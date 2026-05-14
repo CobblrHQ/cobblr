@@ -1,0 +1,65 @@
+# Local dev stack. Same shape we'll deploy to the prod host — nothing
+# bind-mounts source, the images are the source of truth at runtime.
+# Rebuild on every code change you want to actually exercise.
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-cobblr}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cobblr}
+      POSTGRES_DB: ${POSTGRES_DB:-cobblr_meta}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    ports:
+      # Exposed on the host so you can connect with psql / a GUI.
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cobblr} -d ${POSTGRES_DB:-cobblr_meta}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      API_PORT: 4000
+      DATABASE_URL: ${DATABASE_URL:-postgres://cobblr:cobblr@db:5432/cobblr_meta}
+      SUPERUSER_DATABASE_URL: ${SUPERUSER_DATABASE_URL:-postgres://cobblr:cobblr@db:5432/postgres}
+      JWT_SECRET: ${JWT_SECRET:-dev-only-do-not-use-in-prod-must-be-overridden}
+      SESSION_TTL_DAYS: ${SESSION_TTL_DAYS:-30}
+      TENANT_CREDS_ENCRYPTION_KEY: ${TENANT_CREDS_ENCRYPTION_KEY:-dev-only-32-byte-key-replace-me!!}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      # Expose for local-dev curl/postman; in prod only the web
+      # container reaches it.
+      - "4000:4000"
+    restart: unless-stopped
+    labels:
+      # Watchtower (on the prod host) only touches services with this
+      # label — db stays pinned, api gets rolled forward automatically.
+      com.centurylinklabs.watchtower.enable: "true"
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+    depends_on:
+      - api
+    ports:
+      # Local dev uses 8088 to avoid clashing with companion app on
+      # 8080. Prod compose can override via WEB_PORT.
+      - "${WEB_PORT:-8088}:8080"
+    restart: unless-stopped
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+
+volumes:
+  db-data:

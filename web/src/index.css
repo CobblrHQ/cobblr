@@ -1,0 +1,25 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body, #root {
+    @apply h-full bg-mortar text-slate-700 font-sans antialiased;
+  }
+  body {
+    /* Subtle paper grain — brand identity calls for slight imperfection
+       over algorithmic-perfect flat. */
+    background-image:
+      radial-gradient(circle at 1px 1px, rgba(61,68,81,0.04) 1px, transparent 0);
+    background-size: 16px 16px;
+  }
+}
+
+@layer components {
+  .input {
+    @apply w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700
+           placeholder:text-slate-400
+           focus:outline-none focus:border-cobble-400 focus:ring-2 focus:ring-cobble-200
+           transition;
+  }
+}

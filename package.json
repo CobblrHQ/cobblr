@@ -1,0 +1,22 @@
+{
+  "name": "cobblr",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Cobblr — modular workflow platform for niche workflows.",
+  "workspaces": [
+    "api",
+    "web",
+    "packages/*",
+    "modules/*"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "dev:api": "npm run dev -w api",
+    "dev:web": "npm run dev -w web",
+    "test": "npm test --workspaces --if-present"
+  }
+}
