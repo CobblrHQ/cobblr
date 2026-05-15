@@ -1,0 +1,65 @@
+{
+  "manifest": {
+    "id": "cobblr.community.lego",
+    "version": "0.1.0",
+    "name": "Lego Collector",
+    "description": "Custom inventory fields + label wires for Lego set collections. Adds set_id, year, theme, color, condition; prints labels formatted for a Lego shelf.",
+    "author": "Cobblr community",
+    "requires": [
+      { "module": "inventory" },
+      { "module": "labels" }
+    ],
+    "wires": [
+      {
+        "source_kind": "inventory:part",
+        "action_id": "labels:print",
+        "trigger_type": "user-invoked",
+        "template": "LEGO {{theme | default: \"misc\"}} #{{set_id | default: \"---\"}} • {{name}} ({{year | default: \"???\"}})"
+      }
+    ],
+    "field_defs": [
+      {
+        "entity_kind": "inventory:part",
+        "name": "set_id",
+        "display_label": "Set ID",
+        "type": "text",
+        "position": 1
+      },
+      {
+        "entity_kind": "inventory:part",
+        "name": "year",
+        "display_label": "Release year",
+        "type": "number",
+        "position": 2
+      },
+      {
+        "entity_kind": "inventory:part",
+        "name": "theme",
+        "display_label": "Theme",
+        "type": "text",
+        "position": 3
+      },
+      {
+        "entity_kind": "inventory:part",
+        "name": "color",
+        "display_label": "Primary color",
+        "type": "text",
+        "position": 4
+      },
+      {
+        "entity_kind": "inventory:part",
+        "name": "condition",
+        "display_label": "Condition",
+        "type": "text",
+        "position": 5
+      },
+      {
+        "entity_kind": "inventory:part",
+        "name": "minifig_count",
+        "display_label": "Minifig count",
+        "type": "number",
+        "position": 6
+      }
+    ]
+  }
+}

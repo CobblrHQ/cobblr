@@ -6,7 +6,17 @@
 //   moss    #6B8E4E  success / growth (sparingly)
 //   ember   #C7593E  critical actions / errors (very sparingly)
 export default {
-  content: ["./index.html", "./src/**/*.{ts,tsx}"],
+  // Scan the web app's own sources + every first-party module's UI
+  // source so module-only classnames make it into the final CSS.
+  // As more modules ship, add them here.
+  content: [
+    "./index.html",
+    "./src/**/*.{ts,tsx}",
+    "../modules/inventory/src/ui/**/*.{ts,tsx}",
+    "../modules/labels/src/ui/**/*.{ts,tsx}",
+    "../modules/projects/src/ui/**/*.{ts,tsx}",
+    "../packages/platform-web/src/**/*.{ts,tsx}",
+  ],
   darkMode: "class",
   theme: {
     extend: {

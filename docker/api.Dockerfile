@@ -1,28 +1,54 @@
-# Multi-stage Dockerfile for the cobblr-api service.
-# Same shape as companion app's pattern — no bind mounts in compose, the
-# image is the source of truth at runtime.
+# Multi-stage Dockerfile for the cobblr-api service. Image is the
+# source of truth at runtime — no bind mounts in compose.
 
 # ─── builder ─────────────────────────────────────────────────────────
 FROM node:22-alpine AS builder
 
 WORKDIR /app
 
-# Copy workspace skeleton first so npm can resolve workspace links
-# without redoing the install when only source changes.
+# Copy every workspace's package.json before installing so npm can
+# resolve the symlinks without redoing the install on every source
+# change. As new modules land, add their package.json copies here.
 COPY package.json package-lock.json* tsconfig.base.json ./
 COPY api/package.json ./api/
 COPY web/package.json ./web/
 COPY packages/platform-contract/package.json ./packages/platform-contract/
+COPY packages/platform-web/package.json ./packages/platform-web/
+COPY modules/inventory/package.json ./modules/inventory/
+COPY modules/labels/package.json ./modules/labels/
+COPY modules/projects/package.json ./modules/projects/
+COPY modules/purchases/package.json ./modules/purchases/
+COPY modules/machines/package.json ./modules/machines/
+COPY modules/assets/package.json ./modules/assets/
+COPY modules/3d-printers/package.json ./modules/3d-printers/
+COPY modules/laser-cutters/package.json ./modules/laser-cutters/
+COPY modules/cnc-machines/package.json ./modules/cnc-machines/
+COPY modules/workshop-mods/package.json ./modules/workshop-mods/
 
 RUN npm install --workspaces --include-workspace-root --no-audit --no-fund
 
-# Now the source for the api + the platform-contract package it depends on.
-# modules/ comes along so the loader has its scan target in the builder
-# stage too (the runtime stage re-copies the same content).
+# Source for every workspace the runtime needs.
 COPY packages/platform-contract ./packages/platform-contract
+# platform-web is only referenced by module UI code (e.g. inventory's
+# PartDetailPage) — types resolve via tsc but never ship in the api
+# runtime image. Source copy is still required for the inventory tsc
+# build to satisfy the @cobblr/platform-web import.
+COPY packages/platform-web ./packages/platform-web
 COPY api ./api
 COPY modules ./modules
 
+# Build every module that has a build script. The loader's
+# package.json#main resolution picks up dist/module.js at boot.
+RUN npm run --if-present build -w @cobblr/inventory
+RUN npm run --if-present build -w @cobblr/labels
+RUN npm run --if-present build -w @cobblr/projects
+RUN npm run --if-present build -w @cobblr/purchases
+RUN npm run --if-present build -w @cobblr/machines
+RUN npm run --if-present build -w @cobblr/assets
+RUN npm run --if-present build -w @cobblr/3d-printers
+RUN npm run --if-present build -w @cobblr/laser-cutters
+RUN npm run --if-present build -w @cobblr/cnc-machines
+RUN npm run --if-present build -w @cobblr/workshop-mods
 WORKDIR /app/api
 RUN npm run build
 
@@ -33,16 +59,16 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Bring over only what we need to run: built artifacts + the
-# workspace's resolved node_modules. npm hoists everything to the
-# root node_modules, so there's no per-workspace node_modules to copy.
+# Bring over what we need at runtime: built artifacts + the hoisted
+# workspace node_modules. npm hoists into the root node_modules so
+# there's no per-workspace install to copy.
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/api/dist ./api/dist
 COPY --from=builder /app/api/migrations ./api/migrations
 COPY --from=builder /app/api/package.json ./api/
 COPY --from=builder /app/packages/platform-contract ./packages/platform-contract
-# modules/ may be empty (Phase 0) — copy whatever's there so the
-# loader has something to scan at runtime.
+# Each module ships its compiled dist/ + migrations/ alongside its
+# package.json. The loader resolves package.json#main to dist/module.js.
 COPY --from=builder /app/modules ./modules
 
 EXPOSE 4000

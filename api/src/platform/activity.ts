@@ -3,6 +3,8 @@
 // Append-only — no updates, no deletes.
 
 import { meta } from "../db/meta.js";
+import { currentActor } from "../lib/request-context.js";
+import type { AuthMethod } from "../db/schema.js";
 
 export interface ActivityRef {
   /** Module name, or `null` for platform-level events. */
@@ -15,23 +17,42 @@ export interface ActivityRef {
 
 export interface LogParams {
   orgId: string;
-  userId: string | null;
+  /** Falsy values (null / undefined) → the helper falls back to the
+   *  current-request actor in ALS. Pass `null` explicitly to force a
+   *  system entry. */
+  userId?: string | null;
   action: string;
   ref: ActivityRef;
   diff?: unknown;
+  /** Override the auth method. Default: pull from request context if
+   *  one is set, else 'system'. */
+  authMethod?: AuthMethod;
+  /** Override the API token id. Default: pull from request context. */
+  apiTokenId?: string | null;
 }
 
 export async function log(p: LogParams): Promise<void> {
+  // Auto-resolve actor from the current request's AsyncLocalStorage
+  // context when caller didn't override.
+  const actor = currentActor();
+  const userId = p.userId !== undefined ? p.userId : (actor?.userId ?? null);
+  const authMethod: AuthMethod =
+    p.authMethod ?? (actor ? actor.authMethod : "system");
+  const apiTokenId =
+    p.apiTokenId !== undefined ? p.apiTokenId : (actor?.apiTokenId ?? null);
+
   await meta
     .insertInto("activity_log")
     .values({
       org_id: p.orgId,
-      user_id: p.userId,
+      user_id: userId,
       module_name: p.ref.module,
       action: p.action,
       entity_type: p.ref.entityType,
       entity_id: p.ref.entityId,
       diff: p.diff === undefined ? null : (p.diff as object),
+      auth_method: authMethod,
+      api_token_id: apiTokenId,
     })
     .execute();
 }
@@ -40,6 +61,14 @@ export interface ListParams {
   orgId: string;
   limit?: number;
   cursorBeforeId?: number;
+  /** Restrict to actions matching this list. */
+  actions?: string[];
+  /** Filter by auth method. */
+  authMethods?: AuthMethod[];
+  /** Filter by a specific API token id. */
+  apiTokenId?: string;
+  /** Filter by entity type. */
+  entityType?: string;
 }
 
 export interface ActivityEntry {
@@ -50,6 +79,8 @@ export interface ActivityEntry {
   entity_type: string;
   entity_id: string;
   diff: unknown | null;
+  auth_method: AuthMethod;
+  api_token_id: string | null;
   occurred_at: Date;
 }
 
@@ -65,6 +96,8 @@ export async function list(p: ListParams): Promise<ActivityEntry[]> {
       "entity_type",
       "entity_id",
       "diff",
+      "auth_method",
+      "api_token_id",
       "occurred_at",
     ])
     .where("org_id", "=", p.orgId)
@@ -72,6 +105,18 @@ export async function list(p: ListParams): Promise<ActivityEntry[]> {
     .limit(limit);
   if (typeof p.cursorBeforeId === "number") {
     q = q.where("id", "<", p.cursorBeforeId);
+  }
+  if (p.actions && p.actions.length > 0) {
+    q = q.where("action", "in", p.actions);
+  }
+  if (p.authMethods && p.authMethods.length > 0) {
+    q = q.where("auth_method", "in", p.authMethods);
+  }
+  if (p.apiTokenId) {
+    q = q.where("api_token_id", "=", p.apiTokenId);
+  }
+  if (p.entityType) {
+    q = q.where("entity_type", "=", p.entityType);
   }
   return q.execute();
 }

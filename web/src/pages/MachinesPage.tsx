@@ -1,0 +1,546 @@
+// /machines — list view for the machines module, with a detail
+// modal launched per row. URL pattern:
+//
+//   /machines             — list, no selection
+//   /machines/<id>        — list + detail modal open for that row
+//   /machines?lens=X      — list with the lens "X" applied (Stage 8)
+//
+// Lens support is built into the column list here so Stage 8 can
+// flip it on with just a URL param read — the wiring is already
+// in place for `columns = base + lens.contributedFieldDefs`.
+
+import { useEffect, useState, type FormEvent } from "react";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ChevronRight, Plus, Search, Trash2 } from "lucide-react";
+import { ApiError, api, type Machine, type OrgModuleListItem, type PlatformFieldDef } from "../lib/api";
+import { useActiveOrg } from "../auth/ActiveOrgContext";
+import {
+  CustomFieldsPanel,
+  EntityActionsBar,
+  Modal,
+  useToast,
+  useConfirm,
+} from "@cobblr/platform-web";
+
+const ENTITY_KIND = "machines:machine";
+
+export function MachinesPage() {
+  const { activeSlug } = useActiveOrg();
+  const navigate = useNavigate();
+  const { id } = useParams<{ id?: string }>();
+  const [searchParams] = useSearchParams();
+  const lensName = searchParams.get("lens");
+
+  const machines = useQuery({
+    queryKey: ["machines", activeSlug],
+    queryFn: () => api.listMachines(activeSlug),
+    enabled: !!activeSlug,
+  });
+  const fieldDefs = useQuery({
+    queryKey: ["platform-field-defs", activeSlug, ENTITY_KIND],
+    queryFn: () => api.listFieldDefs(activeSlug, ENTITY_KIND),
+    enabled: !!activeSlug,
+    staleTime: 60_000,
+  });
+  const orgModules = useQuery({
+    queryKey: ["org-modules", activeSlug],
+    queryFn: () => api.orgModules(activeSlug),
+    enabled: !!activeSlug,
+    staleTime: 60_000,
+  });
+
+  // Which extra columns (beyond the base) to show. A lens scopes the
+  // table to one specialisation's contributed field-defs. With NO
+  // lens we deliberately show zero extra columns — every enabled
+  // specialisation contributes ~5 fields, so an un-lensed table would
+  // be a wall of mostly-empty "—" cells. The detail modal still shows
+  // all custom fields via CustomFieldsPanel.
+  const allFieldDefs = fieldDefs.data?.items ?? [];
+  const lensFieldDefs: PlatformFieldDef[] = lensName
+    ? allFieldDefs.filter((d) => d.source_module === lensName)
+    : [];
+  const lensModule: OrgModuleListItem | undefined = lensName
+    ? orgModules.data?.items.find((m) => m.name === lensName)
+    : undefined;
+  // The specialisations available to lens by — every distinct module
+  // that has contributed a field-def for machines.
+  const availableLenses = Array.from(
+    new Set(
+      allFieldDefs
+        .map((d) => d.source_module)
+        .filter((s): s is string => !!s),
+    ),
+  )
+    .map((name) => ({
+      name,
+      label: orgModules.data?.items.find((m) => m.name === name)?.displayName ?? name,
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+
+  // Filter machines: with a lens, show only rows that have any of
+  // the lens's fields populated. Without a lens, show all.
+  const allRows = machines.data?.items ?? [];
+  const rows = lensName
+    ? allRows.filter((m) =>
+        lensFieldDefs.some((d) => {
+          const v = (m.metadata as Record<string, unknown>)[d.name];
+          return v !== null && v !== undefined && v !== "";
+        }),
+      )
+    : allRows;
+
+  const [query, setQuery] = useState("");
+  const filtered = query
+    ? rows.filter((m) =>
+        [m.name, m.manufacturer, m.family, m.type, m.short_name]
+          .filter(Boolean)
+          .some((v) => v!.toLowerCase().includes(query.toLowerCase())),
+      )
+    : rows;
+
+  // Group the un-lensed list by specialisation section (3D Printers /
+  // Laser Cutters / CNC Machines). Each machine carries an explicit
+  // `metadata.specialisation` naming its specialisation module (set
+  // via the picker in the detail modal); machines with none set fall
+  // into "Unspecialised". Under a lens the list is already scoped to
+  // one specialisation, so it stays a single flat table.
+  const lensNames = new Set(availableLenses.map((l) => l.name));
+  const sectionOf = (m: Machine): string => {
+    const s = (m.metadata as Record<string, unknown>)?.specialisation;
+    return typeof s === "string" && lensNames.has(s) ? s : "";
+  };
+  const sections: { key: string; label: string; rows: Machine[] }[] = [];
+  if (!lensName) {
+    const byKey = new Map<string, Machine[]>();
+    for (const m of filtered) {
+      const k = sectionOf(m);
+      const arr = byKey.get(k) ?? [];
+      arr.push(m);
+      byKey.set(k, arr);
+    }
+    for (const l of availableLenses) {
+      const r = byKey.get(l.name);
+      if (r?.length) sections.push({ key: l.name, label: l.label, rows: r });
+    }
+    const other = byKey.get("");
+    if (other?.length) sections.push({ key: "", label: "Unspecialised", rows: other });
+  }
+
+  const rowClick = (mid: string) =>
+    navigate(`/machines/${mid}${searchParams.toString() ? `?${searchParams}` : ""}`);
+
+  const [newOpen, setNewOpen] = useState(false);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
+        <h1 className="font-display text-2xl font-extrabold text-slate-700 dark:text-mortar-100 lowercase">
+          machines
+        </h1>
+        {lensModule && (
+          <Link
+            to="/machines"
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-cobble-100 text-cobble-700 dark:bg-cobble-700/40 dark:text-cobble-200 text-[10px] font-mono uppercase tracking-widest hover:bg-cobble-200 transition"
+            title="Clear lens"
+          >
+            lens: {lensModule.displayName} ×
+          </Link>
+        )}
+        <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
+          {filtered.length} of {allRows.length}
+        </span>
+        {!lensName && availableLenses.length > 0 && (
+          <select
+            value=""
+            onChange={(e) => {
+              if (e.target.value) navigate(`/machines?lens=${encodeURIComponent(e.target.value)}`);
+            }}
+            className="input !py-1 !text-xs !w-auto"
+            title="Focus the table on one specialisation's fields"
+          >
+            <option value="">lens…</option>
+            {availableLenses.map((l) => (
+              <option key={l.name} value={l.name}>
+                {l.label}
+              </option>
+            ))}
+          </select>
+        )}
+        <div className="flex-1" />
+        <div className="relative">
+          <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="search…"
+            className="input !py-1 !pl-7 !text-xs !w-48"
+          />
+        </div>
+        <button
+          onClick={() => setNewOpen(true)}
+          className="text-[10px] font-mono uppercase tracking-widest text-cobble-600 hover:text-cobble-700 transition flex items-center gap-1 px-2 py-1 rounded border border-slate-200 dark:border-slate-700"
+        >
+          <Plus size={11} /> new
+        </button>
+      </div>
+
+      {filtered.length === 0 ? (
+        <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-10 text-center text-xs text-slate-400 italic">
+          {allRows.length === 0
+            ? "No machines yet. Click + new to add one."
+            : "No matches with the current filters."}
+        </div>
+      ) : lensName ? (
+        <MachineTable rows={filtered} lensFieldDefs={lensFieldDefs} onRowClick={rowClick} />
+      ) : (
+        <div className="space-y-5">
+          {sections.map((s) => (
+            <section key={s.key || "_other"}>
+              <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500 mb-2">
+                // {s.label}{" "}
+                <span className="text-slate-400 dark:text-slate-500">({s.rows.length})</span>
+              </div>
+              <MachineTable rows={s.rows} lensFieldDefs={[]} onRowClick={rowClick} />
+            </section>
+          ))}
+        </div>
+      )}
+
+      <MachineDetailModal
+        machineId={id ?? null}
+        specialisations={availableLenses}
+        onClose={() => navigate(`/machines${searchParams.toString() ? `?${searchParams}` : ""}`)}
+      />
+      <NewMachineModal
+        open={newOpen}
+        onClose={() => setNewOpen(false)}
+      />
+    </div>
+  );
+}
+
+function MachineTable({
+  rows,
+  lensFieldDefs,
+  onRowClick,
+}: {
+  rows: Machine[];
+  lensFieldDefs: PlatformFieldDef[];
+  onRowClick: (id: string) => void;
+}) {
+  return (
+    <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead className="bg-mortar-50/60 dark:bg-slate-800/40 text-[10px] font-mono uppercase tracking-widest text-slate-500 dark:text-slate-400">
+          <tr>
+            <th className="text-left px-3 py-2">Name</th>
+            <th className="text-left px-3 py-2">Family</th>
+            <th className="text-left px-3 py-2">Manufacturer</th>
+            <th className="text-left px-3 py-2">State</th>
+            {lensFieldDefs.map((d) => (
+              <th key={d.id} className="text-left px-3 py-2">
+                {d.display_label}
+              </th>
+            ))}
+            <th className="text-right px-3 py-2">qty</th>
+            <th className="w-6"></th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+          {rows.map((m) => (
+            <tr
+              key={m.id}
+              onClick={() => onRowClick(m.id)}
+              className="hover:bg-mortar-50 dark:hover:bg-slate-800/40 transition cursor-pointer"
+            >
+              <td className="px-3 py-2 text-slate-700 dark:text-mortar-100 font-medium">
+                {m.name}
+                {m.short_name && (
+                  <span className="ml-1.5 text-[10px] font-mono text-slate-400">
+                    {m.short_name}
+                  </span>
+                )}
+              </td>
+              <td className="px-3 py-2 text-slate-500 dark:text-slate-400">
+                {m.family || "—"}
+              </td>
+              <td className="px-3 py-2 text-slate-500 dark:text-slate-400">
+                {m.manufacturer || "—"}
+              </td>
+              <td className="px-3 py-2">
+                <span className="font-mono text-[10px] uppercase tracking-widest text-slate-500 dark:text-slate-400">
+                  {m.state}
+                </span>
+              </td>
+              {lensFieldDefs.map((d) => {
+                const v = (m.metadata as Record<string, unknown>)[d.name];
+                return (
+                  <td key={d.id} className="px-3 py-2 text-slate-600 dark:text-mortar-200 text-xs">
+                    {v === null || v === undefined || v === "" ? "—" : String(v)}
+                  </td>
+                );
+              })}
+              <td className="px-3 py-2 text-right font-mono text-xs text-slate-500">
+                {m.quantity}
+              </td>
+              <td className="px-2 py-2 text-slate-300 dark:text-slate-600">
+                <ChevronRight size={14} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function MachineDetailModal({
+  machineId,
+  specialisations,
+  onClose,
+}: {
+  machineId: string | null;
+  specialisations: { name: string; label: string }[];
+  onClose: () => void;
+}) {
+  const { activeSlug } = useActiveOrg();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const confirm = useConfirm();
+  const machine = useQuery({
+    queryKey: ["machine", activeSlug, machineId],
+    queryFn: () => api.getMachine(activeSlug, machineId!),
+    enabled: !!machineId,
+  });
+  const update = useMutation({
+    mutationFn: (patch: Partial<Machine>) => api.updateMachine(activeSlug, machineId!, patch),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["machine", activeSlug, machineId] });
+      void qc.invalidateQueries({ queryKey: ["machines", activeSlug] });
+    },
+  });
+  const remove = useMutation({
+    mutationFn: () => api.deleteMachine(activeSlug, machineId!),
+    onSuccess: () => {
+      toast.success("Machine deleted.");
+      void qc.invalidateQueries({ queryKey: ["machines", activeSlug] });
+      onClose();
+    },
+    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't delete."),
+  });
+
+  const m = machine.data;
+  async function handleDelete() {
+    if (!m) return;
+    const ok = await confirm({
+      title: `Delete "${m.name}"?`,
+      message: "This can't be undone. Pairings referencing this machine will be orphaned.",
+      confirmLabel: "Delete machine",
+      destructive: true,
+    });
+    if (ok) remove.mutate();
+  }
+
+  return (
+    <Modal
+      open={!!machineId}
+      onClose={onClose}
+      title={m?.name ?? "loading…"}
+      subtitle={m ? `${m.manufacturer ?? "—"} · ${m.state}` : undefined}
+      size="lg"
+    >
+      {m ? (
+        <div className="space-y-4">
+          <div className="flex items-center gap-2">
+            <EntityActionsBar entityKind={ENTITY_KIND} entityId={m.id} />
+          </div>
+
+          {specialisations.length > 0 && (
+            <label className="block">
+              <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+                Specialisation
+              </span>
+              <select
+                value={
+                  typeof m.metadata?.specialisation === "string"
+                    ? (m.metadata.specialisation as string)
+                    : ""
+                }
+                onChange={(e) =>
+                  update.mutate({
+                    metadata: { ...m.metadata, specialisation: e.target.value || null },
+                  })
+                }
+                className="input !w-auto !py-1 text-xs"
+              >
+                <option value="">— unspecialised —</option>
+                {specialisations.map((s) => (
+                  <option key={s.name} value={s.name}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+
+          <dl className="grid grid-cols-2 gap-3 text-xs">
+            <EditField label="Name" value={m.name} onCommit={(v) => update.mutate({ name: v })} />
+            <EditField label="Short name" value={m.short_name ?? ""} onCommit={(v) => update.mutate({ short_name: v || null })} />
+            <EditField label="Family" value={m.family ?? ""} onCommit={(v) => update.mutate({ family: v || null })} />
+            <EditField label="Type" value={m.type ?? ""} onCommit={(v) => update.mutate({ type: v || null })} />
+            <EditField label="Manufacturer" value={m.manufacturer ?? ""} onCommit={(v) => update.mutate({ manufacturer: v || null })} />
+            <EditField label="State" value={m.state} onCommit={(v) => update.mutate({ state: v })} />
+            <EditField label="Quantity" value={String(m.quantity)} numeric onCommit={(v) => update.mutate({ quantity: Number(v) || 0 })} />
+            <EditField label="Excitement (0-5)" value={String(m.excitement)} numeric onCommit={(v) => update.mutate({ excitement: Math.min(5, Math.max(0, Number(v) || 0)) })} />
+          </dl>
+
+          <CustomFieldsPanel
+            entityKind={ENTITY_KIND}
+            values={m.metadata}
+            onCommit={(name, value) =>
+              update.mutate({
+                metadata: { ...m.metadata, [name]: value },
+              })
+            }
+          />
+
+          <EditField
+            label="Notes"
+            value={m.notes ?? ""}
+            multiline
+            onCommit={(v) => update.mutate({ notes: v || null })}
+          />
+
+          <div className="pt-3 border-t border-slate-100 dark:border-slate-700 flex items-center justify-between">
+            <button
+              onClick={handleDelete}
+              className="text-[10px] font-mono uppercase tracking-widest text-slate-400 hover:text-ember-500 transition flex items-center gap-1"
+            >
+              <Trash2 size={11} /> delete machine
+            </button>
+            <button
+              onClick={onClose}
+              className="px-3 py-1.5 rounded-md text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-mortar-50 dark:hover:bg-slate-800 transition"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="text-xs text-slate-400">loading…</div>
+      )}
+    </Modal>
+  );
+}
+
+function NewMachineModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { activeSlug } = useActiveOrg();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const navigate = useNavigate();
+  const [name, setName] = useState("");
+  const [manufacturer, setManufacturer] = useState("");
+  const [family, setFamily] = useState("");
+  useEffect(() => {
+    if (open) {
+      setName("");
+      setManufacturer("");
+      setFamily("");
+    }
+  }, [open]);
+
+  const create = useMutation({
+    mutationFn: () =>
+      api.createMachine(activeSlug, {
+        name: name.trim(),
+        manufacturer: manufacturer.trim() || null,
+        family: family.trim() || null,
+      }),
+    onSuccess: (m) => {
+      toast.success("Machine added.");
+      void qc.invalidateQueries({ queryKey: ["machines", activeSlug] });
+      onClose();
+      navigate(`/machines/${m.id}`);
+    },
+    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't create."),
+  });
+
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    if (!name.trim()) return;
+    create.mutate();
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title="new machine" size="sm">
+      <form onSubmit={submit} className="space-y-3">
+        <label className="block">
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+            Name
+          </span>
+          <input value={name} onChange={(e) => setName(e.target.value)} autoFocus className="input" />
+        </label>
+        <label className="block">
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+            Manufacturer
+          </span>
+          <input value={manufacturer} onChange={(e) => setManufacturer(e.target.value)} className="input" />
+        </label>
+        <label className="block">
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+            Family (e.g. "Voron", "Railcore")
+          </span>
+          <input value={family} onChange={(e) => setFamily(e.target.value)} className="input" />
+        </label>
+        <p className="text-[10px] text-slate-400">
+          Specialisation fields (hotend, tube_type, spindle, etc.) come from
+          enabled lens modules and show up on the detail view after create.
+        </p>
+        <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-700">
+          <button type="button" onClick={onClose} className="px-3 py-1.5 rounded-md text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-mortar-50 dark:hover:bg-slate-800 transition">
+            Cancel
+          </button>
+          <button type="submit" disabled={!name.trim() || create.isPending} className="px-3 py-1.5 rounded-md text-sm font-medium bg-slate-700 hover:bg-slate-600 text-mortar-50 transition disabled:opacity-50">
+            {create.isPending ? "Creating…" : "Create"}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function EditField({
+  label,
+  value,
+  onCommit,
+  numeric,
+  multiline,
+}: {
+  label: string;
+  value: string;
+  onCommit: (v: string) => void;
+  numeric?: boolean;
+  multiline?: boolean;
+}) {
+  const Cmp = multiline ? "textarea" : "input";
+  return (
+    <label className={"block " + (multiline ? "col-span-2" : "")}>
+      <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+        {label}
+      </span>
+      <Cmp
+        type={numeric ? "number" : "text"}
+        defaultValue={value}
+        onBlur={(e) => {
+          if (e.target.value !== value) onCommit(e.target.value);
+        }}
+        onKeyDown={(e) => {
+          if (!multiline && e.key === "Enter") (e.target as HTMLInputElement).blur();
+        }}
+        rows={multiline ? 3 : undefined}
+        className="input"
+      />
+    </label>
+  );
+}

@@ -3,23 +3,52 @@
 @tailwind utilities;
 
 @layer base {
+  /* color-scheme makes the browser render *native* controls —
+     <select> chrome, checkboxes, scrollbars, date pickers — in the
+     matching light/dark variant. Without this, native selects stay
+     light-on-dark in dark mode regardless of CSS background. */
+  html { color-scheme: light; }
+  html.dark { color-scheme: dark; }
+
   html, body, #root {
-    @apply h-full bg-mortar text-slate-700 font-sans antialiased;
+    @apply h-full bg-mortar text-slate-700 font-sans antialiased
+           dark:bg-slate-800 dark:text-mortar-100;
   }
   body {
     /* Subtle paper grain — brand identity calls for slight imperfection
-       over algorithmic-perfect flat. */
+       over algorithmic-perfect flat. Faded in dark mode where lit
+       texture would be wrong. */
     background-image:
       radial-gradient(circle at 1px 1px, rgba(61,68,81,0.04) 1px, transparent 0);
     background-size: 16px 16px;
+  }
+  html.dark body {
+    background-image:
+      radial-gradient(circle at 1px 1px, rgba(232,226,213,0.03) 1px, transparent 0);
+  }
+}
+
+@layer utilities {
+  /* Horizontal scroll container without the chunky scrollbar — used
+   * on the navbar so an overflowing nav can scroll via wheel /
+   * trackpad / keyboard without visible UI clutter. */
+  .no-scrollbar {
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* old Edge */
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
   }
 }
 
 @layer components {
   .input {
-    @apply w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700
-           placeholder:text-slate-400
-           focus:outline-none focus:border-cobble-400 focus:ring-2 focus:ring-cobble-200
+    @apply w-full rounded-md border border-slate-200 dark:border-slate-700
+           bg-white dark:bg-slate-900
+           px-3 py-2 text-sm
+           text-slate-700 dark:text-mortar-100
+           placeholder:text-slate-400 dark:placeholder:text-slate-500
+           focus:outline-none focus:border-cobble-400 focus:ring-2 focus:ring-cobble-200 dark:focus:ring-cobble-700
            transition;
   }
 }

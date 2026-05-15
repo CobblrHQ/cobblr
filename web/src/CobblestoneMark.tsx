@@ -1,5 +1,5 @@
 // Brand mark — 4 irregular polygons fitting together like cobblestones
-// on a path. See docs/BRAND.md §5: "different sizes, slight
+// on a path. See docs/design-decisions/BRAND.md §5: "different sizes, slight
 // imperfection, visible gaps." This is the v0 sketch; an actual
 // designer's mark would replace it.
 

@@ -1,0 +1,24 @@
+{
+  "name": "@cobblr/3d-printers",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/module.js",
+  "exports": {
+    ".": {
+      "import": "./dist/module.js",
+      "types": "./dist/module.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cobblr/platform-contract": "*",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}

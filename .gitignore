@@ -11,3 +11,6 @@ build/
 coverage/
 _tmp/
 .vite/
+.VSCodeCounter/
+*.tsbuildinfo
+e2e/screenshots/

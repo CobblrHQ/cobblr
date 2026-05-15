@@ -44,6 +44,54 @@ export interface MigrationsTable {
   applied_at: Generated<Date>;
 }
 
+export interface OrgModulesTable {
+  org_id: string;
+  module_name: string;
+  version: string;
+  enabled_at: Generated<Date>;
+  last_migration: string | null;
+}
+
+export interface EntityPairingsTable {
+  id: Generated<string>;
+  org_id: string;
+  source_kind: string;
+  source_id: string;
+  target_kind: string;
+  target_id: string;
+  relationship_kind: string;
+  notes: string | null;
+  metadata: Generated<Record<string, unknown>>;
+  created_at: Generated<Date>;
+  created_by: string | null;
+}
+
+export interface ApiTokensTable {
+  id: Generated<string>;
+  user_id: string;
+  name: string;
+  token_hash: string;
+  token_prefix: string;
+  expires_at: Date | null;
+  last_used_at: Date | null;
+  revoked_at: Date | null;
+  created_at: Generated<Date>;
+}
+
+export interface WorkspaceInvitesTable {
+  id: Generated<string>;
+  org_id: string;
+  invited_by_user: string;
+  token: string;
+  invited_email: string | null;
+  role: OrgRole;
+  expires_at: Date | null;
+  consumed_at: Date | null;
+  consumed_by_user: string | null;
+  revoked_at: Date | null;
+  created_at: Generated<Date>;
+}
+
 // ─────────────────────── platform primitives ──────────────────────
 
 export interface TagsTable {
@@ -62,6 +110,8 @@ export interface TagAssignmentsTable {
   attached_at: Generated<Date>;
 }
 
+export type AuthMethod = "session" | "api_token" | "system";
+
 export interface ActivityLogTable {
   id: Generated<number>;
   org_id: string;
@@ -71,6 +121,11 @@ export interface ActivityLogTable {
   entity_type: string;
   entity_id: string;
   diff: unknown | null;
+  /** How the actor was authenticated. 'system' = internal emitter (wires,
+   *  subscribers, boot tasks). */
+  auth_method: Generated<AuthMethod>;
+  /** Set when auth_method='api_token'; nullable otherwise. */
+  api_token_id: string | null;
   occurred_at: Generated<Date>;
 }
 
@@ -107,14 +162,131 @@ export interface NotificationSubscriptionsTable {
   config: unknown | null;
 }
 
+// ─────────────────────── Pillar A/B/C/D tables ────────────────────
+
+export interface EntityKindsTable {
+  id: string;
+  module_name: string;
+  display_name: string;
+  display_name_plural: string | null;
+  icon: string | null;
+  fields: unknown;
+  detail_route: string | null;
+  endpoints: unknown | null;
+  version: Generated<string>;
+  registered_at: Generated<Date>;
+  /** Resolved 6-axis trait assignment (Tangibility, Identity,
+   *  Containment, Time, Lifecycle, Persistence). Skipped axes are
+   *  absent. Null when the manifest declared no traits. */
+  traits: unknown | null;
+  /** Preset name (e.g. "owned-thing") if the manifest used profile
+   *  shorthand, null if declared raw. Bookkeeping for tooling. */
+  profile: string | null;
+}
+
+export interface EntityActionsTable {
+  id: string;
+  module_name: string;
+  label: string;
+  description: string | null;
+  icon: string | null;
+  applies_to: unknown;
+  invoke_route: string | null;
+  invoke_handler: string | null;
+  version: Generated<string>;
+  registered_at: Generated<Date>;
+  /** False for wire-only actions that shouldn't render as a user
+   *  button on entity-detail pages (they exist only to be fired by
+   *  a wire on an event). */
+  user_invokable: Generated<boolean>;
+}
+
+export interface EntityActionOrgOverridesTable {
+  org_id: string;
+  action_id: string;
+  applies_to_override: unknown;
+  updated_at: Generated<Date>;
+  updated_by: string | null;
+}
+
+export type TriggerType =
+  | "user-invoked"
+  | "event"
+  | "on-create"
+  | "on-update"
+  | "on-delete";
+
+export interface EntityActionBindingsTable {
+  id: Generated<string>;
+  org_id: string;
+  source_kind: string;
+  action_id: string;
+  trigger_type: Generated<TriggerType>;
+  trigger_event: string | null;
+  filter: unknown | null;
+  template: string | null;
+  args: unknown | null;
+  enabled: Generated<boolean>;
+  bundle_id: string | null;
+  /** Set when this row was contributed by a Pillar-E module's
+   *  `contributes.wires`. Cleaned up on module disable. */
+  source_module: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+export interface BundlesTable {
+  id: Generated<string>;
+  org_id: string;
+  external_id: string;
+  name: string;
+  version: string;
+  author: string | null;
+  description: string | null;
+  source_url: string | null;
+  manifest: unknown;
+  installed_at: Generated<Date>;
+}
+
+export type FieldDefType = "text" | "number" | "boolean" | "date" | "url";
+
+export interface ModuleFieldDefsTable {
+  id: Generated<string>;
+  org_id: string;
+  entity_kind: string;
+  name: string;
+  display_label: string;
+  type: FieldDefType;
+  required: Generated<boolean>;
+  position: Generated<number>;
+  bundle_id: string | null;
+  /** Set when this row was contributed by a Pillar-E module's
+   *  `contributes.fieldDefs`. Cleaned up on module disable. */
+  source_module: string | null;
+  /** When type='text', renders as a dropdown of these choices. The
+   *  "+ add new" affordance in the UI PATCHes this array. */
+  choices: string[] | null;
+  created_at: Generated<Date>;
+}
+
 export interface MetaDB {
   users: UsersTable;
   orgs: OrgsTable;
   org_memberships: OrgMembershipsTable;
   migrations: MigrationsTable;
+  org_modules: OrgModulesTable;
+  workspace_invites: WorkspaceInvitesTable;
+  api_tokens: ApiTokensTable;
+  entity_pairings: EntityPairingsTable;
   tags: TagsTable;
   tag_assignments: TagAssignmentsTable;
   activity_log: ActivityLogTable;
   notifications: NotificationsTable;
   notification_subscriptions: NotificationSubscriptionsTable;
+  entity_kinds: EntityKindsTable;
+  entity_actions: EntityActionsTable;
+  entity_action_org_overrides: EntityActionOrgOverridesTable;
+  entity_action_bindings: EntityActionBindingsTable;
+  bundles: BundlesTable;
+  module_field_defs: ModuleFieldDefsTable;
 }

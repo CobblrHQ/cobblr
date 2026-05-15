@@ -150,3 +150,26 @@ export async function markRead(notificationId: string, userId: string): Promise<
     .where("user_id", "=", userId)
     .execute();
 }
+
+export async function markAllRead(userId: string, orgId: string): Promise<number> {
+  const updated = await meta
+    .updateTable("notifications")
+    .set({ read_at: new Date() })
+    .where("user_id", "=", userId)
+    .where("org_id", "=", orgId)
+    .where("read_at", "is", null)
+    .returning("id")
+    .execute();
+  return updated.length;
+}
+
+export async function unreadCount(userId: string, orgId: string): Promise<number> {
+  const row = await meta
+    .selectFrom("notifications")
+    .select(({ fn }) => fn.countAll<string>().as("c"))
+    .where("user_id", "=", userId)
+    .where("org_id", "=", orgId)
+    .where("read_at", "is", null)
+    .executeTakeFirstOrThrow();
+  return Number(row.c);
+}

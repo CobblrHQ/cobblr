@@ -54,8 +54,8 @@ services:
     depends_on:
       - api
     ports:
-      # Local dev uses 8088 to avoid clashing with companion app on
-      # 8080. Prod compose can override via WEB_PORT.
+      # Local dev defaults to 8088 to leave 8080 free for other
+      # stacks on the same host. Prod compose can override via WEB_PORT.
       - "${WEB_PORT:-8088}:8080"
     restart: unless-stopped
     labels:

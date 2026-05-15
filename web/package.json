@@ -11,6 +11,10 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@cobblr/inventory": "*",
+    "@cobblr/labels": "*",
+    "@cobblr/platform-web": "*",
+    "@cobblr/projects": "*",
     "@tanstack/react-query": "^5.62.7",
     "lucide-react": "^0.469.0",
     "react": "^19.0.0",

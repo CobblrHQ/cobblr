@@ -65,6 +65,13 @@ export async function getTenantDb(orgId: string): Promise<Kysely<TenantDB>> {
   return db;
 }
 
+/** Pool accessor for callers that need raw pg (e.g. migration runner).
+ *  Lazily opens the pool by going through getTenantDb. */
+export async function getTenantPool(orgId: string): Promise<Pool> {
+  await getTenantDb(orgId);
+  return cache.get(orgId)!.pool;
+}
+
 /** For tenant deletion (added later) — also useful in tests to reset
  *  the pool when the underlying DB has been dropped/recreated. */
 export async function evictTenantPool(orgId: string): Promise<void> {

@@ -1,0 +1,136 @@
+// Bell icon in the header — badge with unread count, click opens
+// a popover list. Each item navigates to the link_url and marks
+// itself read on click. A small "mark all read" button at the
+// bottom of the popover.
+
+import { useEffect, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Bell, BellOff } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { api, type NotificationEntry } from "../lib/api";
+
+interface Props {
+  slug: string;
+}
+
+export function NotificationsBell({ slug }: Props) {
+  const [open, setOpen] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const qc = useQueryClient();
+  const navigate = useNavigate();
+
+  const unread = useQuery({
+    queryKey: ["notifications-unread", slug],
+    queryFn: () => api.notificationsUnreadCount(slug),
+    enabled: !!slug,
+    refetchInterval: 15_000,
+  });
+  const list = useQuery({
+    queryKey: ["notifications-list", slug],
+    queryFn: () => api.notifications(slug),
+    enabled: !!slug && open,
+  });
+
+  const markRead = useMutation({
+    mutationFn: (id: string) => api.markNotificationRead(slug, id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["notifications-unread", slug] });
+      void qc.invalidateQueries({ queryKey: ["notifications-list", slug] });
+    },
+  });
+  const markAll = useMutation({
+    mutationFn: () => api.markAllNotificationsRead(slug),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["notifications-unread", slug] });
+      void qc.invalidateQueries({ queryKey: ["notifications-list", slug] });
+    },
+  });
+
+  // Close on outside click.
+  useEffect(() => {
+    if (!open) return;
+    function handler(e: MouseEvent) {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const count = unread.data?.count ?? 0;
+
+  function handleItemClick(n: NotificationEntry) {
+    if (!n.read_at) markRead.mutate(n.id);
+    if (n.link_url) navigate(n.link_url);
+    setOpen(false);
+  }
+
+  return (
+    <div className="relative" ref={wrapperRef}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-mortar-100 transition p-1.5 relative"
+        title={count > 0 ? `${count} unread notification${count === 1 ? "" : "s"}` : "Notifications"}
+      >
+        {count > 0 ? <Bell size={14} /> : <BellOff size={14} />}
+        {count > 0 && (
+          <span
+            className="absolute -top-0.5 -right-0.5 bg-ember-500 text-mortar-50 text-[9px] font-bold rounded-full min-w-[14px] h-[14px] flex items-center justify-center px-1 leading-none"
+            aria-label={`${count} unread`}
+          >
+            {count > 99 ? "99+" : count}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div className="absolute right-0 top-9 w-80 max-h-96 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg z-50">
+          <div className="flex items-center justify-between px-3 py-2 border-b border-slate-100 dark:border-slate-700">
+            <div className="text-[10px] font-mono uppercase tracking-widest text-slate-500 dark:text-slate-400">
+              notifications
+            </div>
+            {count > 0 && (
+              <button
+                onClick={() => markAll.mutate()}
+                disabled={markAll.isPending}
+                className="text-[10px] font-mono text-cobble-600 hover:text-cobble-500 transition"
+              >
+                mark all read
+              </button>
+            )}
+          </div>
+          {list.isLoading && (
+            <div className="px-3 py-4 text-[11px] text-slate-400">loading…</div>
+          )}
+          {list.data && list.data.items.length === 0 && (
+            <div className="px-3 py-4 text-[11px] text-slate-400 italic">
+              No notifications yet.
+            </div>
+          )}
+          <ul>
+            {list.data?.items.map((n) => (
+              <li key={n.id}>
+                <button
+                  onClick={() => handleItemClick(n)}
+                  className={
+                    "w-full text-left px-3 py-2 border-b border-slate-100 dark:border-slate-700 last:border-0 transition " +
+                    (n.read_at
+                      ? "opacity-60 hover:bg-mortar-50/50 dark:hover:bg-slate-800/50"
+                      : "hover:bg-mortar-50 dark:hover:bg-slate-800")
+                  }
+                >
+                  <div className="text-sm text-slate-700 dark:text-mortar-100">
+                    {n.message}
+                  </div>
+                  <div className="text-[10px] font-mono text-slate-400 dark:text-slate-500 mt-1">
+                    {n.event_type} · {new Date(n.created_at).toLocaleString()}
+                  </div>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}

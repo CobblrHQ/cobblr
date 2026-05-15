@@ -1,0 +1,227 @@
+{
+  "manifest": {
+    "id": "cobblr.companion app.compat",
+    "version": "0.1.0",
+    "name": "companion app Compatibility",
+    "description": "Reconstitutes the companion app data shape on a fresh Cobblr workspace. Pulls in machines + 3D printers / laser cutters / CNC machines + assets + workshop-mods + inventory + projects + purchases + labels, then installs the companion app-specific extension field-defs (wos_condition, wos_source, etc.) so migrated companion app data renders without further setup. Companion to the one-shot migration script in `_tmp/companion app-migration/`.",
+    "author": "companion app migration",
+    "requires": [
+      {
+        "module": "inventory"
+      },
+      {
+        "module": "projects"
+      },
+      {
+        "module": "purchases"
+      },
+      {
+        "module": "labels"
+      },
+      {
+        "module": "machines"
+      },
+      {
+        "module": "3d-printers"
+      },
+      {
+        "module": "laser-cutters"
+      },
+      {
+        "module": "cnc-machines"
+      },
+      {
+        "module": "assets"
+      },
+      {
+        "module": "workshop-mods"
+      }
+    ],
+    "wires": [
+      {
+        "source_kind": "inventory:part",
+        "action_id": "projects:set-dep-satisfied",
+        "trigger_type": "event",
+        "trigger_event": "inventory.stock.changed"
+      }
+    ],
+    "field_defs": [
+      {
+        "entity_kind": "assets:asset",
+        "name": "wos_category",
+        "display_label": "companion app category",
+        "type": "text",
+        "required": false,
+        "position": 1
+      },
+      {
+        "entity_kind": "assets:asset",
+        "name": "wos_asset_id",
+        "display_label": "companion app asset id",
+        "type": "number",
+        "required": false,
+        "position": 2
+      },
+      {
+        "entity_kind": "assets:asset",
+        "name": "wos_flags",
+        "display_label": "Flags",
+        "type": "text",
+        "required": false,
+        "position": 3
+      },
+      {
+        "entity_kind": "assets:asset",
+        "name": "wos_excitement",
+        "display_label": "Excitement (0-5)",
+        "type": "number",
+        "required": false,
+        "position": 4
+      },
+      {
+        "entity_kind": "assets:asset",
+        "name": "wos_quantity",
+        "display_label": "Quantity",
+        "type": "number",
+        "required": false,
+        "position": 5
+      },
+      {
+        "entity_kind": "inventory:location",
+        "name": "wos_kind",
+        "display_label": "companion app location kind",
+        "type": "text",
+        "required": false,
+        "position": 1
+      },
+      {
+        "entity_kind": "inventory:location",
+        "name": "wos_bin_number",
+        "display_label": "Bin number",
+        "type": "number",
+        "required": false,
+        "position": 2
+      },
+      {
+        "entity_kind": "inventory:location",
+        "name": "wos_bin_type",
+        "display_label": "Bin type",
+        "type": "text",
+        "required": false,
+        "position": 3
+      },
+      {
+        "entity_kind": "inventory:part",
+        "name": "wos_condition",
+        "display_label": "Condition (companion app)",
+        "type": "text",
+        "required": false,
+        "position": 1
+      },
+      {
+        "entity_kind": "inventory:part",
+        "name": "wos_source",
+        "display_label": "Source",
+        "type": "text",
+        "required": false,
+        "position": 2
+      },
+      {
+        "entity_kind": "inventory:part",
+        "name": "wos_external_url",
+        "display_label": "External inventory URL",
+        "type": "url",
+        "required": false,
+        "position": 3
+      },
+      {
+        "entity_kind": "inventory:part",
+        "name": "wos_part_state",
+        "display_label": "companion app part state",
+        "type": "text",
+        "required": false,
+        "position": 4
+      },
+      {
+        "entity_kind": "inventory:part",
+        "name": "wos_file_path",
+        "display_label": "Print file path",
+        "type": "text",
+        "required": false,
+        "position": 5
+      },
+      {
+        "entity_kind": "inventory:part",
+        "name": "wos_material",
+        "display_label": "Material (printable)",
+        "type": "text",
+        "required": false,
+        "position": 6
+      },
+      {
+        "entity_kind": "inventory:part",
+        "name": "wos_print_time_min",
+        "display_label": "Estimated print time (min)",
+        "type": "number",
+        "required": false,
+        "position": 7
+      },
+      {
+        "entity_kind": "inventory:part",
+        "name": "wos_filament_g",
+        "display_label": "Estimated filament (g)",
+        "type": "number",
+        "required": false,
+        "position": 8
+      },
+      {
+        "entity_kind": "machines:machine",
+        "name": "wos_excitement",
+        "display_label": "Excitement (0-5)",
+        "type": "number",
+        "required": false,
+        "position": 20
+      },
+      {
+        "entity_kind": "machines:machine",
+        "name": "wos_category",
+        "display_label": "companion app category",
+        "type": "text",
+        "required": false,
+        "position": 21
+      },
+      {
+        "entity_kind": "machines:machine",
+        "name": "wos_printer_id",
+        "display_label": "companion app printer id",
+        "type": "number",
+        "required": false,
+        "position": 22
+      },
+      {
+        "entity_kind": "machines:machine",
+        "name": "wos_quantity",
+        "display_label": "Quantity",
+        "type": "number",
+        "required": false,
+        "position": 23
+      },
+      {
+        "entity_kind": "projects:project",
+        "name": "wos_mod_id",
+        "display_label": "companion app mod id",
+        "type": "number",
+        "required": false,
+        "position": 60
+      },
+      {
+        "entity_kind": "projects:project",
+        "name": "wos_mod_notes",
+        "display_label": "Notes (companion app)",
+        "type": "text",
+        "required": false,
+        "position": 61
+      }
+    ]
+  }
+}

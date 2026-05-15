@@ -1,0 +1,47 @@
+{
+  "name": "@cobblr/labels",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/module.js",
+  "exports": {
+    ".": {
+      "import": "./dist/module.js",
+      "types": "./dist/module.d.ts"
+    },
+    "./ui": {
+      "types": "./src/ui/index.tsx",
+      "import": "./src/ui/index.tsx"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cobblr/platform-contract": "*",
+    "express": "^4.21.2",
+    "kysely": "^0.27.5",
+    "qrcode": "^1.5.4",
+    "zod": "^3.24.1"
+  },
+  "peerDependencies": {
+    "@tanstack/react-query": "^5",
+    "react": "^19",
+    "react-router-dom": "^7"
+  },
+  "peerDependenciesMeta": {
+    "@tanstack/react-query": { "optional": true },
+    "react": { "optional": true },
+    "react-router-dom": { "optional": true }
+  },
+  "devDependencies": {
+    "@tanstack/react-query": "^5.62.7",
+    "@types/express": "^4.17.21",
+    "@types/qrcode": "^1.5.5",
+    "@types/react": "^19.0.2",
+    "react": "^19.0.0",
+    "react-router-dom": "^7.1.1",
+    "typescript": "^5.7.2"
+  }
+}

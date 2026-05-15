@@ -1,0 +1,374 @@
+// /assets — list + detail modal for the assets module. Same shape
+// as MachinesPage. No specialisations yet (no assets:asset Pillar-E
+// modules ship), so no lens UI here — but the column rendering is
+// already lens-ready: when a future "Vintage Tools" or
+// "Collectibles" module contributes field-defs, they'll appear as
+// extra columns automatically (no code change here).
+
+import { useEffect, useState, type FormEvent } from "react";
+import { useNavigate, useParams, useSearchParams, Link } from "react-router-dom";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ChevronRight, Plus, Search, Trash2 } from "lucide-react";
+import { ApiError, api, type Asset, type OrgModuleListItem, type PlatformFieldDef } from "../lib/api";
+import { useActiveOrg } from "../auth/ActiveOrgContext";
+import {
+  CustomFieldsPanel,
+  EntityActionsBar,
+  Modal,
+  useToast,
+  useConfirm,
+} from "@cobblr/platform-web";
+
+const ENTITY_KIND = "assets:asset";
+
+export function AssetsPage() {
+  const { activeSlug } = useActiveOrg();
+  const navigate = useNavigate();
+  const { id } = useParams<{ id?: string }>();
+  const [searchParams] = useSearchParams();
+  const lensName = searchParams.get("lens");
+
+  const list = useQuery({
+    queryKey: ["assets", activeSlug],
+    queryFn: () => api.listAssets(activeSlug),
+    enabled: !!activeSlug,
+  });
+  const fieldDefs = useQuery({
+    queryKey: ["platform-field-defs", activeSlug, ENTITY_KIND],
+    queryFn: () => api.listFieldDefs(activeSlug, ENTITY_KIND),
+    enabled: !!activeSlug,
+    staleTime: 60_000,
+  });
+  const orgModules = useQuery({
+    queryKey: ["org-modules", activeSlug],
+    queryFn: () => api.orgModules(activeSlug),
+    enabled: !!activeSlug,
+    staleTime: 60_000,
+  });
+
+  const lensFieldDefs: PlatformFieldDef[] = (fieldDefs.data?.items ?? []).filter((d) => {
+    if (lensName) return d.source_module === lensName;
+    return d.source_module !== null;
+  });
+  const lensModule: OrgModuleListItem | undefined = lensName
+    ? orgModules.data?.items.find((m) => m.name === lensName)
+    : undefined;
+
+  const allRows = list.data?.items ?? [];
+  const rows = lensName
+    ? allRows.filter((m) =>
+        lensFieldDefs.some((d) => {
+          const v = (m.metadata as Record<string, unknown>)[d.name];
+          return v !== null && v !== undefined && v !== "";
+        }),
+      )
+    : allRows;
+
+  const [query, setQuery] = useState("");
+  const filtered = query
+    ? rows.filter((m) =>
+        [m.name, m.manufacturer, m.model, m.type, m.short_name]
+          .filter(Boolean)
+          .some((v) => v!.toLowerCase().includes(query.toLowerCase())),
+      )
+    : rows;
+
+  const [newOpen, setNewOpen] = useState(false);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
+        <h1 className="font-display text-2xl font-extrabold text-slate-700 dark:text-mortar-100 lowercase">
+          assets
+        </h1>
+        {lensModule && (
+          <Link
+            to="/assets"
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-cobble-100 text-cobble-700 dark:bg-cobble-700/40 dark:text-cobble-200 text-[10px] font-mono uppercase tracking-widest hover:bg-cobble-200 transition"
+            title="Clear lens"
+          >
+            lens: {lensModule.displayName} ×
+          </Link>
+        )}
+        <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
+          {filtered.length} of {allRows.length}
+        </span>
+        <div className="flex-1" />
+        <div className="relative">
+          <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="search…"
+            className="input !py-1 !pl-7 !text-xs !w-48"
+          />
+        </div>
+        <button
+          onClick={() => setNewOpen(true)}
+          className="text-[10px] font-mono uppercase tracking-widest text-cobble-600 hover:text-cobble-700 transition flex items-center gap-1 px-2 py-1 rounded border border-slate-200 dark:border-slate-700"
+        >
+          <Plus size={11} /> new
+        </button>
+      </div>
+
+      <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-mortar-50/60 dark:bg-slate-800/40 text-[10px] font-mono uppercase tracking-widest text-slate-500 dark:text-slate-400">
+            <tr>
+              <th className="text-left px-3 py-2">Name</th>
+              <th className="text-left px-3 py-2">Manufacturer</th>
+              <th className="text-left px-3 py-2">Model</th>
+              <th className="text-left px-3 py-2">State</th>
+              {lensFieldDefs.map((d) => (
+                <th key={d.id} className="text-left px-3 py-2">{d.display_label}</th>
+              ))}
+              <th className="text-right px-3 py-2">qty</th>
+              <th className="w-6"></th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+            {filtered.map((a) => (
+              <tr
+                key={a.id}
+                onClick={() => navigate(`/assets/${a.id}${searchParams.toString() ? `?${searchParams}` : ""}`)}
+                className="hover:bg-mortar-50 dark:hover:bg-slate-800/40 transition cursor-pointer"
+              >
+                <td className="px-3 py-2 text-slate-700 dark:text-mortar-100 font-medium">
+                  {a.name}
+                  {a.short_name && (
+                    <span className="ml-1.5 text-[10px] font-mono text-slate-400">{a.short_name}</span>
+                  )}
+                </td>
+                <td className="px-3 py-2 text-slate-500 dark:text-slate-400">{a.manufacturer || "—"}</td>
+                <td className="px-3 py-2 text-slate-500 dark:text-slate-400">{a.model || "—"}</td>
+                <td className="px-3 py-2">
+                  <span className="font-mono text-[10px] uppercase tracking-widest text-slate-500 dark:text-slate-400">
+                    {a.state}
+                  </span>
+                </td>
+                {lensFieldDefs.map((d) => {
+                  const v = (a.metadata as Record<string, unknown>)[d.name];
+                  return (
+                    <td key={d.id} className="px-3 py-2 text-slate-600 dark:text-mortar-200 text-xs">
+                      {v === null || v === undefined || v === "" ? "—" : String(v)}
+                    </td>
+                  );
+                })}
+                <td className="px-3 py-2 text-right font-mono text-xs text-slate-500">{a.quantity}</td>
+                <td className="px-2 py-2 text-slate-300 dark:text-slate-600">
+                  <ChevronRight size={14} />
+                </td>
+              </tr>
+            ))}
+            {filtered.length === 0 && (
+              <tr>
+                <td colSpan={5 + lensFieldDefs.length + 1} className="px-3 py-10 text-center text-xs text-slate-400 italic">
+                  {allRows.length === 0
+                    ? "No assets yet. Click + new to add one."
+                    : "No matches with the current filters."}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <AssetDetailModal
+        assetId={id ?? null}
+        onClose={() => navigate(`/assets${searchParams.toString() ? `?${searchParams}` : ""}`)}
+      />
+      <NewAssetModal open={newOpen} onClose={() => setNewOpen(false)} />
+    </div>
+  );
+}
+
+function AssetDetailModal({ assetId, onClose }: { assetId: string | null; onClose: () => void }) {
+  const { activeSlug } = useActiveOrg();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const confirm = useConfirm();
+  const asset = useQuery({
+    queryKey: ["asset", activeSlug, assetId],
+    queryFn: () => api.getAsset(activeSlug, assetId!),
+    enabled: !!assetId,
+  });
+  const update = useMutation({
+    mutationFn: (patch: Partial<Asset>) => api.updateAsset(activeSlug, assetId!, patch),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["asset", activeSlug, assetId] });
+      void qc.invalidateQueries({ queryKey: ["assets", activeSlug] });
+    },
+  });
+  const remove = useMutation({
+    mutationFn: () => api.deleteAsset(activeSlug, assetId!),
+    onSuccess: () => {
+      toast.success("Asset deleted.");
+      void qc.invalidateQueries({ queryKey: ["assets", activeSlug] });
+      onClose();
+    },
+    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't delete."),
+  });
+
+  const a = asset.data;
+  async function handleDelete() {
+    if (!a) return;
+    const ok = await confirm({
+      title: `Delete "${a.name}"?`,
+      message: "This can't be undone.",
+      confirmLabel: "Delete asset",
+      destructive: true,
+    });
+    if (ok) remove.mutate();
+  }
+
+  return (
+    <Modal open={!!assetId} onClose={onClose} title={a?.name ?? "loading…"} subtitle={a ? `${a.manufacturer ?? "—"} · ${a.state}` : undefined} size="lg">
+      {a ? (
+        <div className="space-y-4">
+          <EntityActionsBar entityKind={ENTITY_KIND} entityId={a.id} />
+          <dl className="grid grid-cols-2 gap-3 text-xs">
+            <EditField label="Name" value={a.name} onCommit={(v) => update.mutate({ name: v })} />
+            <EditField label="Short name" value={a.short_name ?? ""} onCommit={(v) => update.mutate({ short_name: v || null })} />
+            <EditField label="Manufacturer" value={a.manufacturer ?? ""} onCommit={(v) => update.mutate({ manufacturer: v || null })} />
+            <EditField label="Model" value={a.model ?? ""} onCommit={(v) => update.mutate({ model: v || null })} />
+            <EditField label="Type" value={a.type ?? ""} onCommit={(v) => update.mutate({ type: v || null })} />
+            <EditField label="State" value={a.state} onCommit={(v) => update.mutate({ state: v })} />
+            <EditField label="Serial number" value={a.serial_number ?? ""} onCommit={(v) => update.mutate({ serial_number: v || null })} />
+            <EditField label="Purchased at" value={a.purchased_at ?? ""} onCommit={(v) => update.mutate({ purchased_at: v || null })} type="date" />
+            <EditField label="Warranty until" value={a.warranty_until ?? ""} onCommit={(v) => update.mutate({ warranty_until: v || null })} type="date" />
+            <EditField label="Last service" value={a.last_service_at ?? ""} onCommit={(v) => update.mutate({ last_service_at: v || null })} type="date" />
+            <EditField label="Quantity" value={String(a.quantity)} numeric onCommit={(v) => update.mutate({ quantity: Number(v) || 0 })} />
+            <EditField label="Excitement (0-5)" value={String(a.excitement)} numeric onCommit={(v) => update.mutate({ excitement: Math.min(5, Math.max(0, Number(v) || 0)) })} />
+          </dl>
+          <CustomFieldsPanel
+            entityKind={ENTITY_KIND}
+            values={a.metadata}
+            onCommit={(name, value) =>
+              update.mutate({ metadata: { ...a.metadata, [name]: value } })
+            }
+          />
+          <EditField label="Notes" value={a.notes ?? ""} multiline onCommit={(v) => update.mutate({ notes: v || null })} />
+          <div className="pt-3 border-t border-slate-100 dark:border-slate-700 flex items-center justify-between">
+            <button
+              onClick={handleDelete}
+              className="text-[10px] font-mono uppercase tracking-widest text-slate-400 hover:text-ember-500 transition flex items-center gap-1"
+            >
+              <Trash2 size={11} /> delete asset
+            </button>
+            <button
+              onClick={onClose}
+              className="px-3 py-1.5 rounded-md text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-mortar-50 dark:hover:bg-slate-800 transition"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="text-xs text-slate-400">loading…</div>
+      )}
+    </Modal>
+  );
+}
+
+function NewAssetModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { activeSlug } = useActiveOrg();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const navigate = useNavigate();
+  const [name, setName] = useState("");
+  const [manufacturer, setManufacturer] = useState("");
+  const [category, setCategory] = useState("");
+  useEffect(() => {
+    if (open) {
+      setName("");
+      setManufacturer("");
+      setCategory("");
+    }
+  }, [open]);
+
+  const create = useMutation({
+    mutationFn: () =>
+      api.createAsset(activeSlug, {
+        name: name.trim(),
+        manufacturer: manufacturer.trim() || null,
+        type: category.trim() || null,
+      }),
+    onSuccess: (a) => {
+      toast.success("Asset added.");
+      void qc.invalidateQueries({ queryKey: ["assets", activeSlug] });
+      onClose();
+      navigate(`/assets/${a.id}`);
+    },
+    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't create."),
+  });
+
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    if (!name.trim()) return;
+    create.mutate();
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title="new asset" size="sm">
+      <form onSubmit={submit} className="space-y-3">
+        <label className="block">
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">Name</span>
+          <input value={name} onChange={(e) => setName(e.target.value)} autoFocus className="input" />
+        </label>
+        <label className="block">
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">Manufacturer</span>
+          <input value={manufacturer} onChange={(e) => setManufacturer(e.target.value)} className="input" />
+        </label>
+        <label className="block">
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">Type / category</span>
+          <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder='e.g. "Appliance", "Hand tool"' className="input" />
+        </label>
+        <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-700">
+          <button type="button" onClick={onClose} className="px-3 py-1.5 rounded-md text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-mortar-50 dark:hover:bg-slate-800 transition">
+            Cancel
+          </button>
+          <button type="submit" disabled={!name.trim() || create.isPending} className="px-3 py-1.5 rounded-md text-sm font-medium bg-slate-700 hover:bg-slate-600 text-mortar-50 transition disabled:opacity-50">
+            {create.isPending ? "Creating…" : "Create"}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function EditField({
+  label,
+  value,
+  onCommit,
+  numeric,
+  multiline,
+  type,
+}: {
+  label: string;
+  value: string;
+  onCommit: (v: string) => void;
+  numeric?: boolean;
+  multiline?: boolean;
+  type?: string;
+}) {
+  const Cmp = multiline ? "textarea" : "input";
+  return (
+    <label className={"block " + (multiline ? "col-span-2" : "")}>
+      <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+        {label}
+      </span>
+      <Cmp
+        type={type ?? (numeric ? "number" : "text")}
+        defaultValue={value}
+        onBlur={(e) => {
+          if (e.target.value !== value) onCommit(e.target.value);
+        }}
+        onKeyDown={(e) => {
+          if (!multiline && e.key === "Enter") (e.target as HTMLInputElement).blur();
+        }}
+        rows={multiline ? 3 : undefined}
+        className="input"
+      />
+    </label>
+  );
+}

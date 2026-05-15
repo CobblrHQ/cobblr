@@ -19,5 +19,10 @@ export default defineConfig({
   build: {
     outDir: "dist",
     sourcemap: true,
+    // Vite's default build dir is "assets" — which collides with the
+    // app's own /assets SPA route (the assets module). nginx would
+    // 301 /assets → /assets/ and serve the static bundle dir instead
+    // of the SPA. Namespace the build output so app routes are free.
+    assetsDir: "static",
   },
 });

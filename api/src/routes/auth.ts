@@ -18,6 +18,8 @@ import { provisionTenantDb } from "../db/provision.js";
 import { hashPassword, verifyPassword } from "../auth/password.js";
 import { signSession } from "../auth/jwt.js";
 import * as activity from "../platform/activity.js";
+import { enableAllForOrg } from "../modules/enable.js";
+import { seedDefaultBindings } from "../platform/seed-bindings.js";
 import type { OrgRole } from "../db/schema.js";
 
 export const authRouter = Router();
@@ -83,6 +85,101 @@ interface AuthResponse {
   orgs: AuthResponseOrg[];
 }
 
+/** Provision a new org for an existing user: insert org row, write
+ *  owner membership, provision the tenant DB, enable all installed
+ *  modules, seed default bindings. Used by signup (for the user's
+ *  first org) and POST /orgs (for additional ones).
+ *
+ *  Returns the new org id + slug. Failures inside DB provisioning
+ *  leave the org row in place (db_credentials_encrypted null) so
+ *  the user can still see it and an operator can re-provision. */
+export async function provisionOrgForUser(
+  userId: string,
+  orgName: string,
+): Promise<{ orgId: string; slug: string; dbName: string }> {
+  const dbName = tenantDbName();
+  const slug = slugifyWithSuffix(orgName);
+  const client = await metaPool.connect();
+  let orgId: string;
+  try {
+    await client.query("begin");
+    const orgRow = await client.query<{ id: string }>(
+      `insert into orgs (name, slug, db_name)
+       values ($1, $2, $3)
+       returning id`,
+      [orgName.trim(), slug, dbName],
+    );
+    orgId = orgRow.rows[0]!.id;
+    await client.query(
+      `insert into org_memberships (user_id, org_id, role)
+       values ($1, $2, 'owner')`,
+      [userId, orgId],
+    );
+    await client.query("commit");
+  } catch (err) {
+    await client.query("rollback");
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  let provisioned = false;
+  try {
+    const { credentialsEncrypted, migrationsApplied } = await provisionTenantDb(dbName);
+    await meta
+      .updateTable("orgs")
+      .set({ db_credentials_encrypted: credentialsEncrypted, updated_at: new Date() })
+      .where("id", "=", orgId)
+      .execute();
+    console.log(`[org-provision] ${dbName} for org ${orgId} (${migrationsApplied} migrations)`);
+    provisioned = true;
+  } catch (err) {
+    console.error(`[org-provision] FAILED to provision ${dbName}:`, err);
+  }
+
+  try {
+    await activity.log({
+      orgId,
+      userId,
+      action: "org_created",
+      ref: { module: null, entityType: "org", entityId: orgId },
+      diff: { name: orgName, db_name: dbName },
+    });
+    if (provisioned) {
+      await activity.log({
+        orgId,
+        userId,
+        action: "tenant_provisioned",
+        ref: { module: null, entityType: "org", entityId: orgId },
+        diff: { db_name: dbName },
+      });
+    }
+  } catch (err) {
+    console.error("[org-provision] activity logging failed:", err);
+  }
+
+  if (provisioned) {
+    try {
+      const enabled = await enableAllForOrg(orgId, userId);
+      if (enabled.length > 0) {
+        console.log(`[org-provision] auto-enabled modules for ${orgId}: ${enabled.join(", ")}`);
+      }
+    } catch (err) {
+      console.error("[org-provision] auto-enable failed:", err);
+    }
+    try {
+      const seeded = await seedDefaultBindings(orgId);
+      if (seeded > 0) {
+        console.log(`[org-provision] seeded ${seeded} default binding(s) for ${orgId}`);
+      }
+    } catch (err) {
+      console.error("[org-provision] seed-bindings failed:", err);
+    }
+  }
+
+  return { orgId, slug, dbName };
+}
+
 async function buildAuthResponse(userId: string): Promise<AuthResponse> {
   const user = await meta
     .selectFrom("users")
@@ -122,101 +219,34 @@ authRouter.post("/signup", async (req, res, next) => {
 
     const password_hash = await hashPassword(body.password);
 
-    // Phase 1: user + org row + membership in a single transaction.
-    // The org row's db_credentials_encrypted stays null at this
-    // point — we'll fill it in after the real DB is provisioned in
-    // phase 2 below. Either both phases succeed or signup fails.
-    const dbName = tenantDbName();
-    const client = await metaPool.connect();
-    let userId: string;
-    let orgId: string;
+    // Phase 1: user row only (org provisioning is its own helper now,
+    // so signup and POST /orgs share the same code path).
+    const userRow = await meta
+      .insertInto("users")
+      .values({
+        email,
+        password_hash,
+        display_name: body.display_name.trim(),
+      })
+      .returning("id")
+      .executeTakeFirstOrThrow();
+    const userId = userRow.id;
+
+    // Phase 2: provision the user's first org.
+    await provisionOrgForUser(userId, body.org_name);
+
     try {
-      await client.query("begin");
-      const userRow = await client.query<{ id: string }>(
-        `insert into users (email, password_hash, display_name)
-         values ($1, $2, $3)
-         returning id`,
-        [email, password_hash, body.display_name.trim()],
-      );
-      userId = userRow.rows[0]!.id;
-
-      const orgRow = await client.query<{ id: string }>(
-        `insert into orgs (name, slug, db_name)
-         values ($1, $2, $3)
-         returning id`,
-        [body.org_name.trim(), slugifyWithSuffix(body.org_name), dbName],
-      );
-      orgId = orgRow.rows[0]!.id;
-
-      await client.query(
-        `insert into org_memberships (user_id, org_id, role)
-         values ($1, $2, 'owner')`,
-        [userId, orgId],
-      );
-      await client.query("commit");
-    } catch (err) {
-      await client.query("rollback");
-      throw err;
-    } finally {
-      client.release();
-    }
-
-    // Phase 2: provision the actual tenant Postgres DB + user, run
-    // tenant-base migrations, and store the encrypted credentials on
-    // the org row. CREATE DATABASE can't run inside a transaction so
-    // this can't share the meta-DB tx above.
-    //
-    // If this step fails, we leave the user + org rows in place but
-    // flagged as un-provisioned (db_credentials_encrypted null) — the
-    // user can still log in; getting them into a working state
-    // becomes an operator concern. (A retry endpoint slots in here
-    // once we have one.)
-    let provisioned = false;
-    try {
-      const { credentialsEncrypted, migrationsApplied } = await provisionTenantDb(dbName);
-      await meta
-        .updateTable("orgs")
-        .set({ db_credentials_encrypted: credentialsEncrypted, updated_at: new Date() })
-        .where("id", "=", orgId)
-        .execute();
-      console.log(
-        `[signup] provisioned ${dbName} for org ${orgId} (${migrationsApplied} migrations)`,
-      );
-      provisioned = true;
-    } catch (err) {
-      console.error(`[signup] FAILED to provision ${dbName}:`, err);
-      // Don't fail signup — the user is created and can log in. The
-      // op-side surface for re-provisioning will close this gap.
-    }
-
-    // Activity log entries for the signup chain. Best-effort —
-    // failure to log shouldn't take down the signup response.
-    try {
+      // user_created lives outside provisionOrgForUser so additional
+      // org creations don't fake-log a new user.
       await activity.log({
-        orgId,
+        orgId: (await meta.selectFrom("org_memberships").select("org_id").where("user_id", "=", userId).executeTakeFirstOrThrow()).org_id,
         userId,
         action: "user_created",
         ref: { module: null, entityType: "user", entityId: userId },
         diff: { email },
       });
-      await activity.log({
-        orgId,
-        userId,
-        action: "org_created",
-        ref: { module: null, entityType: "org", entityId: orgId },
-        diff: { name: body.org_name, db_name: dbName },
-      });
-      if (provisioned) {
-        await activity.log({
-          orgId,
-          userId,
-          action: "tenant_provisioned",
-          ref: { module: null, entityType: "org", entityId: orgId },
-          diff: { db_name: dbName },
-        });
-      }
     } catch (err) {
-      console.error("[signup] activity logging failed:", err);
+      console.error("[signup] user_created log failed:", err);
     }
 
     const out = await buildAuthResponse(userId);

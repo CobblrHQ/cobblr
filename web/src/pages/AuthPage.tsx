@@ -46,16 +46,16 @@ export function AuthPage() {
         <div className="flex flex-col items-center gap-4 mb-6 text-center">
           <CobblestoneMark size={64} />
           <div>
-            <h1 className="font-display text-3xl font-extrabold text-slate-700 lowercase tracking-tight">
+            <h1 className="font-display text-3xl font-extrabold text-slate-700 dark:text-mortar-100 lowercase tracking-tight">
               cobblr
             </h1>
-            <p className="mt-1 text-xs text-slate-400">Cobble together what works.</p>
+            <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">Cobble together what works.</p>
           </div>
         </div>
 
         <form
           onSubmit={submit}
-          className="bg-white/70 backdrop-blur border border-slate-200 rounded-xl p-5 shadow-sm space-y-3"
+          className="bg-white dark:bg-slate-900/70 backdrop-blur border border-slate-200 dark:border-slate-700 rounded-xl p-5 shadow-sm space-y-3"
         >
           <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500 mb-1">
             // {mode === "login" ? "sign in" : "create account"}
@@ -77,7 +77,7 @@ export function AuthPage() {
                   required
                   value={orgName}
                   onChange={(e) => setOrgName(e.target.value)}
-                  placeholder="e.g. ray's workshop"
+                  placeholder="e.g. my workshop"
                   className="input"
                 />
               </Field>
@@ -126,7 +126,7 @@ export function AuthPage() {
               setMode(mode === "login" ? "signup" : "login");
               setError(null);
             }}
-            className="w-full text-xs text-slate-500 hover:text-cobble-500 transition"
+            className="w-full text-xs text-slate-500 dark:text-slate-400 hover:text-cobble-500 transition"
           >
             {mode === "login"
               ? "no account yet? create one"
@@ -134,7 +134,7 @@ export function AuthPage() {
           </button>
         </form>
 
-        <p className="mt-6 text-center text-[11px] font-mono text-slate-400">
+        <p className="mt-6 text-center text-[11px] font-mono text-slate-400 dark:text-slate-500">
           phase 0 · milestone 2 · auth
         </p>
       </div>
@@ -145,7 +145,7 @@ export function AuthPage() {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 mb-1">
+      <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
         {label}
       </span>
       {children}

@@ -27,6 +27,8 @@ interface AuthCtx extends AuthState {
     org_name: string;
   }) => Promise<void>;
   logout: () => void;
+  /** Replace the in-memory org list, e.g. after creating a new one. */
+  setOrgs: (orgs: OrgMembership[]) => void;
 }
 
 const Ctx = createContext<AuthCtx | null>(null);
@@ -97,8 +99,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setState({ user: null, orgs: [], loading: false });
   }, []);
 
+  const setOrgs = useCallback((orgs: OrgMembership[]) => {
+    setState((s) => ({ ...s, orgs }));
+  }, []);
+
   return (
-    <Ctx.Provider value={{ ...state, login, signup, logout }}>
+    <Ctx.Provider value={{ ...state, login, signup, logout, setOrgs }}>
       {children}
     </Ctx.Provider>
   );

@@ -1,0 +1,86 @@
+// Inventory — the first Cobblr connector.
+//
+// Parts + Locations + Categories + Allocations, all scoped to a
+// tenant DB. The platform sees this module via its manifest; runtime
+// API + UI are imported lazily by the loader when needed.
+
+import { defineModule } from "@cobblr/platform-contract";
+
+export default defineModule({
+  name: "inventory",
+  version: "0.1.0",
+  displayName: "Inventory",
+  description:
+    "Parts, locations, categories, stock tracking, polymorphic allocations. The generalised toolkit you'd otherwise Frankenstein from a spreadsheet.",
+  icon: "boxes",
+
+  schema: {
+    tablePrefix: "inventory_",
+    migrationsDir: "./migrations",
+  },
+
+  api: () => import("./api/index.js"),
+
+  // ──────────────── Pillar A — entity kinds we provide ─────────────
+  provides: {
+    entityKinds: [
+      {
+        id: "inventory:part",
+        displayName: "Part",
+        displayNamePlural: "Parts",
+        icon: "boxes",
+        profile: "stock-material" /* physical · fungible · containable · timeless · indefinite · durable */,
+        fields: [
+          { name: "name", type: "text", role: "title", required: true },
+          { name: "description", type: "text", role: "summary" },
+          { name: "qty", type: "number", role: "quantity" },
+          { name: "unit", type: "text", role: "unit" },
+          { name: "cost", type: "number" },
+          { name: "min_qty", type: "number" },
+          { name: "manufacturer", type: "text" },
+          { name: "supplier_url", type: "url" },
+          { name: "image_path", type: "image-path", role: "image" },
+          { name: "notes", type: "text" },
+        ],
+        detailRoute: "/inventory/parts/{id}",
+      },
+      {
+        id: "inventory:location",
+        displayName: "Location",
+        displayNamePlural: "Locations",
+        icon: "map-pin",
+        profile: "place" /* physical · unique · container · timeless · indefinite · durable */,
+        fields: [
+          { name: "name", type: "text", role: "title", required: true },
+          { name: "short_name", type: "text" },
+          { name: "kind", type: "text" },
+        ],
+      },
+    ],
+  },
+
+  intents: [
+    { name: "add_part", description: "Add a new part to inventory" },
+    { name: "adjust_stock", description: "Increase or decrease a part's on-hand quantity" },
+    { name: "allocate_part", description: "Reserve a part for an entity in another module" },
+  ],
+
+  dependencies: [],
+
+  exposes: {
+    events: [
+      "inventory.part.created",
+      "inventory.part.updated",
+      "inventory.part.deleted",
+      "inventory.stock.changed",
+      "inventory.stock.low",
+      "inventory.allocation.reserved",
+      "inventory.allocation.consumed",
+      "inventory.allocation.released",
+    ],
+    api: ["getPartById", "searchParts", "adjustStock", "allocate", "release"],
+    actions: [],
+  },
+
+  subscribes: [],
+});

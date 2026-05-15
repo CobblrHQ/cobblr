@@ -10,10 +10,34 @@ COPY package.json package-lock.json* tsconfig.base.json ./
 COPY web/package.json ./web/
 COPY api/package.json ./api/
 COPY packages/platform-contract/package.json ./packages/platform-contract/
+COPY packages/platform-web/package.json ./packages/platform-web/
+COPY modules/inventory/package.json ./modules/inventory/
+COPY modules/labels/package.json ./modules/labels/
+COPY modules/projects/package.json ./modules/projects/
+COPY modules/purchases/package.json ./modules/purchases/
+COPY modules/machines/package.json ./modules/machines/
+COPY modules/assets/package.json ./modules/assets/
+COPY modules/3d-printers/package.json ./modules/3d-printers/
+COPY modules/laser-cutters/package.json ./modules/laser-cutters/
+COPY modules/cnc-machines/package.json ./modules/cnc-machines/
+COPY modules/workshop-mods/package.json ./modules/workshop-mods/
 
 RUN npm install --workspaces --include-workspace-root --no-audit --no-fund
 
 COPY packages/platform-contract ./packages/platform-contract
+COPY packages/platform-web ./packages/platform-web
+# Module UI sources — Vite resolves @cobblr/<name>/ui to the TSX
+# source at build time. Each new module gets a line here.
+COPY modules/inventory ./modules/inventory
+COPY modules/labels ./modules/labels
+COPY modules/projects ./modules/projects
+COPY modules/purchases ./modules/purchases
+COPY modules/machines ./modules/machines
+COPY modules/assets ./modules/assets
+COPY modules/3d-printers ./modules/3d-printers
+COPY modules/laser-cutters ./modules/laser-cutters
+COPY modules/cnc-machines ./modules/cnc-machines
+COPY modules/workshop-mods ./modules/workshop-mods
 COPY web ./web
 
 WORKDIR /app/web

@@ -1,0 +1,67 @@
+// Labels module client. Exposed alongside the UI so other modules
+// (inventory's web UI) can import + call it directly.
+
+export interface QueueItem {
+  id: string;
+  user_id: string | null;
+  module_name: string;
+  entity_type: string;
+  entity_id: string;
+  qr_payload: string;
+  description: string;
+  qty: number;
+  created_at: string;
+}
+
+export interface Printable {
+  description: string;
+  qr_svg: string;
+}
+
+export interface PrintResponse {
+  batch_id: string;
+  count: number;
+  printables: Printable[];
+}
+
+export class LabelsApi {
+  constructor(
+    private readonly slug: string,
+    private readonly opts: { getToken: () => string | null },
+  ) {}
+
+  private base(): string {
+    return `/api/v1/orgs/${this.slug}/modules/labels`;
+  }
+
+  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+    const headers: Record<string, string> = {};
+    if (body !== undefined) headers["Content-Type"] = "application/json";
+    const token = this.opts.getToken();
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const res = await fetch(`${this.base()}${path}`, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    if (res.status === 204) return undefined as T;
+    const parsed = await res.json().catch(() => null);
+    if (!res.ok) {
+      const err = (parsed as { error?: { code?: string; message?: string } } | null)?.error;
+      throw new Error(err?.message ?? `HTTP ${res.status}`);
+    }
+    return parsed as T;
+  }
+
+  listQueue = () => this.request<{ items: QueueItem[] }>("GET", "/queue");
+  addToQueue = (b: {
+    module_name: string;
+    entity_type: string;
+    entity_id: string;
+    qr_payload: string;
+    description: string;
+    qty?: number;
+  }) => this.request<QueueItem>("POST", "/queue", b);
+  removeFromQueue = (id: string) => this.request<void>("DELETE", `/queue/${id}`);
+  print = () => this.request<PrintResponse>("POST", "/print", {});
+}
