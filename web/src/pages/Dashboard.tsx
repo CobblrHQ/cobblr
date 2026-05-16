@@ -220,35 +220,84 @@ function ModulesPanel({ items }: { items: ModuleListItem[] }) {
     );
   }
   // A specialisation module (3d-printers, workshop-mods, …) has no
-  // route of its own — it extends a base module's entity kind. Its
-  // first dependency is that base. Route its card to the base page
-  // with the specialisation applied as a lens, so the card opens
-  // something instead of a dead `/3d-printers` URL.
+  // route of its own — it extends a base module's entity kind named
+  // by its first dependency. Nest each specialisation inside its
+  // base module's card so the hierarchy is visible, and route the
+  // nested card to the base page with the specialisation as a lens.
   const names = new Set(items.map((m) => m.name));
+  const childrenByParent = new Map<string, ModuleListItem[]>();
+  const tops: ModuleListItem[] = [];
+  for (const m of items) {
+    const parent = m.dependencies.find((d) => names.has(d));
+    if (parent) {
+      const arr = childrenByParent.get(parent) ?? [];
+      arr.push(m);
+      childrenByParent.set(parent, arr);
+    } else {
+      tops.push(m);
+    }
+  }
   return (
-    <div className="grid gap-3 sm:grid-cols-2">
-      {items.map((m) => {
-        const base = m.dependencies.find((d) => names.has(d));
-        const to = base ? `/${base}?lens=${m.name}` : `/${m.name}`;
-        return (
+    <div className="grid gap-3 sm:grid-cols-2 items-start">
+      {tops.map((m) => (
+        <ModuleCard key={m.name} module={m} specialisations={childrenByParent.get(m.name) ?? []} />
+      ))}
+    </div>
+  );
+}
+
+function ModuleCard({
+  module: m,
+  specialisations,
+}: {
+  module: ModuleListItem;
+  specialisations: ModuleListItem[];
+}) {
+  // Leaf module — the whole card is one link.
+  if (specialisations.length === 0) {
+    return (
+      <Link
+        to={`/${m.name}`}
+        className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 hover:border-cobble-300 transition block min-h-[150px]"
+      >
+        <div className="flex items-baseline gap-2">
+          <div className="font-display font-bold text-slate-700 dark:text-mortar-100">{m.displayName}</div>
+          <div className="text-[11px] font-mono text-slate-400 dark:text-slate-500">v{m.version}</div>
+        </div>
+        <div className="mt-1 text-sm text-slate-600 dark:text-mortar-200">{m.description}</div>
+      </Link>
+    );
+  }
+  // Base module with specialisations — keep the card compact: the
+  // specialisations are a wrapped row of chips, not full sub-cards
+  // (those balloon the card and wreck the grid). Each chip's full
+  // description is available on hover.
+  return (
+    <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 flex flex-col min-h-[150px]">
+      <Link to={`/${m.name}`} className="block group">
+        <div className="flex items-baseline gap-2">
+          <div className="font-display font-bold text-slate-700 dark:text-mortar-100 group-hover:text-cobble-600 transition">
+            {m.displayName}
+          </div>
+          <div className="text-[11px] font-mono text-slate-400 dark:text-slate-500">v{m.version}</div>
+        </div>
+        <div className="mt-1 text-sm text-slate-600 dark:text-mortar-200">{m.description}</div>
+      </Link>
+      <div className="mt-auto pt-3 border-t border-slate-100 dark:border-slate-700 flex flex-wrap items-center gap-1.5">
+        <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mr-0.5">
+          specialisations
+        </span>
+        {specialisations.map((s) => (
           <Link
-            key={m.name}
-            to={to}
-            className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 hover:border-cobble-300 transition block"
+            key={s.name}
+            to={`/${m.name}?lens=${s.name}`}
+            title={s.description}
+            className="inline-flex items-center rounded-md border border-slate-200 dark:border-slate-700 bg-mortar-50/60 dark:bg-slate-800 px-2 py-0.5 text-xs font-medium text-slate-600 dark:text-mortar-200 hover:border-cobble-300 hover:text-cobble-600 dark:hover:text-cobble-300 transition"
           >
-            <div className="flex items-baseline gap-2">
-              <div className="font-display font-bold text-slate-700 dark:text-mortar-100">{m.displayName}</div>
-              <div className="text-[11px] font-mono text-slate-400 dark:text-slate-500">v{m.version}</div>
-              {base && (
-                <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500">
-                  extends {base}
-                </div>
-              )}
-            </div>
-            <div className="mt-1 text-sm text-slate-600 dark:text-mortar-200">{m.description}</div>
+            {s.displayName}
           </Link>
-        );
-      })}
+        ))}
+      </div>
     </div>
   );
 }

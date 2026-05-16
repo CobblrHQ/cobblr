@@ -31,8 +31,12 @@ export default {
           500: "#3D4451",
           600: "#323843",
           700: "#262B33",
-          800: "#1B1E23",
-          900: "#0F1114",
+          // Dark-mode surface tones (matched to companion app): 800 is
+          // the page background, 900 the *elevated* card surface —
+          // lighter than the body, not darker, so cards read as
+          // raised. See web/src/index.css for how they're applied.
+          800: "#1E293B",
+          900: "#334155",
         },
         cobble: {
           DEFAULT: "#8B7355",

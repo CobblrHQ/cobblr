@@ -10,7 +10,6 @@ import { useLabels } from "./context";
 import { renderPrintSheetHtml } from "./renderPrintSheet";
 import {
   PAPER_SIZES,
-  findLabelSize,
   findPaper,
   labelSizesForPaper,
   perSheet,
@@ -38,23 +37,21 @@ export function QueuePage() {
   const [paperKey, setPaperKey] = useState(
     () => localStorage.getItem(PAPER_LS) ?? PAPER_SIZES[0]!.key,
   );
-  const sizesForPaper = labelSizesForPaper(paperKey);
-  const [sizeKey, setSizeKey] = useState(
-    () => localStorage.getItem(SIZE_LS) ?? sizesForPaper[0]?.key ?? "",
+  const [pickedSize, setPickedSize] = useState(
+    () => localStorage.getItem(SIZE_LS) ?? "",
   );
-  // Keep the label size valid for the chosen paper.
-  useEffect(() => {
-    if (!sizesForPaper.some((s) => s.key === sizeKey)) {
-      setSizeKey(sizesForPaper[0]?.key ?? "");
-    }
-  }, [paperKey, sizeKey, sizesForPaper]);
+  const sizesForPaper = labelSizesForPaper(paperKey);
+  // Effective label size: the user's pick if it's valid for the
+  // current paper, else that paper's first size. Derived during
+  // render — so paper, label <select>, and preview never disagree,
+  // not even for the one frame a useEffect-based correction leaves.
+  const size = sizesForPaper.find((s) => s.key === pickedSize) ?? sizesForPaper[0];
+  const sizeKey = size?.key ?? "";
+  const paper = size ? findPaper(size.paper) : undefined;
   useEffect(() => localStorage.setItem(PAPER_LS, paperKey), [paperKey]);
   useEffect(() => {
     if (sizeKey) localStorage.setItem(SIZE_LS, sizeKey);
   }, [sizeKey]);
-
-  const size = findLabelSize(sizeKey);
-  const paper = size ? findPaper(size.paper) : undefined;
 
   const items = list.data?.items ?? [];
   const total = items.reduce((acc, i) => acc + i.qty, 0);
@@ -126,8 +123,8 @@ export function QueuePage() {
           <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500">label</span>
           <select
             value={sizeKey}
-            onChange={(e) => setSizeKey(e.target.value)}
-            className="input !w-auto !py-1 text-xs"
+            onChange={(e) => setPickedSize(e.target.value)}
+            className="input !w-72 !py-1 text-xs"
           >
             {sizesForPaper.map((s) => (
               <option key={s.key} value={s.key}>{s.label}</option>
