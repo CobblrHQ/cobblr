@@ -7,6 +7,7 @@
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { listEntries } from "../modules/registry.js";
+import { clearExposableFieldsCache } from "./entities.js";
 
 export async function syncManifestRegistries(): Promise<{
   kinds: number;
@@ -25,6 +26,7 @@ export async function syncManifestRegistries(): Promise<{
     version: string;
     traits: unknown | null;
     profile: string | null;
+    exposable_fields: string[] | null;
   }> = [];
   const actionRows: Array<{
     id: string;
@@ -55,6 +57,7 @@ export async function syncManifestRegistries(): Promise<{
         version: k.version ?? m.version,
         traits: k.traits ?? null,
         profile: k.profile ?? null,
+        exposable_fields: k.exposableFields ?? null,
       });
     }
     for (const a of m.exposes.actions ?? []) {
@@ -95,6 +98,9 @@ export async function syncManifestRegistries(): Promise<{
           version: k.version,
           traits: k.traits ? sql`${JSON.stringify(k.traits)}::jsonb` : null,
           profile: k.profile,
+          exposable_fields: k.exposable_fields
+            ? sql`${JSON.stringify(k.exposable_fields)}::jsonb`
+            : null,
         })
         .onConflict((b) =>
           b.column("id").doUpdateSet({
@@ -110,6 +116,9 @@ export async function syncManifestRegistries(): Promise<{
             version: k.version,
             traits: k.traits ? sql`${JSON.stringify(k.traits)}::jsonb` : null,
             profile: k.profile,
+            exposable_fields: k.exposable_fields
+              ? sql`${JSON.stringify(k.exposable_fields)}::jsonb`
+              : null,
           }),
         )
         .execute();
@@ -163,6 +172,11 @@ export async function syncManifestRegistries(): Promise<{
         .execute();
     }
   });
+
+  // Drop the per-process exposable-fields cache so the next lookup
+  // reads the freshly-written whitelist (any kind whose declaration
+  // changed gets picked up immediately rather than at next restart).
+  clearExposableFieldsCache();
 
   console.log(
     `[registry-sync] ${kindRows.length} entity kind(s), ${actionRows.length} action(s) across ${moduleNames.length} module(s)`,

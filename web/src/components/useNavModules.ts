@@ -43,9 +43,16 @@ export function useNavModules(activeSlug: string): NavModules {
   const items = modules.data?.items ?? [];
   const enabled = items.filter((m) => m.enabled);
   const enabledNames = new Set(enabled.map((m) => m.name));
+  // Hide platform-utility modules from the top-level nav. They have
+  // routes + pages, but those live under /configuration (and as
+  // inline UI like EntityAttachments / SearchBar) — not as peer-
+  // level entries alongside "machines" or "inventory". A name
+  // starting with `core-` is by convention a foundational /
+  // utility module; user-facing modules don't use that prefix.
+  const userFacing = enabled.filter((m) => !m.name.startsWith("core-"));
   const childrenByParent = new Map<string, OrgModuleListItem[]>();
   const rawTops: OrgModuleListItem[] = [];
-  for (const m of enabled) {
+  for (const m of userFacing) {
     const firstDep = m.dependencies[0];
     if (firstDep && enabledNames.has(firstDep)) {
       const arr = childrenByParent.get(firstDep) ?? [];

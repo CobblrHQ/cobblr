@@ -17,8 +17,12 @@ import { NotificationsBell } from "./NotificationsBell";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 import { ModuleNav, ConfigurationLink } from "./ModuleNav";
 import { MobileNav } from "./MobileNav";
+import { SearchBar } from "./SearchBar";
 
-export function AppLayout({ activeSlug }: { activeSlug: string }) {
+export function AppLayout(_props: { activeSlug: string }) {
+  // activeSlug is still threaded through from App.tsx for back-compat
+  // but the bell + display-name link no longer need it (cross-
+  // workspace notifications + /me/activity respectively).
   const { user, logout } = useAuth();
   const { theme, toggle } = useTheme();
 
@@ -51,14 +55,16 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
 
           {/* Right cluster (desktop) — never shrinks */}
           <div className="hidden md:flex items-center gap-1 shrink-0">
+            <SearchBar />
             <ConfigurationLink />
-            <NotificationsBell slug={activeSlug} />
-            <span
-              className="text-xs text-slate-500 dark:text-slate-400 hidden md:inline"
-              title={activeSlug}
+            <NotificationsBell />
+            <Link
+              to="/me"
+              className="text-xs text-slate-500 dark:text-slate-400 hidden md:inline hover:text-cobble-600 transition"
+              title="Your profile + recent activity"
             >
               {user?.display_name}
-            </span>
+            </Link>
             <button
               onClick={toggle}
               className="text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-mortar-100 transition p-1.5"

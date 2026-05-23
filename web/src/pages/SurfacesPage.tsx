@@ -1,0 +1,498 @@
+// /configuration/surfaces — list + revoke public-share URLs for the
+// workspace. Each surface points at a saved view (or one entity);
+// anyone with the token can read it without an account.
+
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { BarChart3, Copy, ExternalLink, Globe, Plus, Trash2 } from "lucide-react";
+import { ApiError, api, type SavedView, type SurfaceRecord } from "../lib/api";
+import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
+
+export function SurfacesPage() {
+  const { activeSlug } = useActiveOrg();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const confirm = useConfirm();
+  const [createOpen, setCreateOpen] = useState(false);
+  const [statsFor, setStatsFor] = useState<SurfaceRecord | null>(null);
+
+  const list = useQuery({
+    queryKey: ["surfaces", activeSlug],
+    queryFn: () => api.listSurfaces(activeSlug),
+    enabled: !!activeSlug,
+  });
+
+  const revoke = useMutation({
+    mutationFn: (id: string) => api.revokeSurface(activeSlug, id),
+    onSuccess: () => {
+      toast.success("Surface revoked — URL is now 404");
+      void qc.invalidateQueries({ queryKey: ["surfaces", activeSlug] });
+    },
+  });
+
+  const items = list.data?.items ?? [];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
+        <h1 className="text-2xl font-semibold text-slate-700 dark:text-mortar-100">
+          Public surfaces
+        </h1>
+        <span className="text-sm text-slate-500 dark:text-slate-400">
+          {items.length} active
+        </span>
+        <div className="flex-1" />
+        <button
+          onClick={() => setCreateOpen(true)}
+          className="inline-flex items-center gap-2 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm transition"
+        >
+          <Plus size={14} /> Publish
+        </button>
+      </div>
+
+      <p className="text-sm text-slate-500 dark:text-slate-400">
+        Share a saved view's data over a long-random URL — no account
+        required to view. Cross-module readers go through{" "}
+        <code className="font-mono">exposableFields</code> projection
+        so private fields stay private.
+      </p>
+
+      {list.isLoading && <div className="text-sm text-slate-500">Loading…</div>}
+      {items.length === 0 && !list.isLoading && (
+        <div className="text-sm text-slate-500 dark:text-slate-400 italic">
+          No public surfaces. Hit Publish to share a view.
+        </div>
+      )}
+
+      <ul className="border border-slate-200 dark:border-slate-700 rounded divide-y divide-slate-100 dark:divide-slate-800">
+        {items.map((s) => (
+          <li key={s.id} className="px-3 py-2 text-sm space-y-1">
+            <div className="flex items-baseline gap-2">
+              <Globe size={14} className="text-slate-400" />
+              <span className="font-medium">{s.name}</span>
+              <span className="text-xs text-slate-500 dark:text-slate-400">
+                {s.scope_type}
+              </span>
+              <div className="flex-1" />
+              <a
+                href={`/p/${s.token}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-slate-400 hover:text-cobble-600 transition"
+                title="Open public page"
+              >
+                <ExternalLink size={14} />
+              </a>
+              <button
+                onClick={() => {
+                  void navigator.clipboard.writeText(
+                    `${window.location.origin}/p/${s.token}`,
+                  );
+                  toast.success("Public URL copied");
+                }}
+                className="text-slate-400 hover:text-cobble-600 transition"
+                title="Copy public URL"
+              >
+                <Copy size={14} />
+              </button>
+              <button
+                onClick={() => setStatsFor(s)}
+                className="text-slate-400 hover:text-cobble-600 transition"
+                title="View stats"
+              >
+                <BarChart3 size={14} />
+              </button>
+              <button
+                onClick={async () => {
+                  const ok = await confirm({
+                    title: "Revoke this surface?",
+                    message: `${s.name} — the public URL will 404 immediately.`,
+                    confirmLabel: "Revoke",
+                    destructive: true,
+                  });
+                  if (ok) revoke.mutate(s.id);
+                }}
+                className="text-slate-400 hover:text-ember-500 transition"
+                title="Revoke"
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+            <div className="font-mono text-xs text-slate-500 dark:text-slate-400 truncate">
+              /p/{s.token}
+            </div>
+          </li>
+        ))}
+      </ul>
+
+      {createOpen && (
+        <CreateSurfaceModal
+          slug={activeSlug}
+          onClose={() => setCreateOpen(false)}
+          onCreated={() => {
+            void qc.invalidateQueries({ queryKey: ["surfaces", activeSlug] });
+            setCreateOpen(false);
+          }}
+        />
+      )}
+      {statsFor && (
+        <SurfaceStatsModal
+          slug={activeSlug}
+          surface={statsFor}
+          onClose={() => setStatsFor(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function SurfaceStatsModal({
+  slug,
+  surface,
+  onClose,
+}: {
+  slug: string;
+  surface: SurfaceRecord;
+  onClose: () => void;
+}) {
+  const stats = useQuery({
+    queryKey: ["surface-stats", slug, surface.id],
+    queryFn: () => api.surfaceStats(slug, surface.id),
+  });
+  const s = stats.data;
+  return (
+    <Modal open onClose={onClose} title={`Stats — ${surface.name}`} size="lg">
+      {stats.isLoading && (
+        <div className="text-sm text-slate-500">Loading…</div>
+      )}
+      {s && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-4 gap-3">
+            <StatCard label="All-time" value={s.views_total} />
+            <StatCard label="Last 24h" value={s.views_24h} />
+            <StatCard label="Last 7d" value={s.views_7d} />
+            <StatCard label="Last 30d" value={s.views_30d} />
+          </div>
+          <div className="text-xs text-slate-500">
+            {s.first_viewed ? (
+              <>
+                First view{" "}
+                <span className="font-mono">
+                  {new Date(s.first_viewed).toLocaleString()}
+                </span>{" "}
+                · last{" "}
+                <span className="font-mono">
+                  {s.last_viewed ? new Date(s.last_viewed).toLocaleString() : "—"}
+                </span>
+              </>
+            ) : (
+              "No views yet."
+            )}
+          </div>
+          {s.recent.length > 0 && (
+            <div>
+              <h3 className="text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">
+                Recent hits ({s.recent.length})
+              </h3>
+              <ul className="border border-slate-200 dark:border-slate-700 rounded divide-y divide-slate-100 dark:divide-slate-800 max-h-72 overflow-y-auto">
+                {s.recent.map((r, i) => (
+                  <li key={i} className="px-3 py-1.5 text-xs flex items-baseline gap-3">
+                    <span className="font-mono text-slate-500 shrink-0">
+                      {new Date(r.viewed_at).toLocaleString()}
+                    </span>
+                    {r.referer && (
+                      <span className="truncate text-slate-600 dark:text-slate-300">
+                        ← {hostname(r.referer)}
+                      </span>
+                    )}
+                    {!r.referer && r.ua_hint && (
+                      <span className="truncate text-slate-400 italic">
+                        {browserName(r.ua_hint)}
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+function StatCard({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="border border-slate-200 dark:border-slate-700 rounded p-3">
+      <div className="text-[10px] uppercase font-mono text-slate-500 tracking-wider">
+        {label}
+      </div>
+      <div className="text-2xl font-semibold text-slate-700 dark:text-mortar-100 mt-0.5">
+        {value.toLocaleString()}
+      </div>
+    </div>
+  );
+}
+
+function hostname(referer: string): string {
+  try {
+    return new URL(referer).hostname;
+  } catch {
+    return referer;
+  }
+}
+
+function browserName(ua: string): string {
+  if (/firefox/i.test(ua)) return "Firefox";
+  if (/edg/i.test(ua)) return "Edge";
+  if (/chrome/i.test(ua)) return "Chrome";
+  if (/safari/i.test(ua)) return "Safari";
+  if (/curl/i.test(ua)) return "curl";
+  return ua.slice(0, 32);
+}
+
+function CreateSurfaceModal({
+  slug,
+  onClose,
+  onCreated,
+}: {
+  slug: string;
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [scopeType, setScopeType] = useState<"view" | "collection">("view");
+  const [viewId, setViewId] = useState("");
+  const [collectionKind, setCollectionKind] = useState("inventory:part");
+  const [collectionFilterRaw, setCollectionFilterRaw] = useState("");
+  const [theme, setTheme] = useState<"auto" | "dark" | "light">("auto");
+  const [layout, setLayout] = useState<"tiles" | "list">("tiles");
+  const [footer, setFooter] = useState("");
+  const toast = useToast();
+
+  const views = useQuery({
+    queryKey: ["saved-views", slug],
+    queryFn: () => api.listSavedViews(slug),
+    enabled: !!slug,
+  });
+  const entityKinds = useQuery({
+    queryKey: ["entity-kinds", slug],
+    queryFn: () => api.listEntityKinds(slug),
+    enabled: !!slug && scopeType === "collection",
+  });
+
+  const items: SavedView[] = views.data?.items ?? [];
+  const kindList = entityKinds.data?.items ?? [];
+
+  const canSubmit =
+    name.trim() !== "" &&
+    (scopeType === "view" ? !!viewId : !!collectionKind);
+
+  return (
+    <Modal open onClose={onClose} title="Publish a public surface">
+      <form
+        onSubmit={async (e) => {
+          e.preventDefault();
+          if (!canSubmit) return;
+          let filter: Record<string, string> | undefined;
+          if (scopeType === "collection" && collectionFilterRaw.trim()) {
+            filter = {};
+            for (const piece of collectionFilterRaw.split(",")) {
+              const [k, v] = piece.split("=").map((s) => s.trim());
+              if (k && v) filter[k] = v;
+            }
+            if (Object.keys(filter).length === 0) filter = undefined;
+          }
+          // Build the config blob: per-surface theming (read by /p/:token)
+          // + ad-hoc query (when scope_type=collection).
+          const config: Record<string, unknown> = {};
+          if (theme !== "auto") config.theme = theme;
+          if (layout !== "tiles") config.layout = layout;
+          if (footer.trim()) config.footer = footer.trim();
+          if (scopeType === "collection") {
+            config.query = filter ? { filter } : {};
+          }
+          try {
+            const created = await api.createSurface(slug, {
+              name: name.trim(),
+              scope_type: scopeType,
+              scope_id: scopeType === "view" ? viewId : collectionKind,
+              config: Object.keys(config).length > 0 ? config : undefined,
+            });
+            toast.success("Published");
+            void navigator.clipboard.writeText(
+              `${window.location.origin}/p/${created.token}`,
+            );
+            toast.info("Public URL copied to clipboard");
+            onCreated();
+          } catch (err) {
+            const msg = err instanceof ApiError ? err.message : String(err);
+            toast.error(msg);
+          }
+        }}
+        className="space-y-3"
+      >
+        <label className="block">
+          <div className="text-xs text-slate-500 mb-1">Name (internal)</div>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. Sarah's collection (public)"
+            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            autoFocus
+          />
+        </label>
+        <label className="block">
+          <div className="text-xs text-slate-500 mb-1">Source</div>
+          <div className="flex gap-1">
+            {(["view", "collection"] as const).map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setScopeType(t)}
+                className={`flex-1 px-3 py-1.5 text-xs rounded transition ${
+                  scopeType === t
+                    ? "bg-cobble-600 text-white"
+                    : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
+                }`}
+              >
+                {t === "view" ? "Saved view" : "Ad-hoc collection"}
+              </button>
+            ))}
+          </div>
+        </label>
+        {scopeType === "view" && (
+          <>
+            <label className="block">
+              <div className="text-xs text-slate-500 mb-1">View to publish</div>
+              <select
+                value={viewId}
+                onChange={(e) => setViewId(e.target.value)}
+                className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+              >
+                <option value="">— pick a saved view —</option>
+                {items.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.name} ({v.entity_kind})
+                  </option>
+                ))}
+              </select>
+            </label>
+            {items.length === 0 && (
+              <p className="text-xs text-slate-500 italic">
+                No saved views yet — create one from the Views page or
+                switch to "Ad-hoc collection" above.
+              </p>
+            )}
+          </>
+        )}
+        {scopeType === "collection" && (
+          <>
+            <label className="block">
+              <div className="text-xs text-slate-500 mb-1">Entity kind</div>
+              <select
+                value={collectionKind}
+                onChange={(e) => setCollectionKind(e.target.value)}
+                className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+              >
+                {kindList.map((k) => (
+                  <option key={k.id} value={k.id}>
+                    {k.display_name} ({k.id})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <div className="text-xs text-slate-500 mb-1">
+                Filter (comma-separated <code>field=value</code>, optional)
+              </div>
+              <input
+                type="text"
+                value={collectionFilterRaw}
+                onChange={(e) => setCollectionFilterRaw(e.target.value)}
+                placeholder="state=active, location_id=…, _tag=urgent"
+                className="w-full px-2 py-1 text-sm font-mono border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+              />
+              <div className="text-[11px] text-slate-400 mt-1">
+                Native columns + metadata fields + <code>_tag</code> are
+                supported (resolver-dependent). Blank = list every entity
+                of this kind.
+              </div>
+            </label>
+          </>
+        )}
+        <div className="border-t border-slate-200 dark:border-slate-700 pt-3 space-y-3">
+          <div className="text-[10px] font-mono uppercase tracking-widest text-slate-500">
+            theming (optional)
+          </div>
+          <label className="block">
+            <div className="text-xs text-slate-500 mb-1">Theme</div>
+            <div className="flex gap-1">
+              {(["auto", "light", "dark"] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setTheme(t)}
+                  className={`flex-1 px-3 py-1 text-xs rounded transition ${
+                    theme === t
+                      ? "bg-cobble-600 text-white"
+                      : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </label>
+          <label className="block">
+            <div className="text-xs text-slate-500 mb-1">Default layout</div>
+            <div className="flex gap-1">
+              {(["tiles", "list"] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setLayout(t)}
+                  className={`flex-1 px-3 py-1 text-xs rounded transition ${
+                    layout === t
+                      ? "bg-cobble-600 text-white"
+                      : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </label>
+          <label className="block">
+            <div className="text-xs text-slate-500 mb-1">Footer text (optional)</div>
+            <input
+              type="text"
+              value={footer}
+              onChange={(e) => setFooter(e.target.value)}
+              placeholder="© 2026 your name · contact: hi@you.com"
+              className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            />
+          </label>
+        </div>
+        <div className="flex justify-end gap-2 pt-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={!canSubmit}
+            className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white"
+          >
+            Publish
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}

@@ -1,48 +1,47 @@
 // Bell icon in the header — badge with unread count, click opens
-// a popover list. Each item navigates to the link_url and marks
-// itself read on click. A small "mark all read" button at the
-// bottom of the popover.
+// a popover list. Cross-workspace inbox: every notification for
+// the user is visible regardless of which workspace they're
+// currently viewing. Each row shows the workspace name and
+// clicking switches the active workspace + navigates to link_url
+// so accept/revoke flows still land on the right page.
 
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell, BellOff } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { api, type NotificationEntry } from "../lib/api";
+import { api, type CrossOrgNotificationEntry } from "../lib/api";
+import { useActiveOrg } from "../auth/ActiveOrgContext";
 
-interface Props {
-  slug: string;
-}
-
-export function NotificationsBell({ slug }: Props) {
+export function NotificationsBell() {
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const { setActiveSlug } = useActiveOrg();
 
   const unread = useQuery({
-    queryKey: ["notifications-unread", slug],
-    queryFn: () => api.notificationsUnreadCount(slug),
-    enabled: !!slug,
+    queryKey: ["me-notifications-unread"],
+    queryFn: () => api.meNotificationsUnreadCount(),
     refetchInterval: 15_000,
   });
   const list = useQuery({
-    queryKey: ["notifications-list", slug],
-    queryFn: () => api.notifications(slug),
-    enabled: !!slug && open,
+    queryKey: ["me-notifications-list"],
+    queryFn: () => api.meNotifications(),
+    enabled: open,
   });
 
   const markRead = useMutation({
-    mutationFn: (id: string) => api.markNotificationRead(slug, id),
+    mutationFn: (id: string) => api.meMarkNotificationRead(id),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["notifications-unread", slug] });
-      void qc.invalidateQueries({ queryKey: ["notifications-list", slug] });
+      void qc.invalidateQueries({ queryKey: ["me-notifications-unread"] });
+      void qc.invalidateQueries({ queryKey: ["me-notifications-list"] });
     },
   });
   const markAll = useMutation({
-    mutationFn: () => api.markAllNotificationsRead(slug),
+    mutationFn: () => api.meMarkAllNotificationsRead(),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["notifications-unread", slug] });
-      void qc.invalidateQueries({ queryKey: ["notifications-list", slug] });
+      void qc.invalidateQueries({ queryKey: ["me-notifications-unread"] });
+      void qc.invalidateQueries({ queryKey: ["me-notifications-list"] });
     },
   });
 
@@ -60,8 +59,12 @@ export function NotificationsBell({ slug }: Props) {
 
   const count = unread.data?.count ?? 0;
 
-  function handleItemClick(n: NotificationEntry) {
+  function handleItemClick(n: CrossOrgNotificationEntry) {
     if (!n.read_at) markRead.mutate(n.id);
+    // Switch the active workspace to the notification's org BEFORE
+    // navigating, so /configuration/links etc. show the right
+    // workspace's data when the page mounts.
+    setActiveSlug(n.org_slug);
     if (n.link_url) navigate(n.link_url);
     setOpen(false);
   }
@@ -71,7 +74,11 @@ export function NotificationsBell({ slug }: Props) {
       <button
         onClick={() => setOpen((o) => !o)}
         className="text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-mortar-100 transition p-1.5 relative"
-        title={count > 0 ? `${count} unread notification${count === 1 ? "" : "s"}` : "Notifications"}
+        title={
+          count > 0
+            ? `${count} unread notification${count === 1 ? "" : "s"}`
+            : "Notifications"
+        }
       >
         {count > 0 ? <Bell size={14} /> : <BellOff size={14} />}
         {count > 0 && (
@@ -122,8 +129,14 @@ export function NotificationsBell({ slug }: Props) {
                   <div className="text-sm text-slate-700 dark:text-mortar-100">
                     {n.message}
                   </div>
-                  <div className="text-[10px] font-mono text-slate-400 dark:text-slate-500 mt-1">
-                    {n.event_type} · {new Date(n.created_at).toLocaleString()}
+                  <div className="text-[10px] font-mono text-slate-400 dark:text-slate-500 mt-1 flex items-center gap-1.5">
+                    <span className="px-1 py-0.5 rounded bg-cobble-50 dark:bg-cobble-900/30 text-cobble-700 dark:text-cobble-300">
+                      {n.org_name}
+                    </span>
+                    <span>·</span>
+                    <span>{n.event_type}</span>
+                    <span>·</span>
+                    <span>{new Date(n.created_at).toLocaleString()}</span>
                   </div>
                 </button>
               </li>

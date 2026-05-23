@@ -21,12 +21,23 @@ import { ActionsPage } from "./pages/ActionsPage";
 import { BundlesPage } from "./pages/BundlesPage";
 import { FieldsPage } from "./pages/FieldsPage";
 import { InviteAcceptPage } from "./pages/InviteAcceptPage";
+import { MeActivityPage } from "./pages/MeActivityPage";
+import { MeProfilePage } from "./pages/MeProfilePage";
+import { PublicSurfacePage } from "./pages/PublicSurfacePage";
 import { ApiTokensPage } from "./pages/ApiTokensPage";
 import { ActivityPage } from "./pages/ActivityPage";
 import { MachinesPage } from "./pages/MachinesPage";
 import { AssetsPage } from "./pages/AssetsPage";
 import { PurchasesPage } from "./pages/PurchasesPage";
 import { ConfigurationPage } from "./pages/ConfigurationPage";
+import { FilesPage } from "./pages/FilesPage";
+import { ViewsPage } from "./pages/ViewsPage";
+import { TagsPage } from "./pages/TagsPage";
+import { SurfacesPage } from "./pages/SurfacesPage";
+import { HealthPage } from "./pages/HealthPage";
+import { SearchPage } from "./pages/SearchPage";
+import { OpenApiPage } from "./pages/OpenApiPage";
+import { LinksPage } from "./pages/LinksPage";
 import { AppLayout } from "./components/AppLayout";
 import { ToastProvider, ConfirmProvider } from "@cobblr/platform-web";
 import { api, getToken } from "./lib/api";
@@ -60,6 +71,9 @@ function RootRoutes() {
   return (
     <Routes>
       <Route path="/invite/:token" element={<InviteAcceptPage />} />
+      {/* /p/:token is the un-auth'd public surface render. Reachable
+          signed-in or signed-out — the token is the secret. */}
+      <Route path="/p/:token" element={<PublicSurfacePage />} />
       <Route path="*" element={<AuthedOrLogin />} />
     </Routes>
   );
@@ -121,7 +135,22 @@ function ActiveOrgScopedRoutes() {
           <Route path="/bundles" element={<BundlesPage />} />
           <Route path="/fields" element={<FieldsPage />} />
           <Route path="/configuration/tokens" element={<ApiTokensPage />} />
+          <Route path="/configuration/surfaces" element={<SurfacesPage />} />
+          <Route path="/configuration/health" element={<HealthPage />} />
+          <Route path="/configuration/openapi" element={<OpenApiPage />} />
+          <Route path="/configuration/links" element={<LinksPage />} />
+          <Route path="/search" element={<SearchPage />} />
           <Route path="/activity" element={<ActivityPage />} />
+          <Route path="/me/activity" element={<MeActivityPage />} />
+          <Route path="/me/profile" element={<MeProfilePage />} />
+          <Route path="/me" element={<MeProfilePage />} />
+          <Route path="/core-files" element={<FilesPage />} />
+          <Route path="/core-views" element={<ViewsPage />} />
+          <Route path="/core-tags" element={<TagsPage />} />
+          {/* Short aliases for human-friendly URLs. */}
+          <Route path="/files" element={<FilesPage />} />
+          <Route path="/views" element={<ViewsPage />} />
+          <Route path="/tags" element={<TagsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

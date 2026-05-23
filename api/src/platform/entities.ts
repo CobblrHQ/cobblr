@@ -7,33 +7,401 @@
 //   2. Modules register an in-process resolver per kind they own;
 //      the platform routes platform.entities.lookup() calls to
 //      those resolvers. No HTTP loopback.
+//
+// The kernel also enforces the cross-module READ trust boundary
+// here: when a kind declares `exposableFields` in its manifest,
+// `lookup()` projects ResolvedEntity.fields to that whitelist
+// before returning. Anything not declared is private to the owning
+// module. See docs/design-decisions/entity-resolver.md.
 
+import { sql } from "kysely";
 import type {
   EntityKindRecord,
+  EntityListQuery,
+  EntityListResolver,
+  EntityListResult,
   EntityResolver,
   ResolvedEntity,
 } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
 
 const resolvers = new Map<string, EntityResolver>();
+const listResolvers = new Map<string, EntityListResolver>();
+
+// In-process cache of the exposable-fields whitelist per kind. Filled
+// lazily on first lookup; kept until process restart (kinds rarely
+// change at runtime, and any change cycles through registry-sync at
+// boot anyway).
+const exposableFieldsCache = new Map<string, string[] | null>();
+
+// One-time deprecation warning per kind that's still on the legacy
+// (null) whitelist. Avoids log spam on hot paths.
+const legacyWarnedKinds = new Set<string>();
+
+// Implicit cross-cutting props on ResolvedEntity that are ALWAYS
+// exposable regardless of the manifest's `exposableFields`. These are
+// the ones declared on the ResolvedEntity interface itself, used by
+// every renderer to display "the entity" generically.
+const IMPLICIT_EXPOSABLE_PROPS = new Set([
+  "kind",
+  "id",
+  "title",
+  "subtitle",
+  "image_path",
+  "detailUrl",
+]);
+
+async function getExposableFields(kind: string): Promise<string[] | null> {
+  if (exposableFieldsCache.has(kind)) {
+    return exposableFieldsCache.get(kind) ?? null;
+  }
+  const row = await meta
+    .selectFrom("entity_kinds")
+    .select(["exposable_fields"])
+    .where("id", "=", kind)
+    .executeTakeFirst();
+  const list = (row?.exposable_fields as string[] | null | undefined) ?? null;
+  exposableFieldsCache.set(kind, list);
+  return list;
+}
+
+/** Apply the read-trust whitelist to a resolved entity. Implicit
+ *  cross-cutting props pass through untouched; `fields` is projected
+ *  to the declared list. Legacy (null) kinds pass everything through
+ *  with a one-time deprecation warning. */
+function applyExposableProjection(
+  resolved: ResolvedEntity,
+  whitelist: string[] | null,
+): ResolvedEntity {
+  if (whitelist === null) {
+    if (!legacyWarnedKinds.has(resolved.kind)) {
+      legacyWarnedKinds.add(resolved.kind);
+      console.warn(
+        `[entities] kind '${resolved.kind}' has no exposableFields declared on its manifest. ` +
+          `Returning the full ResolvedEntity.fields for cross-module reads. ` +
+          `Declare exposableFields on the entity kind to lock in the read-time trust boundary. ` +
+          `See docs/design-decisions/entity-resolver.md.`,
+      );
+    }
+    return resolved;
+  }
+  const allowed = new Set(whitelist);
+  const projected: Record<string, unknown> = {};
+  for (const [name, value] of Object.entries(resolved.fields)) {
+    if (allowed.has(name) || IMPLICIT_EXPOSABLE_PROPS.has(name)) {
+      projected[name] = value;
+    }
+  }
+  return { ...resolved, fields: projected };
+}
 
 export function registerResolver(kind: string, resolver: EntityResolver): void {
   resolvers.set(kind, resolver);
+}
+
+export function registerListResolver(
+  kind: string,
+  resolver: EntityListResolver,
+): void {
+  listResolvers.set(kind, resolver);
+}
+
+/** Clear the per-process exposable-fields cache. Called at the end
+ *  of registry-sync so the next lookup reads the freshly-written
+ *  whitelist. */
+export function clearExposableFieldsCache(): void {
+  exposableFieldsCache.clear();
+  legacyWarnedKinds.clear();
+}
+
+// Role hierarchy for min_target_role gating. Higher index = more
+// privileged. A viewer's role must be at index >= the link's
+// min_target_role index to qualify.
+const ROLE_RANK: Record<string, number> = {
+  guest: 0,
+  member: 1,
+  admin: 2,
+  owner: 3,
+};
+
+/** Find every active, non-expired workspace_link where `targetOrgId`
+ *  is the target and `kind` is in the link's kinds[]. Returns the
+ *  source org's id + slug + name so cross-workspace reads can attribute
+ *  the result. Shared between list() and lookup().
+ *
+ *  M1 v0.5: When the link sets `min_target_role`, gate by the
+ *  viewer's role in the target workspace. viewerUserId omitted
+ *  → role-restricted links are excluded entirely (conservative for
+ *  system callers like scheduled scanners). viewerUserId set
+ *  → join through org_memberships, compare ranks. */
+async function activeLinkedSources(
+  targetOrgId: string,
+  kind: string,
+  viewerUserId?: string,
+): Promise<Array<{ id: string; slug: string; name: string }>> {
+  try {
+    let q = meta
+      .selectFrom("workspace_links as l")
+      .innerJoin("orgs as o", "o.id", "l.source_org_id")
+      .where("l.target_org_id", "=", targetOrgId)
+      .where("l.status", "=", "active")
+      .where((eb) =>
+        eb.or([
+          eb("l.expires_at", "is", null),
+          eb("l.expires_at", ">", sql<Date>`now()`),
+        ]),
+      )
+      // Postgres text-array containment via SQL template — Kysely's
+      // eb.fn doesn't have a clean array-contains helper.
+      .where(sql<boolean>`${kind} = ANY(l.kinds)`);
+
+    if (!viewerUserId) {
+      // System / anonymous caller: only links with NO role
+      // restriction qualify.
+      const rows = await q
+        .select(["l.source_org_id as id", "o.slug", "o.name"])
+        .where("l.min_target_role", "is", null)
+        .execute();
+      return rows;
+    }
+
+    // Authed viewer: join their membership in the target org and
+    // filter in SQL on the rank. We do the rank comparison in JS
+    // after the fetch since the SQL CASE for the four-role ladder
+    // is uglier than this short post-filter.
+    const rows = await q
+      .leftJoin("org_memberships as m", (j) =>
+        j
+          .onRef("m.org_id", "=", "l.target_org_id")
+          .on("m.user_id", "=", viewerUserId),
+      )
+      .select([
+        "l.source_org_id as id",
+        "o.slug",
+        "o.name",
+        "l.min_target_role as min_target_role",
+        "m.role as viewer_role",
+      ])
+      .execute();
+    return rows.filter((r) => {
+      if (!r.min_target_role) return true; // no restriction
+      // Viewer needs a membership row at all + meeting the rank.
+      if (!r.viewer_role) return false;
+      const need = ROLE_RANK[r.min_target_role] ?? 0;
+      const got = ROLE_RANK[r.viewer_role] ?? 0;
+      return got >= need;
+    });
+  } catch (err) {
+    // Meta-side failure shouldn't take down a regular list/lookup —
+    // just degrade to isolated.
+    console.error("[entities] linked-sources query failed:", (err as Error).message);
+    return [];
+  }
 }
 
 export async function lookup(
   orgId: string,
   kind: string,
   id: string,
+  viewer?: { userId?: string },
 ): Promise<ResolvedEntity | null> {
   const resolver = resolvers.get(kind);
   if (!resolver) return null;
+  const whitelist = await getExposableFields(kind);
+
+  // Own workspace first — common case, no cross-workspace traffic.
   try {
-    return await resolver(orgId, id);
+    const resolved = await resolver(orgId, id);
+    if (resolved) return applyExposableProjection(resolved, whitelist);
   } catch (err) {
     console.error(`[entities] resolver for ${kind} failed:`, err);
-    return null;
   }
+
+  // M1 v0.2 cross-workspace lookup: if the caller is the TARGET of an
+  // active, non-expired link that includes this kind, try the source
+  // workspace. First hit wins; same exposableFields projection plus
+  // the `_source_workspace_*` attribution the list union uses.
+  // M1 v0.5: links with min_target_role are gated against viewer.
+  const linkedSources = await activeLinkedSources(orgId, kind, viewer?.userId);
+  for (const src of linkedSources) {
+    try {
+      const resolved = await resolver(src.id, id);
+      if (!resolved) continue;
+      const projected = applyExposableProjection(resolved, whitelist);
+      return {
+        ...projected,
+        fields: {
+          ...projected.fields,
+          _source_workspace_slug: src.slug,
+          _source_workspace_name: src.name,
+        },
+      };
+    } catch (err) {
+      console.error(
+        `[entities] cross-workspace lookup ${kind}:${id} from ${src.slug} failed:`,
+        (err as Error).message,
+      );
+    }
+  }
+  return null;
+}
+
+/** Batched lookup — resolve N (kind, id) refs in one call. Foreign
+ *  callers (other modules, the resolver, cross-module renderers)
+ *  read joined data this way instead of N separate single-hop calls.
+ *
+ *  Same projection rules as lookup(): each kind's exposableFields
+ *  whitelist is applied; null kinds get the legacy pass-through with
+ *  a one-time deprecation warning.
+ *
+ *  Refs that don't resolve (deleted entity, unknown kind, resolver
+ *  threw) are silently skipped — callers get back fewer results than
+ *  they asked for, with `kind`+`id` on each result so they can match
+ *  back to their input. Order is not guaranteed.
+ *
+ *  Per-kind concurrency: the resolver for one kind runs serially for
+ *  all its ids (in case the resolver does batching internally — most
+ *  don't, but this leaves the door open). Across kinds we fan out
+ *  with Promise.all so a slow kind doesn't block fast ones. */
+export async function lookupMany(
+  orgId: string,
+  refs: ReadonlyArray<{ kind: string; id: string }>,
+): Promise<ResolvedEntity[]> {
+  if (refs.length === 0) return [];
+  // Group refs by kind so each kind's resolver gets its own fan-out.
+  const byKind = new Map<string, string[]>();
+  for (const r of refs) {
+    const arr = byKind.get(r.kind);
+    if (arr) arr.push(r.id);
+    else byKind.set(r.kind, [r.id]);
+  }
+  const results = await Promise.all(
+    Array.from(byKind.entries()).map(async ([kind, ids]) => {
+      const resolver = resolvers.get(kind);
+      if (!resolver) return [] as ResolvedEntity[];
+      const whitelist = await getExposableFields(kind);
+      const resolved = await Promise.all(
+        ids.map(async (id) => {
+          try {
+            const r = await resolver(orgId, id);
+            return r ? applyExposableProjection(r, whitelist) : null;
+          } catch (err) {
+            console.error(`[entities] resolver for ${kind}:${id} failed:`, err);
+            return null;
+          }
+        }),
+      );
+      return resolved.filter((r): r is ResolvedEntity => r !== null);
+    }),
+  );
+  return results.flat();
+}
+
+/** Walk entity_pairings from a source entity and return the resolved
+ *  (and projected) target entities. The other half of the resolver
+ *  primitive — kernel single-hop fetch (this) + manifest `exposable
+ *  Fields` whitelist (in lookup) together form the trust boundary
+ *  the entity-resolver.md doc specifies.
+ *
+ *  Direction:
+ *    "in"  (default) — find entities that POINT AT the source via
+ *                       this relation. Returns ResolvedEntity for
+ *                       each pairing's source-side entity.
+ *    "out"           — find entities the source POINTS OUT TO via
+ *                       this relation. Returns ResolvedEntity for
+ *                       each pairing's target-side entity.
+ *
+ *  Optional `kind` filter narrows discovered targets to that kind
+ *  (only useful when one source pairs with multiple kinds via the
+ *  same relation).
+ *
+ *  Same projection rules as lookup() — each discovered entity is
+ *  projected through its kind's exposableFields whitelist before
+ *  returning. */
+export async function walkPairings(
+  orgId: string,
+  source: { kind: string; id: string },
+  spec: { rel: string; dir?: "in" | "out"; kind?: string },
+): Promise<ResolvedEntity[]> {
+  const dir = spec.dir ?? "in";
+  let q = meta
+    .selectFrom("entity_pairings")
+    .where("org_id", "=", orgId)
+    .where("relationship_kind", "=", spec.rel);
+  if (dir === "in") {
+    q = q.where("target_kind", "=", source.kind).where("target_id", "=", source.id);
+    if (spec.kind) q = q.where("source_kind", "=", spec.kind);
+    const rows = await q
+      .select(["source_kind as kind", "source_id as id"])
+      .execute();
+    return lookupMany(orgId, rows);
+  } else {
+    q = q.where("source_kind", "=", source.kind).where("source_id", "=", source.id);
+    if (spec.kind) q = q.where("target_kind", "=", spec.kind);
+    const rows = await q
+      .select(["target_kind as kind", "target_id as id"])
+      .execute();
+    return lookupMany(orgId, rows);
+  }
+}
+
+/** List entities of a kind. Returns { items: [] } when no list
+ *  resolver is registered for the kind. Otherwise calls the
+ *  resolver and projects each item through the kind's
+ *  exposableFields whitelist — same trust boundary as lookup(). */
+export async function list(
+  orgId: string,
+  kind: string,
+  query: EntityListQuery = {},
+  viewer?: { userId?: string },
+): Promise<EntityListResult> {
+  const resolver = listResolvers.get(kind);
+  if (!resolver) return { items: [] };
+  const whitelist = await getExposableFields(kind);
+
+  // Own-workspace results first.
+  let items: ResolvedEntity[] = [];
+  let total: number | undefined;
+  try {
+    const result = await resolver(orgId, query);
+    items = result.items.map((r) => applyExposableProjection(r, whitelist));
+    total = result.total;
+  } catch (err) {
+    console.error(`[entities] list resolver for ${kind} failed:`, err);
+  }
+
+  // M1: union with any active+nonexpired workspace_links where THIS
+  // org is the target and the link includes this kind. The source's
+  // items go through the SAME exposableFields projection (since the
+  // consumer is outside the source workspace — cross-workspace ==
+  // cross-module from a trust perspective). Items get
+  // `_source_workspace_slug` so the UI can render the badge.
+  // M1 v0.5: min_target_role on the link gates whether viewer
+  // qualifies for the share.
+  const linkedSources = await activeLinkedSources(orgId, kind, viewer?.userId);
+  for (const src of linkedSources) {
+    try {
+      const result = await resolver(src.id, query);
+      for (const r of result.items) {
+        const projected = applyExposableProjection(r, whitelist);
+        items.push({
+          ...projected,
+          fields: {
+            ...projected.fields,
+            _source_workspace_slug: src.slug,
+            _source_workspace_name: src.name,
+          },
+        });
+      }
+    } catch (err) {
+      console.error(
+        `[entities] cross-workspace list ${kind} from ${src.slug} failed:`,
+        (err as Error).message,
+      );
+    }
+  }
+
+  return { items, total };
 }
 
 export async function listKinds(): Promise<EntityKindRecord[]> {
@@ -66,6 +434,7 @@ function rowToKindRecord(row: {
   version: string;
   traits: unknown | null;
   profile: string | null;
+  exposable_fields: unknown | null;
 }): EntityKindRecord {
   return {
     id: row.id,
@@ -79,5 +448,6 @@ function rowToKindRecord(row: {
     version: row.version,
     traits: (row.traits as EntityKindRecord["traits"]) ?? null,
     profile: row.profile,
+    exposable_fields: (row.exposable_fields as string[] | null) ?? null,
   };
 }

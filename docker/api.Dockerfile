@@ -24,6 +24,17 @@ COPY modules/3d-printers/package.json ./modules/3d-printers/
 COPY modules/laser-cutters/package.json ./modules/laser-cutters/
 COPY modules/cnc-machines/package.json ./modules/cnc-machines/
 COPY modules/workshop-mods/package.json ./modules/workshop-mods/
+COPY modules/core-recurrence/package.json ./modules/core-recurrence/
+COPY modules/core-activity-log/package.json ./modules/core-activity-log/
+COPY modules/core-notifications/package.json ./modules/core-notifications/
+COPY modules/core-healthcheck/package.json ./modules/core-healthcheck/
+COPY modules/core-tags/package.json ./modules/core-tags/
+COPY modules/core-views/package.json ./modules/core-views/
+COPY modules/core-files/package.json ./modules/core-files/
+COPY modules/core-search/package.json ./modules/core-search/
+COPY modules/core-public-surfaces/package.json ./modules/core-public-surfaces/
+COPY modules/core-openapi/package.json ./modules/core-openapi/
+COPY modules/core-queue/package.json ./modules/core-queue/
 
 RUN npm install --workspaces --include-workspace-root --no-audit --no-fund
 
@@ -49,6 +60,17 @@ RUN npm run --if-present build -w @cobblr/3d-printers
 RUN npm run --if-present build -w @cobblr/laser-cutters
 RUN npm run --if-present build -w @cobblr/cnc-machines
 RUN npm run --if-present build -w @cobblr/workshop-mods
+RUN npm run --if-present build -w @cobblr/core-recurrence
+RUN npm run --if-present build -w @cobblr/core-activity-log
+RUN npm run --if-present build -w @cobblr/core-notifications
+RUN npm run --if-present build -w @cobblr/core-healthcheck
+RUN npm run --if-present build -w @cobblr/core-tags
+RUN npm run --if-present build -w @cobblr/core-views
+RUN npm run --if-present build -w @cobblr/core-files
+RUN npm run --if-present build -w @cobblr/core-search
+RUN npm run --if-present build -w @cobblr/core-public-surfaces
+RUN npm run --if-present build -w @cobblr/core-openapi
+RUN npm run --if-present build -w @cobblr/core-queue
 WORKDIR /app/api
 RUN npm run build
 

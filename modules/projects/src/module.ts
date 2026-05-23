@@ -16,6 +16,7 @@ export default defineModule({
   description:
     "Projects + tasks + dependencies. Tasks can wait on other tasks or on any module's entity — the platform brokers.",
   icon: "layers",
+  band: "stock",
 
   schema: {
     tablePrefix: "projects_",
@@ -40,6 +41,16 @@ export default defineModule({
           { name: "priority", type: "text" },
           { name: "target_date", type: "date" },
         ],
+        // Public face — everything except internal flags. Status + target_date
+        // are needed for cross-module displays (Kanban over multiple modules,
+        // due-date views, notification context).
+        exposableFields: [
+          "name",
+          "description",
+          "status",
+          "priority",
+          "target_date",
+        ],
         detailRoute: "/projects/{id}",
       },
       {
@@ -55,6 +66,16 @@ export default defineModule({
           { name: "priority", type: "text" },
           { name: "energy", type: "text" },
           { name: "due_date", type: "date" },
+        ],
+        // All fields are public-facing — tasks show up everywhere (notifications,
+        // dependent-of-X views, dashboards).
+        exposableFields: [
+          "title",
+          "description",
+          "status",
+          "priority",
+          "energy",
+          "due_date",
         ],
       },
     ],

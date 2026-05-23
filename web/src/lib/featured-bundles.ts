@@ -103,4 +103,77 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       ],
     },
   },
+  {
+    glyph: "🌱",
+    blurb:
+      "Garden tracker — plants as assets with species, sun exposure, planted date, and an RRULE for the watering schedule that the recurrence scanner picks up automatically.",
+    manifest: {
+      id: "cobblr.community.garden",
+      version: "0.1.0",
+      name: "Garden Tracker",
+      description:
+        "Custom assets:asset fields for tracking plants — species, planted date, watering RRULE, sun exposure.",
+      author: "Cobblr community",
+      requires: [{ module: "assets" }],
+      wires: [],
+      field_defs: [
+        { entity_kind: "assets:asset", name: "species", display_label: "Species", type: "text", position: 1 },
+        { entity_kind: "assets:asset", name: "planted_at", display_label: "Planted", type: "date", position: 2 },
+        { entity_kind: "assets:asset", name: "water_rrule", display_label: "Watering schedule (RRULE)", type: "text", position: 3 },
+        { entity_kind: "assets:asset", name: "sun", display_label: "Sun exposure", type: "text", position: 4 },
+      ],
+    },
+  },
+  {
+    glyph: "📚",
+    blurb:
+      "Personal library — author, ISBN, year, read-status. Print spine labels with one wire.",
+    manifest: {
+      id: "cobblr.community.bookshelf",
+      version: "0.1.0",
+      name: "Bookshelf",
+      description:
+        "Catalog books as inventory parts. Each gets author + ISBN + year + read status. Spine-label wire bundled.",
+      author: "Cobblr community",
+      requires: [{ module: "inventory" }, { module: "labels" }],
+      wires: [
+        {
+          source_kind: "inventory:part",
+          action_id: "labels:print",
+          trigger_type: "user-invoked",
+          template:
+            '{{author | default: "Unknown"}}\n{{name}}\n{{year | default: "?"}}',
+        },
+      ],
+      field_defs: [
+        { entity_kind: "inventory:part", name: "author", display_label: "Author", type: "text", position: 1 },
+        { entity_kind: "inventory:part", name: "isbn", display_label: "ISBN", type: "text", position: 2 },
+        { entity_kind: "inventory:part", name: "year", display_label: "Year", type: "number", position: 3 },
+        { entity_kind: "inventory:part", name: "read_status", display_label: "Status", type: "text", position: 4 },
+        { entity_kind: "inventory:part", name: "rating", display_label: "Rating (1-5)", type: "number", position: 5 },
+      ],
+    },
+  },
+  {
+    glyph: "🔧",
+    blurb:
+      "Tool library — checkout/checkin tracking. Marks machines with borrower, due_date, condition. Pair with the labels module to print barcoded check-out tags.",
+    manifest: {
+      id: "cobblr.community.tool-library",
+      version: "0.1.0",
+      name: "Tool Library",
+      description:
+        "Track who's borrowed a tool, when it's due back, and its condition. Custom machine:machine fields.",
+      author: "Cobblr community",
+      requires: [{ module: "machines" }],
+      wires: [],
+      field_defs: [
+        { entity_kind: "machines:machine", name: "borrower", display_label: "Borrower", type: "text", position: 1 },
+        { entity_kind: "machines:machine", name: "due_date", display_label: "Due back", type: "date", position: 2 },
+        { entity_kind: "machines:machine", name: "condition", display_label: "Condition (1-5)", type: "number", position: 3 },
+        { entity_kind: "machines:machine", name: "deposit_paid", display_label: "Deposit paid?", type: "text", position: 4 },
+        { entity_kind: "machines:machine", name: "tool_category", display_label: "Category", type: "text", position: 5 },
+      ],
+    },
+  },
 ];

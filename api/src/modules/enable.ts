@@ -173,6 +173,15 @@ export async function enableModuleForOrg(
  *  one.
  */
 export async function disableModuleForOrg(orgId: string, moduleName: string): Promise<void> {
+  // Foundational modules can't be disabled — the platform assumes
+  // they're always there. The web UI hides the toggle, but enforce
+  // server-side so API/CLI callers can't bypass it either.
+  const entry = getEntry(moduleName);
+  if (entry && entry.manifest.band === "foundational") {
+    throw new Error(
+      `Cannot disable ${moduleName}: it's a foundational module and required by the platform.`,
+    );
+  }
   // Refuse if a dependent module is still enabled.
   const allEntries = listEntries();
   const dependents = allEntries
@@ -215,6 +224,62 @@ export async function disableModuleForOrg(orgId: string, moduleName: string): Pr
   } catch (err) {
     console.error(`[disable] activity logging failed for ${moduleName}:`, err);
   }
+}
+
+/** Scan every (org, module) in org_modules and run any pending
+ *  migrations against the tenant DB. The migration runner is
+ *  idempotent (tracks applied names in the tenant's own `migrations`
+ *  table), so this is safe to call on every boot — it just no-ops
+ *  for tenants that are already current.
+ *
+ *  Solves the "module added a new migration after the org enabled
+ *  the module" gap: previously the new migration would never run
+ *  because enableModuleForOrg short-circuits when org_modules
+ *  already has a row. Now boot reconciles them.
+ *
+ *  Returns the total number of (org, module) pairs that had at
+ *  least one migration applied. */
+export async function syncTenantMigrations(): Promise<number> {
+  const rows = await meta
+    .selectFrom("org_modules")
+    .select(["org_id", "module_name"])
+    .execute();
+  let touched = 0;
+  for (const row of rows) {
+    const entry = getEntry(row.module_name);
+    if (!entry || !entry.manifest.schema) continue;
+    try {
+      const migrationsDir = resolve(
+        entry.rootPath,
+        entry.manifest.schema.migrationsDir,
+      );
+      const pool = await getTenantPool(row.org_id);
+      const result = await runMigrations({
+        pool,
+        directory: migrationsDir,
+        scope: `tenant ${row.org_id} / module ${row.module_name}`,
+      });
+      if (result.applied.length > 0) {
+        touched++;
+        // Update the meta-side last_migration pointer so
+        // /modules/:slug/health stays accurate.
+        await meta
+          .updateTable("org_modules")
+          .set({
+            last_migration: result.applied[result.applied.length - 1] ?? null,
+          })
+          .where("org_id", "=", row.org_id)
+          .where("module_name", "=", row.module_name)
+          .execute();
+      }
+    } catch (err) {
+      console.error(
+        `[migrate-sync] failed for ${row.module_name} on ${row.org_id}:`,
+        (err as Error).message,
+      );
+    }
+  }
+  return touched;
 }
 
 /** Convenience: enable every base module (no `dependencies`) for a

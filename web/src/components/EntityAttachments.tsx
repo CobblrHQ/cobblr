@@ -1,0 +1,791 @@
+// Inline attachment panel for any entity-detail page. Shows the
+// tags + files currently attached to (kind, id), plus affordances
+// to add more — without dropping out to the Tags / Files pages.
+//
+// Backend already supports the (source_module, source_type,
+// source_id) polymorphic shape on both core-tags_assignments and
+// core_files_attachments; this is the matching UI primitive.
+
+import { useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowRight, ImageIcon, Link, Plus, Tag as TagIcon, Trash2, Upload, X } from "lucide-react";
+import { ApiError, api, type PairingItem, type TagRecord } from "../lib/api";
+import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
+import { useImageSrc } from "@cobblr/platform-web";
+
+interface Props {
+  /** Entity kind id, e.g. "inventory:part". */
+  kind: string;
+  /** Tenant-DB UUID of the entity. */
+  entityId: string;
+}
+
+export function EntityAttachments({ kind, entityId }: Props) {
+  const [moduleName, sourceType] = kind.split(":");
+  if (!moduleName || !sourceType) return null;
+  return (
+    <div className="space-y-4">
+      <TagsSection
+        sourceModule={moduleName}
+        sourceType={sourceType}
+        sourceId={entityId}
+      />
+      <FilesSection
+        sourceModule={moduleName}
+        sourceType={sourceType}
+        sourceId={entityId}
+      />
+      <PairingsSection kind={kind} entityId={entityId} />
+    </div>
+  );
+}
+
+/** Best-effort PATCH the entity's image_path to a given URL.
+ *  Convention: `/orgs/<slug>/modules/<module>/<type>s/<id>` is the
+ *  CRUD route for every user-facing entity kind (part, machine,
+ *  asset, project, task, order). Pluralizing with +s is reliable
+ *  for the current set of kinds; if a future kind ends in '-y'
+ *  this helper would need adjustment. */
+async function setEntityImagePath(
+  slug: string,
+  sourceModule: string,
+  sourceType: string,
+  sourceId: string,
+  imagePath: string,
+): Promise<void> {
+  const path = `/orgs/${slug}/modules/${sourceModule}/${sourceType}s/${sourceId}`;
+  await api.request("PATCH", path, { image_path: imagePath });
+}
+
+// ──────────────── Tags ──────────────────────────────────────────────
+
+function TagsSection({
+  sourceModule,
+  sourceType,
+  sourceId,
+}: {
+  sourceModule: string;
+  sourceType: string;
+  sourceId: string;
+}) {
+  const { activeSlug } = useActiveOrg();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  const attached = useQuery({
+    queryKey: ["tag-attachments", activeSlug, sourceType, sourceId],
+    queryFn: () =>
+      api.listTagAttachments(activeSlug, {
+        source_module: sourceModule,
+        source_type: sourceType,
+        source_id: sourceId,
+      }),
+    enabled: !!activeSlug,
+  });
+
+  const detach = useMutation({
+    mutationFn: (id: string) => api.detachTag(activeSlug, id),
+    onSuccess: () => {
+      void qc.invalidateQueries({
+        queryKey: ["tag-attachments", activeSlug, sourceType, sourceId],
+      });
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
+
+  const items = attached.data?.items ?? [];
+
+  return (
+    <section>
+      <h3 className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">
+        Tags
+      </h3>
+      <div className="flex flex-wrap gap-2 items-center">
+        {items.map((a) => (
+          <span
+            key={a.id}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border"
+            style={{
+              borderColor: a.tag_color ?? undefined,
+              background: a.tag_color ? `${a.tag_color}22` : undefined,
+            }}
+          >
+            <TagIcon size={10} style={{ color: a.tag_color ?? undefined }} />
+            <span>{a.tag_name}</span>
+            <button
+              onClick={() => detach.mutate(a.id)}
+              className="text-slate-400 hover:text-ember-500 transition"
+              title="Detach"
+            >
+              <X size={10} />
+            </button>
+          </span>
+        ))}
+        <button
+          onClick={() => setPickerOpen(true)}
+          className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs border border-dashed border-slate-300 dark:border-slate-600 text-slate-500 hover:border-cobble-500 hover:text-cobble-600 transition"
+        >
+          <Plus size={10} /> Tag
+        </button>
+      </div>
+      {pickerOpen && (
+        <TagPickerModal
+          slug={activeSlug}
+          existing={new Set(items.map((a) => a.tag_id))}
+          sourceModule={sourceModule}
+          sourceType={sourceType}
+          sourceId={sourceId}
+          onClose={() => setPickerOpen(false)}
+          onAttached={() => {
+            void qc.invalidateQueries({
+              queryKey: ["tag-attachments", activeSlug, sourceType, sourceId],
+            });
+            setPickerOpen(false);
+          }}
+        />
+      )}
+    </section>
+  );
+}
+
+function TagPickerModal({
+  slug,
+  existing,
+  sourceModule,
+  sourceType,
+  sourceId,
+  onClose,
+  onAttached,
+}: {
+  slug: string;
+  existing: Set<string>;
+  sourceModule: string;
+  sourceType: string;
+  sourceId: string;
+  onClose: () => void;
+  onAttached: () => void;
+}) {
+  const tags = useQuery({
+    queryKey: ["tags", slug],
+    queryFn: () => api.listTags(slug),
+    enabled: !!slug,
+  });
+  const [newTag, setNewTag] = useState("");
+  const toast = useToast();
+
+  async function attach(tag: TagRecord | { name: string }) {
+    try {
+      await api.attachTag(slug, {
+        ...("id" in tag ? { tag_id: tag.id } : { tag_name: tag.name }),
+        source_module: sourceModule,
+        source_type: sourceType,
+        source_id: sourceId,
+      });
+      toast.success("Tagged");
+      onAttached();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : String(err));
+    }
+  }
+
+  const available = (tags.data?.items ?? []).filter((t) => !existing.has(t.id));
+
+  return (
+    <Modal open onClose={onClose} title="Add a tag">
+      <div className="space-y-3">
+        {available.length > 0 && (
+          <>
+            <div className="text-xs text-slate-500">Existing</div>
+            <div className="flex flex-wrap gap-2">
+              {available.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => void attach(t)}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border hover:border-cobble-500"
+                  style={{
+                    borderColor: t.color ?? undefined,
+                    background: t.color ? `${t.color}22` : undefined,
+                  }}
+                >
+                  <TagIcon size={10} style={{ color: t.color ?? undefined }} />
+                  {t.name}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+        <div className="border-t border-slate-200 dark:border-slate-700 pt-3">
+          <div className="text-xs text-slate-500 mb-1">Or create new</div>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!newTag.trim()) return;
+              void attach({ name: newTag.trim() });
+            }}
+            className="flex gap-2"
+          >
+            <input
+              type="text"
+              value={newTag}
+              onChange={(e) => setNewTag(e.target.value)}
+              placeholder="urgent, perennial, technic…"
+              className="flex-1 px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+              autoFocus
+            />
+            <button
+              type="submit"
+              disabled={!newTag.trim()}
+              className="px-3 py-1 text-sm rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white"
+            >
+              Add
+            </button>
+          </form>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ──────────────── Files ─────────────────────────────────────────────
+
+function FilesSection({
+  sourceModule,
+  sourceType,
+  sourceId,
+}: {
+  sourceModule: string;
+  sourceType: string;
+  sourceId: string;
+}) {
+  const { activeSlug } = useActiveOrg();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const confirm = useConfirm();
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  const list = useQuery({
+    queryKey: ["file-attachments", activeSlug, sourceType, sourceId],
+    queryFn: async () => {
+      // No direct API helper for "files attached to this entity" —
+      // use the core-files attachments list endpoint inline.
+      const res = await fetch(
+        `/api/v1/orgs/${activeSlug}/modules/core-files/attachments?source_module=${encodeURIComponent(sourceModule)}&source_type=${encodeURIComponent(sourceType)}&source_id=${encodeURIComponent(sourceId)}`,
+        {
+          headers: {
+            Authorization: `Bearer ${localStorage.getItem("cobblr.token") ?? ""}`,
+          },
+        },
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return (await res.json()) as {
+        items: Array<{
+          id: string;
+          file_id: string;
+          filename: string;
+          mime_type: string;
+          kind: string;
+          role: string | null;
+        }>;
+      };
+    },
+    enabled: !!activeSlug,
+  });
+
+  const uploadAndAttach = useMutation({
+    mutationFn: async (file: File) => {
+      const f = await api.uploadFile(activeSlug, file);
+      // Then attach to this entity.
+      const res = await fetch(
+        `/api/v1/orgs/${activeSlug}/modules/core-files/attachments`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${localStorage.getItem("cobblr.token") ?? ""}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            file_id: f.id,
+            source_module: sourceModule,
+            source_type: sourceType,
+            source_id: sourceId,
+            role: "gallery",
+          }),
+        },
+      );
+      if (!res.ok) throw new Error(`attach failed ${res.status}`);
+      return f;
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({
+        queryKey: ["file-attachments", activeSlug, sourceType, sourceId],
+      });
+    },
+    onError: (e) => toast.error(`Upload failed: ${(e as Error).message}`),
+  });
+
+  const detach = useMutation({
+    mutationFn: async (attachmentId: string) => {
+      const res = await fetch(
+        `/api/v1/orgs/${activeSlug}/modules/core-files/attachments/${attachmentId}`,
+        {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${localStorage.getItem("cobblr.token") ?? ""}`,
+          },
+        },
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({
+        queryKey: ["file-attachments", activeSlug, sourceType, sourceId],
+      });
+    },
+  });
+
+  async function handleFiles(files: FileList | null) {
+    if (!files) return;
+    for (const f of Array.from(files)) {
+      try {
+        await uploadAndAttach.mutateAsync(f);
+      } catch {
+        /* toast already fired */
+      }
+    }
+    if (fileInput.current) fileInput.current.value = "";
+  }
+
+  const items = list.data?.items ?? [];
+
+  return (
+    <section>
+      <h3 className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">
+        Files
+      </h3>
+      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
+        {items.map((att) =>
+          att.kind === "image" ? (
+            <AttachmentThumb
+              key={att.id}
+              attachmentId={att.id}
+              fileId={att.file_id}
+              filename={att.filename}
+              slug={activeSlug}
+              onSetAsCover={async () => {
+                try {
+                  await setEntityImagePath(
+                    activeSlug,
+                    sourceModule,
+                    sourceType,
+                    sourceId,
+                    api.fileRawUrl(activeSlug, att.file_id, "medium"),
+                  );
+                  toast.success("Set as cover image");
+                  // Invalidate the entity's list/detail queries so
+                  // pages re-render with the new image_path. Cast a
+                  // wide net since we don't know which page the user
+                  // came from.
+                  void qc.invalidateQueries({ queryKey: [sourceType + "s"] });
+                  void qc.invalidateQueries({ queryKey: ["assets"] });
+                  void qc.invalidateQueries({ queryKey: ["machines"] });
+                  void qc.invalidateQueries({ queryKey: ["inventory-parts"] });
+                } catch (err) {
+                  toast.error(`Couldn't set as cover: ${(err as Error).message}`);
+                }
+              }}
+              onDetach={async () => {
+                const ok = await confirm({
+                  title: "Detach file?",
+                  message: `${att.filename} will stay in your file library, just unlinked from this entity.`,
+                  confirmLabel: "Detach",
+                  destructive: true,
+                });
+                if (ok) detach.mutate(att.id);
+              }}
+            />
+          ) : (
+            <a
+              key={att.id}
+              href={api.fileRawUrl(activeSlug, att.file_id, "original")}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="aspect-square flex flex-col items-center justify-center text-xs text-slate-500 border border-slate-200 dark:border-slate-700 rounded hover:border-cobble-500 transition p-2 text-center"
+              title={att.filename}
+            >
+              <div className="font-mono text-[10px] uppercase">
+                {att.mime_type.split("/")[1] ?? "file"}
+              </div>
+              <div className="truncate w-full mt-1">{att.filename}</div>
+            </a>
+          ),
+        )}
+        <button
+          onClick={() => fileInput.current?.click()}
+          className="aspect-square flex flex-col items-center justify-center gap-1 text-xs text-slate-500 border border-dashed border-slate-300 dark:border-slate-600 rounded hover:border-cobble-500 hover:text-cobble-600 transition"
+        >
+          <Upload size={14} />
+          <span>Add</span>
+        </button>
+        <input
+          ref={fileInput}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={(e) => void handleFiles(e.target.files)}
+        />
+      </div>
+    </section>
+  );
+}
+
+// ──────────────── Pairings (D4) ─────────────────────────────────────
+// Polymorphic "this entity is linked to that one" without firing a
+// wire. UI-driven only; wires that subscribe to entity_pairings can
+// observe the link, but the link itself is just data.
+
+function PairingsSection({ kind, entityId }: { kind: string; entityId: string }) {
+  const { activeSlug } = useActiveOrg();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const confirm = useConfirm();
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  // List BOTH directions (this entity as source OR as target). Two
+  // queries — pairings router doesn't have a single "everything
+  // touching X" filter, so we union client-side.
+  const outbound = useQuery({
+    queryKey: ["pairings", activeSlug, kind, entityId, "out"],
+    queryFn: () =>
+      api.listPairings(activeSlug, { source_kind: kind, source_id: entityId }),
+    enabled: !!activeSlug,
+  });
+  const inbound = useQuery({
+    queryKey: ["pairings", activeSlug, kind, entityId, "in"],
+    queryFn: () =>
+      api.listPairings(activeSlug, { target_kind: kind, target_id: entityId }),
+    enabled: !!activeSlug,
+  });
+
+  const del = useMutation({
+    mutationFn: (id: string) => api.deletePairing(activeSlug, id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["pairings", activeSlug, kind, entityId, "out"] });
+      void qc.invalidateQueries({ queryKey: ["pairings", activeSlug, kind, entityId, "in"] });
+      toast.success("Link removed");
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
+
+  const outRows = outbound.data?.items ?? [];
+  const inRows = inbound.data?.items ?? [];
+  const all = [...outRows, ...inRows];
+
+  return (
+    <section>
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-xs font-medium text-slate-600 dark:text-slate-300 flex items-center gap-1.5">
+          <Link size={12} /> Linked entities
+        </h3>
+        <button
+          onClick={() => setPickerOpen(true)}
+          className="text-xs text-cobble-600 hover:text-cobble-700 inline-flex items-center gap-1"
+        >
+          <Plus size={12} /> Link
+        </button>
+      </div>
+      {all.length === 0 ? (
+        <p className="text-xs text-slate-400 italic">No links yet.</p>
+      ) : (
+        <ul className="space-y-1">
+          {outRows.map((p) => (
+            <PairingRow
+              key={p.id}
+              pairing={p}
+              direction="out"
+              onDelete={async () => {
+                const ok = await confirm({
+                  title: "Remove this link?",
+                  message: `${p.source_kind} → ${p.relationship_kind} → ${p.target_kind}`,
+                  confirmLabel: "Remove",
+                  destructive: true,
+                });
+                if (ok) del.mutate(p.id);
+              }}
+            />
+          ))}
+          {inRows.map((p) => (
+            <PairingRow
+              key={p.id}
+              pairing={p}
+              direction="in"
+              onDelete={async () => {
+                const ok = await confirm({
+                  title: "Remove this link?",
+                  message: `${p.source_kind} → ${p.relationship_kind} → ${p.target_kind}`,
+                  confirmLabel: "Remove",
+                  destructive: true,
+                });
+                if (ok) del.mutate(p.id);
+              }}
+            />
+          ))}
+        </ul>
+      )}
+      {pickerOpen && (
+        <PairingCreateModal
+          fromKind={kind}
+          fromId={entityId}
+          onClose={() => setPickerOpen(false)}
+          onCreated={() => {
+            void qc.invalidateQueries({ queryKey: ["pairings", activeSlug, kind, entityId, "out"] });
+            setPickerOpen(false);
+          }}
+        />
+      )}
+    </section>
+  );
+}
+
+function PairingRow({
+  pairing,
+  direction,
+  onDelete,
+}: {
+  pairing: PairingItem;
+  direction: "in" | "out";
+  onDelete: () => void;
+}) {
+  // For inbound rows, swap the visual so the *other* side reads
+  // first — keeps "this entity is linked to X" semantics regardless
+  // of which side stored it.
+  const left = direction === "out" ? pairing.target_kind : pairing.source_kind;
+  const leftId = direction === "out" ? pairing.target_id : pairing.source_id;
+  return (
+    <li className="flex items-center gap-2 px-2 py-1 text-xs border border-slate-200 dark:border-slate-700 rounded group">
+      <span className="font-mono text-[10px] text-slate-400">
+        {direction === "out" ? "→" : "←"}
+      </span>
+      <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-mono text-[10px] text-slate-500">
+        {pairing.relationship_kind}
+      </span>
+      <ArrowRight size={10} className="text-slate-300" />
+      <span className="font-medium text-slate-700 dark:text-mortar-100 truncate">
+        {left}
+      </span>
+      <span className="font-mono text-[10px] text-slate-400 truncate">
+        {leftId.slice(0, 8)}
+      </span>
+      <div className="flex-1" />
+      {pairing.notes && (
+        <span className="text-slate-500 italic truncate max-w-[200px]" title={pairing.notes}>
+          {pairing.notes}
+        </span>
+      )}
+      <button
+        onClick={onDelete}
+        className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-ember-500 transition"
+        title="Remove link"
+      >
+        <X size={12} />
+      </button>
+    </li>
+  );
+}
+
+function PairingCreateModal({
+  fromKind,
+  fromId,
+  onClose,
+  onCreated,
+}: {
+  fromKind: string;
+  fromId: string;
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const { activeSlug } = useActiveOrg();
+  const toast = useToast();
+  const [query, setQuery] = useState("");
+  const [targetKind, setTargetKind] = useState("");
+  const [targetId, setTargetId] = useState("");
+  const [targetLabel, setTargetLabel] = useState("");
+  const [rel, setRel] = useState("related-to");
+  const [notes, setNotes] = useState("");
+
+  const search = useQuery({
+    queryKey: ["pairing-search", activeSlug, query],
+    queryFn: () => api.search(activeSlug, query),
+    enabled: !!activeSlug && query.trim().length >= 2,
+  });
+
+  const hits = (search.data?.items ?? []).filter(
+    (h) => !(h.kind === fromKind && h.id === fromId),
+  );
+
+  async function handleSubmit() {
+    if (!targetKind || !targetId) {
+      toast.error("Pick a target entity first.");
+      return;
+    }
+    try {
+      await api.createPairing(activeSlug, {
+        source_kind: fromKind,
+        source_id: fromId,
+        target_kind: targetKind,
+        target_id: targetId,
+        relationship_kind: rel.trim() || "related-to",
+        notes: notes.trim() || null,
+      });
+      toast.success("Linked");
+      onCreated();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : String(err));
+    }
+  }
+
+  return (
+    <Modal open onClose={onClose} title="Link to another entity">
+      <div className="space-y-3">
+        <label className="block">
+          <div className="text-xs text-slate-500 mb-1">Search target</div>
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="part name, asset, project…"
+            autoFocus
+            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+          />
+        </label>
+        {hits.length > 0 && !targetId && (
+          <ul className="border border-slate-200 dark:border-slate-700 rounded max-h-48 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
+            {hits.slice(0, 10).map((h) => (
+              <li key={`${h.kind}:${h.id}`}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTargetKind(h.kind);
+                    setTargetId(h.id);
+                    setTargetLabel(h.title);
+                  }}
+                  className="w-full px-3 py-2 text-left hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2"
+                >
+                  <span className="font-mono text-[10px] text-slate-400">{h.kind}</span>
+                  <span className="text-sm truncate">{h.title}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {targetId && (
+          <div className="flex items-center gap-2 px-3 py-2 text-sm border border-cobble-200 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/20 rounded">
+            <span className="font-mono text-[10px] text-slate-500">{targetKind}</span>
+            <span className="font-medium truncate">{targetLabel}</span>
+            <div className="flex-1" />
+            <button
+              type="button"
+              onClick={() => {
+                setTargetId("");
+                setTargetKind("");
+                setTargetLabel("");
+              }}
+              className="text-slate-400 hover:text-slate-700"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        )}
+        <label className="block">
+          <div className="text-xs text-slate-500 mb-1">Relationship</div>
+          <input
+            type="text"
+            value={rel}
+            onChange={(e) => setRel(e.target.value)}
+            placeholder="related-to"
+            className="w-full px-2 py-1 text-sm font-mono border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+          />
+        </label>
+        <label className="block">
+          <div className="text-xs text-slate-500 mb-1">Notes (optional)</div>
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            rows={2}
+            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+          />
+        </label>
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={!targetId}
+            className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white"
+          >
+            Link
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+
+// Image attachment thumbnail with hover affordances:
+//   - Set as cover (camera/image icon)  → PATCH the entity image_path
+//   - Detach (trash icon)               → DELETE the attachment row
+//
+// The image itself routes through useImageSrc so the Bearer token
+// is sent (the file-raw endpoint requires it; <img src> alone fails).
+function AttachmentThumb({
+  attachmentId,
+  fileId,
+  filename,
+  slug,
+  onSetAsCover,
+  onDetach,
+}: {
+  attachmentId: string;
+  fileId: string;
+  filename: string;
+  slug: string;
+  onSetAsCover: () => void;
+  onDetach: () => void;
+}) {
+  const url = api.fileRawUrl(slug, fileId, "thumb");
+  const resolved = useImageSrc(url);
+  void attachmentId;
+  return (
+    <div className="group relative aspect-square rounded overflow-hidden border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
+      {resolved ? (
+        <img src={resolved} alt={filename} className="w-full h-full object-cover" />
+      ) : (
+        <div className="w-full h-full flex items-center justify-center text-[10px] text-slate-400">…</div>
+      )}
+      <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition">
+        <button
+          onClick={onSetAsCover}
+          className="p-1 rounded bg-black/40 text-white hover:bg-cobble-600 transition"
+          title="Set as cover image"
+        >
+          <ImageIcon size={10} />
+        </button>
+        <button
+          onClick={onDetach}
+          className="p-1 rounded bg-black/40 text-white hover:bg-ember-600 transition"
+          title="Detach"
+        >
+          <Trash2 size={10} />
+        </button>
+      </div>
+    </div>
+  );
+}

@@ -274,15 +274,14 @@ export function ConfigurationLink() {
     <NavLink
       to="/configuration"
       className={({ isActive }) =>
-        "px-2 py-1 rounded transition flex items-center gap-1 text-xs whitespace-nowrap shrink-0 " +
+        "rounded transition p-1.5 shrink-0 " +
         (isActive
-          ? "text-cobble-600 font-semibold"
-          : "text-slate-500 dark:text-slate-400 hover:text-cobble-500")
+          ? "text-cobble-600"
+          : "text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-mortar-100")
       }
       title="Workspace configuration"
     >
-      <Sliders size={13} />
-      config
+      <Sliders size={14} />
     </NavLink>
   );
 }

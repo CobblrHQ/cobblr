@@ -12,6 +12,7 @@ export default defineModule({
   description:
     "Physical machines you own. The base layer — install a specialisation (3D Printers / Laser Cutters / CNC Machines) for type-specific fields.",
   icon: "wrench",
+  band: "stock",
 
   schema: {
     tablePrefix: "machines_",
@@ -37,6 +38,18 @@ export default defineModule({
           { name: "state", type: "text" },
           { name: "image_path", type: "image-path", role: "image" },
           { name: "notes", type: "text" },
+        ],
+        // Public face — identifying + display fields. Manufacturer is
+        // public (you'd want to see "Voron" / "Bambu" on a label) but
+        // notes stay private to the owning module's own UI.
+        exposableFields: [
+          "name",
+          "short_name",
+          "family",
+          "type",
+          "manufacturer",
+          "state",
+          "image_path",
         ],
       },
     ],

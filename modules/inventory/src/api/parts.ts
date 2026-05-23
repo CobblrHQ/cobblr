@@ -11,6 +11,7 @@ import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { routeUnknownToMetadata } from "./route-helpers.js";
 
 export const partsRouter = Router({ mergeParams: true });
 
@@ -199,10 +200,17 @@ partsRouter.get(
   }),
 );
 
+// D6: top-level keys the PartCreate / PartUpdate schemas know about.
+// Derived from the zod schema's shape so they stay in sync. Anything
+// not in here that the caller sends gets hoisted into metadata by
+// routeUnknownToMetadata().
+const NATIVE_PART_KEYS = new Set(Object.keys(PartCreate.shape));
+
 partsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
-    const parsed = PartCreate.safeParse(req.body);
+    const routed = routeUnknownToMetadata(req.body, NATIVE_PART_KEYS);
+    const parsed = PartCreate.safeParse(routed);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
     const ctx = tenantContext(req);
@@ -226,7 +234,7 @@ partsRouter.post(
         state: parsed.data.state ?? "active",
         metadata: parsed.data.metadata ?? {},
       })
-      .returning(["id", "name", "qty", "state", "created_at"])
+      .returning(["id", "name", "qty", "state", "metadata", "created_at"])
       .executeTakeFirstOrThrow();
 
     await platform().activity.log({
@@ -248,7 +256,8 @@ partsRouter.post(
 partsRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
-    const parsed = PartUpdate.safeParse(req.body);
+    const routed = routeUnknownToMetadata(req.body, NATIVE_PART_KEYS);
+    const parsed = PartUpdate.safeParse(routed);
     if (!parsed.success) return badBody(res, parsed.error);
     const id = req.params.id;
     if (!id) {
@@ -371,7 +380,10 @@ partsRouter.post(
       ref: { module: "inventory", entityType: "part", entityId: updated.id },
       diff: { delta: parsed.data.delta, reason: parsed.data.reason ?? null, new_qty: updated.qty },
     });
-    platform().events.emit("inventory.stock.changed", {
+    // Await so any wires (e.g. "flip task deps that depended on
+    // this part") have run before the client gets its 200. A client
+    // that immediately re-reads the task sees satisfied=true.
+    await platform().events.emit("inventory.stock.changed", {
       orgId: ctx.org.id,
       partId: updated.id,
       delta: parsed.data.delta,

@@ -1,0 +1,203 @@
+// /me — user profile self-edit. Display name + password change.
+// Email is read-only (changing it has identity implications that v0.1
+// doesn't tackle).
+//
+// Reachable from the workspace switcher dropdown / display-name
+// chip in the header. Distinct from /me/activity (the cross-
+// workspace feed) — this is "edit who I am", that is "what have I
+// been doing".
+
+import { useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
+import { History, KeyRound, UserCog } from "lucide-react";
+import { useAuth } from "../auth/AuthContext";
+import { api, ApiError } from "../lib/api";
+import { useToast } from "@cobblr/platform-web";
+
+export function MeProfilePage() {
+  const { user } = useAuth();
+  const qc = useQueryClient();
+  const toast = useToast();
+
+  return (
+    <div className="space-y-6 max-w-xl">
+      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
+        <UserCog size={20} className="text-cobble-600" />
+        <h1 className="text-2xl font-semibold text-slate-700 dark:text-mortar-100">
+          Your profile
+        </h1>
+      </div>
+
+      {user && (
+        <DisplayNameSection
+          initial={user.display_name}
+          email={user.email}
+          onSaved={() => {
+            // Refresh /me so AuthContext re-renders with new name.
+            void qc.invalidateQueries({ queryKey: ["me"] });
+            toast.success("Profile saved");
+          }}
+        />
+      )}
+
+      <PasswordSection
+        onChanged={() => toast.success("Password updated — you stay signed in.")}
+      />
+
+      <Link
+        to="/me/activity"
+        className="inline-flex items-center gap-2 text-sm text-cobble-600 hover:text-cobble-700"
+      >
+        <History size={14} />
+        Your activity across all workspaces →
+      </Link>
+    </div>
+  );
+}
+
+function DisplayNameSection({
+  initial,
+  email,
+  onSaved,
+}: {
+  initial: string;
+  email: string;
+  onSaved: () => void;
+}) {
+  const [name, setName] = useState(initial);
+  const toast = useToast();
+  const save = useMutation({
+    mutationFn: (display_name: string) => api.updateMe({ display_name }),
+    onSuccess: onSaved,
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+  const dirty = name.trim() !== initial && name.trim().length > 0;
+  return (
+    <section className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 space-y-3">
+      <h2 className="text-sm font-medium text-slate-600 dark:text-slate-300">
+        Identity
+      </h2>
+      <label className="block">
+        <div className="text-xs text-slate-500 mb-1">Email</div>
+        <input
+          type="email"
+          value={email}
+          readOnly
+          className="w-full px-2 py-1 text-sm border border-slate-200 dark:border-slate-700 rounded bg-slate-50 dark:bg-slate-800/40 text-slate-500 cursor-not-allowed"
+        />
+        <div className="text-[11px] text-slate-400 mt-1">
+          Email changes go through a separate flow — not in v0.1.
+        </div>
+      </label>
+      <label className="block">
+        <div className="text-xs text-slate-500 mb-1">Display name</div>
+        <input
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+        />
+      </label>
+      <div className="flex justify-end pt-2">
+        <button
+          type="button"
+          onClick={() => save.mutate(name.trim())}
+          disabled={!dirty || save.isPending}
+          className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white"
+        >
+          {save.isPending ? "saving…" : "Save"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function PasswordSection({ onChanged }: { onChanged: () => void }) {
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const toast = useToast();
+  const change = useMutation({
+    mutationFn: () =>
+      api.changeMyPassword({ current_password: current, new_password: next }),
+    onSuccess: () => {
+      onChanged();
+      setCurrent("");
+      setNext("");
+      setConfirm("");
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+  const tooShort = next.length > 0 && next.length < 8;
+  const mismatch = confirm.length > 0 && confirm !== next;
+  const canSubmit =
+    current.length > 0 && next.length >= 8 && confirm === next && !change.isPending;
+  return (
+    <section className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 space-y-3">
+      <h2 className="text-sm font-medium text-slate-600 dark:text-slate-300 flex items-center gap-2">
+        <KeyRound size={14} /> Password
+      </h2>
+      <label className="block">
+        <div className="text-xs text-slate-500 mb-1">Current password</div>
+        <input
+          type="password"
+          value={current}
+          autoComplete="current-password"
+          onChange={(e) => setCurrent(e.target.value)}
+          className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+        />
+      </label>
+      <label className="block">
+        <div className="text-xs text-slate-500 mb-1">New password (min 8 chars)</div>
+        <input
+          type="password"
+          value={next}
+          autoComplete="new-password"
+          onChange={(e) => setNext(e.target.value)}
+          className={
+            "w-full px-2 py-1 text-sm border rounded bg-white dark:bg-slate-900 " +
+            (tooShort
+              ? "border-ember-400"
+              : "border-slate-300 dark:border-slate-600")
+          }
+        />
+        {tooShort && (
+          <div className="text-[11px] text-ember-500 mt-1">
+            Minimum 8 characters.
+          </div>
+        )}
+      </label>
+      <label className="block">
+        <div className="text-xs text-slate-500 mb-1">Confirm new password</div>
+        <input
+          type="password"
+          value={confirm}
+          autoComplete="new-password"
+          onChange={(e) => setConfirm(e.target.value)}
+          className={
+            "w-full px-2 py-1 text-sm border rounded bg-white dark:bg-slate-900 " +
+            (mismatch
+              ? "border-ember-400"
+              : "border-slate-300 dark:border-slate-600")
+          }
+        />
+        {mismatch && (
+          <div className="text-[11px] text-ember-500 mt-1">
+            Doesn't match the new password above.
+          </div>
+        )}
+      </label>
+      <div className="flex justify-end pt-2">
+        <button
+          type="button"
+          onClick={() => change.mutate()}
+          disabled={!canSubmit}
+          className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white"
+        >
+          {change.isPending ? "updating…" : "Change password"}
+        </button>
+      </div>
+    </section>
+  );
+}

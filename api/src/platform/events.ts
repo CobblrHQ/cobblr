@@ -27,12 +27,18 @@ export function on(eventName: string, module: string, handler: EventHandler): vo
   subs.set(eventName, list);
 }
 
-/** Emit an event. Fire-and-forget — handlers run on the next
- *  microtask tick so the emitter isn't blocked by slow subscribers.
- *  Errors in handlers are logged but never propagate. Wires fire
- *  alongside direct subscribers. */
-export function emit<T>(eventName: string, payload: T): void {
-  // 1. Fan out to direct subscribers
+/** Emit an event. Returns a Promise that resolves once the wire
+ *  engine has finished firing any user-configured bindings. Direct
+ *  subscribers registered via on() still run fire-and-forget on the
+ *  next microtask tick (slow side-effects shouldn't block responses).
+ *
+ *  A caller that needs read-after-write consistency (e.g. a route
+ *  that responds to the client, who then immediately re-reads) should
+ *  `await emit(...)` so the response only goes out after the wires
+ *  have applied. Non-awaiting callers still trigger the wires; they
+ *  just don't wait for them. */
+export async function emit<T>(eventName: string, payload: T): Promise<void> {
+  // 1. Fan out to direct subscribers — fire-and-forget on next tick.
   const list = subs.get(eventName);
   if (list && list.length > 0) {
     void Promise.resolve().then(async () => {
@@ -48,17 +54,16 @@ export function emit<T>(eventName: string, payload: T): void {
       }
     });
   }
-  // 2. Fire user-configured wires (decoupled from direct subs)
+  // 2. Fire user-configured wires inline so awaiting callers get
+  // sync read-after-write semantics. Wire failures are swallowed
+  // (matched to the contract: emit never rejects).
   const p = payload as { orgId?: unknown };
   if (p && typeof p.orgId === "string") {
-    const orgId = p.orgId;
-    void Promise.resolve().then(async () => {
-      try {
-        await fireEvent(eventName, orgId, payload as Record<string, unknown>);
-      } catch (err) {
-        console.error(`[events] wire engine failed for ${eventName}:`, err);
-      }
-    });
+    try {
+      await fireEvent(eventName, p.orgId, payload as Record<string, unknown>);
+    } catch (err) {
+      console.error(`[events] wire engine failed for ${eventName}:`, err);
+    }
   }
 }
 

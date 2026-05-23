@@ -10,6 +10,7 @@ export default defineModule({
   description:
     "Extends machines with laser-cutter-specific fields: tube_type, wattage, bed_size, cooling_type, focal_length.",
   icon: "flame",
+  band: "user",
 
   dependencies: ["machines"],
 

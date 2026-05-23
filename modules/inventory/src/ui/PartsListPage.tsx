@@ -4,7 +4,16 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, FileUp, Plus, Search } from "lucide-react";
+import { AlertTriangle, FileUp, Plus, Search, Tag as TagIcon } from "lucide-react";
+import {
+  BulkActionBar,
+  EntityThumb,
+  EntityTile,
+  ViewModeToggle,
+  useToast,
+  useConfirm,
+  useViewMode,
+} from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { NewPartDialog } from "./NewPartDialog";
 import { ImportDialog } from "./ImportDialog";
@@ -13,7 +22,7 @@ import type { PartListItem } from "./api";
 type StateFilter = "active" | "draft" | "needs_review" | "all";
 
 export function PartsListPage() {
-  const { api } = useInventory();
+  const { api, orgSlug, getToken } = useInventory();
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
   const [categoryId, setCategoryId] = useState<string>("");
@@ -22,6 +31,10 @@ export function PartsListPage() {
   const [lowOnly, setLowOnly] = useState(false);
   const [adding, setAdding] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [viewMode, setViewMode] = useViewMode("parts", "list");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const toast = useToast();
+  const confirm = useConfirm();
 
   const cats = useQuery({ queryKey: ["inventory-categories"], queryFn: () => api.listCategories() });
   const locs = useQuery({ queryKey: ["inventory-locations"], queryFn: () => api.listLocations() });
@@ -44,6 +57,81 @@ export function PartsListPage() {
     getNextPageParam: (last) => last.next_cursor ?? undefined,
   });
   const partItems = parts.data?.pages.flatMap((p) => p.items) ?? [];
+
+  function toggleRow(id: string, checked: boolean) {
+    setSelected((s) => {
+      const n = new Set(s);
+      if (checked) n.add(id);
+      else n.delete(id);
+      return n;
+    });
+  }
+  function selectAll(checked: boolean) {
+    setSelected(checked ? new Set(partItems.map((p) => p.id)) : new Set());
+  }
+  const allChecked = partItems.length > 0 && partItems.every((p) => selected.has(p.id));
+  async function bulkDelete() {
+    const ok = await confirm({
+      title: `Delete ${selected.size} part${selected.size === 1 ? "" : "s"}?`,
+      message: "This removes them from the workspace permanently.",
+      confirmLabel: "Delete",
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      for (const id of Array.from(selected)) {
+        await api.deletePart(id);
+      }
+      toast.success(`Deleted ${selected.size} part${selected.size === 1 ? "" : "s"}`);
+      setSelected(new Set());
+      void qc.invalidateQueries({ queryKey: ["inventory-parts"] });
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  }
+
+  // Bulk-tag: POST core-tags/attachments per selected id. The inventory
+  // module doesn't have a typed client for core-tags so we fetch the
+  // platform endpoint directly with the same Bearer.
+  const [bulkTagOpen, setBulkTagOpen] = useState(false);
+  const [bulkTagBusy, setBulkTagBusy] = useState(false);
+  async function bulkTag(tagName: string) {
+    if (!tagName.trim()) return;
+    setBulkTagBusy(true);
+    try {
+      const token = getToken();
+      for (const id of Array.from(selected)) {
+        const res = await fetch(
+          `/api/v1/orgs/${orgSlug}/modules/core-tags/attachments`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify({
+              tag_name: tagName.trim(),
+              source_module: "inventory",
+              source_type: "part",
+              source_id: id,
+            }),
+          },
+        );
+        if (!res.ok && res.status !== 409) {
+          // 409 = already tagged with that name; ignore and continue.
+          throw new Error(`HTTP ${res.status}`);
+        }
+      }
+      toast.success(`Tagged ${selected.size} part${selected.size === 1 ? "" : "s"}`);
+      setSelected(new Set());
+      setBulkTagOpen(false);
+      void qc.invalidateQueries({ queryKey: ["inventory-parts"] });
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setBulkTagBusy(false);
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -89,9 +177,11 @@ export function PartsListPage() {
           />
           low-stock only
         </label>
+        <div className="ml-auto" />
+        <ViewModeToggle mode={viewMode} onChange={setViewMode} />
         <button
           onClick={() => setImporting(true)}
-          className="ml-auto rounded-md border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-mortar-200 hover:bg-mortar-50 dark:hover:bg-slate-800/70 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
+          className="rounded-md border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-mortar-200 hover:bg-mortar-50 dark:hover:bg-slate-800/70 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
         >
           <FileUp size={14} /> Import CSV
         </button>
@@ -112,7 +202,16 @@ export function PartsListPage() {
           No parts match. Try widening the filter or add the first one.
         </div>
       )}
-      {partItems.length > 0 && <PartsTable items={partItems} />}
+      {partItems.length > 0 && viewMode === "tiles" && <PartsTileGrid items={partItems} />}
+      {partItems.length > 0 && viewMode === "list" && (
+        <PartsTable
+          items={partItems}
+          selected={selected}
+          allChecked={allChecked}
+          onToggle={toggleRow}
+          onSelectAll={selectAll}
+        />
+      )}
       {parts.hasNextPage && (
         <div className="flex justify-center">
           <button
@@ -143,16 +242,129 @@ export function PartsListPage() {
           }}
         />
       )}
+      <BulkActionBar
+        count={selected.size}
+        onClear={() => setSelected(new Set())}
+        actions={
+          <>
+            <button
+              type="button"
+              onClick={() => setBulkTagOpen(true)}
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-cobble-600 hover:text-cobble-700"
+            >
+              <TagIcon size={12} /> Tag
+            </button>
+            <button
+              type="button"
+              onClick={() => void bulkDelete()}
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-ember-600 hover:text-ember-700"
+            >
+              <AlertTriangle size={12} /> Delete
+            </button>
+          </>
+        }
+      />
+      {bulkTagOpen && (
+        <PartsBulkTagModal
+          count={selected.size}
+          busy={bulkTagBusy}
+          onClose={() => setBulkTagOpen(false)}
+          onSubmit={(n) => void bulkTag(n)}
+        />
+      )}
     </div>
   );
 }
 
-function PartsTable({ items }: { items: PartListItem[] }) {
+function PartsBulkTagModal({
+  count,
+  busy,
+  onClose,
+  onSubmit,
+}: {
+  count: number;
+  busy: boolean;
+  onClose: () => void;
+  onSubmit: (tagName: string) => void;
+}) {
+  const [name, setName] = useState("");
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="bg-white dark:bg-slate-900 rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 p-5 max-w-sm w-full"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="text-sm font-medium mb-3 text-slate-700 dark:text-mortar-100">
+          Tag {count} part{count === 1 ? "" : "s"}
+        </div>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!name.trim()) return;
+            onSubmit(name.trim());
+          }}
+          className="space-y-3"
+        >
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. urgent, archive, low-stock"
+            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            autoFocus
+          />
+          <div className="text-[11px] text-slate-400">
+            Existing tag? Reused. New name? Created on the fly.
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={busy || !name.trim()}
+              className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white"
+            >
+              {busy ? "tagging…" : `Tag ${count}`}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function PartsTable({
+  items,
+  selected,
+  allChecked,
+  onToggle,
+  onSelectAll,
+}: {
+  items: PartListItem[];
+  selected: Set<string>;
+  allChecked: boolean;
+  onToggle: (id: string, checked: boolean) => void;
+  onSelectAll: (checked: boolean) => void;
+}) {
   return (
     <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
           <tr className="bg-mortar-100 dark:bg-slate-800 text-[10px] font-mono uppercase tracking-widest text-slate-500 dark:text-slate-400">
+            <th className="w-8 px-3 py-2">
+              <input
+                type="checkbox"
+                checked={allChecked}
+                onChange={(e) => onSelectAll(e.target.checked)}
+                className="accent-cobble-600"
+                aria-label="Select all"
+              />
+            </th>
             <Th>Name</Th>
             <Th>Category</Th>
             <Th>Location</Th>
@@ -165,13 +377,27 @@ function PartsTable({ items }: { items: PartListItem[] }) {
         <tbody>
           {items.map((p) => (
             <tr key={p.id} className="border-t border-slate-100 dark:border-slate-700 hover:bg-mortar-50 dark:hover:bg-slate-800/70 transition">
+              <td className="px-3 py-2 w-8">
+                <input
+                  type="checkbox"
+                  checked={selected.has(p.id)}
+                  onChange={(e) => onToggle(p.id, e.target.checked)}
+                  className="accent-cobble-600"
+                  aria-label={`Select ${p.name}`}
+                />
+              </td>
               <td className="px-3 py-2">
-                <Link to={`/inventory/parts/${p.id}`} className="font-medium text-slate-700 dark:text-mortar-100 hover:text-cobble-600">
-                  {p.name}
-                </Link>
-                {p.manufacturer && (
-                  <span className="ml-2 text-[11px] text-slate-400 dark:text-slate-500">{p.manufacturer}</span>
-                )}
+                <div className="flex items-center gap-3">
+                  <EntityThumb src={p.image_path} alt={p.name} size={56} />
+                  <div className="min-w-0">
+                    <Link to={`/inventory/parts/${p.id}`} className="font-medium text-slate-700 dark:text-mortar-100 hover:text-cobble-600">
+                      {p.name}
+                    </Link>
+                    {p.manufacturer && (
+                      <span className="ml-2 text-[11px] text-slate-400 dark:text-slate-500">{p.manufacturer}</span>
+                    )}
+                  </div>
+                </div>
               </td>
               <td className="px-3 py-2 text-slate-500 dark:text-slate-400">{p.category_name ?? "—"}</td>
               <td className="px-3 py-2 text-slate-500 dark:text-slate-400">{p.location_name ?? "—"}</td>
@@ -197,6 +423,32 @@ function PartsTable({ items }: { items: PartListItem[] }) {
 
 function Th({ children, className = "" }: { children?: React.ReactNode; className?: string }) {
   return <th className={`px-3 py-2 font-medium text-left ${className}`}>{children}</th>;
+}
+
+function PartsTileGrid({ items }: { items: PartListItem[] }) {
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+      {items.map((p) => (
+        <Link key={p.id} to={`/inventory/parts/${p.id}`} className="block">
+          <EntityTile
+            src={p.image_path}
+            title={p.name}
+            subtitle={p.manufacturer || p.category_name || null}
+            badge={
+              p.low_stock ? (
+                <span className="text-ember-600 dark:text-ember-500">
+                  {fmt(p.qty)} / {p.min_qty == null ? "—" : fmt(p.min_qty)}
+                </span>
+              ) : (
+                `${fmt(p.qty)} ${p.unit}`
+              )
+            }
+            attention={p.low_stock}
+          />
+        </Link>
+      ))}
+    </div>
+  );
 }
 
 function fmt(n: number): string {

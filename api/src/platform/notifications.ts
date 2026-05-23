@@ -173,3 +173,70 @@ export async function unreadCount(userId: string, orgId: string): Promise<number
     .executeTakeFirstOrThrow();
   return Number(row.c);
 }
+
+// ─────── Cross-workspace variants for /me/notifications ─────────────
+// The header bell wants "everything for this user, no matter which
+// workspace they're currently viewing". These variants join through
+// org_memberships so we only return notifications for orgs the user
+// still belongs to (handles the "you were removed from a workspace"
+// case implicitly).
+
+export interface CrossOrgNotificationListItem extends NotificationListItem {
+  org_id: string;
+  org_name: string;
+  org_slug: string;
+}
+
+export async function listForUserAcrossOrgs(
+  userId: string,
+  opts: { limit?: number; unreadOnly?: boolean } = {},
+): Promise<CrossOrgNotificationListItem[]> {
+  const limit = Math.min(Math.max(opts.limit ?? 25, 1), 100);
+  let q = meta
+    .selectFrom("notifications as n")
+    .innerJoin("org_memberships as m", (j) =>
+      j.onRef("m.org_id", "=", "n.org_id").on("m.user_id", "=", userId),
+    )
+    .innerJoin("orgs as o", "o.id", "n.org_id")
+    .select([
+      "n.id as id",
+      "n.event_type as event_type",
+      "n.module_name as module_name",
+      "n.message as message",
+      "n.link_url as link_url",
+      "n.read_at as read_at",
+      "n.created_at as created_at",
+      "n.org_id as org_id",
+      "o.name as org_name",
+      "o.slug as org_slug",
+    ])
+    .where("n.user_id", "=", userId)
+    .orderBy("n.created_at", "desc")
+    .limit(limit);
+  if (opts.unreadOnly) q = q.where("n.read_at", "is", null);
+  return q.execute();
+}
+
+export async function unreadCountAcrossOrgs(userId: string): Promise<number> {
+  const row = await meta
+    .selectFrom("notifications as n")
+    .innerJoin("org_memberships as m", (j) =>
+      j.onRef("m.org_id", "=", "n.org_id").on("m.user_id", "=", userId),
+    )
+    .select(({ fn }) => fn.countAll<string>().as("c"))
+    .where("n.user_id", "=", userId)
+    .where("n.read_at", "is", null)
+    .executeTakeFirstOrThrow();
+  return Number(row.c);
+}
+
+export async function markAllReadAcrossOrgs(userId: string): Promise<number> {
+  const updated = await meta
+    .updateTable("notifications")
+    .set({ read_at: new Date() })
+    .where("user_id", "=", userId)
+    .where("read_at", "is", null)
+    .returning("id")
+    .execute();
+  return updated.length;
+}

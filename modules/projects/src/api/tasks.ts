@@ -8,6 +8,7 @@ import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody } from "./util.js";
+import { routeUnknownToMetadata } from "./route-helpers.js";
 
 export const tasksRouter = Router({ mergeParams: true });
 
@@ -20,6 +21,8 @@ const TaskCreate = z.object({
   energy: z.enum(["small", "medium", "large"]).nullable().optional(),
   due_date: z.string().nullable().optional(),
 });
+
+const TASK_NATIVE_KEYS = new Set(Object.keys(TaskCreate.shape));
 const TaskUpdate = TaskCreate.partial();
 
 const ListQuery = z.object({
@@ -110,7 +113,8 @@ tasksRouter.get(
 tasksRouter.post(
   "/",
   asyncHandler(async (req, res) => {
-    const parsed = TaskCreate.safeParse(req.body);
+    const routed = routeUnknownToMetadata(req.body, TASK_NATIVE_KEYS);
+    const parsed = TaskCreate.safeParse(routed);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
     const ctx = tenantContext(req);
@@ -149,7 +153,8 @@ tasksRouter.post(
 tasksRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
-    const parsed = TaskUpdate.safeParse(req.body);
+    const routed = routeUnknownToMetadata(req.body, TASK_NATIVE_KEYS);
+    const parsed = TaskUpdate.safeParse(routed);
     if (!parsed.success) return badBody(res, parsed.error);
     const id = req.params.id;
     if (!id) {

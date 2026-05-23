@@ -12,6 +12,7 @@ export default defineModule({
   description:
     "Orders, line items, and cost rollup. Each order is a vendor purchase; line items can link to inventory parts and to whatever consumed them — printer mods, projects, anything.",
   icon: "shopping-bag",
+  band: "stock",
 
   schema: {
     tablePrefix: "purchases_",
@@ -41,6 +42,17 @@ export default defineModule({
           { name: "url", type: "url" },
           { name: "notes", type: "text" },
         ],
+        // Cross-module readable: vendor / number / status + dates so a
+        // task can show "blocked on Order #1234 from McMaster (arrived 2026-05-20)".
+        // Costs + tracking + url stay private — internal procurement detail.
+        exposableFields: [
+          "vendor",
+          "order_number",
+          "status",
+          "ordered_at",
+          "expected_arrival",
+          "arrived_at",
+        ],
       },
       {
         id: "purchases:order_item",
@@ -54,6 +66,9 @@ export default defineModule({
           { name: "unit_cost", type: "number" },
           { name: "received_at", type: "date" },
         ],
+        // Line description + qty + received-at for cross-module display
+        // ("3 of these were received last week"). Unit cost private.
+        exposableFields: ["description", "qty", "received_at"],
       },
     ],
   },

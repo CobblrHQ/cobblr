@@ -13,6 +13,7 @@ export default defineModule({
   description:
     "Parts, locations, categories, stock tracking, polymorphic allocations. The generalised toolkit you'd otherwise Frankenstein from a spreadsheet.",
   icon: "boxes",
+  band: "stock",
 
   schema: {
     tablePrefix: "inventory_",
@@ -42,6 +43,18 @@ export default defineModule({
           { name: "image_path", type: "image-path", role: "image" },
           { name: "notes", type: "text" },
         ],
+        // Cross-module readable: name + description for labels & rendering,
+        // qty/min_qty for low-stock / dep-satisfied checks, unit for quantity
+        // display, image for galleries. Internal-only: cost (commercial),
+        // manufacturer/supplier_url (procurement detail), notes (free-text).
+        exposableFields: [
+          "name",
+          "description",
+          "qty",
+          "unit",
+          "min_qty",
+          "image_path",
+        ],
         detailRoute: "/inventory/parts/{id}",
       },
       {
@@ -55,6 +68,9 @@ export default defineModule({
           { name: "short_name", type: "text" },
           { name: "kind", type: "text" },
         ],
+        // Locations are public-by-nature — labels reference them, views
+        // group by them; expose everything declared.
+        exposableFields: ["name", "short_name", "kind"],
       },
     ],
   },
@@ -79,7 +95,20 @@ export default defineModule({
       "inventory.allocation.released",
     ],
     api: ["getPartById", "searchParts", "adjustStock", "allocate", "release"],
-    actions: [],
+    actions: [
+      {
+        id: "inventory:adjust-stock",
+        label: "Adjust part stock",
+        description:
+          "Add or subtract from a part's on-hand qty. Wire it to purchases.order_item.received for auto-bump-on-arrival, or fire it from any other event source. Args: { partId, delta, reason? }.",
+        appliesTo: { any: true },
+        invokeHandler: "inventory.adjust-stock",
+        // Wire-driven only — clicking it on an arbitrary entity
+        // doesn't make sense; the user has stock-adjust HTTP for
+        // direct edits.
+        userInvokable: false,
+      },
+    ],
   },
 
   subscribes: [],

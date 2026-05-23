@@ -13,6 +13,14 @@ export const metaPool = new Pool({
   max: 10,
 });
 
+// Without an 'error' listener, a pg-pool idle-client error (e.g. the
+// server killed an idle connection during shutdown, or a network
+// blip) becomes an unhandled 'error' event and Node terminates the
+// process. Per pg-pool docs, register one.
+metaPool.on("error", (err) => {
+  console.error("[meta-pool] idle client error:", (err as Error).message);
+});
+
 export const meta = new Kysely<MetaDB>({
   dialect: new PostgresDialect({ pool: metaPool }),
 });

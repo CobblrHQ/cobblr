@@ -6,7 +6,7 @@
 // default, timestamptz default) wrap it with Generated<...> so insert
 // types don't require you to supply it.
 
-import type { Generated } from "kysely";
+import type { ColumnType, Generated } from "kysely";
 
 export interface UsersTable {
   id: Generated<string>;
@@ -182,6 +182,45 @@ export interface EntityKindsTable {
   /** Preset name (e.g. "owned-thing") if the manifest used profile
    *  shorthand, null if declared raw. Bookkeeping for tooling. */
   profile: string | null;
+  /** Cross-module read whitelist (jsonb array of field names) — the
+   *  read-time trust boundary. Null = legacy (full fields returned,
+   *  deprecation logged on first cross-module read of this kind).
+   *  See docs/design-decisions/entity-resolver.md. */
+  exposable_fields: unknown | null;
+}
+
+export interface CoreRecurrenceEntityStateTable {
+  org_id: string;
+  kind: string;
+  entity_id: string;
+  last_fired_at: Date;
+  next_due_at: Date | null;
+}
+
+/** M1 cross-workspace sharing: source → target read access. */
+export interface WorkspaceLinksTable {
+  id: Generated<string>;
+  source_org_id: string;
+  target_org_id: string;
+  kinds: string[];
+  status: Generated<"pending" | "active" | "revoked">;
+  created_by: string;
+  created_at: Generated<Date>;
+  accepted_at: Date | null;
+  revoked_at: Date | null;
+  /** M1 v0.2: NULL = never expires. Otherwise the entity-list union
+   *  treats a link with expires_at <= now() as inactive at read time
+   *  (no scheduled sweep). */
+  expires_at: ColumnType<Date | null, Date | null | undefined, Date | null | undefined>;
+  /** M1 v0.5: minimum role the viewer must hold in the TARGET
+   *  workspace to read the share. NULL = no restriction (every
+   *  target member can read, v0.1 default). Values: owner | admin
+   *  | member | guest. */
+  min_target_role: ColumnType<
+    "owner" | "admin" | "member" | "guest" | null,
+    "owner" | "admin" | "member" | "guest" | null | undefined,
+    "owner" | "admin" | "member" | "guest" | null | undefined
+  >;
 }
 
 export interface EntityActionsTable {
@@ -214,7 +253,8 @@ export type TriggerType =
   | "event"
   | "on-create"
   | "on-update"
-  | "on-delete";
+  | "on-delete"
+  | "schedule";
 
 export interface EntityActionBindingsTable {
   id: Generated<string>;
@@ -231,7 +271,25 @@ export interface EntityActionBindingsTable {
   /** Set when this row was contributed by a Pillar-E module's
    *  `contributes.wires`. Cleaned up on module disable. */
   source_module: string | null;
+  /** Q1 wire target. JSON value:
+   *  - `"self"` — action runs on the source entity (default).
+   *  - `{ rel: string, dir?: "in" | "out", kind?: string }` — action
+   *    runs on entities discovered by walking entity_pairings from
+   *    the source. `dir` defaults to "in".
+   *  See docs/design-decisions/wires-and-bundles.md (Q1). */
+  target: Generated<unknown>;
+  /** Q4: RRULE for schedule-triggered wires (null otherwise).
+   *  See docs/design-decisions/wires-and-bundles.md (Q4). */
+  trigger_schedule: string | null;
   created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+/** Per-wire scheduling idempotency state, owned by core-recurrence. */
+export interface WireScheduleStateTable {
+  binding_id: string;
+  last_fired_at: Date | null;
+  next_due_at: Date | null;
   updated_at: Generated<Date>;
 }
 
@@ -269,6 +327,20 @@ export interface ModuleFieldDefsTable {
   created_at: Generated<Date>;
 }
 
+/** Token-keyed lookup so an unauthenticated GET /api/v1/public/:token
+ *  can resolve in one query to (org_id, surface_id) without scanning
+ *  tenant DBs. Configs themselves live in the tenant DB owned by
+ *  core-public-surfaces. */
+export interface PublicSurfaceTokensTable {
+  token: string;
+  org_id: string;
+  surface_id: string;
+  enabled: Generated<boolean>;
+  expires_at: Date | null;
+  revoked_at: Date | null;
+  created_at: Generated<Date>;
+}
+
 export interface MetaDB {
   users: UsersTable;
   orgs: OrgsTable;
@@ -287,6 +359,31 @@ export interface MetaDB {
   entity_actions: EntityActionsTable;
   entity_action_org_overrides: EntityActionOrgOverridesTable;
   entity_action_bindings: EntityActionBindingsTable;
+  wire_schedule_state: WireScheduleStateTable;
+  core_recurrence_entity_state: CoreRecurrenceEntityStateTable;
+  workspace_links: WorkspaceLinksTable;
   bundles: BundlesTable;
   module_field_defs: ModuleFieldDefsTable;
+  public_surface_tokens: PublicSurfaceTokensTable;
+  core_queue_jobs: CoreQueueJobsTable;
+}
+
+/** core-queue v0.1: persistent background work. See
+ *  migrations/platform/20260515-020-queue-jobs.sql for the column
+ *  semantics + lock-sweep model. */
+export interface CoreQueueJobsTable {
+  id: Generated<string>;
+  org_id: string;
+  queue: string;
+  payload: Generated<Record<string, unknown>>;
+  status: Generated<"queued" | "running" | "done" | "failed">;
+  attempts: Generated<number>;
+  max_attempts: Generated<number>;
+  run_at: Generated<Date>;
+  locked_at: Date | null;
+  locked_by: string | null;
+  completed_at: Date | null;
+  failed_at: Date | null;
+  error: string | null;
+  created_at: Generated<Date>;
 }

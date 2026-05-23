@@ -12,7 +12,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Plus, Search, Trash2 } from "lucide-react";
+import { ChevronRight, Plus, Search, Tag as TagIcon, Trash2 } from "lucide-react";
 import { ApiError, api, type Machine, type OrgModuleListItem, type PlatformFieldDef } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import {
@@ -22,6 +22,14 @@ import {
   useToast,
   useConfirm,
 } from "@cobblr/platform-web";
+import {
+  BulkActionBar,
+  EntityThumb,
+  EntityTile,
+  ViewModeToggle,
+  useViewMode,
+} from "@cobblr/platform-web";
+import { EntityAttachments } from "../components/EntityAttachments";
 
 const ENTITY_KIND = "machines:machine";
 
@@ -131,6 +139,52 @@ export function MachinesPage() {
     navigate(`/machines/${mid}${searchParams.toString() ? `?${searchParams}` : ""}`);
 
   const [newOpen, setNewOpen] = useState(false);
+  const [viewMode, setViewMode] = useViewMode("machines", "list");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const toastM = useToast();
+  const confirmM = useConfirm();
+  const qcM = useQueryClient();
+  const bulkDelete = useMutation({
+    mutationFn: async (ids: string[]) => {
+      for (const id of ids) {
+        await api.deleteMachine(activeSlug, id);
+      }
+    },
+    onSuccess: () => {
+      toastM.success(`Deleted ${selected.size} machine${selected.size === 1 ? "" : "s"}`);
+      setSelected(new Set());
+      void qcM.invalidateQueries({ queryKey: ["machines", activeSlug] });
+    },
+    onError: (e) => toastM.error((e as Error).message),
+  });
+  function toggleRow(id: string, checked: boolean) {
+    setSelected((s) => {
+      const n = new Set(s);
+      if (checked) n.add(id);
+      else n.delete(id);
+      return n;
+    });
+  }
+  const [bulkTagOpen, setBulkTagOpen] = useState(false);
+  const bulkTag = useMutation({
+    mutationFn: async (tagName: string) => {
+      for (const id of Array.from(selected)) {
+        await api.attachTag(activeSlug, {
+          tag_name: tagName,
+          source_module: "machines",
+          source_type: "machine",
+          source_id: id,
+        });
+      }
+    },
+    onSuccess: () => {
+      toastM.success(`Tagged ${selected.size} machine${selected.size === 1 ? "" : "s"}`);
+      setSelected(new Set());
+      setBulkTagOpen(false);
+      void qcM.invalidateQueries({ queryKey: ["machines", activeSlug] });
+    },
+    onError: (e) => toastM.error((e as Error).message),
+  });
 
   return (
     <div className="space-y-4">
@@ -177,6 +231,7 @@ export function MachinesPage() {
             className="input !py-1 !pl-7 !text-xs !w-48"
           />
         </div>
+        <ViewModeToggle mode={viewMode} onChange={setViewMode} />
         <button
           onClick={() => setNewOpen(true)}
           className="text-[10px] font-mono uppercase tracking-widest text-cobble-600 hover:text-cobble-700 transition flex items-center gap-1 px-2 py-1 rounded border border-slate-200 dark:border-slate-700"
@@ -191,8 +246,33 @@ export function MachinesPage() {
             ? "No machines yet. Click + new to add one."
             : "No matches with the current filters."}
         </div>
+      ) : viewMode === "tiles" ? (
+        lensName ? (
+          <MachineTileGrid rows={filtered} onRowClick={rowClick} />
+        ) : (
+          <div className="space-y-5">
+            {sections.map((s) => (
+              <section key={s.key || "_other"}>
+                <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500 mb-2">
+                  // {s.label}{" "}
+                  <span className="text-slate-400 dark:text-slate-500">({s.rows.length})</span>
+                </div>
+                <MachineTileGrid rows={s.rows} onRowClick={rowClick} />
+              </section>
+            ))}
+          </div>
+        )
       ) : lensName ? (
-        <MachineTable rows={filtered} lensFieldDefs={lensFieldDefs} onRowClick={rowClick} />
+        <MachineTable
+          rows={filtered}
+          lensFieldDefs={lensFieldDefs}
+          onRowClick={rowClick}
+          selected={selected}
+          onToggle={toggleRow}
+          onSelectAll={(c) =>
+            setSelected(c ? new Set(filtered.map((r) => r.id)) : new Set())
+          }
+        />
       ) : (
         <div className="space-y-5">
           {sections.map((s) => (
@@ -201,7 +281,21 @@ export function MachinesPage() {
                 // {s.label}{" "}
                 <span className="text-slate-400 dark:text-slate-500">({s.rows.length})</span>
               </div>
-              <MachineTable rows={s.rows} lensFieldDefs={[]} onRowClick={rowClick} />
+              <MachineTable
+                rows={s.rows}
+                lensFieldDefs={[]}
+                onRowClick={rowClick}
+                selected={selected}
+                onToggle={toggleRow}
+                onSelectAll={(c) =>
+                  setSelected((prev) => {
+                    const n = new Set(prev);
+                    if (c) for (const r of s.rows) n.add(r.id);
+                    else for (const r of s.rows) n.delete(r.id);
+                    return n;
+                  })
+                }
+              />
             </section>
           ))}
         </div>
@@ -216,7 +310,100 @@ export function MachinesPage() {
         open={newOpen}
         onClose={() => setNewOpen(false)}
       />
+      <BulkActionBar
+        count={selected.size}
+        onClear={() => setSelected(new Set())}
+        actions={
+          <>
+            <button
+              type="button"
+              onClick={() => setBulkTagOpen(true)}
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-cobble-600 hover:text-cobble-700"
+            >
+              <TagIcon size={12} /> Tag
+            </button>
+            <button
+              type="button"
+              disabled={bulkDelete.isPending}
+              onClick={async () => {
+                const ok = await confirmM({
+                  title: `Delete ${selected.size} machine${selected.size === 1 ? "" : "s"}?`,
+                  message: "This removes the rows from the workspace permanently.",
+                  confirmLabel: "Delete",
+                  destructive: true,
+                });
+                if (ok) bulkDelete.mutate(Array.from(selected));
+              }}
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-ember-600 hover:text-ember-700 disabled:opacity-50"
+            >
+              <Trash2 size={12} /> Delete
+            </button>
+          </>
+        }
+      />
+      {bulkTagOpen && (
+        <MachineBulkTagModal
+          count={selected.size}
+          busy={bulkTag.isPending}
+          onClose={() => setBulkTagOpen(false)}
+          onSubmit={(name) => bulkTag.mutate(name)}
+        />
+      )}
     </div>
+  );
+}
+
+function MachineBulkTagModal({
+  count,
+  busy,
+  onClose,
+  onSubmit,
+}: {
+  count: number;
+  busy: boolean;
+  onClose: () => void;
+  onSubmit: (tagName: string) => void;
+}) {
+  const [name, setName] = useState("");
+  return (
+    <Modal open onClose={onClose} title={`Tag ${count} machine${count === 1 ? "" : "s"}`}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!name.trim()) return;
+          onSubmit(name.trim());
+        }}
+        className="space-y-3"
+      >
+        <label className="block">
+          <div className="text-xs text-slate-500 mb-1">Tag name</div>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. in-progress, voron, archive"
+            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            autoFocus
+          />
+        </label>
+        <div className="flex justify-end gap-2 pt-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={busy || !name.trim()}
+            className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white"
+          >
+            {busy ? "tagging…" : `Tag ${count}`}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
@@ -224,16 +411,35 @@ function MachineTable({
   rows,
   lensFieldDefs,
   onRowClick,
+  selected,
+  onToggle,
+  onSelectAll,
 }: {
   rows: Machine[];
   lensFieldDefs: PlatformFieldDef[];
   onRowClick: (id: string) => void;
+  selected?: Set<string>;
+  onToggle?: (id: string, checked: boolean) => void;
+  onSelectAll?: (checked: boolean) => void;
 }) {
+  const showSelect = !!selected && !!onToggle;
+  const allChecked = showSelect && rows.length > 0 && rows.every((r) => selected!.has(r.id));
   return (
     <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
       <table className="w-full text-sm">
         <thead className="bg-mortar-50/60 dark:bg-slate-800/40 text-[10px] font-mono uppercase tracking-widest text-slate-500 dark:text-slate-400">
           <tr>
+            {showSelect && (
+              <th className="w-8 px-3 py-2">
+                <input
+                  type="checkbox"
+                  checked={allChecked}
+                  onChange={(e) => onSelectAll?.(e.target.checked)}
+                  className="accent-cobble-600"
+                  aria-label="Select all"
+                />
+              </th>
+            )}
             <th className="text-left px-3 py-2">Name</th>
             <th className="text-left px-3 py-2">Family</th>
             <th className="text-left px-3 py-2">Manufacturer</th>
@@ -254,13 +460,32 @@ function MachineTable({
               onClick={() => onRowClick(m.id)}
               className="hover:bg-mortar-50 dark:hover:bg-slate-800/40 transition cursor-pointer"
             >
+              {showSelect && (
+                <td
+                  className="px-3 py-2 w-8"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selected!.has(m.id)}
+                    onChange={(e) => onToggle!(m.id, e.target.checked)}
+                    className="accent-cobble-600"
+                    aria-label={`Select ${m.name}`}
+                  />
+                </td>
+              )}
               <td className="px-3 py-2 text-slate-700 dark:text-mortar-100 font-medium">
-                {m.name}
-                {m.short_name && (
-                  <span className="ml-1.5 text-[10px] font-mono text-slate-400">
-                    {m.short_name}
+                <div className="flex items-center gap-3">
+                  <EntityThumb src={m.image_path} alt={m.name} size={56} />
+                  <span className="truncate">
+                    {m.name}
+                    {m.short_name && (
+                      <span className="ml-1.5 text-[10px] font-mono text-slate-400">
+                        {m.short_name}
+                      </span>
+                    )}
                   </span>
-                )}
+                </div>
               </td>
               <td className="px-3 py-2 text-slate-500 dark:text-slate-400">
                 {m.family || "—"}
@@ -291,6 +516,34 @@ function MachineTable({
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function MachineTileGrid({
+  rows,
+  onRowClick,
+}: {
+  rows: Machine[];
+  onRowClick: (id: string) => void;
+}) {
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+      {rows.map((m) => (
+        <button
+          key={m.id}
+          type="button"
+          onClick={() => onRowClick(m.id)}
+          className="text-left"
+        >
+          <EntityTile
+            src={m.image_path}
+            title={m.name}
+            subtitle={m.family || m.manufacturer || m.short_name || null}
+            badge={m.state}
+          />
+        </button>
+      ))}
     </div>
   );
 }
@@ -394,6 +647,8 @@ function MachineDetailModal({
             <EditField label="Quantity" value={String(m.quantity)} numeric onCommit={(v) => update.mutate({ quantity: Number(v) || 0 })} />
             <EditField label="Excitement (0-5)" value={String(m.excitement)} numeric onCommit={(v) => update.mutate({ excitement: Math.min(5, Math.max(0, Number(v) || 0)) })} />
           </dl>
+
+          <EntityAttachments kind={ENTITY_KIND} entityId={m.id} />
 
           <CustomFieldsPanel
             entityKind={ENTITY_KIND}

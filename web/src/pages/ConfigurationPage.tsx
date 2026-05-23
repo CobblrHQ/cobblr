@@ -13,11 +13,18 @@ import { Link } from "react-router-dom";
 import {
   Activity,
   Boxes,
+  FileText,
+  Files,
+  Globe,
+  HeartPulse,
   KeyRound,
+  LayoutList,
+  Link2,
   MousePointerClick,
   Package,
   Plug,
   Sliders,
+  Tag,
   Users,
   Wrench,
 } from "lucide-react";
@@ -94,6 +101,55 @@ export function ConfigurationPage() {
       description:
         "Long-lived `cbt_*` tokens for CLI / AI / automation. Mint, list, revoke.",
       to: "/configuration/tokens",
+    },
+    {
+      icon: Globe,
+      label: "Public surfaces",
+      description:
+        "Token-gated URLs that share a saved view with anyone — no account needed.",
+      to: "/configuration/surfaces",
+    },
+    {
+      icon: HeartPulse,
+      label: "Healthcheck",
+      description:
+        "Live status rollup of every module's probes. Polled every 30s; 503 on red.",
+      to: "/configuration/health",
+    },
+    {
+      icon: Link2,
+      label: "Workspace links",
+      description:
+        "Cross-workspace data sharing — read selected entity kinds from another workspace you own (or invite-share). Accept / revoke per link.",
+      to: "/configuration/links",
+    },
+    {
+      icon: LayoutList,
+      label: "Saved views",
+      description:
+        "List / table / kanban views over your entities. Saved here, renderable from the dashboard, publishable as public surfaces.",
+      to: "/views",
+    },
+    {
+      icon: Tag,
+      label: "Tags",
+      description:
+        "Cross-cutting labels you can attach to anything. Filter by tag in saved views or searches.",
+      to: "/tags",
+    },
+    {
+      icon: Files,
+      label: "Files",
+      description:
+        "Uploaded photos / docs. Files attach to entities via the Tags + Files panel on each detail page.",
+      to: "/files",
+    },
+    {
+      icon: FileText,
+      label: "OpenAPI",
+      description:
+        "Auto-generated OpenAPI 3.1 spec — entity-kind schemas + platform paths. Drop into Swagger UI or Insomnia.",
+      to: "/configuration/openapi",
     },
   ];
 

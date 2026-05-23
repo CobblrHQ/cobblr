@@ -4,6 +4,7 @@ import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody } from "./util.js";
+import { routeUnknownToMetadata } from "./route-helpers.js";
 
 export const assetsRouter = Router({ mergeParams: true });
 
@@ -26,6 +27,8 @@ const AssetCreate = z.object({
   flags: z.array(z.string()).optional(),
   metadata: z.record(z.unknown()).optional(),
 });
+
+const ASSET_NATIVE_KEYS = new Set(Object.keys(AssetCreate.shape));
 const AssetUpdate = AssetCreate.partial();
 
 assetsRouter.get(
@@ -67,7 +70,8 @@ assetsRouter.get(
 assetsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
-    const parsed = AssetCreate.safeParse(req.body);
+    const routed = routeUnknownToMetadata(req.body, ASSET_NATIVE_KEYS);
+    const parsed = AssetCreate.safeParse(routed);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
     const ctx = tenantContext(req);
@@ -103,7 +107,8 @@ assetsRouter.patch(
       res.status(400).json({ error: { code: "missing_id", message: "id required" } });
       return;
     }
-    const parsed = AssetUpdate.safeParse(req.body);
+    const routed = routeUnknownToMetadata(req.body, ASSET_NATIVE_KEYS);
+    const parsed = AssetUpdate.safeParse(routed);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
     const ctx = tenantContext(req);

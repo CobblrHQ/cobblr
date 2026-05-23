@@ -5,6 +5,7 @@ import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody } from "./util.js";
+import { routeUnknownToMetadata } from "./route-helpers.js";
 
 export const projectsRouter = Router({ mergeParams: true });
 
@@ -21,6 +22,8 @@ const ProjectCreate = z.object({
   color: z.string().nullable().optional(),
   metadata: z.record(z.unknown()).optional(),
 });
+
+const PROJECT_NATIVE_KEYS = new Set(Object.keys(ProjectCreate.shape));
 const ProjectUpdate = ProjectCreate.partial();
 
 projectsRouter.get(
@@ -61,7 +64,8 @@ projectsRouter.get(
 projectsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
-    const parsed = ProjectCreate.safeParse(req.body);
+    const routed = routeUnknownToMetadata(req.body, PROJECT_NATIVE_KEYS);
+    const parsed = ProjectCreate.safeParse(routed);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
     const ctx = tenantContext(req);
@@ -102,7 +106,8 @@ projectsRouter.post(
 projectsRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
-    const parsed = ProjectUpdate.safeParse(req.body);
+    const routed = routeUnknownToMetadata(req.body, PROJECT_NATIVE_KEYS);
+    const parsed = ProjectUpdate.safeParse(routed);
     if (!parsed.success) return badBody(res, parsed.error);
     const id = req.params.id;
     if (!id) {

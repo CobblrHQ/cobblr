@@ -13,6 +13,9 @@ export default defineModule({
   displayName: "3D Printers",
   description:
     "Extends machines with 3D-printer-specific fields: hotend, extruder, board, firmware, bed_size, local_ip.",
+  // companion app-specific specialisation. A different builder's app
+  // (homestead manager, gig tracker) wouldn't enable this.
+  band: "user",
   icon: "printer",
 
   dependencies: ["machines"],

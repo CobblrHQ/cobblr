@@ -16,6 +16,7 @@ export default defineModule({
   description:
     "Extends projects with the mod-on-a-machine workflow: substate vocabulary (parts-needed / ready / in-progress), energy estimate, excitement, public visibility. Mod ↔ machine link rides on the pairings primitive (relationship_kind='modifies').",
   icon: "tool",
+  band: "user",
 
   dependencies: ["projects", "machines"],
 

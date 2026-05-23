@@ -22,13 +22,20 @@ export function AuthPage() {
     e.preventDefault();
     setError(null);
     setBusy(true);
+    // Defensive: strip any whitespace from the email (autofill /
+    // copy-paste can sneak in tabs or trailing newlines that .trim()
+    // alone won't catch if they're between chars). Trim the password
+    // too — passwords *could* contain internal whitespace, but
+    // leading/trailing whitespace is always a paste accident.
+    const cleanEmail = email.replace(/\s+/g, "");
+    const cleanPassword = password.trim();
     try {
       if (mode === "login") {
-        await login(email.trim(), password);
+        await login(cleanEmail, cleanPassword);
       } else {
         await signup({
-          email: email.trim(),
-          password,
+          email: cleanEmail,
+          password: cleanPassword,
           display_name: displayName.trim(),
           org_name: orgName.trim(),
         });
@@ -90,7 +97,26 @@ export function AuthPage() {
               type="email"
               autoComplete="email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              // Strip whitespace whenever the field value changes,
+              // however it changed:
+              //   onChange — keyboard input + paste
+              //   onInput  — programmatic value writes (Chrome
+              //              autofill, password manager) that
+              //              bypass React's synthetic onChange
+              //   onBlur   — last line of defense in case the value
+              //              landed via some other path (form-restore,
+              //              extension)
+              // Emails can't legally contain whitespace, so the strip
+              // is safe to run unconditionally.
+              onChange={(e) =>
+                setEmail(e.currentTarget.value.replace(/\s+/g, ""))
+              }
+              onInput={(e) =>
+                setEmail(e.currentTarget.value.replace(/\s+/g, ""))
+              }
+              onBlur={(e) =>
+                setEmail(e.currentTarget.value.replace(/\s+/g, ""))
+              }
               className="input"
             />
           </Field>

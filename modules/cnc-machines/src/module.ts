@@ -10,6 +10,7 @@ export default defineModule({
   description:
     "Extends machines with CNC-specific fields: spindle, axis_count, work_area, controller, coolant_type.",
   icon: "wrench",
+  band: "user",
 
   dependencies: ["machines"],
 

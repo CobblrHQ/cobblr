@@ -9,6 +9,7 @@ import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody } from "./util.js";
+import { routeUnknownToMetadata } from "./route-helpers.js";
 
 export const machinesRouter = Router({ mergeParams: true });
 
@@ -26,6 +27,8 @@ const MachineCreate = z.object({
   location_id: z.string().uuid().nullable().optional(),
   metadata: z.record(z.unknown()).optional(),
 });
+
+const MACHINE_NATIVE_KEYS = new Set(Object.keys(MachineCreate.shape));
 const MachineUpdate = MachineCreate.partial();
 
 machinesRouter.get(
@@ -67,7 +70,8 @@ machinesRouter.get(
 machinesRouter.post(
   "/",
   asyncHandler(async (req, res) => {
-    const parsed = MachineCreate.safeParse(req.body);
+    const routed = routeUnknownToMetadata(req.body, MACHINE_NATIVE_KEYS);
+    const parsed = MachineCreate.safeParse(routed);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
     const ctx = tenantContext(req);
@@ -103,7 +107,8 @@ machinesRouter.patch(
       res.status(400).json({ error: { code: "missing_id", message: "id required" } });
       return;
     }
-    const parsed = MachineUpdate.safeParse(req.body);
+    const routed = routeUnknownToMetadata(req.body, MACHINE_NATIVE_KEYS);
+    const parsed = MachineUpdate.safeParse(routed);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
     const ctx = tenantContext(req);

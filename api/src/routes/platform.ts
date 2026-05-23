@@ -44,12 +44,64 @@ platformOrgRouter.get(
         res.status(400).json({ error: { code: "missing_params", message: "kind + id required" } });
         return;
       }
-      const found = await platform().entities.lookup(req.tenant!.org.id, kind, id);
+      const found = await platform().entities.lookup(req.tenant!.org.id, kind, id, {
+        userId: req.session?.id,
+      });
       if (!found) {
         res.status(404).json({ error: { code: "not_found", message: "entity not found" } });
         return;
       }
       res.json(found);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// Resolver primitive — walk pairings from a source entity. The HTTP
+// surface for what wires call internally via walkPairings(). Lets
+// the wires-builder UI (and any cross-module renderer) drive
+// pairing-traversal joins without duplicating the walk client-side.
+//
+// GET /entities/:kind/:id/pairings?rel=...&dir=in|out&kind=...
+//   → { items: ResolvedEntity[] }  — already exposable-field-projected
+//
+// See docs/design-decisions/entity-resolver.md.
+platformOrgRouter.get(
+  "/:slug/entities/:kind/:id/pairings",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      const { kind, id } = req.params;
+      if (!kind || !id) {
+        res.status(400).json({
+          error: { code: "missing_params", message: "kind + id required" },
+        });
+        return;
+      }
+      const rel = typeof req.query.rel === "string" ? req.query.rel : null;
+      if (!rel) {
+        res.status(400).json({
+          error: { code: "missing_rel", message: "?rel=<relationship_kind> required" },
+        });
+        return;
+      }
+      const dirParam = typeof req.query.dir === "string" ? req.query.dir : "in";
+      if (dirParam !== "in" && dirParam !== "out") {
+        res.status(400).json({
+          error: { code: "bad_dir", message: "?dir must be 'in' or 'out'" },
+        });
+        return;
+      }
+      const kindFilter =
+        typeof req.query.kind === "string" ? req.query.kind : undefined;
+      const items = await platform().entities.walkPairings(
+        req.tenant!.org.id,
+        { kind, id },
+        { rel, dir: dirParam, kind: kindFilter },
+      );
+      res.json({ items });
     } catch (err) {
       next(err);
     }
@@ -132,8 +184,41 @@ platformOrgRouter.post(
         });
         return;
       }
-      // If a binding was selected, pull its template, render it
-      // with the looked-up entity data, then invoke.
+      // Look up the entity once — we need its fields for the
+      // namespaced ctx.entity block (Q2 resolution) and also for
+      // template rendering if a binding template applies.
+      const ent = await platform().entities.lookup(
+        req.tenant!.org.id,
+        parsed.data.entityKind,
+        parsed.data.entityId,
+      );
+      const entityFields = ent?.fields ?? {};
+
+      // Resolve actor metadata for the namespaced event.actor block.
+      // Session already carries display_name + auth method + token id;
+      // we only need an extra lookup for the api_token name when this
+      // request was signed by a token.
+      let api_token_name: string | null = null;
+      if (req.session!.auth_method === "api_token" && req.session!.api_token_id) {
+        const tokRow = await meta
+          .selectFrom("api_tokens")
+          .select("name")
+          .where("id", "=", req.session!.api_token_id)
+          .executeTakeFirst();
+        api_token_name = tokRow?.name ?? null;
+      }
+      const actor = {
+        user_id: req.session!.id,
+        display_name: req.session!.display_name,
+        auth_method: req.session!.auth_method,
+        api_token_id: req.session!.api_token_id,
+        api_token_name,
+      };
+      const firedAt = new Date().toISOString();
+
+      // If a binding was selected, pull its template + render with
+      // the entity's fields PLUS the namespaced event.* block so
+      // templates can use `{{event.actor.display_name}}` etc.
       let rendered: string | undefined;
       if (parsed.data.bindingId) {
         const b = await meta
@@ -143,14 +228,19 @@ platformOrgRouter.post(
           .where("org_id", "=", req.tenant!.org.id)
           .executeTakeFirst();
         if (b?.template) {
-          const ent = await platform().entities.lookup(
-            req.tenant!.org.id,
-            parsed.data.entityKind,
-            parsed.data.entityId,
-          );
+          // Same template-data shape as wires.ts: payload fields
+          // flatten onto event.* so {{event.delta}} works directly;
+          // system-added keys come last to win on collision.
           rendered = platform().templates.render(b.template, {
-            ...(ent?.fields ?? {}),
+            ...entityFields,
             _title: ent?.title ?? "",
+            event: {
+              ...(parsed.data.args ?? {}),
+              name: null,
+              actor,
+              timestamp: firedAt,
+              trigger_type: "user-invoked" as const,
+            },
           });
         }
       }
@@ -158,10 +248,23 @@ platformOrgRouter.post(
       const result = await platform().actions.invoke(parsed.data.actionId, {
         orgId: req.tenant!.org.id,
         userId: req.session!.id,
-        entityKind: parsed.data.entityKind,
-        entityId: parsed.data.entityId,
+        entity: {
+          kind: parsed.data.entityKind,
+          id: parsed.data.entityId,
+          fields: entityFields,
+        },
+        event: {
+          name: null, // user-invoked has no event name
+          payload: parsed.data.args ?? {},
+          actor,
+          timestamp: firedAt,
+          trigger_type: "user-invoked",
+        },
         rendered,
         args: parsed.data.args,
+        // Deprecated compat aliases.
+        entityKind: parsed.data.entityKind,
+        entityId: parsed.data.entityId,
       });
       res.json({ ok: true, result });
     } catch (err) {
@@ -172,17 +275,74 @@ platformOrgRouter.post(
 
 // ──────────────────────── bindings (wires) ─────────────────────────
 
-const BindingCreate = z.object({
-  source_kind: z.string(),
-  action_id: z.string(),
-  trigger_type: z
-    .enum(["user-invoked", "event", "on-create", "on-update", "on-delete"])
-    .default("user-invoked"),
-  trigger_event: z.string().optional(),
-  template: z.string().max(2000).optional(),
-  filter: z.record(z.unknown()).optional(),
-  args: z.record(z.unknown()).optional(),
-});
+// Q1 wire target — see docs/design-decisions/wires-and-bundles.md.
+// Mirror of the WireTarget schema in @cobblr/platform-contract; kept
+// inline here to keep the route's request validation independent of
+// the manifest contract (different concerns, same shape).
+const BindingTarget = z.union([
+  z.literal("self"),
+  z.object({
+    rel: z.string().min(1),
+    dir: z.enum(["in", "out"]).optional(),
+    kind: z.string().optional(),
+  }),
+]);
+
+const BindingCreate = z
+  .object({
+    source_kind: z.string(),
+    action_id: z.string(),
+    trigger_type: z
+      .enum(["user-invoked", "event", "on-create", "on-update", "on-delete", "schedule"])
+      .default("user-invoked"),
+    trigger_event: z.string().optional(),
+    /** RRULE string for schedule-triggered wires (Q4). Null/absent for
+     *  every other trigger type. See wires-and-bundles.md Q4. */
+    trigger_schedule: z.string().optional(),
+    template: z.string().max(2000).optional(),
+    filter: z.record(z.unknown()).optional(),
+    args: z.record(z.unknown()).optional(),
+    /** What entity the action fires on. Default "self" (action runs on
+     *  the source entity); object form opts into cross-module pairing
+     *  traversal. See wires-and-bundles.md Q1. */
+    target: BindingTarget.optional(),
+  })
+  .superRefine((data, ctx) => {
+    // Cross-field correctness: each trigger type has a required
+    // companion field. A wire missing its companion would silently
+    // never fire — fail loud at create time instead.
+    if (data.trigger_type === "event" && !data.trigger_event) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "trigger_event is required when trigger_type is 'event'",
+        path: ["trigger_event"],
+      });
+    }
+    if (data.trigger_type === "schedule" && !data.trigger_schedule) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "trigger_schedule (an RRULE) is required when trigger_type is 'schedule'",
+        path: ["trigger_schedule"],
+      });
+    }
+    if (data.trigger_type !== "event" && data.trigger_event) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "trigger_event is only meaningful when trigger_type is 'event' — remove it or change trigger_type",
+        path: ["trigger_event"],
+      });
+    }
+    if (data.trigger_type !== "schedule" && data.trigger_schedule) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "trigger_schedule is only meaningful when trigger_type is 'schedule' — remove it or change trigger_type",
+        path: ["trigger_schedule"],
+      });
+    }
+  });
 
 platformOrgRouter.get(
   "/:slug/bindings",
@@ -224,6 +384,7 @@ platformOrgRouter.post(
           action_id: parsed.data.action_id,
           trigger_type: parsed.data.trigger_type,
           trigger_event: parsed.data.trigger_event ?? null,
+          trigger_schedule: parsed.data.trigger_schedule ?? null,
           template: parsed.data.template ?? null,
           filter: parsed.data.filter
             ? sql`${JSON.stringify(parsed.data.filter)}::jsonb`
@@ -231,6 +392,11 @@ platformOrgRouter.post(
           args: parsed.data.args
             ? sql`${JSON.stringify(parsed.data.args)}::jsonb`
             : null,
+          // Default "self" (column default + explicit here so the
+          // returning row carries it). Object form serialises to jsonb.
+          target: parsed.data.target
+            ? sql`${JSON.stringify(parsed.data.target)}::jsonb`
+            : sql`'"self"'::jsonb`,
         })
         .returningAll()
         .executeTakeFirstOrThrow();

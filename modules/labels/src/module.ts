@@ -14,6 +14,7 @@ export default defineModule({
   description:
     "QR codes, label templates, per-user print queue. Polymorphic — any module's entity can have a label.",
   icon: "tag",
+  band: "stock",
 
   schema: {
     tablePrefix: "labels_",

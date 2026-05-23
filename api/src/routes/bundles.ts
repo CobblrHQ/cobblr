@@ -25,17 +25,54 @@ const BundleManifest = z.object({
     .default([]),
   wires: z
     .array(
-      z.object({
-        source_kind: z.string(),
-        action_id: z.string(),
-        trigger_type: z
-          .enum(["user-invoked", "event", "on-create", "on-update", "on-delete"])
-          .default("user-invoked"),
-        trigger_event: z.string().optional(),
-        template: z.string().optional(),
-        filter: z.record(z.unknown()).optional(),
-        args: z.record(z.unknown()).optional(),
-      }),
+      z
+        .object({
+          source_kind: z.string(),
+          action_id: z.string(),
+          trigger_type: z
+            .enum(["user-invoked", "event", "on-create", "on-update", "on-delete", "schedule"])
+            .default("user-invoked"),
+          trigger_event: z.string().optional(),
+          // Q4: RRULE for schedule-triggered wires. Required when
+          // trigger_type='schedule', ignored otherwise.
+          trigger_schedule: z.string().optional(),
+          template: z.string().optional(),
+          filter: z.record(z.unknown()).optional(),
+          args: z.record(z.unknown()).optional(),
+          // Q1 wire target. Default "self" if omitted.
+          // See docs/design-decisions/wires-and-bundles.md.
+          target: z
+            .union([
+              z.literal("self"),
+              z.object({
+                rel: z.string().min(1),
+                dir: z.enum(["in", "out"]).optional(),
+                kind: z.string().optional(),
+              }),
+            ])
+            .optional(),
+        })
+        .superRefine((data, ctx) => {
+          // Same trigger / companion-field validation as the
+          // /bindings POST endpoint. Catches bundle authoring bugs
+          // at install time, with a clear path to the offending
+          // wire's field.
+          if (data.trigger_type === "event" && !data.trigger_event) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: "trigger_event is required when trigger_type is 'event'",
+              path: ["trigger_event"],
+            });
+          }
+          if (data.trigger_type === "schedule" && !data.trigger_schedule) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message:
+                "trigger_schedule (an RRULE) is required when trigger_type is 'schedule'",
+              path: ["trigger_schedule"],
+            });
+          }
+        }),
     )
     .default([]),
   field_defs: z
@@ -90,7 +127,7 @@ bundlesRouter.get(
       // on install. The export is the user's own customisations only.
       const wires = await meta
         .selectFrom("entity_action_bindings")
-        .select(["source_kind", "action_id", "trigger_type", "trigger_event", "template", "filter", "args"])
+        .select(["source_kind", "action_id", "trigger_type", "trigger_event", "template", "filter", "args", "target"])
         .where("org_id", "=", orgId)
         .where("bundle_id", "is", null)
         .where("source_module", "is", null)
@@ -150,6 +187,12 @@ bundlesRouter.get(
           template: w.template ?? undefined,
           filter: w.filter ?? undefined,
           args: w.args ?? undefined,
+          // Omit "self" from exports (it's the default; round-trip clean).
+          // Object form serialises as-is.
+          target:
+            w.target && w.target !== "self" && typeof w.target === "object"
+              ? (w.target as { rel: string; dir?: "in" | "out"; kind?: string })
+              : undefined,
         })),
         field_defs: fieldDefs.map((f) => ({
           entity_kind: f.entity_kind,
@@ -214,7 +257,15 @@ bundlesRouter.post(
   withTenant,
   async (req, res, next) => {
     try {
-      const ManifestBody = z.object({ manifest: BundleManifest });
+      // Q5 (wires-and-bundles.md): `requires` is now an "install" not
+      // a "check." If the bundle needs modules the workspace doesn't
+      // have enabled, return 409 with `needs_enable` instead of
+      // auto-enabling silently. Caller re-POSTs with `confirm:true`
+      // to proceed.
+      const ManifestBody = z.object({
+        manifest: BundleManifest,
+        confirm: z.boolean().optional(),
+      });
       const parsed = ManifestBody.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({
@@ -229,11 +280,16 @@ bundlesRouter.post(
       const m: BundleManifestT = parsed.data.manifest;
 
       // Compatibility — every required module must be enabled for
-      // this org. Auto-enable any missing ones (and their transitive
-      // deps via enableModuleForOrg's own dep-check loop) so a fresh
-      // org can install a bundle in one shot. If a required module
-      // isn't even *registered* with the platform we still fail
-      // loud: that's a real incompatibility, not a setup gap.
+      // this org. Q5 resolution: if any required modules aren't
+      // enabled, return 409 with `needs_enable: [...]` so the UI can
+      // prompt the user. Caller re-POSTs with `confirm: true` to
+      // proceed; that path then enables the missing modules (and
+      // their transitive deps via enableModuleForOrg's own dep-check
+      // loop) as part of the atomic install.
+      //
+      // If a required module isn't even *registered* with the
+      // platform, we still fail loud immediately: that's a real
+      // incompatibility, not a setup gap the user can resolve.
       const required = m.requires.map((r) => r.module);
       const autoEnabled: string[] = [];
       if (required.length > 0) {
@@ -246,23 +302,39 @@ bundlesRouter.post(
         const installedSet = new Set(installed.map((r) => r.module_name));
         const missing = required.filter((r) => !installedSet.has(r));
         if (missing.length > 0) {
-          // Sort missing topologically by dependency depth so we
-          // enable parents before children (machines before 3d-printers).
+          // Fail early if any are unknown to the platform — that's
+          // not user-resolvable.
+          for (const name of missing) {
+            if (!getEntry(name)) {
+              res.status(400).json({
+                error: {
+                  code: "unknown_module",
+                  message: `Bundle requires module '${name}' which isn't registered with this platform.`,
+                  details: { missing_module: name },
+                },
+              });
+              return;
+            }
+          }
+          // Q5: needs_enable confirmation gate.
+          if (!parsed.data.confirm) {
+            res.status(409).json({
+              error: {
+                code: "needs_enable",
+                message: `This bundle requires module(s) not enabled in your workspace: ${missing.join(", ")}. Re-POST with confirm:true to enable and install in one step.`,
+                details: { needs_enable: missing },
+              },
+            });
+            return;
+          }
+          // Confirmed: enable the missing modules in dependency order
+          // (parents before children: machines before 3d-printers).
           const ordered = [...missing].sort((a, b) => {
             const ea = getEntry(a);
             const eb = getEntry(b);
             return (ea?.manifest.dependencies.length ?? 0) - (eb?.manifest.dependencies.length ?? 0);
           });
           for (const name of ordered) {
-            if (!getEntry(name)) {
-              res.status(400).json({
-                error: {
-                  code: "unknown_module",
-                  message: `Bundle requires module '${name}' which isn't registered with this platform.`,
-                },
-              });
-              return;
-            }
             await enableModuleForOrg(req.tenant!.org.id, name, { userId: req.session!.id });
             autoEnabled.push(name);
           }
@@ -280,6 +352,68 @@ bundlesRouter.post(
         .executeTakeFirst();
       if (existing) {
         await uninstallBundleId(existing.id);
+      }
+
+      // Q6 (wires-and-bundles.md): pre-check field-def collisions.
+      // Field defs are storage-level (one column-name per entity kind);
+      // two different bundles trying to add the same (entity_kind, name)
+      // is genuinely ambiguous. Fail loud with the collision list so
+      // the user can uninstall the conflicting bundle first.
+      //
+      // This runs AFTER the existing-version uninstall above, so a
+      // bundle that defines `set_id` and then ships v2 also defining
+      // `set_id` doesn't trip itself up.
+      if (m.field_defs.length > 0) {
+        const conflicts = await meta
+          .selectFrom("module_field_defs")
+          .select(["entity_kind", "name", "bundle_id", "source_module"])
+          .where("org_id", "=", req.tenant!.org.id)
+          .where((eb) =>
+            eb.or(
+              m.field_defs.map((f) =>
+                eb.and([
+                  eb("entity_kind", "=", f.entity_kind),
+                  eb("name", "=", f.name),
+                ]),
+              ),
+            ),
+          )
+          .execute();
+        if (conflicts.length > 0) {
+          // Resolve each collision to a human-readable owner so the
+          // UI / user knows what's blocking the install.
+          const ownerNames = new Map<string, string>();
+          const bundleIds = conflicts
+            .map((c) => c.bundle_id)
+            .filter((b): b is string => !!b);
+          if (bundleIds.length > 0) {
+            const bundleRows = await meta
+              .selectFrom("bundles")
+              .select(["id", "name"])
+              .where("id", "in", bundleIds)
+              .execute();
+            for (const b of bundleRows) ownerNames.set(b.id, b.name);
+          }
+          const details = conflicts.map((c) => ({
+            entity_kind: c.entity_kind,
+            field_name: c.name,
+            owned_by: c.bundle_id
+              ? `bundle:${ownerNames.get(c.bundle_id) ?? c.bundle_id}`
+              : c.source_module
+                ? `module:${c.source_module}`
+                : "user-authored",
+          }));
+          res.status(409).json({
+            error: {
+              code: "field_def_collision",
+              message: `Bundle adds field def(s) that already exist in this workspace: ${details
+                .map((d) => `${d.entity_kind}.${d.field_name} (${d.owned_by})`)
+                .join(", ")}. Uninstall the conflicting bundle/module or remove the user-authored field first.`,
+              details: { conflicts: details },
+            },
+          });
+          return;
+        }
       }
 
       const inserted = await meta.transaction().execute(async (trx) => {
@@ -307,14 +441,23 @@ bundlesRouter.post(
               action_id: w.action_id,
               trigger_type: w.trigger_type,
               trigger_event: w.trigger_event ?? null,
+              trigger_schedule: w.trigger_schedule ?? null,
               template: w.template ?? null,
               filter: w.filter ? sql`${JSON.stringify(w.filter)}::jsonb` : null,
               args: w.args ? sql`${JSON.stringify(w.args)}::jsonb` : null,
               bundle_id: bundle.id,
+              target: w.target
+                ? sql`${JSON.stringify(w.target)}::jsonb`
+                : sql`'"self"'::jsonb`,
             })
             .execute();
         }
         for (const f of m.field_defs) {
+          // Q6: collisions were pre-checked above and the install
+          // would have already failed with 409 field_def_collision.
+          // Plain insert; the unique constraint will surface any
+          // unexpected races as a 500 (and the transaction rolls
+          // back).
           await trx
             .insertInto("module_field_defs")
             .values({
@@ -327,7 +470,6 @@ bundlesRouter.post(
               position: f.position ?? 0,
               bundle_id: bundle.id,
             })
-            .onConflict((b) => b.columns(["org_id", "entity_kind", "name"]).doNothing())
             .execute();
         }
         return bundle;

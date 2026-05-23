@@ -8,7 +8,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate, useParams, useSearchParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Plus, Search, Trash2 } from "lucide-react";
+import { ChevronRight, Plus, Search, Tag as TagIcon, Trash2 } from "lucide-react";
 import { ApiError, api, type Asset, type OrgModuleListItem, type PlatformFieldDef } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import {
@@ -18,6 +18,14 @@ import {
   useToast,
   useConfirm,
 } from "@cobblr/platform-web";
+import {
+  BulkActionBar,
+  EntityThumb,
+  EntityTile,
+  ViewModeToggle,
+  useViewMode,
+} from "@cobblr/platform-web";
+import { EntityAttachments } from "../components/EntityAttachments";
 
 const ENTITY_KIND = "assets:asset";
 
@@ -74,6 +82,63 @@ export function AssetsPage() {
     : rows;
 
   const [newOpen, setNewOpen] = useState(false);
+  const [viewMode, setViewMode] = useViewMode("assets", "list");
+  // Bulk-select state. Only enabled in list view (tile mode keeps
+  // click-to-open semantics). Tracks the IDs as a Set so toggle is
+  // O(1) and selectAll is one Set replacement.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const qc = useQueryClient();
+  const toast = useToast();
+  const confirm = useConfirm();
+  const bulkDelete = useMutation({
+    mutationFn: async (ids: string[]) => {
+      // Sequential to keep the API gentle; few-dozen-row selections
+      // finish in well under a second even one-at-a-time.
+      for (const id of ids) {
+        await api.deleteAsset(activeSlug, id);
+      }
+    },
+    onSuccess: () => {
+      toast.success(`Deleted ${selected.size} asset${selected.size === 1 ? "" : "s"}`);
+      setSelected(new Set());
+      void qc.invalidateQueries({ queryKey: ["assets", activeSlug] });
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
+  function toggleRow(id: string, checked: boolean) {
+    setSelected((s) => {
+      const n = new Set(s);
+      if (checked) n.add(id);
+      else n.delete(id);
+      return n;
+    });
+  }
+  function selectAll(checked: boolean) {
+    if (checked) setSelected(new Set(filtered.map((r) => r.id)));
+    else setSelected(new Set());
+  }
+  const allChecked = filtered.length > 0 && filtered.every((r) => selected.has(r.id));
+
+  const [bulkTagOpen, setBulkTagOpen] = useState(false);
+  const bulkTag = useMutation({
+    mutationFn: async (tagName: string) => {
+      for (const id of Array.from(selected)) {
+        await api.attachTag(activeSlug, {
+          tag_name: tagName,
+          source_module: "assets",
+          source_type: "asset",
+          source_id: id,
+        });
+      }
+    },
+    onSuccess: () => {
+      toast.success(`Tagged ${selected.size} asset${selected.size === 1 ? "" : "s"}`);
+      setSelected(new Set());
+      setBulkTagOpen(false);
+      void qc.invalidateQueries({ queryKey: ["assets", activeSlug] });
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
 
   return (
     <div className="space-y-4">
@@ -103,6 +168,7 @@ export function AssetsPage() {
             className="input !py-1 !pl-7 !text-xs !w-48"
           />
         </div>
+        <ViewModeToggle mode={viewMode} onChange={setViewMode} />
         <button
           onClick={() => setNewOpen(true)}
           className="text-[10px] font-mono uppercase tracking-widest text-cobble-600 hover:text-cobble-700 transition flex items-center gap-1 px-2 py-1 rounded border border-slate-200 dark:border-slate-700"
@@ -111,10 +177,47 @@ export function AssetsPage() {
         </button>
       </div>
 
+      {viewMode === "tiles" && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+          {filtered.map((a) => (
+            <button
+              key={a.id}
+              type="button"
+              onClick={() => navigate(`/assets/${a.id}${searchParams.toString() ? `?${searchParams}` : ""}`)}
+              className="text-left"
+            >
+              <EntityTile
+                src={a.image_path}
+                title={a.name}
+                subtitle={a.manufacturer || a.model || a.short_name || null}
+                badge={a.state}
+              />
+            </button>
+          ))}
+          {filtered.length === 0 && (
+            <div className="col-span-full px-3 py-10 text-center text-xs text-slate-400 italic">
+              {allRows.length === 0
+                ? "No assets yet. Click + new to add one."
+                : "No matches with the current filters."}
+            </div>
+          )}
+        </div>
+      )}
+
+      {viewMode === "list" && (
       <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-mortar-50/60 dark:bg-slate-800/40 text-[10px] font-mono uppercase tracking-widest text-slate-500 dark:text-slate-400">
             <tr>
+              <th className="w-8 px-3 py-2">
+                <input
+                  type="checkbox"
+                  checked={allChecked}
+                  onChange={(e) => selectAll(e.target.checked)}
+                  className="accent-cobble-600"
+                  aria-label="Select all"
+                />
+              </th>
               <th className="text-left px-3 py-2">Name</th>
               <th className="text-left px-3 py-2">Manufacturer</th>
               <th className="text-left px-3 py-2">Model</th>
@@ -133,11 +236,28 @@ export function AssetsPage() {
                 onClick={() => navigate(`/assets/${a.id}${searchParams.toString() ? `?${searchParams}` : ""}`)}
                 className="hover:bg-mortar-50 dark:hover:bg-slate-800/40 transition cursor-pointer"
               >
+                <td
+                  className="px-3 py-2 w-8"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selected.has(a.id)}
+                    onChange={(e) => toggleRow(a.id, e.target.checked)}
+                    className="accent-cobble-600"
+                    aria-label={`Select ${a.name}`}
+                  />
+                </td>
                 <td className="px-3 py-2 text-slate-700 dark:text-mortar-100 font-medium">
-                  {a.name}
-                  {a.short_name && (
-                    <span className="ml-1.5 text-[10px] font-mono text-slate-400">{a.short_name}</span>
-                  )}
+                  <div className="flex items-center gap-3">
+                    <EntityThumb src={a.image_path} alt={a.name} size={56} />
+                    <span className="truncate">
+                      {a.name}
+                      {a.short_name && (
+                        <span className="ml-1.5 text-[10px] font-mono text-slate-400">{a.short_name}</span>
+                      )}
+                    </span>
+                  </div>
                 </td>
                 <td className="px-3 py-2 text-slate-500 dark:text-slate-400">{a.manufacturer || "—"}</td>
                 <td className="px-3 py-2 text-slate-500 dark:text-slate-400">{a.model || "—"}</td>
@@ -162,7 +282,7 @@ export function AssetsPage() {
             ))}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={5 + lensFieldDefs.length + 1} className="px-3 py-10 text-center text-xs text-slate-400 italic">
+                <td colSpan={6 + lensFieldDefs.length + 1} className="px-3 py-10 text-center text-xs text-slate-400 italic">
                   {allRows.length === 0
                     ? "No assets yet. Click + new to add one."
                     : "No matches with the current filters."}
@@ -172,13 +292,110 @@ export function AssetsPage() {
           </tbody>
         </table>
       </div>
+      )}
 
       <AssetDetailModal
         assetId={id ?? null}
         onClose={() => navigate(`/assets${searchParams.toString() ? `?${searchParams}` : ""}`)}
       />
       <NewAssetModal open={newOpen} onClose={() => setNewOpen(false)} />
+      <BulkActionBar
+        count={selected.size}
+        onClear={() => setSelected(new Set())}
+        actions={
+          <>
+            <button
+              type="button"
+              onClick={() => setBulkTagOpen(true)}
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-cobble-600 hover:text-cobble-700"
+            >
+              <TagIcon size={12} /> Tag
+            </button>
+            <button
+              type="button"
+              disabled={bulkDelete.isPending}
+              onClick={async () => {
+                const ok = await confirm({
+                  title: `Delete ${selected.size} asset${selected.size === 1 ? "" : "s"}?`,
+                  message: "This is permanent — the rows will be removed from the workspace.",
+                  confirmLabel: "Delete",
+                  destructive: true,
+                });
+                if (ok) bulkDelete.mutate(Array.from(selected));
+              }}
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-ember-600 hover:text-ember-700 disabled:opacity-50"
+            >
+              <Trash2 size={12} /> Delete
+            </button>
+          </>
+        }
+      />
+      {bulkTagOpen && (
+        <BulkTagPromptModal
+          count={selected.size}
+          busy={bulkTag.isPending}
+          onClose={() => setBulkTagOpen(false)}
+          onSubmit={(name) => bulkTag.mutate(name)}
+        />
+      )}
     </div>
+  );
+}
+
+function BulkTagPromptModal({
+  count,
+  busy,
+  onClose,
+  onSubmit,
+}: {
+  count: number;
+  busy: boolean;
+  onClose: () => void;
+  onSubmit: (tagName: string) => void;
+}) {
+  const [name, setName] = useState("");
+  return (
+    <Modal open onClose={onClose} title={`Tag ${count} item${count === 1 ? "" : "s"}`}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!name.trim()) return;
+          onSubmit(name.trim());
+        }}
+        className="space-y-3"
+      >
+        <label className="block">
+          <div className="text-xs text-slate-500 mb-1">Tag name</div>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. urgent, summer-2026, archive"
+            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            autoFocus
+          />
+          <div className="text-[11px] text-slate-400 mt-1">
+            Existing tag? It'll be reused. New name? Created on the fly.
+          </div>
+        </label>
+        <div className="flex justify-end gap-2 pt-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={busy || !name.trim()}
+            className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white"
+          >
+            {busy ? "tagging…" : `Tag ${count}`}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
@@ -247,6 +464,7 @@ function AssetDetailModal({ assetId, onClose }: { assetId: string | null; onClos
               update.mutate({ metadata: { ...a.metadata, [name]: value } })
             }
           />
+          <EntityAttachments kind={ENTITY_KIND} entityId={a.id} />
           <EditField label="Notes" value={a.notes ?? ""} multiline onCommit={(v) => update.mutate({ notes: v || null })} />
           <div className="pt-3 border-t border-slate-100 dark:border-slate-700 flex items-center justify-between">
             <button

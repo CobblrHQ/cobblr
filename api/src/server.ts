@@ -16,6 +16,7 @@ import helmet from "helmet";
 import morgan from "morgan";
 import { env } from "./env.js";
 import { authRouter } from "./routes/auth.js";
+import { publicRouter } from "./routes/public.js";
 import { meRouter } from "./routes/me.js";
 import { modulesRouter } from "./routes/modules.js";
 import { orgsRouter } from "./routes/orgs.js";
@@ -56,6 +57,10 @@ export function createApp(): AppHandles {
 
   v1.use("/auth", authRouter);
   v1.use(meRouter);
+  // Public read endpoint for core-public-surfaces. No auth required;
+  // token in the URL is the secret. Mounted on /api/v1/public/* —
+  // outside /orgs because the URL carries no slug.
+  v1.use("/public", publicRouter);
   v1.use("/orgs", orgsRouter);
   // platformOrgRouter mounts /:slug/entity-kinds, /:slug/entities/:kind/:id,
   // /:slug/actions, /:slug/bindings, /:slug/field-defs, etc. Composed

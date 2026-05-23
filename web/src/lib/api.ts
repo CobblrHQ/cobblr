@@ -321,6 +321,17 @@ export const api = {
     request<void>("DELETE", `/me/api-tokens/${id}`),
   orgActivity: (slug: string, limit = 25) =>
     request<{ items: ActivityEntry[] }>("GET", `/orgs/${slug}/activity?limit=${limit}`),
+  // Cross-workspace activity feed: every action attributed to any
+  // workspace the caller belongs to. Optional ?org= narrows to one.
+  meActivity: (opts: { limit?: number; org?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (opts.limit) qs.set("limit", String(opts.limit));
+    if (opts.org) qs.set("org", opts.org);
+    return request<{ items: CrossOrgActivityEntry[] }>(
+      "GET",
+      `/me/activity${qs.toString() ? `?${qs.toString()}` : ""}`,
+    );
+  },
   modules: () => request<{ items: ModuleListItem[] }>("GET", "/modules"),
 
   // Pillar A — entities + kinds
@@ -433,7 +444,7 @@ export const api = {
     );
   },
 
-  // Notifications
+  // Notifications — per-org variants (still used by some pages).
   notifications: (slug: string, limit = 25) =>
     request<{ items: NotificationEntry[] }>(
       "GET",
@@ -445,7 +456,367 @@ export const api = {
     request<void>("POST", `/orgs/${slug}/notifications/${id}/read`),
   markAllNotificationsRead: (slug: string) =>
     request<{ marked: number }>("POST", `/orgs/${slug}/notifications/read-all`),
+
+  // Notifications — cross-workspace inbox for the header bell.
+  // /me/profile (display_name + password change).
+  updateMe: (body: { display_name?: string }) =>
+    request<{ user: SessionUser }>("PATCH", "/me", body),
+  changeMyPassword: (body: { current_password: string; new_password: string }) =>
+    request<void>("POST", "/me/password", body),
+
+  meNotifications: (limit = 25) =>
+    request<{ items: CrossOrgNotificationEntry[] }>(
+      "GET",
+      `/me/notifications?limit=${limit}`,
+    ),
+  meNotificationsUnreadCount: () =>
+    request<{ count: number }>("GET", "/me/notifications/unread-count"),
+  meMarkNotificationRead: (id: string) =>
+    request<void>("POST", `/me/notifications/${id}/read`),
+  meMarkAllNotificationsRead: () =>
+    request<{ count: number }>("POST", "/me/notifications/read-all"),
+
+  // ─── core-files ───────────────────────────────────────────────────
+  listFiles: (slug: string, kind?: string) =>
+    request<{ items: FileRecord[] }>(
+      "GET",
+      `/orgs/${slug}/modules/core-files/files${kind ? `?kind=${encodeURIComponent(kind)}` : ""}`,
+    ),
+  uploadFile: async (slug: string, file: File): Promise<FileRecord> => {
+    const form = new FormData();
+    form.set("file", file);
+    const token = getToken();
+    const headers: Record<string, string> = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const res = await fetch(
+      `/api/v1/orgs/${slug}/modules/core-files/files`,
+      { method: "POST", headers, body: form },
+    );
+    if (!res.ok) {
+      const text = await res.text();
+      throw new ApiError(res.status, "upload_failed", text);
+    }
+    return (await res.json()) as FileRecord;
+  },
+  deleteFile: (slug: string, id: string) =>
+    request<void>("DELETE", `/orgs/${slug}/modules/core-files/files/${id}`),
+  fileRawUrl: (slug: string, id: string, variant?: "medium" | "thumb" | "original") =>
+    `/api/v1/orgs/${slug}/modules/core-files/files/${id}/raw${variant ? `?variant=${variant}` : ""}`,
+
+  // ─── core-views ───────────────────────────────────────────────────
+  listSavedViews: (slug: string, kind?: string) =>
+    request<{ items: SavedView[] }>(
+      "GET",
+      `/orgs/${slug}/modules/core-views/views${kind ? `?kind=${encodeURIComponent(kind)}` : ""}`,
+    ),
+  createSavedView: (slug: string, body: Partial<SavedView> & { shared?: boolean }) =>
+    request<SavedView>("POST", `/orgs/${slug}/modules/core-views/views`, body),
+  updateSavedView: (
+    slug: string,
+    id: string,
+    body: Partial<SavedView> & { shared?: boolean },
+  ) =>
+    request<SavedView>(
+      "PATCH",
+      `/orgs/${slug}/modules/core-views/views/${id}`,
+      body,
+    ),
+  deleteSavedView: (slug: string, id: string) =>
+    request<void>("DELETE", `/orgs/${slug}/modules/core-views/views/${id}`),
+  viewData: (slug: string, id: string, params?: { q?: string; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.q) qs.set("q", params.q);
+    if (params?.limit) qs.set("limit", String(params.limit));
+    const tail = qs.toString() ? `?${qs.toString()}` : "";
+    return request<ViewDataResponse>(
+      "GET",
+      `/orgs/${slug}/modules/core-views/views/${id}/data${tail}`,
+    );
+  },
+
+  // ─── core-tags ────────────────────────────────────────────────────
+  listTags: (slug: string) =>
+    request<{ items: TagRecord[] }>("GET", `/orgs/${slug}/modules/core-tags/tags`),
+  createTag: (slug: string, body: { name: string; color?: string | null }) =>
+    request<TagRecord>("POST", `/orgs/${slug}/modules/core-tags/tags`, body),
+  deleteTag: (slug: string, id: string) =>
+    request<void>("DELETE", `/orgs/${slug}/modules/core-tags/tags/${id}`),
+  listTagAttachments: (
+    slug: string,
+    params:
+      | { source_type: string; source_id: string; source_module?: string }
+      | { tag_id: string },
+  ) => {
+    const qs = new URLSearchParams(params as Record<string, string>).toString();
+    return request<{ items: TagAttachment[] }>(
+      "GET",
+      `/orgs/${slug}/modules/core-tags/attachments?${qs}`,
+    );
+  },
+  attachTag: (
+    slug: string,
+    body: {
+      tag_name?: string;
+      tag_id?: string;
+      color?: string | null;
+      source_module: string;
+      source_type: string;
+      source_id: string;
+    },
+  ) => request<TagAttachment>("POST", `/orgs/${slug}/modules/core-tags/attachments`, body),
+  detachTag: (slug: string, id: string) =>
+    request<void>("DELETE", `/orgs/${slug}/modules/core-tags/attachments/${id}`),
+
+  // ─── core-search ──────────────────────────────────────────────────
+  // Either `q` (free-text) or `tag` (D7 tag-filter) is required; both
+  // can be combined to narrow tagged entities by name as well.
+  search: (
+    slug: string,
+    args: { q?: string; kinds?: string; tag?: string } | string,
+  ) => {
+    const a = typeof args === "string" ? { q: args } : args;
+    const qs = new URLSearchParams();
+    if (a.q) qs.set("q", a.q);
+    if (a.kinds) qs.set("kinds", a.kinds);
+    if (a.tag) qs.set("tag", a.tag);
+    return request<{ items: SearchHit[]; kinds_searched: string[] }>(
+      "GET",
+      `/orgs/${slug}/modules/core-search/search?${qs.toString()}`,
+    );
+  },
+
+  // ─── core-public-surfaces ─────────────────────────────────────────
+  listSurfaces: (slug: string) =>
+    request<{ items: SurfaceRecord[] }>(
+      "GET",
+      `/orgs/${slug}/modules/core-public-surfaces/surfaces`,
+    ),
+  createSurface: (
+    slug: string,
+    body: {
+      name: string;
+      scope_type: "view" | "entity" | "collection";
+      scope_id: string;
+      config?: Record<string, unknown>;
+      expires_at?: string | null;
+    },
+  ) =>
+    request<SurfaceRecord>(
+      "POST",
+      `/orgs/${slug}/modules/core-public-surfaces/surfaces`,
+      body,
+    ),
+  revokeSurface: (slug: string, id: string) =>
+    request<void>(
+      "DELETE",
+      `/orgs/${slug}/modules/core-public-surfaces/surfaces/${id}`,
+    ),
+  surfaceStats: (slug: string, id: string) =>
+    request<SurfaceStats>(
+      "GET",
+      `/orgs/${slug}/modules/core-public-surfaces/surfaces/${id}/stats`,
+    ),
+
+  // ─── core-healthcheck ─────────────────────────────────────────────
+  healthSnapshot: (slug: string) =>
+    request<{
+      status: "ok" | "degraded" | "error";
+      probes: Record<string, { status: string; message?: string; detail?: unknown }>;
+    }>("GET", `/orgs/${slug}/modules/core-healthcheck/snapshot`),
+
+  // ─── M1 cross-workspace links ─────────────────────────────────────
+  listWorkspaceLinks: () =>
+    request<{ items: WorkspaceLinkItem[] }>("GET", "/me/links"),
+  createWorkspaceLink: (body: {
+    source_org_id: string;
+    target_org_id: string;
+    kinds: string[];
+    expires_at?: string | null;
+    min_target_role?: "owner" | "admin" | "member" | "guest" | null;
+  }) => request<WorkspaceLinkItem>("POST", "/me/links", body),
+  acceptWorkspaceLink: (id: string) =>
+    request<WorkspaceLinkItem>("POST", `/me/links/${id}/accept`),
+  revokeWorkspaceLink: (id: string) =>
+    request<void>("POST", `/me/links/${id}/revoke`),
+  patchWorkspaceLink: (
+    id: string,
+    body: {
+      expires_at?: string | null;
+      min_target_role?: "owner" | "admin" | "member" | "guest" | null;
+    },
+  ) => request<WorkspaceLinkItem>("PATCH", `/me/links/${id}`, body),
+
+  // ─── D4 entity pairings — polymorphic links without firing a wire ─
+  listPairings: (
+    slug: string,
+    filter: Partial<{
+      source_kind: string;
+      source_id: string;
+      target_kind: string;
+      target_id: string;
+      relationship_kind: string;
+    }> = {},
+  ) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(filter)) {
+      if (typeof v === "string" && v.length > 0) qs.set(k, v);
+    }
+    const tail = qs.toString();
+    return request<{ items: PairingItem[] }>(
+      "GET",
+      `/orgs/${slug}/pairings${tail ? `?${tail}` : ""}`,
+    );
+  },
+  createPairing: (
+    slug: string,
+    body: {
+      source_kind: string;
+      source_id: string;
+      target_kind: string;
+      target_id: string;
+      relationship_kind: string;
+      notes?: string | null;
+      metadata?: Record<string, unknown>;
+    },
+  ) => request<PairingItem>("POST", `/orgs/${slug}/pairings`, body),
+  deletePairing: (slug: string, id: string) =>
+    request<void>("DELETE", `/orgs/${slug}/pairings/${id}`),
 };
+
+export interface PairingItem {
+  id: string;
+  org_id: string;
+  source_kind: string;
+  source_id: string;
+  target_kind: string;
+  target_id: string;
+  relationship_kind: string;
+  notes: string | null;
+  metadata: Record<string, unknown>;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface WorkspaceLinkItem {
+  id: string;
+  kinds: string[];
+  status: "pending" | "active" | "revoked";
+  created_at: string;
+  accepted_at: string | null;
+  revoked_at: string | null;
+  expires_at: string | null;
+  min_target_role: "owner" | "admin" | "member" | "guest" | null;
+  source_org_id: string;
+  source_org_name: string;
+  source_org_slug: string;
+  target_org_id: string;
+  target_org_name: string;
+  target_org_slug: string;
+  source_role: string | null;
+  target_role: string | null;
+}
+
+// ─── Types for the methods above ────────────────────────────────────
+export interface FileRecord {
+  id: string;
+  filename: string;
+  mime_type: string;
+  size_bytes: number;
+  kind: "image" | "document" | "video" | "other";
+  width: number | null;
+  height: number | null;
+  variants: {
+    original: { path: string; bytes: number };
+    medium?: { path: string; bytes: number; width: number; height: number };
+    thumb?: { path: string; bytes: number; width: number; height: number };
+  };
+  created_at: string;
+}
+
+export interface SavedView {
+  id: string;
+  entity_kind: string;
+  name: string;
+  view_type: string;
+  config: Record<string, unknown>;
+  is_default: boolean;
+  /** v0.3: when true the dashboard renders this view's data inline. */
+  pinned: boolean;
+  owner_user_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ViewDataResponse {
+  view: { id: string; entity_kind: string; view_type: string };
+  items: Array<{
+    kind: string;
+    id: string;
+    title: string;
+    subtitle?: string;
+    image_path?: string;
+    detailUrl?: string;
+    fields: Record<string, unknown>;
+  }>;
+}
+
+export interface TagRecord {
+  id: string;
+  name: string;
+  color: string | null;
+  created_at: string;
+}
+
+export interface TagAttachment {
+  id: string;
+  tag_id: string;
+  source_module: string;
+  source_type: string;
+  source_id: string;
+  role: string | null;
+  created_at: string;
+  // Joined on list:
+  tag_name?: string;
+  tag_color?: string | null;
+}
+
+export interface SearchHit {
+  kind: string;
+  id: string;
+  title: string;
+  subtitle?: string;
+  image_path?: string;
+  detailUrl?: string;
+  fields: Record<string, unknown>;
+}
+
+export interface SurfaceRecord {
+  id: string;
+  name: string;
+  token: string;
+  scope_type: "view" | "entity" | "collection";
+  scope_id: string;
+  config: Record<string, unknown>;
+  enabled: boolean;
+  expires_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+  public_url: string;
+}
+
+export interface SurfaceStats {
+  views_total: number;
+  views_24h: number;
+  views_7d: number;
+  views_30d: number;
+  first_viewed: string | null;
+  last_viewed: string | null;
+  recent: Array<{
+    viewed_at: string;
+    referer: string | null;
+    ua_hint: string | null;
+  }>;
+}
 
 export interface NotificationEntry {
   id: string;
@@ -455,6 +826,12 @@ export interface NotificationEntry {
   link_url: string | null;
   read_at: string | null;
   created_at: string;
+}
+
+export interface CrossOrgNotificationEntry extends NotificationEntry {
+  org_id: string;
+  org_name: string;
+  org_slug: string;
 }
 
 export interface ActivityEntry {
@@ -470,6 +847,21 @@ export interface ActivityEntry {
   occurred_at: string;
   actor: { id: string; display_name: string | null; email: string | null } | null;
   token: { id: string; name: string; prefix: string | null } | null;
+}
+
+/** Shape of /me/activity rows — every workspace activity attributed
+ *  to the caller, joined with the org's slug + name. */
+export interface CrossOrgActivityEntry {
+  id: string;
+  action: string;
+  module: string | null;
+  entity_type: string | null;
+  entity_id: string | null;
+  diff: unknown | null;
+  occurred_at: string;
+  org_id: string;
+  org_name: string;
+  org_slug: string;
 }
 
 export interface WorkspaceMember {

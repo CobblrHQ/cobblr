@@ -27,6 +27,18 @@ const DEFAULTS: DefaultBinding[] = [
     trigger_type: "event",
     trigger_event: "inventory.stock.changed",
   },
+  // D9 from BACKLOG: order arrival auto-bumps part stock via a
+  // user-editable wire instead of a hardcoded handler. The orders
+  // route emits one purchases.order_item.received per line item
+  // (with partId + delta); this wire fires inventory.adjust-stock
+  // on each. End-users can swap action_id, edit the wire, or
+  // disable it entirely.
+  {
+    source_kind: "purchases:order_item",
+    action_id: "inventory:adjust-stock",
+    trigger_type: "event",
+    trigger_event: "purchases.order_item.received",
+  },
 ];
 
 export async function seedDefaultBindings(orgId: string): Promise<number> {

@@ -15,6 +15,10 @@ modulesRouter.get("/", requireAuth, (_req, res) => {
     displayName: m.displayName,
     description: m.description,
     icon: m.icon ?? null,
+    // Q4 in build-plan.md / module-layers.md — surfaces the band so
+    // the workspace UI can hide the disable toggle for foundationals
+    // and labels stock modules as "default-enabled."
+    band: m.band,
     intents: m.intents.map((i) => ({ name: i.name, description: i.description })),
     exposes: m.exposes,
     dependencies: m.dependencies,

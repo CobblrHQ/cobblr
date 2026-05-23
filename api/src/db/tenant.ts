@@ -60,6 +60,18 @@ export async function getTenantDb(orgId: string): Promise<Kysely<TenantDB>> {
     password: creds.password,
     max: 5,
   });
+  // Without an 'error' listener, a pg-pool idle-client error (e.g.
+  // backend kills a connection during DROP DATABASE on this tenant,
+  // or a transient network blip) becomes an unhandled 'error' event
+  // and Node terminates the process. Tenants get DROPped during
+  // org-delete; this listener is what keeps the api alive across
+  // that path.
+  pool.on("error", (err) => {
+    console.error(
+      `[tenant-pool ${orgId}] idle client error:`,
+      (err as Error).message,
+    );
+  });
   const db = new Kysely<TenantDB>({ dialect: new PostgresDialect({ pool }) });
   cache.set(orgId, { pool, db });
   return db;

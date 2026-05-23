@@ -14,8 +14,10 @@ import { partsRouter } from "./parts.js";
 import { allocationsRouter } from "./allocations.js";
 import { importRouter } from "./import.js";
 import { registerInventoryResolvers } from "./resolvers.js";
+import { registerInventoryActionHandlers } from "./action-handlers.js";
 
 registerInventoryResolvers();
+registerInventoryActionHandlers();
 
 const router = Router({ mergeParams: true });
 

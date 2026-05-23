@@ -12,6 +12,7 @@ export default defineModule({
   description:
     "Physical things you own that aren't fungible stock and aren't machines. Appliances, tools, collections — anything you'd want to track individually.",
   icon: "box",
+  band: "stock",
 
   schema: {
     tablePrefix: "assets_",
@@ -41,6 +42,18 @@ export default defineModule({
           { name: "last_service_at", type: "date" },
           { name: "image_path", type: "image-path", role: "image" },
           { name: "notes", type: "text" },
+        ],
+        // Public face. Service / warranty dates may be sensitive in
+        // commercial contexts; keep them private to assets' own UI for
+        // now. Serial_number stays internal (anti-theft / privacy).
+        exposableFields: [
+          "name",
+          "short_name",
+          "manufacturer",
+          "model",
+          "type",
+          "state",
+          "image_path",
         ],
       },
     ],

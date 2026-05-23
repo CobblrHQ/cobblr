@@ -161,10 +161,32 @@ ordersRouter.patch(
         to: parsed.data.status,
       });
       if (parsed.data.status === "arrived") {
-        platform().events.emit("purchases.order.arrived", {
+        await platform().events.emit("purchases.order.arrived", {
           orgId: ctx.org.id,
           orderId: id,
         });
+        // Fan one event per order_item that's mapped to an
+        // inventory part. Lets a wire bind purchases.order_item
+        // .received → inventory.adjust-stock for auto-bump-on-
+        // arrival without needing the wire engine to iterate
+        // collections itself (D9 from BACKLOG).
+        const items = await db
+          .selectFrom("purchases_order_items")
+          .select(["id", "part_id", "qty", "description"])
+          .where("order_id", "=", id)
+          .where("part_id", "is not", null)
+          .execute();
+        for (const it of items) {
+          if (!it.part_id) continue;
+          await platform().events.emit("purchases.order_item.received", {
+            orgId: ctx.org.id,
+            orderId: id,
+            orderItemId: it.id,
+            partId: it.part_id,
+            delta: Number(it.qty),
+            reason: `Order arrived (${it.description ?? "item"})`,
+          });
+        }
       }
     }
     res.json(updated);
