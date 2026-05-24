@@ -20,10 +20,6 @@ COPY modules/projects/package.json ./modules/projects/
 COPY modules/purchases/package.json ./modules/purchases/
 COPY modules/machines/package.json ./modules/machines/
 COPY modules/assets/package.json ./modules/assets/
-COPY modules/3d-printers/package.json ./modules/3d-printers/
-COPY modules/laser-cutters/package.json ./modules/laser-cutters/
-COPY modules/cnc-machines/package.json ./modules/cnc-machines/
-COPY modules/workshop-mods/package.json ./modules/workshop-mods/
 COPY modules/core-recurrence/package.json ./modules/core-recurrence/
 COPY modules/core-activity-log/package.json ./modules/core-activity-log/
 COPY modules/core-notifications/package.json ./modules/core-notifications/
@@ -35,6 +31,12 @@ COPY modules/core-search/package.json ./modules/core-search/
 COPY modules/core-public-surfaces/package.json ./modules/core-public-surfaces/
 COPY modules/core-openapi/package.json ./modules/core-openapi/
 COPY modules/core-queue/package.json ./modules/core-queue/
+COPY modules/core-locations/package.json ./modules/core-locations/
+COPY modules/core-catalogs/package.json ./modules/core-catalogs/
+COPY modules/core-labels-qr/package.json ./modules/core-labels-qr/
+COPY modules/core-integrations/package.json ./modules/core-integrations/
+COPY modules/core-ai/package.json ./modules/core-ai/
+COPY modules/core-maintenance/package.json ./modules/core-maintenance/
 
 RUN npm install --workspaces --include-workspace-root --no-audit --no-fund
 
@@ -56,10 +58,6 @@ RUN npm run --if-present build -w @cobblr/projects
 RUN npm run --if-present build -w @cobblr/purchases
 RUN npm run --if-present build -w @cobblr/machines
 RUN npm run --if-present build -w @cobblr/assets
-RUN npm run --if-present build -w @cobblr/3d-printers
-RUN npm run --if-present build -w @cobblr/laser-cutters
-RUN npm run --if-present build -w @cobblr/cnc-machines
-RUN npm run --if-present build -w @cobblr/workshop-mods
 RUN npm run --if-present build -w @cobblr/core-recurrence
 RUN npm run --if-present build -w @cobblr/core-activity-log
 RUN npm run --if-present build -w @cobblr/core-notifications
@@ -71,6 +69,12 @@ RUN npm run --if-present build -w @cobblr/core-search
 RUN npm run --if-present build -w @cobblr/core-public-surfaces
 RUN npm run --if-present build -w @cobblr/core-openapi
 RUN npm run --if-present build -w @cobblr/core-queue
+RUN npm run --if-present build -w @cobblr/core-locations
+RUN npm run --if-present build -w @cobblr/core-catalogs
+RUN npm run --if-present build -w @cobblr/core-labels-qr
+RUN npm run --if-present build -w @cobblr/core-integrations
+RUN npm run --if-present build -w @cobblr/core-ai
+RUN npm run --if-present build -w @cobblr/core-maintenance
 WORKDIR /app/api
 RUN npm run build
 

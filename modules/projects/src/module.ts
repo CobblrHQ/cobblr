@@ -17,6 +17,7 @@ export default defineModule({
     "Projects + tasks + dependencies. Tasks can wait on other tasks or on any module's entity — the platform brokers.",
   icon: "layers",
   band: "stock",
+  instanceability: "multi",
 
   schema: {
     tablePrefix: "projects_",
@@ -77,6 +78,7 @@ export default defineModule({
           "energy",
           "due_date",
         ],
+        detailRoute: "/projects/tasks/{id}",
       },
     ],
   },
@@ -94,7 +96,6 @@ export default defineModule({
       "projects.project.updated",
       "projects.task.created",
       "projects.task.updated",
-      "projects.task.completed",
       "projects.task.unblocked",
     ],
     api: ["getProjectById", "getTaskById", "createTask", "completeTask"],
@@ -116,4 +117,20 @@ export default defineModule({
   // Subscribes is informational — the actual reaction happens
   // through a user-configurable wire (seeded at signup).
   subscribes: ["inventory.stock.changed"],
+
+  // The "auto-unblock a task when its part comes back in stock" flow
+  // is a wire, not hardcoded code. We ship it as a default so out-of-
+  // the-box behaviour matches the old hardcoded subscription; users
+  // can edit / disable / replace it. The wire belongs to projects
+  // because projects owns the action it fires.
+  contributes: {
+    wires: [
+      {
+        source_kind: "inventory:part",
+        action_id: "projects:set-dep-satisfied",
+        trigger_type: "event",
+        trigger_event: "inventory.stock.changed",
+      },
+    ],
+  },
 });

@@ -263,6 +263,42 @@ orgsRouter.get("/:slug/local", requireAuth, withTenant, async (req, res, next) =
   }
 });
 
+// Queue jobs for this workspace. Read-only; admins use this to see
+// what background work is queued, running, done, or failed.
+orgsRouter.get("/:slug/queue/jobs", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 50, 200);
+    const statusParam = typeof req.query.status === "string" ? req.query.status : null;
+    let q = meta
+      .selectFrom("core_queue_jobs")
+      .select([
+        "id",
+        "queue",
+        "payload",
+        "status",
+        "attempts",
+        "max_attempts",
+        "run_at",
+        "locked_at",
+        "locked_by",
+        "completed_at",
+        "failed_at",
+        "error",
+        "created_at",
+      ])
+      .where("org_id", "=", req.tenant!.org.id)
+      .orderBy("created_at", "desc")
+      .limit(limit);
+    if (statusParam) {
+      q = q.where("status", "=", statusParam as never);
+    }
+    const items = await q.execute();
+    res.json({ items });
+  } catch (err) {
+    next(err);
+  }
+});
+
 orgsRouter.get("/:slug/activity", requireAuth, withTenant, async (req, res, next) => {
   try {
     const limit = Math.min(Number(req.query.limit) || 25, 100);

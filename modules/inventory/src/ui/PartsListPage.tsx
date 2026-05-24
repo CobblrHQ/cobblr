@@ -4,11 +4,21 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, FileUp, Plus, Search, Tag as TagIcon } from "lucide-react";
+import {
+  AlertTriangle,
+  Archive,
+  FileDown,
+  FileUp,
+  Plus,
+  Search,
+  ShieldCheck,
+  Tag as TagIcon,
+} from "lucide-react";
 import {
   BulkActionBar,
   EntityThumb,
   EntityTile,
+  Modal,
   ViewModeToggle,
   useToast,
   useConfirm,
@@ -29,8 +39,12 @@ export function PartsListPage() {
   const [locationId, setLocationId] = useState<string>("");
   const [state, setState] = useState<StateFilter>("active");
   const [lowOnly, setLowOnly] = useState(false);
+  const [archivedFilter, setArchivedFilter] = useState<"hide" | "include" | "only">("hide");
+  const [warrantyFilter, setWarrantyFilter] = useState<"all" | "expiring30" | "expiring90">("all");
+  const [insuredOnly, setInsuredOnly] = useState(false);
   const [adding, setAdding] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [viewMode, setViewMode] = useViewMode("parts", "list");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const toast = useToast();
@@ -42,8 +56,13 @@ export function PartsListPage() {
   // Cursor-paginated — the parts endpoint caps each page, so a
   // workshop with hundreds of parts needs "load more" to reach
   // them all. (Before this, parts past the cap were unreachable.)
+  const warrantyWithin =
+    warrantyFilter === "expiring30" ? 30 : warrantyFilter === "expiring90" ? 90 : undefined;
   const parts = useInfiniteQuery({
-    queryKey: ["inventory-parts", { search, categoryId, locationId, state, lowOnly }],
+    queryKey: [
+      "inventory-parts",
+      { search, categoryId, locationId, state, lowOnly, archivedFilter, warrantyFilter, insuredOnly },
+    ],
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) =>
       api.listParts({
@@ -52,10 +71,32 @@ export function PartsListPage() {
         location_id: locationId || undefined,
         state: state === "all" ? undefined : state,
         low_stock: lowOnly || undefined,
+        show_archived: archivedFilter === "include" || undefined,
+        archived_only: archivedFilter === "only" || undefined,
+        warranty_expires_within_days: warrantyWithin,
+        insured_only: insuredOnly || undefined,
         cursor: pageParam,
       }),
     getNextPageParam: (last) => last.next_cursor ?? undefined,
   });
+
+  async function exportCsv() {
+    setExporting(true);
+    try {
+      await api.partsExportCsv({
+        search: search.trim() || undefined,
+        state: state === "all" ? undefined : state,
+        show_archived: archivedFilter === "include" || undefined,
+        archived_only: archivedFilter === "only" || undefined,
+        insured_only: insuredOnly || undefined,
+      });
+      toast.success("CSV downloaded.");
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setExporting(false);
+    }
+  }
   const partItems = parts.data?.pages.flatMap((p) => p.items) ?? [];
 
   function toggleRow(id: string, checked: boolean) {
@@ -177,8 +218,44 @@ export function PartsListPage() {
           />
           low-stock only
         </label>
+        <select
+          value={archivedFilter}
+          onChange={(e) => setArchivedFilter(e.target.value as typeof archivedFilter)}
+          className="input !w-auto"
+          title="Archive filter"
+        >
+          <option value="hide">Hide archived</option>
+          <option value="include">Include archived</option>
+          <option value="only">Archived only</option>
+        </select>
+        <select
+          value={warrantyFilter}
+          onChange={(e) => setWarrantyFilter(e.target.value as typeof warrantyFilter)}
+          className="input !w-auto"
+          title="Warranty filter"
+        >
+          <option value="all">Any warranty</option>
+          <option value="expiring30">Warranty in 30d</option>
+          <option value="expiring90">Warranty in 90d</option>
+        </select>
+        <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-mortar-200 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={insuredOnly}
+            onChange={(e) => setInsuredOnly(e.target.checked)}
+            className="accent-cobble-500"
+          />
+          insured only
+        </label>
         <div className="ml-auto" />
         <ViewModeToggle mode={viewMode} onChange={setViewMode} />
+        <button
+          onClick={() => void exportCsv()}
+          disabled={exporting}
+          className="rounded-md border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-mortar-200 hover:bg-mortar-50 dark:hover:bg-slate-800/70 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5 disabled:opacity-50"
+        >
+          <FileDown size={14} /> {exporting ? "exporting…" : "Export CSV"}
+        </button>
         <button
           onClick={() => setImporting(true)}
           className="rounded-md border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-mortar-200 hover:bg-mortar-50 dark:hover:bg-slate-800/70 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
@@ -289,52 +366,49 @@ function PartsBulkTagModal({
 }) {
   const [name, setName] = useState("");
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm" onClick={onClose}>
-      <div
-        className="bg-white dark:bg-slate-900 rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 p-5 max-w-sm w-full"
-        onClick={(e) => e.stopPropagation()}
+    <Modal
+      open
+      onClose={onClose}
+      title={`Tag ${count} part${count === 1 ? "" : "s"}`}
+      size="sm"
+    >
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!name.trim()) return;
+          onSubmit(name.trim());
+        }}
+        className="space-y-3"
       >
-        <div className="text-sm font-medium mb-3 text-slate-700 dark:text-mortar-100">
-          Tag {count} part{count === 1 ? "" : "s"}
+        <input
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="e.g. urgent, archive, low-stock"
+          className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+          autoFocus
+        />
+        <div className="text-[11px] text-slate-400">
+          Existing tag? Reused. New name? Created on the fly.
         </div>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!name.trim()) return;
-            onSubmit(name.trim());
-          }}
-          className="space-y-3"
-        >
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. urgent, archive, low-stock"
-            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
-            autoFocus
-          />
-          <div className="text-[11px] text-slate-400">
-            Existing tag? Reused. New name? Created on the fly.
-          </div>
-          <div className="flex justify-end gap-2 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={busy || !name.trim()}
-              className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white"
-            >
-              {busy ? "tagging…" : `Tag ${count}`}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+        <div className="flex justify-end gap-2 pt-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={busy || !name.trim()}
+            className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white"
+          >
+            {busy ? "tagging…" : `Tag ${count}`}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
@@ -365,6 +439,7 @@ function PartsTable({
                 aria-label="Select all"
               />
             </th>
+            <Th>#ID</Th>
             <Th>Name</Th>
             <Th>Category</Th>
             <Th>Location</Th>
@@ -386,6 +461,9 @@ function PartsTable({
                   aria-label={`Select ${p.name}`}
                 />
               </td>
+              <td className="px-3 py-2 font-mono text-[11px] text-slate-400 dark:text-slate-500 whitespace-nowrap">
+                {p.asset_id != null ? `#${assetIdFmt(p.asset_id)}` : "—"}
+              </td>
               <td className="px-3 py-2">
                 <div className="flex items-center gap-3">
                   <EntityThumb src={p.image_path} alt={p.name} size={56} />
@@ -395,6 +473,13 @@ function PartsTable({
                     </Link>
                     {p.manufacturer && (
                       <span className="ml-2 text-[11px] text-slate-400 dark:text-slate-500">{p.manufacturer}</span>
+                    )}
+                    {(p.serial_number || p.model_number) && (
+                      <div className="text-[10px] font-mono text-slate-400 dark:text-slate-500 mt-0.5">
+                        {p.model_number && <span>m/n {p.model_number}</span>}
+                        {p.model_number && p.serial_number && <span> · </span>}
+                        {p.serial_number && <span>s/n {p.serial_number}</span>}
+                      </div>
                     )}
                   </div>
                 </div>
@@ -407,11 +492,24 @@ function PartsTable({
                 {p.min_qty == null ? "—" : fmt(p.min_qty)}
               </td>
               <td className="px-3 py-2">
-                {p.low_stock && (
-                  <span className="inline-flex items-center gap-1 text-[10px] text-ember-500">
-                    <AlertTriangle size={11} /> low
-                  </span>
-                )}
+                <div className="flex flex-wrap gap-1 items-center justify-end">
+                  {p.low_stock && (
+                    <span className="inline-flex items-center gap-1 text-[10px] text-ember-500 border border-ember-200 dark:border-ember-800 rounded px-1.5 py-0.5">
+                      <AlertTriangle size={10} /> low
+                    </span>
+                  )}
+                  {warrantyChip(p.warranty_days_until, p.lifetime_warranty)}
+                  {p.insured && (
+                    <span className="inline-flex items-center gap-1 text-[10px] text-cobble-600 border border-cobble-200 dark:border-cobble-800 rounded px-1.5 py-0.5">
+                      <ShieldCheck size={10} /> ins
+                    </span>
+                  )}
+                  {p.archived && (
+                    <span className="inline-flex items-center gap-1 text-[10px] text-slate-500 border border-slate-300 dark:border-slate-600 rounded px-1.5 py-0.5">
+                      <Archive size={10} /> arch
+                    </span>
+                  )}
+                </div>
               </td>
             </tr>
           ))}
@@ -454,4 +552,39 @@ function PartsTileGrid({ items }: { items: PartListItem[] }) {
 function fmt(n: number): string {
   // Trim trailing zeros: 3.000 → 3, 3.500 → 3.5, 3.510 → 3.51.
   return Number.isInteger(n) ? String(n) : String(parseFloat(n.toFixed(3)));
+}
+
+/** HomeBox-style zero-padded asset id. */
+function assetIdFmt(id: number): string {
+  return String(id).padStart(3, "0");
+}
+
+function warrantyChip(daysUntil: number | null, lifetime: boolean) {
+  if (lifetime) {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] text-moss-600 border border-moss-200 dark:border-moss-800 rounded px-1.5 py-0.5">
+        lifetime
+      </span>
+    );
+  }
+  if (daysUntil == null) return null;
+  if (daysUntil < 0) {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] text-slate-500 border border-slate-300 dark:border-slate-600 rounded px-1.5 py-0.5">
+        warranty expired
+      </span>
+    );
+  }
+  if (daysUntil <= 90) {
+    const tone =
+      daysUntil <= 30
+        ? "text-ember-500 border-ember-200 dark:border-ember-800"
+        : "text-amber-600 border-amber-200 dark:border-amber-800";
+    return (
+      <span className={`inline-flex items-center gap-1 text-[10px] rounded px-1.5 py-0.5 border ${tone}`}>
+        w/exp {daysUntil}d
+      </span>
+    );
+  }
+  return null;
 }

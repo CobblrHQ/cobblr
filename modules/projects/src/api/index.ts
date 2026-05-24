@@ -6,8 +6,10 @@ import { Router } from "express";
 import { projectsRouter } from "./projects.js";
 import { tasksRouter } from "./tasks.js";
 import { registerProjectsHandlers } from "./handlers.js";
+import { registerProjectsNotificationMappers } from "./notification-mapper.js";
 
 registerProjectsHandlers();
+registerProjectsNotificationMappers();
 
 const router = Router({ mergeParams: true });
 

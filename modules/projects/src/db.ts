@@ -19,6 +19,7 @@ export interface ProjectsProjectsTable {
   completion_date: Date | null;
   color: string | null;
   metadata: Generated<Record<string, unknown>>;
+  instance: Generated<string>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }
@@ -35,6 +36,7 @@ export interface ProjectsTasksTable {
   completed_at: Date | null;
   order_within: Generated<number>;
   metadata: Generated<Record<string, unknown>>;
+  instance: Generated<string>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }
@@ -48,6 +50,7 @@ export interface ProjectsTaskDependenciesTable {
   target_entity_id: string | null;
   satisfied: Generated<boolean>;
   note: string | null;
+  instance: Generated<string>;
   created_at: Generated<Date>;
 }
 

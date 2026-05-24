@@ -8,6 +8,7 @@ import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody } from "./util.js";
+import { routeUnknownToMetadata } from "./route-helpers.js";
 
 export const ordersRouter = Router({ mergeParams: true });
 
@@ -40,6 +41,11 @@ const ItemCreate = z.object({
   received_at: z.string().nullable().optional(),
   metadata: z.record(z.unknown()).optional(),
 });
+
+// D6: top-level keys the schemas know about. Anything else the caller
+// POSTs gets hoisted into metadata by routeUnknownToMetadata().
+const ORDER_NATIVE_KEYS = new Set(Object.keys(OrderCreate.shape));
+const ITEM_NATIVE_KEYS = new Set(Object.keys(ItemCreate.shape));
 
 // ── orders ───────────────────────────────────────────────────────
 
@@ -89,7 +95,8 @@ ordersRouter.get(
 ordersRouter.post(
   "/",
   asyncHandler(async (req, res) => {
-    const parsed = OrderCreate.safeParse(req.body);
+    const routed = routeUnknownToMetadata(req.body, ORDER_NATIVE_KEYS);
+    const parsed = OrderCreate.safeParse(routed);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
     const ctx = tenantContext(req);
@@ -126,7 +133,8 @@ ordersRouter.patch(
       res.status(400).json({ error: { code: "missing_id", message: "id required" } });
       return;
     }
-    const parsed = OrderUpdate.safeParse(req.body);
+    const routed = routeUnknownToMetadata(req.body, ORDER_NATIVE_KEYS);
+    const parsed = OrderUpdate.safeParse(routed);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
     const ctx = tenantContext(req);
@@ -232,7 +240,8 @@ ordersRouter.post(
       res.status(400).json({ error: { code: "missing_id", message: "id required" } });
       return;
     }
-    const parsed = ItemCreate.safeParse(req.body);
+    const routed = routeUnknownToMetadata(req.body, ITEM_NATIVE_KEYS);
+    const parsed = ItemCreate.safeParse(routed);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
     const ctx = tenantContext(req);

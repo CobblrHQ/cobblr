@@ -17,6 +17,8 @@ export interface MachinesMachinesTable {
   quantity: Generated<number>;
   location_id: string | null;
   metadata: ColJsonb;
+  /** Multi-instance scope (defaults to 'machines'). */
+  instance: Generated<string>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }

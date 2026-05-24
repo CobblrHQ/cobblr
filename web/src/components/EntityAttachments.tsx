@@ -359,10 +359,61 @@ function FilesSection({
 
   const items = list.data?.items ?? [];
 
+  // Drag-and-drop: drop anywhere on the section to upload. We track
+  // `dragOver` so the grid can highlight as a drop target instead of
+  // just silently accepting files. A nested counter would be nicer
+  // for handling enter/leave on children but flat is fine here —
+  // pointer-events: none on the overlay keeps child drags from
+  // toggling the counter.
+  const [dragOver, setDragOver] = useState(false);
+  function onDragEnter(e: React.DragEvent) {
+    if (e.dataTransfer.types.includes("Files")) {
+      e.preventDefault();
+      setDragOver(true);
+    }
+  }
+  function onDragOver(e: React.DragEvent) {
+    if (e.dataTransfer.types.includes("Files")) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+    }
+  }
+  function onDragLeave(e: React.DragEvent) {
+    // Only clear when the drag leaves the section entirely (not
+    // when crossing internal boundaries). currentTarget contains
+    // relatedTarget = still inside.
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      setDragOver(false);
+    }
+  }
+  function onDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragOver(false);
+    if (e.dataTransfer.files.length > 0) {
+      void handleFiles(e.dataTransfer.files);
+    }
+  }
+
   return (
-    <section>
-      <h3 className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">
+    <section
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      className={
+        "rounded-lg transition " +
+        (dragOver
+          ? "ring-2 ring-cobble-400 ring-offset-2 dark:ring-offset-slate-900 bg-cobble-50/30 dark:bg-cobble-900/10"
+          : "")
+      }
+    >
+      <h3 className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2 flex items-center gap-2">
         Files
+        {dragOver && (
+          <span className="text-cobble-600 font-normal normal-case tracking-normal">
+            drop to upload
+          </span>
+        )}
       </h3>
       <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
         {items.map((att) =>

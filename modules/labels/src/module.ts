@@ -32,9 +32,8 @@ export default defineModule({
 
   exposes: {
     events: [
-      "labels.queued",
-      "labels.printed",
-      "labels.batch.created",
+      "labels.print.queued",
+      "labels.print.completed",
     ],
     api: ["queue", "listQueue", "clearQueue", "printBatch"],
     // ──────────────── Pillar B — labels' actions ──────────────────

@@ -5,11 +5,12 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { Modal } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { InventoryApiError } from "./api";
 
 export function NewPartDialog({ onClose }: { onClose: (created: boolean) => void }) {
-  const { api } = useInventory();
+  const { api, orgSlug, getToken } = useInventory();
   const navigate = useNavigate();
   const cats = useQuery({ queryKey: ["inventory-categories"], queryFn: () => api.listCategories() });
   const locs = useQuery({ queryKey: ["inventory-locations"], queryFn: () => api.listLocations() });
@@ -19,8 +20,43 @@ export function NewPartDialog({ onClose }: { onClose: (created: boolean) => void
   const [unit, setUnit] = useState("each");
   const [categoryId, setCategoryId] = useState("");
   const [locationId, setLocationId] = useState("");
+  const [printLabel, setPrintLabel] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  async function queueQrLabel(partId: string, displayName: string) {
+    const auth = (): Record<string, string> => {
+      const t = getToken();
+      return t ? { Authorization: `Bearer ${t}` } : {};
+    };
+    const mint = await fetch(
+      `/api/v1/orgs/${orgSlug}/modules/core-labels-qr/tokens`,
+      {
+        method: "POST",
+        headers: { ...auth(), "Content-Type": "application/json" },
+        body: JSON.stringify({
+          entity_kind: "inventory:part",
+          entity_id: partId,
+          mode: "navigate",
+          auth: "session",
+        }),
+      },
+    );
+    if (!mint.ok) return;
+    const tok = (await mint.json()) as { token: string };
+    await fetch(`/api/v1/orgs/${orgSlug}/modules/labels/queue`, {
+      method: "POST",
+      headers: { ...auth(), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        module_name: "inventory",
+        entity_type: "part",
+        entity_id: partId,
+        qr_payload: `${window.location.origin}/qr/${tok.token}`,
+        description: displayName,
+        qty: 1,
+      }),
+    });
+  }
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -34,6 +70,17 @@ export function NewPartDialog({ onClose }: { onClose: (created: boolean) => void
         category_id: categoryId || null,
         location_id: locationId || null,
       });
+      if (printLabel) {
+        try {
+          const displayName =
+            "asset_id" in part && (part as { asset_id: number }).asset_id != null
+              ? `#${String((part as { asset_id: number }).asset_id).padStart(3, "0")} ${name.trim()}`
+              : name.trim();
+          await queueQrLabel(part.id, displayName);
+        } catch {
+          /* non-fatal */
+        }
+      }
       onClose(true);
       navigate(`/inventory/parts/${part.id}`);
     } catch (err) {
@@ -44,21 +91,8 @@ export function NewPartDialog({ onClose }: { onClose: (created: boolean) => void
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4"
-      onClick={() => onClose(false)}
-    >
-      <form
-        role="dialog"
-        aria-modal="true"
-        aria-label="New part"
-        onSubmit={submit}
-        onClick={(e) => e.stopPropagation()}
-        className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 max-w-md w-full p-5 shadow-2xl space-y-3"
-      >
-        <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500">
-          // new part
-        </div>
+    <Modal open onClose={() => onClose(false)} title="new part" size="sm">
+      <form onSubmit={submit} className="space-y-3">
         <Field label="Name">
           <input
             autoFocus
@@ -108,6 +142,15 @@ export function NewPartDialog({ onClose }: { onClose: (created: boolean) => void
             ))}
           </select>
         </Field>
+        <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-mortar-200 cursor-pointer pt-1">
+          <input
+            type="checkbox"
+            checked={printLabel}
+            onChange={(e) => setPrintLabel(e.target.checked)}
+            className="accent-cobble-500"
+          />
+          Queue a QR label print after create
+        </label>
         {error && (
           <div className="text-xs text-ember-500 bg-ember-50 rounded-md px-3 py-2">{error}</div>
         )}
@@ -128,7 +171,7 @@ export function NewPartDialog({ onClose }: { onClose: (created: boolean) => void
           </button>
         </div>
       </form>
-    </div>
+    </Modal>
   );
 }
 

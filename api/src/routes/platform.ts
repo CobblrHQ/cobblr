@@ -108,6 +108,71 @@ platformOrgRouter.get(
   },
 );
 
+// core-resolver v0.1 — multi-hop walk over entity_pairings.
+//
+// POST /entities/:kind/:id/walk-path { hops: [{ rel, dir?, kind? }, ...], maxPerHop? }
+//   → { items: ResolvedEntity[] }
+//
+// POST (not GET) because hops can be many and don't fit cleanly in
+// a query string. Each hop's shape matches walkPairings's spec.
+platformOrgRouter.post(
+  "/:slug/entities/:kind/:id/walk-path",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      const { kind, id } = req.params;
+      if (!kind || !id) {
+        res.status(400).json({
+          error: { code: "missing_params", message: "kind + id required" },
+        });
+        return;
+      }
+      const body = req.body as {
+        hops?: Array<{ rel?: string; dir?: string; kind?: string }>;
+        maxPerHop?: number;
+      };
+      if (!Array.isArray(body.hops) || body.hops.length === 0) {
+        res.status(400).json({
+          error: { code: "missing_hops", message: "hops[] is required (1+ entries)." },
+        });
+        return;
+      }
+      // Validate each hop. Bad shape → 400 rather than a 500 from
+      // walkPath calling rel="undefined".
+      const cleanHops: Array<{ rel: string; dir?: "in" | "out"; kind?: string }> = [];
+      for (const [i, h] of body.hops.entries()) {
+        if (!h?.rel || typeof h.rel !== "string") {
+          res.status(400).json({
+            error: { code: "bad_hop", message: `hop ${i} missing rel` },
+          });
+          return;
+        }
+        if (h.dir && h.dir !== "in" && h.dir !== "out") {
+          res.status(400).json({
+            error: { code: "bad_dir", message: `hop ${i} dir must be 'in' or 'out'` },
+          });
+          return;
+        }
+        cleanHops.push({
+          rel: h.rel,
+          dir: h.dir as "in" | "out" | undefined,
+          kind: typeof h.kind === "string" ? h.kind : undefined,
+        });
+      }
+      const items = await platform().entities.walkPath(
+        req.tenant!.org.id,
+        { kind, id },
+        cleanHops,
+        { maxPerHop: typeof body.maxPerHop === "number" ? body.maxPerHop : undefined },
+      );
+      res.json({ items });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 // ──────────────────────── actions ──────────────────────────────────
 
 platformOrgRouter.get(

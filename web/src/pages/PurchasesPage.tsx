@@ -9,7 +9,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Plus, Search, Trash2 } from "lucide-react";
 import { ApiError, api, type Order } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { EntityActionsBar, Modal, useToast, useConfirm } from "@cobblr/platform-web";
+import { BulkActionBar, EntityActionsBar, Modal, useToast, useConfirm } from "@cobblr/platform-web";
 
 const STATUSES: Order["status"][] = ["planned", "ordered", "in-transit", "arrived", "cancelled"];
 
@@ -39,6 +39,32 @@ export function PurchasesPage() {
   }
 
   const [newOpen, setNewOpen] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const qcP = useQueryClient();
+  const toastP = useToast();
+  const confirmP = useConfirm();
+  const bulkDelete = useMutation({
+    mutationFn: async (ids: string[]) => {
+      for (const id of ids) {
+        await api.deleteOrder(activeSlug, id);
+      }
+    },
+    onSuccess: () => {
+      toastP.success(`Deleted ${selected.size} order${selected.size === 1 ? "" : "s"}`);
+      setSelected(new Set());
+      void qcP.invalidateQueries({ queryKey: ["orders", activeSlug] });
+    },
+    onError: (e) => toastP.error((e as Error).message),
+  });
+  function toggleRow(id: string, checked: boolean) {
+    setSelected((s) => {
+      const n = new Set(s);
+      if (checked) n.add(id);
+      else n.delete(id);
+      return n;
+    });
+  }
+  const allChecked = filtered.length > 0 && filtered.every((r) => selected.has(r.id));
 
   return (
     <div className="space-y-4">
@@ -81,6 +107,17 @@ export function PurchasesPage() {
         <table className="w-full text-sm">
           <thead className="bg-mortar-50/60 dark:bg-slate-800/40 text-[10px] font-mono uppercase tracking-widest text-slate-500 dark:text-slate-400">
             <tr>
+              <th className="w-8 px-3 py-2">
+                <input
+                  type="checkbox"
+                  checked={allChecked}
+                  onChange={(e) =>
+                    setSelected(e.target.checked ? new Set(filtered.map((r) => r.id)) : new Set())
+                  }
+                  className="accent-cobble-600"
+                  aria-label="Select all"
+                />
+              </th>
               <th className="text-left px-3 py-2">Vendor</th>
               <th className="text-left px-3 py-2">Order #</th>
               <th className="text-left px-3 py-2">Status</th>
@@ -97,6 +134,18 @@ export function PurchasesPage() {
                 onClick={() => navigate(`/purchases/${o.id}`)}
                 className="hover:bg-mortar-50 dark:hover:bg-slate-800/40 transition cursor-pointer"
               >
+                <td
+                  className="px-3 py-2 w-8"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selected.has(o.id)}
+                    onChange={(e) => toggleRow(o.id, e.target.checked)}
+                    className="accent-cobble-600"
+                    aria-label={`Select ${o.vendor || o.order_number}`}
+                  />
+                </td>
                 <td className="px-3 py-2 text-slate-700 dark:text-mortar-100 font-medium">
                   {o.vendor || "—"}
                 </td>
@@ -122,7 +171,7 @@ export function PurchasesPage() {
             ))}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-3 py-10 text-center text-xs text-slate-400 italic">
+                <td colSpan={8} className="px-3 py-10 text-center text-xs text-slate-400 italic">
                   {allRows.length === 0
                     ? "No orders yet. Click + new to log one."
                     : "No matches with the current filters."}
@@ -135,6 +184,28 @@ export function PurchasesPage() {
 
       <OrderDetailModal orderId={id ?? null} onClose={() => navigate("/purchases")} />
       <NewOrderModal open={newOpen} onClose={() => setNewOpen(false)} />
+      <BulkActionBar
+        count={selected.size}
+        onClear={() => setSelected(new Set())}
+        actions={
+          <button
+            type="button"
+            disabled={bulkDelete.isPending}
+            onClick={async () => {
+              const ok = await confirmP({
+                title: `Delete ${selected.size} order${selected.size === 1 ? "" : "s"}?`,
+                message: "This removes the rows from the workspace permanently.",
+                confirmLabel: "Delete",
+                destructive: true,
+              });
+              if (ok) bulkDelete.mutate(Array.from(selected));
+            }}
+            className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-ember-600 hover:text-ember-700 disabled:opacity-50"
+          >
+            <Trash2 size={12} /> Delete
+          </button>
+        }
+      />
     </div>
   );
 }

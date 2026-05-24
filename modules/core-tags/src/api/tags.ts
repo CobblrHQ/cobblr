@@ -205,7 +205,7 @@ tagsRouter.post(
       })
       .returningAll()
       .executeTakeFirstOrThrow();
-    await platform().events.emit("core-tags.attached", {
+    await platform().events.emit("core-tags.assignment.created", {
       orgId: ctx.org.id,
       tagId,
       source_module: row.source_module,
@@ -275,7 +275,7 @@ tagsRouter.delete(
       res.status(404).json({ error: { code: "not_found", message: "attachment not found" } });
       return;
     }
-    await platform().events.emit("core-tags.detached", {
+    await platform().events.emit("core-tags.assignment.deleted", {
       orgId: ctx.org.id,
       tagId: row.tag_id,
       source_module: row.source_module,

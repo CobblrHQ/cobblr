@@ -24,6 +24,9 @@ export interface AssetsAssetsTable {
   location_id: string | null;
   flags: ColJsonbArr;
   metadata: ColJsonb;
+  /** Multi-instance scope. Defaults to 'assets' at the DB level so
+   *  legacy code paths keep working; instance-aware writes set it. */
+  instance: Generated<string>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }

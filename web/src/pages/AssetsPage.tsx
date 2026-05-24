@@ -26,6 +26,7 @@ import {
   useViewMode,
 } from "@cobblr/platform-web";
 import { EntityAttachments } from "../components/EntityAttachments";
+import { LocationPicker } from "../components/LocationPicker";
 
 const ENTITY_KIND = "assets:asset";
 
@@ -442,7 +443,17 @@ function AssetDetailModal({ assetId, onClose }: { assetId: string | null; onClos
     <Modal open={!!assetId} onClose={onClose} title={a?.name ?? "loading…"} subtitle={a ? `${a.manufacturer ?? "—"} · ${a.state}` : undefined} size="lg">
       {a ? (
         <div className="space-y-4">
-          <EntityActionsBar entityKind={ENTITY_KIND} entityId={a.id} />
+          <div className="flex items-start gap-4">
+            <EntityThumb
+              src={a.image_path}
+              alt={a.name}
+              size={128}
+              className="ring-1 ring-slate-200 dark:ring-slate-700"
+            />
+            <div className="flex-1">
+              <EntityActionsBar entityKind={ENTITY_KIND} entityId={a.id} />
+            </div>
+          </div>
           <dl className="grid grid-cols-2 gap-3 text-xs">
             <EditField label="Name" value={a.name} onCommit={(v) => update.mutate({ name: v })} />
             <EditField label="Short name" value={a.short_name ?? ""} onCommit={(v) => update.mutate({ short_name: v || null })} />
@@ -456,6 +467,12 @@ function AssetDetailModal({ assetId, onClose }: { assetId: string | null; onClos
             <EditField label="Last service" value={a.last_service_at ?? ""} onCommit={(v) => update.mutate({ last_service_at: v || null })} type="date" />
             <EditField label="Quantity" value={String(a.quantity)} numeric onCommit={(v) => update.mutate({ quantity: Number(v) || 0 })} />
             <EditField label="Excitement (0-5)" value={String(a.excitement)} numeric onCommit={(v) => update.mutate({ excitement: Math.min(5, Math.max(0, Number(v) || 0)) })} />
+            <LocationPicker
+              label="Location"
+              value={a.location_id}
+              onChange={(id) => update.mutate({ location_id: id })}
+              size="sm"
+            />
           </dl>
           <CustomFieldsPanel
             entityKind={ENTITY_KIND}
@@ -496,11 +513,13 @@ function NewAssetModal({ open, onClose }: { open: boolean; onClose: () => void }
   const [name, setName] = useState("");
   const [manufacturer, setManufacturer] = useState("");
   const [category, setCategory] = useState("");
+  const [locationId, setLocationId] = useState<string | null>(null);
   useEffect(() => {
     if (open) {
       setName("");
       setManufacturer("");
       setCategory("");
+      setLocationId(null);
     }
   }, [open]);
 
@@ -510,6 +529,7 @@ function NewAssetModal({ open, onClose }: { open: boolean; onClose: () => void }
         name: name.trim(),
         manufacturer: manufacturer.trim() || null,
         type: category.trim() || null,
+        location_id: locationId,
       }),
     onSuccess: (a) => {
       toast.success("Asset added.");
@@ -541,6 +561,11 @@ function NewAssetModal({ open, onClose }: { open: boolean; onClose: () => void }
           <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">Type / category</span>
           <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder='e.g. "Appliance", "Hand tool"' className="input" />
         </label>
+        <LocationPicker
+          label="Location"
+          value={locationId}
+          onChange={setLocationId}
+        />
         <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-700">
           <button type="button" onClick={onClose} className="px-3 py-1.5 rounded-md text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-mortar-50 dark:hover:bg-slate-800 transition">
             Cancel

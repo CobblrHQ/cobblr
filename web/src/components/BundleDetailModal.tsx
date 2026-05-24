@@ -1,36 +1,67 @@
-// Click an installed bundle → this modal opens. Shows what's inside:
-// the wires it added, the field defs it added, the original manifest,
-// and an uninstall button (behind a destructive confirm). Read-only
-// for the content itself — to edit a wire or field def from here,
-// you'd uninstall the bundle and add them yourself.
+// Bundle detail modal — used for both installed and featured (not
+// yet installed) bundles. The two modes share the same preview shape
+// (description, screenshots, readme, wires + field defs the manifest
+// declares); the footer changes:
+//
+//   installed       → uninstall + download
+//   featured/preview → install + download
+//
+// For installed bundles we additionally hit /bundles/:id to fetch the
+// actually-installed wires/field-defs (in case the manifest drifted).
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Download, Trash2 } from "lucide-react";
-import { ApiError, api, type PlatformBundle } from "../lib/api";
+import { Download, Package, Trash2 } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import {
+  ApiError,
+  api,
+  type PlatformBundle,
+  type PlatformBundleManifest,
+} from "../lib/api";
 import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
 
-interface Props {
+interface InstalledMode {
+  mode: "installed";
+  bundle: PlatformBundle;
+}
+
+interface FeaturedMode {
+  mode: "featured";
+  manifest: PlatformBundleManifest;
+  /** Optional glyph from the featured catalog. */
+  glyph?: string;
+  /** Optional cleaner one-line blurb. */
+  blurb?: string;
+  /** Set to true if the bundle's external_id matches one already
+   *  installed — the modal shows "Already installed" instead of
+   *  enabling Install. */
+  alreadyInstalled?: boolean;
+}
+
+type Props = {
   open: boolean;
   onClose: () => void;
   slug: string;
-  bundle: PlatformBundle | null;
-}
+} & (InstalledMode | FeaturedMode | { mode: null });
 
-export function BundleDetailModal({ open, onClose, slug, bundle }: Props) {
+export function BundleDetailModal(props: Props) {
+  const { open, onClose, slug } = props;
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
 
+  // Installed-only: fetch the actually-installed wires + field defs.
+  const installedBundleId = props.mode === "installed" ? props.bundle.id : null;
   const detail = useQuery({
-    queryKey: ["bundle-detail", slug, bundle?.id],
-    queryFn: () => api.getBundle(slug, bundle!.id),
-    enabled: open && !!bundle,
+    queryKey: ["bundle-detail", slug, installedBundleId],
+    queryFn: () => api.getBundle(slug, installedBundleId!),
+    enabled: open && !!installedBundleId,
   });
 
   const uninstall = useMutation({
-    mutationFn: () => api.uninstallBundle(slug, bundle!.id),
+    mutationFn: () => api.uninstallBundle(slug, installedBundleId!),
     onSuccess: () => {
-      toast.success(`Uninstalled ${bundle?.name ?? "bundle"}.`);
+      toast.success(`Uninstalled.`);
       void qc.invalidateQueries({ queryKey: ["bundles", slug] });
       void qc.invalidateQueries({ queryKey: ["bindings", slug] });
       void qc.invalidateQueries({ queryKey: ["field-defs", slug] });
@@ -41,10 +72,27 @@ export function BundleDetailModal({ open, onClose, slug, bundle }: Props) {
     },
   });
 
+  const install = useMutation({
+    mutationFn: (manifest: PlatformBundleManifest) => api.installBundle(slug, manifest),
+    onSuccess: (r) => {
+      toast.success(
+        `Installed ${r.bundle.name} v${r.bundle.version} — ${r.applied.wires} wire(s), ${r.applied.field_defs} field def(s).`,
+      );
+      void qc.invalidateQueries({ queryKey: ["bundles", slug] });
+      void qc.invalidateQueries({ queryKey: ["bindings", slug] });
+      void qc.invalidateQueries({ queryKey: ["field-defs", slug] });
+      onClose();
+    },
+    onError: (e: unknown) => {
+      const msg = e instanceof ApiError ? e.message : (e as Error).message;
+      toast.error(msg);
+    },
+  });
+
   async function handleUninstall() {
-    if (!bundle) return;
+    if (props.mode !== "installed") return;
     const ok = await confirm({
-      title: `Uninstall ${bundle.name}?`,
+      title: `Uninstall ${props.bundle.name}?`,
       message: `This removes the bundle's wires and custom fields. Your data (parts, tasks, etc.) is untouched — only the bundle-installed customisations go.`,
       confirmLabel: "Uninstall",
       destructive: true,
@@ -52,8 +100,71 @@ export function BundleDetailModal({ open, onClose, slug, bundle }: Props) {
     if (ok) uninstall.mutate();
   }
 
+  if (props.mode === null || !open) return null;
+
+  // Derive the shared rendering shape — the manifest for previews
+  // comes from either the installed bundle's stored manifest or the
+  // featured catalog's manifest.
+  const manifest: PlatformBundleManifest | undefined =
+    props.mode === "installed"
+      ? ((detail.data?.bundle as { manifest?: PlatformBundleManifest } | undefined)?.manifest ??
+        props.bundle.manifest)
+      : props.manifest;
+
+  const name = props.mode === "installed" ? props.bundle.name : manifest?.name ?? "";
+  const externalId =
+    props.mode === "installed" ? props.bundle.external_id : manifest?.id ?? "";
+  const version = props.mode === "installed" ? props.bundle.version : manifest?.version ?? "";
+  const author =
+    props.mode === "installed" ? props.bundle.author : manifest?.author ?? null;
+  const description =
+    props.mode === "installed" ? props.bundle.description : (manifest?.description ?? null);
+
+  // For installed: wires + field defs come from the server (live state).
+  // For featured: we render the manifest's declared wires + field defs
+  // so the user can see EXACTLY what installing will do.
+  const wires =
+    props.mode === "installed"
+      ? (detail.data?.wires ?? []).map((w) => ({
+          id: w.id,
+          source_kind: w.source_kind,
+          action_id: w.action_id,
+          trigger_type: w.trigger_type,
+          trigger_event: w.trigger_event,
+          template: w.template,
+        }))
+      : (manifest?.wires ?? []).map((w, i) => ({
+          id: `preview-${i}`,
+          source_kind: w.source_kind,
+          action_id: w.action_id,
+          trigger_type: w.trigger_type ?? "user-invoked",
+          trigger_event: w.trigger_event ?? null,
+          template: w.template ?? null,
+        }));
+
+  const fieldDefs =
+    props.mode === "installed"
+      ? (detail.data?.field_defs ?? []).map((f) => ({
+          id: f.id,
+          entity_kind: f.entity_kind,
+          name: f.name,
+          display_label: f.display_label,
+          type: f.type,
+        }))
+      : (manifest?.field_defs ?? []).map((f, i) => ({
+          id: `preview-${i}`,
+          entity_kind: f.entity_kind,
+          name: f.name,
+          display_label: f.display_label,
+          type: f.type,
+        }));
+
+  const readme = manifest?.readme_md;
+  const screenshots = manifest?.screenshots ?? [];
+  const requires = manifest?.requires ?? [];
+  const providesLens = manifest?.provides_lens;
+
   function downloadManifest() {
-    const manifest = (detail.data?.bundle as { manifest?: unknown } | undefined)?.manifest;
     if (!manifest) return;
     const blob = new Blob([JSON.stringify({ manifest }, null, 2)], {
       type: "application/json",
@@ -61,42 +172,104 @@ export function BundleDetailModal({ open, onClose, slug, bundle }: Props) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${bundle?.external_id ?? "bundle"}.json`;
+    a.download = `${externalId || "bundle"}.json`;
     a.click();
     URL.revokeObjectURL(url);
     toast.info("Manifest downloaded.");
   }
 
-  if (!bundle) return null;
-
-  const wires = detail.data?.wires ?? [];
-  const fieldDefs = detail.data?.field_defs ?? [];
+  const subtitle = `${externalId}${version ? ` · v${version}` : ""}${
+    author ? ` · by ${author}` : ""
+  }`;
+  const titlePrefix =
+    props.mode === "featured" && props.glyph ? `${props.glyph} ` : "";
 
   return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title={bundle.name}
-      subtitle={`${bundle.external_id} · v${bundle.version}${bundle.author ? ` · by ${bundle.author}` : ""}`}
-      size="lg"
-    >
+    <Modal open={open} onClose={onClose} title={`${titlePrefix}${name}`} subtitle={subtitle} size="lg">
       <div className="space-y-5">
-        {bundle.description && (
-          <p className="text-sm text-slate-600 dark:text-mortar-200">
-            {bundle.description}
+        {props.mode === "featured" && props.blurb && (
+          <p className="text-sm text-slate-600 dark:text-mortar-200 italic">
+            {props.blurb}
           </p>
+        )}
+        {description && (
+          <p className="text-sm text-slate-600 dark:text-mortar-200">{description}</p>
+        )}
+
+        {screenshots.length > 0 && (
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {screenshots.map((src, i) => (
+              <img
+                key={i}
+                src={src}
+                alt={`${name} screenshot ${i + 1}`}
+                className="h-32 rounded-md border border-slate-200 dark:border-slate-700 object-cover shrink-0"
+                loading="lazy"
+              />
+            ))}
+          </div>
+        )}
+
+        {readme && (
+          <Section title="walkthrough">
+            <div className="prose prose-sm dark:prose-invert max-w-none text-slate-700 dark:text-mortar-100">
+              <ReactMarkdown>{readme}</ReactMarkdown>
+            </div>
+          </Section>
         )}
 
         <dl className="grid grid-cols-3 gap-2 text-xs">
-          <Row label="Installed">{new Date(bundle.installed_at).toLocaleString()}</Row>
-          <Row label="Wires installed">{wires.length}</Row>
-          <Row label="Fields installed">{fieldDefs.length}</Row>
+          {props.mode === "installed" ? (
+            <Row label="Installed">
+              {new Date(props.bundle.installed_at).toLocaleString()}
+            </Row>
+          ) : (
+            <Row label="Status">
+              {props.alreadyInstalled ? (
+                <span className="text-moss-600">installed</span>
+              ) : (
+                <span className="text-slate-400">preview</span>
+              )}
+            </Row>
+          )}
+          <Row label={props.mode === "installed" ? "Wires installed" : "Wires added"}>
+            {wires.length}
+          </Row>
+          <Row label={props.mode === "installed" ? "Fields installed" : "Fields added"}>
+            {fieldDefs.length}
+          </Row>
         </dl>
 
-        {/* Wires from this bundle */}
+        {requires.length > 0 && (
+          <Section title="requires modules">
+            <div className="flex flex-wrap gap-1.5">
+              {requires.map((r) => (
+                <span
+                  key={r.module}
+                  className="font-mono text-[11px] px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-mortar-200"
+                >
+                  {r.module}
+                  {r.version ? `@${r.version}` : ""}
+                </span>
+              ))}
+            </div>
+          </Section>
+        )}
+
+        {providesLens && (
+          <Section title="provides a lens">
+            <div className="text-xs text-slate-600 dark:text-mortar-200">
+              Adds a{" "}
+              <strong>{providesLens.display_name ?? providesLens.name}</strong> view
+              under <code className="font-mono">{providesLens.entity_kind}</code>.
+            </div>
+          </Section>
+        )}
+
+        {/* Wires */}
         <Section title={`wires (${wires.length})`}>
           {wires.length === 0 ? (
-            <EmptyHint>This bundle didn't install any wires.</EmptyHint>
+            <EmptyHint>This bundle doesn't add any wires.</EmptyHint>
           ) : (
             <ul className="space-y-1.5">
               {wires.map((w) => (
@@ -128,10 +301,10 @@ export function BundleDetailModal({ open, onClose, slug, bundle }: Props) {
           )}
         </Section>
 
-        {/* Field defs from this bundle */}
+        {/* Field defs */}
         <Section title={`custom fields (${fieldDefs.length})`}>
           {fieldDefs.length === 0 ? (
-            <EmptyHint>This bundle didn't install any custom fields.</EmptyHint>
+            <EmptyHint>This bundle doesn't add any custom fields.</EmptyHint>
           ) : (
             <ul className="space-y-1">
               {fieldDefs.map((f) => (
@@ -156,30 +329,47 @@ export function BundleDetailModal({ open, onClose, slug, bundle }: Props) {
         </Section>
 
         {/* Raw manifest collapsible */}
-        <details className="text-xs">
-          <summary className="font-mono uppercase tracking-widest text-[10px] text-slate-400 cursor-pointer">
-            View raw manifest JSON
-          </summary>
-          {detail.data && (
+        {manifest && (
+          <details className="text-xs">
+            <summary className="font-mono uppercase tracking-widest text-[10px] text-slate-400 cursor-pointer">
+              View raw manifest JSON
+            </summary>
             <pre className="mt-2 p-2 rounded bg-mortar-50 dark:bg-slate-800 font-mono text-[11px] overflow-x-auto text-slate-600 dark:text-mortar-200 max-h-64">
-              {JSON.stringify((detail.data.bundle as { manifest: unknown }).manifest, null, 2)}
+              {JSON.stringify(manifest, null, 2)}
             </pre>
-          )}
-        </details>
+          </details>
+        )}
 
         {/* Footer actions */}
         <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-700">
-          <button
-            onClick={handleUninstall}
-            disabled={uninstall.isPending}
-            className="text-[10px] font-mono uppercase tracking-widest text-slate-400 hover:text-ember-500 transition flex items-center gap-1"
-          >
-            <Trash2 size={11} /> uninstall bundle
-          </button>
+          {props.mode === "installed" ? (
+            <button
+              onClick={handleUninstall}
+              disabled={uninstall.isPending}
+              className="text-[10px] font-mono uppercase tracking-widest text-slate-400 hover:text-ember-500 transition flex items-center gap-1"
+            >
+              <Trash2 size={11} /> uninstall bundle
+            </button>
+          ) : (
+            <button
+              onClick={() => manifest && install.mutate(manifest)}
+              disabled={
+                !manifest || install.isPending || props.alreadyInstalled === true
+              }
+              className="text-xs font-medium px-3 py-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white transition flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Package size={13} />
+              {props.alreadyInstalled
+                ? "Already installed"
+                : install.isPending
+                  ? "Installing…"
+                  : "Install bundle"}
+            </button>
+          )}
           <div className="flex items-center gap-2">
             <button
               onClick={downloadManifest}
-              disabled={!detail.data}
+              disabled={!manifest}
               className="text-[10px] font-mono uppercase tracking-widest text-slate-500 hover:text-cobble-600 transition flex items-center gap-1"
               title="Download the manifest JSON"
             >

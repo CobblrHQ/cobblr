@@ -1,0 +1,255 @@
+// The "+ New thing" funnel. Single user-facing entry point for both
+// lens-promotion and module-instance creation. Asks one question in
+// human language; the system picks the right primitive under the
+// hood.
+//
+// v0.1 ships the instance path only (lens creation requires
+// lens-promotion's bundle build which lands next). When the user
+// picks "sub-category" the modal explains that's a future capability
+// and points them at bundle install for now.
+
+import { useState, type FormEvent } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Boxes, FolderPlus } from "lucide-react";
+import { Modal, useToast } from "@cobblr/platform-web";
+import { ApiError, api, type OrgModuleListItem } from "../lib/api";
+import { useActiveOrg } from "../auth/ActiveOrgContext";
+
+type Step = "choose-shape" | "instance-pick-module" | "instance-name" | "lens-coming-soon";
+
+export function NewThingFunnelModal({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose: () => void;
+}) {
+  const { activeSlug } = useActiveOrg();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [step, setStep] = useState<Step>("choose-shape");
+  const [pickedModule, setPickedModule] = useState<string | null>(null);
+  const [displayName, setDisplayName] = useState("");
+
+  const modules = useQuery({
+    queryKey: ["org-modules", activeSlug],
+    queryFn: () => api.orgModules(activeSlug),
+    enabled: !!activeSlug && open,
+  });
+  // Only modules marked multi-instance show in the picker. Today the
+  // platform doesn't expose instanceability on the OrgModuleListItem
+  // shape; we use a hardcoded allowlist of known multi-instance
+  // modules until the manifest field is on the wire. (TODO: add to
+  // /api/v1/orgs/:slug/modules response.)
+  const MULTI = new Set(["assets", "inventory", "machines", "projects", "purchases"]);
+  const candidates = (modules.data?.items ?? []).filter((m) =>
+    MULTI.has(m.name),
+  );
+
+  const create = useMutation({
+    mutationFn: () => {
+      if (!pickedModule) throw new Error("module not picked");
+      const slug = slugify(displayName);
+      return api.createInstance(activeSlug, {
+        module_name: pickedModule,
+        instance_name: slug,
+        display_name: displayName.trim(),
+      });
+    },
+    onSuccess: (inst) => {
+      toast.success(`Created '${inst.display_name}'.`);
+      void qc.invalidateQueries({ queryKey: ["instances", activeSlug] });
+      void qc.invalidateQueries({ queryKey: ["entity-kind-overrides", activeSlug] });
+      reset();
+      onClose();
+    },
+    onError: (e: unknown) => {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't create.");
+    },
+  });
+
+  function reset() {
+    setStep("choose-shape");
+    setPickedModule(null);
+    setDisplayName("");
+  }
+
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    if (!displayName.trim()) return;
+    create.mutate();
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={() => {
+        reset();
+        onClose();
+      }}
+      title="New thing in workspace"
+      size="md"
+    >
+      {step === "choose-shape" && (
+        <div className="space-y-3">
+          <p className="text-sm text-slate-600 dark:text-mortar-200">
+            What kind of thing do you want to add to your workspace?
+          </p>
+          <button
+            type="button"
+            onClick={() => setStep("instance-pick-module")}
+            className="w-full text-left rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 hover:border-cobble-400 dark:hover:border-cobble-700 transition flex items-start gap-3"
+          >
+            <Boxes size={20} className="text-cobble-500 mt-0.5 shrink-0" />
+            <div className="flex-1">
+              <div className="font-medium text-slate-700 dark:text-mortar-100">
+                Its own thing
+              </div>
+              <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                Separate from everything else — its own list, its own custom fields, possibly thousands of rows. (e.g., a "Cars" inventory separate from your "Tools" inventory)
+              </div>
+            </div>
+          </button>
+          <button
+            type="button"
+            onClick={() => setStep("lens-coming-soon")}
+            className="w-full text-left rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 hover:border-cobble-400 dark:hover:border-cobble-700 transition flex items-start gap-3"
+          >
+            <FolderPlus size={20} className="text-cobble-500 mt-0.5 shrink-0" />
+            <div className="flex-1">
+              <div className="font-medium text-slate-700 dark:text-mortar-100">
+                Sub-category of an existing thing
+              </div>
+              <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                Shares custom fields and list views with a parent. Small (1–100 rows). Browsed together with siblings. (e.g., "Castle sets" within your Lego inventory)
+              </div>
+            </div>
+          </button>
+        </div>
+      )}
+
+      {step === "instance-pick-module" && (
+        <div className="space-y-3">
+          <p className="text-sm text-slate-600 dark:text-mortar-200">
+            What kind of thing is it like?
+          </p>
+          {modules.isLoading && (
+            <div className="text-sm text-slate-500">Loading…</div>
+          )}
+          {candidates.length === 0 && !modules.isLoading && (
+            <div className="text-sm italic text-slate-500 dark:text-slate-400">
+              No multi-instance modules enabled. Enable one of: Assets,
+              Inventory, Machines, Projects, Purchases.
+            </div>
+          )}
+          {candidates.map((m: OrgModuleListItem) => (
+            <button
+              key={m.name}
+              type="button"
+              onClick={() => {
+                setPickedModule(m.name);
+                setStep("instance-name");
+              }}
+              className="w-full text-left rounded border border-slate-200 dark:border-slate-700 p-3 hover:border-cobble-400 dark:hover:border-cobble-700 transition"
+            >
+              <div className="text-sm font-medium text-slate-700 dark:text-mortar-100">
+                Like {m.displayName ?? m.name}
+              </div>
+              <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                {m.description}
+              </div>
+            </button>
+          ))}
+          <div className="flex justify-end pt-2">
+            <button
+              type="button"
+              onClick={() => setStep("choose-shape")}
+              className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+            >
+              Back
+            </button>
+          </div>
+        </div>
+      )}
+
+      {step === "instance-name" && (
+        <form onSubmit={submit} className="space-y-3">
+          <p className="text-sm text-slate-600 dark:text-mortar-200">
+            What's this new thing called?
+          </p>
+          <label className="block">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+              Name
+            </span>
+            <input
+              type="text"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              placeholder="e.g. Cars, Tools, Screws"
+              className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+              autoFocus
+            />
+            {displayName && (
+              <div className="text-[10px] text-slate-500 mt-1 font-mono">
+                URL slug: <code>{slugify(displayName)}</code>
+              </div>
+            )}
+          </label>
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={() => setStep("instance-pick-module")}
+              className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+            >
+              Back
+            </button>
+            <button
+              type="submit"
+              disabled={!displayName.trim() || create.isPending}
+              className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white"
+            >
+              {create.isPending ? "Creating…" : "Create"}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {step === "lens-coming-soon" && (
+        <div className="space-y-3">
+          <p className="text-sm text-slate-600 dark:text-mortar-200">
+            Sub-category creation lands as a separate primitive (lens
+            bundles) — it lets one parent thing host multiple shared-shape
+            categories like "Castle sets" / "Star Wars sets" under your
+            Lego inventory. The architecture is spec'd; the UI ships next.
+          </p>
+          <p className="text-sm text-slate-600 dark:text-mortar-200">
+            For now, you can:
+          </p>
+          <ul className="list-disc list-inside text-sm text-slate-600 dark:text-mortar-200 space-y-1">
+            <li>Install a featured lens bundle from the Bundles page</li>
+            <li>Author your own JSON bundle with <code>provides_lens</code></li>
+            <li>Use tags to group sub-categories within an existing thing</li>
+          </ul>
+          <div className="flex justify-end pt-2">
+            <button
+              type="button"
+              onClick={() => setStep("choose-shape")}
+              className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+            >
+              Back
+            </button>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+function slugify(s: string): string {
+  return s
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-+/g, "-");
+}

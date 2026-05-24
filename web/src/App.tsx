@@ -22,6 +22,7 @@ import { BundlesPage } from "./pages/BundlesPage";
 import { FieldsPage } from "./pages/FieldsPage";
 import { InviteAcceptPage } from "./pages/InviteAcceptPage";
 import { MeActivityPage } from "./pages/MeActivityPage";
+import { MeNotificationsPage } from "./pages/MeNotificationsPage";
 import { MeProfilePage } from "./pages/MeProfilePage";
 import { PublicSurfacePage } from "./pages/PublicSurfacePage";
 import { ApiTokensPage } from "./pages/ApiTokensPage";
@@ -37,7 +38,15 @@ import { SurfacesPage } from "./pages/SurfacesPage";
 import { HealthPage } from "./pages/HealthPage";
 import { SearchPage } from "./pages/SearchPage";
 import { OpenApiPage } from "./pages/OpenApiPage";
+import { QueuePage } from "./pages/QueuePage";
 import { LinksPage } from "./pages/LinksPage";
+import { LocationsPage } from "./pages/LocationsPage";
+import { CatalogsPage } from "./pages/CatalogsPage";
+import { CatalogDetailPage } from "./pages/CatalogDetailPage";
+import { CatalogMatchPage } from "./pages/CatalogMatchPage";
+import { PresentationPage } from "./pages/PresentationPage";
+import { IntegrationsPage } from "./pages/IntegrationsPage";
+import { AiPage } from "./pages/AiPage";
 import { AppLayout } from "./components/AppLayout";
 import { ToastProvider, ConfirmProvider } from "@cobblr/platform-web";
 import { api, getToken } from "./lib/api";
@@ -137,11 +146,20 @@ function ActiveOrgScopedRoutes() {
           <Route path="/configuration/tokens" element={<ApiTokensPage />} />
           <Route path="/configuration/surfaces" element={<SurfacesPage />} />
           <Route path="/configuration/health" element={<HealthPage />} />
+          <Route path="/configuration/locations" element={<LocationsPage />} />
+          <Route path="/configuration/presentation" element={<PresentationPage />} />
+          <Route path="/configuration/integrations" element={<IntegrationsPage />} />
+          <Route path="/configuration/ai" element={<AiPage />} />
+          <Route path="/configuration/catalogs" element={<CatalogsPage />} />
+          <Route path="/configuration/catalogs/match" element={<CatalogMatchPage />} />
+          <Route path="/configuration/catalogs/:id" element={<CatalogDetailPage />} />
           <Route path="/configuration/openapi" element={<OpenApiPage />} />
+          <Route path="/configuration/queue" element={<QueuePage />} />
           <Route path="/configuration/links" element={<LinksPage />} />
           <Route path="/search" element={<SearchPage />} />
           <Route path="/activity" element={<ActivityPage />} />
           <Route path="/me/activity" element={<MeActivityPage />} />
+          <Route path="/me/notifications" element={<MeNotificationsPage />} />
           <Route path="/me/profile" element={<MeProfilePage />} />
           <Route path="/me" element={<MeProfilePage />} />
           <Route path="/core-files" element={<FilesPage />} />

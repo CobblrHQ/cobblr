@@ -34,9 +34,32 @@ interface ParsedRow {
   notes: string | null;
   category_name: string | null;
   location_name: string | null;
+  // HomeBox parity fields.
+  serial_number: string | null;
+  model_number: string | null;
+  warranty_expires: string | null; // YYYY-MM-DD
+  lifetime_warranty: boolean;
+  warranty_details: string | null;
+  insured: boolean;
+  archived: boolean;
+  supplier_url: string | null;
   // Verbatim from the CSV so the UI can show which row had a problem.
   row_number: number;
   warnings: string[];
+}
+
+function asBool(v: string | undefined): boolean {
+  if (!v) return false;
+  const s = v.trim().toLowerCase();
+  return s === "true" || s === "yes" || s === "y" || s === "1";
+}
+
+function asDate(v: string | undefined): string | null {
+  if (!v) return null;
+  const s = v.trim();
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return null;
+  return `${m[1]}-${m[2]}-${m[3]}`;
 }
 
 interface ParseResult {
@@ -112,6 +135,15 @@ const HEADER_SYNONYMS: Record<string, string[]> = {
   notes: ["notes", "note", "comment", "remarks", "description"],
   category: ["category", "type", "group", "kind"],
   location: ["location", "bin", "shelf", "where", "place"],
+  // HomeBox parity fields (round-trips with /parts/export.csv).
+  serial_number: ["serial_number", "serial", "sn"],
+  model_number: ["model_number", "model", "model_no"],
+  warranty_expires: ["warranty_expires", "warranty", "warranty_until", "expires"],
+  warranty_details: ["warranty_details", "warranty_notes"],
+  lifetime_warranty: ["lifetime_warranty", "lifetime"],
+  insured: ["insured"],
+  archived: ["archived"],
+  supplier_url: ["supplier_url", "supplier", "url", "link"],
 };
 
 function detectHeaders(rawHeaders: string[]): Record<string, number> {
@@ -197,6 +229,14 @@ function parseCsv(text: string): ParseResult {
       notes: get("notes") || null,
       category_name: get("category") || null,
       location_name: get("location") || null,
+      serial_number: get("serial_number")?.trim() || null,
+      model_number: get("model_number")?.trim() || null,
+      warranty_expires: asDate(get("warranty_expires")),
+      lifetime_warranty: asBool(get("lifetime_warranty")),
+      warranty_details: get("warranty_details")?.trim() || null,
+      insured: asBool(get("insured")),
+      archived: asBool(get("archived")),
+      supplier_url: get("supplier_url")?.trim() || null,
       row_number: i + 1,
       warnings,
     });
@@ -227,19 +267,26 @@ importRouter.post(
     const ctx = tenantContext(req);
     const session = sessionUser(req);
 
-    // Look up category + location by name once (case-insensitive) so
-    // we don't N+1. Names that don't match anything fall back to the
-    // supplied defaults (or null).
+    // Look up category by name once (case-insensitive) so we don't
+    // N+1. Names that don't match anything fall back to the supplied
+    // defaults (or null).
     const cats = await db
       .selectFrom("inventory_categories")
       .select(["id", "name"])
       .execute();
-    const locs = await db
-      .selectFrom("inventory_locations")
-      .select(["id", "name"])
-      .execute();
     const catByName = new Map(cats.map((c) => [c.name.toLowerCase(), c.id]));
-    const locByName = new Map(locs.map((l) => [l.name.toLowerCase(), l.id]));
+    // Locations are owned by core-locations — cross-module read goes
+    // through the platform resolver, never a direct SELECT.
+    const locsResult = await platform().entities.list(
+      ctx.org.id,
+      "core-locations:location",
+      { limit: 500 },
+    );
+    const locByName = new Map<string, string>();
+    for (const loc of locsResult.items) {
+      const name = String(loc.title ?? "").toLowerCase();
+      if (name) locByName.set(name, loc.id);
+    }
 
     const inserted = await db.transaction().execute(async (trx) => {
       const ids: string[] = [];
@@ -265,6 +312,14 @@ importRouter.post(
             notes: row.notes,
             category_id: cat_id,
             location_id: loc_id,
+            serial_number: row.serial_number,
+            model_number: row.model_number,
+            warranty_expires: row.warranty_expires ? new Date(row.warranty_expires) : null,
+            lifetime_warranty: row.lifetime_warranty,
+            warranty_details: row.warranty_details,
+            insured: row.insured,
+            archived: row.archived,
+            supplier_url: row.supplier_url,
           })
           .returning("id")
           .executeTakeFirstOrThrow();

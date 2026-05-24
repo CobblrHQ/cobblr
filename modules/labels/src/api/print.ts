@@ -69,7 +69,7 @@ printRouter.post(
       }
     }
 
-    platform().events.emit("labels.printed", {
+    platform().events.emit("labels.print.completed", {
       orgId: ctx.org.id,
       batchId,
       count: printables.length,

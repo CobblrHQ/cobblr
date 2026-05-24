@@ -341,6 +341,63 @@ export interface PublicSurfaceTokensTable {
   created_at: Generated<Date>;
 }
 
+export interface WorkspaceModuleInstancesTable {
+  id: Generated<string>;
+  org_id: string;
+  module_name: string;
+  instance_name: string;
+  display_name: string;
+  is_default: Generated<boolean>;
+  config: Generated<Record<string, unknown>>;
+  created_at: Generated<Date>;
+}
+
+export interface EntityKindOverridesTable {
+  id: Generated<string>;
+  org_id: string;
+  /** 'entity_kind' / 'instance' / 'bundle' */
+  target_kind: string;
+  target_id: string;
+  display_label: string | null;
+  display_label_plural: string | null;
+  icon: string | null;
+  hidden: Generated<boolean>;
+  nav_order: number | null;
+  config: Generated<Record<string, unknown>>;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+export interface CoreLabelsQrTokensTable {
+  id: Generated<string>;
+  token: string;
+  org_id: string;
+  entity_kind: string;
+  entity_id: string;
+  mode: Generated<"navigate" | "action">;
+  action_id: string | null;
+  auth: Generated<"public" | "session">;
+  config: Generated<Record<string, unknown>>;
+  created_at: Generated<Date>;
+  revoked_at: Date | null;
+  expires_at: Date | null;
+}
+
+export interface IntegrationInboundTokenLookupTable {
+  token: string;
+  org_id: string;
+  inbound_id: string;
+  connector_id: string;
+  enabled: Generated<boolean>;
+  created_at: Generated<Date>;
+}
+
+export interface OrgEncryptionKeysTable {
+  org_id: string;
+  key_b64: string;
+  created_at: Generated<Date>;
+}
+
 export interface MetaDB {
   users: UsersTable;
   orgs: OrgsTable;
@@ -366,6 +423,24 @@ export interface MetaDB {
   module_field_defs: ModuleFieldDefsTable;
   public_surface_tokens: PublicSurfaceTokensTable;
   core_queue_jobs: CoreQueueJobsTable;
+  auth_magic_tokens: AuthMagicTokensTable;
+  workspace_module_instances: WorkspaceModuleInstancesTable;
+  entity_kind_overrides: EntityKindOverridesTable;
+  core_labels_qr_tokens: CoreLabelsQrTokensTable;
+  integration_inbound_token_lookup: IntegrationInboundTokenLookupTable;
+  org_encryption_keys: OrgEncryptionKeysTable;
+}
+
+/** core-auth-extensions v0.1: passwordless magic-link tokens. */
+export interface AuthMagicTokensTable {
+  id: Generated<string>;
+  email: string;
+  token_hash: string;
+  expires_at: Generated<Date>;
+  consumed_at: Date | null;
+  created_at: Generated<Date>;
+  request_ip: string | null;
+  request_ua: string | null;
 }
 
 /** core-queue v0.1: persistent background work. See

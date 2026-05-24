@@ -25,6 +25,7 @@ import {
   ListChecks,
   Package,
   ShoppingCart,
+  Sparkles,
   Sprout,
   Tags,
   Wrench,
@@ -71,12 +72,192 @@ export function Dashboard() {
         userName={user?.display_name ?? user?.email ?? ""}
       />
 
+      <CrossWorkspaceStrip />
+
+      <GettingStartedPanel slug={activeSlug} enabled={enabled} />
+
       <ModuleTiles slug={activeSlug} enabled={enabled} />
 
       <PinnedViews slug={activeSlug} />
 
       <RecentActivity slug={activeSlug} />
     </div>
+  );
+}
+
+// Empty-state onboarding. Shows when the active workspace has no
+// entities across any of the user-facing modules — the dashboard
+// would otherwise show a row of "0" tiles with no clear next step.
+// Hides itself the moment any module gets its first entity.
+function GettingStartedPanel({
+  slug,
+  enabled,
+}: {
+  slug: string;
+  enabled: Set<string>;
+}) {
+  // One cheap probe per enabled module: any items at all?
+  const probe = useQuery({
+    queryKey: ["dash-getting-started", slug, Array.from(enabled).sort().join(",")],
+    queryFn: async () => {
+      const probes: Array<Promise<number>> = [];
+      const wrap = (path: string) =>
+        api
+          .request<{ items: unknown[] }>("GET", `/orgs/${slug}${path}`)
+          .then((r) => r.items.length)
+          .catch(() => 0);
+      if (enabled.has("inventory"))
+        probes.push(wrap("/modules/inventory/parts?limit=1"));
+      if (enabled.has("machines"))
+        probes.push(wrap("/modules/machines/machines?limit=1"));
+      if (enabled.has("assets")) probes.push(wrap("/modules/assets/assets?limit=1"));
+      if (enabled.has("projects"))
+        probes.push(wrap("/modules/projects/projects?limit=1"));
+      if (enabled.has("purchases"))
+        probes.push(wrap("/modules/purchases/orders?limit=1"));
+      const counts = await Promise.all(probes);
+      return counts.reduce((a, b) => a + b, 0);
+    },
+    enabled: enabled.size > 0,
+    staleTime: 60_000,
+  });
+
+  // Don't render until we know whether the workspace is empty. Once
+  // any entity exists, hide forever for this session.
+  if (probe.data === undefined || probe.data > 0) return null;
+
+  // Determine the most relevant "first thing to do" based on which
+  // user-facing modules are enabled.
+  const firstActions: Array<{ to: string; label: string; description: string }> = [];
+  if (enabled.has("inventory"))
+    firstActions.push({
+      to: "/inventory",
+      label: "Add a part",
+      description: "Track inventory — sets, parts, supplies. Bulk import via CSV.",
+    });
+  if (enabled.has("machines"))
+    firstActions.push({
+      to: "/machines",
+      label: "Add a machine",
+      description: "Catalog tools, printers, equipment with photos + state.",
+    });
+  if (enabled.has("assets"))
+    firstActions.push({
+      to: "/assets",
+      label: "Add an asset",
+      description:
+        "Plants, collectibles, anything you want to track over time. Watering RRULEs work out of the box.",
+    });
+  if (enabled.has("projects"))
+    firstActions.push({
+      to: "/projects",
+      label: "Start a project",
+      description: "Group tasks + cross-module dependencies under one heading.",
+    });
+
+  return (
+    <section className="rounded-xl border-2 border-dashed border-cobble-300 dark:border-cobble-700 bg-cobble-50/30 dark:bg-cobble-900/10 p-5 space-y-3">
+      <div className="flex items-center gap-2">
+        <Sparkles size={16} className="text-cobble-600" />
+        <h2 className="font-semibold text-slate-700 dark:text-mortar-100">
+          Welcome — this workspace is empty.
+        </h2>
+      </div>
+      <p className="text-sm text-slate-600 dark:text-mortar-200">
+        Pick a first thing to add, or install a starter bundle from the
+        marketplace.
+      </p>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {firstActions.map((a) => (
+          <Link
+            key={a.to}
+            to={a.to}
+            className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 hover:border-cobble-400 transition"
+          >
+            <div className="text-sm font-medium text-slate-700 dark:text-mortar-100">
+              {a.label}
+            </div>
+            <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              {a.description}
+            </div>
+          </Link>
+        ))}
+        <Link
+          to="/bundles"
+          className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 hover:border-cobble-400 transition"
+        >
+          <div className="text-sm font-medium text-slate-700 dark:text-mortar-100">
+            Browse the marketplace
+          </div>
+          <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+            One-click install of a starter pack — Lego, Garden, Tool
+            Library, Bookshelf, more. Pre-built field defs + wires.
+          </div>
+        </Link>
+        <Link
+          to="/configuration"
+          className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 hover:border-cobble-400 transition"
+        >
+          <div className="text-sm font-medium text-slate-700 dark:text-mortar-100">
+            Tune what's installed
+          </div>
+          <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+            Enable / disable modules, tweak custom fields, wire
+            up integrations.
+          </div>
+        </Link>
+      </div>
+    </section>
+  );
+}
+
+// Cross-workspace summary strip — what's going on across EVERY
+// workspace the user belongs to, even ones they're not currently
+// looking at. Renders nothing when there's nothing to show, so a
+// quiet account stays quiet.
+function CrossWorkspaceStrip() {
+  const { orgs } = useAuth();
+  const unread = useQuery({
+    queryKey: ["dash-cross-unread"],
+    queryFn: () => api.meNotificationsUnreadCount(),
+    refetchInterval: 30_000,
+  });
+  const links = useQuery({
+    queryKey: ["dash-cross-links"],
+    queryFn: () => api.listWorkspaceLinks(),
+    staleTime: 60_000,
+  });
+  const unreadCount = unread.data?.count ?? 0;
+  const pending = (links.data?.items ?? []).filter((l) => l.status === "pending");
+  if (orgs.length <= 1 && unreadCount === 0 && pending.length === 0) return null;
+
+  return (
+    <section className="flex items-center gap-3 flex-wrap text-sm">
+      <span className="text-[10px] font-mono uppercase tracking-widest text-cobble-500">
+        // across all workspaces
+      </span>
+      {orgs.length > 1 && (
+        <span className="text-slate-600 dark:text-mortar-200">
+          {orgs.length} workspaces
+        </span>
+      )}
+      {unreadCount > 0 && (
+        <Link
+          to="/me/notifications"
+          className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded border border-ember-200 dark:border-ember-700 text-ember-700 dark:text-ember-300 hover:bg-ember-50 dark:hover:bg-ember-900/20 text-xs transition"
+        >
+          {unreadCount} unread notification{unreadCount === 1 ? "" : "s"}
+        </Link>
+      )}
+      {pending.length > 0 && (
+        <Link
+          to="/configuration/links"
+          className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded border border-cobble-200 dark:border-cobble-700 text-cobble-700 dark:text-cobble-300 hover:bg-cobble-50 dark:hover:bg-cobble-900/20 text-xs transition"
+        >
+          {pending.length} pending link{pending.length === 1 ? "" : "s"}
+        </Link>
+      )}
+    </section>
   );
 }
 

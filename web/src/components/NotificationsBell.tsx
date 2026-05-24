@@ -8,7 +8,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell, BellOff } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { api, type CrossOrgNotificationEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
@@ -115,6 +115,11 @@ export function NotificationsBell() {
             </div>
           )}
           <ul>
+            {list.data && list.data.items.length === 0 && (
+              <li className="px-3 py-4 text-[11px] text-slate-400 italic">
+                Nothing yet.
+              </li>
+            )}
             {list.data?.items.map((n) => (
               <li key={n.id}>
                 <button
@@ -142,6 +147,13 @@ export function NotificationsBell() {
               </li>
             ))}
           </ul>
+          <Link
+            to="/me/notifications"
+            onClick={() => setOpen(false)}
+            className="block px-3 py-2 border-t border-slate-100 dark:border-slate-700 text-[11px] font-mono uppercase tracking-widest text-cobble-600 hover:text-cobble-500 transition text-center"
+          >
+            see all →
+          </Link>
         </div>
       )}
     </div>

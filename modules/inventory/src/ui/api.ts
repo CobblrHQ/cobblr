@@ -28,7 +28,20 @@ export interface Location {
   created_at: string;
 }
 
-export interface PartListItem {
+/** Fields the part record carries past the workshop-BOM basics —
+ *  HomeBox parity. Same shape on both list and detail. */
+export interface HomeBoxFields {
+  asset_id: number | null;
+  serial_number: string | null;
+  model_number: string | null;
+  warranty_expires: string | null;
+  lifetime_warranty: boolean;
+  warranty_details: string | null;
+  insured: boolean;
+  archived: boolean;
+}
+
+export interface PartListItem extends HomeBoxFields {
   id: string;
   name: string;
   description: string | null;
@@ -51,9 +64,12 @@ export interface PartListItem {
   assigned_qty: number;
   available_qty: number;
   low_stock: boolean;
+  /** Computed: positive = days until expiry, negative = already
+   *  expired, null = no warranty date. */
+  warranty_days_until: number | null;
 }
 
-export interface Part {
+export interface Part extends HomeBoxFields {
   id: string;
   name: string;
   description: string | null;
@@ -133,13 +149,17 @@ export class InventoryApi {
     return `/api/v1/orgs/${this.slug}/modules/inventory`;
   }
 
-  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  private request<T>(method: string, path: string, body?: unknown): Promise<T> {
+    return this.requestAbs<T>(method, `${this.base()}${path}`, body);
+  }
+
+  private async requestAbs<T>(method: string, url: string, body?: unknown): Promise<T> {
     const headers: Record<string, string> = {};
     if (body !== undefined) headers["Content-Type"] = "application/json";
     const token = this.opts.getToken();
     if (token) headers["Authorization"] = `Bearer ${token}`;
 
-    const res = await fetch(`${this.base()}${path}`, {
+    const res = await fetch(url, {
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -168,13 +188,24 @@ export class InventoryApi {
   createCategory = (b: { name: string; color?: string; parent_id?: string | null }) =>
     this.request<Category>("POST", "/categories", b);
 
-  listLocations = () => this.request<{ items: Location[] }>("GET", "/locations");
+  // Locations now live in the foundational core-locations module —
+  // /api/v1/orgs/:slug/modules/core-locations/locations. The inventory
+  // UI still wants to show a location picker on parts, so we keep
+  // these wrappers for callers' convenience.
+  listLocations = () => this.requestAbs<{ items: Location[] }>(
+    "GET",
+    `/api/v1/orgs/${this.slug}/modules/core-locations/locations`,
+  );
   createLocation = (b: {
     name: string;
     short_name?: string | null;
     parent_id?: string | null;
     kind?: "container" | "area";
-  }) => this.request<Location>("POST", "/locations", b);
+  }) => this.requestAbs<Location>(
+    "POST",
+    `/api/v1/orgs/${this.slug}/modules/core-locations/locations`,
+    b,
+  );
 
   listParts = (q: {
     search?: string;
@@ -182,6 +213,10 @@ export class InventoryApi {
     location_id?: string;
     state?: "active" | "draft" | "needs_review";
     low_stock?: boolean;
+    show_archived?: boolean;
+    archived_only?: boolean;
+    insured_only?: boolean;
+    warranty_expires_within_days?: number;
     cursor?: string;
   } = {}) => {
     const params = new URLSearchParams();
@@ -190,12 +225,59 @@ export class InventoryApi {
     if (q.location_id) params.set("location_id", q.location_id);
     if (q.state) params.set("state", q.state);
     if (q.low_stock) params.set("low_stock", "1");
+    if (q.show_archived) params.set("show_archived", "1");
+    if (q.archived_only) params.set("archived_only", "1");
+    if (q.insured_only) params.set("insured_only", "1");
+    if (q.warranty_expires_within_days)
+      params.set("warranty_expires_within_days", String(q.warranty_expires_within_days));
     if (q.cursor) params.set("cursor", q.cursor);
     const qs = params.toString();
     return this.request<{ items: PartListItem[]; next_cursor: string | null }>(
       "GET",
       `/parts${qs ? "?" + qs : ""}`,
     );
+  };
+
+  /** Builds the URL for the CSV export endpoint. The browser
+   *  navigates to it (we can't fetch and download easily without a
+   *  blob round-trip). Token has to come from the cookie — the API
+   *  side accepts both. For Bearer-only clients, fetch the URL and
+   *  pipe the blob to a download. */
+  partsExportCsvUrl = (q: {
+    search?: string;
+    state?: "active" | "draft" | "needs_review";
+    show_archived?: boolean;
+    archived_only?: boolean;
+    insured_only?: boolean;
+  } = {}) => {
+    const params = new URLSearchParams();
+    if (q.search) params.set("search", q.search);
+    if (q.state) params.set("state", q.state);
+    if (q.show_archived) params.set("show_archived", "1");
+    if (q.archived_only) params.set("archived_only", "1");
+    if (q.insured_only) params.set("insured_only", "1");
+    const qs = params.toString();
+    return `${this.base()}/parts/export.csv${qs ? "?" + qs : ""}`;
+  };
+
+  /** Download the CSV by fetching with Bearer auth then saving the
+   *  blob — works for any browser, no cookie required. */
+  partsExportCsv = async (q: Parameters<typeof this.partsExportCsvUrl>[0] = {}) => {
+    const url = this.partsExportCsvUrl(q);
+    const token = this.opts.getToken();
+    const res = await fetch(url, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) {
+      throw new InventoryApiError(res.status, "csv_export_failed", `HTTP ${res.status}`);
+    }
+    const blob = await res.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    const date = new Date().toISOString().slice(0, 10);
+    a.download = `inventory-${date}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
   };
   getPart = (id: string) => this.request<Part>("GET", `/parts/${id}`);
   createPart = (b: Partial<Omit<PartListItem, "id" | "created_at" | "updated_at" | "assigned_qty" | "available_qty" | "low_stock">> & { name: string }) =>

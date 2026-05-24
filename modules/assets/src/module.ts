@@ -13,6 +13,7 @@ export default defineModule({
     "Physical things you own that aren't fungible stock and aren't machines. Appliances, tools, collections — anything you'd want to track individually.",
   icon: "box",
   band: "stock",
+  instanceability: "multi",
 
   schema: {
     tablePrefix: "assets_",
@@ -55,6 +56,7 @@ export default defineModule({
           "state",
           "image_path",
         ],
+        detailRoute: "/assets/{id}",
       },
     ],
   },

@@ -57,7 +57,7 @@ queueRouter.post(
       .returningAll()
       .executeTakeFirstOrThrow();
 
-    platform().events.emit("labels.queued", {
+    platform().events.emit("labels.print.queued", {
       orgId: ctx.org.id,
       queueId: inserted.id,
       module: parsed.data.module_name,

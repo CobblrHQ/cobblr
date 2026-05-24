@@ -17,18 +17,7 @@ export interface InventoryCategoriesTable {
   slug: string;
   color: string | null;
   parent_id: string | null;
-  created_at: Generated<Date>;
-  updated_at: Generated<Date>;
-}
-
-export interface InventoryLocationsTable {
-  id: Generated<string>;
-  name: string;
-  short_name: string | null;
-  parent_id: string | null;
-  depth: Generated<number>;
-  kind: Generated<"container" | "area">;
-  metadata: Generated<Record<string, unknown>>;
+  instance: Generated<string>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }
@@ -53,6 +42,16 @@ export interface InventoryPartsTable {
   notes: string | null;
   state: Generated<PartState>;
   metadata: Generated<Record<string, unknown>>;
+  instance: Generated<string>;
+  // HomeBox parity fields (migration 0004).
+  asset_id: Generated<number>;
+  serial_number: string | null;
+  model_number: string | null;
+  warranty_expires: Date | null;
+  lifetime_warranty: Generated<boolean>;
+  warranty_details: string | null;
+  insured: Generated<boolean>;
+  archived: Generated<boolean>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }
@@ -71,11 +70,11 @@ export interface InventoryAllocationsTable {
   reserved_at: Generated<Date>;
   consumed_at: Date | null;
   released_at: Date | null;
+  instance: Generated<string>;
 }
 
 export interface InventoryDB {
   inventory_categories: InventoryCategoriesTable;
-  inventory_locations: InventoryLocationsTable;
   inventory_parts: InventoryPartsTable;
   inventory_allocations: InventoryAllocationsTable;
 }

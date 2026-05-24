@@ -19,6 +19,7 @@ export interface PurchasesOrdersTable {
   tracking_number: string | null;
   notes: string | null;
   metadata: ColumnType<Record<string, unknown>, Record<string, unknown> | undefined, Record<string, unknown> | undefined>;
+  instance: Generated<string>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }
@@ -35,6 +36,7 @@ export interface PurchasesOrderItemsTable {
   consumed_by_entity_id: string | null;
   received_at: ColumnType<Date | null, string | null | undefined, string | null | undefined>;
   metadata: ColumnType<Record<string, unknown>, Record<string, unknown> | undefined, Record<string, unknown> | undefined>;
+  instance: Generated<string>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }

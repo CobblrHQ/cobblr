@@ -30,6 +30,7 @@ import {
   useViewMode,
 } from "@cobblr/platform-web";
 import { EntityAttachments } from "../components/EntityAttachments";
+import { LocationPicker } from "../components/LocationPicker";
 
 const ENTITY_KIND = "machines:machine";
 
@@ -605,8 +606,16 @@ function MachineDetailModal({
     >
       {m ? (
         <div className="space-y-4">
-          <div className="flex items-center gap-2">
-            <EntityActionsBar entityKind={ENTITY_KIND} entityId={m.id} />
+          <div className="flex items-start gap-4">
+            <EntityThumb
+              src={m.image_path}
+              alt={m.name}
+              size={128}
+              className="ring-1 ring-slate-200 dark:ring-slate-700"
+            />
+            <div className="flex-1 flex items-center gap-2">
+              <EntityActionsBar entityKind={ENTITY_KIND} entityId={m.id} />
+            </div>
           </div>
 
           {specialisations.length > 0 && (
@@ -646,6 +655,12 @@ function MachineDetailModal({
             <EditField label="State" value={m.state} onCommit={(v) => update.mutate({ state: v })} />
             <EditField label="Quantity" value={String(m.quantity)} numeric onCommit={(v) => update.mutate({ quantity: Number(v) || 0 })} />
             <EditField label="Excitement (0-5)" value={String(m.excitement)} numeric onCommit={(v) => update.mutate({ excitement: Math.min(5, Math.max(0, Number(v) || 0)) })} />
+            <LocationPicker
+              label="Location"
+              value={m.location_id}
+              onChange={(id) => update.mutate({ location_id: id })}
+              size="sm"
+            />
           </dl>
 
           <EntityAttachments kind={ENTITY_KIND} entityId={m.id} />
@@ -697,11 +712,13 @@ function NewMachineModal({ open, onClose }: { open: boolean; onClose: () => void
   const [name, setName] = useState("");
   const [manufacturer, setManufacturer] = useState("");
   const [family, setFamily] = useState("");
+  const [locationId, setLocationId] = useState<string | null>(null);
   useEffect(() => {
     if (open) {
       setName("");
       setManufacturer("");
       setFamily("");
+      setLocationId(null);
     }
   }, [open]);
 
@@ -711,6 +728,7 @@ function NewMachineModal({ open, onClose }: { open: boolean; onClose: () => void
         name: name.trim(),
         manufacturer: manufacturer.trim() || null,
         family: family.trim() || null,
+        location_id: locationId,
       }),
     onSuccess: (m) => {
       toast.success("Machine added.");
@@ -748,6 +766,11 @@ function NewMachineModal({ open, onClose }: { open: boolean; onClose: () => void
           </span>
           <input value={family} onChange={(e) => setFamily(e.target.value)} className="input" />
         </label>
+        <LocationPicker
+          label="Location"
+          value={locationId}
+          onChange={setLocationId}
+        />
         <p className="text-[10px] text-slate-400">
           Specialisation fields (hotend, tube_type, spindle, etc.) come from
           enabled lens modules and show up on the detail view after create.

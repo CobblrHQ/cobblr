@@ -16,6 +16,12 @@ export interface ViewsTable {
    *  the user actually wants pinned instead of the first 2 shared. */
   pinned: Generated<boolean>;
   owner_user_id: string | null;
+  /** v1.5: bundle that shipped this view, if any. Cleared on bundle
+   *  uninstall (manual cascade — bundles table lives cross-DB). */
+  bundle_id: string | null;
+  /** v1.5: module whose `contributes.savedViews` shipped this view,
+   *  if any. Cleared on module disable. */
+  source_module: string | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }

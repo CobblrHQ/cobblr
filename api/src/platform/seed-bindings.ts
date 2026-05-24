@@ -1,89 +1,76 @@
-// Default wires seeded at signup. Re-creates the cross-module
-// behaviour the old hardcoded subscribers gave us, but now as
-// user-editable rows in entity_action_bindings.
+// Manifest-driven default wires. Every module's
+// `manifest.contributes.wires[]` describes user-editable bindings the
+// platform should install when the module gets enabled — the actual
+// insertion happens inside `enableModuleForOrg`, co-located with the
+// rest of the module's contributions.
 //
-// As more modules land, add their defaults here. Eventually this
-// could move into per-module manifests ("recommendedBindings") so
-// the seeding is co-located with the module that triggers it.
+// This file backfills: for every existing (org, module) pair, top up
+// any wires the manifest declares that aren't yet in
+// `entity_action_bindings`. That covers two cases:
+//   1. An org that was created before a wire was added to the manifest
+//      (the original "default bindings" seed-on-signup path).
+//   2. A wire whose source_module record was deleted and needs re-
+//      asserting on next boot.
+//
+// Kernel knows nothing about specific modules here — it iterates the
+// registry. Adding a default wire = edit the module's manifest. No
+// kernel patch required.
 
-import { sql } from "kysely";
 import { meta } from "../db/meta.js";
+import { listEntries } from "../modules/registry.js";
 
-interface DefaultBinding {
-  source_kind: string;
-  action_id: string;
-  trigger_type: "user-invoked" | "event" | "on-create" | "on-update" | "on-delete";
-  trigger_event?: string;
-  template?: string;
-}
-
-const DEFAULTS: DefaultBinding[] = [
-  // When inventory.stock.changed fires, ask projects to flip any
-  // task dep that referenced this part. Replaces the old hardcoded
-  // subscription in projects/src/api/subscribers.ts.
-  {
-    source_kind: "inventory:part",
-    action_id: "projects:set-dep-satisfied",
-    trigger_type: "event",
-    trigger_event: "inventory.stock.changed",
-  },
-  // D9 from BACKLOG: order arrival auto-bumps part stock via a
-  // user-editable wire instead of a hardcoded handler. The orders
-  // route emits one purchases.order_item.received per line item
-  // (with partId + delta); this wire fires inventory.adjust-stock
-  // on each. End-users can swap action_id, edit the wire, or
-  // disable it entirely.
-  {
-    source_kind: "purchases:order_item",
-    action_id: "inventory:adjust-stock",
-    trigger_type: "event",
-    trigger_event: "purchases.order_item.received",
-  },
-];
-
-export async function seedDefaultBindings(orgId: string): Promise<number> {
+/** Top up missing default bindings for one (org, module). Idempotent
+ *  per (org, source_kind, action_id, trigger_event, source_module). */
+async function topUpForModule(orgId: string, moduleName: string): Promise<number> {
+  const entry = listEntries().find((e) => e.manifest.name === moduleName);
+  if (!entry) return 0;
+  const wires = entry.manifest.contributes.wires;
   let inserted = 0;
-  for (const b of DEFAULTS) {
-    // Idempotent — skip if a binding for this (kind, action,
-    // trigger_event) already exists for the org.
+  for (const w of wires) {
     const existing = await meta
       .selectFrom("entity_action_bindings")
       .select("id")
       .where("org_id", "=", orgId)
-      .where("source_kind", "=", b.source_kind)
-      .where("action_id", "=", b.action_id)
-      .where("trigger_event", b.trigger_event ? "=" : "is", b.trigger_event ?? null)
+      .where("source_kind", "=", w.source_kind)
+      .where("action_id", "=", w.action_id)
+      .where("trigger_event", w.trigger_event ? "=" : "is", w.trigger_event ?? null)
+      .where("source_module", "=", moduleName)
       .executeTakeFirst();
     if (existing) continue;
     await meta
       .insertInto("entity_action_bindings")
       .values({
         org_id: orgId,
-        source_kind: b.source_kind,
-        action_id: b.action_id,
-        trigger_type: b.trigger_type,
-        trigger_event: b.trigger_event ?? null,
-        template: b.template ?? null,
+        source_kind: w.source_kind,
+        action_id: w.action_id,
+        trigger_type: w.trigger_type,
+        trigger_event: w.trigger_event ?? null,
+        template: w.template ?? null,
+        source_module: moduleName,
       })
       .execute();
     inserted++;
   }
-  void sql;
   return inserted;
 }
 
-/** Backfill: for every existing org, top up missing default bindings.
- *  Called once at boot so accounts that pre-date a new default get
- *  it without manual intervention. Cheap — one query + N idempotent
- *  inserts per org. */
+/** Backfill: for every (org, module) in org_modules, top up any wires
+ *  the module's manifest declares but the workspace doesn't have yet.
+ *  Cheap — one query + N idempotent inserts per (org, module). */
 export async function backfillDefaultBindings(): Promise<number> {
-  const orgs = await meta.selectFrom("orgs").select("id").execute();
+  const rows = await meta
+    .selectFrom("org_modules")
+    .select(["org_id", "module_name"])
+    .execute();
   let total = 0;
-  for (const o of orgs) {
+  for (const r of rows) {
     try {
-      total += await seedDefaultBindings(o.id);
+      total += await topUpForModule(r.org_id, r.module_name);
     } catch (err) {
-      console.error(`[seed-bindings] backfill failed for org ${o.id}:`, err);
+      console.error(
+        `[seed-bindings] backfill failed for org ${r.org_id} / module ${r.module_name}:`,
+        err,
+      );
     }
   }
   return total;

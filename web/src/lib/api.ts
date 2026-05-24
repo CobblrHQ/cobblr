@@ -220,6 +220,17 @@ export const api = {
   }) => request<AuthResponse>("POST", "/auth/signup", body),
   login: (body: { email: string; password: string }) =>
     request<AuthResponse>("POST", "/auth/login", body),
+  magicRequest: (body: { email: string }) =>
+    request<{
+      ok: boolean;
+      expires_at: string;
+      message: string;
+      /** Dev mode only — non-prod returns the plaintext + a link. */
+      dev_token?: string;
+      dev_link?: string;
+    }>("POST", "/auth/magic/request", body),
+  magicConsume: (body: { token: string }) =>
+    request<AuthResponse>("POST", "/auth/magic/consume", body),
   me: () => request<MeResponse>("GET", "/me"),
   orgLocal: (slug: string) => request<OrgLocalResponse>("GET", `/orgs/${slug}/local`),
   listOrgs: () => request<{ items: OrgMembership[] }>("GET", "/orgs"),
@@ -262,6 +273,15 @@ export const api = {
     request<void>("DELETE", `/orgs/${slug}/modules/purchases/orders/${id}`),
   addOrderItem: (slug: string, orderId: string, body: Partial<OrderItem>) =>
     request<OrderItem>("POST", `/orgs/${slug}/modules/purchases/orders/${orderId}/items`, body),
+
+  // inventory module — just enough to count parts by location (the
+  // configuration/locations page needs it). Module-specific UI lives
+  // inside the inventory module itself.
+  listInventoryParts: (slug: string) =>
+    request<{ items: Array<{ id: string; name: string; location_id: string | null }> }>(
+      "GET",
+      `/orgs/${slug}/modules/inventory/parts`,
+    ),
 
   // assets module
   listAssets: (slug: string) =>
@@ -458,6 +478,20 @@ export const api = {
     request<{ marked: number }>("POST", `/orgs/${slug}/notifications/read-all`),
 
   // Notifications — cross-workspace inbox for the header bell.
+  // core-queue admin: list jobs for the workspace.
+  listQueueJobs: (
+    slug: string,
+    opts: { limit?: number; status?: string } = {},
+  ) => {
+    const qs = new URLSearchParams();
+    if (opts.limit) qs.set("limit", String(opts.limit));
+    if (opts.status) qs.set("status", opts.status);
+    return request<{ items: QueueJob[] }>(
+      "GET",
+      `/orgs/${slug}/queue/jobs${qs.toString() ? `?${qs}` : ""}`,
+    );
+  },
+
   // /me/profile (display_name + password change).
   updateMe: (body: { display_name?: string }) =>
     request<{ user: SessionUser }>("PATCH", "/me", body),
@@ -681,7 +715,499 @@ export const api = {
   ) => request<PairingItem>("POST", `/orgs/${slug}/pairings`, body),
   deletePairing: (slug: string, id: string) =>
     request<void>("DELETE", `/orgs/${slug}/pairings/${id}`),
+
+  // Instances (workspace_module_instances) — multi-instance modules.
+  // A workspace can install one module multiple times under different
+  // names. See docs/design-decisions/instances.md.
+  listInstances: (slug: string, moduleName?: string) =>
+    request<{ items: ModuleInstance[] }>(
+      "GET",
+      `/orgs/${slug}/instances${moduleName ? `?module=${encodeURIComponent(moduleName)}` : ""}`,
+    ),
+  createInstance: (
+    slug: string,
+    body: { module_name: string; instance_name: string; display_name: string },
+  ) =>
+    request<ModuleInstance>("POST", `/orgs/${slug}/instances`, body),
+  deleteInstance: (slug: string, instanceName: string) =>
+    request<void>("DELETE", `/orgs/${slug}/instances/${instanceName}`),
+
+  // Workspace presentation overrides — rename / hide / re-icon / reorder
+  // for any nav entry (entity kind, instance, bundle).
+  listOverrides: (slug: string) =>
+    request<{ items: EntityKindOverride[] }>(
+      "GET",
+      `/orgs/${slug}/entity-kind-overrides`,
+    ),
+  upsertOverride: (
+    slug: string,
+    body: {
+      target_kind: "entity_kind" | "instance" | "bundle";
+      target_id: string;
+      display_label?: string | null;
+      display_label_plural?: string | null;
+      icon?: string | null;
+      hidden?: boolean;
+      nav_order?: number | null;
+    },
+  ) =>
+    request<EntityKindOverride>("PUT", `/orgs/${slug}/entity-kind-overrides`, body),
+  deleteOverride: (slug: string, targetKind: string, targetId: string) =>
+    request<void>(
+      "DELETE",
+      `/orgs/${slug}/entity-kind-overrides/${encodeURIComponent(targetKind)}/${encodeURIComponent(targetId)}`,
+    ),
+
+  // core-integrations — outbound + inbound connectors. See
+  // docs/design-decisions/core-integrations.md.
+  listConnectorCatalogue: (slug: string) =>
+    request<{ items: IntegrationConnectorDef[] }>(
+      "GET",
+      `/orgs/${slug}/modules/core-integrations/connectors/catalogue`,
+    ),
+  listConnectors: (slug: string) =>
+    request<{ items: IntegrationConnector[] }>(
+      "GET",
+      `/orgs/${slug}/modules/core-integrations/connectors`,
+    ),
+  createConnector: (
+    slug: string,
+    body: {
+      connector_id: string;
+      label: string;
+      credentials: Record<string, unknown>;
+      config?: Record<string, unknown>;
+    },
+  ) =>
+    request<IntegrationConnector>(
+      "POST",
+      `/orgs/${slug}/modules/core-integrations/connectors`,
+      body,
+    ),
+  updateConnector: (
+    slug: string,
+    id: string,
+    body: {
+      label?: string;
+      credentials?: Record<string, unknown>;
+      config?: Record<string, unknown>;
+      enabled?: boolean;
+    },
+  ) =>
+    request<IntegrationConnector>(
+      "PATCH",
+      `/orgs/${slug}/modules/core-integrations/connectors/${id}`,
+      body,
+    ),
+  deleteConnector: (slug: string, id: string) =>
+    request<void>(
+      "DELETE",
+      `/orgs/${slug}/modules/core-integrations/connectors/${id}`,
+    ),
+  testConnector: (slug: string, id: string) =>
+    request<{ ok: boolean; error?: string }>(
+      "POST",
+      `/orgs/${slug}/modules/core-integrations/connectors/${id}/test`,
+    ),
+  invokeConnector: (
+    slug: string,
+    id: string,
+    body: { action_id: string; args?: Record<string, unknown>; rendered?: string },
+  ) =>
+    request<{ ok: boolean; ms: number; result: unknown }>(
+      "POST",
+      `/orgs/${slug}/modules/core-integrations/connectors/${id}/invoke`,
+      body,
+    ),
+  listIntegrationCalls: (slug: string, limit = 50) =>
+    request<{ items: IntegrationCall[] }>(
+      "GET",
+      `/orgs/${slug}/modules/core-integrations/connectors/calls?limit=${limit}`,
+    ),
+  listInboundHandlers: (slug: string) =>
+    request<{ items: InboundHandlerDef[] }>(
+      "GET",
+      `/orgs/${slug}/modules/core-integrations/inbound-tokens/handlers`,
+    ),
+  listInboundTokens: (slug: string) =>
+    request<{ items: InboundToken[] }>(
+      "GET",
+      `/orgs/${slug}/modules/core-integrations/inbound-tokens`,
+    ),
+  createInboundToken: (
+    slug: string,
+    body: { connector_id: string; label: string; config?: Record<string, unknown> },
+  ) =>
+    request<InboundToken>(
+      "POST",
+      `/orgs/${slug}/modules/core-integrations/inbound-tokens`,
+      body,
+    ),
+  revokeInboundToken: (slug: string, id: string) =>
+    request<InboundToken>(
+      "POST",
+      `/orgs/${slug}/modules/core-integrations/inbound-tokens/${id}/revoke`,
+    ),
+  deleteInboundToken: (slug: string, id: string) =>
+    request<void>(
+      "DELETE",
+      `/orgs/${slug}/modules/core-integrations/inbound-tokens/${id}`,
+    ),
+
+  // core-ai — provider config + capability defaults + usage. See
+  // docs/design-decisions/core-ai.md.
+  listAiProviderCatalogue: (slug: string) =>
+    request<{ items: AiProviderDef[] }>(
+      "GET",
+      `/orgs/${slug}/modules/core-ai/providers/catalogue`,
+    ),
+  listAiProviders: (slug: string) =>
+    request<{ items: AiProvider[] }>(
+      "GET",
+      `/orgs/${slug}/modules/core-ai/providers`,
+    ),
+  createAiProvider: (
+    slug: string,
+    body: {
+      provider_id: string;
+      label: string;
+      credentials: Record<string, unknown>;
+      config?: Record<string, unknown>;
+      monthly_budget_cents?: number | null;
+    },
+  ) => request<AiProvider>("POST", `/orgs/${slug}/modules/core-ai/providers`, body),
+  updateAiProvider: (
+    slug: string,
+    id: string,
+    body: {
+      label?: string;
+      credentials?: Record<string, unknown>;
+      config?: Record<string, unknown>;
+      enabled?: boolean;
+      monthly_budget_cents?: number | null;
+    },
+  ) => request<AiProvider>("PATCH", `/orgs/${slug}/modules/core-ai/providers/${id}`, body),
+  deleteAiProvider: (slug: string, id: string) =>
+    request<void>("DELETE", `/orgs/${slug}/modules/core-ai/providers/${id}`),
+  testAiProvider: (slug: string, id: string) =>
+    request<{ ok: boolean; error?: string; note?: string }>(
+      "POST",
+      `/orgs/${slug}/modules/core-ai/providers/${id}/test`,
+    ),
+  listAiCapabilityDefaults: (slug: string) =>
+    request<{ items: AiCapabilityDefault[]; all_capabilities: string[] }>(
+      "GET",
+      `/orgs/${slug}/modules/core-ai/capability-defaults`,
+    ),
+  upsertAiCapabilityDefault: (
+    slug: string,
+    body: {
+      capability: string;
+      provider_id: string;
+      model: string;
+      config?: Record<string, unknown>;
+    },
+  ) =>
+    request<AiCapabilityDefault>(
+      "PUT",
+      `/orgs/${slug}/modules/core-ai/capability-defaults`,
+      body,
+    ),
+  deleteAiCapabilityDefault: (slug: string, capability: string) =>
+    request<void>(
+      "DELETE",
+      `/orgs/${slug}/modules/core-ai/capability-defaults/${encodeURIComponent(capability)}`,
+    ),
+  invokeAi: (
+    slug: string,
+    body: {
+      capability: string;
+      input: Record<string, unknown>;
+      provider_id?: string;
+      model?: string;
+      bypass_cache?: boolean;
+    },
+  ) =>
+    request<{
+      result: unknown;
+      provider_id: string;
+      model: string;
+      cached: boolean;
+      cost_cents?: number;
+      duration_ms: number;
+    }>("POST", `/orgs/${slug}/modules/core-ai/invoke`, body),
+  listAiCalls: (slug: string, limit = 50) =>
+    request<{ items: AiCall[] }>(
+      "GET",
+      `/orgs/${slug}/modules/core-ai/usage/calls?limit=${limit}`,
+    ),
+  getAiUsageSummary: (slug: string) =>
+    request<{ since: string; items: AiUsageSummaryRow[] }>(
+      "GET",
+      `/orgs/${slug}/modules/core-ai/usage/summary`,
+    ),
+
+  // core-catalogs — imported reference datasets (Rebrickable parts,
+  // McMaster catalog, ISBN, etc.). User entities point at rows here
+  // via `entity_pairings` with `relationship_kind: "matches"`.
+  listCatalogs: (slug: string) =>
+    request<{ items: Catalog[] }>(
+      "GET",
+      `/orgs/${slug}/modules/core-catalogs/catalogs`,
+    ),
+  getCatalog: (slug: string, id: string) =>
+    request<Catalog>(
+      "GET",
+      `/orgs/${slug}/modules/core-catalogs/catalogs/${id}`,
+    ),
+  createCatalog: (slug: string, body: Partial<Catalog>) =>
+    request<Catalog>(
+      "POST",
+      `/orgs/${slug}/modules/core-catalogs/catalogs`,
+      body,
+    ),
+  updateCatalog: (slug: string, id: string, body: Partial<Catalog>) =>
+    request<Catalog>(
+      "PATCH",
+      `/orgs/${slug}/modules/core-catalogs/catalogs/${id}`,
+      body,
+    ),
+  deleteCatalog: (slug: string, id: string) =>
+    request<void>(
+      "DELETE",
+      `/orgs/${slug}/modules/core-catalogs/catalogs/${id}`,
+    ),
+  importCatalogCsv: (
+    slug: string,
+    id: string,
+    body: { csv: string; schema?: CatalogSchema },
+  ) =>
+    request<{ imported: number; total: number; schema_used: CatalogSchema }>(
+      "POST",
+      `/orgs/${slug}/modules/core-catalogs/catalogs/${id}/import-csv`,
+      body,
+    ),
+  listCatalogEntries: (
+    slug: string,
+    catalogId: string,
+    params: { q?: string; limit?: number; offset?: number } = {},
+  ) => {
+    const qs = new URLSearchParams();
+    if (params.q) qs.set("q", params.q);
+    if (params.limit) qs.set("limit", String(params.limit));
+    if (params.offset) qs.set("offset", String(params.offset));
+    const trailing = qs.toString() ? `?${qs}` : "";
+    return request<{ items: CatalogEntry[]; title_column: string }>(
+      "GET",
+      `/orgs/${slug}/modules/core-catalogs/catalogs/${catalogId}/entries${trailing}`,
+    );
+  },
+
+  // core-locations — workspace-wide tree of physical places. Anything
+  // with a `location_id` field (machines, assets, parts) points at
+  // rows from this endpoint.
+  listLocations: (slug: string) =>
+    request<{ items: Location[] }>(
+      "GET",
+      `/orgs/${slug}/modules/core-locations/locations`,
+    ),
+  getLocation: (slug: string, id: string) =>
+    request<Location>(
+      "GET",
+      `/orgs/${slug}/modules/core-locations/locations/${id}`,
+    ),
+  createLocation: (slug: string, body: Partial<Location>) =>
+    request<Location>(
+      "POST",
+      `/orgs/${slug}/modules/core-locations/locations`,
+      body,
+    ),
+  updateLocation: (slug: string, id: string, body: Partial<Location>) =>
+    request<Location>(
+      "PATCH",
+      `/orgs/${slug}/modules/core-locations/locations/${id}`,
+      body,
+    ),
+  deleteLocation: (slug: string, id: string) =>
+    request<void>(
+      "DELETE",
+      `/orgs/${slug}/modules/core-locations/locations/${id}`,
+    ),
 };
+
+export interface AiProvider {
+  id: string;
+  provider_id: string;
+  label: string;
+  config: Record<string, unknown>;
+  enabled: boolean;
+  monthly_budget_cents: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AiProviderDef {
+  id: string;
+  label: string;
+  credentials: Record<string, { label: string; secret: boolean }>;
+  capabilities: Record<string, { models: string[]; defaultModel?: string }>;
+}
+
+export interface AiCapabilityDefault {
+  capability: string;
+  provider_id: string;
+  model: string;
+  config: Record<string, unknown>;
+}
+
+export interface AiCall {
+  id: string;
+  provider_id: string;
+  capability: string;
+  model: string | null;
+  input_summary: string | null;
+  output_summary: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cost_cents: number | null;
+  duration_ms: number | null;
+  ok: boolean;
+  error: string | null;
+  cached: boolean;
+  invoked_at: string;
+}
+
+export interface AiUsageSummaryRow {
+  capability: string;
+  provider_id: string;
+  calls: number;
+  cached_calls: number;
+  total_cost_cents: number | null;
+  total_duration_ms: number | null;
+  failed: number;
+}
+
+export interface IntegrationConnector {
+  id: string;
+  connector_id: string;
+  label: string;
+  config: Record<string, unknown>;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface IntegrationConnectorDef {
+  id: string;
+  label: string;
+  credentials: Record<string, { label: string; secret: boolean }>;
+  actions: Array<{
+    id: string;
+    label: string;
+    description?: string;
+    argsSchema?: Record<string, { label: string; type: "text" | "number" | "boolean" }>;
+  }>;
+}
+
+export interface InboundHandlerDef {
+  id: string;
+  label: string;
+  config: Record<string, { label: string; secret: boolean }>;
+  emits: string[];
+}
+
+export interface InboundToken {
+  id: string;
+  connector_id: string;
+  token: string;
+  label: string;
+  config: Record<string, unknown>;
+  enabled: boolean;
+  last_hit_at: string | null;
+  hit_count: number;
+  created_at: string;
+}
+
+export interface IntegrationCall {
+  id: string;
+  direction: "outbound" | "inbound";
+  connector_id: string;
+  action_or_event: string;
+  status: number | null;
+  ok: boolean;
+  error: string | null;
+  request_meta: Record<string, unknown> | null;
+  ms: number | null;
+  occurred_at: string;
+}
+
+export interface ModuleInstance {
+  id: string;
+  org_id: string;
+  module_name: string;
+  instance_name: string;
+  display_name: string;
+  is_default: boolean;
+  config: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface EntityKindOverride {
+  id: string;
+  org_id: string;
+  target_kind: "entity_kind" | "instance" | "bundle";
+  target_id: string;
+  display_label: string | null;
+  display_label_plural: string | null;
+  icon: string | null;
+  hidden: boolean;
+  nav_order: number | null;
+  config: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Location {
+  id: string;
+  name: string;
+  short_name: string | null;
+  parent_id: string | null;
+  depth: number;
+  kind: "area" | "container";
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CatalogSchema {
+  id_column?: string;
+  title_column?: string;
+  image_column?: string;
+  subtitle_column?: string;
+  description_column?: string;
+}
+
+export interface Catalog {
+  id: string;
+  name: string;
+  description: string | null;
+  source_url: string | null;
+  puller_id: string | null;
+  schema: CatalogSchema;
+  last_sync_at: string | null;
+  entry_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CatalogEntry {
+  id: string;
+  catalog_id: string;
+  external_id: string;
+  payload: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
 
 export interface PairingItem {
   id: string;
@@ -832,6 +1358,22 @@ export interface CrossOrgNotificationEntry extends NotificationEntry {
   org_id: string;
   org_name: string;
   org_slug: string;
+}
+
+export interface QueueJob {
+  id: string;
+  queue: string;
+  payload: Record<string, unknown>;
+  status: "queued" | "running" | "done" | "failed";
+  attempts: number;
+  max_attempts: number;
+  run_at: string;
+  locked_at: string | null;
+  locked_by: string | null;
+  completed_at: string | null;
+  failed_at: string | null;
+  error: string | null;
+  created_at: string;
 }
 
 export interface ActivityEntry {
@@ -1026,6 +1568,10 @@ export interface PlatformBundle {
   description: string | null;
   source_url: string | null;
   installed_at: string;
+  /** The full manifest persisted at install time. Used by the nav
+   *  to read `provides_lens` so lens-contributing bundles render
+   *  under their parent module's popover. */
+  manifest?: PlatformBundleManifest;
 }
 
 export interface PlatformBundleManifest {
@@ -1034,6 +1580,10 @@ export interface PlatformBundleManifest {
   name: string;
   description?: string;
   author?: string;
+  /** v1.5: markdown walkthrough rendered on the bundle detail page. */
+  readme_md?: string;
+  /** v1.5: image URLs displayed as a screenshot strip. */
+  screenshots?: string[];
   requires?: { module: string; version?: string }[];
   wires?: {
     source_kind: string;
@@ -1051,5 +1601,15 @@ export interface PlatformBundleManifest {
     type: "text" | "number" | "boolean" | "date" | "url";
     required?: boolean;
     position?: number;
+    /** When type='text', renders as a dropdown of these choices. */
+    choices?: string[];
   }[];
+  /** Optional lens contribution — turns this bundle into a Pillar-E
+   *  specialisation. The nav reads installed bundles with
+   *  provides_lens to render lens chips under the parent module. */
+  provides_lens?: {
+    entity_kind: string;
+    name: string;
+    display_name: string;
+  };
 }

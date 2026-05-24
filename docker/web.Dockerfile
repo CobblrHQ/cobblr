@@ -17,10 +17,6 @@ COPY modules/projects/package.json ./modules/projects/
 COPY modules/purchases/package.json ./modules/purchases/
 COPY modules/machines/package.json ./modules/machines/
 COPY modules/assets/package.json ./modules/assets/
-COPY modules/3d-printers/package.json ./modules/3d-printers/
-COPY modules/laser-cutters/package.json ./modules/laser-cutters/
-COPY modules/cnc-machines/package.json ./modules/cnc-machines/
-COPY modules/workshop-mods/package.json ./modules/workshop-mods/
 
 RUN npm install --workspaces --include-workspace-root --no-audit --no-fund
 
@@ -34,10 +30,6 @@ COPY modules/projects ./modules/projects
 COPY modules/purchases ./modules/purchases
 COPY modules/machines ./modules/machines
 COPY modules/assets ./modules/assets
-COPY modules/3d-printers ./modules/3d-printers
-COPY modules/laser-cutters ./modules/laser-cutters
-COPY modules/cnc-machines ./modules/cnc-machines
-COPY modules/workshop-mods ./modules/workshop-mods
 COPY web ./web
 
 WORKDIR /app/web

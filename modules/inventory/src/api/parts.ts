@@ -30,6 +30,14 @@ const PartCreate = z.object({
   notes: z.string().max(8_000).nullable().optional(),
   state: z.enum(["active", "draft", "needs_review"]).optional(),
   metadata: z.record(z.unknown()).optional(),
+  // HomeBox parity fields.
+  serial_number: z.string().max(160).nullable().optional(),
+  model_number: z.string().max(160).nullable().optional(),
+  warranty_expires: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  lifetime_warranty: z.boolean().optional(),
+  warranty_details: z.string().max(2_000).nullable().optional(),
+  insured: z.boolean().optional(),
+  archived: z.boolean().optional(),
 });
 
 const PartUpdate = PartCreate.partial();
@@ -39,14 +47,23 @@ const StockAdjust = z.object({
   reason: z.string().max(500).optional(),
 });
 
+const Truthy = z.union([z.literal("1"), z.literal("true"), z.literal("0"), z.literal("false")]);
+const isTruthy = (v: string | undefined): boolean => v === "1" || v === "true";
+
 const ListQuery = z.object({
   search: z.string().optional(),
   category_id: z.string().uuid().optional(),
   location_id: z.string().uuid().optional(),
   state: z.enum(["active", "draft", "needs_review"]).optional(),
-  low_stock: z
-    .union([z.literal("1"), z.literal("true"), z.literal("0"), z.literal("false")])
-    .optional(),
+  low_stock: Truthy.optional(),
+  /** Show archived rows. Default false — archived parts are hidden
+   *  from the list. */
+  show_archived: Truthy.optional(),
+  /** Only archived rows. Overrides show_archived. */
+  archived_only: Truthy.optional(),
+  insured_only: Truthy.optional(),
+  /** Warranty expires within N days. */
+  warranty_expires_within_days: z.coerce.number().int().positive().max(3650).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(100),
   // Opaque cursor — base64 of {name,id} of the last row on the
   // previous page. Absent = first page.
@@ -77,7 +94,6 @@ partsRouter.get(
     let query = db
       .selectFrom("inventory_parts as p")
       .leftJoin("inventory_categories as c", "c.id", "p.category_id")
-      .leftJoin("inventory_locations as l", "l.id", "p.location_id")
       .select((eb) => [
         "p.id",
         "p.name",
@@ -97,7 +113,14 @@ partsRouter.get(
         "p.category_id",
         "c.name as category_name",
         "p.location_id",
-        "l.name as location_name",
+        "p.asset_id",
+        "p.serial_number",
+        "p.model_number",
+        "p.warranty_expires",
+        "p.lifetime_warranty",
+        "p.warranty_details",
+        "p.insured",
+        "p.archived",
         // Aggregated reserved quantity from active allocations.
         eb
           .selectFrom("inventory_allocations as a")
@@ -112,17 +135,45 @@ partsRouter.get(
       .orderBy("p.id");
 
     if (filter.search) {
-      const like = `%${filter.search.toLowerCase()}%`;
-      query = query.where((eb) =>
-        eb.or([
-          eb(sql<string>`lower(p.name)`, "like", like),
-          eb(sql<string>`lower(coalesce(p.notes,''))`, "like", like),
-        ]),
-      );
+      const raw = filter.search.trim();
+      // HomeBox-style `#NNN` syntax: search by asset_id (zero-padded
+      // or not, parse the integer suffix).
+      const assetMatch = raw.match(/^#?\s*0*(\d+)\s*$/);
+      if (assetMatch) {
+        query = query.where("p.asset_id", "=", Number(assetMatch[1]));
+      } else {
+        const like = `%${raw.toLowerCase()}%`;
+        query = query.where((eb) =>
+          eb.or([
+            eb(sql<string>`lower(p.name)`, "like", like),
+            eb(sql<string>`lower(coalesce(p.notes,''))`, "like", like),
+            eb(sql<string>`lower(coalesce(p.serial_number,''))`, "like", like),
+            eb(sql<string>`lower(coalesce(p.model_number,''))`, "like", like),
+            eb(sql<string>`lower(coalesce(p.manufacturer,''))`, "like", like),
+          ]),
+        );
+      }
     }
     if (filter.category_id) query = query.where("p.category_id", "=", filter.category_id);
     if (filter.location_id) query = query.where("p.location_id", "=", filter.location_id);
     if (filter.state) query = query.where("p.state", "=", filter.state);
+
+    // Archived defaults to hidden. archived_only takes precedence;
+    // otherwise show_archived widens the result set.
+    if (isTruthy(filter.archived_only)) {
+      query = query.where("p.archived", "=", true);
+    } else if (!isTruthy(filter.show_archived)) {
+      query = query.where("p.archived", "=", false);
+    }
+    if (isTruthy(filter.insured_only)) {
+      query = query.where("p.insured", "=", true);
+    }
+    if (filter.warranty_expires_within_days) {
+      const days = filter.warranty_expires_within_days;
+      query = query.where(
+        sql<boolean>`p.warranty_expires is not null and p.warranty_expires <= (current_date + ${days} * interval '1 day')`,
+      );
+    }
 
     // Cursor: keyset pagination on the (name, id) ordering.
     if (filter.cursor) {
@@ -156,6 +207,12 @@ partsRouter.get(
       const assigned = Number(r.assigned_qty ?? 0);
       const minQty = r.min_qty != null ? Number(r.min_qty) : null;
       const available = qty - assigned;
+      // Days until warranty expires — null when no warranty date.
+      let warranty_days_until: number | null = null;
+      if (r.warranty_expires) {
+        const ms = new Date(r.warranty_expires).getTime() - Date.now();
+        warranty_days_until = Math.ceil(ms / 86_400_000);
+      }
       return {
         ...r,
         qty,
@@ -164,11 +221,34 @@ partsRouter.get(
         assigned_qty: assigned,
         available_qty: available,
         low_stock: minQty != null && available <= minQty,
+        warranty_days_until,
+        location_name: null as string | null,
       };
     });
     const filtered = lowStockOnly
       ? items.filter((p) => p.low_stock)
       : items;
+
+    // Cross-module read for the location name: go through the
+    // resolver (no direct table read) per module-layers.md.
+    const locationIds = Array.from(
+      new Set(
+        filtered
+          .map((p) => p.location_id)
+          .filter((id): id is string => !!id),
+      ),
+    );
+    if (locationIds.length > 0) {
+      const ctx = tenantContext(req);
+      const resolved = await platform().entities.lookupMany(
+        ctx.org.id,
+        locationIds.map((id) => ({ kind: "core-locations:location", id })),
+      );
+      const byId = new Map(resolved.map((r) => [r.id, r.title]));
+      for (const p of filtered) {
+        if (p.location_id) p.location_name = byId.get(p.location_id) ?? null;
+      }
+    }
 
     const last = filtered[filtered.length - 1];
     const next_cursor =
@@ -177,6 +257,160 @@ partsRouter.get(
     res.json({ items: filtered, next_cursor });
   }),
 );
+
+// CSV export — same shape as the list query (search + filters), but
+// returns every matching row (no pagination) as text/csv. Headers
+// match the importer's synonyms so the export round-trips.
+partsRouter.get(
+  "/export.csv",
+  asyncHandler(async (req, res) => {
+    const q = ListQuery.safeParse(req.query);
+    if (!q.success) return badBody(res, q.error);
+    const filter = q.data;
+    const db = tenantDb(req);
+
+    let query = db
+      .selectFrom("inventory_parts as p")
+      .leftJoin("inventory_categories as c", "c.id", "p.category_id")
+      .select([
+        "p.id",
+        "p.asset_id",
+        "p.name",
+        "p.description",
+        "p.qty",
+        "p.unit",
+        "p.cost",
+        "p.min_qty",
+        "p.manufacturer",
+        "p.serial_number",
+        "p.model_number",
+        "p.supplier_url",
+        "p.notes",
+        "p.warranty_expires",
+        "p.lifetime_warranty",
+        "p.warranty_details",
+        "p.insured",
+        "p.archived",
+        "p.state",
+        "c.name as category_name",
+        "p.location_id",
+        "p.created_at",
+      ])
+      .orderBy("p.asset_id", "asc");
+
+    if (filter.search) {
+      const raw = filter.search.trim();
+      const assetMatch = raw.match(/^#?\s*0*(\d+)\s*$/);
+      if (assetMatch) {
+        query = query.where("p.asset_id", "=", Number(assetMatch[1]));
+      } else {
+        const like = `%${raw.toLowerCase()}%`;
+        query = query.where((eb) =>
+          eb.or([
+            eb(sql<string>`lower(p.name)`, "like", like),
+            eb(sql<string>`lower(coalesce(p.serial_number,''))`, "like", like),
+            eb(sql<string>`lower(coalesce(p.model_number,''))`, "like", like),
+            eb(sql<string>`lower(coalesce(p.manufacturer,''))`, "like", like),
+          ]),
+        );
+      }
+    }
+    if (filter.category_id) query = query.where("p.category_id", "=", filter.category_id);
+    if (filter.location_id) query = query.where("p.location_id", "=", filter.location_id);
+    if (filter.state) query = query.where("p.state", "=", filter.state);
+    if (isTruthy(filter.archived_only)) {
+      query = query.where("p.archived", "=", true);
+    } else if (!isTruthy(filter.show_archived)) {
+      query = query.where("p.archived", "=", false);
+    }
+    if (isTruthy(filter.insured_only)) query = query.where("p.insured", "=", true);
+
+    const rows = await query.execute();
+
+    // Resolve location names through the platform resolver (one
+    // batch).
+    const locationIds = Array.from(
+      new Set(rows.map((r) => r.location_id).filter((id): id is string => !!id)),
+    );
+    const locationNames = new Map<string, string>();
+    if (locationIds.length > 0) {
+      const ctx = tenantContext(req);
+      const resolved = await platform().entities.lookupMany(
+        ctx.org.id,
+        locationIds.map((id) => ({ kind: "core-locations:location", id })),
+      );
+      for (const r of resolved) locationNames.set(r.id, r.title);
+    }
+
+    const headers = [
+      "asset_id",
+      "name",
+      "description",
+      "qty",
+      "unit",
+      "cost",
+      "min_qty",
+      "manufacturer",
+      "serial_number",
+      "model_number",
+      "supplier_url",
+      "warranty_expires",
+      "lifetime_warranty",
+      "warranty_details",
+      "insured",
+      "archived",
+      "state",
+      "category",
+      "location",
+      "notes",
+      "created_at",
+    ];
+
+    const lines: string[] = [headers.join(",")];
+    for (const r of rows) {
+      const cells = [
+        r.asset_id != null ? String(r.asset_id) : "",
+        r.name,
+        r.description ?? "",
+        r.qty,
+        r.unit,
+        r.cost ?? "",
+        r.min_qty ?? "",
+        r.manufacturer ?? "",
+        r.serial_number ?? "",
+        r.model_number ?? "",
+        r.supplier_url ?? "",
+        r.warranty_expires
+          ? new Date(r.warranty_expires).toISOString().slice(0, 10)
+          : "",
+        r.lifetime_warranty ? "true" : "false",
+        r.warranty_details ?? "",
+        r.insured ? "true" : "false",
+        r.archived ? "true" : "false",
+        r.state,
+        r.category_name ?? "",
+        r.location_id ? (locationNames.get(r.location_id) ?? "") : "",
+        r.notes ?? "",
+        new Date(r.created_at).toISOString(),
+      ];
+      lines.push(cells.map(csvCell).join(","));
+    }
+    const date = new Date().toISOString().slice(0, 10);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="inventory-${date}.csv"`,
+    );
+    res.send(lines.join("\n") + "\n");
+  }),
+);
+
+function csvCell(v: unknown): string {
+  const s = v == null ? "" : String(v);
+  // Quote if contains comma / quote / newline. Double internal quotes.
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
 
 partsRouter.get(
   "/:id",
@@ -233,8 +467,17 @@ partsRouter.post(
         notes: parsed.data.notes ?? null,
         state: parsed.data.state ?? "active",
         metadata: parsed.data.metadata ?? {},
+        serial_number: parsed.data.serial_number ?? null,
+        model_number: parsed.data.model_number ?? null,
+        warranty_expires: parsed.data.warranty_expires
+          ? new Date(parsed.data.warranty_expires)
+          : null,
+        lifetime_warranty: parsed.data.lifetime_warranty ?? false,
+        warranty_details: parsed.data.warranty_details ?? null,
+        insured: parsed.data.insured ?? false,
+        archived: parsed.data.archived ?? false,
       })
-      .returning(["id", "name", "qty", "state", "metadata", "created_at"])
+      .returning(["id", "name", "qty", "state", "metadata", "asset_id", "created_at"])
       .executeTakeFirstOrThrow();
 
     await platform().activity.log({
@@ -273,6 +516,8 @@ partsRouter.patch(
       if (v === undefined) continue;
       if (k === "qty" || k === "cost" || k === "min_qty") {
         patch[k] = v == null ? null : String(v);
+      } else if (k === "warranty_expires") {
+        patch[k] = v == null ? null : new Date(v as string);
       } else {
         patch[k] = v;
       }

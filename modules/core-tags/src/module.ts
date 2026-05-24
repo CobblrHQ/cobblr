@@ -55,8 +55,8 @@ export default defineModule({
     events: [
       "core-tags.tag.created",
       "core-tags.tag.deleted",
-      "core-tags.attached",
-      "core-tags.detached",
+      "core-tags.assignment.created",
+      "core-tags.assignment.deleted",
     ],
     api: [],
     actions: [],

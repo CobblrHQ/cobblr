@@ -9,7 +9,6 @@
 
 import { Router } from "express";
 import { categoriesRouter } from "./categories.js";
-import { locationsRouter } from "./locations.js";
 import { partsRouter } from "./parts.js";
 import { allocationsRouter } from "./allocations.js";
 import { importRouter } from "./import.js";
@@ -22,7 +21,6 @@ registerInventoryActionHandlers();
 const router = Router({ mergeParams: true });
 
 router.use("/categories", categoriesRouter);
-router.use("/locations", locationsRouter);
 router.use("/parts", partsRouter);
 router.use("/allocations", allocationsRouter);
 router.use(importRouter);

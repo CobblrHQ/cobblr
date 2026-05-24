@@ -93,6 +93,23 @@ export async function enableModuleForOrg(
     })
     .execute();
 
+  // Create the default instance row for this (org, module). The
+  // default's instance_name matches the module's name so existing
+  // module-prefix URLs and entity-kind IDs stay valid. Idempotent —
+  // workspace_module_instances has a unique constraint on
+  // (org_id, module_name, instance_name).
+  await meta
+    .insertInto("workspace_module_instances")
+    .values({
+      org_id: orgId,
+      module_name: moduleName,
+      instance_name: moduleName,
+      display_name: entry.manifest.displayName ?? moduleName,
+      is_default: true,
+    })
+    .onConflict((c) => c.columns(["org_id", "module_name", "instance_name"]).doNothing())
+    .execute();
+
   // Pillar E — apply contributed field-defs + wires. Tagged with
   // source_module so disable can clean them up. Idempotent via
   // existence checks; safe to re-run.
@@ -282,15 +299,60 @@ export async function syncTenantMigrations(): Promise<number> {
   return touched;
 }
 
-/** Convenience: enable every base module (no `dependencies`) for a
- *  fresh org. Phase 1 dev shortcut so signup → working inventory in
- *  one step. Pillar-E modules with deps require an explicit enable
- *  via POST /orgs/:slug/modules/:name/enable — most users don't
- *  want every specialization installed by default. */
+/** Convenience: enable every base module for a fresh org. Phase 1
+ *  shortcut so signup → working inventory in one step.
+ *
+ *  Order matters:
+ *    1. Every `band: "foundational"` module first — these are always
+ *       on, no opt-in. Sorted to run no-deps ones before any that
+ *       declare deps (so foundationals can depend on other
+ *       foundationals).
+ *    2. Every other module with no `dependencies` (stock + user-band
+ *       modules that ship in the default install).
+ *  Modules with `dependencies.length > 0` (Pillar-E specializations)
+ *  require an explicit enable via POST /orgs/:slug/modules/:name/enable.
+ */
 export async function enableAllForOrg(orgId: string, userId?: string): Promise<string[]> {
   const enabled: string[] = [];
-  for (const entry of listEntries()) {
-    if (entry.manifest.dependencies.length > 0) continue;
+  const all = listEntries();
+  const foundationals = all.filter((e) => e.manifest.band === "foundational");
+  const nonFoundationalBaseModules = all.filter(
+    (e) =>
+      e.manifest.band !== "foundational" && e.manifest.dependencies.length === 0,
+  );
+
+  // Sort foundationals so any with deps run AFTER their deps. (Today
+  // every foundational has zero deps; future-proofing for the moment
+  // a foundational legitimately depends on another foundational.)
+  const sortByDeps = (
+    arr: typeof foundationals,
+  ): typeof foundationals => {
+    const out: typeof foundationals = [];
+    const remaining = [...arr];
+    const placed = new Set<string>();
+    while (remaining.length > 0) {
+      const before = remaining.length;
+      for (let i = 0; i < remaining.length; i++) {
+        const entry = remaining[i]!;
+        if (entry.manifest.dependencies.every((d) => placed.has(d))) {
+          out.push(entry);
+          placed.add(entry.manifest.name);
+          remaining.splice(i, 1);
+          break;
+        }
+      }
+      if (remaining.length === before) {
+        // Cycle / unresolvable dep; bail out and append the rest as-is
+        // so we don't infinite-loop. enableModuleForOrg will surface a
+        // clearer error.
+        out.push(...remaining);
+        break;
+      }
+    }
+    return out;
+  };
+
+  for (const entry of [...sortByDeps(foundationals), ...nonFoundationalBaseModules]) {
     try {
       const result = await enableModuleForOrg(orgId, entry.manifest.name, { userId });
       if (!result.alreadyEnabled) enabled.push(entry.manifest.name);

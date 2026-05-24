@@ -1,8 +1,13 @@
 // Inventory — the first Cobblr connector.
 //
-// Parts + Locations + Categories + Allocations, all scoped to a
-// tenant DB. The platform sees this module via its manifest; runtime
-// API + UI are imported lazily by the loader when needed.
+// Parts + Categories + Allocations, all scoped to a tenant DB.
+// Locations used to live here too but graduated to core-locations
+// (foundational) once it became clear every module with physical
+// entities wants to reference the same tree. Existing
+// inventory_locations rows are mirrored into core_locations_locations
+// at boot (see api/src/platform/migrate-inventory-locations.ts).
+// The platform sees this module via its manifest; runtime API + UI
+// are imported lazily by the loader when needed.
 
 import { defineModule } from "@cobblr/platform-contract";
 
@@ -14,6 +19,7 @@ export default defineModule({
     "Parts, locations, categories, stock tracking, polymorphic allocations. The generalised toolkit you'd otherwise Frankenstein from a spreadsheet.",
   icon: "boxes",
   band: "stock",
+  instanceability: "multi",
 
   schema: {
     tablePrefix: "inventory_",
@@ -57,21 +63,6 @@ export default defineModule({
         ],
         detailRoute: "/inventory/parts/{id}",
       },
-      {
-        id: "inventory:location",
-        displayName: "Location",
-        displayNamePlural: "Locations",
-        icon: "map-pin",
-        profile: "place" /* physical · unique · container · timeless · indefinite · durable */,
-        fields: [
-          { name: "name", type: "text", role: "title", required: true },
-          { name: "short_name", type: "text" },
-          { name: "kind", type: "text" },
-        ],
-        // Locations are public-by-nature — labels reference them, views
-        // group by them; expose everything declared.
-        exposableFields: ["name", "short_name", "kind"],
-      },
     ],
   },
 
@@ -112,4 +103,19 @@ export default defineModule({
   },
 
   subscribes: [],
+
+  // The "order arrival auto-bumps part stock" flow is a wire, not
+  // hardcoded code. Ship it as a default; users can edit / disable
+  // / replace it. The wire belongs to inventory because inventory
+  // owns the action it fires.
+  contributes: {
+    wires: [
+      {
+        source_kind: "purchases:order_item",
+        action_id: "inventory:adjust-stock",
+        trigger_type: "event",
+        trigger_event: "purchases.order_item.received",
+      },
+    ],
+  },
 });

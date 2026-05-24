@@ -1,23 +1,33 @@
 // /search?q=… — full results page for the global search bar.
 // Same backend as the header dropdown but no result cap; results are
 // grouped by kind so the page reads like a faceted browse.
+//
+// Filters expose ?q (free text), ?tag (single tag chip), ?kinds
+// (comma-separated kind ids) — all editable in-page so users don't
+// have to know the URL syntax.
 
 import { useMemo } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Search } from "lucide-react";
+import { Search, X } from "lucide-react";
+import { EntityThumb } from "@cobblr/platform-web";
 import { api, type SearchHit } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
 export function SearchPage() {
   const { activeSlug } = useActiveOrg();
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const q = (params.get("q") ?? "").trim();
-  const kinds = params.get("kinds") ?? undefined;
-  // `?tag=urgent` (with or without `?q=`) restricts results to
-  // entities carrying that tag. core-search forwards it as the D7
-  // `_tag` predicate to every list resolver that supports it.
+  const kindsParam = params.get("kinds") ?? "";
+  const kinds = kindsParam || undefined;
   const tag = (params.get("tag") ?? "").trim() || undefined;
+
+  const entityKinds = useQuery({
+    queryKey: ["entity-kinds-for-search", activeSlug],
+    queryFn: () => api.listEntityKinds(activeSlug),
+    enabled: !!activeSlug,
+    staleTime: 5 * 60_000,
+  });
 
   const results = useQuery({
     queryKey: ["search-full", activeSlug, q, kinds ?? "", tag ?? ""],
@@ -35,31 +45,109 @@ export function SearchPage() {
     return Array.from(m.entries());
   }, [results.data?.items]);
 
+  function setParam(name: string, value: string | null) {
+    if (value === null || value === "") params.delete(name);
+    else params.set(name, value);
+    setParams(params, { replace: true });
+  }
+
+  const selectedKinds = new Set(kindsParam.split(",").filter(Boolean));
+  function toggleKind(id: string) {
+    const next = new Set(selectedKinds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setParam("kinds", next.size === 0 ? null : Array.from(next).join(","));
+  }
+
   return (
     <div className="space-y-4">
-      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
+      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3 flex-wrap">
         <Search size={20} className="text-cobble-600" />
         <h1 className="text-2xl font-semibold text-slate-700 dark:text-mortar-100">
           Search
         </h1>
-        {q && (
-          <span className="text-sm text-slate-500 dark:text-slate-400">
-            for "<span className="font-mono">{q}</span>"
+        <span className="text-sm text-slate-500 dark:text-slate-400">
+          {results.data ? `${results.data.items.length} results` : ""}
+        </span>
+        <div className="flex-1" />
+        <div className="relative">
+          <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            type="text"
+            value={q}
+            onChange={(e) => setParam("q", e.target.value || null)}
+            placeholder="search…"
+            className="input !py-1 !pl-7 !text-xs !w-56"
+            autoFocus
+          />
+        </div>
+      </div>
+
+      {/* Active filter chips — clear individually with the × button. */}
+      {(tag || selectedKinds.size > 0 || q) && (
+        <div className="flex items-center gap-2 flex-wrap text-xs">
+          <span className="font-mono uppercase tracking-wider text-slate-400 text-[10px]">
+            filters
           </span>
-        )}
-        {tag && (
-          <span className="text-sm text-slate-500 dark:text-slate-400">
-            tag <span className="font-mono">#{tag}</span>
-          </span>
-        )}
+          {q && (
+            <Chip onClear={() => setParam("q", null)}>
+              q: "<span className="font-mono">{q}</span>"
+            </Chip>
+          )}
+          {tag && (
+            <Chip onClear={() => setParam("tag", null)}>#{tag}</Chip>
+          )}
+          {Array.from(selectedKinds).map((k) => (
+            <Chip key={k} onClear={() => toggleKind(k)}>
+              <span className="font-mono">{k}</span>
+            </Chip>
+          ))}
+        </div>
+      )}
+
+      {/* Kind picker — list each registered kind as a toggleable chip. */}
+      <div className="flex items-center gap-2 flex-wrap text-xs">
+        <span className="font-mono uppercase tracking-wider text-slate-400 text-[10px]">
+          kinds
+        </span>
+        {(entityKinds.data?.items ?? []).map((k) => {
+          const on = selectedKinds.has(k.id);
+          return (
+            <button
+              key={k.id}
+              type="button"
+              onClick={() => toggleKind(k.id)}
+              className={
+                "px-2 py-0.5 rounded text-[11px] border transition " +
+                (on
+                  ? "bg-cobble-600 text-white border-cobble-600"
+                  : "border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:border-cobble-400 hover:text-cobble-600")
+              }
+            >
+              {k.display_name}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Tag input — narrow to entities carrying a tag, no view required. */}
+      <div className="flex items-center gap-2 text-xs">
+        <span className="font-mono uppercase tracking-wider text-slate-400 text-[10px]">
+          tag
+        </span>
+        <input
+          type="text"
+          value={tag ?? ""}
+          onChange={(e) => setParam("tag", e.target.value || null)}
+          placeholder="filter by tag name…"
+          className="input !py-1 !text-xs !w-48"
+        />
       </div>
 
       {!q && !tag && (
-        <p className="text-sm text-slate-500 dark:text-slate-400 italic">
-          Type in the header bar to search across every kind in this workspace,
-          or visit{" "}
-          <span className="font-mono text-xs">?tag=&lt;name&gt;</span> to list
-          everything carrying that tag.
+        <p className="text-sm text-slate-500 dark:text-slate-400 italic mt-6">
+          Type a query above, or filter by tag, or pick a kind — results
+          appear as you type.
         </p>
       )}
 
@@ -71,23 +159,26 @@ export function SearchPage() {
         <div className="text-sm text-slate-500 italic">
           No results{q ? ` for "${q}"` : ""}
           {tag ? ` tagged #${tag}` : ""}. Try a different keyword, a different
-          tag, or check that the relevant module is enabled.
+          tag, or relax the kind filters.
         </div>
       )}
 
       {grouped.map(([kind, items]) => (
         <section key={kind} className="space-y-2">
-          <h2 className="text-sm font-medium text-slate-600 dark:text-slate-300 sticky top-0 bg-white dark:bg-slate-950 py-1">
-            {kind}
-            <span className="ml-2 text-xs text-slate-400">{items.length}</span>
+          <h2 className="text-sm font-medium text-slate-600 dark:text-slate-300 sticky top-0 bg-slate-50 dark:bg-slate-950 py-1 flex items-center gap-2">
+            <span className="font-mono text-[10px] uppercase tracking-wider text-slate-400">
+              {kind}
+            </span>
+            <span className="text-xs text-slate-400">{items.length}</span>
           </h2>
-          <ul className="border border-slate-200 dark:border-slate-700 rounded divide-y divide-slate-100 dark:divide-slate-800">
+          <ul className="border border-slate-200 dark:border-slate-700 rounded divide-y divide-slate-100 dark:divide-slate-800 bg-white dark:bg-slate-900">
             {items.map((h) => (
-              <li key={h.id} className="px-3 py-2 text-sm">
+              <li key={`${h.kind}:${h.id}`} className="px-3 py-2 text-sm">
                 <Link
                   to={detailRoute(h.kind, h.id)}
-                  className="flex items-baseline gap-3 hover:text-cobble-600"
+                  className="flex items-center gap-3 hover:text-cobble-600"
                 >
+                  <EntityThumb src={h.image_path} alt={h.title} size={36} />
                   <span className="font-medium truncate">{h.title}</span>
                   {h.subtitle && (
                     <span className="text-xs text-slate-500 truncate">
@@ -101,6 +192,28 @@ export function SearchPage() {
         </section>
       ))}
     </div>
+  );
+}
+
+function Chip({
+  children,
+  onClear,
+}: {
+  children: React.ReactNode;
+  onClear: () => void;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-cobble-50 dark:bg-cobble-900/30 text-cobble-700 dark:text-cobble-300 border border-cobble-200 dark:border-cobble-700">
+      {children}
+      <button
+        type="button"
+        onClick={onClear}
+        className="hover:text-ember-500 transition"
+        title="Clear"
+      >
+        <X size={10} />
+      </button>
+    </span>
   );
 }
 

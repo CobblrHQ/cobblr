@@ -4,13 +4,35 @@
 
 import { Router } from "express";
 import { z } from "zod";
-import { sql } from "kysely";
+import { sql, type Kysely } from "kysely";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import { meta } from "../db/meta.js";
+import { getTenantDb } from "../db/tenant.js";
 import * as activity from "../platform/activity.js";
 import { enableModuleForOrg } from "../modules/enable.js";
 import { getEntry } from "../modules/registry.js";
+import { upsertOverride, deleteOverride } from "../platform/entity-kind-overrides.js";
+
+// Cross-module table type for the tenant-DB writes. core-views owns
+// `core_views_views`; bundles install rows into it tagged with
+// bundle_id. We declare the minimal columns we touch — the full
+// schema is in modules/core-views/src/db.ts (ViewsTable).
+interface CoreViewsViewsRow {
+  id: string;
+  entity_kind: string;
+  name: string;
+  view_type: string;
+  config: unknown;
+  is_default: boolean;
+  pinned: boolean;
+  owner_user_id: string | null;
+  bundle_id: string | null;
+  source_module: string | null;
+}
+interface BundleTenantDB {
+  core_views_views: CoreViewsViewsRow;
+}
 
 export const bundlesRouter = Router({ mergeParams: true });
 
@@ -20,6 +42,19 @@ const BundleManifest = z.object({
   name: z.string().min(1),
   description: z.string().optional(),
   author: z.string().optional(),
+  /** v1.5: long-form walkthrough rendered on the bundle's detail page.
+   *  Markdown. The short `description` field still appears in lists +
+   *  install confirmations; `readme_md` is for the "here's how I use
+   *  this bundle in practice" narrative. Free-form length — sensible
+   *  authors keep it under a few thousand chars; the platform doesn't
+   *  enforce a cap. */
+  readme_md: z.string().optional(),
+  /** v1.5: image URLs (or file:// paths inside the manifest delivery
+   *  archive when a directory ships a sidecar) that render as a
+   *  screenshot strip on the bundle detail page. Order = display
+   *  order. Treated as URLs verbatim — no embedding, no inlining;
+   *  bundle authors host the images wherever. */
+  screenshots: z.array(z.string().min(1)).optional(),
   requires: z
     .array(z.object({ module: z.string(), version: z.string().optional() }))
     .default([]),
@@ -84,9 +119,78 @@ const BundleManifest = z.object({
         type: z.enum(["text", "number", "boolean", "date", "url"]),
         required: z.boolean().optional(),
         position: z.number().int().optional(),
+        /** When type='text', renders as a dropdown of these choices. */
+        choices: z.array(z.string()).optional(),
       }),
     )
     .default([]),
+  /** v1.5 (wires-and-bundles.md Q5, alt 3): bundle ships saved views.
+   *  The "skin over a generic module" framing — a Lego bundle wants
+   *  to ship not just custom field defs but also "see them grouped
+   *  by theme, filtered to low-stock" as a default view.
+   *
+   *  Each entry creates a row in core_views_views tagged with the
+   *  bundle's id; uninstall removes them, the user can edit them
+   *  freely while installed (edits stick across re-install since the
+   *  install path is upsert-by-(bundle_id, name, entity_kind)). */
+  saved_views: z
+    .array(
+      z.object({
+        entity_kind: z.string(),
+        name: z.string().min(1),
+        view_type: z.string().min(1).default("list"),
+        config: z.record(z.unknown()).default({}),
+        /** Pin this view to the dashboard on install. */
+        pinned: z.boolean().optional(),
+        /** Mark as default-for-entity-kind on install. The same
+         *  unique-default guard the views API enforces applies. */
+        is_default: z.boolean().optional(),
+      }),
+    )
+    .default([]),
+  /** Optional lens contribution — turns this bundle into a Pillar-E-
+   *  style specialisation. The nav reads installed bundles with
+   *  provides_lens to render the parent-module's popover and the
+   *  lens filter on the parent's list page. Replaces the previous
+   *  pattern of declaring a Pillar-E module with `dependencies:
+   *  ["machines"]`. */
+  provides_lens: z
+    .object({
+      /** What kind this lens narrows. e.g. "machines:machine" */
+      entity_kind: z.string(),
+      /** Slug used in URLs like /machines?lens=3d-printers. */
+      // Lens slug used in URLs like /machines?lens=3d-printers. Allow
+      // leading digit so domain-natural names (3d-printers, 2d-cad,
+      // 4-axis-cnc) work without ugly renames.
+      name: z
+        .string()
+        .regex(/^[a-z0-9][a-z0-9-]*$/),
+      /** Human label rendered in the popover + chip. */
+      display_name: z.string(),
+      /** v1.6 (lens-promotion.md §1.1): formalises the "rows belonging
+       *  to me match this filter" predicate. Today companion app lens
+       *  bundles use `metadata.category` informally; this makes it
+       *  explicit. */
+      discriminator: z
+        .object({
+          field: z.string().min(1),
+          value: z.union([z.string(), z.number(), z.boolean()]),
+        })
+        .optional(),
+      /** v1.6 (lens-promotion.md §1.3): promote the lens to a peer of
+       *  the parent kind in the nav (instead of nesting beneath it). */
+      presents_as_top_level: z.boolean().optional(),
+      /** v1.6: when set + presents_as_top_level=true, the parent
+       *  entity kind itself is hidden from the workspace's nav. The
+       *  workspace can flip this back on at /configuration/presentation. */
+      hide_parent: z.boolean().optional(),
+      /** v1.6: lucide icon name for the nav chip. */
+      icon: z.string().optional(),
+      /** v1.6: override the bundle's name when rendering the nav
+       *  entry. Falls back to display_name. */
+      label_override: z.string().optional(),
+    })
+    .optional(),
 });
 
 type BundleManifestT = z.infer<typeof BundleManifest>;
@@ -99,7 +203,20 @@ bundlesRouter.get(
     try {
       const rows = await meta
         .selectFrom("bundles")
-        .select(["id", "external_id", "name", "version", "author", "description", "source_url", "installed_at"])
+        .select([
+          "id",
+          "external_id",
+          "name",
+          "version",
+          "author",
+          "description",
+          "source_url",
+          "installed_at",
+          // The full manifest is needed by the nav so it can read
+          // `provides_lens` for lens-contributing bundles. Cheap
+          // to ship since manifests are small.
+          "manifest",
+        ])
         .where("org_id", "=", req.tenant!.org.id)
         .orderBy("installed_at", "desc")
         .execute();
@@ -148,9 +265,38 @@ bundlesRouter.get(
         .where("org_id", "=", orgId)
         .execute();
 
+      // v1.5: saved views from core-views' tenant table. Same filter
+      // as wires + field defs — bundle-owned and module-owned rows
+      // are excluded since re-install re-creates them; we only export
+      // the user-authored ones.
+      let savedViews: Array<{
+        entity_kind: string;
+        name: string;
+        view_type: string;
+        config: unknown;
+        pinned: boolean;
+        is_default: boolean;
+      }> = [];
+      try {
+        const tdb = (await getTenantDb(orgId)) as unknown as Kysely<BundleTenantDB>;
+        savedViews = await tdb
+          .selectFrom("core_views_views")
+          .select(["entity_kind", "name", "view_type", "config", "pinned", "is_default"])
+          .where("bundle_id", "is", null)
+          .where("source_module", "is", null)
+          // Workspace-shared only — private (owner_user_id set) views
+          // are personal to the exporter and shouldn't ride along.
+          .where("owner_user_id", "is", null)
+          .execute();
+      } catch (err) {
+        console.error(`[bundle-export] saved_views fetch failed for ${orgId}:`, err);
+        // Continue without views — partial exports are still useful.
+      }
+
       // requires set = modules referenced by any exported wire's
-      // kind/action. Keeps the manifest re-installable on a fresh
-      // org without bringing the user's whole module set along.
+      // kind/action, field def's kind, or saved view's kind. Keeps
+      // the manifest re-installable on a fresh org without bringing
+      // the user's whole module set along.
       const referencedModules = new Set<string>();
       for (const w of wires) {
         const srcMod = w.source_kind.split(":")[0];
@@ -160,6 +306,10 @@ bundlesRouter.get(
       }
       for (const f of fieldDefs) {
         const m = f.entity_kind.split(":")[0];
+        if (m) referencedModules.add(m);
+      }
+      for (const v of savedViews) {
+        const m = v.entity_kind.split(":")[0];
         if (m) referencedModules.add(m);
       }
       const requires = installedModules
@@ -201,6 +351,14 @@ bundlesRouter.get(
           type: f.type,
           required: f.required,
           position: f.position,
+        })),
+        saved_views: savedViews.map((v) => ({
+          entity_kind: v.entity_kind,
+          name: v.name,
+          view_type: v.view_type,
+          config: (v.config ?? {}) as Record<string, unknown>,
+          pinned: v.pinned,
+          is_default: v.is_default,
         })),
       };
       res.json({ manifest });
@@ -469,11 +627,107 @@ bundlesRouter.post(
               required: f.required ?? false,
               position: f.position ?? 0,
               bundle_id: bundle.id,
+              // Propagate dropdown choices when the bundle supplies
+              // them — Pillar-E specialisation bundles use this for
+              // hotend / firmware / spindle etc.
+              choices: f.choices
+                ? (sql`${JSON.stringify(f.choices)}::jsonb` as unknown as string[])
+                : null,
             })
             .execute();
         }
         return bundle;
       });
+
+      // v1.5: bundle saved_views land in core-views' tenant table,
+      // which lives in a different Postgres DB from cobblr_meta. We
+      // can't extend the meta transaction across DBs, so this runs
+      // as a follow-up step. If it fails, the bundle is "installed"
+      // (meta side) but missing its views — the user can re-install
+      // (the existing-version uninstall path cleans up first) to
+      // recover. Logged loud so the partial state is visible.
+      let viewsInstalled = 0;
+      if (m.saved_views.length > 0) {
+        try {
+          const tdb = (await getTenantDb(req.tenant!.org.id)) as unknown as Kysely<BundleTenantDB>;
+          for (const v of m.saved_views) {
+            await tdb
+              .insertInto("core_views_views")
+              .values({
+                entity_kind: v.entity_kind,
+                name: v.name,
+                view_type: v.view_type,
+                config: sql`${JSON.stringify(v.config)}::jsonb`,
+                is_default: v.is_default ?? false,
+                pinned: v.pinned ?? false,
+                owner_user_id: null,
+                bundle_id: inserted.id,
+                source_module: null,
+              } as never)
+              .execute();
+            viewsInstalled++;
+          }
+        } catch (err) {
+          console.error(
+            `[bundle-install] saved_views insert failed for bundle ${inserted.id} (${inserted.external_id}):`,
+            err,
+          );
+          // Best-effort: don't break the install — return the error
+          // detail so the caller can decide whether to re-install.
+          res.status(500).json({
+            error: {
+              code: "saved_views_install_failed",
+              message: `Bundle installed but ${m.saved_views.length - viewsInstalled} saved view(s) failed to apply. Re-install to retry.`,
+              details: { wires: m.wires.length, field_defs: m.field_defs.length, saved_views: viewsInstalled },
+            },
+          });
+          return;
+        }
+      }
+
+      // v1.6 (lens-promotion.md §1.3): if the bundle declares
+       // provides_lens, write initial entity_kind_overrides rows so the
+       // nav / breadcrumbs / search-chips render the bundle as a
+       // top-level item with its chosen label + icon. Workspace edits
+       // trump these defaults; insertOnly=true means a re-install
+       // doesn't clobber a workspace's customisation.
+      if (m.provides_lens) {
+        const lens = m.provides_lens;
+        try {
+          await upsertOverride({
+            orgId: req.tenant!.org.id,
+            targetKind: "bundle",
+            targetId: m.id,
+            displayLabel: lens.label_override ?? lens.display_name,
+            icon: lens.icon ?? null,
+            insertOnly: true,
+            config: {
+              presents_as_top_level: lens.presents_as_top_level === true,
+              parent_kind: lens.entity_kind,
+              lens_slug: lens.name,
+            },
+          });
+          if (lens.hide_parent) {
+            // Parent kind gets a hidden=true override, scoped to
+            // target_kind='entity_kind'. Workspace can flip back on at
+            // /configuration/presentation.
+            await upsertOverride({
+              orgId: req.tenant!.org.id,
+              targetKind: "entity_kind",
+              targetId: lens.entity_kind,
+              hidden: true,
+              insertOnly: true,
+            });
+          }
+        } catch (err) {
+          console.error(
+            `[bundle-install] lens override seed failed for ${inserted.id} (${inserted.external_id}):`,
+            err,
+          );
+          // Continue — overrides are presentation, not data. Re-install
+          // recovers.
+        }
+      }
 
       await activity.log({
         orgId: req.tenant!.org.id,
@@ -485,6 +739,7 @@ bundlesRouter.post(
           name: m.name,
           wires: m.wires.length,
           field_defs: m.field_defs.length,
+          saved_views: viewsInstalled,
         },
       });
       res.status(201).json({
@@ -536,6 +791,44 @@ bundlesRouter.delete(
 );
 
 async function uninstallBundleId(bundleId: string): Promise<void> {
+  // v1.5: bundles can also have installed saved views in the
+  // tenant DB. Delete those FIRST (so they're gone whether or not
+  // the meta-side delete succeeds), then drop the meta-side rows
+  // in a transaction.
+  const bundleRow = await meta
+    .selectFrom("bundles")
+    .select(["org_id", "external_id"])
+    .where("id", "=", bundleId)
+    .executeTakeFirst();
+  if (bundleRow) {
+    try {
+      const tdb = (await getTenantDb(bundleRow.org_id)) as unknown as Kysely<BundleTenantDB>;
+      await tdb
+        .deleteFrom("core_views_views")
+        .where("bundle_id", "=", bundleId)
+        .execute();
+    } catch (err) {
+      console.error(
+        `[bundle-uninstall] saved_views cleanup failed for bundle ${bundleId}:`,
+        err,
+      );
+      // Continue — orphaned views are a smaller problem than a
+      // half-uninstalled bundle row in meta.
+    }
+    // v1.6: lens override rows scoped to this bundle. Best-effort —
+    // workspace edits to a bundle's row are also blown away here, but
+    // re-install re-seeds them so the loss is recoverable. Don't
+    // touch entity_kind override rows (those may be user-authored
+    // for the parent kind regardless of which bundle set them).
+    try {
+      await deleteOverride(bundleRow.org_id, "bundle", bundleRow.external_id);
+    } catch (err) {
+      console.error(
+        `[bundle-uninstall] override cleanup failed for ${bundleRow.external_id}:`,
+        err,
+      );
+    }
+  }
   // FKs on bindings + field_defs have ON DELETE SET NULL for bundle_id,
   // but we want full uninstall — remove the artifacts the bundle
   // created, then the bundle row.

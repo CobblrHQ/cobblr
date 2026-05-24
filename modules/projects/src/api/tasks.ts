@@ -20,6 +20,7 @@ const TaskCreate = z.object({
   priority: z.enum(["low", "med", "high", "urgent"]).nullable().optional(),
   energy: z.enum(["small", "medium", "large"]).nullable().optional(),
   due_date: z.string().nullable().optional(),
+  metadata: z.record(z.unknown()).optional(),
 });
 
 const TASK_NATIVE_KEYS = new Set(Object.keys(TaskCreate.shape));
@@ -130,6 +131,10 @@ tasksRouter.post(
         priority: parsed.data.priority ?? "med",
         energy: parsed.data.energy ?? "medium",
         due_date: parsed.data.due_date ? new Date(parsed.data.due_date) : null,
+        // D6: hoisted-from-top-level keys live here.
+        ...(parsed.data.metadata && Object.keys(parsed.data.metadata).length > 0
+          ? { metadata: parsed.data.metadata as never }
+          : {}),
       })
       .returningAll()
       .executeTakeFirstOrThrow();

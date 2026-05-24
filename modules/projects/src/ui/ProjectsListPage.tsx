@@ -3,7 +3,8 @@
 import { useMemo, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Search } from "lucide-react";
+import { Plus, Search, Trash2 } from "lucide-react";
+import { BulkActionBar, useToast, useConfirm } from "@cobblr/platform-web";
 import { useProjects } from "./context";
 import type { Project } from "./api";
 
@@ -57,6 +58,31 @@ export function ProjectsListPage() {
     }
     return m;
   }, [filtered]);
+
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const toast = useToast();
+  const confirm = useConfirm();
+  const bulkDelete = useMutation({
+    mutationFn: async (ids: string[]) => {
+      for (const id of ids) {
+        await api.deleteProject(id);
+      }
+    },
+    onSuccess: () => {
+      toast.success(`Deleted ${selected.size} project${selected.size === 1 ? "" : "s"}`);
+      setSelected(new Set());
+      void qc.invalidateQueries({ queryKey: ["projects-list"] });
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
+  function toggleRow(id: string, checked: boolean) {
+    setSelected((s) => {
+      const n = new Set(s);
+      if (checked) n.add(id);
+      else n.delete(id);
+      return n;
+    });
+  }
 
   return (
     <div className="space-y-5">
@@ -115,10 +141,22 @@ export function ProjectsListPage() {
             </div>
             <ul className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 divide-y divide-slate-100 dark:divide-slate-700">
               {rows.map((p) => (
-                <li key={p.id}>
+                <li key={p.id} className="flex items-stretch">
+                  <label
+                    className="flex items-center px-3 cursor-pointer"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selected.has(p.id)}
+                      onChange={(e) => toggleRow(p.id, e.target.checked)}
+                      className="accent-cobble-600"
+                      aria-label={`Select ${p.name}`}
+                    />
+                  </label>
                   <Link
                     to={`/projects/${p.id}`}
-                    className="block px-4 py-3 hover:bg-mortar-50 dark:hover:bg-slate-800/70 transition"
+                    className="flex-1 px-2 py-3 hover:bg-mortar-50 dark:hover:bg-slate-800/70 transition"
                   >
                     <div className="flex items-baseline gap-3">
                       <span className="font-medium text-slate-700 dark:text-mortar-100">{p.name}</span>
@@ -147,6 +185,28 @@ export function ProjectsListPage() {
           </section>
         );
       })}
+      <BulkActionBar
+        count={selected.size}
+        onClear={() => setSelected(new Set())}
+        actions={
+          <button
+            type="button"
+            disabled={bulkDelete.isPending}
+            onClick={async () => {
+              const ok = await confirm({
+                title: `Delete ${selected.size} project${selected.size === 1 ? "" : "s"}?`,
+                message: "Tasks belonging to these projects stay (their project_id goes null). The project rows themselves are removed.",
+                confirmLabel: "Delete",
+                destructive: true,
+              });
+              if (ok) bulkDelete.mutate(Array.from(selected));
+            }}
+            className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-ember-600 hover:text-ember-700 disabled:opacity-50"
+          >
+            <Trash2 size={12} /> Delete
+          </button>
+        }
+      />
     </div>
   );
 }

@@ -391,6 +391,16 @@ const ModuleManifest = z.object({
   // §"Foundational modules — the strict-test band").
   band: z.enum(["foundational", "stock", "marketplace", "user"]).default("user"),
 
+  // Whether a workspace can install this module multiple times under
+  // different "instance" names. "multi" modules add an `instance`
+  // column to their tables (via a migration) and gain instance-
+  // scoped routes at /orgs/:slug/instances/<name>/items. "single"
+  // modules (default) install once per workspace; their default
+  // instance name is implicitly the module name. Foundational
+  // modules are always 'single' regardless of declaration.
+  // See docs/design-decisions/instances.md.
+  instanceability: z.enum(["single", "multi"]).default("single"),
+
   // Optional. Pillar-E specialisation modules (3d-printers,
   // workshop-mods, etc.) often have NO tables of their own — they
   // only contribute field-defs/wires to entity kinds owned by a
@@ -773,6 +783,26 @@ export interface PlatformEntities {
     orgId: string,
     refs: ReadonlyArray<{ kind: string; id: string }>,
   ): Promise<ResolvedEntity[]>;
+  /** core-resolver v0.1: multi-hop pairing walk.
+   *
+   *  Chains N hops through entity_pairings. Each hop has the same
+   *  shape walkPairings accepts (rel + dir + optional kind filter).
+   *  All hops batch their SQL: one query per hop, not one per
+   *  intermediate row. Dedups duplicate (kind, id) refs along the
+   *  way. Returns the resolved entities at the END of the path,
+   *  all projected through exposableFields.
+   *
+   *  Example: part → [used-by] → task → [child-of] → project
+   *  resolves a part's downstream projects in two batched calls.
+   *
+   *  `opts.maxPerHop` (default 500) bounds the working set per hop
+   *  so a path with explosive fanout doesn't OOM. */
+  walkPath(
+    orgId: string,
+    source: { kind: string; id: string },
+    hops: Array<{ rel: string; dir?: "in" | "out"; kind?: string }>,
+    opts?: { maxPerHop?: number },
+  ): Promise<ResolvedEntity[]>;
   /** Walk entity_pairings from a source and return resolved + projected
    *  target entities. dir defaults to "in" (incoming — find things that
    *  POINT AT the source via this relation). kind filters discovered
@@ -992,6 +1022,218 @@ export interface PlatformRecurrence {
  *  enqueue() defers a unit of work; registerWorker(name, fn) sets
  *  the handler that the api process's worker loop will invoke when
  *  the job's run_at has arrived. See api/src/platform/queue.ts. */
+export interface PlatformNotifications {
+  /** Fan a notification to one user across their enabled channels.
+   *  Writes the row, looks up the user's per-event-type channel
+   *  preferences, and delivers via every enabled channel. */
+  dispatch(p: {
+    orgId: string;
+    userId: string;
+    eventType: string;
+    message: string;
+    link_url?: string;
+    module?: string;
+    entityType?: string;
+    entityId?: string;
+    payload?: unknown;
+  }): Promise<{ notificationId: string; deliveredVia: string[] }>;
+  /** Convenience: every member of an org. Modules that want to
+   *  broadcast a notification (e.g. "this task is now unblocked")
+   *  iterate this and dispatch per-user. */
+  orgMemberIds(orgId: string): Promise<string[]>;
+}
+
+export interface PlatformIntegrations {
+  /** Register an outbound connector. */
+  registerConnector(c: {
+    id: string;
+    label: string;
+    describeCredentials: () => Record<string, { label: string; secret: boolean }>;
+    actions: Array<{
+      id: string;
+      label: string;
+      description?: string;
+      argsSchema?: Record<string, { label: string; type: "text" | "number" | "boolean" }>;
+    }>;
+    invoke: (
+      ctx: {
+        orgId: string;
+        connectorId: string;
+        rowId: string;
+        credentials: Record<string, unknown>;
+        args: Record<string, unknown>;
+        rendered?: string;
+        event?: { name: string | null; payload: Record<string, unknown> };
+      },
+      actionId: string,
+    ) => Promise<unknown>;
+    testConnection?: (credentials: Record<string, unknown>) => Promise<{ ok: boolean; error?: string }>;
+  }): void;
+  /** Register an inbound webhook handler. */
+  registerInboundHandler(h: {
+    id: string;
+    label: string;
+    describeWebhookConfig: () => Record<string, { label: string; secret: boolean }>;
+    emits: string[];
+    handle: (
+      req: { headers: Record<string, string | string[] | undefined>; body: unknown; rawBody?: string },
+      ctx: {
+        orgId: string;
+        inboundRowId: string;
+        config: Record<string, unknown>;
+        emit: (eventName: string, payload: unknown) => Promise<void>;
+      },
+    ) => Promise<{ status: number; body?: unknown }>;
+  }): void;
+  /** List registered outbound connectors. Used by the connector
+   *  catalogue endpoint to render the "Add connector" picker. */
+  listConnectors(): Array<{
+    id: string;
+    label: string;
+    credentials: Record<string, { label: string; secret: boolean }>;
+    actions: Array<{
+      id: string;
+      label: string;
+      description?: string;
+      argsSchema?: Record<string, { label: string; type: "text" | "number" | "boolean" }>;
+    }>;
+  }>;
+  /** List registered inbound handlers. */
+  listInboundHandlers(): Array<{
+    id: string;
+    label: string;
+    config: Record<string, { label: string; secret: boolean }>;
+    emits: string[];
+  }>;
+  /** Resolve a registered connector by id, or null. Modules use this
+   *  to validate a user-supplied connector_id before persisting. */
+  getConnector(id: string): {
+    id: string;
+    label: string;
+    actions: Array<{
+      id: string;
+      label: string;
+      description?: string;
+      argsSchema?: Record<string, { label: string; type: "text" | "number" | "boolean" }>;
+    }>;
+    testConnection?: (credentials: Record<string, unknown>) => Promise<{ ok: boolean; error?: string }>;
+  } | null;
+  /** Encrypt credentials with the per-org master key. */
+  encryptCredentials(orgId: string, plaintext: Record<string, unknown>): Promise<string>;
+  /** Decrypt credentials with the per-org master key. */
+  decryptCredentials(orgId: string, ciphertext: string): Promise<Record<string, unknown>>;
+  /** Invoke a registered connector. Returns the connector's result,
+   *  or throws on failure. Audit logging is the caller's
+   *  responsibility — the platform layer is intentionally stateless
+   *  here so per-workspace audit rows live in the module's tenant
+   *  DB. */
+  invokeConnector(
+    connectorId: string,
+    ctx: {
+      orgId: string;
+      rowId: string;
+      credentials: Record<string, unknown>;
+      args?: Record<string, unknown>;
+      rendered?: string;
+      event?: { name: string | null; payload: Record<string, unknown> };
+    },
+    actionId: string,
+  ): Promise<unknown>;
+  /** Dispatch a request to a registered inbound handler. Used by
+   *  the unauthenticated webhook receiver. */
+  dispatchInbound(
+    handlerId: string,
+    req: { headers: Record<string, string | string[] | undefined>; body: unknown; rawBody?: string },
+    ctx: {
+      orgId: string;
+      inboundRowId: string;
+      config: Record<string, unknown>;
+      emit: (eventName: string, payload: unknown) => Promise<void>;
+    },
+  ): Promise<{ status: number; body?: unknown }>;
+}
+
+// ──────────────────────── core-ai provider registry ───────────────
+//
+// Providers register at module load time (openai, anthropic, ollama
+// ship built-in). The PlatformAi facade exposes a unified `invoke`
+// that picks a provider + model based on the workspace's capability
+// defaults, calls the provider, writes an audit row, returns the
+// shaped result.
+
+export const AiCapabilities = [
+  "classify-image",
+  "extract-text",
+  "summarise",
+  "embed-text",
+  "chat",
+  "match-to-catalog",
+] as const;
+
+export type AiCapability = (typeof AiCapabilities)[number];
+
+export interface AiProviderDef {
+  id: string;
+  label: string;
+  describeCredentials: () => Record<string, { label: string; secret: boolean }>;
+  /** Map capability → models the provider supports for it. */
+  capabilities: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>>;
+  /** Run a single inference. The platform handles caching + audit
+   *  before/after. */
+  invoke: (ctx: {
+    orgId: string;
+    rowId: string;
+    capability: AiCapability;
+    model: string;
+    credentials: Record<string, unknown>;
+    input: Record<string, unknown>;
+    config: Record<string, unknown>;
+  }) => Promise<{
+    result: unknown;
+    input_tokens?: number;
+    output_tokens?: number;
+    cost_cents?: number;
+  }>;
+  /** Optional health/test ping. */
+  testConnection?: (credentials: Record<string, unknown>) => Promise<{ ok: boolean; error?: string }>;
+}
+
+export interface PlatformAi {
+  registerProvider(p: AiProviderDef): void;
+  listProviders(): Array<{
+    id: string;
+    label: string;
+    credentials: Record<string, { label: string; secret: boolean }>;
+    capabilities: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>>;
+  }>;
+  getProvider(id: string): AiProviderDef | null;
+  /** Single entry point for any module to use AI. Picks provider +
+   *  model from the workspace's capability defaults, calls the
+   *  cache, calls the provider, writes audit + cache rows, returns
+   *  the result. */
+  invoke(req: {
+    orgId: string;
+    capability: AiCapability;
+    input: Record<string, unknown>;
+    /** Override provider + model from workspace defaults. */
+    provider_id?: string;
+    model?: string;
+    /** Skip cache lookup AND skip cache write. Useful for
+     *  match-to-catalog after a user rejects a suggestion. */
+    bypass_cache?: boolean;
+    source?: { kind: string; id: string };
+  }): Promise<{
+    result: unknown;
+    provider_id: string;
+    model: string;
+    cached: boolean;
+    input_tokens?: number;
+    output_tokens?: number;
+    cost_cents?: number;
+    duration_ms: number;
+  }>;
+}
+
 export interface PlatformQueue {
   enqueue(p: {
     orgId: string;
@@ -1023,6 +1265,9 @@ export interface Platform {
   health: PlatformHealth;
   recurrence: PlatformRecurrence;
   queue: PlatformQueue;
+  notifications: PlatformNotifications;
+  integrations: PlatformIntegrations;
+  ai: PlatformAi;
 }
 
 let _platform: Platform | null = null;

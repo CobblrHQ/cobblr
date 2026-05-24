@@ -117,7 +117,7 @@ export async function tick(
       // rarely what the user wants. Latest-only; builders who want
       // every occurrence can declare a finer schedule.
       const fireAt = occurrences[occurrences.length - 1]!;
-      await platform().events.emit("core-recurrence.fired", {
+      await platform().events.emit("core-recurrence.rule.fired", {
         orgId: w.org_id,
         scheduleId: w.id,
         firedFor: fireAt.toISOString(),

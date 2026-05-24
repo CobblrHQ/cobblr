@@ -32,7 +32,7 @@ export default defineModule({
   api: () => import("./api/index.js"),
 
   exposes: {
-    events: ["core-recurrence.fired"],
+    events: ["core-recurrence.rule.fired"],
     api: ["tick"],
     actions: [],
   },

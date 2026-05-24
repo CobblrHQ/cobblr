@@ -33,9 +33,13 @@ import * as wires from "./platform/wires.js";
 import * as health from "./platform/health.js";
 import * as recurrenceRegistry from "./platform/recurrence-registry.js";
 import * as queue from "./platform/queue.js";
+import * as notificationsImpl from "./platform/notifications.js";
+import * as integrationsImpl from "./platform/integrations.js";
+import * as aiImpl from "./platform/ai.js";
 import { syncManifestRegistries } from "./platform/registry-sync.js";
+import { migrateLensModules } from "./platform/migrate-lens-modules.js";
+import { migrateInventoryLocations } from "./platform/migrate-inventory-locations.js";
 import { backfillDefaultBindings } from "./platform/seed-bindings.js";
-import { registerNotificationSubscribers } from "./platform/notification-subscribers.js";
 import { runOnBoot, runOnShutdown } from "./modules/lifecycle.js";
 import { completeApp, createApp } from "./server.js";
 
@@ -77,6 +81,7 @@ async function boot() {
       lookupMany: entities.lookupMany,
       list: entities.list,
       walkPairings: entities.walkPairings,
+      walkPath: entities.walkPath,
       listKinds: entities.listKinds,
       getKind: entities.getKind,
     },
@@ -99,12 +104,75 @@ async function boot() {
       enqueue: queue.enqueue,
       registerWorker: queue.registerWorker,
     },
+    notifications: {
+      dispatch: notificationsImpl.dispatch,
+      orgMemberIds: async (orgId: string) => {
+        const rows = await meta
+          .selectFrom("org_memberships")
+          .select("user_id")
+          .where("org_id", "=", orgId)
+          .execute();
+        return rows.map((r) => String(r.user_id));
+      },
+    },
+    integrations: {
+      registerConnector: integrationsImpl.registerConnector,
+      registerInboundHandler: integrationsImpl.registerInboundHandler,
+      listConnectors: () =>
+        integrationsImpl.listOutboundConnectors().map((c) => ({
+          id: c.id,
+          label: c.label,
+          credentials: c.describeCredentials(),
+          actions: c.actions,
+        })),
+      listInboundHandlers: () =>
+        integrationsImpl.listInboundHandlers().map((h) => ({
+          id: h.id,
+          label: h.label,
+          config: h.describeWebhookConfig(),
+          emits: h.emits,
+        })),
+      getConnector: (id) => {
+        const c = integrationsImpl.getConnector(id);
+        if (!c) return null;
+        return {
+          id: c.id,
+          label: c.label,
+          actions: c.actions,
+          testConnection: c.testConnection,
+        };
+      },
+      encryptCredentials: integrationsImpl.encryptCredentials,
+      decryptCredentials: integrationsImpl.decryptCredentials,
+      invokeConnector: async (connectorId, ctx, actionId) => {
+        const c = integrationsImpl.getConnector(connectorId);
+        if (!c) throw new Error(`unknown connector: ${connectorId}`);
+        return c.invoke(
+          {
+            orgId: ctx.orgId,
+            connectorId,
+            rowId: ctx.rowId,
+            credentials: ctx.credentials,
+            args: ctx.args ?? {},
+            rendered: ctx.rendered,
+            event: ctx.event,
+          },
+          actionId,
+        );
+      },
+      dispatchInbound: async (handlerId, req, ctx) => {
+        const h = integrationsImpl.getInboundHandler(handlerId);
+        if (!h) throw new Error(`unknown inbound handler: ${handlerId}`);
+        return h.handle(req, ctx);
+      },
+    },
+    ai: {
+      registerProvider: aiImpl.registerProvider,
+      listProviders: aiImpl.listProviders,
+      getProvider: aiImpl.getProvider,
+      invoke: aiImpl.invoke,
+    },
   });
-
-  // Register platform-level event → notification mappers BEFORE
-  // modules load so module-emitted events get caught from the very
-  // first emit.
-  registerNotificationSubscribers();
 
   await loadAllModules();
   // Mirror manifests into the cobblr_meta registries after load so
@@ -112,6 +180,32 @@ async function boot() {
   // accurate metadata. Done AFTER load so module-side resolver /
   // handler registrations land first.
   await syncManifestRegistries();
+  // One-shot: convert the four legacy Pillar-E lens modules
+  // (3d-printers, laser-cutters, cnc-machines, workshop-mods) to
+  // equivalent bundles. They used to be pure-field-def modules; now
+  // they're lens bundles with `provides_lens`. Idempotent — orgs
+  // that have already been migrated (or never had the modules
+  // enabled) skip silently. Runs BEFORE syncTenantMigrations so
+  // any cleaned-up org_modules rows don't get a stale migration
+  // sync.
+  const lensResult = await migrateLensModules();
+  if (lensResult.orgsTouched > 0) {
+    console.log(
+      `[cobblr-api] lens-module → bundle migration: ${lensResult.orgsTouched} org(s), ${lensResult.bundlesInstalled} bundle(s) installed, ${lensResult.fieldsMoved} field def(s) moved`,
+    );
+  }
+  // One-shot: move inventory_locations rows into core_locations_locations
+  // (UUIDs preserved so cross-module location_id refs stay valid) and
+  // drop the inventory_parts.location_id FK constraint that pinned the
+  // table to inventory. Idempotent — orgs already migrated no-op.
+  // Runs BEFORE syncTenantMigrations so the org_modules row we may
+  // insert for core-locations doesn't get a stale migration sync.
+  const invLocResult = await migrateInventoryLocations();
+  if (invLocResult.orgsTouched > 0) {
+    console.log(
+      `[cobblr-api] inventory_locations → core-locations: ${invLocResult.orgsTouched} org(s), ${invLocResult.rowsCopied} row(s) copied, ${invLocResult.fksDropped} FK(s) dropped`,
+    );
+  }
   // Catch every (org, module) up to the latest module migration. A
   // module that ships a new migration after an org enabled it won't
   // pick it up otherwise — enableModuleForOrg short-circuits on the

@@ -13,6 +13,7 @@ export default defineModule({
     "Physical machines you own. The base layer — install a specialisation (3D Printers / Laser Cutters / CNC Machines) for type-specific fields.",
   icon: "wrench",
   band: "stock",
+  instanceability: "multi",
 
   schema: {
     tablePrefix: "machines_",
@@ -51,6 +52,7 @@ export default defineModule({
           "state",
           "image_path",
         ],
+        detailRoute: "/machines/{id}",
       },
     ],
   },

@@ -55,7 +55,7 @@ export function registerLabelsHandlers(): void {
       .returning(["id", "description"])
       .executeTakeFirstOrThrow();
 
-    platform().events.emit("labels.queued", {
+    platform().events.emit("labels.print.queued", {
       orgId: ctx.orgId,
       queueId: inserted.id,
       entityKind: ent.kind,

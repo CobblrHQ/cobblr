@@ -27,32 +27,6 @@ export function registerInventoryResolvers(): void {
     },
   );
 
-  platform().entities.registerResolver(
-    "inventory:location",
-    async (orgId, id) => {
-      const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
-      const row = await db
-        .selectFrom("inventory_locations")
-        .selectAll()
-        .where("id", "=", id)
-        .executeTakeFirst();
-      if (!row) return null;
-      return {
-        kind: "inventory:location",
-        id: row.id,
-        title: row.short_name ?? row.name,
-        subtitle: row.kind,
-        detailUrl: undefined,
-        fields: {
-          name: row.name,
-          short_name: row.short_name,
-          kind: row.kind,
-          parent_id: row.parent_id,
-        },
-      };
-    },
-  );
-
   // List resolver — lets core-views (and future search) iterate the
   // kind without each consumer learning the inventory_parts table
   // shape. Supports limit/offset, optional free-text q on name +

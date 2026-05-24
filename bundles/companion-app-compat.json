@@ -22,19 +22,7 @@
         "module": "machines"
       },
       {
-        "module": "3d-printers"
-      },
-      {
-        "module": "laser-cutters"
-      },
-      {
-        "module": "cnc-machines"
-      },
-      {
         "module": "assets"
-      },
-      {
-        "module": "workshop-mods"
       }
     ],
     "wires": [
@@ -87,7 +75,7 @@
         "position": 5
       },
       {
-        "entity_kind": "inventory:location",
+        "entity_kind": "core-locations:location",
         "name": "wos_kind",
         "display_label": "companion app location kind",
         "type": "text",
@@ -95,7 +83,7 @@
         "position": 1
       },
       {
-        "entity_kind": "inventory:location",
+        "entity_kind": "core-locations:location",
         "name": "wos_bin_number",
         "display_label": "Bin number",
         "type": "number",
@@ -103,7 +91,7 @@
         "position": 2
       },
       {
-        "entity_kind": "inventory:location",
+        "entity_kind": "core-locations:location",
         "name": "wos_bin_type",
         "display_label": "Bin type",
         "type": "text",

@@ -4,7 +4,7 @@
 // dropdown shows live as you type; pressing Enter navigates to the
 // /search results page.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Search } from "lucide-react";
@@ -31,6 +31,27 @@ export function SearchBar() {
     enabled: !!activeSlug && debounced.length > 1,
     staleTime: 30_000,
   });
+
+  // Pull the entity-kinds registry once — drives detailRoute lookup so
+  // we don't need an if-chain hardcoding routes per module. Stale-for-
+  // a-while because the registry changes only on module install/disable.
+  const kinds = useQuery({
+    queryKey: ["entity-kinds", activeSlug],
+    queryFn: () => api.listEntityKinds(activeSlug),
+    enabled: !!activeSlug,
+    staleTime: 5 * 60_000,
+  });
+  const routeByKind = useMemo(() => {
+    const m = new Map<string, string | null>();
+    for (const k of kinds.data?.items ?? []) m.set(k.id, k.detail_route);
+    return m;
+  }, [kinds.data]);
+
+  function detailRoute(kind: string, id: string): string {
+    const tmpl = routeByKind.get(kind);
+    if (tmpl) return tmpl.replace("{id}", id);
+    return `/search?q=${encodeURIComponent(`${kind}:${id}`)}`;
+  }
 
   // Close dropdown on outside click.
   useEffect(() => {
@@ -103,15 +124,3 @@ export function SearchBar() {
   );
 }
 
-/** Map a kind to its detail-page URL. Falls back to /search?kind=... if
- *  no known route. Matches the routes registered in App.tsx. */
-function detailRoute(kind: string, id: string): string {
-  const [moduleName, type] = kind.split(":");
-  if (moduleName === "inventory" && type === "part") return `/inventory/parts/${id}`;
-  if (moduleName === "machines" && type === "machine") return `/machines/${id}`;
-  if (moduleName === "assets" && type === "asset") return `/assets/${id}`;
-  if (moduleName === "projects" && type === "project") return `/projects/${id}`;
-  if (moduleName === "projects" && type === "task") return `/projects/tasks/${id}`;
-  if (moduleName === "purchases" && type === "order") return `/purchases/${id}`;
-  return `/search?q=${encodeURIComponent(`${kind}:${id}`)}`;
-}

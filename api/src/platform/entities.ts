@@ -345,6 +345,96 @@ export async function walkPairings(
   }
 }
 
+/** core-resolver v0.1: multi-hop pairing walk.
+ *
+ *  Chains N hops through entity_pairings, returning the resolved
+ *  entities reached at the end. Each hop's spec is the same shape
+ *  walkPairings accepts. We do the SQL traversal in batches per
+ *  hop rather than calling walkPairings N times — each hop fans
+ *  ALL its sources into a single WHERE IN, so cost is one query per
+ *  hop instead of one per intermediate row.
+ *
+ *  Use case: "given a part, find every project whose tasks use it."
+ *    part → [used-by] → task → [child-of] → project
+ *  Two hops, one batched SQL call each, all results projected
+ *  through exposableFields.
+ *
+ *  Dedup: identical (kind,id) values that appear in multiple paths
+ *  collapse — callers get unique entities back, not duplicates.
+ *
+ *  Cycle / depth guard: each hop is bounded by `maxPerHop` (default
+ *  500). A path that would explode the working set is truncated
+ *  with a warning logged. Tune via the param when needed. */
+export async function walkPath(
+  orgId: string,
+  source: { kind: string; id: string },
+  hops: Array<{ rel: string; dir?: "in" | "out"; kind?: string }>,
+  opts: { maxPerHop?: number } = {},
+): Promise<ResolvedEntity[]> {
+  if (hops.length === 0) return [];
+  const maxPerHop = opts.maxPerHop ?? 500;
+
+  // Current frontier — pairs of (kind, id) we've reached so far.
+  // Starts as the single source.
+  let frontier: Array<{ kind: string; id: string }> = [source];
+
+  for (let i = 0; i < hops.length; i++) {
+    const hop = hops[i]!;
+    const dir = hop.dir ?? "in";
+    if (frontier.length === 0) break;
+    if (frontier.length > maxPerHop) {
+      console.warn(
+        `[entities.walkPath] hop ${i} input ${frontier.length} > maxPerHop ${maxPerHop}; truncating.`,
+      );
+      frontier = frontier.slice(0, maxPerHop);
+    }
+    const sourceKinds = Array.from(new Set(frontier.map((f) => f.kind)));
+    const sourceIds = Array.from(new Set(frontier.map((f) => f.id)));
+    let q = meta
+      .selectFrom("entity_pairings")
+      .where("org_id", "=", orgId)
+      .where("relationship_kind", "=", hop.rel);
+    if (dir === "in") {
+      // The frontier entities are the TARGETs of the pairings.
+      q = q
+        .where("target_kind", "in", sourceKinds)
+        .where("target_id", "in", sourceIds);
+      if (hop.kind) q = q.where("source_kind", "=", hop.kind);
+      const rows = await q
+        .select(["source_kind as kind", "source_id as id"])
+        .execute();
+      frontier = uniqRefs(rows);
+    } else {
+      q = q
+        .where("source_kind", "in", sourceKinds)
+        .where("source_id", "in", sourceIds);
+      if (hop.kind) q = q.where("target_kind", "=", hop.kind);
+      const rows = await q
+        .select(["target_kind as kind", "target_id as id"])
+        .execute();
+      frontier = uniqRefs(rows);
+    }
+  }
+
+  if (frontier.length === 0) return [];
+  return lookupMany(orgId, frontier);
+}
+
+/** Helper: dedupe a list of (kind, id) refs. */
+function uniqRefs(
+  refs: Array<{ kind: string; id: string }>,
+): Array<{ kind: string; id: string }> {
+  const seen = new Set<string>();
+  const out: Array<{ kind: string; id: string }> = [];
+  for (const r of refs) {
+    const key = `${r.kind}:${r.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(r);
+  }
+  return out;
+}
+
 /** List entities of a kind. Returns { items: [] } when no list
  *  resolver is registered for the kind. Otherwise calls the
  *  resolver and projects each item through the kind's

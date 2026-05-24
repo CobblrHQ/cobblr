@@ -13,6 +13,7 @@ export default defineModule({
     "Orders, line items, and cost rollup. Each order is a vendor purchase; line items can link to inventory parts and to whatever consumed them — printer mods, projects, anything.",
   icon: "shopping-bag",
   band: "stock",
+  instanceability: "multi",
 
   schema: {
     tablePrefix: "purchases_",
@@ -53,6 +54,7 @@ export default defineModule({
           "expected_arrival",
           "arrived_at",
         ],
+        detailRoute: "/purchases/{id}",
       },
       {
         id: "purchases:order_item",

@@ -24,6 +24,9 @@ import { platformOrgRouter } from "./routes/platform.js";
 import { bundlesRouter } from "./routes/bundles.js";
 import { membersRouter, invitesRootRouter } from "./routes/members.js";
 import { pairingsRouter } from "./routes/pairings.js";
+import { instancesRouter, overridesRouter } from "./routes/instances.js";
+import { qrScanRouter } from "./routes/qr-scan.js";
+import { integrationsInboundRouter } from "./routes/integrations-inbound.js";
 
 export interface AppHandles {
   app: Application;
@@ -39,7 +42,22 @@ export function createApp(): AppHandles {
   app.use(helmet({ contentSecurityPolicy: false }));
   app.use(compression());
   app.use(cors({ origin: true, credentials: true }));
-  app.use(express.json({ limit: "1mb" }));
+  app.use(
+    express.json({
+      limit: "1mb",
+      // Capture raw body bytes on inbound webhook paths so the
+      // integrations receiver can verify HMAC signatures against the
+      // exact bytes that were transmitted. Cheap (one toString per
+      // request, kept only on the request object), bounded to the
+      // /integrations/ path so we don't keep raw bytes for every API
+      // call.
+      verify: (req, _res, buf) => {
+        if (req.url?.startsWith("/api/v1/integrations/")) {
+          (req as unknown as { rawBody?: string }).rawBody = buf.toString("utf8");
+        }
+      },
+    }),
+  );
   if (env.NODE_ENV !== "test") {
     app.use(morgan(env.NODE_ENV === "production" ? "combined" : "dev"));
   }
@@ -61,6 +79,13 @@ export function createApp(): AppHandles {
   // token in the URL is the secret. Mounted on /api/v1/public/* —
   // outside /orgs because the URL carries no slug.
   v1.use("/public", publicRouter);
+  // QR scan target — unauthenticated GET that resolves a token to
+  // (org, entity, mode). See modules/core-labels-qr.
+  v1.use("/qr", qrScanRouter);
+  // Inbound webhook receiver for core-integrations. Unauthenticated;
+  // the token in the URL is the secret. See
+  // modules/core-integrations.
+  v1.use("/integrations", integrationsInboundRouter);
   v1.use("/orgs", orgsRouter);
   // platformOrgRouter mounts /:slug/entity-kinds, /:slug/entities/:kind/:id,
   // /:slug/actions, /:slug/bindings, /:slug/field-defs, etc. Composed
@@ -71,6 +96,8 @@ export function createApp(): AppHandles {
   v1.use("/orgs/:slug/bundles", bundlesRouter);
   v1.use("/orgs/:slug/members", membersRouter);
   v1.use("/orgs/:slug/pairings", pairingsRouter);
+  v1.use("/orgs/:slug/instances", instancesRouter);
+  v1.use("/orgs/:slug/entity-kind-overrides", overridesRouter);
   // /invites/:token + accept don't take a tenant slug — auth-only.
   v1.use(invitesRootRouter);
   v1.use("/modules", modulesRouter);

@@ -19,7 +19,6 @@ import { hashPassword, verifyPassword } from "../auth/password.js";
 import { signSession } from "../auth/jwt.js";
 import * as activity from "../platform/activity.js";
 import { enableAllForOrg } from "../modules/enable.js";
-import { seedDefaultBindings } from "../platform/seed-bindings.js";
 import type { OrgRole } from "../db/schema.js";
 
 export const authRouter = Router();
@@ -167,14 +166,11 @@ export async function provisionOrgForUser(
     } catch (err) {
       console.error("[org-provision] auto-enable failed:", err);
     }
-    try {
-      const seeded = await seedDefaultBindings(orgId);
-      if (seeded > 0) {
-        console.log(`[org-provision] seeded ${seeded} default binding(s) for ${orgId}`);
-      }
-    } catch (err) {
-      console.error("[org-provision] seed-bindings failed:", err);
-    }
+    // Default wires for the org get installed transitively when
+    // `enableAllForOrg` enables each module — `enableModuleForOrg`
+    // iterates `manifest.contributes.wires` and inserts every entry.
+    // The backfillDefaultBindings call at boot covers orgs created
+    // before a given default wire was added to the manifest.
   }
 
   return { orgId, slug, dbName };
@@ -299,6 +295,202 @@ authRouter.post("/login", async (req, res, next) => {
         error: { code: "invalid_body", message: "Bad login payload", details: err.issues },
       });
     }
+    return next(err);
+  }
+});
+
+// ──────────────────────── Magic-link auth ───────────────────────────
+//
+// Passwordless login. The flow:
+//
+//   1. POST /auth/magic/request {email}
+//        creates a one-time, 15min-bounded token. The plaintext is
+//        returned ONCE in the response (dev mode) so the front-end
+//        can show the user a copy-link button. In production this
+//        would arrive via email instead — Cobblr core doesn't ship
+//        SMTP; modules can subscribe to the auth.magic.requested
+//        event to wire one up.
+//
+//   2. POST /auth/magic/consume {token}
+//        verifies the token (unconsumed, unexpired), marks it
+//        consumed, signs a session JWT, returns the full auth
+//        response. Works whether or not the user existed before —
+//        if no row for the email exists, a fresh user is created
+//        with that email and a placeholder display name.
+//
+// Security notes:
+//   - Tokens are stored as sha256 hashes; plaintext only ever
+//     transits the request once.
+//   - 15min TTL is short enough that bruteforcing is impractical
+//     with a 256-bit URL-safe random token.
+//   - Single-use: consumed_at is set on first redeem; re-redeems
+//     return 410. No retry budget.
+//   - We don't disclose whether the email was previously registered
+//     — same 202 response either way — to avoid email-enumeration.
+
+import { createHash, randomBytes } from "node:crypto";
+
+const MAGIC_TTL_MS = 15 * 60 * 1000;
+
+function hashMagicToken(plain: string): string {
+  return createHash("sha256").update(plain).digest("hex");
+}
+function mintMagicToken(): { plain: string; hash: string } {
+  // 32 bytes → 43-char URL-safe base64.
+  const plain = randomBytes(32).toString("base64url");
+  return { plain, hash: hashMagicToken(plain) };
+}
+
+const MagicRequest = z.object({
+  email: z.string().email().max(255),
+});
+
+authRouter.post("/magic/request", async (req, res, next) => {
+  try {
+    const parsed = MagicRequest.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        error: { code: "invalid_body", message: "Bad request", details: parsed.error.issues },
+      });
+      return;
+    }
+    const email = parsed.data.email.toLowerCase().trim();
+    const { plain, hash } = mintMagicToken();
+    await meta
+      .insertInto("auth_magic_tokens")
+      .values({
+        email,
+        token_hash: hash,
+        request_ip: (req.ip ?? null) as string | null,
+        request_ua: (req.get("user-agent") ?? null) as string | null,
+      })
+      .execute();
+
+    // Dev mode: return the plaintext + a copy-paste-able URL so the
+    // demo flow works without SMTP. A production env that wires
+    // email delivery (via an auth.magic.requested event subscriber
+    // in a future module) should set NODE_ENV=production AND the
+    // requester won't see the link in the response.
+    const link = `/auth/magic?token=${encodeURIComponent(plain)}`;
+    res.status(202).json({
+      ok: true,
+      // dev_token only present in non-prod so the test harness can
+      // grab it without grepping the meta DB.
+      ...(process.env.NODE_ENV !== "production" && { dev_token: plain, dev_link: link }),
+      expires_at: new Date(Date.now() + MAGIC_TTL_MS).toISOString(),
+      message:
+        "If that email exists or is allowed to sign in, a magic link has been issued.",
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+const MagicConsume = z.object({
+  token: z.string().min(8).max(200),
+});
+
+authRouter.post("/magic/consume", async (req, res, next) => {
+  try {
+    const parsed = MagicConsume.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        error: { code: "invalid_body", message: "Bad request", details: parsed.error.issues },
+      });
+      return;
+    }
+    const hash = hashMagicToken(parsed.data.token);
+    const row = await meta
+      .selectFrom("auth_magic_tokens")
+      .selectAll()
+      .where("token_hash", "=", hash)
+      .executeTakeFirst();
+    if (!row) {
+      res.status(404).json({
+        error: { code: "invalid_token", message: "Token not found." },
+      });
+      return;
+    }
+    if (row.consumed_at) {
+      res.status(410).json({
+        error: { code: "already_consumed", message: "Token already used." },
+      });
+      return;
+    }
+    if (row.expires_at <= new Date()) {
+      res.status(410).json({
+        error: { code: "expired", message: "Token has expired." },
+      });
+      return;
+    }
+    await meta
+      .updateTable("auth_magic_tokens")
+      .set({ consumed_at: new Date() })
+      .where("id", "=", row.id)
+      .execute();
+
+    // Find-or-create the user for this email. If they're new, we
+    // also provision a default workspace so the post-login flow has
+    // somewhere to land.
+    const existing = await meta
+      .selectFrom("users")
+      .select(["id", "active"])
+      .where("email", "=", row.email)
+      .executeTakeFirst();
+
+    let userId: string;
+    if (existing) {
+      if (!existing.active) {
+        res.status(403).json({
+          error: { code: "user_inactive", message: "Account is disabled." },
+        });
+        return;
+      }
+      userId = existing.id;
+    } else {
+      // Fresh user via magic link — no password set (they'll always
+      // be magic-only unless they later use POST /me/password).
+      // Display name defaults to the email's local-part.
+      const defaultName = row.email.split("@")[0] ?? "user";
+      const inserted = await meta
+        .insertInto("users")
+        .values({
+          email: row.email,
+          password_hash: "", // empty; verifyPassword will reject all
+          display_name: defaultName,
+        })
+        .returning("id")
+        .executeTakeFirstOrThrow();
+      userId = inserted.id;
+      // Give them a starter workspace named after them.
+      try {
+        await provisionOrgForUser(userId, `${defaultName}'s workspace`);
+      } catch (err) {
+        console.error("[magic/consume] org provision failed:", err);
+      }
+    }
+
+    await meta
+      .updateTable("users")
+      .set({ last_login_at: new Date() })
+      .where("id", "=", userId)
+      .execute();
+    await activity.log({
+      orgId: (
+        await meta
+          .selectFrom("org_memberships")
+          .select("org_id")
+          .where("user_id", "=", userId)
+          .executeTakeFirstOrThrow()
+      ).org_id,
+      userId,
+      action: "login",
+      ref: { module: null, entityType: "user", entityId: userId },
+      diff: { method: "magic_link" },
+    }).catch((err) => console.error("[magic] activity log failed:", err));
+    const out = await buildAuthResponse(userId);
+    return res.json(out);
+  } catch (err) {
     return next(err);
   }
 });
