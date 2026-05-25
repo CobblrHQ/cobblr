@@ -1,0 +1,307 @@
+// /orgs/:slug/portal-config + /orgs/:slug/permissions
+//
+// Backs the member portal feature (a slimmed-down front-end shell)
+// + per-action capability grants. See
+// docs/design-decisions/member-portal-and-permissions.md.
+
+import { Router } from "express";
+import { z } from "zod";
+import { sql } from "kysely";
+import { requireAuth } from "../auth/middleware.js";
+import { withTenant } from "../middleware/tenant.js";
+import { meta } from "../db/meta.js";
+import * as activity from "../platform/activity.js";
+
+export const portalRouter = Router({ mergeParams: true });
+
+const PortalConfigShape = z.object({
+  display_name: z.string().max(120).optional(),
+  logo_path: z.string().max(500).nullable().optional(),
+  theme: z.enum(["light", "dark", "auto"]).optional(),
+  pinned_views: z.array(z.string().uuid()).default([]),
+  welcome_markdown: z.string().max(20000).optional(),
+});
+
+// ──────────────────────── /portal-config ────────────────────────
+
+portalRouter.get(
+  "/:slug/portal-config",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      const row = await meta
+        .selectFrom("orgs")
+        .select(["portal_config", "name"])
+        .where("id", "=", req.tenant!.org.id)
+        .executeTakeFirst();
+      res.json({
+        config: row?.portal_config ?? { pinned_views: [] },
+        org_name: row?.name ?? "",
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+portalRouter.put(
+  "/:slug/portal-config",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      // Only admins/owners can edit. The portal it configures is
+      // visible to every role.
+      if (req.tenant!.role !== "owner" && req.tenant!.role !== "admin") {
+        res.status(403).json({
+          error: { code: "forbidden", message: "Admins only." },
+        });
+        return;
+      }
+      const parsed = PortalConfigShape.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({
+          error: { code: "invalid_body", message: "Bad portal config", details: parsed.error.issues },
+        });
+        return;
+      }
+      await meta
+        .updateTable("orgs")
+        .set({
+          portal_config: sql`${JSON.stringify(parsed.data)}::jsonb` as never,
+          updated_at: new Date(),
+        })
+        .where("id", "=", req.tenant!.org.id)
+        .execute();
+      await activity.log({
+        orgId: req.tenant!.org.id,
+        userId: req.session!.id,
+        action: "portal_config_updated",
+        ref: { module: null, entityType: "org", entityId: req.tenant!.org.id },
+        diff: { pinned_views: parsed.data.pinned_views.length },
+      });
+      res.json({ config: parsed.data });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─────────────────────── /permissions ───────────────────────────
+
+// GET — returns the capability matrix: every member of the workspace
+// + which action grants they currently hold. Admins/owners are
+// implicit; we still list them so the UI can show "implicit" badges.
+portalRouter.get(
+  "/:slug/permissions",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      if (req.tenant!.role !== "owner" && req.tenant!.role !== "admin") {
+        res.status(403).json({
+          error: { code: "forbidden", message: "Admins only." },
+        });
+        return;
+      }
+      const members = await meta
+        .selectFrom("org_memberships as om")
+        .innerJoin("users as u", "u.id", "om.user_id")
+        .select(["u.id", "u.email", "u.display_name", "om.role"])
+        .where("om.org_id", "=", req.tenant!.org.id)
+        .orderBy("u.display_name")
+        .execute();
+      const grants = await meta
+        .selectFrom("workspace_capability_grants")
+        .select(["user_id", "action_id"])
+        .where("org_id", "=", req.tenant!.org.id)
+        .execute();
+      const grantsByUser: Record<string, string[]> = {};
+      for (const g of grants) {
+        (grantsByUser[g.user_id] ||= []).push(g.action_id);
+      }
+      // Custom-role assignments (S2). Each member can have many.
+      const roleAssigns = await meta
+        .selectFrom("workspace_role_assignments")
+        .select(["user_id", "role_id"])
+        .where("org_id", "=", req.tenant!.org.id)
+        .execute();
+      const roleIdsByUser: Record<string, string[]> = {};
+      for (const a of roleAssigns) {
+        (roleIdsByUser[a.user_id] ||= []).push(a.role_id);
+      }
+      res.json({
+        members: members.map((m) => ({
+          id: m.id,
+          email: m.email,
+          display_name: m.display_name,
+          role: m.role,
+          grants: grantsByUser[m.id] ?? [],
+          custom_role_ids: roleIdsByUser[m.id] ?? [],
+        })),
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+const GrantBody = z.object({
+  user_id: z.string().uuid(),
+  action_id: z.string().min(1).max(120),
+});
+
+portalRouter.post(
+  "/:slug/permissions/grants",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      if (req.tenant!.role !== "owner" && req.tenant!.role !== "admin") {
+        res.status(403).json({
+          error: { code: "forbidden", message: "Admins only." },
+        });
+        return;
+      }
+      const parsed = GrantBody.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({
+          error: { code: "invalid_body", message: "Bad grant", details: parsed.error.issues },
+        });
+        return;
+      }
+      // Verify the target user is actually a member of this workspace.
+      const member = await meta
+        .selectFrom("org_memberships")
+        .select("user_id")
+        .where("org_id", "=", req.tenant!.org.id)
+        .where("user_id", "=", parsed.data.user_id)
+        .executeTakeFirst();
+      if (!member) {
+        res.status(404).json({
+          error: { code: "not_member", message: "User isn't a member of this workspace." },
+        });
+        return;
+      }
+      const row = await meta
+        .insertInto("workspace_capability_grants")
+        .values({
+          org_id: req.tenant!.org.id,
+          user_id: parsed.data.user_id,
+          action_id: parsed.data.action_id,
+          granted_by: req.session!.id,
+        })
+        .onConflict((c) => c.columns(["org_id", "user_id", "action_id"]).doNothing())
+        .returningAll()
+        .executeTakeFirst();
+      await activity.log({
+        orgId: req.tenant!.org.id,
+        userId: req.session!.id,
+        action: "capability_granted",
+        ref: { module: null, entityType: "user", entityId: parsed.data.user_id },
+        diff: { action_id: parsed.data.action_id },
+      });
+      res.status(201).json({ grant: row ?? null });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+portalRouter.delete(
+  "/:slug/permissions/grants",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      if (req.tenant!.role !== "owner" && req.tenant!.role !== "admin") {
+        res.status(403).json({
+          error: { code: "forbidden", message: "Admins only." },
+        });
+        return;
+      }
+      const parsed = GrantBody.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({
+          error: { code: "invalid_body", message: "Bad grant", details: parsed.error.issues },
+        });
+        return;
+      }
+      await meta
+        .deleteFrom("workspace_capability_grants")
+        .where("org_id", "=", req.tenant!.org.id)
+        .where("user_id", "=", parsed.data.user_id)
+        .where("action_id", "=", parsed.data.action_id)
+        .execute();
+      await activity.log({
+        orgId: req.tenant!.org.id,
+        userId: req.session!.id,
+        action: "capability_revoked",
+        ref: { module: null, entityType: "user", entityId: parsed.data.user_id },
+        diff: { action_id: parsed.data.action_id },
+      });
+      res.status(204).end();
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// What actions are even grantable? The platform-contract manifest
+// gains a `portal_grantable: boolean` flag on actions; we list every
+// action across registered modules whose manifest set it. The admin
+// permissions UI consumes this to render the matrix columns.
+portalRouter.get(
+  "/:slug/permissions/grantable-actions",
+  requireAuth,
+  withTenant,
+  async (_req, res, next) => {
+    try {
+      // For v0.1 the manifest-flag lookup isn't wired through yet —
+      // hard-code a small starter set so the UI has something to
+      // render. Adding actions later is a one-liner in this array
+      // OR a future migration to read from a registered-actions
+      // table tagged with portal_grantable.
+      res.json({
+        items: [
+          {
+            action_id: "inventory:create-part",
+            label: "Create parts",
+            description: "Add new parts to inventory.",
+          },
+        ],
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// What capabilities does the *current* user have? Used by the
+// portal shell to decide whether to render edit affordances.
+portalRouter.get(
+  "/:slug/me/capabilities",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      const role = req.tenant!.role;
+      const grants =
+        role === "owner" || role === "admin"
+          ? [] // admins have everything implicitly; UI sees role and skips the check
+          : await meta
+              .selectFrom("workspace_capability_grants")
+              .select("action_id")
+              .where("org_id", "=", req.tenant!.org.id)
+              .where("user_id", "=", req.session!.id)
+              .execute();
+      res.json({
+        role,
+        grants: grants.map((g) => g.action_id),
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);

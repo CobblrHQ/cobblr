@@ -2,13 +2,14 @@
 // Shows schema, lets the user upload a CSV, browse entries with
 // fuzzy search.
 
-import { useMemo, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { Link, useParams } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Library, Upload } from "lucide-react";
-import { Modal, useToast } from "@cobblr/platform-web";
+import { BackToTop, Modal, useToast, usePageTitle } from "@cobblr/platform-web";
 import { ApiError, api, type CatalogEntry, type CatalogSchema } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { CatalogFieldValue, NoImage } from "../components/CatalogFieldValue";
 
 export function CatalogDetailPage() {
   const { activeSlug } = useActiveOrg();
@@ -29,18 +30,52 @@ export function CatalogDetailPage() {
     queryFn: () => api.getCatalog(activeSlug, id!),
     enabled: !!activeSlug && !!id,
   });
-  const entriesQ = useQuery({
+  const PAGE_SIZE = 60;
+  const entriesQ = useInfiniteQuery({
     queryKey: ["core-catalog-entries", activeSlug, id, debounced],
-    queryFn: () =>
-      api.listCatalogEntries(activeSlug, id!, { q: debounced || undefined, limit: 100 }),
+    initialPageParam: 0,
+    queryFn: ({ pageParam }) =>
+      api.listCatalogEntries(activeSlug, id!, {
+        q: debounced || undefined,
+        limit: PAGE_SIZE,
+        offset: pageParam as number,
+      }),
+    getNextPageParam: (last, all) => {
+      // Server returns at most `limit` items per page. A short
+      // page = exhausted.
+      if (last.items.length < PAGE_SIZE) return undefined;
+      return all.flatMap((p) => p.items).length;
+    },
     enabled: !!activeSlug && !!id,
   });
+
+  // IntersectionObserver sentinel — when it enters the viewport,
+  // fetch the next page. The observer keeps firing as the user
+  // scrolls, but useInfiniteQuery short-circuits if a fetch is
+  // already in flight or there's no next page.
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const node = sentinelRef.current;
+    if (!node) return;
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (entry?.isIntersecting && entriesQ.hasNextPage && !entriesQ.isFetchingNextPage) {
+          void entriesQ.fetchNextPage();
+        }
+      },
+      { rootMargin: "200px" },
+    );
+    io.observe(node);
+    return () => io.disconnect();
+  }, [entriesQ]);
 
   if (!id) return null;
 
   const catalog = catalogQ.data;
-  const entries = entriesQ.data?.items ?? [];
-  const titleCol = entriesQ.data?.title_column ?? "name";
+  const entries = entriesQ.data?.pages.flatMap((p) => p.items) ?? [];
+  const titleCol =
+    entriesQ.data?.pages[0]?.title_column ?? "name";
+  usePageTitle(catalog?.name ?? "Catalog");
 
   return (
     <div className="space-y-4">
@@ -112,6 +147,19 @@ export function CatalogDetailPage() {
         ))}
       </div>
 
+      <div ref={sentinelRef} className="py-4 text-center text-xs text-slate-400">
+        {entriesQ.isFetchingNextPage && "loading more…"}
+        {!entriesQ.isFetchingNextPage && entriesQ.hasNextPage && entries.length > 0 && (
+          <span>scroll for more</span>
+        )}
+        {!entriesQ.hasNextPage && entries.length > 0 && (
+          <span>— end of catalog ({entries.length} loaded) —</span>
+        )}
+      </div>
+
+      <BackToTop />
+
+
       {importOpen && catalog && (
         <ImportCsvModal
           slug={activeSlug}
@@ -150,25 +198,56 @@ function EntryCard({
   titleColumn: string;
   catalog: { schema: CatalogSchema } | null;
 }) {
-  const imageCol = String(catalog?.schema?.image_column ?? "image_url");
+  const schema = catalog?.schema ?? {};
+  const imageCol = String(schema.image_column ?? "image_url");
+  const heroField = schema.hero_field;
+  const heroRenderer = schema.hero_renderer;
+  const renderers = schema.field_renderers ?? {};
+  const labels = schema.field_labels ?? {};
   const title = String(entry.payload[titleColumn] ?? entry.external_id);
-  const image =
+  const imageVal =
     imageCol && typeof entry.payload[imageCol] === "string"
       ? (entry.payload[imageCol] as string)
       : null;
+
+  // Filter out columns we're already drawing as the hero or in
+  // the header — avoids "rgb: #FF0000" appearing alongside the
+  // big swatch.
+  const skip = new Set<string>([titleColumn, imageCol]);
+  if (heroField) skip.add(heroField);
   const otherKeys = Object.keys(entry.payload)
-    .filter((k) => k !== titleColumn && k !== imageCol)
+    .filter((k) => !skip.has(k))
     .slice(0, 3);
+
+  // The hero block: either the configured hero_field+renderer,
+  // OR the image_column (with a graceful fallback), OR a "no
+  // image" placeholder. Either way we render the slot so the
+  // visual rhythm of the grid is consistent.
+  const hero = heroField ? (
+    <div className="shrink-0">
+      <CatalogFieldValue
+        fieldName={heroField}
+        value={entry.payload[heroField]}
+        renderer={heroRenderer ?? "text"}
+        size="block"
+      />
+    </div>
+  ) : imageVal ? (
+    <CatalogFieldValue
+      fieldName={imageCol}
+      value={imageVal}
+      renderer="image-url"
+      size="block"
+    />
+  ) : (
+    <NoImage size="block" title="No image in this catalog" />
+  );
+
   return (
     <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 flex gap-3">
-      {image && (
-        <img
-          src={image}
-          alt={title}
-          className="w-16 h-16 rounded object-cover border border-slate-200 dark:border-slate-700 shrink-0"
-          loading="lazy"
-        />
-      )}
+      <div className="w-32 h-32 shrink-0 flex items-center justify-center">
+        {hero}
+      </div>
       <div className="min-w-0 flex-1">
         <div className="text-sm font-medium text-slate-700 dark:text-mortar-100 truncate">
           {title}
@@ -177,11 +256,18 @@ function EntryCard({
           #{entry.external_id}
         </div>
         {otherKeys.map((k) => (
-          <div key={k} className="text-xs text-slate-500 dark:text-mortar-200 truncate">
+          <div
+            key={k}
+            className="text-xs text-slate-500 dark:text-mortar-200 truncate flex items-center gap-1"
+          >
             <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400">
-              {k}:{" "}
+              {labels[k] ?? k}:
             </span>
-            {String(entry.payload[k])}
+            <CatalogFieldValue
+              fieldName={k}
+              value={entry.payload[k]}
+              renderer={renderers[k]}
+            />
           </div>
         ))}
       </div>

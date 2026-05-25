@@ -6,9 +6,10 @@ import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Copy, KeyRound, Plus, Trash2 } from "lucide-react";
 import { ApiError, api, type ApiTokenListItem } from "../lib/api";
-import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
+import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 
 export function ApiTokensPage() {
+  usePageTitle("API tokens");
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();

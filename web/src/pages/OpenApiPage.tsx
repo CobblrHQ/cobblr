@@ -6,7 +6,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Copy, Download, FileText } from "lucide-react";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { useToast } from "@cobblr/platform-web";
+import { useToast, usePageTitle } from "@cobblr/platform-web";
 
 interface OpenApiSpec {
   openapi: string;
@@ -21,6 +21,7 @@ interface OpenApiSpec {
 }
 
 export function OpenApiPage() {
+  usePageTitle("OpenAPI");
   const { activeSlug } = useActiveOrg();
   const toast = useToast();
 

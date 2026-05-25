@@ -1,20 +1,39 @@
 // Modal to create a new part. Minimum fields only — name + qty +
-// optional category/location. Detail page handles every other field
-// after creation.
+// optional category/location.
+//
+// v0.2: catalog-aware quick-add. Type in the catalog typeahead at the
+// top — the platform searches every installed catalog at once. Pick
+// a hit → name + image_path pre-fill from the catalog payload, and a
+// `matches → core-catalogs:entry` pairing is written after create so
+// the rest of the app can hydrate matched-entry data into the row.
 
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Modal } from "@cobblr/platform-web";
+import {
+  CatalogTypeahead,
+  Modal,
+  type CatalogTypeaheadHit,
+} from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { InventoryApiError } from "./api";
 
-export function NewPartDialog({ onClose }: { onClose: (created: boolean) => void }) {
+interface NewPartDialogProps {
+  onClose: (created: boolean) => void;
+  /** When set, called with the new part id after create instead of
+   *  the default navigate-to-detail. Used by the portal shell to
+   *  refresh its view in place rather than send the user to the
+   *  admin shell's detail page. */
+  onCreated?: (partId: string) => void;
+}
+
+export function NewPartDialog({ onClose, onCreated }: NewPartDialogProps) {
   const { api, orgSlug, getToken } = useInventory();
   const navigate = useNavigate();
   const cats = useQuery({ queryKey: ["inventory-categories"], queryFn: () => api.listCategories() });
   const locs = useQuery({ queryKey: ["inventory-locations"], queryFn: () => api.listLocations() });
 
+  const [matched, setMatched] = useState<CatalogTypeaheadHit | null>(null);
   const [name, setName] = useState("");
   const [qty, setQty] = useState("1");
   const [unit, setUnit] = useState("each");
@@ -23,6 +42,24 @@ export function NewPartDialog({ onClose }: { onClose: (created: boolean) => void
   const [printLabel, setPrintLabel] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  function pickImageFromPayload(payload: Record<string, unknown>): string | null {
+    for (const k of ["img_url", "image_url", "image", "thumbnail"]) {
+      const v = payload[k];
+      if (typeof v === "string" && v.length > 0) return v;
+    }
+    return null;
+  }
+
+  // When the user picks a catalog hit, pre-fill any blank fields. We
+  // never overwrite something the user already typed — they may have
+  // started entering a custom name and then matched to refine the
+  // image without losing their work.
+  function handleMatch(hit: CatalogTypeaheadHit | null) {
+    setMatched(hit);
+    if (!hit) return;
+    if (!name.trim()) setName(hit.title);
+  }
 
   async function queueQrLabel(partId: string, displayName: string) {
     const auth = (): Record<string, string> => {
@@ -63,13 +100,29 @@ export function NewPartDialog({ onClose }: { onClose: (created: boolean) => void
     setBusy(true);
     setError(null);
     try {
+      const imageFromMatch = matched ? pickImageFromPayload(matched.payload) : null;
       const part = await api.createPart({
         name: name.trim(),
         qty: Number(qty) || 0,
         unit: unit.trim() || "each",
         category_id: categoryId || null,
         location_id: locationId || null,
+        // Stamp the matched catalog's image so the list row shows it
+        // immediately. (Hydration would still find it via the pairing,
+        // but this avoids the join cost on every list render.)
+        image_path: imageFromMatch,
       });
+      // Write the pairing AFTER create — needs the part id. Failure
+      // here is non-fatal: the part exists, only the binding is
+      // missing. The user can still hit "Match to catalog" from the
+      // detail page.
+      if (matched) {
+        try {
+          await api.createMatchPairing(part.id, matched.id);
+        } catch (e) {
+          console.error("[NewPartDialog] match pairing failed", e);
+        }
+      }
       if (printLabel) {
         try {
           const displayName =
@@ -82,7 +135,11 @@ export function NewPartDialog({ onClose }: { onClose: (created: boolean) => void
         }
       }
       onClose(true);
-      navigate(`/inventory/parts/${part.id}`);
+      if (onCreated) {
+        onCreated(part.id);
+      } else {
+        navigate(`/inventory/parts/${part.id}`);
+      }
     } catch (err) {
       setError(err instanceof InventoryApiError ? err.message : "Couldn't create part");
     } finally {
@@ -93,12 +150,21 @@ export function NewPartDialog({ onClose }: { onClose: (created: boolean) => void
   return (
     <Modal open onClose={() => onClose(false)} title="new part" size="sm">
       <form onSubmit={submit} className="space-y-3">
+        <Field label="Match to a catalog (optional)">
+          <CatalogTypeahead
+            selected={matched}
+            onSelect={handleMatch}
+            search={(q) => api.searchCatalogs(q)}
+            placeholder="Search Lego sets, parts, anything…"
+          />
+        </Field>
         <Field label="Name">
           <input
             autoFocus
             required
             value={name}
             onChange={(e) => setName(e.target.value)}
+            placeholder={matched ? matched.title : ""}
             className="input"
           />
         </Field>

@@ -13,9 +13,10 @@ import { Link } from "react-router-dom";
 import { History, KeyRound, UserCog } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { api, ApiError } from "../lib/api";
-import { useToast } from "@cobblr/platform-web";
+import { useToast, usePageTitle } from "@cobblr/platform-web";
 
 export function MeProfilePage() {
+  usePageTitle("Profile");
   const { user } = useAuth();
   const qc = useQueryClient();
   const toast = useToast();

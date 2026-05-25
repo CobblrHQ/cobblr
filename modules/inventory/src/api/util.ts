@@ -2,7 +2,8 @@
 
 import type { Request, Response, NextFunction } from "express";
 import { z } from "zod";
-import { tenantContext, type OrgRole } from "../db.js";
+import { platform } from "@cobblr/platform-contract";
+import { tenantContext, sessionUser, type OrgRole } from "../db.js";
 
 /** Wrap an async handler so thrown rejections route to next(err)
  *  instead of becoming an unhandled rejection. */
@@ -37,6 +38,38 @@ export function requireRole(req: Request, res: Response, ...allowed: OrgRole[]):
       error: {
         code: "forbidden",
         message: `This action requires one of: ${allowed.join(", ")}.`,
+      },
+    });
+    return false;
+  }
+  return true;
+}
+
+/** Gate a route by a specific action capability — admin/owner pass
+ *  implicitly; members/guests need an explicit grant in
+ *  workspace_capability_grants. Opt-in per action (default is still
+ *  role-based gating). Usage:
+ *    if (!(await requireCapability(req, res, "inventory:create-part"))) return;
+ *  See docs/design-decisions/member-portal-and-permissions.md. */
+export async function requireCapability(
+  req: Request,
+  res: Response,
+  actionId: string,
+): Promise<boolean> {
+  const ctx = tenantContext(req);
+  const user = sessionUser(req);
+  const ok = await platform().auth.userHasCapability({
+    orgId: ctx.org.id,
+    userId: user.id,
+    role: ctx.role,
+    actionId,
+  });
+  if (!ok) {
+    res.status(403).json({
+      error: {
+        code: "missing_capability",
+        message: `This action requires the ${actionId} capability. Ask a workspace admin to grant it.`,
+        details: { action_id: actionId, your_role: ctx.role },
       },
     });
     return false;

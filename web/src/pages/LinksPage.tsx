@@ -8,9 +8,10 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Check, Clock, Link2, Plus, X } from "lucide-react";
 import { ApiError, api, type WorkspaceLinkItem } from "../lib/api";
-import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
+import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 
 export function LinksPage() {
+  usePageTitle("Workspace links");
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();

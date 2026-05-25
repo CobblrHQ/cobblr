@@ -10,11 +10,12 @@ import { useMemo } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Search, X } from "lucide-react";
-import { EntityThumb } from "@cobblr/platform-web";
+import { EntityThumb, usePageTitle } from "@cobblr/platform-web";
 import { api, type SearchHit } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
 export function SearchPage() {
+  usePageTitle("Search");
   const { activeSlug } = useActiveOrg();
   const [params, setParams] = useSearchParams();
   const q = (params.get("q") ?? "").trim();

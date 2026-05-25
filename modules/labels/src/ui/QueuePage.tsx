@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import QRCode from "qrcode";
 import { Printer, Trash2 } from "lucide-react";
+import { usePageTitle } from "@cobblr/platform-web";
 import { useLabels } from "./context";
 import { renderPrintSheetHtml } from "./renderPrintSheet";
 import {
@@ -28,9 +29,16 @@ function qrSvg(payload: string): Promise<string> {
 }
 
 export function QueuePage() {
-  const { api } = useLabels();
+  usePageTitle("Labels");
+  const { api, orgSlug } = useLabels();
   const qc = useQueryClient();
-  const list = useQuery({ queryKey: ["labels-queue"], queryFn: () => api.listQueue() });
+  // Shared key with BasketWidget + Dashboard's LabelsTile so the
+  // three consumers de-dupe in flight.
+  const list = useQuery({
+    queryKey: ["labels-queue", orgSlug],
+    queryFn: () => api.listQueue(),
+    enabled: !!orgSlug,
+  });
 
   // Paper + label-size selection, persisted so a workshop keeps its
   // printer setup between visits.

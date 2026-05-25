@@ -24,6 +24,10 @@ import { platformOrgRouter } from "./routes/platform.js";
 import { bundlesRouter } from "./routes/bundles.js";
 import { membersRouter, invitesRootRouter } from "./routes/members.js";
 import { pairingsRouter } from "./routes/pairings.js";
+import { portalRouter } from "./routes/portal.js";
+import { adminUsersRouter } from "./routes/admin-users.js";
+import { superAdminRouter } from "./routes/super-admin.js";
+import { customRolesRouter } from "./routes/custom-roles.js";
 import { instancesRouter, overridesRouter } from "./routes/instances.js";
 import { qrScanRouter } from "./routes/qr-scan.js";
 import { integrationsInboundRouter } from "./routes/integrations-inbound.js";
@@ -41,7 +45,20 @@ export function createApp(): AppHandles {
   app.disable("x-powered-by");
   app.use(helmet({ contentSecurityPolicy: false }));
   app.use(compression());
-  app.use(cors({ origin: true, credentials: true }));
+  // CORS: env-driven allowlist. Set CORS_ALLOWED_ORIGINS to a
+  // comma-separated list in production (see docs/PRODUCTION_DEPLOY.md).
+  // Unset in dev = mirror request origin (matches the prior reflect-
+  // any-origin behavior so local localhost:8088 ↔ localhost:4000 keeps
+  // working without setup).
+  const corsAllowlist = env.CORS_ALLOWED_ORIGINS?.split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  app.use(
+    cors({
+      origin: corsAllowlist && corsAllowlist.length > 0 ? corsAllowlist : true,
+      credentials: true,
+    }),
+  );
   app.use(
     express.json({
       limit: "1mb",
@@ -91,6 +108,15 @@ export function createApp(): AppHandles {
   // /:slug/actions, /:slug/bindings, /:slug/field-defs, etc. Composed
   // onto /orgs so it inherits the same routing tree.
   v1.use("/orgs", platformOrgRouter);
+  // Member portal config + per-action capability grants.
+  v1.use("/orgs", portalRouter);
+  // Admin user creation (no-email onboarding flow).
+  v1.use("/orgs", adminUsersRouter);
+  // Custom roles (S2): workspace-defined capability bundles.
+  v1.use("/orgs", customRolesRouter);
+  // Super-admin (platform operator) surface — cross-workspace
+  // dashboards. Gated by SUPERADMIN_EMAILS env var.
+  v1.use("/super-admin", superAdminRouter);
   // Bundles live one layer further down — same auth + tenant
   // middleware, dedicated mount for clarity.
   v1.use("/orgs/:slug/bundles", bundlesRouter);

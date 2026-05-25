@@ -22,6 +22,7 @@ import {
   ViewModeToggle,
   useToast,
   useConfirm,
+  usePageTitle,
   useViewMode,
 } from "@cobblr/platform-web";
 import { useInventory } from "./context";
@@ -32,6 +33,7 @@ import type { PartListItem } from "./api";
 type StateFilter = "active" | "draft" | "needs_review" | "all";
 
 export function PartsListPage() {
+  usePageTitle("Inventory");
   const { api, orgSlug, getToken } = useInventory();
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
@@ -42,6 +44,7 @@ export function PartsListPage() {
   const [archivedFilter, setArchivedFilter] = useState<"hide" | "include" | "only">("hide");
   const [warrantyFilter, setWarrantyFilter] = useState<"all" | "expiring30" | "expiring90">("all");
   const [insuredOnly, setInsuredOnly] = useState(false);
+  const [lifecycle, setLifecycle] = useState<"" | "bulk" | "kit" | "parted-out">("");
   const [adding, setAdding] = useState(false);
   const [importing, setImporting] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -61,7 +64,7 @@ export function PartsListPage() {
   const parts = useInfiniteQuery({
     queryKey: [
       "inventory-parts",
-      { search, categoryId, locationId, state, lowOnly, archivedFilter, warrantyFilter, insuredOnly },
+      { search, categoryId, locationId, state, lowOnly, archivedFilter, warrantyFilter, insuredOnly, lifecycle },
     ],
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) =>
@@ -75,6 +78,7 @@ export function PartsListPage() {
         archived_only: archivedFilter === "only" || undefined,
         warranty_expires_within_days: warrantyWithin,
         insured_only: insuredOnly || undefined,
+        lifecycle: lifecycle || undefined,
         cursor: pageParam,
       }),
     getNextPageParam: (last) => last.next_cursor ?? undefined,
@@ -208,6 +212,17 @@ export function PartsListPage() {
           <option value="draft">Draft</option>
           <option value="needs_review">Needs review</option>
           <option value="all">All</option>
+        </select>
+        <select
+          value={lifecycle}
+          onChange={(e) => setLifecycle(e.target.value as typeof lifecycle)}
+          className="input !w-auto"
+          title="Lifecycle — kits vs bulk vs parted-out (Lego-style)"
+        >
+          <option value="">All lifecycle</option>
+          <option value="bulk">Bulk only</option>
+          <option value="kit">Kits only</option>
+          <option value="parted-out">Parted-out</option>
         </select>
         <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-mortar-200 cursor-pointer">
           <input

@@ -61,6 +61,24 @@ export async function syncManifestRegistries(): Promise<{
       });
     }
     for (const a of m.exposes.actions ?? []) {
+      // N1 from 2026-05-25-audit.md: warn when a user-invokable action
+      // declares appliesTo: { any: true }. Universal is usually wrong
+      // for clickable buttons — they end up surfacing on locations,
+      // bundles, users, every entity kind in the system. Wire-driven
+      // (userInvokable: false) actions can legitimately apply to any.
+      const userInvokable = a.userInvokable ?? true;
+      const appliesAny =
+        typeof a.appliesTo === "object" &&
+        a.appliesTo !== null &&
+        "any" in a.appliesTo &&
+        a.appliesTo.any === true;
+      if (userInvokable && appliesAny) {
+        console.warn(
+          `[registry-sync] action ${a.id} declares appliesTo: { any: true } AND userInvokable: true. ` +
+            `It will show as a button on every entity kind (locations, bundles, users, …). ` +
+            `Narrow to specific kinds or set userInvokable: false. See 2026-05-25-audit.md N1.`,
+        );
+      }
       actionRows.push({
         id: a.id,
         module_name: m.name,
@@ -70,7 +88,7 @@ export async function syncManifestRegistries(): Promise<{
         applies_to: a.appliesTo,
         invoke_route: a.invokeRoute ?? null,
         invoke_handler: a.invokeHandler ?? null,
-        user_invokable: a.userInvokable ?? true,
+        user_invokable: userInvokable,
         version: a.version ?? m.version,
       });
     }

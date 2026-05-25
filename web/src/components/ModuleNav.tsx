@@ -46,6 +46,17 @@ export function ModuleNav() {
       >
         dashboard
       </NavLink>
+      <NavLink
+        to="/scan"
+        className={({ isActive }) =>
+          "px-2 py-1 rounded transition text-sm whitespace-nowrap shrink-0 " +
+          (isActive
+            ? "text-cobble-600 font-semibold"
+            : "text-slate-500 dark:text-slate-400 hover:text-cobble-500")
+        }
+      >
+        scan
+      </NavLink>
       {tops.map((m) => {
         const kids = children.get(m.name) ?? [];
         if (kids.length === 0) {

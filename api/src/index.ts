@@ -17,6 +17,7 @@
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { setPlatform } from "@cobblr/platform-contract";
+import { sql, type Kysely } from "kysely";
 import { env } from "./env.js";
 import { meta, metaPool, pingMeta } from "./db/meta.js";
 import { runMigrations } from "./db/migrate.js";
@@ -37,6 +38,7 @@ import * as notificationsImpl from "./platform/notifications.js";
 import * as integrationsImpl from "./platform/integrations.js";
 import * as aiImpl from "./platform/ai.js";
 import { syncManifestRegistries } from "./platform/registry-sync.js";
+import { syncInstalledModules } from "./platform/installed-modules.js";
 import { migrateLensModules } from "./platform/migrate-lens-modules.js";
 import { migrateInventoryLocations } from "./platform/migrate-inventory-locations.js";
 import { backfillDefaultBindings } from "./platform/seed-bindings.js";
@@ -172,6 +174,155 @@ async function boot() {
       getProvider: aiImpl.getProvider,
       invoke: aiImpl.invoke,
     },
+    auth: {
+      // Capability check walks three sources in order:
+      //   1. Stock role: owner/admin always pass.
+      //   2. Direct per-user grant (workspace_capability_grants).
+      //   3. Custom-role assignment that includes the capability.
+      // See docs/design-decisions/member-portal-and-permissions.md
+      // §2.4 + 2026-05-25-audit.md S2.
+      userHasCapability: async ({ orgId, userId, role, actionId }) => {
+        if (role === "owner" || role === "admin") return true;
+        // Direct grant.
+        const grant = await meta
+          .selectFrom("workspace_capability_grants")
+          .select("id")
+          .where("org_id", "=", orgId)
+          .where("user_id", "=", userId)
+          .where("action_id", "=", actionId)
+          .executeTakeFirst();
+        if (grant) return true;
+        // Custom-role assignment → role's capability bundle.
+        const viaRole = await meta
+          .selectFrom("workspace_role_assignments as a")
+          .innerJoin("workspace_role_capabilities as c", "c.role_id", "a.role_id")
+          .select("c.action_id")
+          .where("a.org_id", "=", orgId)
+          .where("a.user_id", "=", userId)
+          .where("c.action_id", "=", actionId)
+          .limit(1)
+          .executeTakeFirst();
+        return !!viaRole;
+      },
+    },
+    // B1 from 2026-05-25-audit.md: pairings + catalogs platform
+    // surfaces so modules stop SELECTing each other's tables.
+    pairings: {
+      create: async ({ orgId, sourceKind, sourceId, targetKind, targetId, relationshipKind, createdBy }) => {
+        const row = await meta
+          .insertInto("entity_pairings")
+          .values({
+            org_id: orgId,
+            source_kind: sourceKind,
+            source_id: sourceId,
+            target_kind: targetKind,
+            target_id: targetId,
+            relationship_kind: relationshipKind,
+            created_by: createdBy ?? null,
+          })
+          .returning("id")
+          .executeTakeFirstOrThrow();
+        return { id: row.id };
+      },
+      createMany: async (rows) => {
+        if (rows.length === 0) return { inserted: 0 };
+        await meta
+          .insertInto("entity_pairings")
+          .values(
+            rows.map((r) => ({
+              org_id: r.orgId,
+              source_kind: r.sourceKind,
+              source_id: r.sourceId,
+              target_kind: r.targetKind,
+              target_id: r.targetId,
+              relationship_kind: r.relationshipKind,
+              created_by: r.createdBy ?? null,
+            })),
+          )
+          .execute();
+        return { inserted: rows.length };
+      },
+      findByTargets: async ({ orgId, sourceKind, targetKind, targetIds, relationshipKind }) => {
+        if (targetIds.length === 0) return [];
+        const rows = await meta
+          .selectFrom("entity_pairings")
+          .select(["source_id as sourceId", "target_id as targetId"])
+          .where("org_id", "=", orgId)
+          .where("source_kind", "=", sourceKind)
+          .where("target_kind", "=", targetKind)
+          .where("relationship_kind", "=", relationshipKind)
+          .where("target_id", "in", targetIds)
+          .execute();
+        return rows;
+      },
+    },
+    catalogs: {
+      findBySemanticType: async (orgId, semanticType) => {
+        type CatalogsXReadDB = {
+          core_catalogs_catalogs: {
+            id: string;
+            name: string;
+            schema: Record<string, unknown>;
+          };
+        };
+        const tdb = (await getTenantDb(orgId)) as unknown as Kysely<CatalogsXReadDB>;
+        const row = await tdb
+          .selectFrom("core_catalogs_catalogs")
+          .select(["id", "name", "schema"])
+          .where(sql<boolean>`schema->>'semantic_type' = ${semanticType}`)
+          .limit(1)
+          .executeTakeFirst();
+        return row ? { id: row.id, name: row.name, schema: row.schema ?? {} } : null;
+      },
+      findByBundleExternalIdSuffix: async (orgId, suffix) => {
+        type CatalogsXReadDB = {
+          core_catalogs_catalogs: {
+            id: string;
+            name: string;
+            bundle_external_id: string | null;
+          };
+        };
+        const tdb = (await getTenantDb(orgId)) as unknown as Kysely<CatalogsXReadDB>;
+        const row = await tdb
+          .selectFrom("core_catalogs_catalogs")
+          .select(["id", "name"])
+          .where("bundle_external_id", "like", `%${suffix}`)
+          .limit(1)
+          .executeTakeFirst();
+        return row ? { id: row.id, name: row.name } : null;
+      },
+      queryEntries: async ({ orgId, catalogId, payloadEq, externalIdIn, limit }) => {
+        type CatalogsXReadDB = {
+          core_catalogs_entries: {
+            id: string;
+            catalog_id: string;
+            external_id: string;
+            payload: Record<string, unknown>;
+          };
+        };
+        const tdb = (await getTenantDb(orgId)) as unknown as Kysely<CatalogsXReadDB>;
+        let q = tdb
+          .selectFrom("core_catalogs_entries")
+          .select(["id", "catalog_id", "external_id", "payload"])
+          .where("catalog_id", "=", catalogId);
+        if (payloadEq) {
+          for (const [k, v] of Object.entries(payloadEq)) {
+            q = q.where(sql<boolean>`payload->>${k} = ${v}`);
+          }
+        }
+        if (externalIdIn && externalIdIn.length > 0) {
+          q = q.where("external_id", "in", externalIdIn);
+        }
+        if (limit) q = q.limit(limit);
+        const rows = await q.execute();
+        return rows.map((r) => ({
+          id: r.id,
+          catalogId: r.catalog_id,
+          externalId: r.external_id,
+          payload: r.payload as Record<string, unknown>,
+        }));
+      },
+    },
   });
 
   await loadAllModules();
@@ -180,6 +331,12 @@ async function boot() {
   // accurate metadata. Done AFTER load so module-side resolver /
   // handler registrations land first.
   await syncManifestRegistries();
+  // Marketplace v2: snapshot the runtime module set into
+  // installed_modules so super-admin / workspace-admin can see what
+  // code is present + version + signature. See
+  // docs/design-decisions/marketplace.md §4.
+  const installedCount = await syncInstalledModules();
+  console.log(`[cobblr-api] installed_modules synced: ${installedCount}`);
   // One-shot: convert the four legacy Pillar-E lens modules
   // (3d-printers, laser-cutters, cnc-machines, workshop-mods) to
   // equivalent bundles. They used to be pure-field-def modules; now

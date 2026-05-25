@@ -5,8 +5,10 @@ import { useQuery } from "@tanstack/react-query";
 import { HeartPulse, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { api } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { usePageTitle } from "@cobblr/platform-web";
 
 export function HealthPage() {
+  usePageTitle("Health");
   const { activeSlug } = useActiveOrg();
 
   const snap = useQuery({

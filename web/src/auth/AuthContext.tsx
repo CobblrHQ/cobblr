@@ -29,6 +29,9 @@ interface AuthCtx extends AuthState {
   logout: () => void;
   /** Replace the in-memory org list, e.g. after creating a new one. */
   setOrgs: (orgs: OrgMembership[]) => void;
+  /** Re-fetch /me. Used after force-password-reset to release the
+   *  redirect guard once the server clears must_reset_password. */
+  refreshMe: () => Promise<void>;
 }
 
 const Ctx = createContext<AuthCtx | null>(null);
@@ -103,8 +106,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setState((s) => ({ ...s, orgs }));
   }, []);
 
+  const refreshMe = useCallback(async () => {
+    const res = await api.me();
+    setState({ user: res.user, orgs: res.orgs, loading: false });
+  }, []);
+
   return (
-    <Ctx.Provider value={{ ...state, login, signup, logout, setOrgs }}>
+    <Ctx.Provider value={{ ...state, login, signup, logout, setOrgs, refreshMe }}>
       {children}
     </Ctx.Provider>
   );

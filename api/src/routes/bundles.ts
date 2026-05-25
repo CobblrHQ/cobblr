@@ -30,8 +30,25 @@ interface CoreViewsViewsRow {
   bundle_id: string | null;
   source_module: string | null;
 }
+// core-catalogs lives in the same tenant DB. Bundles can ship catalog
+// shells (definition + schema, no rows) tagged by bundle_external_id
+// so uninstall can find them.
+interface CoreCatalogsCatalogsRow {
+  id: string;
+  name: string;
+  description: string | null;
+  source_url: string | null;
+  puller_id: string | null;
+  schema: unknown;
+  last_sync_at: Date | null;
+  entry_count: number;
+  bundle_external_id: string | null;
+  created_at: Date;
+  updated_at: Date;
+}
 interface BundleTenantDB {
   core_views_views: CoreViewsViewsRow;
+  core_catalogs_catalogs: CoreCatalogsCatalogsRow;
 }
 
 export const bundlesRouter = Router({ mergeParams: true });
@@ -145,6 +162,51 @@ const BundleManifest = z.object({
         /** Mark as default-for-entity-kind on install. The same
          *  unique-default guard the views API enforces applies. */
         is_default: z.boolean().optional(),
+      }),
+    )
+    .default([]),
+  /** Bundles can ship catalog SHELLS — name + schema config, no
+   *  rows. Used so a "Rebrickable Lego" bundle can install the six
+   *  catalogs with their hero_field / image_column / field_renderer
+   *  config in one click, then the rows get loaded via the CSV
+   *  importer (or a puller, when those exist).
+   *
+   *  Rows are intentionally NOT in the manifest: 60k-row CSVs would
+   *  blow past the express body limit and make installs synchronous-
+   *  multi-second. Bundle authors point users at the row import
+   *  separately. */
+  catalogs: z
+    .array(
+      z.object({
+        /** Stable id within the bundle (e.g. "rebrickable-colors").
+         *  Used to find this catalog on uninstall + on re-install
+         *  for in-place schema updates. */
+        external_id: z.string().regex(/^[a-z0-9][a-z0-9_-]*$/),
+        name: z.string().min(1),
+        description: z.string().optional(),
+        source_url: z.string().optional(),
+        puller_id: z.string().optional(),
+        schema: z
+          .object({
+            id_column: z.string().optional(),
+            title_column: z.string().optional(),
+            image_column: z.string().optional(),
+            subtitle_column: z.string().optional(),
+            description_column: z.string().optional(),
+            field_renderers: z
+              .record(
+                z.enum(["text", "color-hex", "image-url", "url-link", "year", "boolean", "code"]),
+              )
+              .optional(),
+            field_labels: z.record(z.string()).optional(),
+            bindable_to_kinds: z.array(z.string()).optional(),
+            semantic_type: z.string().regex(/^[a-z0-9][a-z0-9.-]*$/).optional(),
+            hero_field: z.string().optional(),
+            hero_renderer: z
+              .enum(["text", "color-hex", "image-url", "url-link", "year", "boolean", "code"])
+              .optional(),
+          })
+          .default({}),
       }),
     )
     .default([]),
@@ -277,6 +339,14 @@ bundlesRouter.get(
         pinned: boolean;
         is_default: boolean;
       }> = [];
+      let userCatalogs: Array<{
+        id: string;
+        name: string;
+        description: string | null;
+        source_url: string | null;
+        puller_id: string | null;
+        schema: unknown;
+      }> = [];
       try {
         const tdb = (await getTenantDb(orgId)) as unknown as Kysely<BundleTenantDB>;
         savedViews = await tdb
@@ -288,9 +358,16 @@ bundlesRouter.get(
           // are personal to the exporter and shouldn't ride along.
           .where("owner_user_id", "is", null)
           .execute();
+        // Catalogs the user created in this workspace (not installed
+        // via a bundle). Definitions only — row data stays in place.
+        userCatalogs = await tdb
+          .selectFrom("core_catalogs_catalogs")
+          .select(["id", "name", "description", "source_url", "puller_id", "schema"])
+          .where("bundle_external_id", "is", null)
+          .execute();
       } catch (err) {
-        console.error(`[bundle-export] saved_views fetch failed for ${orgId}:`, err);
-        // Continue without views — partial exports are still useful.
+        console.error(`[bundle-export] tenant DB fetch failed for ${orgId}:`, err);
+        // Continue without views/catalogs — partial exports are still useful.
       }
 
       // requires set = modules referenced by any exported wire's
@@ -359,6 +436,21 @@ bundlesRouter.get(
           config: (v.config ?? {}) as Record<string, unknown>,
           pinned: v.pinned,
           is_default: v.is_default,
+        })),
+        catalogs: userCatalogs.map((c) => ({
+          // Derive a stable external_id from name — kebab-cased, ascii.
+          // Bundle re-install upserts on (bundle.id + this), so as long
+          // as the user doesn't rename the catalog between exports, the
+          // round-trip is stable.
+          external_id: c.name
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/^-+|-+$/g, ""),
+          name: c.name,
+          description: c.description ?? undefined,
+          source_url: c.source_url ?? undefined,
+          puller_id: c.puller_id ?? undefined,
+          schema: (c.schema ?? {}) as Record<string, unknown>,
         })),
       };
       res.json({ manifest });
@@ -633,11 +725,81 @@ bundlesRouter.post(
               choices: f.choices
                 ? (sql`${JSON.stringify(f.choices)}::jsonb` as unknown as string[])
                 : null,
+              renderer: (f as { renderer?: string | null }).renderer ?? null,
             })
             .execute();
         }
         return bundle;
       });
+
+      // v1.6: bundle catalogs land in the tenant DB too (core-catalogs
+      // module). Same pattern as saved_views: separate DB → can't share
+      // the meta transaction. Upsert by (bundle_external_id,
+      // external_id_within_bundle) — re-install refreshes the schema
+      // config in place, rows survive.
+      let catalogsInstalled = 0;
+      if (m.catalogs.length > 0) {
+        try {
+          const tdb = (await getTenantDb(req.tenant!.org.id)) as unknown as Kysely<BundleTenantDB>;
+          for (const c of m.catalogs) {
+            const existing = await tdb
+              .selectFrom("core_catalogs_catalogs")
+              .select("id")
+              .where("bundle_external_id", "=", `${m.id}/${c.external_id}`)
+              .executeTakeFirst();
+            if (existing) {
+              await tdb
+                .updateTable("core_catalogs_catalogs")
+                .set({
+                  name: c.name,
+                  description: c.description ?? null,
+                  source_url: c.source_url ?? null,
+                  puller_id: c.puller_id ?? null,
+                  schema: sql`${JSON.stringify(c.schema)}::jsonb`,
+                  updated_at: new Date(),
+                })
+                .where("id", "=", existing.id)
+                .execute();
+            } else {
+              await tdb
+                .insertInto("core_catalogs_catalogs")
+                .values({
+                  name: c.name,
+                  description: c.description ?? null,
+                  source_url: c.source_url ?? null,
+                  puller_id: c.puller_id ?? null,
+                  schema: sql`${JSON.stringify(c.schema)}::jsonb`,
+                  bundle_external_id: `${m.id}/${c.external_id}`,
+                } as never)
+                .execute();
+            }
+            catalogsInstalled++;
+          }
+        } catch (err) {
+          console.error(
+            `[bundle-install] catalogs insert failed for bundle ${inserted.id} (${inserted.external_id}):`,
+            err,
+          );
+          // B2 from 2026-05-25-audit: don't fail the whole install;
+          // mark partial + return a warning. The bundle row stays in
+          // place + the workspace admin sees the partial state in the
+          // bundles list. Re-install fixes it.
+          await meta
+            .updateTable("bundles")
+            .set({
+              install_status: "partial",
+              install_warnings: sql`${JSON.stringify([
+                {
+                  step: "catalogs",
+                  failed_count: m.catalogs.length - catalogsInstalled,
+                  message: (err as Error).message,
+                },
+              ])}::jsonb` as never,
+            })
+            .where("id", "=", inserted.id)
+            .execute();
+        }
+      }
 
       // v1.5: bundle saved_views land in core-views' tenant table,
       // which lives in a different Postgres DB from cobblr_meta. We
@@ -672,16 +834,22 @@ bundlesRouter.post(
             `[bundle-install] saved_views insert failed for bundle ${inserted.id} (${inserted.external_id}):`,
             err,
           );
-          // Best-effort: don't break the install — return the error
-          // detail so the caller can decide whether to re-install.
-          res.status(500).json({
-            error: {
-              code: "saved_views_install_failed",
-              message: `Bundle installed but ${m.saved_views.length - viewsInstalled} saved view(s) failed to apply. Re-install to retry.`,
-              details: { wires: m.wires.length, field_defs: m.field_defs.length, saved_views: viewsInstalled },
-            },
-          });
-          return;
+          // B2: same pattern as the catalogs path — mark partial,
+          // return success-ish with a warning. Re-install to recover.
+          await meta
+            .updateTable("bundles")
+            .set({
+              install_status: "partial",
+              install_warnings: sql`coalesce(install_warnings, '[]'::jsonb) || ${JSON.stringify([
+                {
+                  step: "saved_views",
+                  failed_count: m.saved_views.length - viewsInstalled,
+                  message: (err as Error).message,
+                },
+              ])}::jsonb` as never,
+            })
+            .where("id", "=", inserted.id)
+            .execute();
         }
       }
 
@@ -740,6 +908,7 @@ bundlesRouter.post(
           wires: m.wires.length,
           field_defs: m.field_defs.length,
           saved_views: viewsInstalled,
+          catalogs: catalogsInstalled,
         },
       });
       res.status(201).json({
@@ -747,6 +916,7 @@ bundlesRouter.post(
         applied: {
           wires: m.wires.length,
           field_defs: m.field_defs.length,
+          catalogs: catalogsInstalled,
           auto_enabled_modules: autoEnabled,
         },
       });
@@ -814,6 +984,24 @@ async function uninstallBundleId(bundleId: string): Promise<void> {
       );
       // Continue — orphaned views are a smaller problem than a
       // half-uninstalled bundle row in meta.
+    }
+    // v1.6: drop catalogs whose bundle_external_id starts with
+    // "<bundle-id>/" (the install prefix we wrote). Rows in
+    // core_catalogs_entries cascade via the FK. This DOES delete
+    // user-imported rows — same as bundle uninstall removing
+    // user-edited field defs. Re-install restores the catalog shells
+    // but not the rows.
+    try {
+      const tdb = (await getTenantDb(bundleRow.org_id)) as unknown as Kysely<BundleTenantDB>;
+      await tdb
+        .deleteFrom("core_catalogs_catalogs")
+        .where("bundle_external_id", "like", `${bundleRow.external_id}/%`)
+        .execute();
+    } catch (err) {
+      console.error(
+        `[bundle-uninstall] catalogs cleanup failed for bundle ${bundleId}:`,
+        err,
+      );
     }
     // v1.6: lens override rows scoped to this bundle. Best-effort —
     // workspace edits to a bundle's row are also blown away here, but

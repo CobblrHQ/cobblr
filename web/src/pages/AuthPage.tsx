@@ -5,10 +5,12 @@ import { useState, type FormEvent } from "react";
 import { useAuth } from "../auth/AuthContext";
 import { CobblestoneMark } from "../CobblestoneMark";
 import { api, ApiError, setToken } from "../lib/api";
+import { usePageTitle } from "@cobblr/platform-web";
 
 type Mode = "login" | "signup";
 
 export function AuthPage() {
+  usePageTitle("Sign in");
   const { login, signup } = useAuth();
   const [mode, setMode] = useState<Mode>("login");
   const [email, setEmail] = useState("");

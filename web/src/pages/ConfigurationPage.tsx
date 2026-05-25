@@ -21,6 +21,7 @@ import {
   LayoutGrid,
   LayoutList,
   Library,
+  CopyPlus,
   FolderPlus,
   Link2,
   ListTodo,
@@ -31,6 +32,7 @@ import {
   Sliders,
   Sparkles,
   Tag,
+  Shield,
   Users,
   Wrench,
 } from "lucide-react";
@@ -38,6 +40,7 @@ import { ModulePickerModal } from "../components/ModulePickerModal";
 import { MembersModal } from "../components/MembersModal";
 import { NewThingFunnelModal } from "../components/NewThingFunnelModal";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { usePageTitle } from "@cobblr/platform-web";
 
 interface Tile {
   icon: typeof Wrench;
@@ -59,6 +62,7 @@ const GROUP_LABELS: Record<Tile["group"], string> = {
 const GROUP_ORDER: Tile["group"][] = ["modules", "data", "access", "extend", "admin"];
 
 export function ConfigurationPage() {
+  usePageTitle("Configuration");
   const { activeOrg, activeSlug } = useActiveOrg();
   const [modulesOpen, setModulesOpen] = useState(false);
   const [membersOpen, setMembersOpen] = useState(false);
@@ -147,6 +151,14 @@ export function ConfigurationPage() {
         "Per-entity-kind custom field defs — text, number, date, url, with optional dropdown choices.",
       to: "/fields",
     },
+    {
+      group: "data",
+      icon: CopyPlus,
+      label: "Templates",
+      description:
+        "Per-workspace entity templates — stamp out new parts / assets / machines pre-filled with defaults + tags. \"Household appliance template\" / \"new Voron printer\" / \"Lego set acquired\".",
+      to: "/configuration/templates",
+    },
     // ── people + access ────────────────────────────────────────────
     {
       group: "access",
@@ -220,6 +232,38 @@ export function ConfigurationPage() {
       description:
         "Auto-generated OpenAPI 3.1 spec — entity-kind schemas + platform paths. Drop into Swagger UI or Insomnia.",
       to: "/configuration/openapi",
+    },
+    {
+      group: "access",
+      icon: Users,
+      label: "Users",
+      description:
+        "Mint workspace accounts with a temp password (no email required). The user resets on first login. Also: reset a forgotten password for an existing member.",
+      to: "/configuration/users",
+    },
+    {
+      group: "access",
+      icon: LayoutGrid,
+      label: "Member portal",
+      description:
+        "Branding + pinned views for the slimmed-down member portal at /portal/:slug. Members + guests land here by default; admins can preview.",
+      to: "/configuration/portal",
+    },
+    {
+      group: "access",
+      icon: Users,
+      label: "Custom roles",
+      description:
+        "Bundle multiple capabilities under a name (e.g. \"Sorter\" = create-part + assign-location). Assign roles to members in addition to their stock role.",
+      to: "/configuration/roles",
+    },
+    {
+      group: "access",
+      icon: Shield,
+      label: "Permissions",
+      description:
+        "Per-member capability grants. Admins implicitly have everything; members can be granted specific verbs like 'create parts' or 'receive orders'.",
+      to: "/configuration/permissions",
     },
     // ── ops + diagnostics ──────────────────────────────────────────
     {

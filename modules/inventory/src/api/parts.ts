@@ -10,7 +10,7 @@ import { z } from "zod";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
-import { asyncHandler, badBody, requireRole } from "./util.js";
+import { asyncHandler, badBody, requireCapability, requireRole } from "./util.js";
 import { routeUnknownToMetadata } from "./route-helpers.js";
 
 export const partsRouter = Router({ mergeParams: true });
@@ -64,6 +64,13 @@ const ListQuery = z.object({
   insured_only: Truthy.optional(),
   /** Warranty expires within N days. */
   warranty_expires_within_days: z.coerce.number().int().positive().max(3650).optional(),
+  /** Lego-style lifecycle filter (backed by metadata.state).
+   *  - "bulk"        → loose individual parts (no kit relationship)
+   *  - "kit"         → kits still sealed / built (not parted out)
+   *  - "parted-out"  → kits that have been disassembled
+   *  See the Lego bundle's `state` field for the full vocabulary.
+   *  Workspaces that don't use the Lego bundle just don't pass this. */
+  lifecycle: z.enum(["bulk", "kit", "parted-out"]).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(100),
   // Opaque cursor — base64 of {name,id} of the last row on the
   // previous page. Absent = first page.
@@ -157,6 +164,23 @@ partsRouter.get(
     if (filter.category_id) query = query.where("p.category_id", "=", filter.category_id);
     if (filter.location_id) query = query.where("p.location_id", "=", filter.location_id);
     if (filter.state) query = query.where("p.state", "=", filter.state);
+    if (filter.lifecycle === "bulk") {
+      // Match either the new `lifecycle` field (Lego bundle v0.3+) or
+      // a missing field (default = loose). The legacy `state` key is
+      // accepted for backwards compat on workspaces that haven't
+      // re-installed the bundle.
+      query = query.where(
+        sql<boolean>`coalesce(p.metadata->>'lifecycle', p.metadata->>'state', 'loose') in ('loose', 'bulk', 'spare')`,
+      );
+    } else if (filter.lifecycle === "kit") {
+      query = query.where(
+        sql<boolean>`coalesce(p.metadata->>'lifecycle', p.metadata->>'state') in ('sealed', 'built')`,
+      );
+    } else if (filter.lifecycle === "parted-out") {
+      query = query.where(
+        sql<boolean>`coalesce(p.metadata->>'lifecycle', p.metadata->>'state') = 'parted-out'`,
+      );
+    }
 
     // Archived defaults to hidden. archived_only takes precedence;
     // otherwise show_archived widens the result set.
@@ -443,6 +467,7 @@ const NATIVE_PART_KEYS = new Set(Object.keys(PartCreate.shape));
 partsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "inventory:create-part"))) return;
     const routed = routeUnknownToMetadata(req.body, NATIVE_PART_KEYS);
     const parsed = PartCreate.safeParse(routed);
     if (!parsed.success) return badBody(res, parsed.error);

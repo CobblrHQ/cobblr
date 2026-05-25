@@ -4,7 +4,7 @@ import { useMemo, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Search, Trash2 } from "lucide-react";
-import { BulkActionBar, useToast, useConfirm } from "@cobblr/platform-web";
+import { BulkActionBar, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 import { useProjects } from "./context";
 import type { Project } from "./api";
 
@@ -18,6 +18,7 @@ const STATUS_LABEL: Record<string, string> = {
 const STATUS_ORDER = ["planning", "active", "blocked", "done", "abandoned"];
 
 export function ProjectsListPage() {
+  usePageTitle("Projects");
   const { api } = useProjects();
   const qc = useQueryClient();
   const list = useQuery({ queryKey: ["projects-list"], queryFn: () => api.listProjects() });

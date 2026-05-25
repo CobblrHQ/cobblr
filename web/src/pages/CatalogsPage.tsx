@@ -9,11 +9,12 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { Library, Plus, Trash2 } from "lucide-react";
-import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
+import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 import { ApiError, api, type Catalog } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
 export function CatalogsPage() {
+  usePageTitle("Catalogs");
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();

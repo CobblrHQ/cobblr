@@ -2,6 +2,16 @@
 // API on COBBLR_TEST_API (defaults to http://localhost:4000) with a
 // real Postgres backing it. Each suite creates a fresh org so runs
 // are idempotent and isolated from one another.
+//
+// Teardown: every org created by `signupFreshOrg` or
+// `registerOrgForTeardown` is deleted at end-of-file by the
+// afterAll hook in setup-teardown.ts (wired via vitest.config.ts's
+// setupFiles). Tests that POST /orgs ad-hoc must register the new
+// session themselves; helper exported here for that case.
+
+import { registerOrgForTeardown } from "./setup-teardown.js";
+
+export { registerOrgForTeardown };
 
 const BASE = process.env.COBBLR_TEST_API ?? "http://localhost:4000";
 
@@ -32,12 +42,17 @@ export async function signupFreshOrg(label: string): Promise<TestSession> {
     user: { id: string };
     orgs: { id: string; slug: string }[];
   };
-  return {
+  const session: TestSession = {
     token: json.token,
     userId: json.user.id,
     orgId: json.orgs[0]!.id,
     slug: json.orgs[0]!.slug,
   };
+  // Register for teardown — afterAll() in setup-teardown.ts deletes
+  // every registered workspace at end-of-file. Without this the
+  // dev/CI DB accumulates orphan tenant DBs forever.
+  registerOrgForTeardown({ token: session.token, slug: session.slug });
+  return session;
 }
 
 export async function http<T = unknown>(
@@ -68,6 +83,9 @@ export async function http<T = unknown>(
     throw new Error(`${init?.method ?? "GET"} ${path} → ${res.status}: ${await res.text()}`);
   }
   if (res.status === 204) return undefined as T;
+  // Some POSTs return 201 with no body. Detect via content-length.
+  const cl = res.headers.get("content-length");
+  if (cl === "0") return undefined as T;
   return (await res.json()) as T;
 }
 

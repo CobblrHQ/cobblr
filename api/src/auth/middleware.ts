@@ -10,6 +10,19 @@ import { meta } from "../db/meta.js";
 import { verifySession } from "./jwt.js";
 import { resolveApiToken } from "./api-tokens.js";
 import { runWithActor } from "../lib/request-context.js";
+import { env } from "../env.js";
+
+// Parse SUPERADMIN_EMAILS once at module load. Comma-separated list
+// of emails that get the platform-admin flag on every request.
+const SUPERADMIN_EMAILS: Set<string> = new Set(
+  (env.SUPERADMIN_EMAILS ?? "")
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean),
+);
+function isPlatformAdmin(email: string): boolean {
+  return SUPERADMIN_EMAILS.has(email.toLowerCase());
+}
 
 export interface SessionUser {
   id: string;
@@ -20,6 +33,10 @@ export interface SessionUser {
   /** If auth_method === "api_token", the id of the token that signed
    *  the request. Used for the activity-log audit trail. */
   api_token_id: string | null;
+  /** True when the user's email is in SUPERADMIN_EMAILS. Gates the
+   *  /super-admin/* surface. Per-workspace roles are unaffected;
+   *  this is a SEPARATE tier above admin/owner. */
+  is_platform_admin: boolean;
 }
 
 // Augment Express's Request without leaking the field globally —
@@ -85,6 +102,7 @@ export async function requireAuth(
       display_name: user.display_name,
       auth_method: authMethod,
       api_token_id: apiTokenId,
+      is_platform_admin: isPlatformAdmin(user.email),
     };
     // Wrap the rest of the request chain in actor context so any
     // deeply-nested activity.log() call automatically picks up
@@ -98,4 +116,23 @@ export async function requireAuth(
       error: { code: "unauthenticated", message: (err as Error).message },
     });
   }
+}
+
+/** Middleware: 403 anyone who isn't a platform admin. Use after
+ *  `requireAuth` on routes scoped to /super-admin/*. */
+export function requirePlatformAdmin(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): void {
+  if (!req.session?.is_platform_admin) {
+    res.status(403).json({
+      error: {
+        code: "not_platform_admin",
+        message: "Platform-admin only. Set SUPERADMIN_EMAILS to include your email.",
+      },
+    });
+    return;
+  }
+  next();
 }

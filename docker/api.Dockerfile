@@ -37,6 +37,9 @@ COPY modules/core-labels-qr/package.json ./modules/core-labels-qr/
 COPY modules/core-integrations/package.json ./modules/core-integrations/
 COPY modules/core-ai/package.json ./modules/core-ai/
 COPY modules/core-maintenance/package.json ./modules/core-maintenance/
+COPY modules/core-templates/package.json ./modules/core-templates/
+COPY modules/core-scan/package.json ./modules/core-scan/
+COPY modules/bricklink-connector/package.json ./modules/bricklink-connector/
 
 RUN npm install --workspaces --include-workspace-root --no-audit --no-fund
 
@@ -49,6 +52,15 @@ COPY packages/platform-contract ./packages/platform-contract
 COPY packages/platform-web ./packages/platform-web
 COPY api ./api
 COPY modules ./modules
+
+# Marketplace v2: fetch/verify registry-sourced modules + record the
+# manifest of every baked-in marketplace module. `source: "vendored"`
+# entries are no-ops (modules/ COPY put them in place); `source:
+# "registry"` entries are downloaded, sha256+ed25519 verified, and
+# extracted to modules/<name>/. See docs/design-decisions/marketplace.md.
+COPY cobblr-modules.json ./cobblr-modules.json
+COPY scripts ./scripts
+RUN node scripts/install-registry-modules.mjs
 
 # Build every module that has a build script. The loader's
 # package.json#main resolution picks up dist/module.js at boot.
@@ -75,6 +87,9 @@ RUN npm run --if-present build -w @cobblr/core-labels-qr
 RUN npm run --if-present build -w @cobblr/core-integrations
 RUN npm run --if-present build -w @cobblr/core-ai
 RUN npm run --if-present build -w @cobblr/core-maintenance
+RUN npm run --if-present build -w @cobblr/core-templates
+RUN npm run --if-present build -w @cobblr/core-scan
+RUN npm run --if-present build -w @cobblr/bricklink-connector
 WORKDIR /app/api
 RUN npm run build
 
@@ -96,6 +111,9 @@ COPY --from=builder /app/packages/platform-contract ./packages/platform-contract
 # Each module ships its compiled dist/ + migrations/ alongside its
 # package.json. The loader resolves package.json#main to dist/module.js.
 COPY --from=builder /app/modules ./modules
+# Manifest of every baked-in marketplace module — consumed at api
+# boot to populate the installed_modules table.
+COPY --from=builder /app/installed-modules.manifest.json ./installed-modules.manifest.json
 
 EXPOSE 4000
 

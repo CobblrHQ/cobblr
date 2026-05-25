@@ -7,10 +7,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, api, type PlatformBinding } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ChevronRight, Plus } from "lucide-react";
-import { useToast } from "@cobblr/platform-web";
+import { useToast, usePageTitle } from "@cobblr/platform-web";
 import { WireDetailModal } from "../components/WireDetailModal";
 
 export function BindingsPage() {
+  usePageTitle("Wires");
   const { activeSlug: slug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();

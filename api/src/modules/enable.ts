@@ -129,6 +129,7 @@ export async function enableModuleForOrg(
         choices: fd.choices
           ? (sql`${JSON.stringify(fd.choices)}::jsonb` as unknown as string[])
           : null,
+        renderer: (fd as { renderer?: string | null }).renderer ?? null,
       })
       .onConflict((b) => b.columns(["org_id", "entity_kind", "name"]).doNothing())
       .execute();

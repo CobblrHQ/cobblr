@@ -6,7 +6,7 @@ import { useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Check, Plus, Trash2 } from "lucide-react";
-import { EntityActionsBar, CustomFieldsPanel } from "@cobblr/platform-web";
+import { EntityActionsBar, CustomFieldsPanel, usePageTitle } from "@cobblr/platform-web";
 import { useProjects } from "./context";
 import type { Priority, ProjectStatus, Task, TaskStatus } from "./api";
 
@@ -23,6 +23,7 @@ export function ProjectDetailPage() {
     queryFn: () => api.getProject(id!),
     enabled: !!id,
   });
+  usePageTitle(project.data?.name ?? "Project");
   const tasks = useQuery({
     queryKey: ["project-tasks", id],
     queryFn: () => api.listTasks({ project_id: id }),

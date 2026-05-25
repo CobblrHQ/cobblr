@@ -11,9 +11,10 @@ import { LayoutList, Pencil, Pin, PinOff, Plus, Trash2 } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import { ApiError, api, type SavedView } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
+import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 
 export function ViewsPage() {
+  usePageTitle("Views");
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();

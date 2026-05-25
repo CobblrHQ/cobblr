@@ -25,7 +25,7 @@ import {
   ShieldCheck,
   Trash2,
 } from "lucide-react";
-import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
+import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 import {
   ApiError,
   api,
@@ -37,6 +37,7 @@ import {
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
 export function IntegrationsPage() {
+  usePageTitle("Integrations");
   const { activeSlug } = useActiveOrg();
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<IntegrationConnector | null>(null);

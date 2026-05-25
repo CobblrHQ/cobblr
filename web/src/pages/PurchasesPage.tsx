@@ -9,11 +9,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Plus, Search, Trash2 } from "lucide-react";
 import { ApiError, api, type Order } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { BulkActionBar, EntityActionsBar, Modal, useToast, useConfirm } from "@cobblr/platform-web";
+import { BulkActionBar, EntityActionsBar, Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 
 const STATUSES: Order["status"][] = ["planned", "ordered", "in-transit", "arrived", "cancelled"];
 
 export function PurchasesPage() {
+  usePageTitle("Purchases");
   const { activeSlug } = useActiveOrg();
   const navigate = useNavigate();
   const { id } = useParams<{ id?: string }>();

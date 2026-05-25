@@ -7,10 +7,12 @@ import { useQuery } from "@tanstack/react-query";
 import { Filter, KeyRound, ShieldCheck, Wrench, User } from "lucide-react";
 import { api, type ActivityEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { usePageTitle } from "@cobblr/platform-web";
 
 type AuthMethod = "session" | "api_token" | "system";
 
 export function ActivityPage() {
+  usePageTitle("Activity");
   const { activeSlug } = useActiveOrg();
   const [authFilter, setAuthFilter] = useState<AuthMethod | "all">("all");
   const [entityFilter, setEntityFilter] = useState<string>("");

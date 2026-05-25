@@ -69,6 +69,11 @@ interface AuthResponseUser {
   id: string;
   email: string;
   display_name: string;
+  /** True when the user must pick a new password before doing
+   *  anything substantive — admin minted the account with a temp
+   *  password. Web client redirects to /me/force-password-reset
+   *  until the user clears the flag via PATCH /me/password. */
+  must_reset_password: boolean;
 }
 
 interface AuthResponseOrg {
@@ -179,7 +184,7 @@ export async function provisionOrgForUser(
 async function buildAuthResponse(userId: string): Promise<AuthResponse> {
   const user = await meta
     .selectFrom("users")
-    .select(["id", "email", "display_name"])
+    .select(["id", "email", "display_name", "must_reset_password"])
     .where("id", "=", userId)
     .executeTakeFirstOrThrow();
 

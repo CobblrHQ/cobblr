@@ -9,7 +9,7 @@
 // popover under the parent rather than as broken top-level links.
 
 import { Link, Outlet } from "react-router-dom";
-import { LogOut, Moon, Sun } from "lucide-react";
+import { LogOut, Moon, Server, Sun } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
 import { CobblestoneMark } from "../CobblestoneMark";
@@ -27,9 +27,16 @@ export function AppLayout(_props: { activeSlug: string }) {
   const { theme, toggle } = useTheme();
 
   return (
-    // grid-cols-1 pins the column to viewport width; overflow-x-clip
-    // belts-and-suspenders against any child trying to push wider.
-    <div className="min-h-screen grid grid-rows-[auto_1fr] grid-cols-1 overflow-x-clip">
+    // grid-cols-1 pins the column to viewport width. We deliberately
+    // do NOT set overflow-x on the outermost div — Chrome on macOS
+    // suppresses the two-finger back/forward swipe gesture whenever
+    // a page-level container clips horizontal overflow. The header
+    // still clips its own nav (which scrolls horizontally), and
+    // every page content is constrained by max-w-6xl + min-w-0 +
+    // shrink-0 on flex children. If something does push wider than
+    // viewport, that's a layout bug to fix locally rather than mask
+    // here.
+    <div className="min-h-screen grid grid-rows-[auto_1fr] grid-cols-1">
       <header className="border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/80 backdrop-blur overflow-x-clip">
         <div className="max-w-6xl mx-auto px-5 py-3 flex items-center gap-3 min-w-0">
           {/* Brand — never compressed */}
@@ -56,6 +63,15 @@ export function AppLayout(_props: { activeSlug: string }) {
           {/* Right cluster (desktop) — never shrinks */}
           <div className="hidden md:flex items-center gap-1 shrink-0">
             <SearchBar />
+            {user?.is_platform_admin && (
+              <Link
+                to="/super-admin"
+                title="Platform-operator dashboards"
+                className="text-slate-400 dark:text-slate-500 hover:text-cobble-600 transition p-1.5"
+              >
+                <Server size={14} />
+              </Link>
+            )}
             <ConfigurationLink />
             <NotificationsBell />
             <Link
@@ -89,7 +105,7 @@ export function AppLayout(_props: { activeSlug: string }) {
         </div>
       </header>
 
-      <main className="min-w-0 overflow-x-hidden">
+      <main className="min-w-0">
         <div className="max-w-6xl mx-auto w-full px-5 py-6">
           <Outlet />
         </div>

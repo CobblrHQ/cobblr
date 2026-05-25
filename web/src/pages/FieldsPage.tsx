@@ -5,14 +5,36 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Plus } from "lucide-react";
-import { ApiError, api, type PlatformFieldDef } from "../lib/api";
+import { ApiError, api, type CatalogFieldRenderer, type PlatformFieldDef } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { FieldDefDetailModal } from "../components/FieldDefDetailModal";
-import { useToast } from "@cobblr/platform-web";
+import { FieldRenderer, useToast, usePageTitle } from "@cobblr/platform-web";
 
 const TYPES: PlatformFieldDef["type"][] = ["text", "number", "boolean", "date", "url"];
 
+// Default renderer per field type — keeps the dropdown small and
+// surfaces what the user almost always wants.
+const RENDERERS_BY_TYPE: Record<PlatformFieldDef["type"], CatalogFieldRenderer[]> = {
+  text: ["text", "color-hex", "image-url", "url-link", "code"],
+  number: ["text", "year"],
+  boolean: ["boolean"],
+  date: ["text"],
+  url: ["url-link", "image-url"],
+};
+
+// Tiny inline sample so the user can see what a renderer looks like.
+const RENDERER_SAMPLE: Record<CatalogFieldRenderer, string> = {
+  text: "Hello",
+  "color-hex": "0033B2",
+  "image-url": "https://placehold.co/40",
+  "url-link": "https://example.com",
+  year: "1965",
+  boolean: "true",
+  code: "ABC-123",
+};
+
 export function FieldsPage() {
+  usePageTitle("Fields");
   const { activeSlug: slug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
@@ -33,7 +55,10 @@ export function FieldsPage() {
   const [name, setName] = useState("");
   const [label, setLabel] = useState("");
   const [type, setType] = useState<PlatformFieldDef["type"]>("text");
+  const [renderer, setRenderer] = useState<CatalogFieldRenderer>("text");
   const [err, setErr] = useState<string | null>(null);
+
+  const rendererChoices = RENDERERS_BY_TYPE[type];
 
   const create = useMutation({
     mutationFn: () =>
@@ -42,6 +67,7 @@ export function FieldsPage() {
         name,
         display_label: label,
         type,
+        renderer: renderer === "text" ? null : renderer,
       }),
     onSuccess: () => {
       toast.success(`Added "${label}" to ${entityKind}.`);
@@ -50,6 +76,7 @@ export function FieldsPage() {
       setName("");
       setLabel("");
       setType("text");
+      setRenderer("text");
       setErr(null);
     },
     onError: (e: unknown) => {
@@ -117,7 +144,17 @@ export function FieldsPage() {
             </span>
             <select
               value={type}
-              onChange={(e) => setType(e.target.value as PlatformFieldDef["type"])}
+              onChange={(e) => {
+                const next = e.target.value as PlatformFieldDef["type"];
+                setType(next);
+                // Reset renderer if the new type doesn't support the
+                // currently-picked one (e.g. switching from text to
+                // number invalidates color-hex).
+                const allowed = RENDERERS_BY_TYPE[next];
+                if (!allowed.includes(renderer)) {
+                  setRenderer(allowed[0] ?? "text");
+                }
+              }}
               className="input"
             >
               {TYPES.map((t) => (
@@ -149,6 +186,37 @@ export function FieldsPage() {
               className="input"
             />
           </label>
+          {rendererChoices.length > 1 && (
+            <label className="block col-span-2">
+              <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+                Renderer
+                <span className="ml-2 normal-case tracking-normal text-slate-300 dark:text-slate-600">
+                  how this value draws on cards + detail pages
+                </span>
+              </span>
+              <div className="flex items-center gap-2">
+                <select
+                  value={renderer}
+                  onChange={(e) => setRenderer(e.target.value as CatalogFieldRenderer)}
+                  className="input flex-1"
+                >
+                  {rendererChoices.map((r) => (
+                    <option key={r} value={r}>
+                      {r}
+                    </option>
+                  ))}
+                </select>
+                {renderer !== "text" && (
+                  <FieldRenderer
+                    fieldName={name || "preview"}
+                    value={RENDERER_SAMPLE[renderer]}
+                    renderer={renderer}
+                    size="inline"
+                  />
+                )}
+              </div>
+            </label>
+          )}
         </div>
         {err && <div className="text-xs text-ember-500">{err}</div>}
         <button

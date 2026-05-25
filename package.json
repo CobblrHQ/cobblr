@@ -18,5 +18,8 @@
     "dev:api": "npm run dev -w api",
     "dev:web": "npm run dev -w web",
     "test": "npm test --workspaces --if-present"
+  },
+  "devDependencies": {
+    "playwright": "^1.60.0"
   }
 }

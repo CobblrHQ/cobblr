@@ -1,0 +1,12 @@
+{
+  "$comment": "Operator-curated list of marketplace modules baked into THIS cobblr-core image. Foundational + stock modules are NOT listed here — they live in modules/ and ship with the repo. Only marketplace modules are listed; the image-build pipeline (scripts/install-registry-modules.mjs) fetches each entry's tarball, verifies sha256 + ed25519 signature, extracts to /app/modules/<name>/. Edit + rebuild the image to ship a new module or version. See docs/design-decisions/marketplace.md.",
+  "registry_url": "https://raw.githubusercontent.com/CobblrHQ/registry/main/modules.json",
+  "modules": [
+    {
+      "name": "bricklink-connector",
+      "version": "0.2.0",
+      "source": "vendored",
+      "$comment": "Vendored mode = read from modules/<name>/ in this repo, skip the registry fetch. Used during the transition while bricklink-connector's external repo is being set up. Flip to source: \"registry\" once v0.1.0 has a signed tarball published in the registry."
+    }
+  ]
+}

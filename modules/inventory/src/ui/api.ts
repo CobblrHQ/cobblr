@@ -217,6 +217,8 @@ export class InventoryApi {
     archived_only?: boolean;
     insured_only?: boolean;
     warranty_expires_within_days?: number;
+    /** Lego-style lifecycle filter, see the API ListQuery comment. */
+    lifecycle?: "bulk" | "kit" | "parted-out";
     cursor?: string;
   } = {}) => {
     const params = new URLSearchParams();
@@ -230,6 +232,7 @@ export class InventoryApi {
     if (q.insured_only) params.set("insured_only", "1");
     if (q.warranty_expires_within_days)
       params.set("warranty_expires_within_days", String(q.warranty_expires_within_days));
+    if (q.lifecycle) params.set("lifecycle", q.lifecycle);
     if (q.cursor) params.set("cursor", q.cursor);
     const qs = params.toString();
     return this.request<{ items: PartListItem[]; next_cursor: string | null }>(
@@ -318,4 +321,45 @@ export class InventoryApi {
   }) => this.request<Allocation>("POST", "/allocations", b);
   setAllocationStatus = (id: string, status: "consumed" | "released") =>
     this.request<Allocation>("PATCH", `/allocations/${id}/status`, { status });
+
+  /** Cross-catalog search — returns hits from every installed catalog
+   *  that has a title_column match against `q`. Used by the catalog-
+   *  aware quick-add typeahead on NewPartDialog.
+   *
+   *  source_kind=inventory:part keeps non-Lego catalogs out of the
+   *  typeahead unless they explicitly declare bindable_to_kinds
+   *  including inventory:part (or omit it). */
+  searchCatalogs = (q: string, limit = 20) =>
+    this.requestAbs<{ items: CatalogSearchHit[] }>(
+      "GET",
+      `/api/v1/orgs/${this.slug}/modules/core-catalogs/catalogs/search?${new URLSearchParams(
+        { q, limit: String(limit), source_kind: "inventory:part" },
+      )}`,
+    );
+
+  /** Writes a `relationship_kind=matches` row in entity_pairings.
+   *  Called after createPart() when the user picked a catalog hit on
+   *  the quick-add form. */
+  createMatchPairing = (source_id: string, catalog_entry_id: string) =>
+    this.requestAbs<unknown>(
+      "POST",
+      `/api/v1/orgs/${this.slug}/pairings`,
+      {
+        source_kind: "inventory:part",
+        source_id,
+        target_kind: "core-catalogs:entry",
+        target_id: catalog_entry_id,
+        relationship_kind: "matches",
+      },
+    );
+}
+
+export interface CatalogSearchHit {
+  id: string;
+  catalog_id: string;
+  catalog_name: string;
+  external_id: string;
+  payload: Record<string, unknown>;
+  title: string;
+  title_column: string;
 }

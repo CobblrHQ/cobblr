@@ -1,10 +1,11 @@
 {
   "manifest": {
     "id": "cobblr.community.lego",
-    "version": "0.1.0",
+    "version": "0.3.0",
     "name": "Lego Collector",
-    "description": "Custom inventory fields + label wires for Lego set collections. Adds set_id, year, theme, color, condition; prints labels formatted for a Lego shelf.",
+    "description": "Custom inventory fields + label wires for a Lego collection. Adds set_id, year, theme, color, condition, lifecycle state, minifig count. Pairs with the Rebrickable catalogs bundle so quick-add typeahead pre-fills name, image, year + the rest hydrates from the matched catalog entry.",
     "author": "Cobblr community",
+    "readme_md": "# Lego Collector\n\nAdds the custom fields a Lego user actually wants on `inventory:part`, plus a label wire formatted for a Lego shelf.\n\n## Recommended companion bundle\n\nInstall **Rebrickable catalogs** (`cobblr.community.rebrickable-catalogs`) before using this. With both bundles + the seeder run, the inventory quick-add typeahead searches every Rebrickable catalog at once, pre-fills name + image + year on pick, and writes a `matches → core-catalogs:entry` pairing automatically. Empty Lego fields fall back to the matched catalog entry's payload at render time.\n\n## What it adds\n\n- **set_id** — Rebrickable set number (e.g. `75192-1`). Rendered as code.\n- **year** — Release year. Renders as a year.\n- **theme** — Star Wars / City / Bionicle / etc.\n- **color** — Primary color. (For loose parts.)\n- **condition** — sealed / built / used / damaged / loose. Choice list.\n- **state** — sealed / built / parted-out / partial. Set lifecycle.\n- **minifig_count** — How many minifigs in the set.\n\n## Label wire\n\nOn any `inventory:part` row, the EntityActionsBar surfaces a **Print label** action. Template:\n\n`LEGO {{theme}} #{{set_id}} • {{name}} ({{year}})`\n\nFields with no local value fall back to the matched Rebrickable entry — so `theme` and `year` print correctly even if you didn't fill them in.",
     "requires": [
       { "module": "inventory" },
       { "module": "labels" }
@@ -23,14 +24,16 @@
         "name": "set_id",
         "display_label": "Set ID",
         "type": "text",
-        "position": 1
+        "position": 1,
+        "renderer": "code"
       },
       {
         "entity_kind": "inventory:part",
         "name": "year",
         "display_label": "Release year",
         "type": "number",
-        "position": 2
+        "position": 2,
+        "renderer": "year"
       },
       {
         "entity_kind": "inventory:part",
@@ -51,14 +54,23 @@
         "name": "condition",
         "display_label": "Condition",
         "type": "text",
-        "position": 5
+        "position": 5,
+        "choices": ["sealed", "used", "damaged", "loose"]
+      },
+      {
+        "entity_kind": "inventory:part",
+        "name": "lifecycle",
+        "display_label": "Lifecycle",
+        "type": "text",
+        "position": 6,
+        "choices": ["sealed", "built", "parted-out", "partial"]
       },
       {
         "entity_kind": "inventory:part",
         "name": "minifig_count",
         "display_label": "Minifig count",
         "type": "number",
-        "position": 6
+        "position": 7
       }
     ]
   }

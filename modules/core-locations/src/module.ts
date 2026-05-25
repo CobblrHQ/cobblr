@@ -48,14 +48,27 @@ export default defineModule({
           { name: "kind", type: "text" },
           { name: "parent_id", type: "text" },
           { name: "depth", type: "number" },
+          { name: "description", type: "text", role: "summary" },
+          { name: "notes", type: "text" },
+          { name: "image_path", type: "image-path", role: "image" },
         ],
         getEndpoint: "/locations/{id}",
-        detailRoute: "/configuration/locations",
+        // Direct detail route — promoted from "list-with-tree-nav"
+        // to "open a location to see its contents + photo + notes".
+        detailRoute: "/configuration/locations/{id}",
         // Locations themselves are physical (a shelf, a bin, a room)
         // and they CONTAIN physical things. Lets labels:print apply
         // to locations too — "label the bin."
         profile: "place",
-        exposableFields: ["name", "short_name", "kind", "parent_id", "depth"],
+        exposableFields: [
+          "name",
+          "short_name",
+          "kind",
+          "parent_id",
+          "depth",
+          "description",
+          "image_path",
+        ],
       },
     ],
   },

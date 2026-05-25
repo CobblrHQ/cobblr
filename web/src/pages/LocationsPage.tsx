@@ -5,16 +5,19 @@
 // inside.
 
 import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Plus,
+  Printer,
   Trash2,
   Pencil,
   Box as BoxIcon,
   Square as AreaIcon,
 } from "lucide-react";
-import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
+import { BulkActionBar, Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 import { ApiError, api, type Location } from "../lib/api";
+import { queueLabelsBulk } from "../lib/queue-label";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
 interface LocationNode extends Location {
@@ -56,6 +59,7 @@ function totalUsage(c: UsageCounts | undefined): number {
 }
 
 export function LocationsPage() {
+  usePageTitle("Locations");
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
@@ -63,6 +67,42 @@ export function LocationsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [createParentId, setCreateParentId] = useState<string | null>(null);
   const [editTarget, setEditTarget] = useState<Location | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [printing, setPrinting] = useState(false);
+
+  function toggle(id: string) {
+    setSelected((s) => {
+      const next = new Set(s);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function bulkPrint() {
+    if (selected.size === 0) return;
+    setPrinting(true);
+    const all = list.data?.items ?? [];
+    const inputs = Array.from(selected)
+      .map((id) => all.find((l) => l.id === id))
+      .filter((l): l is NonNullable<typeof l> => !!l)
+      .map((loc) => ({
+        slug: activeSlug,
+        entityKind: "core-locations:location",
+        entityId: loc.id,
+        description: loc.short_name ?? loc.name,
+      }));
+    const { ok, fail } = await queueLabelsBulk(inputs);
+    setPrinting(false);
+    if (fail === 0) {
+      toast.success(
+        `Queued ${ok} label${ok === 1 ? "" : "s"} — open Labels → Queue to print.`,
+      );
+    } else {
+      toast.error(`Queued ${ok}; ${fail} failed.`);
+    }
+    setSelected(new Set());
+  }
 
   const list = useQuery({
     queryKey: ["core-locations", activeSlug],
@@ -177,6 +217,8 @@ export function LocationsPage() {
             key={n.id}
             node={n}
             usageByLocation={usageByLocation}
+            selected={selected}
+            onToggleSelect={toggle}
             onAddChild={(parentId) => {
               setCreateParentId(parentId);
               setCreateOpen(true);
@@ -238,6 +280,21 @@ export function LocationsPage() {
           }}
         />
       )}
+      <BulkActionBar
+        count={selected.size}
+        onClear={() => setSelected(new Set())}
+        actions={
+          <button
+            type="button"
+            disabled={printing}
+            onClick={() => void bulkPrint()}
+            className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-cobble-600 hover:text-cobble-700 disabled:opacity-50"
+          >
+            <Printer size={12} />
+            {printing ? "Queuing…" : "Print labels"}
+          </button>
+        }
+      />
     </div>
   );
 }
@@ -245,12 +302,16 @@ export function LocationsPage() {
 function LocationCard({
   node,
   usageByLocation,
+  selected,
+  onToggleSelect,
   onAddChild,
   onEdit,
   onDelete,
 }: {
   node: LocationNode;
   usageByLocation: Map<string, UsageCounts>;
+  selected: Set<string>;
+  onToggleSelect: (id: string) => void;
   onAddChild: (parentId: string) => void;
   onEdit: (loc: Location) => void;
   onDelete: (loc: LocationNode) => void;
@@ -261,11 +322,22 @@ function LocationCard({
   return (
     <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
       <div className="px-4 py-2.5 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700 flex items-center gap-2">
+        <input
+          type="checkbox"
+          checked={selected.has(node.id)}
+          onChange={() => onToggleSelect(node.id)}
+          className="accent-cobble-600 shrink-0"
+          aria-label={`Select ${node.name}`}
+          title="Select for bulk actions"
+        />
         <KindIcon size={16} className="text-cobble-500 shrink-0" />
         <div className="flex-1 min-w-0">
-          <div className="font-medium text-slate-700 dark:text-mortar-100 truncate">
+          <Link
+            to={`/configuration/locations/${node.id}`}
+            className="font-medium text-slate-700 dark:text-mortar-100 hover:text-cobble-600 truncate block"
+          >
             {node.name}
-          </div>
+          </Link>
           {node.short_name && node.short_name !== node.name && (
             <div className="text-xs text-slate-500 dark:text-slate-400 font-mono truncate">
               {node.short_name}
@@ -315,6 +387,8 @@ function LocationCard({
               key={c.id}
               node={c}
               usageByLocation={usageByLocation}
+              selected={selected}
+              onToggleSelect={onToggleSelect}
               onAddChild={onAddChild}
               onEdit={onEdit}
               onDelete={onDelete}
@@ -350,6 +424,12 @@ function LocationFormModal({
   );
   const toast = useToast();
 
+  // Range expansion: "Drawer 1-3" → ["Drawer 1", "Drawer 2", "Drawer 3"].
+  // Only active on create — on edit we never want a rename to silently
+  // spawn siblings. Caps at 50 so a typo'd "Drawer 1-9999" doesn't
+  // melt the server.
+  const expansion = !editing ? parseRange(name) : null;
+
   // Editing: exclude self + descendants from the parent picker (no
   // cycles). For create, all rows are valid parents.
   const selectableParents = useMemo(() => {
@@ -374,18 +454,38 @@ function LocationFormModal({
         onSubmit={async (e) => {
           e.preventDefault();
           if (!name.trim()) return;
-          const body: Partial<Location> = {
-            name: name.trim(),
-            short_name: shortName.trim() || null,
-            kind,
-            parent_id: parentId || null,
-          };
           try {
             if (editing && target) {
-              await api.updateLocation(slug, target.id, body);
+              await api.updateLocation(slug, target.id, {
+                name: name.trim(),
+                short_name: shortName.trim() || null,
+                kind,
+                parent_id: parentId || null,
+              });
               toast.success("Location updated");
+            } else if (expansion && expansion.names.length > 1) {
+              // Bulk-create N siblings from a "Foo 1-3" range. Sequential
+              // (not Promise.all) so the server's auto-numbering / activity
+              // log stays clean and a single failure stops the rest.
+              // Short_name is intentionally dropped for bulk — it's
+              // per-location and wouldn't make sense duplicated.
+              let made = 0;
+              for (const n of expansion.names) {
+                await api.createLocation(slug, {
+                  name: n,
+                  kind,
+                  parent_id: parentId || null,
+                });
+                made++;
+              }
+              toast.success(`Created ${made} locations: ${expansion.names.join(", ")}`);
             } else {
-              await api.createLocation(slug, body);
+              await api.createLocation(slug, {
+                name: name.trim(),
+                short_name: shortName.trim() || null,
+                kind,
+                parent_id: parentId || null,
+              });
               toast.success("Location created");
             }
             onSaved();
@@ -403,10 +503,21 @@ function LocationFormModal({
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Garage / Shelf 3 / Bin 17"
+            placeholder="e.g. Garage / Shelf 3 / Bin 17 — or Drawer 1-3 to bulk-create"
             className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
             autoFocus
           />
+          {expansion && expansion.names.length > 1 && (
+            <div className="text-[11px] text-cobble-600 dark:text-cobble-300 mt-1">
+              → will create {expansion.names.length} locations: {expansion.preview}
+            </div>
+          )}
+          {!editing && !expansion && (
+            <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">
+              Tip: type a range like <code className="font-mono">Drawer 1-3</code> to create
+              three siblings at once.
+            </div>
+          )}
         </label>
         <label className="block">
           <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
@@ -477,4 +588,33 @@ function LocationFormModal({
       </form>
     </Modal>
   );
+}
+
+// Parses a name like "Drawer 1-3" → { names: ["Drawer 1","Drawer 2",
+// "Drawer 3"], preview: "…" }. Returns null when the input isn't a
+// numeric range, when start > end, or when the range exceeds the
+// 50-row safety cap. Accepts hyphen and en-dash; tolerates extra
+// whitespace.
+const RANGE_RE = /^(.*?)\s*(\d+)\s*[-–]\s*(\d+)\s*$/;
+const MAX_RANGE = 50;
+
+function parseRange(raw: string): { names: string[]; preview: string } | null {
+  const m = raw.match(RANGE_RE);
+  if (!m) return null;
+  const prefix = (m[1] ?? "").trim();
+  const start = Number(m[2]);
+  const end = Number(m[3]);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  if (start > end) return null;
+  const count = end - start + 1;
+  if (count < 2 || count > MAX_RANGE) return null;
+  const names: string[] = [];
+  for (let n = start; n <= end; n++) {
+    names.push(prefix ? `${prefix} ${n}` : String(n));
+  }
+  const preview =
+    names.length <= 4
+      ? names.join(", ")
+      : `${names[0]}, ${names[1]}, …, ${names[names.length - 1]}`;
+  return { names, preview };
 }

@@ -9,9 +9,10 @@ import { CheckCircle2, AlertTriangle } from "lucide-react";
 import { ApiError, api } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { useToast } from "@cobblr/platform-web";
+import { useToast, usePageTitle } from "@cobblr/platform-web";
 
 export function InviteAcceptPage() {
+  usePageTitle("Accept invite");
   const { token } = useParams<{ token: string }>();
   const { user, setOrgs } = useAuth();
   const { setActiveSlug } = useActiveOrg();

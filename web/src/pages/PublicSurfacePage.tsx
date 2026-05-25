@@ -18,7 +18,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useParams, useSearchParams } from "react-router-dom";
 import { CobblestoneMark } from "../CobblestoneMark";
-import { EntityTile, EntityThumb } from "@cobblr/platform-web";
+import { EntityTile, EntityThumb, usePageTitle } from "@cobblr/platform-web";
 
 interface SurfaceItem {
   kind: string;
@@ -56,6 +56,7 @@ interface SurfaceTheme {
 }
 
 export function PublicSurfacePage() {
+  usePageTitle("Public surface");
   const { token } = useParams<{ token: string }>();
   const [params] = useSearchParams();
 

@@ -30,12 +30,10 @@ import {
   Tags,
   Wrench,
 } from "lucide-react";
-import {
-  EntityThumb,
+import { EntityThumb,
   EntityTile,
   ViewModeToggle,
-  useViewMode,
-} from "@cobblr/platform-web";
+  useViewMode, usePageTitle } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useAuth } from "../auth/AuthContext";
 import {
@@ -46,6 +44,7 @@ import {
 } from "../lib/api";
 
 export function Dashboard() {
+  usePageTitle("Dashboard");
   const { user } = useAuth();
   const { activeOrg, activeSlug } = useActiveOrg();
   if (!activeOrg || !activeSlug) return null;
@@ -217,8 +216,12 @@ function GettingStartedPanel({
 // quiet account stays quiet.
 function CrossWorkspaceStrip() {
   const { orgs } = useAuth();
+  // Shared key with the NotificationsBell so React Query de-dupes
+  // the call (was ["dash-cross-unread"] — separate from the bell's
+  // ["me-notifications-unread"] — so the same endpoint was fetched
+  // twice on every dashboard mount).
   const unread = useQuery({
-    queryKey: ["dash-cross-unread"],
+    queryKey: ["me-notifications-unread"],
     queryFn: () => api.meNotificationsUnreadCount(),
     refetchInterval: 30_000,
   });
@@ -395,26 +398,22 @@ function Tile({
 }
 
 function InventoryTile({ slug }: { slug: string }) {
+  // One fetch — the list endpoint already returns `low_stock`
+  // per row, so we compute both numbers from the same payload
+  // instead of issuing two separate full-list queries.
   const all = useQuery({
     queryKey: ["dash-inv-all", slug],
     queryFn: () =>
-      api.request<{ items: unknown[] }>(
+      api.request<{ items: Array<{ low_stock?: boolean }> }>(
         "GET",
         `/orgs/${slug}/modules/inventory/parts?limit=200`,
       ),
+    enabled: !!slug,
     staleTime: 30_000,
   });
-  const low = useQuery({
-    queryKey: ["dash-inv-low", slug],
-    queryFn: () =>
-      api.request<{ items: unknown[] }>(
-        "GET",
-        `/orgs/${slug}/modules/inventory/parts?low_stock=1&limit=200`,
-      ),
-    staleTime: 30_000,
-  });
-  const total = all.data?.items.length ?? 0;
-  const lowCount = low.data?.items.length ?? 0;
+  const items = all.data?.items ?? [];
+  const total = items.length;
+  const lowCount = items.filter((p) => p.low_stock).length;
   return (
     <Tile
       to="/inventory"
@@ -561,13 +560,16 @@ function PurchasesTile({ slug }: { slug: string }) {
 }
 
 function LabelsTile({ slug }: { slug: string }) {
+  // Shared key with BasketWidget + QueuePage so React Query
+  // de-dupes the request in flight (one fetch, three consumers).
   const q = useQuery({
-    queryKey: ["dash-labels", slug],
+    queryKey: ["labels-queue", slug],
     queryFn: () =>
       api.request<{ items: unknown[] }>(
         "GET",
         `/orgs/${slug}/modules/labels/queue`,
       ),
+    enabled: !!slug,
     staleTime: 30_000,
   });
   const queued = q.data?.items.length ?? 0;

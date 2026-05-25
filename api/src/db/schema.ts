@@ -14,6 +14,13 @@ export interface UsersTable {
   password_hash: string;
   display_name: string;
   active: Generated<boolean>;
+  /** True when an admin minted this account with a temp password.
+   *  Login succeeds; the response carries the flag and the web
+   *  client redirects to /me/force-password-reset until the user
+   *  picks their own password. PATCH /me/password clears it. */
+  must_reset_password: Generated<boolean>;
+  /** uuid of the admin who minted the account (null = self-signup). */
+  created_by: string | null;
   created_at: Generated<Date>;
   last_login_at: Date | null;
 }
@@ -25,8 +32,27 @@ export interface OrgsTable {
   db_name: string;
   db_credentials_encrypted: string | null;
   plan: Generated<"free" | "paid" | "disabled">;
+  /** Member-portal config — branding + pinned views shown in the
+   *  slimmed-down `/portal/:slug` shell. See
+   *  docs/design-decisions/member-portal-and-permissions.md. */
+  portal_config: Generated<{
+    display_name?: string;
+    logo_path?: string | null;
+    theme?: "light" | "dark" | "auto";
+    pinned_views: string[];
+    welcome_markdown?: string;
+  }>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
+}
+
+export interface WorkspaceCapabilityGrantsTable {
+  id: Generated<string>;
+  org_id: string;
+  user_id: string;
+  action_id: string;
+  granted_at: Generated<Date>;
+  granted_by: string | null;
 }
 
 export type OrgRole = "owner" | "admin" | "member" | "guest";
@@ -304,6 +330,14 @@ export interface BundlesTable {
   source_url: string | null;
   manifest: unknown;
   installed_at: Generated<Date>;
+  /** Tracks whether all install steps completed cleanly.
+   *   - "active"  → fully applied.
+   *   - "partial" → meta side committed, one or more tenant-side
+   *                 steps failed (catalogs, saved_views, lens
+   *                 overrides). Re-install to recover.
+   *   - "pending" → install in flight (reserved for v0.3 async). */
+  install_status: Generated<"active" | "partial" | "pending">;
+  install_warnings: Generated<unknown>;
 }
 
 export type FieldDefType = "text" | "number" | "boolean" | "date" | "url";
@@ -324,6 +358,11 @@ export interface ModuleFieldDefsTable {
   /** When type='text', renders as a dropdown of these choices. The
    *  "+ add new" affordance in the UI PATCHes this array. */
   choices: string[] | null;
+  /** Built-in renderer id for displaying this field's value in
+   *  list rows + detail pages. Same fixed set as
+   *  CatalogSchema.field_renderers — color-hex, image-url,
+   *  url-link, year, boolean, code, or null (= plain text). */
+  renderer: string | null;
   created_at: Generated<Date>;
 }
 
@@ -429,6 +468,55 @@ export interface MetaDB {
   core_labels_qr_tokens: CoreLabelsQrTokensTable;
   integration_inbound_token_lookup: IntegrationInboundTokenLookupTable;
   org_encryption_keys: OrgEncryptionKeysTable;
+  workspace_capability_grants: WorkspaceCapabilityGrantsTable;
+  workspace_roles: WorkspaceRolesTable;
+  workspace_role_capabilities: WorkspaceRoleCapabilitiesTable;
+  workspace_role_assignments: WorkspaceRoleAssignmentsTable;
+  installed_modules: InstalledModulesTable;
+}
+
+/** Marketplace v2 — registry of code that can run on this host.
+ *  Populated by the loader at boot; distinct from `org_modules`
+ *  (per-workspace enable) and `bundles` (data only). See
+ *  docs/design-decisions/marketplace.md §4. */
+export interface InstalledModulesTable {
+  id: Generated<string>;
+  name: string;
+  version: string;
+  band: string;
+  source: "image" | "registry" | "manual";
+  source_url: string | null;
+  source_sha256: string | null;
+  signed_by: string | null;
+  manifest: unknown;
+  installed_at: Generated<Date>;
+  installed_by: string | null;
+}
+
+/** Custom roles: workspace-defined named bundles of capabilities.
+ *  See docs/design-decisions/member-portal-and-permissions.md §7
+ *  + 2026-05-25-audit.md S2. Stock roles (owner/admin/member/guest)
+ *  stay; custom roles are additive. */
+export interface WorkspaceRolesTable {
+  id: Generated<string>;
+  org_id: string;
+  name: string;
+  description: string | null;
+  created_at: Generated<Date>;
+  created_by: string | null;
+}
+
+export interface WorkspaceRoleCapabilitiesTable {
+  role_id: string;
+  action_id: string;
+}
+
+export interface WorkspaceRoleAssignmentsTable {
+  org_id: string;
+  user_id: string;
+  role_id: string;
+  assigned_at: Generated<Date>;
+  assigned_by: string | null;
 }
 
 /** core-auth-extensions v0.1: passwordless magic-link tokens. */

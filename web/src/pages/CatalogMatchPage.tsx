@@ -10,11 +10,12 @@ import { useState, useEffect, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Library, ArrowLeft } from "lucide-react";
-import { useToast } from "@cobblr/platform-web";
+import { useToast, usePageTitle } from "@cobblr/platform-web";
 import { ApiError, api, type CatalogEntry, type Catalog } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
 export function CatalogMatchPage() {
+  usePageTitle("Match to catalog");
   const { activeSlug } = useActiveOrg();
   const [params] = useSearchParams();
   const navigate = useNavigate();
@@ -29,7 +30,18 @@ export function CatalogMatchPage() {
     queryFn: () => api.listCatalogs(activeSlug),
     enabled: !!activeSlug,
   });
-  const catalogs: Catalog[] = catalogsQ.data?.items ?? [];
+  // Filter to catalogs that either don't declare bindable_to_kinds
+  // (legacy / generic catalogs the user maintains) OR declare the
+  // current source_kind. Keeps the picker honest — a user matching a
+  // machines:machine doesn't see Lego catalogs.
+  const allCatalogs: Catalog[] = catalogsQ.data?.items ?? [];
+  const catalogs: Catalog[] = allCatalogs.filter((c) => {
+    const kinds = c.schema?.bindable_to_kinds;
+    // Omitted → catalog binds to everything (legacy behavior).
+    // Declared (incl. empty) → strict — must include sourceKind.
+    if (kinds === undefined) return true;
+    return sourceKind ? kinds.includes(sourceKind) : false;
+  });
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   useEffect(() => {

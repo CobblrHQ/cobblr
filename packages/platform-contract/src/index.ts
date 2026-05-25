@@ -457,6 +457,12 @@ const ModuleManifest = z.object({
             required: z.boolean().optional(),
             position: z.number().int().optional(),
             choices: z.array(z.string()).optional(),
+            /** Built-in renderer id — color-hex / image-url /
+             *  url-link / year / boolean / code / text. The web UI
+             *  switches on this when drawing the value. */
+            renderer: z
+              .enum(["text", "color-hex", "image-url", "url-link", "year", "boolean", "code"])
+              .optional(),
           }),
         )
         .default([]),
@@ -1253,6 +1259,108 @@ export interface PlatformQueue {
   ): void;
 }
 
+/** Authorization helpers exposed to modules. Today only one: a
+ *  user-has-capability check for per-action grants. Modules that
+ *  want a route gated by a specific verb (e.g. `inventory:create-
+ *  part`) ask `platform().auth.userHasCapability(...)`. Admins/owners
+ *  pass implicitly; members/guests need an explicit grant in
+ *  workspace_capability_grants. See
+ *  docs/design-decisions/member-portal-and-permissions.md. */
+export interface PlatformAuth {
+  userHasCapability(args: {
+    orgId: string;
+    userId: string;
+    role: string;
+    actionId: string;
+  }): Promise<boolean>;
+}
+
+/** Reads + writes against entity_pairings, the polymorphic
+ *  relationship table. Modules use this instead of SELECTing the
+ *  table directly so we have one chokepoint for org-scoping +
+ *  validation. See B1 in 2026-05-25-audit.md. */
+export interface PlatformPairings {
+  /** Insert a pairing. Returns the new row id. Org-scoped: the
+   *  caller passes orgId; the function inserts with that org_id. */
+  create(args: {
+    orgId: string;
+    sourceKind: string;
+    sourceId: string;
+    targetKind: string;
+    targetId: string;
+    relationshipKind: string;
+    createdBy?: string | null;
+  }): Promise<{ id: string }>;
+  /** Insert many pairings at once. Used by inventory.disassemble-kit
+   *  to write hundreds of "matches" / "derived-from" rows efficiently. */
+  createMany(
+    rows: Array<{
+      orgId: string;
+      sourceKind: string;
+      sourceId: string;
+      targetKind: string;
+      targetId: string;
+      relationshipKind: string;
+      createdBy?: string | null;
+    }>,
+  ): Promise<{ inserted: number }>;
+  /** Bulk pairing lookup. "Given these N target entities, which
+   *  source-side entities of `sourceKind` point at them via
+   *  `relationshipKind`?" Returns an array of { sourceId, targetId }
+   *  tuples so the caller can group by target. Used by
+   *  bricklink-connector's wanted-list diff to fan out from N
+   *  catalog entries to the inventory:part rows matched to them in
+   *  one query. */
+  findByTargets(args: {
+    orgId: string;
+    sourceKind: string;
+    targetKind: string;
+    targetIds: string[];
+    relationshipKind: string;
+  }): Promise<Array<{ sourceId: string; targetId: string }>>;
+}
+
+/** Read-only access to core-catalogs from other modules. Modules
+ *  used to SELECT directly from `core_catalogs_*` tables, which
+ *  violated module-layers.md §"What modules canNOT do." This
+ *  surface gives the few operations modules legitimately need
+ *  (semantic-type lookup, BOM-style entry filter, name+payload
+ *  hydration) without the table-type leak. See B1 in
+ *  2026-05-25-audit.md. */
+export interface PlatformCatalogs {
+  /** Find a catalog by its declared semantic_type. Returns null
+   *  when no catalog in the workspace declares the type. */
+  findBySemanticType(
+    orgId: string,
+    semanticType: string,
+  ): Promise<{ id: string; name: string; schema: Record<string, unknown> } | null>;
+  /** Find a catalog by its bundle_external_id (suffix match). Used
+   *  during a bundle uninstall to delete the right catalogs. */
+  findByBundleExternalIdSuffix(
+    orgId: string,
+    suffix: string,
+  ): Promise<{ id: string; name: string } | null>;
+  /** Query entries within a catalog. JSON path filter is restricted
+   *  to payload->>'<key>' = '<value>' equality — no arbitrary SQL.
+   *  The kernel handles the org-scoping + table access. */
+  queryEntries(args: {
+    orgId: string;
+    catalogId: string;
+    /** Equality filters on payload JSONB keys. `{ set_num: "75192-1" }`
+     *  → `payload->>'set_num' = '75192-1'`. */
+    payloadEq?: Record<string, string>;
+    externalIdIn?: string[];
+    limit?: number;
+  }): Promise<
+    Array<{
+      id: string;
+      catalogId: string;
+      externalId: string;
+      payload: Record<string, unknown>;
+    }>
+  >;
+}
+
 export interface Platform {
   activity: PlatformActivity;
   events: PlatformEvents;
@@ -1268,6 +1376,9 @@ export interface Platform {
   notifications: PlatformNotifications;
   integrations: PlatformIntegrations;
   ai: PlatformAi;
+  auth: PlatformAuth;
+  pairings: PlatformPairings;
+  catalogs: PlatformCatalogs;
 }
 
 let _platform: Platform | null = null;

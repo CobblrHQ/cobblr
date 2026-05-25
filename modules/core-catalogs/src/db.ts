@@ -12,6 +12,7 @@ export interface CatalogsTable {
   schema: Generated<Record<string, unknown>>;
   last_sync_at: Date | null;
   entry_count: Generated<number>;
+  bundle_external_id: string | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }

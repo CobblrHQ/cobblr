@@ -4,18 +4,46 @@
 // is just the registry + delete.
 
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Tag as TagIcon, Trash2 } from "lucide-react";
-import { ApiError, api } from "../lib/api";
+import { ExternalLink, Plus, Tag as TagIcon, Trash2 } from "lucide-react";
+import { ApiError, api, type TagRecord } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
+import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+
+interface TagAttachment {
+  id: string;
+  tag_id: string;
+  source_module: string;
+  source_type: string;
+  source_id: string;
+  tag_name: string;
+  tag_color: string | null;
+  created_at: string;
+}
+
+// Map a (source_module, source_type) to the route prefix for the
+// detail page. Same convention the EntityChip uses.
+function detailRoute(sourceModule: string, sourceType: string, id: string): string | null {
+  const map: Record<string, string> = {
+    "inventory:part": `/inventory/parts/${id}`,
+    "machines:machine": `/machines/${id}`,
+    "assets:asset": `/assets/${id}`,
+    "projects:project": `/projects/projects/${id}`,
+    "projects:task": `/projects/tasks/${id}`,
+    "purchases:order": `/purchases/${id}`,
+  };
+  return map[`${sourceModule}:${sourceType}`] ?? null;
+}
 
 export function TagsPage() {
+  usePageTitle("Tags");
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
   const [createOpen, setCreateOpen] = useState(false);
+  const [exploring, setExploring] = useState<TagRecord | null>(null);
 
   const list = useQuery({
     queryKey: ["tags", activeSlug],
@@ -68,7 +96,14 @@ export function TagsPage() {
             }}
           >
             <TagIcon size={12} style={{ color: t.color ?? undefined }} />
-            <span>{t.name}</span>
+            <button
+              type="button"
+              onClick={() => setExploring(t)}
+              className="hover:underline focus:outline-none"
+              title={`Show what's tagged "${t.name}"`}
+            >
+              {t.name}
+            </button>
             <button
               onClick={async () => {
                 const ok = await confirm({
@@ -88,6 +123,14 @@ export function TagsPage() {
         ))}
       </div>
 
+      {exploring && (
+        <TagAttachmentsModal
+          slug={activeSlug}
+          tag={exploring}
+          onClose={() => setExploring(null)}
+        />
+      )}
+
       {createOpen && (
         <CreateTagModal
           slug={activeSlug}
@@ -99,6 +142,90 @@ export function TagsPage() {
         />
       )}
     </div>
+  );
+}
+
+function TagAttachmentsModal({
+  slug,
+  tag,
+  onClose,
+}: {
+  slug: string;
+  tag: TagRecord;
+  onClose: () => void;
+}) {
+  const list = useQuery({
+    queryKey: ["tag-attachments", slug, tag.id],
+    queryFn: async () => {
+      const token = localStorage.getItem("cobblr.token") ?? "";
+      const res = await fetch(
+        `/api/v1/orgs/${slug}/modules/core-tags/attachments?tag_id=${encodeURIComponent(tag.id)}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return (await res.json()) as { items: TagAttachment[] };
+    },
+  });
+
+  const items = list.data?.items ?? [];
+
+  return (
+    <Modal open onClose={onClose} title={`Tagged "${tag.name}"`} size="md">
+      {list.isLoading && (
+        <div className="text-sm text-slate-500">Loading…</div>
+      )}
+      {!list.isLoading && items.length === 0 && (
+        <div className="text-sm text-slate-500 italic py-4 text-center">
+          Nothing's tagged with this yet. Attach the tag from any
+          entity's detail page.
+        </div>
+      )}
+      {items.length > 0 && (
+        <ul className="space-y-1.5">
+          {items.map((a) => {
+            const route = detailRoute(a.source_module, a.source_type, a.source_id);
+            const label = `${a.source_module}:${a.source_type}`;
+            return (
+              <li
+                key={a.id}
+                className="flex items-center justify-between gap-2 border border-slate-200 dark:border-slate-700 rounded-md px-3 py-2 text-sm"
+              >
+                <div className="min-w-0">
+                  <div className="font-mono text-[11px] text-slate-400 dark:text-slate-500">
+                    {label}
+                  </div>
+                  <div className="text-[10px] font-mono text-slate-400 dark:text-slate-500 truncate">
+                    {a.source_id}
+                  </div>
+                </div>
+                {route ? (
+                  <Link
+                    to={route}
+                    onClick={onClose}
+                    className="text-cobble-600 hover:text-cobble-700 inline-flex items-center gap-1 text-xs"
+                  >
+                    open <ExternalLink size={11} />
+                  </Link>
+                ) : (
+                  <span className="text-[10px] text-slate-400 italic">
+                    no detail route
+                  </span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <div className="flex justify-end pt-3">
+        <button
+          type="button"
+          onClick={onClose}
+          className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+        >
+          Close
+        </button>
+      </div>
+    </Modal>
   );
 }
 

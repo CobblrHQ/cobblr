@@ -13,12 +13,70 @@ import { asyncHandler, badBody, requireRole } from "./util.js";
 
 export const catalogsRouter = Router({ mergeParams: true });
 
+// One of the small fixed set of built-in renderers Cobblr's web UI
+// knows how to draw. Catalogs (and later: entity kinds, bundle
+// presentation overrides) declare which renderer to use per field
+// via `field_renderers` below. Bundles intentionally don't ship
+// rendering code — the platform owns the renderer library; bundles
+// own the declarative mapping. See FIELD_RENDERERS in
+// web/src/components/CatalogFieldValue.tsx.
+const FieldRenderer = z.enum([
+  "text",        // default — String(value)
+  "color-hex",   // "0033B2" → swatch + uppercase hex
+  "image-url",   // URL → thumbnail
+  "url-link",    // URL → clickable link
+  "year",        // 1965 → "1965"
+  "boolean",     // "True"/"true"/1/0 → ✓ / ✕
+  "code",        // monospace + bg, for SKUs / model numbers
+]);
+
 const SchemaConfig = z.object({
   id_column: z.string().optional(),
   title_column: z.string().optional(),
   image_column: z.string().optional(),
   subtitle_column: z.string().optional(),
   description_column: z.string().optional(),
+  /** Optional per-field renderer overrides — `{rgb: "color-hex",
+   *  img_url: "image-url"}`. The catalog detail UI picks the
+   *  renderer keyed by the payload field name. Unknown fields fall
+   *  back to plain text. */
+  field_renderers: z.record(FieldRenderer).optional(),
+  /** Optional per-field display-label overrides. Rebrickable's
+   *  payloads use database-y short names (`is_trans`, `num_parts`,
+   *  `part_cat_id`); this map lets a bundle author render them as
+   *  "Transparent", "Pieces", "Category" without renaming the
+   *  source column on import. */
+  field_labels: z.record(z.string()).optional(),
+  /** Replaces the card's image slot with a renderer drawing
+   *  `payload[hero_field]`. E.g. for Rebrickable colors, set
+   *  hero_field=rgb + hero_renderer=color-hex and the card shows a
+   *  big swatch where the photo would be. Bundles use this to
+   *  inject domain-specific visual identity without shipping JS. */
+  hero_field: z.string().optional(),
+  hero_renderer: FieldRenderer.optional(),
+  /** Opt out of the cross-catalog search endpoint. Catalogs that
+   *  are huge (McMaster scale) or otherwise not bindable to user
+   *  entities can set this so the quick-add typeahead doesn't pull
+   *  them in. Default false. */
+  exclude_from_global_search: z.boolean().optional(),
+  /** Which entity kinds this catalog is meaningful to match against.
+   *  Picker filters by source_kind ∈ bindable_to_kinds (or shows the
+   *  catalog when this list is omitted). Lets the Rebrickable bundle
+   *  declare "I only bind to inventory:part" so users matching a
+   *  machine don't see Lego parts in the picker. */
+  bindable_to_kinds: z.array(z.string()).optional(),
+  /** Stable semantic identifier for this catalog's role in the
+   *  domain. Lets other modules look up "the canonical sets catalog"
+   *  without coupling to a specific bundle id. Convention:
+   *  `<vendor>.<kind>` lowercase. Examples:
+   *    lego.set / lego.part / lego.minifig / lego.color / lego.bom
+   *    mcmaster.part
+   *    discogs.release
+   *    usda.food
+   *  First-match wins per workspace — a workspace can only have one
+   *  canonical catalog per semantic_type. See 2026-05-25-audit.md S5.
+   */
+  semantic_type: z.string().regex(/^[a-z0-9][a-z0-9.-]*$/).optional(),
 });
 
 const CatalogCreate = z.object({
@@ -51,6 +109,185 @@ catalogsRouter.get(
       .orderBy("name")
       .execute();
     res.json({ items: rows });
+  }),
+);
+
+// Cross-catalog search — one call, every catalog in the workspace.
+// Used by the catalog-aware quick-add typeahead on entity create
+// forms (NewPartDialog etc.) so the user types "millenn" once and
+// sees results from Rebrickable sets + minifigs + anything else.
+//
+// Each catalog can have its own title_column, so we read the catalog
+// rows first to discover them, then fan out one per-catalog query
+// substituting the right column into the LIKE filter. Catalogs can
+// opt out via schema.exclude_from_global_search=true (e.g. the BOM
+// table whose 5M rows would drown out the real catalogs).
+//
+// MUST be declared before any "/:id" route — Express matches in
+// declaration order and "search" would otherwise be parsed as an id.
+const SearchQuery = z.object({
+  q: z.string().min(1),
+  limit: z.coerce.number().int().min(1).max(60).default(30),
+  /** Restrict to specific catalog ids if the caller knows which
+   *  catalogs are relevant (e.g. inventory:part create form might
+   *  only want catalogs whose entries are bindable to parts). */
+  catalog_ids: z.string().optional(), // comma-separated
+  /** When set, the picker filters out catalogs whose
+   *  `schema.bindable_to_kinds` is declared and doesn't include this
+   *  source kind. Lets NewPartDialog hit /search?source_kind=inventory:part
+   *  and only see Rebrickable + other Lego catalogs. */
+  source_kind: z.string().optional(),
+});
+
+// Lookup a catalog by its semantic_type. The cross-module discovery
+// surface — a different module asks "give me the canonical lego.set
+// catalog" and gets a single row, regardless of which bundle
+// installed it. Returns null if no catalog declares that type.
+// See 2026-05-25-audit.md S5.
+catalogsRouter.get(
+  "/by-semantic-type/:semantic_type",
+  asyncHandler(async (req, res) => {
+    const semType = req.params.semantic_type;
+    if (!semType) {
+      res.status(400).json({
+        error: { code: "missing_semantic_type", message: "semantic_type required" },
+      });
+      return;
+    }
+    const db = tenantDb(req);
+    const row = await db
+      .selectFrom("core_catalogs_catalogs")
+      .selectAll()
+      .where(
+        sql<boolean>`schema->>'semantic_type' = ${semType}`,
+      )
+      .limit(1)
+      .executeTakeFirst();
+    if (!row) {
+      res.status(404).json({
+        error: {
+          code: "no_catalog_for_semantic_type",
+          message: `No catalog declares semantic_type='${semType}' in this workspace.`,
+        },
+      });
+      return;
+    }
+    res.json(row);
+  }),
+);
+
+catalogsRouter.get(
+  "/search",
+  asyncHandler(async (req, res) => {
+    const parsed = SearchQuery.safeParse(req.query);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const db = tenantDb(req);
+    const like = `%${parsed.data.q.toLowerCase()}%`;
+    const restrict = parsed.data.catalog_ids
+      ?.split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    let catalogsQuery = db
+      .selectFrom("core_catalogs_catalogs")
+      .select(["id", "name", "schema", "entry_count"]);
+    if (restrict && restrict.length > 0) {
+      catalogsQuery = catalogsQuery.where("id", "in", restrict);
+    }
+    const catalogs = (await catalogsQuery.execute()).filter((c) => {
+      const s = (c.schema ?? {}) as Record<string, unknown>;
+      if (s.exclude_from_global_search === true) return false;
+      // Apply bindable_to_kinds filter when the caller supplied a
+      // source_kind. Catalogs that don't declare bindings are kept
+      // (workspace-authored catalogs without explicit scoping).
+      if (parsed.data.source_kind && Array.isArray(s.bindable_to_kinds)) {
+        // Declared at all → gate strictly. Empty array means
+        // "binds to nothing" (taxonomies); omit the field entirely
+        // to mean "binds to everything" (legacy / generic catalogs).
+        const kinds = s.bindable_to_kinds as string[];
+        if (!kinds.includes(parsed.data.source_kind)) return false;
+      }
+      return true;
+    });
+    if (catalogs.length === 0) {
+      res.json({ items: [] });
+      return;
+    }
+
+    const results: Array<{
+      id: string;
+      catalog_id: string;
+      catalog_name: string;
+      external_id: string;
+      payload: Record<string, unknown>;
+      title: string;
+      title_column: string;
+    }> = [];
+    // Pull a generous per-catalog slice so client-side ranking has
+    // room: a typed part-number query alphabetically lands between
+    // 30014 and 30019, so a stingy limit risks dropping the exact
+    // hit ("3001") on the floor. 20 is plenty for 6 catalogs.
+    const perCatalogLimit = Math.max(
+      20,
+      Math.ceil(parsed.data.limit / catalogs.length),
+    );
+    await Promise.all(
+      catalogs.map(async (c) => {
+        const s = (c.schema ?? {}) as Record<string, unknown>;
+        const titleColumn = String(s.title_column ?? "name");
+        // Match on title_column OR on the canonical external_id —
+        // both are valid lookups (the user might type a set number or
+        // a name).
+        const rows = await db
+          .selectFrom("core_catalogs_entries")
+          .select(["id", "catalog_id", "external_id", "payload"])
+          .where("catalog_id", "=", c.id)
+          .where(
+            sql<boolean>`(lower(payload->>${titleColumn}) like ${like} or lower(external_id) like ${like})`,
+          )
+          .orderBy(sql<string>`payload->>${titleColumn}` as never)
+          .limit(perCatalogLimit)
+          .execute();
+        for (const r of rows) {
+          const title = String(
+            (r.payload as Record<string, unknown>)[titleColumn] ?? r.external_id,
+          );
+          results.push({
+            id: r.id,
+            catalog_id: r.catalog_id,
+            catalog_name: c.name,
+            external_id: r.external_id,
+            payload: r.payload as Record<string, unknown>,
+            title,
+            title_column: titleColumn,
+          });
+        }
+      }),
+    );
+
+    // Rank: external_id-prefix (the user typed a part #) >
+    // title-prefix > word-start > substring. Alphabetical within a
+    // tier so paging is stable.
+    const q = parsed.data.q.toLowerCase();
+    const rank = (hit: {
+      title: string;
+      external_id: string;
+    }): number => {
+      const t = hit.title.toLowerCase();
+      const eid = hit.external_id.toLowerCase();
+      if (eid === q) return 0;
+      if (eid.startsWith(q)) return 1;
+      if (t.startsWith(q)) return 2;
+      if (t.includes(` ${q}`)) return 3;
+      return 4;
+    };
+    results.sort((a, b) => {
+      const ra = rank(a);
+      const rb = rank(b);
+      if (ra !== rb) return ra - rb;
+      return a.title.localeCompare(b.title);
+    });
+    res.json({ items: results.slice(0, parsed.data.limit) });
   }),
 );
 

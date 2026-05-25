@@ -563,6 +563,16 @@ platformOrgRouter.delete(
 
 // ──────────────────────── field defs (Pillar D-lite) ───────────────
 
+const FieldRenderer = z.enum([
+  "text",
+  "color-hex",
+  "image-url",
+  "url-link",
+  "year",
+  "boolean",
+  "code",
+]);
+
 const FieldDefCreate = z.object({
   entity_kind: z.string(),
   name: z.string().regex(/^[a-z][a-z0-9_]*$/),
@@ -572,6 +582,9 @@ const FieldDefCreate = z.object({
   position: z.number().int().optional(),
   /** When type='text', renders as a dropdown of these choices. */
   choices: z.array(z.string().max(120)).optional(),
+  /** Built-in renderer id for how the value should be drawn on
+   *  detail pages + list rows. Null/omit = plain text. */
+  renderer: FieldRenderer.nullable().optional(),
 }).refine(
   (d) => !d.choices || d.type === "text",
   { message: "choices is only valid for type='text'", path: ["choices"] },
@@ -582,6 +595,7 @@ const FieldDefPatch = z.object({
   required: z.boolean().optional(),
   position: z.number().int().optional(),
   choices: z.array(z.string().max(120)).nullable().optional(),
+  renderer: FieldRenderer.nullable().optional(),
 });
 
 platformOrgRouter.get(
@@ -632,6 +646,7 @@ platformOrgRouter.post(
           choices: parsed.data.choices
             ? (sql`${JSON.stringify(parsed.data.choices)}::jsonb` as unknown as string[])
             : null,
+          renderer: parsed.data.renderer ?? null,
         })
         .returningAll()
         .executeTakeFirstOrThrow();
@@ -679,6 +694,7 @@ platformOrgRouter.patch(
           ? sql`${JSON.stringify(parsed.data.choices)}::jsonb`
           : null;
       }
+      if (parsed.data.renderer !== undefined) updates.renderer = parsed.data.renderer;
       if (Object.keys(updates).length === 0) {
         res.status(400).json({ error: { code: "no_changes", message: "no fields to update" } });
         return;

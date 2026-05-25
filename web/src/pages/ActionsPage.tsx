@@ -26,7 +26,7 @@ import {
 } from "../lib/api";
 import { traitPredicateMatches } from "../lib/trait-match";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { useToast } from "@cobblr/platform-web";
+import { useToast, usePageTitle } from "@cobblr/platform-web";
 
 // The 6 axes, in canonical order. The trait word is the label —
 // it's the vocabulary, deliberately. The `hint` is a genuine
@@ -90,6 +90,7 @@ function predicateSummary(p: ActionAppliesTo): string {
 }
 
 export function ActionsPage() {
+  usePageTitle("Actions");
   const { activeSlug: slug } = useActiveOrg();
   const actions = useQuery({
     queryKey: ["registered-actions", slug],

@@ -7,9 +7,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BarChart3, Copy, ExternalLink, Globe, Plus, Trash2 } from "lucide-react";
 import { ApiError, api, type SavedView, type SurfaceRecord } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
+import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 
 export function SurfacesPage() {
+  usePageTitle("Public surfaces");
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();

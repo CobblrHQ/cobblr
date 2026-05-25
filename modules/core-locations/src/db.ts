@@ -12,6 +12,9 @@ export interface LocationsTable {
   depth: Generated<number>;
   kind: Generated<"container" | "area">;
   metadata: Generated<Record<string, unknown>>;
+  description: string | null;
+  notes: string | null;
+  image_path: string | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }

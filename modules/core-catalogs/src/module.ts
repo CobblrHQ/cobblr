@@ -107,9 +107,17 @@ export default defineModule({
         label: "Match to catalog",
         description:
           "Link this entity to a row in an imported reference catalog. Opens a picker over installed catalogs; on confirm, writes an entity_pairings row with relationship_kind='matches'.",
-        // Any entity can be matched — Lego parts to Rebrickable,
-        // machines to a parts catalog, books to ISBNs, etc.
-        appliesTo: { any: true },
+        // Default to the kinds where catalog matching is meaningful.
+        // Locations / catalogs themselves / bundles / users / org_modules
+        // never want this. Workspaces can broaden via the per-org
+        // `entity_action_org_overrides.applies_to_override` jsonb if
+        // they really need a different kind to be matchable.
+        // Each catalog can further declare `schema.bindable_to_kinds`
+        // to scope WHICH catalogs the picker offers for a given
+        // source kind (e.g. Rebrickable only binds to inventory:part).
+        appliesTo: {
+          kinds: ["inventory:part", "assets:asset", "machines:machine"],
+        },
         // No server-side handler — the click navigates to a picker
         // page that creates the pairing via /pairings on confirm.
         // (v0.2 may add an invokeHandler so wires can auto-match

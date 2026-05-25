@@ -79,6 +79,13 @@ export function FieldDefDetailModal({ open, onClose, slug, fieldDef }: Props) {
               <span className="text-slate-500">user-authored</span>
             )}
           </Row>
+          {fieldDef.renderer && (
+            <Row label="Renderer">
+              <span className="font-mono uppercase tracking-widest text-[10px] text-cobble-600 dark:text-cobble-300">
+                {fieldDef.renderer}
+              </span>
+            </Row>
+          )}
         </dl>
 
         <div className="p-3 rounded-md bg-mortar-50 dark:bg-slate-800/70 text-xs text-slate-600 dark:text-mortar-200">

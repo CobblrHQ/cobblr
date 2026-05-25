@@ -92,12 +92,23 @@ export default defineModule({
         label: "Adjust part stock",
         description:
           "Add or subtract from a part's on-hand qty. Wire it to purchases.order_item.received for auto-bump-on-arrival, or fire it from any other event source. Args: { partId, delta, reason? }.",
-        appliesTo: { any: true },
+        // Tightened from { any: true } to inventory:part-only — wire
+        // can still hit it for any source via target traversal, but
+        // the manual-button surface stays scoped.
+        appliesTo: { kinds: ["inventory:part"] },
         invokeHandler: "inventory.adjust-stock",
         // Wire-driven only — clicking it on an arbitrary entity
         // doesn't make sense; the user has stock-adjust HTTP for
         // direct edits.
         userInvokable: false,
+      },
+      {
+        id: "inventory:disassemble-kit",
+        label: "Disassemble into parts",
+        description:
+          "Expand a kit (an inventory:part matched to a Rebrickable set) into its constituent parts. Reads the rebrickable-inventory-parts BOM catalog, spawns one inventory:part per BOM row, writes a `matches` pairing to each Rebrickable part entry + a `derived-from` pairing back to the kit, and flips the kit's metadata.state to 'parted-out'. Requires the BOM catalog to be loaded (node scripts/seed-rebrickable.mjs --include-bom).",
+        appliesTo: { kinds: ["inventory:part"] },
+        invokeHandler: "inventory.disassemble-kit",
       },
     ],
   },

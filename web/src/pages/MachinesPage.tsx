@@ -12,16 +12,15 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Plus, Search, Tag as TagIcon, Trash2 } from "lucide-react";
+import { ChevronRight, Plus, Printer, Search, Tag as TagIcon, Trash2 } from "lucide-react";
+import { queueLabelsBulk } from "../lib/queue-label";
 import { ApiError, api, type Machine, type OrgModuleListItem, type PlatformFieldDef } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import {
-  CustomFieldsPanel,
+import { CustomFieldsPanel,
   EntityActionsBar,
   Modal,
   useToast,
-  useConfirm,
-} from "@cobblr/platform-web";
+  useConfirm, usePageTitle } from "@cobblr/platform-web";
 import {
   BulkActionBar,
   EntityThumb,
@@ -35,6 +34,7 @@ import { LocationPicker } from "../components/LocationPicker";
 const ENTITY_KIND = "machines:machine";
 
 export function MachinesPage() {
+  usePageTitle("Machines");
   const { activeSlug } = useActiveOrg();
   const navigate = useNavigate();
   const { id } = useParams<{ id?: string }>();
@@ -322,6 +322,30 @@ export function MachinesPage() {
               className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-cobble-600 hover:text-cobble-700"
             >
               <TagIcon size={12} /> Tag
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                const inputs = Array.from(selected)
+                  .map((id) => allRows.find((m) => m.id === id))
+                  .filter((m): m is NonNullable<typeof m> => !!m)
+                  .map((m) => ({
+                    slug: activeSlug,
+                    entityKind: "machines:machine",
+                    entityId: m.id,
+                    description: m.name,
+                  }));
+                const { ok, fail } = await queueLabelsBulk(inputs);
+                if (fail === 0) {
+                  toastM.success(`Queued ${ok} label${ok === 1 ? "" : "s"}.`);
+                } else {
+                  toastM.error(`Queued ${ok}; ${fail} failed.`);
+                }
+                setSelected(new Set());
+              }}
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-cobble-600 hover:text-cobble-700"
+            >
+              <Printer size={12} /> Print labels
             </button>
             <button
               type="button"

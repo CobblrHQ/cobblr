@@ -7,8 +7,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { useInventory } from "./context";
 import { InventoryApiError } from "./api";
+import { usePageTitle } from "@cobblr/platform-web";
 
 export function SettingsPage() {
+  usePageTitle("Inventory settings");
   return (
     <div className="grid gap-5 sm:grid-cols-2">
       <CategoriesCard />

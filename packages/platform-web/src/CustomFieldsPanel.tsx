@@ -13,17 +13,36 @@ import { useMemo, useState, type FocusEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { usePlatformWeb } from "./context";
 import type { PlatformFieldDef } from "./types";
+import { FieldRenderer } from "./FieldRenderer";
 
 interface Props {
   entityKind: string;
   values: Record<string, unknown>;
   onCommit: (name: string, value: unknown) => void;
   className?: string;
+  /** Secondary value source — used when the local `values[name]` is
+   *  blank. The typical source is the payload of a catalog entry the
+   *  entity matches: e.g. an inventory:part with no local `year` set
+   *  falls back to the Rebrickable sets entry's `year` field.
+   *
+   *  Visually, fallback values are shown in italic + with a "from
+   *  {fallbackLabel}" hint so the user knows it's not their own data.
+   *  Editing the field commits the value locally — no in-place mutation
+   *  of the fallback source. */
+  fallbackValues?: Record<string, unknown>;
+  fallbackLabel?: string;
 }
 
 const isBlank = (v: unknown) => v === null || v === undefined || v === "";
 
-export function CustomFieldsPanel({ entityKind, values, onCommit, className }: Props) {
+export function CustomFieldsPanel({
+  entityKind,
+  values,
+  onCommit,
+  className,
+  fallbackValues,
+  fallbackLabel,
+}: Props) {
   const { api, orgSlug } = usePlatformWeb();
   const { data } = useQuery({
     queryKey: ["platform-field-defs", orgSlug, entityKind],
@@ -44,15 +63,21 @@ export function CustomFieldsPanel({ entityKind, values, onCommit, className }: P
   // field not contributed by a module (org-authored / bundle fields
   // the user opted into). Empty module-contributed fields collapse
   // behind a toggle.
+  // Treat a field with a fallback value as not-empty — keeps catalog-
+  // sourced data out of the "collapse if blank" bucket so it's
+  // actually visible to the user.
+  const hasValueOrFallback = (name: string) =>
+    !isBlank(values[name]) || !isBlank(fallbackValues?.[name]);
   const { shown, hidden } = useMemo(() => {
     const shown: PlatformFieldDef[] = [];
     const hidden: PlatformFieldDef[] = [];
     for (const f of fields) {
-      if (!f.source_module || !isBlank(values[f.name])) shown.push(f);
+      if (!f.source_module || hasValueOrFallback(f.name)) shown.push(f);
       else hidden.push(f);
     }
     return { shown, hidden };
-  }, [fields, values]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fields, values, fallbackValues]);
 
   if (fields.length === 0) return null;
   const visible = showAll ? fields : shown;
@@ -73,6 +98,8 @@ export function CustomFieldsPanel({ entityKind, values, onCommit, className }: P
               key={f.id}
               def={f}
               value={values[f.name]}
+              fallbackValue={fallbackValues?.[f.name]}
+              fallbackLabel={fallbackLabel}
               onCommit={(v) => onCommit(f.name, v)}
             />
           ))}
@@ -101,29 +128,47 @@ export function CustomFieldsPanel({ entityKind, values, onCommit, className }: P
 function FieldRow({
   def,
   value,
+  fallbackValue,
+  fallbackLabel,
   onCommit,
 }: {
   def: PlatformFieldDef;
   value: unknown;
+  fallbackValue?: unknown;
+  fallbackLabel?: string;
   onCommit: (v: unknown) => void;
 }) {
   // Dropdown branch — type='text' with choices.
   if (def.type === "text" && def.choices && def.choices.length > 0) {
     return <ChoiceRow def={def} value={value} onCommit={onCommit} />;
   }
-  return <PlainRow def={def} value={value} onCommit={onCommit} />;
+  return (
+    <PlainRow
+      def={def}
+      value={value}
+      fallbackValue={fallbackValue}
+      fallbackLabel={fallbackLabel}
+      onCommit={onCommit}
+    />
+  );
 }
 
 function PlainRow({
   def,
   value,
+  fallbackValue,
+  fallbackLabel,
   onCommit,
 }: {
   def: PlatformFieldDef;
   value: unknown;
+  fallbackValue?: unknown;
+  fallbackLabel?: string;
   onCommit: (v: unknown) => void;
 }) {
   const initial = value == null ? "" : String(value);
+  const usingFallback = isBlank(value) && !isBlank(fallbackValue);
+  const fallbackStr = fallbackValue == null ? "" : String(fallbackValue);
   const [draft, setDraft] = useState(initial);
   function commit(e: FocusEvent<HTMLInputElement>) {
     const next = e.target.value;
@@ -136,23 +181,49 @@ function PlainRow({
       onCommit(next === "" ? null : next);
     }
   }
+  // When the field def declares a renderer, show a live preview
+  // next to the input so the user sees "0033B2" → blue swatch in
+  // real time. The input keeps the raw value; the renderer reads
+  // the current draft so the preview updates on every keystroke.
+  const showPreview = !!def.renderer && def.renderer !== "text";
   return (
     <label className="block">
       <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
         {def.display_label}
         {def.required ? <span className="text-ember-500"> *</span> : null}
+        {usingFallback && (
+          <span className="ml-2 italic text-cobble-500 normal-case tracking-normal">
+            from {fallbackLabel ?? "match"}
+          </span>
+        )}
       </span>
-      <input
-        type={def.type === "number" ? "number" : def.type === "date" ? "date" : "text"}
-        defaultValue={initial}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-        }}
-        className="input"
-        data-draft={draft}
-      />
+      <div className={showPreview ? "flex items-center gap-2" : ""}>
+        <input
+          type={def.type === "number" ? "number" : def.type === "date" ? "date" : "text"}
+          defaultValue={initial}
+          placeholder={usingFallback ? fallbackStr : undefined}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          }}
+          className={
+            "input flex-1 " +
+            (usingFallback
+              ? "italic placeholder:text-cobble-500 placeholder:not-italic"
+              : "")
+          }
+          data-draft={draft}
+        />
+        {showPreview && (
+          <FieldRenderer
+            fieldName={def.name}
+            value={draft || initial || fallbackStr}
+            renderer={def.renderer ?? undefined}
+            size="inline"
+          />
+        )}
+      </div>
     </label>
   );
 }

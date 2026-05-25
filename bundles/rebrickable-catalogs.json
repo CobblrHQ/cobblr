@@ -1,0 +1,158 @@
+{
+  "manifest": {
+    "id": "cobblr.community.rebrickable-catalogs",
+    "version": "0.5.0",
+    "name": "Rebrickable catalogs",
+    "description": "Installs the six Rebrickable reference catalogs (themes, part categories, colors, parts, sets, minifigs) with pre-configured renderers: color swatches for the colors palette, image thumbs for sets + minifigs, year columns formatted as years. Row data is loaded separately via the CSV importer or scripts/seed-rebrickable.mjs.",
+    "author": "Cobblr community",
+    "readme_md": "# Rebrickable catalogs\n\nSix reference catalogs sourced from [Rebrickable's public CSV dumps](https://rebrickable.com/downloads/). The bundle ships the **schema config only** \u2014 id columns, title columns, image columns, hero swatch for the colors palette, and the right renderer per field.\n\n## Catalogs installed\n\n| Catalog | Rows | Notes |\n|---|---|---|\n| Themes | ~500 | Bionicle, Star Wars, City, etc. |\n| Part categories | ~75 | Bricks, plates, slopes, tiles, \u2026 |\n| Colors | ~280 | Big swatch on every card via `hero_field=rgb` + `hero_renderer=color-hex`. |\n| Parts | ~62,000 | Individual LEGO elements. Image enrichment via `inventory_parts.csv.gz` (see seeder). |\n| Sets | ~27,000 | Has `img_url` from Rebrickable's CDN. |\n| Minifigs | ~17,000 | Has `img_url`; broken URLs fall back to a placeholder. |\n\n## Loading the data\n\nThis bundle is the *configuration*, not the rows. To load rows:\n\n```bash\nnode scripts/seed-rebrickable.mjs\n```\n\nThe seeder logs in as the demo user, finds the workspace with this bundle installed, and CSV-imports each catalog from Rebrickable's CDN. It runs idempotently \u2014 re-running refreshes the rows.",
+    "requires": [],
+    "catalogs": [
+      {
+        "external_id": "rebrickable-themes",
+        "name": "Rebrickable themes",
+        "description": "LEGO themes \u2014 Bionicle, Star Wars, City, Town, Castle, etc. Reference taxonomy; not directly bindable to inventory items (sets reference themes).",
+        "source_url": "https://cdn.rebrickable.com/media/downloads/themes.csv.gz",
+        "schema": {
+          "id_column": "id",
+          "title_column": "name",
+          "bindable_to_kinds": [],
+          "semantic_type": "lego.theme"
+        }
+      },
+      {
+        "external_id": "rebrickable-part-categories",
+        "name": "Rebrickable part categories",
+        "description": "Part categories \u2014 bricks, plates, slopes, tiles, minifig parts, etc. Reference taxonomy; not directly bindable.",
+        "source_url": "https://cdn.rebrickable.com/media/downloads/part_categories.csv.gz",
+        "schema": {
+          "id_column": "id",
+          "title_column": "name",
+          "bindable_to_kinds": [],
+          "semantic_type": "lego.part-category"
+        }
+      },
+      {
+        "external_id": "rebrickable-colors",
+        "name": "Rebrickable colors",
+        "description": "Every LEGO color Rebrickable tracks. The card renders a big swatch in the image slot via hero_field=rgb + hero_renderer=color-hex.",
+        "source_url": "https://cdn.rebrickable.com/media/downloads/colors.csv.gz",
+        "schema": {
+          "id_column": "id",
+          "title_column": "name",
+          "hero_field": "rgb",
+          "hero_renderer": "color-hex",
+          "field_renderers": {
+            "is_trans": "boolean"
+          },
+          "field_labels": {
+            "is_trans": "Transparent",
+            "num_parts": "Used in parts",
+            "num_sets": "Used in sets",
+            "y1": "First seen",
+            "y2": "Last seen"
+          },
+          "bindable_to_kinds": [],
+          "semantic_type": "lego.color"
+        }
+      },
+      {
+        "external_id": "rebrickable-parts",
+        "name": "Rebrickable parts",
+        "description": "Individual LEGO parts (~62k rows). image_column points at img_url, populated by the seeder from inventory_parts.csv.gz.",
+        "source_url": "https://cdn.rebrickable.com/media/downloads/parts.csv.gz",
+        "schema": {
+          "id_column": "part_num",
+          "title_column": "name",
+          "image_column": "img_url",
+          "field_labels": {
+            "part_num": "Part number",
+            "part_cat_id": "Category",
+            "part_material": "Material",
+            "img_url": "Image"
+          },
+          "bindable_to_kinds": [
+            "inventory:part"
+          ],
+          "semantic_type": "lego.part"
+        }
+      },
+      {
+        "external_id": "rebrickable-sets",
+        "name": "Rebrickable sets",
+        "description": "LEGO sets (~27k rows). Each has an img_url on Rebrickable's CDN.",
+        "source_url": "https://cdn.rebrickable.com/media/downloads/sets.csv.gz",
+        "schema": {
+          "id_column": "set_num",
+          "title_column": "name",
+          "image_column": "img_url",
+          "field_renderers": {
+            "year": "year",
+            "img_url": "url-link"
+          },
+          "field_labels": {
+            "set_num": "Set number",
+            "theme_id": "Theme",
+            "num_parts": "Pieces",
+            "year": "Year",
+            "img_url": "Image"
+          },
+          "bindable_to_kinds": [
+            "inventory:part"
+          ],
+          "semantic_type": "lego.set"
+        }
+      },
+      {
+        "external_id": "rebrickable-minifigs",
+        "name": "Rebrickable minifigs",
+        "description": "Minifigure catalog (~17k rows). Some img_urls 404 on the CDN \u2014 those degrade to a placeholder.",
+        "source_url": "https://cdn.rebrickable.com/media/downloads/minifigs.csv.gz",
+        "schema": {
+          "id_column": "fig_num",
+          "title_column": "name",
+          "image_column": "img_url",
+          "field_renderers": {
+            "img_url": "url-link"
+          },
+          "field_labels": {
+            "fig_num": "Figure number",
+            "num_parts": "Pieces",
+            "img_url": "Image"
+          },
+          "bindable_to_kinds": [
+            "inventory:part"
+          ],
+          "semantic_type": "lego.minifig"
+        }
+      },
+      {
+        "external_id": "rebrickable-inventory-parts",
+        "name": "Rebrickable set inventories",
+        "description": "The set BOM: every (set_inventory, part_num, color_id) tuple with quantity + img_url. ~5M rows. Powers the 'what parts does set X contain' lookup and the 'what am I still missing' restoration workflow. Excluded from the global quick-add typeahead because the row count would drown out the real catalogs. The seeder synthesises a row_id = '<inventory_id>-<part_num>-<color_id>-<is_spare>' column on import so each tuple gets its own external_id.",
+        "source_url": "https://cdn.rebrickable.com/media/downloads/inventory_parts.csv.gz",
+        "schema": {
+          "id_column": "row_id",
+          "title_column": "part_num",
+          "image_column": "img_url",
+          "field_renderers": {
+            "img_url": "url-link",
+            "is_spare": "boolean"
+          },
+          "field_labels": {
+            "row_id": "Row ID",
+            "inventory_id": "Set inventory",
+            "set_num": "Set number",
+            "part_num": "Part number",
+            "color_id": "Color",
+            "is_spare": "Spare",
+            "img_url": "Image"
+          },
+          "exclude_from_global_search": true,
+          "bindable_to_kinds": [],
+          "semantic_type": "lego.bom"
+        }
+      }
+    ]
+  }
+}

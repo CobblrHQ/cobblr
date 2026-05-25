@@ -10,7 +10,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Eye, EyeOff, Pencil, RotateCcw } from "lucide-react";
-import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
+import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 import {
   ApiError,
   api,
@@ -19,6 +19,7 @@ import {
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
 export function PresentationPage() {
+  usePageTitle("Presentation");
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();

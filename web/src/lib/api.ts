@@ -41,13 +41,20 @@ async function request<T>(
   });
 
   // Always try to parse JSON — our error responses are always JSON.
-  // 204s have no body; handle that explicitly.
+  // 204 is no-content; some 201s also send empty bodies (e.g.
+  // /role-assignments). Treat any successful empty body as void.
   if (res.status === 204) return undefined as T;
+  const contentLength = res.headers.get("content-length");
+  if (res.ok && contentLength === "0") return undefined as T;
 
   let parsed: unknown;
   try {
     parsed = await res.json();
   } catch {
+    // Empty-body success → treat as void rather than failing. Some
+    // POST endpoints return 201 with no body (no content-length set
+    // because the server didn't write one).
+    if (res.ok) return undefined as T;
     throw new ApiError(res.status, "non_json", `Non-JSON response (${res.status})`);
   }
 
@@ -69,6 +76,13 @@ export interface SessionUser {
   id: string;
   email: string;
   display_name: string;
+  /** True when an admin minted this account with a temp password. UI
+   *  redirects to /me/force-password-reset until cleared. PATCH
+   *  /me/password clears it. */
+  must_reset_password: boolean;
+  /** True when this user's email is in the platform's
+   *  SUPERADMIN_EMAILS env var. Unlocks the /super-admin/* shell. */
+  is_platform_admin?: boolean;
 }
 
 export interface OrgMembership {
@@ -854,6 +868,69 @@ export const api = {
       `/orgs/${slug}/modules/core-integrations/inbound-tokens/${id}`,
     ),
 
+  // core-scan — barcode + photo identification, generalized. See
+  // docs/design-decisions/core-scan.md.
+  scanBarcode: (
+    slug: string,
+    body: {
+      barcode?: string;
+      source_kind?: "barcode" | "photo" | "url" | "receipt";
+      source_url?: string;
+      image_file_id?: string;
+      scan_batch_id?: string;
+      scan_area?: string;
+      enrich_ms?: number;
+    },
+  ) =>
+    request<ScanInboxItem>("POST", `/orgs/${slug}/modules/core-scan/scan`, body),
+  listScanInbox: (
+    slug: string,
+    q: { status?: "pending" | "enriching" | "resolved" | "discarded"; batch_id?: string } = {},
+  ) => {
+    const params = new URLSearchParams();
+    if (q.status) params.set("status", q.status);
+    if (q.batch_id) params.set("batch_id", q.batch_id);
+    const qs = params.toString();
+    return request<{ items: ScanInboxItem[] }>(
+      "GET",
+      `/orgs/${slug}/modules/core-scan/inbox${qs ? "?" + qs : ""}`,
+    );
+  },
+  getScanItem: (slug: string, id: string) =>
+    request<ScanInboxItem>("GET", `/orgs/${slug}/modules/core-scan/inbox/${id}`),
+  confirmScanItem: (
+    slug: string,
+    id: string,
+    body: {
+      target_module: string;
+      target_kind: string;
+      name?: string;
+      location_id?: string;
+      extras?: Record<string, unknown>;
+    },
+  ) =>
+    request<{ item: ScanInboxItem; created: { id: string } }>(
+      "POST",
+      `/orgs/${slug}/modules/core-scan/inbox/${id}/confirm`,
+      body,
+    ),
+  discardScanItem: (slug: string, id: string) =>
+    request<ScanInboxItem>(
+      "POST",
+      `/orgs/${slug}/modules/core-scan/inbox/${id}/discard`,
+    ),
+  rerunScanAi: (slug: string, id: string) =>
+    request<ScanInboxItem>(
+      "POST",
+      `/orgs/${slug}/modules/core-scan/inbox/${id}/rerun-ai`,
+    ),
+  createScanBatch: (slug: string) =>
+    request<{ id: string }>(
+      "POST",
+      `/orgs/${slug}/modules/core-scan/batches`,
+      {},
+    ),
+
   // core-ai — provider config + capability defaults + usage. See
   // docs/design-decisions/core-ai.md.
   listAiProviderCatalogue: (slug: string) =>
@@ -977,6 +1054,58 @@ export const api = {
       "DELETE",
       `/orgs/${slug}/modules/core-catalogs/catalogs/${id}`,
     ),
+
+  // core-templates — per-workspace entity templates. See
+  // docs/homebox-parity-report.md punch-list item #2.
+  listTemplates: (slug: string, targetKind?: string) => {
+    const qs = targetKind ? `?target_kind=${encodeURIComponent(targetKind)}` : "";
+    return request<{ items: EntityTemplate[] }>(
+      "GET",
+      `/orgs/${slug}/modules/core-templates/templates${qs}`,
+    );
+  },
+  getTemplate: (slug: string, id: string) =>
+    request<EntityTemplate>(
+      "GET",
+      `/orgs/${slug}/modules/core-templates/templates/${id}`,
+    ),
+  createTemplate: (
+    slug: string,
+    body: {
+      target_kind: string;
+      name: string;
+      description?: string | null;
+      defaults?: Record<string, unknown>;
+      default_tags?: string[];
+      position?: number;
+    },
+  ) =>
+    request<EntityTemplate>(
+      "POST",
+      `/orgs/${slug}/modules/core-templates/templates`,
+      body,
+    ),
+  updateTemplate: (slug: string, id: string, body: Partial<EntityTemplate>) =>
+    request<EntityTemplate>(
+      "PATCH",
+      `/orgs/${slug}/modules/core-templates/templates/${id}`,
+      body,
+    ),
+  deleteTemplate: (slug: string, id: string) =>
+    request<void>(
+      "DELETE",
+      `/orgs/${slug}/modules/core-templates/templates/${id}`,
+    ),
+  instantiateTemplate: <T = { id: string }>(
+    slug: string,
+    id: string,
+    overrides?: Record<string, unknown>,
+  ) =>
+    request<T>(
+      "POST",
+      `/orgs/${slug}/modules/core-templates/templates/${id}/instantiate`,
+      { overrides },
+    ),
   importCatalogCsv: (
     slug: string,
     id: string,
@@ -1002,6 +1131,146 @@ export const api = {
       `/orgs/${slug}/modules/core-catalogs/catalogs/${catalogId}/entries${trailing}`,
     );
   },
+  /** Cross-catalog search — single call, results from every installed
+   *  catalog in the workspace (except those with
+   *  `schema.exclude_from_global_search: true`). Used by the catalog-
+   *  aware quick-add typeahead on entity create forms. */
+  searchCatalogs: (
+    slug: string,
+    params: { q: string; limit?: number; catalog_ids?: string[] },
+  ) => {
+    const qs = new URLSearchParams({ q: params.q });
+    if (params.limit) qs.set("limit", String(params.limit));
+    if (params.catalog_ids?.length) qs.set("catalog_ids", params.catalog_ids.join(","));
+    return request<{ items: CatalogSearchHit[] }>(
+      "GET",
+      `/orgs/${slug}/modules/core-catalogs/catalogs/search?${qs}`,
+    );
+  },
+
+  // Member portal — config (branding + pinned views) + per-action
+  // capability grants. See docs/design-decisions/member-portal-and-
+  // permissions.md.
+  getPortalConfig: (slug: string) =>
+    request<{ config: PortalConfig; org_name: string }>(
+      "GET",
+      `/orgs/${slug}/portal-config`,
+    ),
+  updatePortalConfig: (slug: string, body: PortalConfig) =>
+    request<{ config: PortalConfig }>(
+      "PUT",
+      `/orgs/${slug}/portal-config`,
+      body,
+    ),
+  listPermissionMatrix: (slug: string) =>
+    request<{ members: PermissionsMember[] }>(
+      "GET",
+      `/orgs/${slug}/permissions`,
+    ),
+  grantCapability: (slug: string, user_id: string, action_id: string) =>
+    request<unknown>("POST", `/orgs/${slug}/permissions/grants`, {
+      user_id,
+      action_id,
+    }),
+  revokeCapability: (slug: string, user_id: string, action_id: string) =>
+    request<void>("DELETE", `/orgs/${slug}/permissions/grants`, {
+      user_id,
+      action_id,
+    }),
+  listGrantableActions: (slug: string) =>
+    request<{ items: GrantableAction[] }>(
+      "GET",
+      `/orgs/${slug}/permissions/grantable-actions`,
+    ),
+  getMyCapabilities: (slug: string) =>
+    request<{ role: string; grants: string[] }>(
+      "GET",
+      `/orgs/${slug}/me/capabilities`,
+    ),
+
+  // Admin-creates-user — see api/src/routes/admin-users.ts. Returns
+  // the temp password ONCE; the UI has to capture it now or call
+  // regen later.
+  adminCreateUser: (
+    slug: string,
+    body: { email: string; display_name: string; role: "owner" | "admin" | "member" | "guest" },
+  ) =>
+    request<{
+      user: { id: string; email: string; display_name: string; role: string; must_reset_password: boolean };
+      temp_password: string;
+      instructions: string;
+    }>("POST", `/orgs/${slug}/admin/users`, body),
+  adminRegenPassword: (slug: string, user_id: string) =>
+    request<{ temp_password: string; instructions: string }>(
+      "POST",
+      `/orgs/${slug}/admin/users/regen-password`,
+      { user_id },
+    ),
+
+  // Custom roles (S2): workspace-defined named bundles of
+  // capabilities. See member-portal-and-permissions.md §7.
+  listCustomRoles: (slug: string) =>
+    request<{ items: CustomRole[] }>("GET", `/orgs/${slug}/roles`),
+  createCustomRole: (
+    slug: string,
+    body: { name: string; description?: string; capabilities?: string[] },
+  ) =>
+    request<{ role: { id: string }; capabilities: string[] }>(
+      "POST",
+      `/orgs/${slug}/roles`,
+      body,
+    ),
+  updateCustomRole: (
+    slug: string,
+    id: string,
+    body: { name?: string; description?: string | null; capabilities?: string[] },
+  ) => request<void>("PATCH", `/orgs/${slug}/roles/${id}`, body),
+  deleteCustomRole: (slug: string, id: string) =>
+    request<void>("DELETE", `/orgs/${slug}/roles/${id}`),
+  assignCustomRole: (slug: string, user_id: string, role_id: string) =>
+    request<void>("POST", `/orgs/${slug}/role-assignments`, { user_id, role_id }),
+  unassignCustomRole: (slug: string, user_id: string, role_id: string) =>
+    request<void>("DELETE", `/orgs/${slug}/role-assignments`, { user_id, role_id }),
+
+  // Super-admin (platform operator) — gated by SUPERADMIN_EMAILS.
+  // The web shell renders /super-admin/* only when user.is_platform_admin.
+  superAdminOverview: () =>
+    request<{
+      orgs_count: number;
+      users_count: number;
+      active_users_7d: number;
+      activity_24h: number;
+      capability_grants: number;
+      bundles_installed: number;
+    }>("GET", `/super-admin/overview`),
+  superAdminWorkspaces: () =>
+    request<{ items: SuperAdminWorkspace[] }>(
+      "GET",
+      `/super-admin/workspaces`,
+    ),
+  superAdminUsers: () =>
+    request<{ items: SuperAdminUser[] }>("GET", `/super-admin/users`),
+  superAdminModules: () =>
+    request<{ items: SuperAdminModuleRow[] }>("GET", `/super-admin/modules`),
+  superAdminActivity: (params?: { limit?: number; org?: string; user?: string; action?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.limit) qs.set("limit", String(params.limit));
+    if (params?.org) qs.set("org", params.org);
+    if (params?.user) qs.set("user", params.user);
+    if (params?.action) qs.set("action", params.action);
+    const tail = qs.toString() ? `?${qs}` : "";
+    return request<{ items: SuperAdminActivityRow[] }>(
+      "GET",
+      `/super-admin/activity${tail}`,
+    );
+  },
+  superAdminHealth: () =>
+    request<{
+      db: { ok: boolean; latency_ms: number };
+      activity_1h: number;
+      backup: { ok: boolean | null; note: string };
+      timestamp: string;
+    }>("GET", `/super-admin/health`),
 
   // core-locations — workspace-wide tree of physical places. Anything
   // with a `location_id` field (machines, assets, parts) points at
@@ -1175,9 +1444,65 @@ export interface Location {
   depth: number;
   kind: "area" | "container";
   metadata: Record<string, unknown>;
+  description: string | null;
+  notes: string | null;
+  image_path: string | null;
   created_at: string;
   updated_at: string;
 }
+
+export interface ScanInboxItem {
+  id: string;
+  status: "pending" | "enriching" | "resolved" | "discarded";
+  source_kind: "barcode" | "photo" | "url" | "receipt";
+  barcode_text: string | null;
+  source_url: string | null;
+  image_file_id: string | null;
+  catalog_image_file_id: string | null;
+  catalog_image_url: string | null;
+  suggested_name: string | null;
+  suggested_manufacturer: string | null;
+  suggested_sku: string | null;
+  suggested_metadata: Record<string, unknown>;
+  ai_notes: string | null;
+  ai_confidence: string | null;
+  ai_suggested_at: string | null;
+  target_module: string | null;
+  target_kind: string | null;
+  target_entity_id: string | null;
+  target_location_id: string | null;
+  scan_batch_id: string | null;
+  scan_area: string | null;
+  quantity: number;
+  created_at: string;
+  updated_at: string;
+  resolved_at: string | null;
+}
+
+export interface EntityTemplate {
+  id: string;
+  target_kind: string;
+  name: string;
+  description: string | null;
+  defaults: Record<string, unknown>;
+  default_tags: string[];
+  position: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Built-in renderers Cobblr's web UI knows how to draw against a
+ *  catalog entry's `payload[fieldName]`. Catalogs (and later: entity
+ *  kinds + bundle presentation overrides) declare which renderer to
+ *  use per field via CatalogSchema.field_renderers. */
+export type CatalogFieldRenderer =
+  | "text"        // default — String(value)
+  | "color-hex"   // "0033B2" → swatch + uppercase hex
+  | "image-url"   // URL → thumbnail
+  | "url-link"    // URL → clickable link
+  | "year"        // 1965 → "1965"
+  | "boolean"     // "True"/"true"/1/0 → ✓ / ✕
+  | "code";       // monospace + bg, for SKUs / model numbers
 
 export interface CatalogSchema {
   id_column?: string;
@@ -1185,6 +1510,24 @@ export interface CatalogSchema {
   image_column?: string;
   subtitle_column?: string;
   description_column?: string;
+  field_renderers?: Record<string, CatalogFieldRenderer>;
+  /** Pretty labels for payload keys — `{ is_trans: "Transparent" }`.
+   *  Falls back to the raw key when not set. */
+  field_labels?: Record<string, string>;
+  /** Which entity kinds this catalog is meaningful to match against.
+   *  Omitted ⇒ catalog appears in the picker for every source kind
+   *  the action applies to. */
+  bindable_to_kinds?: string[];
+  /** Stable semantic identifier — e.g. "lego.set", "mcmaster.part".
+   *  Lets other modules look up "the canonical sets catalog" without
+   *  hardcoding a bundle id. See 2026-05-25-audit.md S5. */
+  semantic_type?: string;
+  /** Replaces the card's image slot with a renderer drawing
+   *  `payload[hero_field]`. E.g. Rebrickable colors set
+   *  hero_field=rgb + hero_renderer=color-hex → cards show big
+   *  color swatches where the photo would be. */
+  hero_field?: string;
+  hero_renderer?: CatalogFieldRenderer;
 }
 
 export interface Catalog {
@@ -1209,6 +1552,18 @@ export interface CatalogEntry {
   updated_at: string;
 }
 
+/** Result row from /catalogs/search — denormalised so the typeahead
+ *  can render `<title> · <catalog_name>` without a second lookup. */
+export interface CatalogSearchHit {
+  id: string;
+  catalog_id: string;
+  catalog_name: string;
+  external_id: string;
+  payload: Record<string, unknown>;
+  title: string;
+  title_column: string;
+}
+
 export interface PairingItem {
   id: string;
   org_id: string;
@@ -1221,6 +1576,88 @@ export interface PairingItem {
   metadata: Record<string, unknown>;
   created_by: string | null;
   created_at: string;
+}
+
+export interface PortalConfig {
+  display_name?: string;
+  logo_path?: string | null;
+  theme?: "light" | "dark" | "auto";
+  pinned_views: string[];
+  welcome_markdown?: string;
+}
+
+export interface PermissionsMember {
+  id: string;
+  email: string;
+  display_name: string;
+  role: "owner" | "admin" | "member" | "guest";
+  grants: string[];
+  /** Custom-role assignments — array of workspace_roles.id values. */
+  custom_role_ids: string[];
+}
+
+export interface GrantableAction {
+  action_id: string;
+  label: string;
+  description: string;
+}
+
+export interface CustomRole {
+  id: string;
+  name: string;
+  description: string | null;
+  created_at: string;
+  capabilities: string[];
+  member_count: number;
+}
+
+export interface SuperAdminWorkspace {
+  id: string;
+  name: string;
+  slug: string;
+  plan: string;
+  created_at: string;
+  member_count: number;
+  last_activity_at: string | null;
+  owner: { id: string; email: string; display_name: string } | null;
+}
+
+export interface SuperAdminUser {
+  id: string;
+  email: string;
+  display_name: string;
+  active: boolean;
+  must_reset_password: boolean;
+  created_at: string;
+  last_login_at: string | null;
+  orgs: Array<{ org_id: string; org_name: string; org_slug: string; role: string }>;
+}
+
+export interface SuperAdminModuleRow {
+  module_name: string;
+  workspace_count: number;
+  workspaces: Array<{
+    org_id: string;
+    org_name: string;
+    org_slug: string;
+    version: string;
+    last_migration: string | null;
+  }>;
+}
+
+export interface SuperAdminActivityRow {
+  id: string;
+  action: string;
+  module_name: string | null;
+  entity_type: string | null;
+  entity_id: string | null;
+  diff: unknown;
+  occurred_at: string;
+  auth_method: string;
+  org_name: string | null;
+  org_slug: string | null;
+  user_email: string | null;
+  user_display_name: string | null;
 }
 
 export interface WorkspaceLinkItem {
@@ -1556,6 +1993,7 @@ export interface PlatformFieldDef {
   bundle_id: string | null;
   source_module: string | null;
   choices: string[] | null;
+  renderer: CatalogFieldRenderer | null;
   created_at: string;
 }
 

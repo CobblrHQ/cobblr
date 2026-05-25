@@ -10,9 +10,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { File as FileIcon, Trash2, Upload } from "lucide-react";
 import { api, type FileRecord } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { useToast, useConfirm } from "@cobblr/platform-web";
+import { useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 
 export function FilesPage() {
+  usePageTitle("Files");
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();

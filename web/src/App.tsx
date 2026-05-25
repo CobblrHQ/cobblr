@@ -7,6 +7,7 @@
 // imports its UI from "@cobblr/<name>/ui"; the host wires it under
 // /<module>/* and the module's own internal routes take over.
 
+import { lazy, Suspense } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { PlatformWebProvider } from "@cobblr/platform-web";
 import { InventoryUI } from "@cobblr/inventory/ui";
@@ -16,40 +17,67 @@ import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { ActiveOrgProvider, useActiveOrg } from "./auth/ActiveOrgContext";
 import { AuthPage } from "./pages/AuthPage";
 import { Dashboard } from "./pages/Dashboard";
-import { BindingsPage } from "./pages/BindingsPage";
-import { ActionsPage } from "./pages/ActionsPage";
-import { BundlesPage } from "./pages/BundlesPage";
-import { FieldsPage } from "./pages/FieldsPage";
 import { InviteAcceptPage } from "./pages/InviteAcceptPage";
-import { MeActivityPage } from "./pages/MeActivityPage";
-import { MeNotificationsPage } from "./pages/MeNotificationsPage";
-import { MeProfilePage } from "./pages/MeProfilePage";
 import { PublicSurfacePage } from "./pages/PublicSurfacePage";
-import { ApiTokensPage } from "./pages/ApiTokensPage";
-import { ActivityPage } from "./pages/ActivityPage";
+// Eager: nav-linked pages users hit from the dashboard frequently.
 import { MachinesPage } from "./pages/MachinesPage";
 import { AssetsPage } from "./pages/AssetsPage";
 import { PurchasesPage } from "./pages/PurchasesPage";
-import { ConfigurationPage } from "./pages/ConfigurationPage";
+import { SearchPage } from "./pages/SearchPage";
+import { TagsPage } from "./pages/TagsPage";
 import { FilesPage } from "./pages/FilesPage";
 import { ViewsPage } from "./pages/ViewsPage";
-import { TagsPage } from "./pages/TagsPage";
-import { SurfacesPage } from "./pages/SurfacesPage";
-import { HealthPage } from "./pages/HealthPage";
-import { SearchPage } from "./pages/SearchPage";
-import { OpenApiPage } from "./pages/OpenApiPage";
-import { QueuePage } from "./pages/QueuePage";
-import { LinksPage } from "./pages/LinksPage";
-import { LocationsPage } from "./pages/LocationsPage";
-import { CatalogsPage } from "./pages/CatalogsPage";
-import { CatalogDetailPage } from "./pages/CatalogDetailPage";
-import { CatalogMatchPage } from "./pages/CatalogMatchPage";
-import { PresentationPage } from "./pages/PresentationPage";
-import { IntegrationsPage } from "./pages/IntegrationsPage";
-import { AiPage } from "./pages/AiPage";
+import { ConfigurationPage } from "./pages/ConfigurationPage";
+// Lazy: rarely-visited admin / drill-down pages. Splitting these
+// out keeps the dashboard's initial bundle smaller. Each becomes
+// its own chunk; the chunk loads on first navigation.
+const BindingsPage = lazy(() => import("./pages/BindingsPage").then((m) => ({ default: m.BindingsPage })));
+const ActionsPage = lazy(() => import("./pages/ActionsPage").then((m) => ({ default: m.ActionsPage })));
+const BundlesPage = lazy(() => import("./pages/BundlesPage").then((m) => ({ default: m.BundlesPage })));
+const FieldsPage = lazy(() => import("./pages/FieldsPage").then((m) => ({ default: m.FieldsPage })));
+const MeActivityPage = lazy(() => import("./pages/MeActivityPage").then((m) => ({ default: m.MeActivityPage })));
+const MeNotificationsPage = lazy(() => import("./pages/MeNotificationsPage").then((m) => ({ default: m.MeNotificationsPage })));
+const MeProfilePage = lazy(() => import("./pages/MeProfilePage").then((m) => ({ default: m.MeProfilePage })));
+const ApiTokensPage = lazy(() => import("./pages/ApiTokensPage").then((m) => ({ default: m.ApiTokensPage })));
+const ActivityPage = lazy(() => import("./pages/ActivityPage").then((m) => ({ default: m.ActivityPage })));
+const SurfacesPage = lazy(() => import("./pages/SurfacesPage").then((m) => ({ default: m.SurfacesPage })));
+const HealthPage = lazy(() => import("./pages/HealthPage").then((m) => ({ default: m.HealthPage })));
+const OpenApiPage = lazy(() => import("./pages/OpenApiPage").then((m) => ({ default: m.OpenApiPage })));
+const QueuePage = lazy(() => import("./pages/QueuePage").then((m) => ({ default: m.QueuePage })));
+const LinksPage = lazy(() => import("./pages/LinksPage").then((m) => ({ default: m.LinksPage })));
+const LocationsPage = lazy(() => import("./pages/LocationsPage").then((m) => ({ default: m.LocationsPage })));
+const LocationDetailPage = lazy(() => import("./pages/LocationDetailPage").then((m) => ({ default: m.LocationDetailPage })));
+const TemplatesPage = lazy(() => import("./pages/TemplatesPage").then((m) => ({ default: m.TemplatesPage })));
+const ScanPage = lazy(() => import("./pages/ScanPage").then((m) => ({ default: m.ScanPage })));
+const ScanCameraPage = lazy(() => import("./pages/ScanCameraPage").then((m) => ({ default: m.ScanCameraPage })));
+const BundleComposerPage = lazy(() => import("./pages/BundleComposerPage").then((m) => ({ default: m.BundleComposerPage })));
+const CatalogsPage = lazy(() => import("./pages/CatalogsPage").then((m) => ({ default: m.CatalogsPage })));
+const CatalogDetailPage = lazy(() => import("./pages/CatalogDetailPage").then((m) => ({ default: m.CatalogDetailPage })));
+const CatalogMatchPage = lazy(() => import("./pages/CatalogMatchPage").then((m) => ({ default: m.CatalogMatchPage })));
+const PresentationPage = lazy(() => import("./pages/PresentationPage").then((m) => ({ default: m.PresentationPage })));
+const IntegrationsPage = lazy(() => import("./pages/IntegrationsPage").then((m) => ({ default: m.IntegrationsPage })));
+const AiPage = lazy(() => import("./pages/AiPage").then((m) => ({ default: m.AiPage })));
+const PortalConfigPage = lazy(() => import("./pages/PortalConfigPage").then((m) => ({ default: m.PortalConfigPage })));
+const PermissionsPage = lazy(() => import("./pages/PermissionsPage").then((m) => ({ default: m.PermissionsPage })));
+const PortalHomePage = lazy(() => import("./pages/PortalHomePage").then((m) => ({ default: m.PortalHomePage })));
+const PortalViewPage = lazy(() => import("./pages/PortalViewPage").then((m) => ({ default: m.PortalViewPage })));
+const BrickLinkPage = lazy(() => import("./pages/BrickLinkPage").then((m) => ({ default: m.BrickLinkPage })));
+import { ForcePasswordResetPage } from "./pages/ForcePasswordResetPage";
+const UsersPage = lazy(() => import("./pages/UsersPage").then((m) => ({ default: m.UsersPage })));
+const SuperAdminPage = lazy(() => import("./pages/SuperAdminPage").then((m) => ({ default: m.SuperAdminPage })));
+const RolesPage = lazy(() => import("./pages/RolesPage").then((m) => ({ default: m.RolesPage })));
 import { AppLayout } from "./components/AppLayout";
+import { PortalLayout } from "./components/PortalLayout";
 import { ToastProvider, ConfirmProvider } from "@cobblr/platform-web";
 import { api, getToken } from "./lib/api";
+
+function RouteFallback() {
+  return (
+    <div className="text-xs font-mono text-slate-400 dark:text-slate-500 p-6">
+      loading…
+    </div>
+  );
+}
 
 export function App() {
   return (
@@ -91,6 +119,12 @@ function RootRoutes() {
 function AuthedOrLogin() {
   const { user } = useAuth();
   if (!user) return <AuthPage />;
+  // Force-password-reset gate: if the admin minted this account with
+  // a temp password, the user must pick a new one before anything
+  // else. /me/force-password-reset is rendered standalone (no portal,
+  // no admin shell, no nav) so the user can't navigate around it.
+  // See docs/PRODUCTION_DEPLOY.md (no-email onboarding).
+  if (user.must_reset_password) return <ForcePasswordResetPage />;
   return <AuthedRoutes />;
 }
 
@@ -103,7 +137,21 @@ function AuthedRoutes() {
 }
 
 function ActiveOrgScopedRoutes() {
-  const { activeSlug } = useActiveOrg();
+  const { activeSlug, activeOrg } = useActiveOrg();
+
+  // Shell routing: members + guests land in the portal, admins +
+  // owners get the admin shell. If a non-admin lands on an admin
+  // route via direct link, the redirect below bounces them. They can
+  // navigate freely once in the portal.
+  // See docs/design-decisions/member-portal-and-permissions.md.
+  const role = activeOrg?.role;
+  const onPortal = window.location.pathname.startsWith("/portal/");
+  const shouldRedirectToPortal =
+    activeSlug &&
+    role &&
+    role !== "owner" &&
+    role !== "admin" &&
+    !onPortal;
 
   return (
     <PlatformWebProvider
@@ -117,6 +165,8 @@ function ActiveOrgScopedRoutes() {
           api.appendFieldDefChoice(slug, id, value),
       }}
     >
+      <Suspense fallback={<RouteFallback />}>
+      {shouldRedirectToPortal && <Navigate to={`/portal/${activeSlug}`} replace />}
       <Routes>
         <Route element={<AppLayout activeSlug={activeSlug} />}>
           <Route index element={<Dashboard />} />
@@ -142,17 +192,30 @@ function ActiveOrgScopedRoutes() {
           <Route path="/bindings" element={<BindingsPage />} />
           <Route path="/actions" element={<ActionsPage />} />
           <Route path="/bundles" element={<BundlesPage />} />
+          <Route path="/bundles/compose" element={<BundleComposerPage />} />
           <Route path="/fields" element={<FieldsPage />} />
           <Route path="/configuration/tokens" element={<ApiTokensPage />} />
           <Route path="/configuration/surfaces" element={<SurfacesPage />} />
           <Route path="/configuration/health" element={<HealthPage />} />
           <Route path="/configuration/locations" element={<LocationsPage />} />
+          <Route path="/configuration/locations/:id" element={<LocationDetailPage />} />
+          <Route path="/configuration/templates" element={<TemplatesPage />} />
+          <Route path="/scan" element={<ScanPage />} />
+          <Route path="/scan/camera" element={<ScanCameraPage />} />
           <Route path="/configuration/presentation" element={<PresentationPage />} />
           <Route path="/configuration/integrations" element={<IntegrationsPage />} />
           <Route path="/configuration/ai" element={<AiPage />} />
           <Route path="/configuration/catalogs" element={<CatalogsPage />} />
           <Route path="/configuration/catalogs/match" element={<CatalogMatchPage />} />
           <Route path="/configuration/catalogs/:id" element={<CatalogDetailPage />} />
+          <Route path="/bricklink-connector" element={<BrickLinkPage />} />
+          {/* Legacy alias — pre-rename. Bookmarks keep working. */}
+          <Route path="/bricklink" element={<BrickLinkPage />} />
+          <Route path="/configuration/portal" element={<PortalConfigPage />} />
+          <Route path="/configuration/permissions" element={<PermissionsPage />} />
+          <Route path="/configuration/users" element={<UsersPage />} />
+          <Route path="/configuration/roles" element={<RolesPage />} />
+          <Route path="/super-admin" element={<SuperAdminPage />} />
           <Route path="/configuration/openapi" element={<OpenApiPage />} />
           <Route path="/configuration/queue" element={<QueuePage />} />
           <Route path="/configuration/links" element={<LinksPage />} />
@@ -171,7 +234,16 @@ function ActiveOrgScopedRoutes() {
           <Route path="/tags" element={<TagsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
+        {/* Member portal — sibling route, not nested under AppLayout.
+            Same auth + tenant context (PlatformWebProvider above),
+            different chrome. /portal/:slug/* is open to every role;
+            the page itself decides what to show. */}
+        <Route path="/portal/:slug" element={<PortalLayout />}>
+          <Route index element={<PortalHomePage />} />
+          <Route path="views/:viewId" element={<PortalViewPage />} />
+        </Route>
       </Routes>
+      </Suspense>
       <LabelsBasket orgSlug={activeSlug} getToken={getToken} />
     </PlatformWebProvider>
   );

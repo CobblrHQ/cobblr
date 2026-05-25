@@ -7,11 +7,14 @@ import { Tag } from "lucide-react";
 import { useLabels } from "./context";
 
 export function BasketWidget() {
-  const { api } = useLabels();
+  const { api, orgSlug } = useLabels();
+  // Gate by orgSlug so the widget doesn't fire `/orgs//modules/...`
+  // before the host has hydrated the active workspace from /me.
   const { data } = useQuery({
-    queryKey: ["labels-queue"],
+    queryKey: ["labels-queue", orgSlug],
     queryFn: () => api.listQueue(),
     refetchInterval: 10_000,
+    enabled: !!orgSlug,
   });
   const items = data?.items ?? [];
   if (items.length === 0) return null;

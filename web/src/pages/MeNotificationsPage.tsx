@@ -12,9 +12,10 @@ import { Bell, Check, CheckCheck } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api, type CrossOrgNotificationEntry } from "../lib/api";
-import { useToast } from "@cobblr/platform-web";
+import { useToast, usePageTitle } from "@cobblr/platform-web";
 
 export function MeNotificationsPage() {
+  usePageTitle("Notifications");
   const { orgs } = useAuth();
   const { setActiveSlug } = useActiveOrg();
   const navigate = useNavigate();

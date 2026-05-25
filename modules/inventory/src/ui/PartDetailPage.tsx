@@ -5,9 +5,10 @@
 import { useState, type FocusEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, ArrowLeft, Printer, ShieldCheck, Trash2 } from "lucide-react";
-import { CustomFieldsPanel, EntityActionsBar, EntityThumb, useConfirm, useToast } from "@cobblr/platform-web";
+import { Archive, ArrowLeft, Library, Printer, ShieldCheck, Trash2 } from "lucide-react";
+import { CustomFieldsPanel, EntityActionsBar, EntityThumb, useConfirm, usePageTitle, useToast } from "@cobblr/platform-web";
 import { useInventory } from "./context";
+import { useMatchedCatalogEntry } from "./useMatchedCatalogEntry";
 import { AllocationsPanel } from "./AllocationsPanel";
 import { StockAdjustButton } from "./StockAdjustButton";
 import { PartGallery } from "./PartGallery";
@@ -27,6 +28,7 @@ export function PartDetailPage() {
 
   const cats = useQuery({ queryKey: ["inventory-categories"], queryFn: () => api.listCategories() });
   const locs = useQuery({ queryKey: ["inventory-locations"], queryFn: () => api.listLocations() });
+  const matched = useMatchedCatalogEntry(id);
 
   const toast = useToast();
   const confirm = useConfirm();
@@ -50,6 +52,7 @@ export function PartDetailPage() {
   });
 
   if (part.isLoading) return <div className="text-sm text-slate-400 dark:text-slate-500">loading…</div>;
+  usePageTitle(part.data?.name ?? "Part");
   if (part.error) {
     return <div className="text-sm text-ember-500">{(part.error as Error).message}</div>;
   }
@@ -65,7 +68,7 @@ export function PartDetailPage() {
       <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 space-y-3">
         <div className="flex items-start gap-4">
           <EntityThumb
-            src={p.image_path}
+            src={p.image_path ?? matched.data?.image_path ?? null}
             alt={p.name}
             size={96}
             className="ring-1 ring-slate-200 dark:ring-slate-700"
@@ -81,6 +84,15 @@ export function PartDetailPage() {
                 {p.asset_id != null && (
                   <span className="text-[11px] font-mono uppercase tracking-widest text-slate-500 dark:text-slate-400 bg-mortar-100 dark:bg-slate-800 rounded px-2 py-0.5">
                     #{String(p.asset_id).padStart(3, "0")}
+                  </span>
+                )}
+                {matched.data && (
+                  <span
+                    className="text-[10px] inline-flex items-center gap-1 text-cobble-700 dark:text-cobble-300 bg-cobble-50 dark:bg-cobble-900/40 border border-cobble-200 dark:border-cobble-800 rounded px-1.5 py-0.5"
+                    title={`Matched to ${matched.data.title} in ${matched.data.subtitle ?? "a catalog"}`}
+                  >
+                    <Library size={10} />
+                    matched: {matched.data.title}
                   </span>
                 )}
                 <PrintQrButton partId={p.id} orgSlug={orgSlug} getToken={getToken} />
@@ -272,6 +284,8 @@ export function PartDetailPage() {
       <CustomFieldsPanel
         entityKind="inventory:part"
         values={(p.metadata as Record<string, unknown> | null) ?? {}}
+        fallbackValues={matched.data?.fields}
+        fallbackLabel={matched.data ? `catalog (${matched.data.title})` : undefined}
         onCommit={(name, value) =>
           update.mutate({
             metadata: {

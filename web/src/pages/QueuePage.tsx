@@ -10,11 +10,13 @@ import { useQuery } from "@tanstack/react-query";
 import { ListTodo } from "lucide-react";
 import { api, type QueueJob } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { usePageTitle } from "@cobblr/platform-web";
 
 const STATUSES = ["queued", "running", "done", "failed"] as const;
 type Status = (typeof STATUSES)[number];
 
 export function QueuePage() {
+  usePageTitle("Background queue");
   const { activeSlug } = useActiveOrg();
   const [statusFilter, setStatusFilter] = useState<"" | Status>("");
 

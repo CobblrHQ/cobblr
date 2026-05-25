@@ -36,6 +36,15 @@ export interface PlatformResolvedEntity {
   fields: Record<string, unknown>;
 }
 
+export type FieldRendererId =
+  | "text"
+  | "color-hex"
+  | "image-url"
+  | "url-link"
+  | "year"
+  | "boolean"
+  | "code";
+
 export interface PlatformFieldDef {
   id: string;
   entity_kind: string;
@@ -48,6 +57,9 @@ export interface PlatformFieldDef {
   source_module?: string | null;
   /** When set on type='text' fields, renders as a dropdown. */
   choices?: string[] | null;
+  /** Optional built-in renderer for displaying the value on
+   *  list rows + detail pages. */
+  renderer?: FieldRendererId | null;
 }
 
 /** The adapter the host (web app) injects. Every shared component

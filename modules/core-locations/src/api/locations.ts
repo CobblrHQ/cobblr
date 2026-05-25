@@ -15,6 +15,9 @@ const LocationCreate = z.object({
   parent_id: z.string().uuid().nullable().optional(),
   kind: z.enum(["container", "area"]).optional(),
   metadata: z.record(z.unknown()).optional(),
+  description: z.string().max(8_000).nullable().optional(),
+  notes: z.string().max(8_000).nullable().optional(),
+  image_path: z.string().max(500).nullable().optional(),
 });
 
 const LocationUpdate = LocationCreate.partial();
@@ -104,6 +107,9 @@ locationsRouter.post(
         depth,
         kind: parsed.data.kind ?? "area",
         metadata: parsed.data.metadata ?? {},
+        description: parsed.data.description ?? null,
+        notes: parsed.data.notes ?? null,
+        image_path: parsed.data.image_path ?? null,
       })
       .returningAll()
       .executeTakeFirstOrThrow();
@@ -145,6 +151,9 @@ locationsRouter.patch(
     if (parsed.data.short_name !== undefined) patch.short_name = parsed.data.short_name;
     if (parsed.data.kind !== undefined) patch.kind = parsed.data.kind;
     if (parsed.data.metadata !== undefined) patch.metadata = parsed.data.metadata;
+    if (parsed.data.description !== undefined) patch.description = parsed.data.description;
+    if (parsed.data.notes !== undefined) patch.notes = parsed.data.notes;
+    if (parsed.data.image_path !== undefined) patch.image_path = parsed.data.image_path;
 
     if (parsed.data.parent_id !== undefined) {
       // Reject cycle: new parent_id can't be self or a descendant.

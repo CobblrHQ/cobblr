@@ -8,18 +8,34 @@ import { requireAuth } from "../auth/middleware.js";
 import { mintTokenString } from "../auth/api-tokens.js";
 import { hashPassword, verifyPassword } from "../auth/password.js";
 import * as notifications from "../platform/notifications.js";
+import * as activity from "../platform/activity.js";
 
 export const meRouter = Router();
 
 meRouter.get("/me", requireAuth, async (req, res) => {
   const userId = req.session!.id;
-  const orgs = await meta
-    .selectFrom("org_memberships as m")
-    .innerJoin("orgs as o", "o.id", "m.org_id")
-    .select(["o.id", "o.name", "o.slug", "m.role"])
-    .where("m.user_id", "=", userId)
-    .execute();
-  return res.json({ user: req.session, orgs });
+  const [user, orgs] = await Promise.all([
+    meta
+      .selectFrom("users")
+      .select(["id", "email", "display_name", "must_reset_password"])
+      .where("id", "=", userId)
+      .executeTakeFirstOrThrow(),
+    meta
+      .selectFrom("org_memberships as m")
+      .innerJoin("orgs as o", "o.id", "m.org_id")
+      .select(["o.id", "o.name", "o.slug", "m.role"])
+      .where("m.user_id", "=", userId)
+      .execute(),
+  ]);
+  return res.json({
+    user: {
+      ...user,
+      auth_method: req.session!.auth_method,
+      api_token_id: req.session!.api_token_id,
+      is_platform_admin: req.session!.is_platform_admin,
+    },
+    orgs,
+  });
 });
 
 // PATCH /me — update display_name (and in future preferences). email
@@ -87,9 +103,29 @@ meRouter.post("/me/password", requireAuth, async (req, res, next) => {
     const newHash = await hashPassword(parsed.data.new_password);
     await meta
       .updateTable("users")
-      .set({ password_hash: newHash })
+      .set({ password_hash: newHash, must_reset_password: false })
       .where("id", "=", req.session!.id)
       .execute();
+    // Activity-log to whichever workspace the user is a member of
+    // (security-relevant action — was missing per 2026-05-25 audit).
+    // Picking the first owned org is best-effort; a per-user audit
+    // stream lives at /me/activity which UNIONs across all orgs.
+    const firstOrg = await meta
+      .selectFrom("org_memberships")
+      .select("org_id")
+      .where("user_id", "=", req.session!.id)
+      .limit(1)
+      .executeTakeFirst();
+    if (firstOrg) {
+      await activity
+        .log({
+          orgId: firstOrg.org_id,
+          userId: req.session!.id,
+          action: "password_changed",
+          ref: { module: null, entityType: "user", entityId: req.session!.id },
+        })
+        .catch((err) => console.error("[me/password] activity log failed:", err));
+    }
     res.status(204).end();
   } catch (err) {
     next(err);

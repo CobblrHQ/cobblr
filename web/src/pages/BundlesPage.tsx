@@ -5,11 +5,12 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Copy, Download, Package, Share2 } from "lucide-react";
+import { Link } from "react-router-dom";
 import { ApiError, api, type PlatformBundle, type PlatformBundleManifest } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { FEATURED_BUNDLES, type FeaturedBundle } from "../lib/featured-bundles";
 import { BundleDetailModal } from "../components/BundleDetailModal";
-import { Modal, useToast } from "@cobblr/platform-web";
+import { Modal, useToast, usePageTitle } from "@cobblr/platform-web";
 
 type SelectedBundle =
   | { mode: "installed"; bundle: PlatformBundle }
@@ -17,6 +18,7 @@ type SelectedBundle =
   | null;
 
 export function BundlesPage() {
+  usePageTitle("Bundles");
   const { activeSlug: slug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
@@ -93,11 +95,18 @@ export function BundlesPage() {
           publishable presets that wire modules together
         </span>
         <div className="flex-1" />
+        <Link
+          to="/bundles/compose"
+          className="text-[10px] font-mono uppercase tracking-widest text-slate-500 hover:text-cobble-600 transition flex items-center gap-1"
+          title="Pick which wires + field defs go into a bundle, no JSON authoring required"
+        >
+          <Package size={12} /> compose
+        </Link>
         <button
           type="button"
           onClick={() => setExportOpen(true)}
           className="text-[10px] font-mono uppercase tracking-widest text-slate-500 hover:text-cobble-600 transition flex items-center gap-1"
-          title="Preview + publish your wires + field defs as a bundle"
+          title="Export the whole workspace's customisations as one bundle (no per-item picker)"
         >
           <Download size={12} /> publish mine
         </button>

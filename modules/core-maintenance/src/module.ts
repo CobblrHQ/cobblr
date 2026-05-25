@@ -42,9 +42,20 @@ export default defineModule({
       "core-maintenance.entry.due-soon",
       "core-maintenance.entry.overdue",
     ],
-    api: [],
+    api: ["sweep"],
     actions: [],
   },
 
   subscribes: [],
+
+  lifecycle: {
+    onBoot: async () => {
+      const { startMaintenanceSweeper } = await import("./sweeper.js");
+      startMaintenanceSweeper();
+    },
+    onShutdown: async () => {
+      const { stopMaintenanceSweeper } = await import("./sweeper.js");
+      stopMaintenanceSweeper();
+    },
+  },
 });

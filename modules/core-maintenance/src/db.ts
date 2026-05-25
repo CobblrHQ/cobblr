@@ -16,6 +16,7 @@ export interface CoreMaintenanceEntriesTable {
   performed_by: string | null;
   notes: string | null;
   recurrence_rule: string | null;
+  last_notified_at: Date | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }

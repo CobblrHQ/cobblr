@@ -13,6 +13,13 @@ import { PartsListPage } from "./PartsListPage";
 import { PartDetailPage } from "./PartDetailPage";
 import { SettingsPage } from "./SettingsPage";
 
+// Re-export the NewPartDialog + Provider so the portal shell can
+// mount a per-view create button when the user has the
+// inventory:create-part capability. Wraps the dialog with the same
+// InventoryProvider the admin shell uses.
+export { NewPartDialog } from "./NewPartDialog";
+export { InventoryProvider } from "./context";
+
 export const navItems = [
   { label: "Inventory", path: "/inventory", icon: Boxes },
 ];
