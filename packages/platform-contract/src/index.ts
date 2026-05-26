@@ -42,7 +42,12 @@ const EntityFieldRole = z.enum([
 
 const EntityField = z.object({
   name: z.string().min(1).max(80),
-  type: z.enum(["text", "number", "boolean", "date", "image-path", "url"]),
+  // `object` is for free-form JSON attribute blobs (e.g.
+  // inventory:part.metadata) — opaque to the kernel beyond
+  // type-checking that it's an object. Renderers treat it as
+  // "json blob, show keys"; consumer modules read specific keys
+  // via platform.entities.lookupMany.
+  type: z.enum(["text", "number", "boolean", "date", "image-path", "url", "object"]),
   role: EntityFieldRole.optional(),
   required: z.boolean().optional(),
   description: z.string().optional(),
@@ -1257,6 +1262,17 @@ export interface PlatformQueue {
       attempts: number;
     }) => Promise<void> | void,
   ): void;
+  /** "Does this org already have a non-finished job on this queue?"
+   *  Returns the set of org_ids (out of the input set) that have at
+   *  least one job in the given statuses on the named queue. Used
+   *  by recurring-job seeders to avoid double-queuing on boot — a
+   *  cleaner replacement for hand-rolled `SELECT … FROM
+   *  core_queue_jobs` against another module's tables. */
+  hasPendingJob(args: {
+    orgIds: string[];
+    queue: string;
+    statuses?: Array<"queued" | "running" | "done" | "failed">;
+  }): Promise<Set<string>>;
 }
 
 /** Authorization helpers exposed to modules. Today only one: a
@@ -1357,6 +1373,28 @@ export interface PlatformCatalogs {
       catalogId: string;
       externalId: string;
       payload: Record<string, unknown>;
+    }>
+  >;
+  /** Fuzzy-search entries in a catalog by trigram similarity against
+   *  `payload->>'name'` (or a caller-supplied payload key). Returns
+   *  top-K candidates with their similarity score (0..1, higher =
+   *  more similar). Caller-side LLMs use this to pull candidates
+   *  before running a structured match. Uses Postgres `pg_trgm` —
+   *  the kernel owns the SQL so modules don't reach across schemas. */
+  similaritySearch(args: {
+    orgId: string;
+    catalogId: string;
+    queryText: string;
+    /** payload key to match against. Defaults to "name". */
+    payloadKey?: string;
+    /** top-K cap. Defaults to 10, max 100. */
+    limit?: number;
+  }): Promise<
+    Array<{
+      id: string;
+      externalId: string;
+      payload: Record<string, unknown>;
+      score: number;
     }>
   >;
 }

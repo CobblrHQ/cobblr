@@ -14,6 +14,7 @@ import { Router } from "express";
 import { sql } from "kysely";
 import { requireAuth, requirePlatformAdmin } from "../auth/middleware.js";
 import { meta } from "../db/meta.js";
+import { getCpuStats, getInvocationStats } from "../sandbox/pool.js";
 
 export const superAdminRouter = Router();
 
@@ -283,6 +284,82 @@ superAdminRouter.get("/activity", async (req, res, next) => {
 // GET /super-admin/health — system health snapshot. db ping +
 // recent error count + backup-last-success would be ideal; v1 ships
 // db + activity-count + a placeholder for backup.
+// GET /super-admin/sandbox-cpu — per-workspace + per-module wasm
+// CPU usage over the current accounting window. Pairs with the
+// platform-side CPU quota (see SANDBOX_CPU_QUOTA_MS_PER_WINDOW).
+// Lets the operator spot workspaces close to / over the limit.
+superAdminRouter.get("/sandbox-cpu", async (_req, res, next) => {
+  try {
+    const stats = getCpuStats();
+    // Hydrate workspace slugs + names for display.
+    const orgIds = stats.workspaces.map((w) => w.orgId);
+    let orgsById: Map<string, { name: string; slug: string }> = new Map();
+    if (orgIds.length > 0) {
+      const rows = await meta
+        .selectFrom("orgs")
+        .select(["id", "name", "slug"])
+        .where("id", "in", orgIds)
+        .execute();
+      orgsById = new Map(rows.map((r) => [r.id, { name: r.name, slug: r.slug }]));
+    }
+    res.json({
+      window_ms: stats.windowMs,
+      quota_ms_per_window: stats.quotaMsPerWindow,
+      workspaces: stats.workspaces.map((w) => {
+        const org = orgsById.get(w.orgId);
+        return {
+          org_id: w.orgId,
+          name: org?.name ?? "(unknown)",
+          slug: org?.slug ?? "",
+          used_ms: w.usedMs,
+          samples: w.samples,
+          pct: w.usedMs / stats.quotaMsPerWindow,
+          by_module: w.byModule,
+        };
+      }),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /super-admin/sandbox-telemetry — per-(workspace, module)
+// invocation count + error rate + p50/p95 latency. Process-
+// lifetime totals; the latency p50/p95 is computed over a rolling
+// ring of the most recent ~200 invocations so the percentiles
+// reflect current behaviour rather than aging-out historicals.
+superAdminRouter.get("/sandbox-telemetry", async (_req, res, next) => {
+  try {
+    const rows = getInvocationStats();
+    const orgIds = [...new Set(rows.map((r) => r.orgId))];
+    let orgsById: Map<string, { name: string; slug: string }> = new Map();
+    if (orgIds.length > 0) {
+      const orgRows = await meta
+        .selectFrom("orgs")
+        .select(["id", "name", "slug"])
+        .where("id", "in", orgIds)
+        .execute();
+      orgsById = new Map(orgRows.map((r) => [r.id, { name: r.name, slug: r.slug }]));
+    }
+    res.json({
+      rows: rows.map((r) => ({
+        org_id: r.orgId,
+        name: orgsById.get(r.orgId)?.name ?? "(unknown)",
+        slug: orgsById.get(r.orgId)?.slug ?? "",
+        module_name: r.moduleName,
+        invocations: r.invocations,
+        errors: r.errors,
+        error_rate: r.errorRate,
+        p50_ms: r.p50Ms,
+        p95_ms: r.p95Ms,
+        recent_samples: r.recentSamples,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 superAdminRouter.get("/health", async (_req, res, next) => {
   try {
     const dbStart = Date.now();

@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>hello-as · sandboxed UI demo</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+        margin: 0;
+        padding: 1.5rem 2rem;
+        max-width: 720px;
+      }
+      h1 { font-size: 1.5rem; margin: 0 0 0.25rem; }
+      p { color: #555; }
+      button {
+        font: inherit; padding: 0.5rem 1rem; cursor: pointer;
+        border: 1px solid #888; border-radius: 6px; background: #f5f5f5;
+      }
+      pre {
+        background: #f0f0f0; padding: 1rem; border-radius: 6px;
+        overflow-x: auto; font-size: 0.85rem;
+      }
+      .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 1rem 0; }
+      .log { font-size: 0.85rem; color: #666; margin-top: 0.5rem; }
+    </style>
+  </head>
+  <body>
+    <h1>hello-as</h1>
+    <p>Sandboxed module UI demo. The buttons below post to the
+       module's wasm-hosted routes through the workspace's cobblr
+       api. Auth comes from the parent SPA via <code>postMessage</code>
+       or a <code>?token=</code> URL parameter.</p>
+
+    <div class="actions">
+      <button data-route="/greet">Activity log</button>
+      <button data-route="/query-self">Tenant query</button>
+      <button data-route="/catalogs-probe">Catalogs probe</button>
+      <button data-route="/fetch-allowed">Allowed fetch</button>
+      <button data-route="/fetch-blocked">Blocked fetch</button>
+    </div>
+
+    <pre id="output">(awaiting click)</pre>
+    <div class="log" id="status"></div>
+
+    <script>
+      // Sandboxed UIs run in an isolated origin (iframe sandbox).
+      // The parent SPA passes the auth token + active workspace slug
+      // via postMessage (or via query params for direct access).
+      const params = new URLSearchParams(location.search);
+      let token = params.get("token") || "";
+      let slug = params.get("slug") || "";
+
+      window.addEventListener("message", (ev) => {
+        if (ev.data?.type === "cobblr.sandboxed.context") {
+          token = ev.data.token ?? token;
+          slug = ev.data.slug ?? slug;
+          updateStatus();
+        }
+      });
+      // Announce readiness so the parent SPA knows to send context.
+      try { window.parent.postMessage({ type: "cobblr.sandboxed.ready", module: "hello-as" }, "*"); } catch {}
+
+      function updateStatus() {
+        const el = document.getElementById("status");
+        el.textContent = slug ? `workspace ${slug} · token ${token ? "set" : "missing"}` : "no workspace context yet";
+      }
+
+      async function invoke(route) {
+        const out = document.getElementById("output");
+        if (!token || !slug) {
+          out.textContent = "missing auth — open the page with ?token=…&slug=… or wait for parent context";
+          return;
+        }
+        out.textContent = "…";
+        try {
+          const r = await fetch(`/api/v1/orgs/${slug}/modules/hello-as${route}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: "{}",
+          });
+          const body = await r.json();
+          out.textContent = JSON.stringify(body, null, 2);
+        } catch (err) {
+          out.textContent = `request failed: ${err.message ?? err}`;
+        }
+      }
+
+      for (const btn of document.querySelectorAll("button[data-route]")) {
+        btn.addEventListener("click", () => invoke(btn.dataset.route));
+      }
+      updateStatus();
+    </script>
+  </body>
+</html>

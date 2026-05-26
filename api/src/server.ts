@@ -27,6 +27,7 @@ import { pairingsRouter } from "./routes/pairings.js";
 import { portalRouter } from "./routes/portal.js";
 import { adminUsersRouter } from "./routes/admin-users.js";
 import { superAdminRouter } from "./routes/super-admin.js";
+import { sandboxInstallRouter } from "./routes/sandbox-install.js";
 import { customRolesRouter } from "./routes/custom-roles.js";
 import { instancesRouter, overridesRouter } from "./routes/instances.js";
 import { qrScanRouter } from "./routes/qr-scan.js";
@@ -117,6 +118,11 @@ export function createApp(): AppHandles {
   // Super-admin (platform operator) surface — cross-workspace
   // dashboards. Gated by SUPERADMIN_EMAILS env var.
   v1.use("/super-admin", superAdminRouter);
+  // Sandbox marketplace runtime install (super-admin only). Backs
+  // the "Browse + Install" UI: fetch registry, verify, extract,
+  // register without restart. See sandbox-install.ts +
+  // docs/design-decisions/module-isolation.md.
+  v1.use("/sandbox", sandboxInstallRouter);
   // Bundles live one layer further down — same auth + tenant
   // middleware, dedicated mount for clarity.
   v1.use("/orgs/:slug/bundles", bundlesRouter);

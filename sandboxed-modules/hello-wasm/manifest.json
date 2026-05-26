@@ -1,0 +1,16 @@
+{
+  "name": "hello-wasm",
+  "version": "0.0.1",
+  "displayName": "Hello wasm",
+  "description": "Marketplace v0.3 sample sandboxed module. Exercises ACTIVITY_LOG, EVENT_EMIT, NOTIFICATION_SEND, and the deadline terminator. Hand-written WAT — an SDK-generated version comes later.",
+  "band": "marketplace",
+  "abi_version": 1,
+  "routes": [
+    { "method": "POST", "path": "/greet",       "handler": "handle" },
+    { "method": "POST", "path": "/emit",        "handler": "emit" },
+    { "method": "POST", "path": "/notify-self", "handler": "notify_self" },
+    { "method": "POST", "path": "/spin",        "handler": "spin" }
+  ],
+  "network": [],
+  "max_memory_pages": 16
+}

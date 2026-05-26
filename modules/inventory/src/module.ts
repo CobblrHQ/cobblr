@@ -48,6 +48,13 @@ export default defineModule({
           { name: "supplier_url", type: "url" },
           { name: "image_path", type: "image-path", role: "image" },
           { name: "notes", type: "text" },
+          // Free-form JSON attribute blob. Declared so we can also
+          // include it in exposableFields below — cross-module readers
+          // (bricklink-connector reading metadata.lego.color_id, etc.)
+          // go through platform.entities.lookupMany. The schema is
+          // intentionally `object` not a fixed shape; each consumer
+          // module stuffs its own namespace under a top-level key.
+          { name: "metadata", type: "object" },
         ],
         // Cross-module readable: name + description for labels & rendering,
         // qty/min_qty for low-stock / dep-satisfied checks, unit for quantity
@@ -60,6 +67,16 @@ export default defineModule({
           "unit",
           "min_qty",
           "image_path",
+          // `metadata` is the per-part free-form attribute blob —
+          // already conceptually a cross-module surface (modules
+          // stuff their own keys here, e.g. metadata.lego.color_id
+          // for the bricklink connector to match against). Exposing
+          // it lets foreign modules read those keys via
+          // platform.entities.lookupMany instead of reaching into
+          // inventory_parts directly. Sensitive procurement fields
+          // (cost, supplier_url, manufacturer, notes) stay
+          // restricted — they're absent from this list on purpose.
+          "metadata",
         ],
         detailRoute: "/inventory/parts/{id}",
       },

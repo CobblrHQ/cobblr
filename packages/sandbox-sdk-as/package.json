@@ -1,0 +1,19 @@
+{
+  "name": "@cobblr/sandbox-sdk-as",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "AssemblyScript SDK for writing v0.3 sandboxed Cobblr modules. Wraps the host ABI (host_log, host_platform_call) in idiomatic AS helpers so module authors don't deal with raw pointer arithmetic.",
+  "exports": {
+    ".": {
+      "import": "./assembly/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "assemblyscript": "^0.27.29",
+    "typescript": "^5.7.2"
+  }
+}

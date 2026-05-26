@@ -23,6 +23,7 @@ import { meta, metaPool, pingMeta } from "./db/meta.js";
 import { runMigrations } from "./db/migrate.js";
 import { getTenantDb } from "./db/tenant.js";
 import { loadAllModules } from "./modules/loader.js";
+import { loadAllSandboxedModules } from "./sandbox/loader.js";
 import { syncTenantMigrations } from "./modules/enable.js";
 import { mountModules } from "./modules/mount.js";
 import * as activity from "./platform/activity.js";
@@ -105,6 +106,7 @@ async function boot() {
     queue: {
       enqueue: queue.enqueue,
       registerWorker: queue.registerWorker,
+      hasPendingJob: queue.hasPendingJob,
     },
     notifications: {
       dispatch: notificationsImpl.dispatch,
@@ -322,10 +324,71 @@ async function boot() {
           payload: r.payload as Record<string, unknown>,
         }));
       },
+      similaritySearch: async ({ orgId, catalogId, queryText, payloadKey, limit }) => {
+        // pg_trgm similarity against payload->>'<key>'. The key
+        // defaults to "name" because that's the conventional
+        // user-facing identifier across the catalogs we ship;
+        // callers can override (e.g. payload->>'title' for a
+        // future media catalog). Limit hard-capped at 100 so a
+        // misuse can't drag a 100k-row catalog through pg_trgm.
+        const k = Math.max(1, Math.min(limit ?? 10, 100));
+        const key = payloadKey ?? "name";
+        type CatalogsXReadDB = {
+          core_catalogs_entries: {
+            id: string;
+            external_id: string;
+            payload: Record<string, unknown>;
+          };
+        };
+        const tdb = (await getTenantDb(orgId)) as unknown as Kysely<CatalogsXReadDB>;
+        const compiled = sql<{
+          id: string;
+          external_id: string;
+          payload: Record<string, unknown>;
+          score: number;
+        }>`
+          select
+            id,
+            external_id,
+            payload,
+            similarity(payload->>${key}, ${queryText}) as score
+          from core_catalogs_entries
+          where catalog_id = ${catalogId}
+            and payload->>${key} is not null
+          order by similarity(payload->>${key}, ${queryText}) desc
+          limit ${k}
+        `.compile(tdb as never);
+        const result = await (
+          tdb as unknown as {
+            executeQuery: (
+              q: unknown,
+            ) => Promise<{
+              rows: Array<{
+                id: string;
+                external_id: string;
+                payload: Record<string, unknown>;
+                score: number;
+              }>;
+            }>;
+          }
+        ).executeQuery(compiled);
+        return result.rows.map((r) => ({
+          id: r.id,
+          externalId: r.external_id,
+          payload: r.payload,
+          score: Number(r.score),
+        }));
+      },
     },
   });
 
   await loadAllModules();
+  // Marketplace v0.3 PoC: register sandboxed wasm modules alongside
+  // the in-process modules. They get the same Express mount + the
+  // same workspace-enable toggle; the difference is invisible to
+  // everything except the route handler (which goes through the
+  // wasm sandbox). See docs/design-decisions/module-isolation.md.
+  await loadAllSandboxedModules();
   // Mirror manifests into the cobblr_meta registries after load so
   // <EntityActionsBar> / platform.entities.lookup() etc. have
   // accurate metadata. Done AFTER load so module-side resolver /

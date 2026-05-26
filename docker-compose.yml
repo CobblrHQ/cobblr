@@ -1,6 +1,11 @@
 # Local dev stack. Same shape we'll deploy to the prod host — nothing
 # bind-mounts source, the images are the source of truth at runtime.
 # Rebuild on every code change you want to actually exercise.
+#
+# Persistent state lives in ./data/<service>/ (bind mounts, never
+# named volumes). One predictable tree per stack — restic / rsync
+# both see it, "move to a new SSD" is one rsync away, and you can
+# inspect rows without `docker volume inspect`.
 
 services:
   db:
@@ -10,7 +15,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cobblr}
       POSTGRES_DB: ${POSTGRES_DB:-cobblr_meta}
     volumes:
-      - db-data:/var/lib/postgresql/data
+      - ./data/postgres:/var/lib/postgresql/data
     ports:
       # Exposed on the host so you can connect with psql / a GUI.
       - "5432:5432"
@@ -41,6 +46,21 @@ services:
       # CORS allowlist for the web origin in production. Empty in
       # dev = reflect-any-origin (preserves local-host UX).
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
+      # Public signup gate. Default off in prod (POST /auth/signup
+      # returns 403); flip via .env to open self-service signup.
+      # Dev default: unset → falls back to NODE_ENV check (open in dev).
+      PUBLIC_SIGNUP_ENABLED: ${PUBLIC_SIGNUP_ENABLED:-}
+      # Marketplace v0.3.x runtime install — sandboxed module
+      # tarballs go here. Bind-mounted so installs persist across
+      # api restarts AND survive image rebuilds.
+      COBBLR_RUNTIME_MODULES_DIR: /var/cobblr/sandboxed-modules
+      # User-uploaded files (core-files). Bind-mounted to ./data/files
+      # so they survive image rebuilds.
+      COBBLR_FILES_ROOT: /var/cobblr/files
+      # Optional: registry URL + auth token for /sandbox/install.
+      # Defaults to cobblrhq/registry's modules.json on GitHub.
+      COBBLR_REGISTRY_URL: ${COBBLR_REGISTRY_URL:-}
+      COBBLR_REGISTRY_TOKEN: ${COBBLR_REGISTRY_TOKEN:-}
     depends_on:
       db:
         condition: service_healthy
@@ -48,6 +68,9 @@ services:
       # Expose for local-dev curl/postman; in prod only the web
       # container reaches it.
       - "4000:4000"
+    volumes:
+      - ./data/sandboxed-modules:/var/cobblr/sandboxed-modules
+      - ./data/files:/var/cobblr/files
     restart: unless-stopped
     labels:
       # Watchtower (on the prod host) only touches services with this
@@ -67,6 +90,3 @@ services:
     restart: unless-stopped
     labels:
       com.centurylinklabs.watchtower.enable: "true"
-
-volumes:
-  db-data:

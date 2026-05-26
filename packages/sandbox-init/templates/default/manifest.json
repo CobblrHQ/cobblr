@@ -1,0 +1,13 @@
+{
+  "name": "{{NAME}}",
+  "version": "0.1.0",
+  "displayName": "{{PASCAL}}",
+  "description": "TODO — short description for the marketplace listing.",
+  "band": "marketplace",
+  "abi_version": 2,
+  "routes": [
+    { "method": "POST", "path": "/ping", "handler": "ping" }
+  ],
+  "network": [],
+  "max_memory_pages": 64
+}

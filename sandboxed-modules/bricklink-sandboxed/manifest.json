@@ -1,0 +1,18 @@
+{
+  "name": "bricklink-sandboxed",
+  "version": "0.1.0",
+  "displayName": "BrickLink (sandboxed)",
+  "description": "Sandboxed v0.3 port of bricklink-connector. Parses BrickLink wanted-list XML + order CSVs; diffs wanted-list against the workspace's inventory (cross-module read from inventory:parts). Proves a real domain module on the wasm sandbox.",
+  "band": "marketplace",
+  "abi_version": 2,
+  "routes": [
+    { "method": "POST", "path": "/parse-wanted-list", "handler": "parse_wanted_list" },
+    { "method": "POST", "path": "/parse-order",       "handler": "parse_order" },
+    { "method": "POST", "path": "/diff-wanted-list",  "handler": "diff_wanted_list", "deadline_ms": 10000 }
+  ],
+  "network": [],
+  "reads": {
+    "inventory": ["parts"]
+  },
+  "max_memory_pages": 128
+}

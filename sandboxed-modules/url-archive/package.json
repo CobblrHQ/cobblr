@@ -1,0 +1,17 @@
+{
+  "name": "@cobblr/sandboxed-url-archive",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Sandboxed URL archive — sample real-world v0.3.x module.",
+  "scripts": {
+    "vendor-sdk": "node ../../packages/sandbox-sdk-as/scripts/vendor-into.mjs .",
+    "build": "npm run vendor-sdk && asc assembly/index.ts --outFile module.wasm --runtime incremental --bindings raw --exportRuntime"
+  },
+  "dependencies": {
+    "@cobblr/sandbox-sdk-as": "*"
+  },
+  "devDependencies": {
+    "assemblyscript": "^0.27.29"
+  }
+}

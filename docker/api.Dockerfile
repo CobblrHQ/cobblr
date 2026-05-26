@@ -40,6 +40,11 @@ COPY modules/core-maintenance/package.json ./modules/core-maintenance/
 COPY modules/core-templates/package.json ./modules/core-templates/
 COPY modules/core-scan/package.json ./modules/core-scan/
 COPY modules/bricklink-connector/package.json ./modules/bricklink-connector/
+# v0.3 sandbox SDK + AS sample module. Workspace-resolved so the
+# AS author repo (sandboxed-modules/hello-as) sees the SDK at build
+# time. The api runtime doesn't import these — only the AS toolchain.
+COPY packages/sandbox-sdk-as/package.json ./packages/sandbox-sdk-as/
+COPY sandboxed-modules/hello-as/package.json ./sandboxed-modules/hello-as/
 
 RUN npm install --workspaces --include-workspace-root --no-audit --no-fund
 
@@ -60,6 +65,13 @@ COPY modules ./modules
 # extracted to modules/<name>/. See docs/design-decisions/marketplace.md.
 COPY cobblr-modules.json ./cobblr-modules.json
 COPY scripts ./scripts
+
+# Marketplace v0.3 sandboxed modules. Each subdir has a manifest.json
+# + a module.wasm built ahead of time (the kernel doesn't compile wasm
+# at boot). The sandbox loader scans this dir at api boot and
+# registers each entry as a synthetic module with wasm-backed routes.
+# See docs/design-decisions/module-isolation.md.
+COPY sandboxed-modules ./sandboxed-modules
 RUN node scripts/install-registry-modules.mjs
 
 # Build every module that has a build script. The loader's
@@ -111,6 +123,9 @@ COPY --from=builder /app/packages/platform-contract ./packages/platform-contract
 # Each module ships its compiled dist/ + migrations/ alongside its
 # package.json. The loader resolves package.json#main to dist/module.js.
 COPY --from=builder /app/modules ./modules
+# Sandboxed wasm modules (marketplace v0.3). Each subdir has a
+# manifest.json + module.wasm; the sandbox loader picks them up.
+COPY --from=builder /app/sandboxed-modules ./sandboxed-modules
 # Manifest of every baked-in marketplace module — consumed at api
 # boot to populate the installed_modules table.
 COPY --from=builder /app/installed-modules.manifest.json ./installed-modules.manifest.json
@@ -119,7 +134,12 @@ EXPOSE 4000
 
 WORKDIR /app/api
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
   CMD wget -qO- http://127.0.0.1:4000/api/v1/healthz || exit 1
+# start_period=60s covers cold boot: tenant DB provisioning catch-up
+# + module migrations + the sandbox loader scanning both image-baked
+# and runtime-installed wasm modules. 15s was tight even on the
+# workshop box — boots over that frequently get marked unhealthy
+# transiently, which trips Watchtower into a reload loop.
 
 CMD ["node", "dist/index.js"]

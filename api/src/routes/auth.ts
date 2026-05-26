@@ -17,6 +17,7 @@ import { meta, metaPool } from "../db/meta.js";
 import { provisionTenantDb } from "../db/provision.js";
 import { hashPassword, verifyPassword } from "../auth/password.js";
 import { signSession } from "../auth/jwt.js";
+import { publicSignupEnabled } from "../auth/signup-gate.js";
 import * as activity from "../platform/activity.js";
 import { enableAllForOrg } from "../modules/enable.js";
 import type { OrgRole } from "../db/schema.js";
@@ -199,10 +200,38 @@ async function buildAuthResponse(userId: string): Promise<AuthResponse> {
   return { token, user, orgs };
 }
 
+// ────────────────────────── GET /config ──────────────────────────
+//
+// Anonymous-readable feature flags the web client needs before the
+// user has logged in (e.g. whether to render the "create account"
+// link). Add fields here as more anonymous-time toggles appear;
+// don't repurpose /api/v1/healthz for auth UI hints.
+
+authRouter.get("/config", (_req, res) => {
+  res.json({
+    signup_enabled: publicSignupEnabled(),
+  });
+});
+
 // ────────────────────────── POST /signup ─────────────────────────
+//
+// Gated by PUBLIC_SIGNUP_ENABLED. Off by default in prod so an
+// open Funnel/Tailnet URL can't be used to mint workspaces by
+// strangers. Existing users still log in via /login or
+// /magic/consume; platform admins mint new accounts via
+// /super-admin/users.
 
 authRouter.post("/signup", async (req, res, next) => {
   try {
+    if (!publicSignupEnabled()) {
+      return res.status(403).json({
+        error: {
+          code: "signup_disabled",
+          message:
+            "Public signup is disabled on this deployment. Ask a platform admin to mint an account.",
+        },
+      });
+    }
     const body = SignupBody.parse(req.body);
     const email = body.email.toLowerCase().trim();
 

@@ -223,6 +223,384 @@ meRouter.post("/me/notifications/read-all", requireAuth, async (req, res, next) 
   }
 });
 
+// ─────────────────── Notification channel bindings ──────────────────
+//
+// A "channel binding" = one row in notification_subscriptions.
+// CRUD here, scoped to the active workspace, owned by the user.
+// Config validation depends on channel — see ChannelConfigSchemas.
+//
+// Subscription unique key: (user_id, org_id, event_type, channel).
+// Use event_type = '*' for wildcard (all events).
+
+const ChannelEnum = z.enum([
+  "in_app",
+  "browser_push",
+  "email",
+  "discord",
+  "webhook",
+  "slack",
+  "sms",
+]);
+const PriorityEnum = z.enum(["low", "normal", "high", "urgent"]);
+
+// Channel-specific config validators. The dispatcher's drivers
+// re-validate at delivery time (so a row with stale config doesn't
+// blow up the dispatcher), but we validate at write time too so
+// users get immediate feedback when they paste a malformed URL.
+const ChannelConfigSchemas: Record<string, z.ZodTypeAny> = {
+  in_app: z.object({}).strict(),
+  browser_push: z.object({}).strict(),
+  discord: z.object({
+    webhook_url: z
+      .string()
+      .url()
+      .regex(/^https:\/\/discord\.com\/api\/webhooks\//, {
+        message: "must be a https://discord.com/api/webhooks/... URL",
+      }),
+  }),
+  slack: z.object({
+    webhook_url: z
+      .string()
+      .url()
+      .regex(/^https:\/\/hooks\.slack\.com\//, {
+        message: "must be a https://hooks.slack.com/... URL",
+      }),
+  }),
+  webhook: z.object({
+    url: z.string().url(),
+    headers: z.record(z.string(), z.string()).optional(),
+  }),
+  email: z.object({
+    smtp_host: z.string().min(1).max(255),
+    smtp_port: z.number().int().min(1).max(65535).optional(),
+    smtp_user: z.string().min(1).max(255),
+    smtp_pass: z.string().min(1).max(255),
+    smtp_secure: z.boolean().optional(),
+    from: z.string().email(),
+    to: z.string().email(),
+  }),
+  sms: z.object({
+    account_sid: z.string().regex(/^AC[a-f0-9]{32}$/i, {
+      message: "must be a Twilio Account SID (ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx)",
+    }),
+    auth_token: z.string().min(20).max(64),
+    from_number: z.string().regex(/^\+[1-9]\d{1,14}$/),
+    to_number: z.string().regex(/^\+[1-9]\d{1,14}$/),
+  }),
+};
+
+const ChannelBindingBody = z.object({
+  org_id: z.string().uuid(),
+  /** '*' wildcard or any event_type literal. */
+  event_type: z.string().min(1).max(120),
+  channel: ChannelEnum,
+  enabled: z.boolean().optional().default(true),
+  min_priority: PriorityEnum.optional().default("low"),
+  /** Channel-specific config — see ChannelConfigSchemas. */
+  config: z.unknown().optional(),
+});
+
+meRouter.get(
+  "/me/notification-channels",
+  requireAuth,
+  async (req, res, next) => {
+    try {
+      const orgId = String(req.query.org_id ?? "");
+      if (!orgId) {
+        res.status(400).json({
+          error: { code: "missing_org_id", message: "?org_id=<uuid> required" },
+        });
+        return;
+      }
+      // Caller must be a member of the workspace.
+      const member = await meta
+        .selectFrom("org_memberships")
+        .select("user_id")
+        .where("user_id", "=", req.session!.id)
+        .where("org_id", "=", orgId)
+        .executeTakeFirst();
+      if (!member) {
+        res.status(404).json({
+          error: { code: "not_a_member", message: "Workspace not found." },
+        });
+        return;
+      }
+      const rows = await meta
+        .selectFrom("notification_subscriptions")
+        .select([
+          "id",
+          "event_type",
+          "channel",
+          "enabled",
+          "min_priority",
+          "config",
+        ])
+        .where("user_id", "=", req.session!.id)
+        .where("org_id", "=", orgId)
+        .orderBy("event_type", "asc")
+        .orderBy("channel", "asc")
+        .execute();
+      // Hide secrets in the response — config can contain SMTP
+      // passwords, Twilio auth tokens, webhook URLs that ARE the
+      // secret. Replace each value with `<set>` so the UI can show
+      // "configured" without re-exposing the raw bytes.
+      const items = rows.map((r) => ({
+        ...r,
+        config: redactConfig(r.config),
+      }));
+      res.json({ items });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+/** Replace secret-ish config values with `<set>` markers so the
+ *  list endpoint doesn't re-expose them once written. The UI sends
+ *  the raw values back on update only if the user actually changed
+ *  the field. */
+function redactConfig(config: unknown): unknown {
+  if (!config || typeof config !== "object") return config;
+  const SECRET_KEYS = new Set([
+    "webhook_url",
+    "url",
+    "smtp_pass",
+    "auth_token",
+    "headers",
+  ]);
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(config as Record<string, unknown>)) {
+    if (SECRET_KEYS.has(k) && v !== null && v !== undefined && v !== "") {
+      out[k] = "<set>";
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+meRouter.post(
+  "/me/notification-channels",
+  requireAuth,
+  async (req, res, next) => {
+    try {
+      const parsed = ChannelBindingBody.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({
+          error: { code: "invalid_body", message: "Bad subscription payload", details: parsed.error.issues },
+        });
+        return;
+      }
+      // Caller must be a member.
+      const member = await meta
+        .selectFrom("org_memberships")
+        .select("user_id")
+        .where("user_id", "=", req.session!.id)
+        .where("org_id", "=", parsed.data.org_id)
+        .executeTakeFirst();
+      if (!member) {
+        res.status(404).json({
+          error: { code: "not_a_member", message: "Workspace not found." },
+        });
+        return;
+      }
+      // Validate channel-specific config shape.
+      const schema = ChannelConfigSchemas[parsed.data.channel];
+      let validatedConfig: unknown;
+      if (schema) {
+        const r = schema.safeParse(parsed.data.config ?? {});
+        if (!r.success) {
+          res.status(400).json({
+            error: {
+              code: "invalid_channel_config",
+              message: `Bad config for channel '${parsed.data.channel}'`,
+              details: r.error.issues,
+            },
+          });
+          return;
+        }
+        validatedConfig = r.data;
+      } else {
+        validatedConfig = parsed.data.config ?? null;
+      }
+      const row = await meta
+        .insertInto("notification_subscriptions")
+        .values({
+          user_id: req.session!.id,
+          org_id: parsed.data.org_id,
+          event_type: parsed.data.event_type,
+          channel: parsed.data.channel,
+          enabled: parsed.data.enabled,
+          min_priority: parsed.data.min_priority,
+          config: validatedConfig as never,
+        })
+        .onConflict((c) =>
+          c
+            .columns(["user_id", "org_id", "event_type", "channel"])
+            .doUpdateSet({
+              enabled: parsed.data.enabled,
+              min_priority: parsed.data.min_priority,
+              config: validatedConfig as never,
+            }),
+        )
+        .returning(["id", "event_type", "channel", "enabled", "min_priority"])
+        .executeTakeFirstOrThrow();
+      res.status(201).json({
+        ...row,
+        config: redactConfig(validatedConfig),
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+meRouter.delete(
+  "/me/notification-channels/:id",
+  requireAuth,
+  async (req, res, next) => {
+    try {
+      const id = req.params.id;
+      if (!id) {
+        res.status(400).json({ error: { code: "missing_id", message: "id required" } });
+        return;
+      }
+      const removed = await meta
+        .deleteFrom("notification_subscriptions")
+        .where("id", "=", id)
+        .where("user_id", "=", req.session!.id)
+        .returning("id")
+        .executeTakeFirst();
+      if (!removed) {
+        res.status(404).json({ error: { code: "not_found", message: "Binding not found." } });
+        return;
+      }
+      res.status(204).end();
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// Fire a test notification through ALL of the caller's bindings in
+// the given workspace. Useful as a "did I configure my Discord
+// webhook correctly?" probe. Returns the dispatch result so the UI
+// can show which channels actually delivered.
+// Per-binding test: POST /me/notification-channels/:id/test fires
+// through exactly that one binding's channel. Doesn't touch the
+// notifications table; doesn't trigger any other binding the user
+// may have set up. Used by the per-row "test" button so a Discord
+// webhook can be validated without spamming everyone else.
+meRouter.post(
+  "/me/notification-channels/:id/test",
+  requireAuth,
+  async (req, res, next) => {
+    try {
+      const id = req.params.id;
+      if (!id) {
+        res.status(400).json({
+          error: { code: "missing_id", message: "binding id required in path" },
+        });
+        return;
+      }
+      const priorityRaw = String(req.body?.priority ?? "normal");
+      const priority = (["low", "normal", "high", "urgent"] as const).includes(
+        priorityRaw as never,
+      )
+        ? (priorityRaw as "low" | "normal" | "high" | "urgent")
+        : "normal";
+      const result = await notifications.testOneBinding(id, req.session!.id, priority);
+      if (result.ownerCheck === "not_found") {
+        res.status(404).json({
+          error: { code: "not_found", message: "Binding not found." },
+        });
+        return;
+      }
+      if (result.ownerCheck === "denied") {
+        res.status(403).json({
+          error: { code: "not_owner", message: "Not your binding." },
+        });
+        return;
+      }
+      res.json({ deliveredVia: result.deliveredVia });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// "Test all" = fire a test through EVERY binding in the workspace,
+// regardless of each binding's event_type. We can't get there with
+// dispatch() because dispatch routes by event_type matching, and a
+// user whose bindings are scoped to specific events (e.g.
+// 'order.shipped') wouldn't see ANY binding fire on a synthetic
+// 'test.notification' event. Iterate bindings + call the per-binding
+// path directly so the button does what its label promises.
+meRouter.post(
+  "/me/notification-channels/test",
+  requireAuth,
+  async (req, res, next) => {
+    try {
+      const orgId = String(req.body?.org_id ?? "");
+      if (!orgId) {
+        res.status(400).json({
+          error: { code: "missing_org_id", message: "{ org_id } required in body" },
+        });
+        return;
+      }
+      const member = await meta
+        .selectFrom("org_memberships")
+        .select("user_id")
+        .where("user_id", "=", req.session!.id)
+        .where("org_id", "=", orgId)
+        .executeTakeFirst();
+      if (!member) {
+        res.status(404).json({
+          error: { code: "not_a_member", message: "Workspace not found." },
+        });
+        return;
+      }
+      const priorityRaw = String(req.body?.priority ?? "normal");
+      const priority = (["low", "normal", "high", "urgent"] as const).includes(
+        priorityRaw as never,
+      )
+        ? (priorityRaw as "low" | "normal" | "high" | "urgent")
+        : "normal";
+
+      // Pull every enabled binding the user owns in this workspace
+      // whose threshold the test priority meets. Fire each via the
+      // per-binding driver path so we hit each binding's actual
+      // channel + config regardless of event_type matching.
+      const PRIORITY_ORDER = { low: 0, normal: 1, high: 2, urgent: 3 } as const;
+      const bindings = await meta
+        .selectFrom("notification_subscriptions")
+        .select(["id", "channel", "min_priority"])
+        .where("user_id", "=", req.session!.id)
+        .where("org_id", "=", orgId)
+        .where("enabled", "=", true)
+        .execute();
+      const reached = bindings.filter(
+        (b) => PRIORITY_ORDER[priority] >= PRIORITY_ORDER[b.min_priority],
+      );
+      const results = await Promise.all(
+        reached.map((b) =>
+          notifications.testOneBinding(b.id, req.session!.id, priority),
+        ),
+      );
+      const deliveredVia = Array.from(
+        new Set(results.flatMap((r) => r.deliveredVia)),
+      );
+      res.json({
+        deliveredVia,
+        attempted: reached.length,
+        skippedByThreshold: bindings.length - reached.length,
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 // ──────────────────────── API tokens ─────────────────────────────
 
 const TokenCreate = z.object({
@@ -593,7 +971,11 @@ meRouter.post("/me/links/:id/accept", requireAuth, async (req, res, next) => {
             eventType: "workspace_links.accepted",
             message: `${targetOrg.name} accepted your workspace link.`,
             link_url: "/configuration/links",
-            module: "core-notifications",
+            // workspace_links is a kernel feature, not a module — leave
+            // module attribution null so the UI shows "platform" rather
+            // than misattributing to whichever module happens to own
+            // notifications.
+            module: undefined,
             entityType: "workspace_link",
             entityId: updated.id,
           }),

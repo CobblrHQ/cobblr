@@ -42,3 +42,13 @@ export function listEntries(): RegisteredModule[] {
 export function size(): number {
   return registry.size;
 }
+
+/** Remove a module from the in-memory registry. Used by the
+ *  runtime sandbox-uninstall path. The Express router that was
+ *  mounted at boot stays mounted for the process lifetime — but
+ *  subsequent requests find no live registration + the route
+ *  handler short-circuits via the sandbox loader's stale-entry
+ *  check. A full unmount needs an api restart. */
+export function deregister(name: string): boolean {
+  return registry.delete(name);
+}

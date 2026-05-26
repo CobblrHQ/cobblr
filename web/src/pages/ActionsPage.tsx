@@ -25,6 +25,7 @@ import {
   type RegisteredAction,
 } from "../lib/api";
 import { traitPredicateMatches } from "../lib/trait-match";
+import { TraitProfileBadge } from "../components/TraitFingerprint";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useToast, usePageTitle } from "@cobblr/platform-web";
 
@@ -296,15 +297,20 @@ function ActionCard({
                 )}
               </div>
               {previewMatches.length > 0 ? (
-                <div className="flex flex-wrap gap-1">
-                  {previewMatches.map((k) => (
-                    <span
-                      key={k}
-                      className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-mortar-200"
-                    >
-                      {k}
-                    </span>
-                  ))}
+                <div className="space-y-1.5">
+                  {previewMatches.map((kid) => {
+                    const k = kinds.find((x) => x.id === kid);
+                    return (
+                      <div key={kid} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-mortar-200">
+                          {kid}
+                        </span>
+                        {k && (
+                          <TraitProfileBadge profile={k.profile} traits={k.traits} />
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="text-[10px] font-mono text-ember-500">

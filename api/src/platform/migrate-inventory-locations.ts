@@ -1,3 +1,9 @@
+// HISTORICAL DATA MIGRATION — not kernel logic. The hardcoded
+// `inventory` / `core-locations` names + the legacy table shape
+// here are encoded migration knowledge, not steady-state coupling.
+// Delete once every production tenant has been migrated. Skip
+// with `COBBLR_SKIP_HISTORICAL_MIGRATIONS=1`.
+//
 // One-shot boot migration: inventory_locations → core_locations_locations.
 //
 // Locations used to live under the inventory module (`inventory:location`,
@@ -135,6 +141,9 @@ async function migrateOne(orgId: string): Promise<{
 
 /** Boot-time entry point. Finds every org and runs the per-org copy. */
 export async function migrateInventoryLocations(): Promise<InventoryLocationsMigrationResult> {
+  if (process.env.COBBLR_SKIP_HISTORICAL_MIGRATIONS === "1") {
+    return { orgsTouched: 0, rowsCopied: 0, fksDropped: 0 };
+  }
   // We need orgs that have inventory enabled (their tenant DB has the
   // legacy table). enableModuleForOrg for core-locations is idempotent
   // for orgs that don't.

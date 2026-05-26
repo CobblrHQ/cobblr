@@ -1,0 +1,12 @@
+{
+  "name": "@cobblr/sandboxed-{{NAME}}",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "asc assembly/index.ts --outFile module.wasm --runtime incremental --bindings raw --exportRuntime"
+  },
+  "devDependencies": {
+    "assemblyscript": "^0.27.29"
+  }
+}

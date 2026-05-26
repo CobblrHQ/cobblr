@@ -47,20 +47,27 @@ export function Dashboard() {
   usePageTitle("Dashboard");
   const { user } = useAuth();
   const { activeOrg, activeSlug } = useActiveOrg();
-  if (!activeOrg || !activeSlug) return null;
 
   // The org's enabled modules — every per-module query below gates
   // off this so we don't ping endpoints whose router isn't mounted.
+  // Query is unconditional + gated by `enabled` so React's hook
+  // ordering stays stable across renders even when activeSlug is
+  // briefly "" (right after auth, before ActiveOrgContext picks the
+  // first org). The early-return-before-hooks pattern crashed the
+  // page with React #310 on fresh logins; see _tmp/needs-your-check.md.
   const modulesQ = useQuery({
     queryKey: ["org-modules", activeSlug],
     queryFn: () => api.orgModules(activeSlug),
     staleTime: 30_000,
+    enabled: !!activeSlug,
   });
   const enabled = new Set(
     (modulesQ.data?.items ?? [])
       .filter((m) => m.enabled)
       .map((m) => m.name),
   );
+
+  if (!activeOrg || !activeSlug) return null;
 
   return (
     <div className="space-y-6">

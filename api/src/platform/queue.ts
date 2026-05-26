@@ -94,6 +94,28 @@ export function listQueues(): string[] {
   return Array.from(handlers.keys());
 }
 
+/** "Which of these orgs already have a non-finished job on `queue`?"
+ *  Caller passes the candidate org set + the queue name + which
+ *  statuses count as "pending" (default queued+running). Returns the
+ *  subset that do. Used by recurring-job seeders that want to avoid
+ *  double-queuing on boot. */
+export async function hasPendingJob(args: {
+  orgIds: string[];
+  queue: string;
+  statuses?: Array<"queued" | "running" | "done" | "failed">;
+}): Promise<Set<string>> {
+  if (args.orgIds.length === 0) return new Set();
+  const statuses = args.statuses ?? ["queued", "running"];
+  const rows = await meta
+    .selectFrom("core_queue_jobs")
+    .select("org_id")
+    .where("queue", "=", args.queue)
+    .where("org_id", "in", args.orgIds)
+    .where("status", "in", statuses)
+    .execute();
+  return new Set(rows.map((r) => r.org_id));
+}
+
 /** Reclaim stale locks (worker crashed mid-execution) so the next
  *  tick's claim can pick them up. Idempotent. */
 async function sweepStaleLocks(): Promise<number> {

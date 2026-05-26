@@ -1,0 +1,310 @@
+// Runtime install endpoint for sandboxed marketplace modules.
+//
+// POST /api/v1/sandbox/install — super-admin only. Body:
+//   { name: string, version: string, registry_url?: string }
+//
+// Fetches the registry, validates the entry's sha256 + ed25519
+// signature, extracts to RUNTIME_INSTALL_DIR, then registers + mounts
+// the module so it's immediately available. The install is logged
+// in installed_modules with source="runtime".
+//
+// The actual fetch/verify/extract logic lives in
+// scripts/install-registry-modules.mjs at image-build time; we
+// re-implement the same flow here for the runtime path. Keeping
+// them aligned is mandatory — drift would create install asymmetry
+// (some modules verifiable at build but not runtime, or vice versa).
+
+import { Router } from "express";
+import { z } from "zod";
+import { createHash, verify as cryptoVerify, createPublicKey } from "node:crypto";
+import { mkdirSync, writeFileSync, existsSync, rmSync } from "node:fs";
+import { join as joinPath } from "node:path";
+import { spawnSync } from "node:child_process";
+import { sql } from "kysely";
+import { requireAuth, requirePlatformAdmin } from "../auth/middleware.js";
+import { meta } from "../db/meta.js";
+import { RUNTIME_INSTALL_DIR, loadOneSandboxedModule, uninstallSandboxedModule } from "../sandbox/loader.js";
+import { mountNewlyRegistered } from "../modules/mount.js";
+import { assertSafeUrl } from "../sandbox/ssrf.js";
+export const sandboxInstallRouter = Router();
+sandboxInstallRouter.use(requireAuth, requirePlatformAdmin);
+
+const InstallBody = z.object({
+  name: z.string().min(1).max(120).regex(/^[a-z0-9][a-z0-9_-]*$/),
+  version: z.string().min(1).max(64),
+  /** Override the registry URL. Defaults to the operator-curated
+   *  cobblrhq/registry. Useful for testing against a local fixture. */
+  registry_url: z.string().url().optional(),
+});
+
+const DEFAULT_REGISTRY =
+  process.env.COBBLR_REGISTRY_URL ??
+  "https://raw.githubusercontent.com/CobblrHQ/registry/main/modules.json";
+
+function authHeaders(url: string): Record<string, string> {
+  const token = process.env.COBBLR_REGISTRY_TOKEN || process.env.GITHUB_TOKEN;
+  if (!token) return {};
+  if (/^https:\/\/([^/]*\.)?github(usercontent)?\.com\b/.test(url)) {
+    return { Authorization: `Bearer ${token}`, Accept: "application/octet-stream" };
+  }
+  return {};
+}
+
+async function fetchJson(url: string): Promise<unknown> {
+  await assertSafeUrl(url);
+  const r = await fetch(url, { headers: authHeaders(url) });
+  if (!r.ok) throw new Error(`fetch ${url} → ${r.status} ${r.statusText}`);
+  return r.json();
+}
+
+async function fetchBuffer(url: string): Promise<Buffer> {
+  await assertSafeUrl(url);
+  const r = await fetch(url, { headers: { ...authHeaders(url), Accept: "application/octet-stream" } });
+  if (!r.ok) throw new Error(`fetch ${url} → ${r.status} ${r.statusText}`);
+  return Buffer.from(await r.arrayBuffer());
+}
+
+function verifyEd25519(publicKeyB64: string, tarball: Buffer, signatureB64: string): boolean {
+  const keyDer = Buffer.from(publicKeyB64, "base64");
+  const pubKey = createPublicKey({ key: keyDer, format: "der", type: "spki" });
+  const sig = Buffer.from(signatureB64, "base64");
+  return cryptoVerify(null, tarball, pubKey, sig);
+}
+
+sandboxInstallRouter.post("/install", async (req, res, next) => {
+  try {
+    const parsed = InstallBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        error: { code: "invalid_body", message: "name + version required", details: parsed.error.issues },
+      });
+      return;
+    }
+    const { name, version } = parsed.data;
+    const registryUrl = parsed.data.registry_url ?? DEFAULT_REGISTRY;
+
+    type RegistryShape = {
+      modules: Array<{
+        name: string;
+        public_key_ed25519: string | null;
+        versions: Array<{
+          version: string;
+          source_url: string;
+          sha256: string | null;
+          signature: string | null;
+        }>;
+      }>;
+    };
+
+    const registry = (await fetchJson(registryUrl)) as RegistryShape;
+    const modSpec = registry.modules.find((m) => m.name === name);
+    if (!modSpec) {
+      res.status(404).json({ error: { code: "not_in_registry", message: `${name} not in registry` } });
+      return;
+    }
+    const versionSpec = modSpec.versions.find((v) => v.version === version);
+    if (!versionSpec) {
+      res.status(404).json({ error: { code: "version_not_found", message: `${name}@${version} not in registry` } });
+      return;
+    }
+    if (!versionSpec.sha256 || !modSpec.public_key_ed25519 || !versionSpec.signature) {
+      res.status(400).json({
+        error: { code: "unsigned", message: "registry entry missing sha256 / public key / signature" },
+      });
+      return;
+    }
+
+    // Fetch + verify + extract.
+    const tarball = await fetchBuffer(versionSpec.source_url);
+    const gotSha = createHash("sha256").update(tarball).digest("hex");
+    if (gotSha !== versionSpec.sha256) {
+      res.status(400).json({
+        error: { code: "sha_mismatch", message: `sha256 mismatch: registry=${versionSpec.sha256} got=${gotSha}` },
+      });
+      return;
+    }
+    const sigB64 = versionSpec.signature.startsWith("ed25519:")
+      ? versionSpec.signature.slice("ed25519:".length)
+      : versionSpec.signature;
+    if (!verifyEd25519(modSpec.public_key_ed25519, tarball, sigB64)) {
+      res.status(400).json({
+        error: { code: "bad_signature", message: "ed25519 signature did NOT verify" },
+      });
+      return;
+    }
+
+    // Extract to RUNTIME_INSTALL_DIR/<name>/. If any step after
+    // `mkdirSync` fails (extract, manifest read, registration),
+    // we tear down the targetDir so the next install isn't blocked
+    // by a half-baked install + the loader doesn't pick up an
+    // unregistered manifest at boot.
+    const targetDir = joinPath(RUNTIME_INSTALL_DIR, name);
+    const alreadyExisted = existsSync(targetDir);
+    const rollback = (reason: string, status: number, code: string) => {
+      if (!alreadyExisted) {
+        try {
+          rmSync(targetDir, { recursive: true, force: true });
+        } catch (err) {
+          console.error(`[sandbox-install] rollback failed for ${targetDir}:`, err);
+        }
+      } else {
+        console.warn(
+          `[sandbox-install] ${name}@${version}: ${reason} — leaving ${targetDir} alone (pre-existing install)`,
+        );
+      }
+      res.status(status).json({ error: { code, message: reason } });
+    };
+    mkdirSync(targetDir, { recursive: true });
+    const tmpTar = joinPath(RUNTIME_INSTALL_DIR, `.install-${name}-${Date.now()}.tgz`);
+    writeFileSync(tmpTar, tarball);
+    const tarRes = spawnSync("tar", ["-xzf", tmpTar, "-C", targetDir]);
+    try {
+      spawnSync("rm", ["-f", tmpTar]);
+    } catch {/* ignore */}
+    if (tarRes.status !== 0) {
+      rollback(`tar extract failed (exit ${tarRes.status})`, 500, "extract_failed");
+      return;
+    }
+
+    // Register + mount the new module without restarting the api.
+    const manifestPath = joinPath(targetDir, "manifest.json");
+    if (!existsSync(manifestPath)) {
+      rollback("extracted tarball missing manifest.json", 400, "no_manifest");
+      return;
+    }
+    let loaded;
+    try {
+      loaded = await loadOneSandboxedModule(targetDir);
+    } catch (err) {
+      rollback((err as Error).message, 400, "load_failed");
+      return;
+    }
+    if (!loaded) {
+      rollback("manifest loaded but registration failed", 500, "register_failed");
+      return;
+    }
+    await mountNewlyRegistered(loaded.name);
+
+    // Audit-trail: record the install in installed_modules.
+    await meta
+      .insertInto("installed_modules")
+      .values({
+        name: loaded.name,
+        version: loaded.version,
+        band: "marketplace",
+        source: "registry",
+        source_url: versionSpec.source_url,
+        source_sha256: versionSpec.sha256,
+        signed_by: modSpec.public_key_ed25519,
+        manifest: sql`${JSON.stringify(loaded)}::jsonb` as never,
+        installed_by: req.session!.id,
+      })
+      .onConflict((c) =>
+        c.column("name").doUpdateSet({
+          version: loaded.version,
+          source: "registry",
+          source_url: versionSpec.source_url,
+          source_sha256: versionSpec.sha256,
+          signed_by: modSpec.public_key_ed25519,
+          manifest: sql`${JSON.stringify(loaded)}::jsonb` as never,
+        }),
+      )
+      .execute();
+
+    // The installed_modules row above IS the audit trail —
+    // installed_by + installed_at land there. Skipping activity_log
+    // because the helper requires orgId (cross-workspace platform
+    // installs are intentionally not tied to a single workspace).
+
+    res.status(201).json({
+      ok: true,
+      name: loaded.name,
+      version: loaded.version,
+      routes: loaded.routes.map((r) => ({ method: r.method, path: r.path })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Browse-the-registry helper for the UI. Returns the same modules.json
+ *  the operator-curated registry serves, optionally annotated with
+ *  installed-status from the local installed_modules table. */
+sandboxInstallRouter.get("/registry", async (req, res, next) => {
+  try {
+    const registryUrl =
+      (typeof req.query.url === "string" ? req.query.url : undefined) ?? DEFAULT_REGISTRY;
+    const registry = (await fetchJson(registryUrl)) as { modules: Array<{ name: string }> };
+    const installedRows = await meta
+      .selectFrom("installed_modules")
+      .select(["name", "version", "source"])
+      .execute();
+    const installedByName = new Map(installedRows.map((r) => [r.name, r]));
+    const items = registry.modules.map((m) => ({
+      ...m,
+      installed: installedByName.get(m.name) ?? null,
+    }));
+    res.json({ items });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Uninstall a runtime-installed sandboxed module. Image-baked
+ *  modules (those in /app/sandboxed-modules/ that came with the
+ *  cobblr-core image) are intentionally NOT removable here — that
+ *  requires an image rebuild. Workspace-admin installs from the
+ *  registry land under /var/cobblr/sandboxed-modules/ and are
+ *  freely removable.
+ *
+ *  Effect:
+ *    - Retires any in-flight workers holding the wasm.
+ *    - Drops the in-memory registry entry (mounted routes start
+ *      returning 410 Gone for subsequent calls).
+ *    - Removes the runtime-install dir on disk.
+ *    - Deletes the installed_modules row.
+ *
+ *  Workspace `org_modules` rows that had this module enabled stay —
+ *  the operator can choose to clean those up via super-admin's
+ *  workspace module matrix if needed. */
+sandboxInstallRouter.delete("/install/:name", async (req, res, next) => {
+  try {
+    const name = req.params.name;
+    if (!name || !/^[a-z0-9][a-z0-9_-]*$/.test(name)) {
+      res.status(400).json({ error: { code: "bad_name", message: "invalid module name" } });
+      return;
+    }
+    // Refuse to delete image-baked modules — those are part of the
+    // distribution + need an image rebuild to remove. installed_modules
+    // tells us which is which: source="registry" came via runtime
+    // install; source="image" came from the cobblr-core image.
+    const row = await meta
+      .selectFrom("installed_modules")
+      .select(["name", "source"])
+      .where("name", "=", name)
+      .executeTakeFirst();
+    if (!row) {
+      res.status(404).json({ error: { code: "not_installed", message: `${name} is not installed` } });
+      return;
+    }
+    if (row.source === "image") {
+      res.status(409).json({
+        error: {
+          code: "image_baked",
+          message: `${name} is image-baked — uninstall requires rebuilding the cobblr-core image with the module removed from cobblr-modules.json`,
+        },
+      });
+      return;
+    }
+    const result = await uninstallSandboxedModule(name);
+    await meta.deleteFrom("installed_modules").where("name", "=", name).execute();
+    res.json({
+      ok: true,
+      name,
+      removed_from_registry: result.removedFromRegistry,
+      removed_dir: result.removedDir,
+    });
+  } catch (err) {
+    next(err);
+  }
+});

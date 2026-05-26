@@ -1,0 +1,16 @@
+{
+  "name": "url-archive",
+  "version": "0.1.0",
+  "displayName": "URL Archive",
+  "description": "Save URLs you want to remember. Adds, lists, fetches the page title from each. End-to-end demo of every v0.3.x kernel op: TENANT_EXEC writes, TENANT_QUERY reads, HOST_FETCH grabs page titles, HOST_RESPOND emits real responses, ACTIVITY_LOG audits each action.",
+  "band": "marketplace",
+  "abi_version": 2,
+  "routes": [
+    { "method": "POST", "path": "/add",          "handler": "add" },
+    { "method": "POST", "path": "/list",         "handler": "list" },
+    { "method": "POST", "path": "/refresh-all",  "handler": "refresh_all", "deadline_ms": 15000 },
+    { "method": "POST", "path": "/clear",        "handler": "clear" }
+  ],
+  "network": [".github.com", ".githubusercontent.com", "localhost"],
+  "max_memory_pages": 64
+}

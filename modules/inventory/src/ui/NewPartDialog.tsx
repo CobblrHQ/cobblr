@@ -28,7 +28,7 @@ interface NewPartDialogProps {
 }
 
 export function NewPartDialog({ onClose, onCreated }: NewPartDialogProps) {
-  const { api, orgSlug, getToken } = useInventory();
+  const { api } = useInventory();
   const navigate = useNavigate();
   const cats = useQuery({ queryKey: ["inventory-categories"], queryFn: () => api.listCategories() });
   const locs = useQuery({ queryKey: ["inventory-locations"], queryFn: () => api.listLocations() });
@@ -62,37 +62,29 @@ export function NewPartDialog({ onClose, onCreated }: NewPartDialogProps) {
   }
 
   async function queueQrLabel(partId: string, displayName: string) {
-    const auth = (): Record<string, string> => {
-      const t = getToken();
-      return t ? { Authorization: `Bearer ${t}` } : {};
-    };
-    const mint = await fetch(
-      `/api/v1/orgs/${orgSlug}/modules/core-labels-qr/tokens`,
-      {
-        method: "POST",
-        headers: { ...auth(), "Content-Type": "application/json" },
-        body: JSON.stringify({
-          entity_kind: "inventory:part",
-          entity_id: partId,
-          mode: "navigate",
-          auth: "session",
-        }),
-      },
-    );
-    if (!mint.ok) return;
-    const tok = (await mint.json()) as { token: string };
-    await fetch(`/api/v1/orgs/${orgSlug}/modules/labels/queue`, {
-      method: "POST",
-      headers: { ...auth(), "Content-Type": "application/json" },
-      body: JSON.stringify({
+    // Two-step cross-module call: mint a QR navigate-token from
+    // core-labels-qr, then enqueue a label in the labels module
+    // pointing at it. Both flow through the typed inventory client
+    // so failures throw InventoryApiError instead of vanishing.
+    try {
+      const tok = await api.mintQrToken({
+        entity_kind: "inventory:part",
+        entity_id: partId,
+        mode: "navigate",
+        auth: "session",
+      });
+      await api.enqueueLabel({
         module_name: "inventory",
         entity_type: "part",
         entity_id: partId,
         qr_payload: `${window.location.origin}/qr/${tok.token}`,
         description: displayName,
         qty: 1,
-      }),
-    });
+      });
+    } catch {
+      // Non-fatal: the part was created. A failed label enqueue
+      // shouldn't block the user from seeing the new part.
+    }
   }
 
   async function submit(e: FormEvent) {

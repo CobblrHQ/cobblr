@@ -1,7 +1,7 @@
 // Combined signup / login screen. Toggle at the bottom flips mode —
 // keeps the splash → auth → dashboard journey one screen.
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useAuth } from "../auth/AuthContext";
 import { CobblestoneMark } from "../CobblestoneMark";
 import { api, ApiError, setToken } from "../lib/api";
@@ -13,6 +13,23 @@ export function AuthPage() {
   usePageTitle("Sign in");
   const { login, signup } = useAuth();
   const [mode, setMode] = useState<Mode>("login");
+  // signup_enabled gates the "create account" toggle. Default true
+  // so the toggle is shown in the brief window before /auth/config
+  // resolves — if the server says signup is disabled, we both hide
+  // the toggle AND snap any user already on signup back to login.
+  const [signupEnabled, setSignupEnabled] = useState(true);
+  useEffect(() => {
+    api
+      .authConfig()
+      .then((cfg) => {
+        setSignupEnabled(cfg.signup_enabled);
+        if (!cfg.signup_enabled) setMode("login");
+      })
+      .catch(() => {
+        // Network/early-boot — leave toggle visible; the POST will
+        // surface the real error if the user clicks through.
+      });
+  }, []);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -148,18 +165,20 @@ export function AuthPage() {
             {busy ? "…" : mode === "login" ? "Sign in" : "Create account"}
           </button>
 
-          <button
-            type="button"
-            onClick={() => {
-              setMode(mode === "login" ? "signup" : "login");
-              setError(null);
-            }}
-            className="w-full text-xs text-slate-500 dark:text-slate-400 hover:text-cobble-500 transition"
-          >
-            {mode === "login"
-              ? "no account yet? create one"
-              : "already have an account? sign in"}
-          </button>
+          {(signupEnabled || mode === "signup") && (
+            <button
+              type="button"
+              onClick={() => {
+                setMode(mode === "login" ? "signup" : "login");
+                setError(null);
+              }}
+              className="w-full text-xs text-slate-500 dark:text-slate-400 hover:text-cobble-500 transition"
+            >
+              {mode === "login"
+                ? "no account yet? create one"
+                : "already have an account? sign in"}
+            </button>
+          )}
         </form>
 
         {mode === "login" && (
@@ -167,7 +186,7 @@ export function AuthPage() {
         )}
 
         <p className="mt-6 text-center text-[11px] font-mono text-slate-400 dark:text-slate-500">
-          phase 0 · milestone 2 · auth
+          cobble together what works
         </p>
       </div>
     </div>

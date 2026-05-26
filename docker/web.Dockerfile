@@ -35,6 +35,20 @@ COPY web ./web
 WORKDIR /app/web
 RUN npm run build
 
+# Sandboxed module UIs. Each module that ships a `ui/` dir gets
+# its assets served at /sandboxed/<name>/ alongside the main SPA.
+# The parent SPA renders them via iframe — see
+# docs/design-decisions/module-isolation.md §6.
+COPY sandboxed-modules /tmp/sandboxed-modules
+RUN mkdir -p /app/web/dist/sandboxed && \
+    for d in /tmp/sandboxed-modules/*/ui; do \
+      if [ -d "$d" ]; then \
+        name=$(basename $(dirname $d)); \
+        cp -r "$d" "/app/web/dist/sandboxed/$name"; \
+        echo "[web-build] sandboxed UI: $name"; \
+      fi; \
+    done
+
 # ─── runtime ─────────────────────────────────────────────────────────
 FROM nginx:1.27-alpine AS runtime
 

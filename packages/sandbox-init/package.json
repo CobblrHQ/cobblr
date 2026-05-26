@@ -1,0 +1,13 @@
+{
+  "name": "@cobblr/sandbox-init",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Scaffolder for a new Cobblr v0.3 sandboxed module. Generates a working AS project with the SDK vendored in + npm scripts wired up.",
+  "bin": {
+    "cobblr-sandbox-init": "./bin/init.mjs"
+  },
+  "scripts": {
+    "typecheck": "echo 'no-op'"
+  }
+}

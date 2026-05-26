@@ -8,17 +8,39 @@
 import { meta } from "../db/meta.js";
 import { inAppChannel } from "./channels/in-app.js";
 import { browserPushChannel } from "./channels/browser-push.js";
+import { discordChannel } from "./channels/discord.js";
+import { slackChannel } from "./channels/slack.js";
+import { webhookChannel } from "./channels/webhook.js";
+import { emailChannel } from "./channels/email.js";
+import { smsChannel } from "./channels/sms.js";
 import type { Channel } from "./channels/types.js";
-import type { NotificationChannel } from "../db/schema.js";
+import type { NotificationChannel, NotificationPriority } from "../db/schema.js";
 
 const REGISTRY: Record<NotificationChannel, Channel | undefined> = {
   in_app: inAppChannel,
   browser_push: browserPushChannel,
-  email: undefined,
-  discord: undefined,
-  webhook: undefined,
-  slack: undefined,
+  email: emailChannel,
+  discord: discordChannel,
+  webhook: webhookChannel,
+  slack: slackChannel,
+  sms: smsChannel,
 };
+
+/** Ordering for the min_priority threshold. low < normal < high < urgent. */
+const PRIORITY_ORDER: Record<NotificationPriority, number> = {
+  low: 0,
+  normal: 1,
+  high: 2,
+  urgent: 3,
+};
+
+/** True if `notif >= threshold` on the priority ladder. */
+function meetsThreshold(
+  notifPriority: NotificationPriority,
+  threshold: NotificationPriority,
+): boolean {
+  return PRIORITY_ORDER[notifPriority] >= PRIORITY_ORDER[threshold];
+}
 
 export interface DispatchParams {
   orgId: string;
@@ -29,6 +51,11 @@ export interface DispatchParams {
   module?: string;
   entityType?: string;
   entityId?: string;
+  /** Routing knob. Subscriptions with min_priority above this won't
+   *  fire. Default 'normal' so a module that emits without thinking
+   *  about urgency lands in the standard "I care if I'm at the
+   *  computer" tier. */
+  priority?: NotificationPriority;
   payload?: unknown;
 }
 
@@ -38,6 +65,8 @@ export interface DispatchResult {
 }
 
 export async function dispatch(p: DispatchParams): Promise<DispatchResult> {
+  const priority: NotificationPriority = p.priority ?? "normal";
+
   // 1. Insert the notification row first so it exists in the DB even
   //    if every channel fails. delivered_via starts empty.
   const inserted = await meta
@@ -51,31 +80,75 @@ export async function dispatch(p: DispatchParams): Promise<DispatchResult> {
       entity_id: p.entityId ?? null,
       message: p.message,
       link_url: p.link_url ?? null,
+      priority,
     })
     .returning("id")
     .executeTakeFirstOrThrow();
 
-  // 2. Resolve which channels are enabled. No subscriptions → default
-  //    to in_app only. Explicit row with enabled=false suppresses a
-  //    channel that would otherwise default-on.
+  // 2. Resolve which subscriptions to fire. We pull both exact-match
+  //    (event_type = eventType) and wildcard ('*') rows. Then:
+  //      a. drop disabled rows
+  //      b. drop rows whose min_priority is above this notification's
+  //         priority (the urgency threshold)
+  //      c. dedup so a (channel, eventType-exact) and (channel,
+  //         wildcard) pair only fires the channel once — exact wins.
+  //    No subscriptions at all → default to in_app only (legacy
+  //    behaviour preserved). An explicit `enabled=false` row
+  //    suppresses a channel that would otherwise default-on.
   const subs = await meta
     .selectFrom("notification_subscriptions")
-    .select(["channel", "enabled"])
+    .select(["channel", "enabled", "min_priority", "event_type", "config"])
     .where("user_id", "=", p.userId)
     .where("org_id", "=", p.orgId)
-    .where("event_type", "=", p.eventType)
+    .where((eb) =>
+      eb.or([
+        eb("event_type", "=", p.eventType),
+        eb("event_type", "=", "*"),
+      ]),
+    )
     .execute();
 
-  const channelNames: NotificationChannel[] =
-    subs.length === 0
-      ? ["in_app"]
-      : (subs.filter((s) => s.enabled).map((s) => s.channel) as NotificationChannel[]);
+  // Exact-match rows take precedence over wildcard for the same
+  // (user, org, channel). Build a per-channel "the row that wins"
+  // map: prefer event_type === p.eventType over event_type === '*'.
+  const winningByChannel = new Map<
+    NotificationChannel,
+    typeof subs[number]
+  >();
+  for (const s of subs) {
+    const existing = winningByChannel.get(s.channel);
+    if (!existing) {
+      winningByChannel.set(s.channel, s);
+      continue;
+    }
+    // Exact beats wildcard.
+    if (existing.event_type === "*" && s.event_type !== "*") {
+      winningByChannel.set(s.channel, s);
+    }
+  }
+
+  const effective: Array<{
+    channel: NotificationChannel;
+    config: unknown;
+  }> = [];
+  for (const s of winningByChannel.values()) {
+    if (!s.enabled) continue;
+    if (!meetsThreshold(priority, s.min_priority)) continue;
+    effective.push({ channel: s.channel, config: s.config });
+  }
+
+  // Legacy default: no subscriptions matched at all → in_app only.
+  // (Existing callers haven't started supplying priority either, so
+  // this preserves their before-vs-after behaviour exactly.)
+  if (effective.length === 0 && subs.length === 0) {
+    effective.push({ channel: "in_app", config: null });
+  }
 
   // 3. Fan out in parallel. A failing channel doesn't take the others
   //    down with it. Channels not in the registry (or stubbed out)
   //    won't appear in delivered_via.
   const results = await Promise.all(
-    channelNames.map(async (name) => {
+    effective.map(async ({ channel: name, config }) => {
       const channel = REGISTRY[name];
       if (!channel) return { name, ok: false };
       try {
@@ -86,6 +159,8 @@ export async function dispatch(p: DispatchParams): Promise<DispatchResult> {
           eventType: p.eventType,
           message: p.message,
           link_url: p.link_url ?? null,
+          priority,
+          subscriptionConfig: config,
           payload: p.payload,
         });
         return { name, ok };
@@ -105,6 +180,46 @@ export async function dispatch(p: DispatchParams): Promise<DispatchResult> {
       .execute();
   }
   return { notificationId: inserted.id, deliveredVia };
+}
+
+/** Fire a test invocation through exactly ONE subscription's
+ *  channel, bypassing the dispatcher's full subscription scan + the
+ *  notifications-table insert. Used by the per-row "test" button on
+ *  /me/notification-channels so a user can validate their Discord
+ *  webhook without spamming every other binding they've set up. */
+export async function testOneBinding(
+  bindingId: string,
+  userId: string,
+  priority: NotificationPriority,
+): Promise<{ deliveredVia: NotificationChannel[]; ownerCheck: "ok" | "denied" | "not_found" }> {
+  const row = await meta
+    .selectFrom("notification_subscriptions")
+    .select(["id", "user_id", "org_id", "channel", "config", "enabled"])
+    .where("id", "=", bindingId)
+    .executeTakeFirst();
+  if (!row) return { deliveredVia: [], ownerCheck: "not_found" };
+  if (row.user_id !== userId) return { deliveredVia: [], ownerCheck: "denied" };
+  const driver = REGISTRY[row.channel];
+  if (!driver) return { deliveredVia: [], ownerCheck: "ok" };
+  let ok = false;
+  try {
+    ok = await driver.deliver({
+      notificationId: "test-" + bindingId,
+      orgId: row.org_id,
+      userId,
+      eventType: "test.notification",
+      message: `Per-binding test at ${new Date().toISOString()} (priority=${priority}).`,
+      link_url: "/me/notification-channels",
+      priority,
+      subscriptionConfig: row.config,
+    });
+  } catch (err) {
+    console.error(`[notify:test-one] channel ${row.channel} threw:`, err);
+  }
+  return {
+    deliveredVia: ok ? [row.channel] : [],
+    ownerCheck: "ok",
+  };
 }
 
 export interface NotificationListItem {

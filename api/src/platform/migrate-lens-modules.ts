@@ -1,3 +1,17 @@
+// HISTORICAL DATA MIGRATION — not kernel logic.
+//
+// This file's hardcoded module names (3d-printers, laser-cutters,
+// cnc-machines, workshop-mods) are NOT the kernel knowing about
+// specific modules in steady state — they're the *previous* schema
+// shape of those modules, encoded here so the boot pass can lift
+// data from the old shape into the new one. After all production
+// orgs are past this point (boot loops to migrate-lens completing
+// with `orgsTouched=0` consistently), the file can be deleted.
+//
+// On a fresh install with no legacy data, the early-return on
+// `targets.length === 0` keeps the cost at one SELECT. Skip
+// entirely with `COBBLR_SKIP_HISTORICAL_MIGRATIONS=1`.
+//
 // One-shot migration: the four Pillar-E specialisation modules
 // (3d-printers, laser-cutters, cnc-machines, workshop-mods) used to
 // be modules that contributed field defs via `contributes.fieldDefs`
@@ -420,6 +434,9 @@ export async function migrateLensModules(): Promise<{
   bundlesInstalled: number;
   fieldsMoved: number;
 }> {
+  if (process.env.COBBLR_SKIP_HISTORICAL_MIGRATIONS === "1") {
+    return { orgsTouched: 0, bundlesInstalled: 0, fieldsMoved: 0 };
+  }
   const targets = await meta
     .selectFrom("org_modules")
     .select(["org_id", "module_name"])

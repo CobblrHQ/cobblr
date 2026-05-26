@@ -1,0 +1,5 @@
+node_modules/
+module.wasm
+*.tar.gz
+*.tar.gz.sig
+*.tar.gz.sha256

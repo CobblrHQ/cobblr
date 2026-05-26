@@ -17,9 +17,14 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { meta } from "../db/meta.js";
 import { listEntries } from "../modules/registry.js";
+import { RUNTIME_INSTALL_DIR } from "../sandbox/loader.js";
 import { sql } from "kysely";
 
-const RUNTIME_INSTALL_DIR = "/var/cobblr/modules";
+// RUNTIME_INSTALL_DIR is owned by sandbox/loader (it's the same path
+// the sandbox loader scans for installed modules + the volume bind
+// in docker-compose). Re-deriving the literal here drifted once
+// already (was "/var/cobblr/modules", actual is "…/sandboxed-modules")
+// and quietly mis-classified every registry install as "manual".
 
 type BuildManifestEntry = {
   name: string;

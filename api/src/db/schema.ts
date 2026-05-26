@@ -161,7 +161,10 @@ export type NotificationChannel =
   | "email"
   | "discord"
   | "webhook"
-  | "slack";
+  | "slack"
+  | "sms";
+
+export type NotificationPriority = "low" | "normal" | "high" | "urgent";
 
 export interface NotificationsTable {
   id: Generated<string>;
@@ -173,6 +176,7 @@ export interface NotificationsTable {
   entity_id: string | null;
   message: string;
   link_url: string | null;
+  priority: Generated<NotificationPriority>;
   delivered_via: Generated<NotificationChannel[]>;
   read_at: Date | null;
   created_at: Generated<Date>;
@@ -182,9 +186,15 @@ export interface NotificationSubscriptionsTable {
   id: Generated<string>;
   user_id: string;
   org_id: string;
+  /** `*` = wildcard: matches every notification regardless of event_type.
+   *  Dispatcher checks exact-match first then falls back to wildcard. */
   event_type: string;
   channel: NotificationChannel;
   enabled: Generated<boolean>;
+  /** Only fan out to this subscription if notification.priority is
+   *  >= min_priority. low < normal < high < urgent. Default 'low'
+   *  (the floor) so legacy subs don't suddenly drop notifications. */
+  min_priority: Generated<NotificationPriority>;
   config: unknown | null;
 }
 

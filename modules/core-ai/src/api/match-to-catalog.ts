@@ -11,9 +11,8 @@
 
 import { Router } from "express";
 import { z } from "zod";
-import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
-import { tenantDb, tenantContext } from "../db.js";
+import { tenantContext } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 
 export const matchToCatalogRouter = Router({ mergeParams: true });
@@ -31,13 +30,6 @@ const Body = z.object({
   /** How many candidates to retrieve. Default 10. */
   top_k: z.number().int().positive().max(50).optional(),
 });
-
-interface CatalogEntry {
-  id: string;
-  external_id: string;
-  payload: Record<string, unknown>;
-  score: number;
-}
 
 matchToCatalogRouter.post(
   "/",
@@ -68,24 +60,21 @@ matchToCatalogRouter.post(
       return;
     }
 
-    // Candidate pull. pg_trgm similarity against payload->>'name'.
-    const db = tenantDb(req) as unknown as {
-      executeQuery: (q: unknown) => Promise<{ rows: CatalogEntry[] }>;
-    };
-    const compiled = sql<CatalogEntry>`
-      select
-        id,
-        external_id,
-        payload,
-        similarity(payload->>'name', ${queryText}) as score
-      from core_catalogs_entries
-      where catalog_id = ${parsed.data.catalog_id}
-        and payload->>'name' is not null
-      order by similarity(payload->>'name', ${queryText}) desc
-      limit ${k}
-    `.compile((tenantDb(req) as never));
-    const result = await db.executeQuery(compiled);
-    const candidates = result.rows;
+    // Candidate pull via the kernel's catalog primitive — pg_trgm
+    // similarity lives in core-catalogs's schema, so the kernel
+    // owns the SQL. Modules don't reach across schemas.
+    const rows = await platform().catalogs.similaritySearch({
+      orgId: ctx.org.id,
+      catalogId: parsed.data.catalog_id,
+      queryText,
+      limit: k,
+    });
+    const candidates = rows.map((r) => ({
+      id: r.id,
+      external_id: r.externalId,
+      payload: r.payload,
+      score: r.score,
+    }));
 
     if (parsed.data.candidates_only) {
       res.json({ candidates });

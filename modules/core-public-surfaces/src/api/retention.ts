@@ -95,13 +95,13 @@ export async function startRetentionWorker(): Promise<void> {
 async function seedJobsForOrgs(): Promise<void> {
   const meta = platform().db.meta as MetaDbLike;
   const orgs = await meta.selectFrom("orgs").select("id").execute();
-  const queued = await meta
-    .selectFrom("core_queue_jobs")
-    .select("org_id")
-    .where("queue", "=", QUEUE_NAME)
-    .where("status", "in", ["queued", "running"])
-    .execute();
-  const haveJob = new Set(queued.map((q) => q.org_id));
+  const orgIds = orgs.map((o) => o.id);
+  // Ask the kernel's queue primitive which orgs already have a
+  // pending sweep — no need to peek inside core-queue's tables.
+  const haveJob = await platform().queue.hasPendingJob({
+    orgIds,
+    queue: QUEUE_NAME,
+  });
   for (const o of orgs) {
     if (haveJob.has(o.id)) continue;
     await platform().queue.enqueue({

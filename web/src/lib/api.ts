@@ -226,6 +226,8 @@ export const api = {
   request: <T>(method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: unknown) =>
     request<T>(method, path, body),
   healthz: () => request<Healthz>("GET", "/healthz"),
+  authConfig: () =>
+    request<{ signup_enabled: boolean }>("GET", "/auth/config"),
   signup: (body: {
     email: string;
     password: string;
@@ -523,6 +525,36 @@ export const api = {
     request<void>("POST", `/me/notifications/${id}/read`),
   meMarkAllNotificationsRead: () =>
     request<{ count: number }>("POST", "/me/notifications/read-all"),
+
+  // ─── Notification channel bindings ────────────────────────────────
+  meNotificationChannels: (orgId: string) =>
+    request<{ items: NotificationChannelBinding[] }>(
+      "GET",
+      `/me/notification-channels?org_id=${encodeURIComponent(orgId)}`,
+    ),
+  upsertMeNotificationChannel: (body: NotificationChannelUpsert) =>
+    request<NotificationChannelBinding>(
+      "POST",
+      `/me/notification-channels`,
+      body,
+    ),
+  deleteMeNotificationChannel: (id: string) =>
+    request<void>("DELETE", `/me/notification-channels/${id}`),
+  testMeNotificationChannel: (body: { org_id: string; priority?: NotificationPriority }) =>
+    request<{ notificationId: string; deliveredVia: string[] }>(
+      "POST",
+      `/me/notification-channels/test`,
+      body,
+    ),
+  testOneMeNotificationChannel: (
+    id: string,
+    body: { priority?: NotificationPriority } = {},
+  ) =>
+    request<{ deliveredVia: string[] }>(
+      "POST",
+      `/me/notification-channels/${id}/test`,
+      body,
+    ),
 
   // ─── core-files ───────────────────────────────────────────────────
   listFiles: (slug: string, kind?: string) =>
@@ -1272,6 +1304,82 @@ export const api = {
       timestamp: string;
     }>("GET", `/super-admin/health`),
 
+  // Per-(workspace, module) invocation telemetry. Process-lifetime
+  // counts; latency percentiles use a rolling ring of ~200 recent
+  // samples so they reflect current behaviour.
+  superAdminSandboxTelemetry: () =>
+    request<{
+      rows: Array<{
+        org_id: string;
+        name: string;
+        slug: string;
+        module_name: string;
+        invocations: number;
+        errors: number;
+        error_rate: number;
+        p50_ms: number;
+        p95_ms: number;
+        recent_samples: number;
+      }>;
+    }>("GET", `/super-admin/sandbox-telemetry`),
+
+  // Per-workspace + per-module sandbox CPU usage in the current
+  // accounting window. `pct` is used_ms / quota_ms_per_window so
+  // 1.0+ means the workspace is at or over its budget.
+  superAdminSandboxCpu: () =>
+    request<{
+      window_ms: number;
+      quota_ms_per_window: number;
+      workspaces: Array<{
+        org_id: string;
+        name: string;
+        slug: string;
+        used_ms: number;
+        samples: number;
+        pct: number;
+        by_module: Record<string, number>;
+      }>;
+    }>("GET", `/super-admin/sandbox-cpu`),
+
+  // Marketplace v0.3.x — operator browses the cobblr registry +
+  // installs sandboxed modules at runtime.
+  sandboxRegistry: (url?: string) => {
+    const qs = url ? `?url=${encodeURIComponent(url)}` : "";
+    return request<{
+      items: Array<{
+        name: string;
+        display_name?: string;
+        description?: string;
+        band: string;
+        author?: string;
+        homepage?: string;
+        public_key_ed25519: string | null;
+        versions: Array<{
+          version: string;
+          released_at?: string;
+          source_url: string;
+          sha256: string | null;
+          signature: string | null;
+          notes?: string;
+        }>;
+        installed: { name: string; version: string; source: string } | null;
+      }>;
+    }>("GET", `/sandbox/registry${qs}`);
+  },
+  sandboxInstall: (body: { name: string; version: string; registry_url?: string }) =>
+    request<{ ok: boolean; name: string; version: string; routes: Array<{ method: string; path: string }> }>(
+      "POST",
+      `/sandbox/install`,
+      body,
+    ),
+  sandboxUninstall: (name: string) =>
+    request<{
+      ok: boolean;
+      name: string;
+      removed_from_registry: boolean;
+      removed_dir: string | null;
+    }>("DELETE", `/sandbox/install/${encodeURIComponent(name)}`),
+
   // core-locations — workspace-wide tree of physical places. Anything
   // with a `location_id` field (machines, assets, parts) points at
   // rows from this endpoint.
@@ -1795,6 +1903,39 @@ export interface CrossOrgNotificationEntry extends NotificationEntry {
   org_id: string;
   org_name: string;
   org_slug: string;
+}
+
+export type NotificationPriority = "low" | "normal" | "high" | "urgent";
+
+export type NotificationChannelName =
+  | "in_app"
+  | "browser_push"
+  | "email"
+  | "discord"
+  | "webhook"
+  | "slack"
+  | "sms";
+
+/** A row from notification_subscriptions, as returned by GET
+ *  /me/notification-channels. `config` may contain `<set>` strings
+ *  in place of secret values (webhook URLs, SMTP passwords, Twilio
+ *  auth tokens) — the API redacts those on read. */
+export interface NotificationChannelBinding {
+  id: string;
+  event_type: string;
+  channel: NotificationChannelName;
+  enabled: boolean;
+  min_priority: NotificationPriority;
+  config: Record<string, unknown> | null;
+}
+
+export interface NotificationChannelUpsert {
+  org_id: string;
+  event_type: string;
+  channel: NotificationChannelName;
+  enabled?: boolean;
+  min_priority?: NotificationPriority;
+  config?: Record<string, unknown>;
 }
 
 export interface QueueJob {

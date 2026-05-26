@@ -1,0 +1,22 @@
+{
+  "name": "hello-as",
+  "version": "0.0.2",
+  "displayName": "Hello AssemblyScript",
+  "description": "Sample sandboxed module written in AssemblyScript via @cobblr/sandbox-sdk-as. Exercises every shipped kernel op (write + read).",
+  "band": "marketplace",
+  "abi_version": 2,
+  "routes": [
+    { "method": "POST", "path": "/greet",           "handler": "handle" },
+    { "method": "POST", "path": "/emit",            "handler": "emit" },
+    { "method": "POST", "path": "/notify-self",     "handler": "notify_self" },
+    { "method": "POST", "path": "/query-self",      "handler": "query_self" },
+    { "method": "POST", "path": "/query-other",     "handler": "query_other" },
+    { "method": "POST", "path": "/query-mutate",    "handler": "query_mutate" },
+    { "method": "POST", "path": "/pairings-probe",  "handler": "pairings_probe" },
+    { "method": "POST", "path": "/catalogs-probe",  "handler": "catalogs_probe" },
+    { "method": "POST", "path": "/fetch-blocked",   "handler": "fetch_blocked" },
+    { "method": "POST", "path": "/fetch-allowed",   "handler": "fetch_allowed" }
+  ],
+  "network": ["localhost"],
+  "max_memory_pages": 64
+}

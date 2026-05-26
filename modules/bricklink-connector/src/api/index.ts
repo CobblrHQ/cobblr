@@ -3,7 +3,6 @@
 
 import { Router } from "express";
 import { z } from "zod";
-import type { Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { parseWantedList } from "../services/wanted-list.js";
 import { parseOrderCsv } from "../services/order-csv.js";
@@ -102,19 +101,20 @@ router.post("/diff-wanted-list", async (req, res, next) => {
     }
     const loader: LoadInventoryParts = async (orgId, partIds) => {
       if (partIds.length === 0) return [];
-      type InventoryReadDB = {
-        inventory_parts: { id: string; qty: string; metadata: Record<string, unknown> };
-      };
-      const tdb = (await platform().tenants.getDb(orgId)) as unknown as Kysely<InventoryReadDB>;
-      const rows = await tdb
-        .selectFrom("inventory_parts")
-        .select(["id", "qty", "metadata"])
-        .where("id", "in", partIds)
-        .execute();
-      return rows.map((r) => ({
+      // Go through the kernel's entity registry — inventory:part
+      // exposes { qty, metadata } in its exposableFields, so this
+      // is a layering-clean cross-module read. No more reaching
+      // into inventory_parts.
+      const resolved = await platform().entities.lookupMany(
+        orgId,
+        partIds.map((id) => ({ kind: "inventory:part", id })),
+      );
+      return resolved.map((r) => ({
         id: r.id,
-        qty: Number(r.qty) || 0,
-        color_id: extractColorId(r.metadata),
+        qty: Number((r.fields as { qty?: number | string }).qty ?? 0) || 0,
+        color_id: extractColorId(
+          (r.fields as { metadata?: Record<string, unknown> | null }).metadata ?? null,
+        ),
       }));
     };
     const result = await diffWantedList(orgId, parsed.data.items, loader);

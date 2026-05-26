@@ -98,7 +98,7 @@ export function OpenApiPage() {
             <h2 className="text-sm font-medium text-slate-600 dark:text-slate-300 mb-2">
               Component schemas
             </h2>
-            <ul className="border border-slate-200 dark:border-slate-700 rounded divide-y divide-slate-100 dark:divide-slate-800 max-h-96 overflow-y-auto">
+            <ul className="border border-slate-200 dark:border-slate-700 rounded divide-y divide-slate-100 dark:divide-slate-800 max-h-96 overflow-y-auto overflow-x-auto">
               {schemas.map(([name, s]) => (
                 <li key={name} className="px-3 py-2 text-sm">
                   <div className="font-mono text-xs">{name}</div>
@@ -122,9 +122,9 @@ export function OpenApiPage() {
             <h2 className="text-sm font-medium text-slate-600 dark:text-slate-300 mb-2">
               Paths
             </h2>
-            <ul className="border border-slate-200 dark:border-slate-700 rounded divide-y divide-slate-100 dark:divide-slate-800 max-h-96 overflow-y-auto font-mono text-xs">
+            <ul className="border border-slate-200 dark:border-slate-700 rounded divide-y divide-slate-100 dark:divide-slate-800 max-h-96 overflow-y-auto overflow-x-auto font-mono text-xs">
               {paths.map((p) => (
-                <li key={p} className="px-3 py-1.5">
+                <li key={p} className="px-3 py-1.5 whitespace-nowrap">
                   {p}
                 </li>
               ))}

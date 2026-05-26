@@ -10,7 +10,7 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { History, KeyRound, UserCog } from "lucide-react";
+import { Bell, History, KeyRound, UserCog } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { api, ApiError } from "../lib/api";
 import { useToast, usePageTitle } from "@cobblr/platform-web";
@@ -46,13 +46,22 @@ export function MeProfilePage() {
         onChanged={() => toast.success("Password updated — you stay signed in.")}
       />
 
-      <Link
-        to="/me/activity"
-        className="inline-flex items-center gap-2 text-sm text-cobble-600 hover:text-cobble-700"
-      >
-        <History size={14} />
-        Your activity across all workspaces →
-      </Link>
+      <div className="flex flex-col gap-2">
+        <Link
+          to="/me/activity"
+          className="inline-flex items-center gap-2 text-sm text-cobble-600 hover:text-cobble-700"
+        >
+          <History size={14} />
+          Your activity across all workspaces →
+        </Link>
+        <Link
+          to="/me/notification-channels"
+          className="inline-flex items-center gap-2 text-sm text-cobble-600 hover:text-cobble-700"
+        >
+          <Bell size={14} />
+          Notification channels (Discord / Slack / email / SMS / webhook) →
+        </Link>
+      </div>
     </div>
   );
 }

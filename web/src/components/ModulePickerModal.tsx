@@ -89,6 +89,16 @@ export function ModulePickerModal({ open, onClose, scopeToParent }: Props) {
     : orderedParents;
   const visibleOrphans = scopeToParent && !showAll ? [] : orphans;
 
+  // Split top-level "user-facing" modules from platform infrastructure
+  // (the `core-*` set). Activity log, files, queue, etc. are real
+  // module rows but they're plumbing — not a per-workspace product
+  // choice the way Assets / BrickLink / Inventory are. They get a
+  // compact one-line treatment at the bottom of the modal instead of
+  // full-height tiles.
+  const isPlatformCore = (m: OrgModuleListItem) => m.name.startsWith("core-");
+  const userParents = visibleParents.filter((m) => !isPlatformCore(m));
+  const corePlatform = visibleParents.filter(isPlatformCore);
+
   const enable = useMutation({
     mutationFn: (name: string) => api.enableModule(activeSlug, name),
     onSuccess: (_r, name) => {
@@ -169,7 +179,7 @@ export function ModulePickerModal({ open, onClose, scopeToParent }: Props) {
         )}
 
         <ul className="space-y-3">
-          {visibleParents.map((p) => (
+          {userParents.map((p) => (
             <ParentCard
               key={p.name}
               parent={p}
@@ -181,7 +191,7 @@ export function ModulePickerModal({ open, onClose, scopeToParent }: Props) {
               draggable={!scopeToParent || showAll}
               onDropBefore={(name) => reorderTo(name, p.name)}
               onDropAtEnd={(name) => reorderTo(name, null)}
-              isLast={p === visibleParents[visibleParents.length - 1]}
+              isLast={p === userParents[userParents.length - 1]}
             />
           ))}
           {visibleOrphans.map((m) => (
@@ -198,12 +208,39 @@ export function ModulePickerModal({ open, onClose, scopeToParent }: Props) {
               </div>
             </li>
           ))}
-          {visibleParents.length === 0 && visibleOrphans.length === 0 && (
+          {userParents.length === 0 && visibleOrphans.length === 0 && corePlatform.length === 0 && (
             <li className="text-xs text-slate-400 italic text-center py-6">
               No modules match this filter.
             </li>
           )}
         </ul>
+
+        {corePlatform.length > 0 && (
+          <details className="mt-5 pt-3 border-t border-slate-200 dark:border-slate-700 group">
+            <summary className="cursor-pointer list-none flex items-center justify-between text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 hover:text-cobble-500 dark:hover:text-cobble-400 transition">
+              <span>// platform infrastructure ({corePlatform.length})</span>
+              <span className="text-slate-300 dark:text-slate-600 group-open:rotate-90 transition-transform">▸</span>
+            </summary>
+            <div className="text-[10px] font-mono text-slate-400 dark:text-slate-500 mt-2 mb-2 italic">
+              Foundational modules. Modules built on top of cobblr assume
+              these are on. Disabling something here will likely break
+              every user-facing module in the workspace — flip with care.
+            </div>
+            <ul className="space-y-1">
+              {corePlatform.map((m) => (
+                <li key={m.name}>
+                  <CoreRow
+                    m={m}
+                    enabledNames={enabledNames}
+                    onEnable={() => enable.mutate(m.name)}
+                    onDisable={() => handleDisable(m)}
+                    busy={enable.isPending || disable.isPending}
+                  />
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
 
         <div className="pt-3 border-t border-slate-100 dark:border-slate-700 flex justify-end">
           <button
@@ -420,6 +457,68 @@ function Row({
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+// One-line rendering for platform-infrastructure modules (the
+// core-* set). Name + version + one-line description + enable
+// toggle. No drag handle (foundational modules don't appear in the
+// nav, so reordering them is meaningless). No "specialisations"
+// nest. Description gets truncated.
+function CoreRow({
+  m,
+  enabledNames,
+  onEnable,
+  onDisable,
+  busy,
+}: {
+  m: OrgModuleListItem;
+  enabledNames: Set<string>;
+  onEnable: () => void;
+  onDisable: () => void;
+  busy: boolean;
+}) {
+  const missingDeps = m.dependencies.filter((d) => !enabledNames.has(d));
+  const blocked = missingDeps.length > 0;
+  return (
+    <div className="flex items-center gap-2 py-1 px-2 rounded hover:bg-mortar-50 dark:hover:bg-slate-800/40 transition">
+      <span className="shrink-0">
+        {m.enabled ? (
+          <CheckCircle2 size={12} className="text-moss-600" />
+        ) : blocked ? (
+          <Lock size={12} className="text-slate-400" />
+        ) : (
+          <Circle size={12} className="text-slate-300" />
+        )}
+      </span>
+      <span className="text-xs font-medium text-slate-600 dark:text-mortar-200 shrink-0">
+        {m.displayName}
+      </span>
+      <span className="text-[10px] font-mono text-slate-400 shrink-0">v{m.version}</span>
+      <span
+        className="text-[11px] text-slate-400 dark:text-slate-500 truncate flex-1"
+        title={m.description}
+      >
+        {m.description}
+      </span>
+      {m.enabled ? (
+        <button
+          onClick={onDisable}
+          disabled={busy}
+          className="text-[10px] font-mono uppercase tracking-widest text-slate-400 hover:text-ember-500 transition px-2 shrink-0"
+        >
+          disable
+        </button>
+      ) : (
+        <button
+          onClick={onEnable}
+          disabled={busy || blocked}
+          className="text-[10px] font-mono uppercase tracking-widest px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700 text-cobble-600 hover:bg-mortar-50 dark:hover:bg-slate-800 transition disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+        >
+          enable
+        </button>
+      )}
     </div>
   );
 }

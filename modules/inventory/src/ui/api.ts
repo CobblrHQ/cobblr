@@ -352,6 +352,37 @@ export class InventoryApi {
         relationship_kind: "matches",
       },
     );
+
+  /** Mint a QR navigate-token for an entity. Used by NewPartDialog's
+   *  "queue a label after create" flow. Cross-module call into
+   *  core-labels-qr — kept here so callers don't reach for raw fetch. */
+  mintQrToken = (b: {
+    entity_kind: string;
+    entity_id: string;
+    mode: "navigate";
+    auth: "session";
+  }) =>
+    this.requestAbs<{ token: string }>(
+      "POST",
+      `/api/v1/orgs/${this.slug}/modules/core-labels-qr/tokens`,
+      b,
+    );
+
+  /** Add an item to the labels print queue. Cross-module call into
+   *  the labels module. */
+  enqueueLabel = (b: {
+    module_name: string;
+    entity_type: string;
+    entity_id: string;
+    qr_payload: string;
+    description: string;
+    qty: number;
+  }) =>
+    this.requestAbs<unknown>(
+      "POST",
+      `/api/v1/orgs/${this.slug}/modules/labels/queue`,
+      b,
+    );
 }
 
 export interface CatalogSearchHit {
