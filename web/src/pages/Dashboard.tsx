@@ -709,10 +709,11 @@ function PinnedView({
 function RecentActivity({ slug }: { slug: string }) {
   const q = useQuery({
     queryKey: ["dash-activity", slug],
-    queryFn: () => api.orgActivity(slug, 10),
+    queryFn: () => api.orgActivity(slug, 50),
     staleTime: 30_000,
   });
   const items = q.data?.items ?? [];
+  const groups = groupActivity(items);
   return (
     <section>
       <SectionTitle>recent activity</SectionTitle>
@@ -720,15 +721,45 @@ function RecentActivity({ slug }: { slug: string }) {
       {!q.isLoading && items.length === 0 && (
         <div className="text-xs text-slate-400 italic">no activity yet</div>
       )}
-      {items.length > 0 && (
+      {groups.length > 0 && (
         <ul className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 divide-y divide-slate-100 dark:divide-slate-800">
-          {items.map((e) => (
-            <ActivityRow key={e.id} entry={e} />
-          ))}
+          {groups.map((g) => {
+            const first = g.items[0];
+            if (!first) return null;
+            return g.items.length === 1 ? (
+              <ActivityRow key={first.id} entry={first} />
+            ) : (
+              <ActivityGroupRow key={first.id} group={g} />
+            );
+          })}
         </ul>
       )}
     </section>
   );
+}
+
+interface ActivityGroup {
+  signature: string;
+  items: ActivityEntry[];
+}
+
+/** Roll up consecutive entries that share actor + action + entity_type.
+ *  An 8-pairings burst from a single seed run becomes one line that
+ *  expands on click. Non-adjacent identical entries STAY separate —
+ *  if something else happened in between, the burst was already
+ *  interrupted and rolling those up would distort the timeline. */
+function groupActivity(items: ActivityEntry[]): ActivityGroup[] {
+  const out: ActivityGroup[] = [];
+  for (const e of items) {
+    const sig = `${e.actor?.display_name ?? ""}|${e.action}|${e.entity_type ?? ""}`;
+    const last = out[out.length - 1];
+    if (last && last.signature === sig) {
+      last.items.push(e);
+    } else {
+      out.push({ signature: sig, items: [e] });
+    }
+  }
+  return out;
 }
 
 function ActivityRow({ entry: e }: { entry: ActivityEntry }) {
@@ -754,6 +785,66 @@ function ActivityRow({ entry: e }: { entry: ActivityEntry }) {
       <span className="font-mono text-[10px] text-slate-400 shrink-0">
         {relativeTime(e.occurred_at)}
       </span>
+    </li>
+  );
+}
+
+/** Consolidated row for a burst of N identical-signature entries.
+ *  Shows one summary line + a `×N` chip. If any entry in the group
+ *  has unique detail in its diff (a name/title/label), expanding the
+ *  group reveals each line; otherwise no accordion (nothing extra to
+ *  show). */
+function ActivityGroupRow({ group }: { group: ActivityGroup }) {
+  // Guaranteed non-empty: ActivityGroup is only constructed inside
+  // groupActivity which always pushes at least one item before the
+  // group is recorded; and the caller only renders this for groups
+  // with length > 1.
+  const first = group.items[0]!;
+  const last = group.items[group.items.length - 1]!;
+  const action = humanAction(first.action);
+  const actor = first.actor?.display_name ?? "someone";
+  const titles = group.items
+    .map((e) => pickString((e.diff ?? {}) as Record<string, unknown>, ["name", "title", "label"]))
+    .filter((t): t is string => !!t);
+  const hasUniqueDetail = titles.length > 0;
+  const rowContent = (
+    <div className="flex items-baseline gap-3 text-sm w-full">
+      <span className="text-slate-500 dark:text-slate-400 shrink-0">
+        {actor}
+      </span>
+      <span className="text-slate-600 dark:text-mortar-200 shrink-0">
+        {action}
+      </span>
+      <span className="text-slate-700 dark:text-mortar-100 truncate">
+        <span className="font-mono text-xs text-slate-400">{first.entity_type}</span>
+        <span className="ml-1.5 inline-flex items-center text-[10px] font-mono uppercase tracking-widest text-cobble-600 dark:text-cobble-400 bg-cobble-50 dark:bg-cobble-900/40 rounded px-1.5 py-0.5">
+          ×{group.items.length}
+        </span>
+      </span>
+      <span className="flex-1" />
+      <span className="font-mono text-[10px] text-slate-400 shrink-0">
+        {relativeTime(last.occurred_at)}
+        <span className="text-slate-300 dark:text-slate-600"> → </span>
+        {relativeTime(first.occurred_at)}
+      </span>
+    </div>
+  );
+  if (!hasUniqueDetail) {
+    return <li className="px-4 py-2">{rowContent}</li>;
+  }
+  return (
+    <li>
+      <details className="group">
+        <summary className="list-none cursor-pointer px-4 py-2 hover:bg-mortar-50 dark:hover:bg-slate-800/40 transition flex items-baseline gap-2">
+          <span className="text-slate-300 dark:text-slate-600 text-[10px] shrink-0 group-open:rotate-90 transition-transform">▸</span>
+          {rowContent}
+        </summary>
+        <ul className="border-t border-slate-100 dark:border-slate-800 bg-mortar-25 dark:bg-slate-800/20 divide-y divide-slate-100 dark:divide-slate-800/40">
+          {group.items.map((e) => (
+            <ActivityRow key={e.id} entry={e} />
+          ))}
+        </ul>
+      </details>
     </li>
   );
 }

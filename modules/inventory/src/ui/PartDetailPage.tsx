@@ -51,8 +51,13 @@ export function PartDetailPage() {
     onError: (e: unknown) => toast.error((e as Error).message),
   });
 
-  if (part.isLoading) return <div className="text-sm text-slate-400 dark:text-slate-500">loading…</div>;
+  // usePageTitle MUST run on every render — calling a hook after an
+  // early return violates the Rules of Hooks. When the part query
+  // transitions from isLoading=true to isLoading=false the hook
+  // count would change between renders and React silently fails the
+  // component (the page renders blank, no error in the console).
   usePageTitle(part.data?.name ?? "Part");
+  if (part.isLoading) return <div className="text-sm text-slate-400 dark:text-slate-500">loading…</div>;
   if (part.error) {
     return <div className="text-sm text-ember-500">{(part.error as Error).message}</div>;
   }

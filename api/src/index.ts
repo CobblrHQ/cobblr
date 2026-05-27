@@ -257,6 +257,19 @@ async function boot() {
           .execute();
         return rows;
       },
+      findBySources: async ({ orgId, sourceKind, sourceIds, targetKind, relationshipKind }) => {
+        if (sourceIds.length === 0) return [];
+        const rows = await meta
+          .selectFrom("entity_pairings")
+          .select(["source_id as sourceId", "target_id as targetId"])
+          .where("org_id", "=", orgId)
+          .where("source_kind", "=", sourceKind)
+          .where("target_kind", "=", targetKind)
+          .where("relationship_kind", "=", relationshipKind)
+          .where("source_id", "in", sourceIds)
+          .execute();
+        return rows;
+      },
     },
     catalogs: {
       findBySemanticType: async (orgId, semanticType) => {

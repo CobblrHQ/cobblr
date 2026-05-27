@@ -255,6 +255,7 @@ partsRouter.get(
 
     // Cross-module read for the location name: go through the
     // resolver (no direct table read) per module-layers.md.
+    const ctx = tenantContext(req);
     const locationIds = Array.from(
       new Set(
         filtered
@@ -263,7 +264,6 @@ partsRouter.get(
       ),
     );
     if (locationIds.length > 0) {
-      const ctx = tenantContext(req);
       const resolved = await platform().entities.lookupMany(
         ctx.org.id,
         locationIds.map((id) => ({ kind: "core-locations:location", id })),
@@ -271,6 +271,52 @@ partsRouter.get(
       const byId = new Map(resolved.map((r) => [r.id, r.title]));
       for (const p of filtered) {
         if (p.location_id) p.location_name = byId.get(p.location_id) ?? null;
+      }
+    }
+
+    // Catalog-image fallback: for parts that don't carry their own
+    // image_path, walk the `matches → core-catalogs:entry` pairing
+    // and use the matched entry's image_path. One batched pairings
+    // lookup + one batched lookupMany — no N+1.
+    const partsNeedingImage = filtered
+      .filter((p) => !p.image_path)
+      .map((p) => p.id);
+    if (partsNeedingImage.length > 0) {
+      const pairs = await platform().pairings.findBySources({
+        orgId: ctx.org.id,
+        sourceKind: "inventory:part",
+        sourceIds: partsNeedingImage,
+        targetKind: "core-catalogs:entry",
+        relationshipKind: "matches",
+      });
+      if (pairs.length > 0) {
+        // Some parts may have multiple matches (e.g. matched in two
+        // different catalogs). Keep the first one — order is undefined
+        // but stable per call.
+        const targetByPart = new Map<string, string>();
+        for (const p of pairs) {
+          if (!targetByPart.has(p.sourceId)) {
+            targetByPart.set(p.sourceId, p.targetId);
+          }
+        }
+        const entries = await platform().entities.lookupMany(
+          ctx.org.id,
+          Array.from(new Set(targetByPart.values())).map((id) => ({
+            kind: "core-catalogs:entry",
+            id,
+          })),
+        );
+        const imageByEntryId = new Map<string, string>();
+        for (const e of entries) {
+          if (e.image_path) imageByEntryId.set(e.id, e.image_path);
+        }
+        for (const p of filtered) {
+          if (p.image_path) continue;
+          const targetId = targetByPart.get(p.id);
+          if (!targetId) continue;
+          const img = imageByEntryId.get(targetId);
+          if (img) p.image_path = img;
+        }
       }
     }
 

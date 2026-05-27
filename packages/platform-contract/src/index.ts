@@ -1334,6 +1334,20 @@ export interface PlatformPairings {
     targetIds: string[];
     relationshipKind: string;
   }): Promise<Array<{ sourceId: string; targetId: string }>>;
+  /** The inverse of findByTargets. "Given these N source entities,
+   *  which target-side entities of `targetKind` do they point at via
+   *  `relationshipKind`?" One SQL round-trip; caller groups by
+   *  sourceId. Used by inventory's parts-list endpoint to
+   *  batch-resolve the matched catalog entry for every part on the
+   *  page (so the inventory row can fall back to the catalog's
+   *  image when image_path is empty). */
+  findBySources(args: {
+    orgId: string;
+    sourceKind: string;
+    sourceIds: string[];
+    targetKind: string;
+    relationshipKind: string;
+  }): Promise<Array<{ sourceId: string; targetId: string }>>;
 }
 
 /** Read-only access to core-catalogs from other modules. Modules
