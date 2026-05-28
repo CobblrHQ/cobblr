@@ -148,6 +148,16 @@ export function completeApp(app: Application): void {
 
   app.use(
     (err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+      // Postgres 22P02 (invalid_text_representation) means a malformed
+      // path/query value hit a typed column (e.g. a non-UUID :id). That's
+      // a client error, not a server fault — answer 400, and never echo
+      // the raw driver message (which the 500 path leaks in non-prod).
+      if ((err as { code?: string }).code === "22P02") {
+        res.status(400).json({
+          error: { code: "invalid_input", message: "Malformed identifier or value." },
+        });
+        return;
+      }
       console.error("[cobblr-api] unhandled", err);
       res.status(500).json({
         error: { code: "internal", message: env.NODE_ENV === "production" ? "Internal error" : err.message },

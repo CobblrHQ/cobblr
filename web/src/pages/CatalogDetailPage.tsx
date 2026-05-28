@@ -69,13 +69,17 @@ export function CatalogDetailPage() {
     return () => io.disconnect();
   }, [entriesQ]);
 
+  // usePageTitle is a hook — it must run before the conditional
+  // `return null` below, or the hook order changes when :id appears/
+  // disappears between renders and React crashes the page.
+  usePageTitle(catalogQ.data?.name ?? "Catalog");
+
   if (!id) return null;
 
   const catalog = catalogQ.data;
   const entries = entriesQ.data?.pages.flatMap((p) => p.items) ?? [];
   const titleCol =
     entriesQ.data?.pages[0]?.title_column ?? "name";
-  usePageTitle(catalog?.name ?? "Catalog");
 
   return (
     <div className="space-y-4">

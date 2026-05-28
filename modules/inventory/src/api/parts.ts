@@ -570,6 +570,7 @@ partsRouter.post(
 partsRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "inventory:update-part"))) return;
     const routed = routeUnknownToMetadata(req.body, NATIVE_PART_KEYS);
     const parsed = PartUpdate.safeParse(routed);
     if (!parsed.success) return badBody(res, parsed.error);
@@ -664,6 +665,7 @@ partsRouter.delete(
 partsRouter.post(
   "/:id/stock-adjust",
   asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "inventory:adjust-stock"))) return;
     const parsed = StockAdjust.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const id = req.params.id;

@@ -83,6 +83,9 @@ inboundTokensRouter.post(
 inboundTokensRouter.get(
   "/",
   asyncHandler(async (req, res) => {
+    // Rows include the token secret (selectAll) — owner/admin only,
+    // never members/guests, matching the create/revoke/delete gates.
+    if (!requireRole(req, res, "owner", "admin")) return;
     const db = tenantDb(req);
     const items = await db
       .selectFrom("core_integrations_inbound_tokens")

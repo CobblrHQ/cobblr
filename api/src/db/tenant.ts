@@ -18,7 +18,11 @@ interface CachedTenant {
   db: Kysely<TenantDB>;
 }
 
-const cache = new Map<string, CachedTenant>();
+// Cache the in-flight PROMISE, not the resolved value: two concurrent
+// first-requests for the same tenant then share one open() instead of
+// each constructing a Pool — otherwise the second cache.set() overwrites
+// the first, orphaning its connections (a slow leak under load).
+const cache = new Map<string, Promise<CachedTenant>>();
 
 interface TenantCredentials {
   user: string;
@@ -36,10 +40,7 @@ function metaHostBits(): { host: string; port: number } {
   };
 }
 
-export async function getTenantDb(orgId: string): Promise<Kysely<TenantDB>> {
-  const cached = cache.get(orgId);
-  if (cached) return cached.db;
-
+async function openTenant(orgId: string): Promise<CachedTenant> {
   const org = await meta
     .selectFrom("orgs")
     .select(["db_name", "db_credentials_encrypted"])
@@ -64,8 +65,8 @@ export async function getTenantDb(orgId: string): Promise<Kysely<TenantDB>> {
   // backend kills a connection during DROP DATABASE on this tenant,
   // or a transient network blip) becomes an unhandled 'error' event
   // and Node terminates the process. Tenants get DROPped during
-  // org-delete; this listener is what keeps the api alive across
-  // that path.
+  // org-delete; this listener is what keeps the api alive across that
+  // path.
   pool.on("error", (err) => {
     console.error(
       `[tenant-pool ${orgId}] idle client error:`,
@@ -73,22 +74,40 @@ export async function getTenantDb(orgId: string): Promise<Kysely<TenantDB>> {
     );
   });
   const db = new Kysely<TenantDB>({ dialect: new PostgresDialect({ pool }) });
-  cache.set(orgId, { pool, db });
-  return db;
+  return { pool, db };
+}
+
+export async function getTenantDb(orgId: string): Promise<Kysely<TenantDB>> {
+  let entry = cache.get(orgId);
+  if (!entry) {
+    entry = openTenant(orgId);
+    cache.set(orgId, entry);
+    // A failed open must not poison the cache forever — let the next
+    // call retry (only evict if our promise is still the cached one).
+    entry.catch(() => {
+      if (cache.get(orgId) === entry) cache.delete(orgId);
+    });
+  }
+  return (await entry).db;
 }
 
 /** Pool accessor for callers that need raw pg (e.g. migration runner).
  *  Lazily opens the pool by going through getTenantDb. */
 export async function getTenantPool(orgId: string): Promise<Pool> {
   await getTenantDb(orgId);
-  return cache.get(orgId)!.pool;
+  return (await cache.get(orgId)!).pool;
 }
 
-/** For tenant deletion (added later) — also useful in tests to reset
- *  the pool when the underlying DB has been dropped/recreated. */
+/** For tenant deletion — also useful in tests to reset the pool when
+ *  the underlying DB has been dropped/recreated. */
 export async function evictTenantPool(orgId: string): Promise<void> {
-  const cached = cache.get(orgId);
-  if (!cached) return;
+  const entry = cache.get(orgId);
+  if (!entry) return;
   cache.delete(orgId);
-  await cached.pool.end();
+  try {
+    const { pool } = await entry;
+    await pool.end();
+  } catch {
+    // open() failed — nothing to close.
+  }
 }

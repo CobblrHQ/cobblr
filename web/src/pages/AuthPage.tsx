@@ -37,6 +37,14 @@ export function AuthPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Signup spins up a whole tenant database + enables the starter
+  // modules — several seconds of real work. Acknowledge the click
+  // instantly with a dedicated "setting up your workspace" screen
+  // instead of leaving the user staring at a button that says "…".
+  // On success the AuthContext flips us to the dashboard; on error we
+  // fall back to the form (busy=false) with the message shown.
+  const provisioning = busy && mode === "signup";
+
   async function submit(e: FormEvent) {
     e.preventDefault();
     setError(null);
@@ -79,6 +87,31 @@ export function AuthPage() {
           </div>
         </div>
 
+        {provisioning ? (
+          <div
+            role="status"
+            aria-live="polite"
+            className="bg-white dark:bg-slate-900/70 backdrop-blur border border-slate-200 dark:border-slate-700 rounded-xl p-6 shadow-sm text-center space-y-4"
+          >
+            <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500">
+              // account created
+            </div>
+            <div
+              className="mx-auto h-8 w-8 rounded-full border-2 border-cobble-200 border-t-cobble-600 animate-spin"
+              aria-hidden
+            />
+            <div className="font-display text-lg font-bold text-slate-700 dark:text-mortar-100">
+              Setting up your workspace…
+            </div>
+            <p className="text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+              Spinning up a private database for{" "}
+              <strong className="text-slate-700 dark:text-mortar-200">
+                {orgName.trim() || "your workspace"}
+              </strong>{" "}
+              and signing you in. This takes a few seconds — hang tight.
+            </p>
+          </div>
+        ) : (
         <form
           onSubmit={submit}
           className="bg-white dark:bg-slate-900/70 backdrop-blur border border-slate-200 dark:border-slate-700 rounded-xl p-5 shadow-sm space-y-3"
@@ -180,8 +213,9 @@ export function AuthPage() {
             </button>
           )}
         </form>
+        )}
 
-        {mode === "login" && (
+        {mode === "login" && !provisioning && (
           <MagicLinkPanel email={email} />
         )}
 

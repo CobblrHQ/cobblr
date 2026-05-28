@@ -143,7 +143,7 @@ export function AssetsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2 border-b border-slate-200 dark:border-slate-700 pb-3">
         <h1 className="font-display text-2xl font-extrabold text-slate-700 dark:text-mortar-100 lowercase">
           assets
         </h1>

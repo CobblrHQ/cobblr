@@ -78,7 +78,7 @@ export function PartDetailPage() {
             size={96}
             className="ring-1 ring-slate-200 dark:ring-slate-700"
           />
-          <div className="flex items-start gap-3 flex-1">
+          <div className="flex flex-col sm:flex-row items-start gap-3 flex-1 min-w-0">
             <div className="flex-1 min-w-0">
               <InlineText
                 value={p.name}

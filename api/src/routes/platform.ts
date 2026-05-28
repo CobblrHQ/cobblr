@@ -9,6 +9,7 @@ import { z } from "zod";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { requireAuth } from "../auth/middleware.js";
+import { requireCapability } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
 import { meta } from "../db/meta.js";
 import * as activity from "../platform/activity.js";
@@ -249,6 +250,11 @@ platformOrgRouter.post(
         });
         return;
       }
+      // Authorize: owner/admin pass; members/guests need an explicit
+      // grant for this specific action. Closes the hole where any
+      // authenticated member (incl. a read-only guest) could invoke any
+      // action — e.g. hand-firing inventory:adjust-stock to move stock.
+      if (!(await requireCapability(req, res, parsed.data.actionId))) return;
       // Look up the entity once — we need its fields for the
       // namespaced ctx.entity block (Q2 resolution) and also for
       // template rendering if a binding template applies.
@@ -360,11 +366,16 @@ const BindingCreate = z
     trigger_type: z
       .enum(["user-invoked", "event", "on-create", "on-update", "on-delete", "schedule"])
       .default("user-invoked"),
-    trigger_event: z.string().optional(),
+    // .nullish() not .optional(): the web form sends `null` for an
+    // unset field (not `undefined`), and `.optional()` rejected null —
+    // which 400'd the default "user-invoked, no template" wire. The
+    // superRefine checks below are truthiness-based, so null reads as
+    // "absent" correctly, and the insert already coalesces `?? null`.
+    trigger_event: z.string().nullish(),
     /** RRULE string for schedule-triggered wires (Q4). Null/absent for
      *  every other trigger type. See wires-and-bundles.md Q4. */
-    trigger_schedule: z.string().optional(),
-    template: z.string().max(2000).optional(),
+    trigger_schedule: z.string().nullish(),
+    template: z.string().max(2000).nullish(),
     filter: z.record(z.unknown()).optional(),
     args: z.record(z.unknown()).optional(),
     /** What entity the action fires on. Default "self" (action runs on

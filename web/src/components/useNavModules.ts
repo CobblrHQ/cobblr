@@ -29,6 +29,10 @@ export interface NavModules {
    *  (either real Pillar-E modules OR installed lens bundles
    *  rendered as synthetic module items). */
   childrenByParent: Map<string, OrgModuleListItem[]>;
+  /** Every enabled module name (including `core-*`). Lets the nav gate
+   *  hardcoded affordances like the scan link on their module being on
+   *  — a blank slate shows only what the user has turned on. */
+  enabledNames: Set<string>;
   isLoading: boolean;
 }
 
@@ -186,6 +190,7 @@ export function useNavModules(activeSlug: string): NavModules {
   return {
     tops,
     childrenByParent,
+    enabledNames,
     isLoading: modules.isLoading || bundles.isLoading,
   };
 }

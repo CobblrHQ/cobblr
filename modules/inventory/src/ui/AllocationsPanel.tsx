@@ -2,7 +2,7 @@
 // inline consume + release controls on the reserved ones, and a
 // "new reservation" form at the bottom.
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useInventory } from "./context";
 import type { AllocationStatus } from "./api";
@@ -82,9 +82,7 @@ function ReserveForm({ partId }: { partId: string }) {
   const { api } = useInventory();
   const qc = useQueryClient();
   const [qty, setQty] = useState("1");
-  const [targetModule, setTargetModule] = useState("projects");
-  const [targetType, setTargetType] = useState("task");
-  const [targetId, setTargetId] = useState("");
+  const [target, setTarget] = useState<{ module: string; type: string; id: string; label: string } | null>(null);
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -93,9 +91,9 @@ function ReserveForm({ partId }: { partId: string }) {
       api.createAllocation({
         part_id: partId,
         qty: Number(qty),
-        target_module: targetModule.trim(),
-        target_entity_type: targetType.trim(),
-        target_entity_id: targetId.trim(),
+        target_module: target!.module,
+        target_entity_type: target!.type,
+        target_entity_id: target!.id,
         reason: reason.trim() || undefined,
       }),
     onSuccess: () => {
@@ -103,7 +101,7 @@ function ReserveForm({ partId }: { partId: string }) {
       void qc.invalidateQueries({ queryKey: ["inventory-part", partId] });
       void qc.invalidateQueries({ queryKey: ["inventory-parts"] });
       setQty("1");
-      setTargetId("");
+      setTarget(null);
       setReason("");
       setError(null);
     },
@@ -114,7 +112,7 @@ function ReserveForm({ partId }: { partId: string }) {
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    if (!targetId.trim() || !Number(qty)) return;
+    if (!target || !Number(qty)) return;
     reserve.mutate();
   }
 
@@ -123,7 +121,7 @@ function ReserveForm({ partId }: { partId: string }) {
       <div className="text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500">
         Reserve for…
       </div>
-      <div className="grid grid-cols-4 gap-2">
+      <div className="flex gap-2">
         <input
           type="number"
           step="any"
@@ -131,26 +129,11 @@ function ReserveForm({ partId }: { partId: string }) {
           value={qty}
           onChange={(e) => setQty(e.target.value)}
           placeholder="qty"
-          className="input col-span-1"
+          className="input w-20 shrink-0"
         />
-        <input
-          value={targetModule}
-          onChange={(e) => setTargetModule(e.target.value)}
-          placeholder="module"
-          className="input col-span-1 font-mono text-xs"
-        />
-        <input
-          value={targetType}
-          onChange={(e) => setTargetType(e.target.value)}
-          placeholder="entity type"
-          className="input col-span-1 font-mono text-xs"
-        />
-        <input
-          value={targetId}
-          onChange={(e) => setTargetId(e.target.value)}
-          placeholder="entity id"
-          className="input col-span-1 font-mono text-xs"
-        />
+        <div className="flex-1 min-w-0">
+          <EntityPicker selected={target} onSelect={setTarget} onClear={() => setTarget(null)} />
+        </div>
       </div>
       <div className="flex gap-2">
         <input
@@ -161,7 +144,7 @@ function ReserveForm({ partId }: { partId: string }) {
         />
         <button
           type="submit"
-          disabled={reserve.isPending || !targetId.trim() || !Number(qty)}
+          disabled={reserve.isPending || !target || !Number(qty)}
           className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-xs font-medium px-3 py-2 transition disabled:opacity-50"
         >
           {reserve.isPending ? "…" : "Reserve"}
@@ -169,6 +152,92 @@ function ReserveForm({ partId }: { partId: string }) {
       </div>
       {error && <div className="text-xs text-ember-500">{error}</div>}
     </form>
+  );
+}
+
+// Typeahead entity picker — search across kinds (core-search) and pick a
+// real entity, so reserving no longer means typing a raw module/type/UUID.
+function EntityPicker({
+  selected,
+  onSelect,
+  onClear,
+}: {
+  selected: { label: string } | null;
+  onSelect: (e: { module: string; type: string; id: string; label: string }) => void;
+  onClear: () => void;
+}) {
+  const { api } = useInventory();
+  const [q, setQ] = useState("");
+  const [debounced, setDebounced] = useState("");
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(q), 200);
+    return () => clearTimeout(t);
+  }, [q]);
+  const results = useQuery({
+    queryKey: ["reserve-entity-search", debounced],
+    queryFn: () => api.searchEntities(debounced),
+    enabled: debounced.trim().length >= 2,
+  });
+
+  if (selected) {
+    return (
+      <div className="input flex items-center gap-2">
+        <span className="flex-1 truncate text-sm text-slate-700 dark:text-mortar-100">{selected.label}</span>
+        <button
+          type="button"
+          onClick={onClear}
+          className="text-xs text-slate-400 hover:text-ember-500 shrink-0"
+          title="Change target"
+        >
+          ✕
+        </button>
+      </div>
+    );
+  }
+
+  const items = results.data?.items ?? [];
+  return (
+    <div className="relative">
+      <input
+        value={q}
+        onChange={(e) => {
+          setQ(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        placeholder="search a task, project, anything to reserve for…"
+        className="input text-sm"
+      />
+      {open && debounced.trim().length >= 2 && (
+        <ul className="absolute z-20 mt-1 w-full max-h-56 overflow-auto rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg">
+          {results.isLoading && <li className="px-3 py-2 text-xs text-slate-400">searching…</li>}
+          {!results.isLoading && items.length === 0 && (
+            <li className="px-3 py-2 text-xs text-slate-400 italic">no matches</li>
+          )}
+          {items.map((it) => {
+            const [module = "", type = ""] = it.kind.split(":");
+            const label = it.title ?? it.name ?? it.id;
+            return (
+              <li key={`${it.kind}:${it.id}`}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onSelect({ module, type, id: it.id, label });
+                    setOpen(false);
+                    setQ("");
+                  }}
+                  className="w-full text-left px-3 py-2 text-sm hover:bg-mortar-50 dark:hover:bg-slate-800 flex items-center gap-2"
+                >
+                  <span className="flex-1 truncate text-slate-700 dark:text-mortar-100">{label}</span>
+                  <span className="text-[10px] font-mono text-slate-400 shrink-0">{it.kind}</span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
   );
 }
 

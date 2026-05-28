@@ -11,6 +11,7 @@ import { z } from "zod";
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { requireAuth } from "../auth/middleware.js";
+import { requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
 import * as activity from "../platform/activity.js";
 
@@ -50,6 +51,7 @@ pairingsRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
 
 pairingsRouter.post("/", requireAuth, withTenant, async (req, res, next) => {
   try {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
     const parsed = PairingCreate.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
@@ -96,6 +98,7 @@ const PairingPatch = z.object({
 });
 pairingsRouter.patch("/:id", requireAuth, withTenant, async (req, res, next) => {
   try {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
     const id = req.params.id;
     if (!id) {
       res.status(400).json({ error: { code: "missing_id", message: "id required" } });
@@ -132,6 +135,7 @@ pairingsRouter.patch("/:id", requireAuth, withTenant, async (req, res, next) => 
 
 pairingsRouter.delete("/:id", requireAuth, withTenant, async (req, res, next) => {
   try {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
     const id = req.params.id;
     if (!id) {
       res.status(400).json({ error: { code: "missing_id", message: "id required" } });

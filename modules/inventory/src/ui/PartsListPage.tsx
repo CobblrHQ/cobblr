@@ -10,6 +10,7 @@ import {
   FileDown,
   FileUp,
   Plus,
+  Printer,
   Search,
   ShieldCheck,
   Tag as TagIcon,
@@ -132,6 +133,48 @@ export function PartsListPage() {
       void qc.invalidateQueries({ queryKey: ["inventory-parts"] });
     } catch (err) {
       toast.error((err as Error).message);
+    }
+  }
+
+  // Bulk print-labels: mint a navigate QR token per selected part and
+  // enqueue a label, so labels can be queued straight from the list
+  // (not just one part at a time on the detail page).
+  const [bulkLabelBusy, setBulkLabelBusy] = useState(false);
+  async function bulkPrintLabels() {
+    setBulkLabelBusy(true);
+    let queued = 0;
+    try {
+      for (const id of Array.from(selected)) {
+        const p = partItems.find((x) => x.id === id);
+        const assetId = (p as { asset_id?: number } | undefined)?.asset_id;
+        const desc =
+          assetId != null
+            ? `#${String(assetId).padStart(3, "0")} ${p?.name ?? ""}`.trim()
+            : (p?.name ?? "Part");
+        try {
+          const { token } = await api.mintQrToken({
+            entity_kind: "inventory:part",
+            entity_id: id,
+            mode: "navigate",
+            auth: "session",
+          });
+          await api.enqueueLabel({
+            module_name: "inventory",
+            entity_type: "part",
+            entity_id: id,
+            qr_payload: `${window.location.origin}/qr/${token}`,
+            description: desc,
+            qty: 1,
+          });
+          queued++;
+        } catch {
+          /* skip this one, keep going */
+        }
+      }
+      toast.success(`Queued ${queued} label${queued === 1 ? "" : "s"} — open Labels → Queue to print.`);
+      setSelected(new Set());
+    } finally {
+      setBulkLabelBusy(false);
     }
   }
 
@@ -341,6 +384,14 @@ export function PartsListPage() {
           <>
             <button
               type="button"
+              disabled={bulkLabelBusy}
+              onClick={() => void bulkPrintLabels()}
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-cobble-600 hover:text-cobble-700 disabled:opacity-50"
+            >
+              <Printer size={12} /> {bulkLabelBusy ? "Queuing…" : "Print labels"}
+            </button>
+            <button
+              type="button"
               onClick={() => setBulkTagOpen(true)}
               className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-cobble-600 hover:text-cobble-700"
             >
@@ -442,7 +493,10 @@ function PartsTable({
 }) {
   return (
     <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
-      <table className="w-full text-sm">
+      {/* min-w keeps the table wider than a narrow viewport so the
+          parent's overflow-x-auto scrolls, instead of w-full squishing
+          9 columns into ~350px and clipping them off-screen. */}
+      <table className="w-full min-w-[640px] text-sm">
         <thead>
           <tr className="bg-mortar-100 dark:bg-slate-800 text-[10px] font-mono uppercase tracking-widest text-slate-500 dark:text-slate-400">
             <th className="w-8 px-3 py-2">

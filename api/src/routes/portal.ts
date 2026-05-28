@@ -152,6 +152,37 @@ const GrantBody = z.object({
   action_id: z.string().min(1).max(120),
 });
 
+// Capabilities that requireCapability() gates check but that aren't
+// invokable "actions" in the entity_actions registry yet. Until the
+// manifest gains a first-class capability registry, list the
+// endpoint-gate caps here so they're grantable + validated alongside
+// the registered actions. TODO: fold into a manifest-declared registry.
+const ENDPOINT_CAPABILITIES = [
+  { action_id: "inventory:create-part", label: "Create parts", description: "Add new parts to inventory." },
+  { action_id: "inventory:update-part", label: "Edit parts", description: "Edit existing part fields." },
+];
+
+/** Every capability an admin can grant a member: the registered actions
+ *  (entity_actions) plus the endpoint-gate caps above. Single source of
+ *  truth for both the matrix columns and grant validation. */
+async function grantableActions(): Promise<
+  Array<{ action_id: string; label: string; description: string }>
+> {
+  const registered = await meta
+    .selectFrom("entity_actions")
+    .select(["id", "label", "description"])
+    .orderBy("id")
+    .execute();
+  const items = registered.map((r) => ({
+    action_id: r.id,
+    label: r.label,
+    description: r.description ?? "",
+  }));
+  const have = new Set(items.map((a) => a.action_id));
+  for (const c of ENDPOINT_CAPABILITIES) if (!have.has(c.action_id)) items.push(c);
+  return items;
+}
+
 portalRouter.post(
   "/:slug/permissions/grants",
   requireAuth,
@@ -181,6 +212,18 @@ portalRouter.post(
       if (!member) {
         res.status(404).json({
           error: { code: "not_member", message: "User isn't a member of this workspace." },
+        });
+        return;
+      }
+      // Don't persist arbitrary action_id strings: a grant for a cap
+      // that no gate checks is dead, and it pollutes the matrix.
+      const grantable = await grantableActions();
+      if (!grantable.some((a) => a.action_id === parsed.data.action_id)) {
+        res.status(400).json({
+          error: {
+            code: "unknown_action",
+            message: `${parsed.data.action_id} is not a grantable capability.`,
+          },
         });
         return;
       }
@@ -258,20 +301,7 @@ portalRouter.get(
   withTenant,
   async (_req, res, next) => {
     try {
-      // For v0.1 the manifest-flag lookup isn't wired through yet —
-      // hard-code a small starter set so the UI has something to
-      // render. Adding actions later is a one-liner in this array
-      // OR a future migration to read from a registered-actions
-      // table tagged with portal_grantable.
-      res.json({
-        items: [
-          {
-            action_id: "inventory:create-part",
-            label: "Create parts",
-            description: "Add new parts to inventory.",
-          },
-        ],
-      });
+      res.json({ items: await grantableActions() });
     } catch (err) {
       next(err);
     }

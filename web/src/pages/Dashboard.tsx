@@ -170,8 +170,9 @@ function GettingStartedPanel({
         </h2>
       </div>
       <p className="text-sm text-slate-600 dark:text-mortar-200">
-        Pick a first thing to add, or install a starter bundle from the
-        marketplace.
+        {firstActions.length > 0
+          ? "Pick a first thing to add, or install a starter bundle from the marketplace."
+          : "Nothing's installed yet — that's by design. Install a starter bundle from the marketplace, or switch on just the modules you want from Configuration. Cobblr only shows what you turn on."}
       </p>
       <div className="grid gap-2 sm:grid-cols-2">
         {firstActions.map((a) => (

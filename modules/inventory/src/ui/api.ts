@@ -337,6 +337,17 @@ export class InventoryApi {
       )}`,
     );
 
+  /** Cross-kind entity search (core-search). Powers the reserve-for
+   *  picker so users pick a real entity instead of typing a raw
+   *  module / type / UUID. Each hit's `kind` is the "module:type" id. */
+  searchEntities = (q: string, perKind = 8) =>
+    this.requestAbs<{ items: Array<{ id: string; kind: string; title?: string; name?: string }> }>(
+      "GET",
+      `/api/v1/orgs/${this.slug}/modules/core-search/search?${new URLSearchParams(
+        { q, per_kind: String(perKind) },
+      )}`,
+    );
+
   /** Writes a `relationship_kind=matches` row in entity_pairings.
    *  Called after createPart() when the user picked a catalog hit on
    *  the quick-add form. */

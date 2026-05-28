@@ -156,7 +156,7 @@ export function NewPartDialog({ onClose, onCreated }: NewPartDialogProps) {
             required
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder={matched ? matched.title : ""}
+            placeholder={matched ? matched.title : "e.g. Brick 2×4 — Red"}
             className="input"
           />
         </Field>

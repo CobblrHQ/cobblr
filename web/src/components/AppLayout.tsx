@@ -8,7 +8,7 @@
 // specialisations (3D Printers, Laser Cutters, etc.) into a hover
 // popover under the parent rather than as broken top-level links.
 
-import { Link, Outlet } from "react-router-dom";
+import { Link, Outlet, useLocation } from "react-router-dom";
 import { LogOut, Moon, Server, Sun } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
@@ -18,6 +18,7 @@ import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 import { ModuleNav, ConfigurationLink } from "./ModuleNav";
 import { MobileNav } from "./MobileNav";
 import { SearchBar } from "./SearchBar";
+import { ErrorBoundary } from "./ErrorBoundary";
 
 export function AppLayout(_props: { activeSlug: string }) {
   // activeSlug is still threaded through from App.tsx for back-compat
@@ -25,6 +26,7 @@ export function AppLayout(_props: { activeSlug: string }) {
   // workspace notifications + /me/activity respectively).
   const { user, logout } = useAuth();
   const { theme, toggle } = useTheme();
+  const location = useLocation();
 
   return (
     // grid-cols-1 pins the column to viewport width. We deliberately
@@ -54,9 +56,13 @@ export function AppLayout(_props: { activeSlug: string }) {
             <WorkspaceSwitcher />
           </div>
 
-          {/* Center nav (desktop): scrolls horizontally if it
-              overflows. Hidden on mobile — MobileNav takes over. */}
-          <nav className="hidden md:flex items-center gap-0.5 flex-1 min-w-0 overflow-x-auto no-scrollbar">
+          {/* Center nav (desktop): wraps to a second row when it
+              overflows so every module link stays reachable. The old
+              `overflow-x-auto no-scrollbar` scrolled horizontally with
+              a hidden scrollbar, which left links past the fold (e.g.
+              projects, purchases) unreachable. Hidden on mobile —
+              MobileNav takes over. */}
+          <nav className="hidden md:flex flex-wrap items-center gap-0.5 flex-1 min-w-0">
             <ModuleNav />
           </nav>
 
@@ -107,7 +113,13 @@ export function AppLayout(_props: { activeSlug: string }) {
 
       <main className="min-w-0">
         <div className="max-w-6xl mx-auto w-full px-5 py-6">
-          <Outlet />
+          {/* Per-page boundary: a crash in one page shows a fallback but
+              keeps the nav/chrome, and keying on pathname resets it when
+              you navigate away. Also catches lazy-chunk load errors that
+              the Suspense fallback doesn't. */}
+          <ErrorBoundary key={location.pathname} scope="page">
+            <Outlet />
+          </ErrorBoundary>
         </div>
       </main>
     </div>

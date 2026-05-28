@@ -300,26 +300,30 @@ export async function syncTenantMigrations(): Promise<number> {
   return touched;
 }
 
-/** Convenience: enable every base module for a fresh org. Phase 1
- *  shortcut so signup → working inventory in one step.
+/** Enable the always-on foundational substrate for a fresh org — and
+ *  nothing else. Cobblr is a blank slate: every domain module
+ *  (inventory, machines, assets, projects, purchases, labels, scan, …)
+ *  and every marketplace / user module stays OFF until the user opts
+ *  in — from the marketplace ("Browse the marketplace") or
+ *  Configuration → Modules. Pre-enabling them would decide the user's
+ *  app for them and bury a brand-new workspace under modules and nav
+ *  tabs it never asked for. The platform's whole premise is that the
+ *  user builds their own app; we don't pre-pick it for them.
  *
- *  Order matters:
- *    1. Every `band: "foundational"` module first — these are always
- *       on, no opt-in. Sorted to run no-deps ones before any that
- *       declare deps (so foundationals can depend on other
- *       foundationals).
- *    2. Every other module with no `dependencies` (stock + user-band
- *       modules that ship in the default install).
- *  Modules with `dependencies.length > 0` (Pillar-E specializations)
- *  require an explicit enable via POST /orgs/:slug/modules/:name/enable.
+ *  Foundational modules (`band: "foundational"`) are the one exception:
+ *  they're the substrate the kernel, the dashboard, and other modules
+ *  assume exists (activity-log, files, tags, locations, notifications,
+ *  queue, healthcheck, maintenance). Nobody thinks to "enable the
+ *  activity log" — it's plumbing, always on. Sorted so any foundational
+ *  that depends on another foundational runs after it.
  */
-export async function enableAllForOrg(orgId: string, userId?: string): Promise<string[]> {
+export async function enableFoundationalForOrg(
+  orgId: string,
+  userId?: string,
+): Promise<string[]> {
   const enabled: string[] = [];
-  const all = listEntries();
-  const foundationals = all.filter((e) => e.manifest.band === "foundational");
-  const nonFoundationalBaseModules = all.filter(
-    (e) =>
-      e.manifest.band !== "foundational" && e.manifest.dependencies.length === 0,
+  const foundationals = listEntries().filter(
+    (e) => e.manifest.band === "foundational",
   );
 
   // Sort foundationals so any with deps run AFTER their deps. (Today
@@ -353,7 +357,7 @@ export async function enableAllForOrg(orgId: string, userId?: string): Promise<s
     return out;
   };
 
-  for (const entry of [...sortByDeps(foundationals), ...nonFoundationalBaseModules]) {
+  for (const entry of sortByDeps(foundationals)) {
     try {
       const result = await enableModuleForOrg(orgId, entry.manifest.name, { userId });
       if (!result.alreadyEnabled) enabled.push(entry.manifest.name);

@@ -68,6 +68,7 @@ const UsersPage = lazy(() => import("./pages/UsersPage").then((m) => ({ default:
 const SuperAdminPage = lazy(() => import("./pages/SuperAdminPage").then((m) => ({ default: m.SuperAdminPage })));
 const RolesPage = lazy(() => import("./pages/RolesPage").then((m) => ({ default: m.RolesPage })));
 import { AppLayout } from "./components/AppLayout";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { PortalLayout } from "./components/PortalLayout";
 import { ToastProvider, ConfirmProvider } from "@cobblr/platform-web";
 import { api, getToken } from "./lib/api";
@@ -82,13 +83,15 @@ function RouteFallback() {
 
 export function App() {
   return (
-    <AuthProvider>
-      <ToastProvider>
-        <ConfirmProvider>
-          <Shell />
-        </ConfirmProvider>
-      </ToastProvider>
-    </AuthProvider>
+    <ErrorBoundary scope="app">
+      <AuthProvider>
+        <ToastProvider>
+          <ConfirmProvider>
+            <Shell />
+          </ConfirmProvider>
+        </ToastProvider>
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }
 

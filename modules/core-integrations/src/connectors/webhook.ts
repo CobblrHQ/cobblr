@@ -5,7 +5,45 @@
 // This connector is the lowest common denominator — every other HTTP
 // service can be wired up via this until a dedicated connector exists.
 
+import net from "node:net";
 import { platform } from "@cobblr/platform-contract";
+
+// SSRF guard for admin-configured outbound URLs: block non-http(s)
+// schemes and obvious internal targets (loopback / private / link-local,
+// incl. the cloud metadata IP 169.254.169.254). Hostname-based — does
+// NOT defend against DNS-rebinding (a deeper follow-up).
+function isPrivateIp(ip: string): boolean {
+  if (ip === "::1" || ip.startsWith("fe80:") || ip.startsWith("fc") || ip.startsWith("fd")) return true;
+  const p = ip.split(".").map(Number);
+  if (p.length !== 4 || p.some((n) => Number.isNaN(n))) return false;
+  const a = p[0]!, b = p[1]!;
+  return (
+    a === 127 || a === 10 ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 169 && b === 254) ||
+    a === 0
+  );
+}
+
+function assertSafeOutboundUrl(raw: string): void {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    throw new Error("webhook: invalid URL");
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") {
+    throw new Error("webhook: only http(s) URLs are allowed");
+  }
+  const host = u.hostname.toLowerCase();
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".internal")) {
+    throw new Error("webhook: internal host blocked");
+  }
+  if (net.isIP(host) && isPrivateIp(host)) {
+    throw new Error("webhook: private/loopback address blocked");
+  }
+}
 
 export function register(): void {
   platform().integrations.registerConnector({
@@ -47,7 +85,13 @@ export function register(): void {
         const sig = createHmac("sha256", secret).update(body).digest("hex");
         headers["x-cobblr-signature"] = `sha256=${sig}`;
       }
-      const res = await fetch(url, { method: "POST", headers, body });
+      assertSafeOutboundUrl(url);
+      const res = await fetch(url, {
+        method: "POST",
+        headers,
+        body,
+        signal: AbortSignal.timeout(10_000),
+      });
       if (!res.ok) {
         const text = await res.text().catch(() => "");
         throw new Error(`webhook: ${res.status} ${res.statusText} ${text.slice(0, 200)}`);
@@ -58,9 +102,10 @@ export function register(): void {
       const url = String(credentials.url ?? "");
       if (!url) return { ok: false, error: "no url" };
       try {
+        assertSafeOutboundUrl(url);
         // HEAD first, fall back to GET. Some webhook targets reject HEAD.
-        const res = await fetch(url, { method: "HEAD" }).catch(() =>
-          fetch(url, { method: "GET" }),
+        const res = await fetch(url, { method: "HEAD", signal: AbortSignal.timeout(8_000) }).catch(() =>
+          fetch(url, { method: "GET", signal: AbortSignal.timeout(8_000) }),
         );
         return { ok: res.ok || res.status < 500 };
       } catch (err) {

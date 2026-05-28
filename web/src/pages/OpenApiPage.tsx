@@ -71,14 +71,27 @@ export function OpenApiPage() {
               <Copy size={14} />
               Copy
             </button>
-            <a
-              href={`/api/v1/orgs/${activeSlug}/modules/core-openapi/openapi.json`}
-              download="cobblr-openapi.json"
+            <button
+              onClick={() => {
+                // The spec endpoint needs a Bearer header, which a
+                // plain <a download> navigation can't send (→ 401).
+                // The spec is already fetched into memory, so download
+                // a blob of it rather than re-hitting the endpoint.
+                const blob = new Blob([JSON.stringify(spec, null, 2)], {
+                  type: "application/json",
+                });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = "cobblr-openapi.json";
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
               className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 text-white"
             >
               <Download size={14} />
               Download
-            </a>
+            </button>
           </>
         )}
       </div>

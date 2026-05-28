@@ -9,10 +9,40 @@
 // resolver is slow we return the bare row immediately and let
 // this finish detached.
 
+import net from "node:net";
 import type { Kysely } from "kysely";
 import { sql } from "kysely";
 import { lookupBarcode, type BarcodeHit } from "./barcode-lookup.js";
 import type { CoreScanDB } from "../db.js";
+
+// The catalog-image upload re-uses the caller's bearer token, so it MUST
+// target our own API — never a caller-influenced base URL, or the token
+// leaks. enrich runs in the api process, so localhost is correct.
+const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
+
+// SSRF guard for the externally-sourced catalog image_url: block
+// non-http(s) + internal targets (loopback/private/link-local incl.
+// cloud metadata). Hostname-based; not DNS-rebind-proof (follow-up).
+function isPrivateIp(ip: string): boolean {
+  if (ip === "::1" || ip.startsWith("fe80:") || ip.startsWith("fc") || ip.startsWith("fd")) return true;
+  const p = ip.split(".").map(Number);
+  if (p.length !== 4 || p.some((n) => Number.isNaN(n))) return false;
+  const a = p[0]!, b = p[1]!;
+  return (
+    a === 127 || a === 10 ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 169 && b === 254) ||
+    a === 0
+  );
+}
+function assertSafeOutboundUrl(raw: string): void {
+  const u = new URL(raw);
+  if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("blocked non-http(s) URL");
+  const host = u.hostname.toLowerCase();
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".internal")) throw new Error("blocked internal host");
+  if (net.isIP(host) && isPrivateIp(host)) throw new Error("blocked private address");
+}
 
 interface EnrichContext {
   /** Tenant DB for this workspace. */
@@ -134,17 +164,24 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
   // the row for the UI to fetch directly if needed.
   if (hit.image_url) {
     try {
+      // image_url is from an external lookup — guard against SSRF and
+      // bound the download (timeout + Content-Length).
+      assertSafeOutboundUrl(hit.image_url);
       const dlRes = await fetch(hit.image_url, {
         headers: { "user-agent": "cobblr-core-scan/0.1" },
+        signal: AbortSignal.timeout(8_000),
       });
-      if (dlRes.ok) {
+      const len = Number(dlRes.headers.get("content-length") ?? 0);
+      if (dlRes.ok && len <= 10 * 1024 * 1024) {
         const blob = await dlRes.blob();
         const fd = new FormData();
         // Try to keep the source filename for forensics.
         const filename = hit.image_url.split("/").pop() ?? "catalog.jpg";
         fd.append("file", blob, filename);
+        // INTERNAL_API, not ctx.baseUrl: this call carries the bearer
+        // token, so it must never target a caller-influenced URL.
         const upRes = await fetch(
-          `${ctx.baseUrl}/api/v1/orgs/${ctx.orgSlug}/modules/core-files/files`,
+          `${INTERNAL_API}/api/v1/orgs/${ctx.orgSlug}/modules/core-files/files`,
           {
             method: "POST",
             headers: { Authorization: `Bearer ${ctx.bearer}` },
