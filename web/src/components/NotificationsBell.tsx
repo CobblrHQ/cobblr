@@ -7,7 +7,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, BellOff } from "lucide-react";
+import { Bell } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, type CrossOrgNotificationEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -80,7 +80,10 @@ export function NotificationsBell() {
             : "Notifications"
         }
       >
-        {count > 0 ? <Bell size={14} /> : <BellOff size={14} />}
+        {/* Always a normal bell — a struck-through (BellOff) icon reads
+            as "notifications muted", which is wrong; zero unread is just
+            an empty badge, not a disabled state. */}
+        <Bell size={14} />
         {count > 0 && (
           <span
             className="absolute -top-0.5 -right-0.5 bg-ember-500 text-mortar-50 text-[9px] font-bold rounded-full min-w-[14px] h-[14px] flex items-center justify-center px-1 leading-none"

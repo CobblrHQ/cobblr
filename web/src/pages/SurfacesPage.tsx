@@ -4,7 +4,15 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BarChart3, Copy, ExternalLink, Globe, Plus, Trash2 } from "lucide-react";
+import {
+  BarChart3,
+  Copy,
+  ExternalLink,
+  Globe,
+  Pencil,
+  Plus,
+  Trash2,
+} from "lucide-react";
 import { ApiError, api, type SavedView, type SurfaceRecord } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
@@ -17,6 +25,7 @@ export function SurfacesPage() {
   const confirm = useConfirm();
   const [createOpen, setCreateOpen] = useState(false);
   const [statsFor, setStatsFor] = useState<SurfaceRecord | null>(null);
+  const [editFor, setEditFor] = useState<SurfaceRecord | null>(null);
 
   const list = useQuery({
     queryKey: ["surfaces", activeSlug],
@@ -75,7 +84,27 @@ export function SurfacesPage() {
               <span className="text-xs text-slate-500 dark:text-slate-400">
                 {s.scope_type}
               </span>
+              {!s.enabled && (
+                <span className="text-[10px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300">
+                  paused
+                </span>
+              )}
+              {s.expires_at && (
+                <span
+                  className="text-[10px] font-mono text-slate-400"
+                  title={new Date(s.expires_at).toLocaleString()}
+                >
+                  expires {new Date(s.expires_at).toLocaleDateString()}
+                </span>
+              )}
               <div className="flex-1" />
+              <button
+                onClick={() => setEditFor(s)}
+                className="text-slate-400 hover:text-cobble-600 transition"
+                title="Edit"
+              >
+                <Pencil size={14} />
+              </button>
               <a
                 href={`/p/${s.token}`}
                 target="_blank"
@@ -144,7 +173,219 @@ export function SurfacesPage() {
           onClose={() => setStatsFor(null)}
         />
       )}
+      {editFor && (
+        <EditSurfaceModal
+          slug={activeSlug}
+          surface={editFor}
+          onClose={() => setEditFor(null)}
+          onSaved={() => {
+            void qc.invalidateQueries({ queryKey: ["surfaces", activeSlug] });
+            setEditFor(null);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+// datetime-local <-> ISO helpers. The input wants "YYYY-MM-DDTHH:mm"
+// in local time; the API wants ISO-8601 (or null to clear the expiry).
+function isoToLocalInput(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
+    d.getHours(),
+  )}:${pad(d.getMinutes())}`;
+}
+
+function EditSurfaceModal({
+  slug,
+  surface,
+  onClose,
+  onSaved,
+}: {
+  slug: string;
+  surface: SurfaceRecord;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const toast = useToast();
+  const [name, setName] = useState(surface.name);
+  const [enabled, setEnabled] = useState(surface.enabled);
+  const [expiresInput, setExpiresInput] = useState(
+    isoToLocalInput(surface.expires_at),
+  );
+  const cfg = surface.config as {
+    theme?: "auto" | "dark" | "light";
+    layout?: "tiles" | "list";
+    footer?: string;
+  };
+  const [theme, setTheme] = useState<"auto" | "dark" | "light">(
+    cfg.theme ?? "auto",
+  );
+  const [layout, setLayout] = useState<"tiles" | "list">(cfg.layout ?? "tiles");
+  const [footer, setFooter] = useState(cfg.footer ?? "");
+
+  const save = useMutation({
+    mutationFn: () => {
+      // Preserve any config keys we don't edit here (e.g. a collection's
+      // `query`); only overwrite the theming knobs this form owns.
+      const config: Record<string, unknown> = {
+        ...(surface.config as Record<string, unknown>),
+      };
+      if (theme === "auto") delete config.theme;
+      else config.theme = theme;
+      if (layout === "tiles") delete config.layout;
+      else config.layout = layout;
+      if (footer.trim()) config.footer = footer.trim();
+      else delete config.footer;
+      return api.updateSurface(slug, surface.id, {
+        name: name.trim(),
+        enabled,
+        expires_at: expiresInput ? new Date(expiresInput).toISOString() : null,
+        config,
+      });
+    },
+    onSuccess: () => {
+      toast.success("Surface updated");
+      onSaved();
+    },
+    onError: (e: unknown) =>
+      toast.error(e instanceof ApiError ? e.message : "Couldn't save"),
+  });
+
+  return (
+    <Modal open onClose={onClose} title={`Edit — ${surface.name}`}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (name.trim()) save.mutate();
+        }}
+        className="space-y-3"
+      >
+        <label className="block">
+          <div className="text-xs text-slate-500 mb-1">Name (internal)</div>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            autoFocus
+          />
+        </label>
+
+        <label className="flex items-center gap-2 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(e) => setEnabled(e.target.checked)}
+            data-testid="surface-enabled"
+          />
+          <span className="text-sm text-slate-700 dark:text-mortar-100">
+            Enabled
+          </span>
+          <span className="text-xs text-slate-400">
+            — uncheck to pause (URL stays valid, 404s while paused)
+          </span>
+        </label>
+
+        <label className="block">
+          <div className="text-xs text-slate-500 mb-1">
+            Expires (optional — blank = never)
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="datetime-local"
+              value={expiresInput}
+              onChange={(e) => setExpiresInput(e.target.value)}
+              className="px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+              data-testid="surface-expires"
+            />
+            {expiresInput && (
+              <button
+                type="button"
+                onClick={() => setExpiresInput("")}
+                className="text-xs text-slate-500 hover:text-ember-500"
+              >
+                clear
+              </button>
+            )}
+          </div>
+        </label>
+
+        <div className="border-t border-slate-200 dark:border-slate-700 pt-3 space-y-3">
+          <div className="text-[10px] font-mono uppercase tracking-widest text-slate-500">
+            theming
+          </div>
+          <label className="block">
+            <div className="text-xs text-slate-500 mb-1">Theme</div>
+            <div className="flex gap-1">
+              {(["auto", "light", "dark"] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setTheme(t)}
+                  className={`flex-1 px-3 py-1 text-xs rounded transition ${
+                    theme === t
+                      ? "bg-cobble-600 text-white"
+                      : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </label>
+          <label className="block">
+            <div className="text-xs text-slate-500 mb-1">Default layout</div>
+            <div className="flex gap-1">
+              {(["tiles", "list"] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setLayout(t)}
+                  className={`flex-1 px-3 py-1 text-xs rounded transition ${
+                    layout === t
+                      ? "bg-cobble-600 text-white"
+                      : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </label>
+          <label className="block">
+            <div className="text-xs text-slate-500 mb-1">Footer text</div>
+            <input
+              type="text"
+              value={footer}
+              onChange={(e) => setFooter(e.target.value)}
+              className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            />
+          </label>
+        </div>
+
+        <div className="flex justify-end gap-2 pt-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={!name.trim() || save.isPending}
+            className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white"
+            data-testid="surface-save"
+          >
+            Save
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 

@@ -50,6 +50,7 @@ export default defineModule({
   exposes: {
     events: [
       "core-public-surfaces.surface.created",
+      "core-public-surfaces.surface.updated",
       "core-public-surfaces.surface.revoked",
       "core-public-surfaces.surface.viewed",
     ],

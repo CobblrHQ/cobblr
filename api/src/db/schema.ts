@@ -55,6 +55,41 @@ export interface WorkspaceCapabilityGrantsTable {
   granted_by: string | null;
 }
 
+/** Admin-configurable per-field read-scope (H2 extension). One row =
+ *  one field of one kind, gated behind `capability`, for one workspace.
+ *  Merged over the manifest-declared entity_kinds.field_read_scopes at
+ *  read time. */
+export interface WorkspaceFieldScopesTable {
+  id: Generated<string>;
+  org_id: string;
+  kind: string;
+  field: string;
+  capability: string;
+  created_by: string | null;
+  created_at: Generated<Date>;
+}
+
+export interface WorkspaceNavHeadingsTable {
+  id: Generated<string>;
+  org_id: string;
+  name: string;
+  icon: string | null;
+  position: Generated<number>;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+export interface WorkspaceNavHeadingMembersTable {
+  id: Generated<string>;
+  heading_id: string;
+  org_id: string;
+  /** 'module' (target_id = module name) | 'instance' (target_id = slug) */
+  target_kind: string;
+  target_id: string;
+  position: Generated<number>;
+  created_at: Generated<Date>;
+}
+
 export type OrgRole = "owner" | "admin" | "member" | "guest";
 
 export interface OrgMembershipsTable {
@@ -223,6 +258,12 @@ export interface EntityKindsTable {
    *  deprecation logged on first cross-module read of this kind).
    *  See docs/design-decisions/entity-resolver.md. */
   exposable_fields: unknown | null;
+  /** Per-field read capability map (jsonb { field_name: capability }).
+   *  Layered on exposable_fields: a gated field is omitted unless the
+   *  viewer holds the capability (owner/admin + viewer-less system
+   *  reads see all). Null = no per-field gating. H2 — tiered member
+   *  read access ("see parts, not prices"). */
+  field_read_scopes: unknown | null;
 }
 
 export interface CoreRecurrenceEntityStateTable {
@@ -479,6 +520,9 @@ export interface MetaDB {
   integration_inbound_token_lookup: IntegrationInboundTokenLookupTable;
   org_encryption_keys: OrgEncryptionKeysTable;
   workspace_capability_grants: WorkspaceCapabilityGrantsTable;
+  workspace_field_scopes: WorkspaceFieldScopesTable;
+  workspace_nav_headings: WorkspaceNavHeadingsTable;
+  workspace_nav_heading_members: WorkspaceNavHeadingMembersTable;
   workspace_roles: WorkspaceRolesTable;
   workspace_role_capabilities: WorkspaceRoleCapabilitiesTable;
   workspace_role_assignments: WorkspaceRoleAssignmentsTable;

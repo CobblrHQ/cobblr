@@ -42,6 +42,9 @@ const MeProfilePage = lazy(() => import("./pages/MeProfilePage").then((m) => ({ 
 const ApiTokensPage = lazy(() => import("./pages/ApiTokensPage").then((m) => ({ default: m.ApiTokensPage })));
 const ActivityPage = lazy(() => import("./pages/ActivityPage").then((m) => ({ default: m.ActivityPage })));
 const SurfacesPage = lazy(() => import("./pages/SurfacesPage").then((m) => ({ default: m.SurfacesPage })));
+const PrintFarmPage = lazy(() => import("./pages/PrintFarmPage").then((m) => ({ default: m.PrintFarmPage })));
+const MaintenancePage = lazy(() => import("./pages/MaintenancePage").then((m) => ({ default: m.MaintenancePage })));
+const QrTokensPage = lazy(() => import("./pages/QrTokensPage").then((m) => ({ default: m.QrTokensPage })));
 const HealthPage = lazy(() => import("./pages/HealthPage").then((m) => ({ default: m.HealthPage })));
 const OpenApiPage = lazy(() => import("./pages/OpenApiPage").then((m) => ({ default: m.OpenApiPage })));
 const QueuePage = lazy(() => import("./pages/QueuePage").then((m) => ({ default: m.QueuePage })));
@@ -59,9 +62,12 @@ const PresentationPage = lazy(() => import("./pages/PresentationPage").then((m) 
 const IntegrationsPage = lazy(() => import("./pages/IntegrationsPage").then((m) => ({ default: m.IntegrationsPage })));
 const AiPage = lazy(() => import("./pages/AiPage").then((m) => ({ default: m.AiPage })));
 const PortalConfigPage = lazy(() => import("./pages/PortalConfigPage").then((m) => ({ default: m.PortalConfigPage })));
+const AppsConfigPage = lazy(() => import("./pages/AppsConfigPage").then((m) => ({ default: m.AppsConfigPage })));
 const PermissionsPage = lazy(() => import("./pages/PermissionsPage").then((m) => ({ default: m.PermissionsPage })));
 const PortalHomePage = lazy(() => import("./pages/PortalHomePage").then((m) => ({ default: m.PortalHomePage })));
 const PortalViewPage = lazy(() => import("./pages/PortalViewPage").then((m) => ({ default: m.PortalViewPage })));
+const AppPlayerPage = lazy(() => import("./pages/AppPlayerPage").then((m) => ({ default: m.AppPlayerPage })));
+const AppRecordPage = lazy(() => import("./pages/AppPlayerPage").then((m) => ({ default: m.AppRecordPage })));
 const BrickLinkPage = lazy(() => import("./pages/BrickLinkPage").then((m) => ({ default: m.BrickLinkPage })));
 import { ForcePasswordResetPage } from "./pages/ForcePasswordResetPage";
 const UsersPage = lazy(() => import("./pages/UsersPage").then((m) => ({ default: m.UsersPage })));
@@ -72,6 +78,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { PortalLayout } from "./components/PortalLayout";
 import { ToastProvider, ConfirmProvider } from "@cobblr/platform-web";
 import { api, getToken } from "./lib/api";
+import { InstancePage } from "./pages/InstancePage";
 
 function RouteFallback() {
   return (
@@ -186,6 +193,10 @@ function ActiveOrgScopedRoutes() {
             path="/projects/*"
             element={<ProjectsUI orgSlug={activeSlug} getToken={getToken} />}
           />
+          {/* Per-instance pages (user-created module instances). The
+              /* suffix lets a packaged module UI mount its own nested
+              routes (e.g. inventory's parts/:id) under the instance. */}
+          <Route path="/instances/:name/*" element={<InstancePage />} />
           <Route path="/machines" element={<MachinesPage />} />
           <Route path="/machines/:id" element={<MachinesPage />} />
           <Route path="/assets" element={<AssetsPage />} />
@@ -200,6 +211,9 @@ function ActiveOrgScopedRoutes() {
           <Route path="/fields" element={<FieldsPage />} />
           <Route path="/configuration/tokens" element={<ApiTokensPage />} />
           <Route path="/configuration/surfaces" element={<SurfacesPage />} />
+          <Route path="/configuration/farm" element={<PrintFarmPage />} />
+          <Route path="/configuration/maintenance" element={<MaintenancePage />} />
+          <Route path="/configuration/qr-tokens" element={<QrTokensPage />} />
           <Route path="/configuration/health" element={<HealthPage />} />
           <Route path="/configuration/locations" element={<LocationsPage />} />
           <Route path="/configuration/locations/:id" element={<LocationDetailPage />} />
@@ -216,6 +230,7 @@ function ActiveOrgScopedRoutes() {
           {/* Legacy alias — pre-rename. Bookmarks keep working. */}
           <Route path="/bricklink" element={<BrickLinkPage />} />
           <Route path="/configuration/portal" element={<PortalConfigPage />} />
+          <Route path="/configuration/apps" element={<AppsConfigPage />} />
           <Route path="/configuration/permissions" element={<PermissionsPage />} />
           <Route path="/configuration/users" element={<UsersPage />} />
           <Route path="/configuration/roles" element={<RolesPage />} />
@@ -247,6 +262,8 @@ function ActiveOrgScopedRoutes() {
         <Route path="/portal/:slug" element={<PortalLayout />}>
           <Route index element={<PortalHomePage />} />
           <Route path="views/:viewId" element={<PortalViewPage />} />
+          <Route path="app/:appSlug" element={<AppPlayerPage />} />
+          <Route path="app/:appSlug/r/:kind/:id" element={<AppRecordPage />} />
         </Route>
       </Routes>
       </Suspense>

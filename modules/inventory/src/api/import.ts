@@ -11,12 +11,12 @@ import { Router } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
-import { asyncHandler, badBody } from "./util.js";
+import { asyncHandler, badBody, requireCapability } from "./util.js";
 
 export const importRouter = Router({ mergeParams: true });
 
 const ImportBody = z.object({
-  csv: z.string().min(1).max(2 * 1024 * 1024), // 2 MB cap, ~50k rows
+  csv: z.string().min(1).max(10 * 1024 * 1024), // 10 MB cap, ~200k rows
   dry_run: z.boolean().default(false),
   // Default category/location to apply when the CSV doesn't specify
   // (or doesn't have those columns at all).
@@ -249,6 +249,9 @@ function parseCsv(text: string): ParseResult {
 importRouter.post(
   "/parts/import",
   asyncHandler(async (req, res) => {
+    // Bulk import IS a create — gate it on the same capability as
+    // POST /parts so a member can't bulk-insert past the permission.
+    if (!(await requireCapability(req, res, "inventory:create-part"))) return;
     const parsed = ImportBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const result = parseCsv(parsed.data.csv);
@@ -288,67 +291,64 @@ importRouter.post(
       if (name) locByName.set(name, loc.id);
     }
 
+    // Resolve category/location per row up-front (pure, no I/O), then
+    // bulk-insert in chunks. A 40k import was 32s of row-by-row round
+    // trips; chunked multi-row inserts bring it to a couple of seconds.
+    const valueRows = result.rows.map((row) => ({
+      name: row.name,
+      qty: String(row.qty),
+      unit: row.unit ?? "each",
+      cost: row.cost == null ? null : String(row.cost),
+      min_qty: row.min_qty == null ? null : String(row.min_qty),
+      manufacturer: row.manufacturer,
+      notes: row.notes,
+      category_id:
+        (row.category_name ? catByName.get(row.category_name.toLowerCase()) : undefined) ??
+        parsed.data.default_category_id ??
+        null,
+      location_id:
+        (row.location_name ? locByName.get(row.location_name.toLowerCase()) : undefined) ??
+        parsed.data.default_location_id ??
+        null,
+      serial_number: row.serial_number,
+      model_number: row.model_number,
+      warranty_expires: row.warranty_expires ? new Date(row.warranty_expires) : null,
+      lifetime_warranty: row.lifetime_warranty,
+      warranty_details: row.warranty_details,
+      insured: row.insured,
+      archived: row.archived,
+      supplier_url: row.supplier_url,
+    }));
+
+    const CHUNK = 500;
     const inserted = await db.transaction().execute(async (trx) => {
       const ids: string[] = [];
-      for (const row of result.rows) {
-        const cat_id =
-          (row.category_name ? catByName.get(row.category_name.toLowerCase()) : undefined) ??
-          parsed.data.default_category_id ??
-          null;
-        const loc_id =
-          (row.location_name ? locByName.get(row.location_name.toLowerCase()) : undefined) ??
-          parsed.data.default_location_id ??
-          null;
-
-        const created = await trx
+      for (let i = 0; i < valueRows.length; i += CHUNK) {
+        const rows = await trx
           .insertInto("inventory_parts")
-          .values({
-            name: row.name,
-            qty: String(row.qty),
-            unit: row.unit ?? "each",
-            cost: row.cost == null ? null : String(row.cost),
-            min_qty: row.min_qty == null ? null : String(row.min_qty),
-            manufacturer: row.manufacturer,
-            notes: row.notes,
-            category_id: cat_id,
-            location_id: loc_id,
-            serial_number: row.serial_number,
-            model_number: row.model_number,
-            warranty_expires: row.warranty_expires ? new Date(row.warranty_expires) : null,
-            lifetime_warranty: row.lifetime_warranty,
-            warranty_details: row.warranty_details,
-            insured: row.insured,
-            archived: row.archived,
-            supplier_url: row.supplier_url,
-          })
+          .values(valueRows.slice(i, i + CHUNK))
           .returning("id")
-          .executeTakeFirstOrThrow();
-        ids.push(created.id);
+          .execute();
+        ids.push(...rows.map((r) => r.id));
       }
       return ids;
     });
 
-    // One activity entry per imported part. Cheap, gives the audit
-    // log a full record of what landed.
-    for (let i = 0; i < inserted.length; i++) {
-      const id = inserted[i]!;
-      const row = result.rows[i]!;
-      try {
-        await platform().activity.log({
-          orgId: ctx.org.id,
-          userId: session.id,
-          action: "part_created",
-          ref: { module: "inventory", entityType: "part", entityId: id },
-          diff: { name: row.name, qty: row.qty, source: "csv_import" },
-        });
-        platform().events.emit("inventory.part.created", {
-          orgId: ctx.org.id,
-          partId: id,
-          source: "csv_import",
-        });
-      } catch (err) {
-        console.error("[import] activity/event failure for", id, err);
-      }
+    // ONE summary activity entry — not 40k. A bulk import is a single
+    // deliberate action; per-row audit at scale just floods the log
+    // (and 40k inserts blew the request budget). Per-row part.created
+    // events are dropped too: nothing subscribes to them, and search
+    // indexes via the generated search_blob column, not an event.
+    try {
+      await platform().activity.log({
+        orgId: ctx.org.id,
+        userId: session.id,
+        action: "parts_imported",
+        ref: { module: "inventory", entityType: "part", entityId: inserted[0] ?? "" },
+        diff: { count: inserted.length, source: "csv_import" },
+      });
+    } catch (err) {
+      console.error("[import] activity log failure:", err);
     }
 
     res.json({

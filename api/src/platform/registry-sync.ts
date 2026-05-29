@@ -27,6 +27,7 @@ export async function syncManifestRegistries(): Promise<{
     traits: unknown | null;
     profile: string | null;
     exposable_fields: string[] | null;
+    field_read_scopes: Record<string, string> | null;
   }> = [];
   const actionRows: Array<{
     id: string;
@@ -58,6 +59,7 @@ export async function syncManifestRegistries(): Promise<{
         traits: k.traits ?? null,
         profile: k.profile ?? null,
         exposable_fields: k.exposableFields ?? null,
+        field_read_scopes: k.fieldReadScopes ?? null,
       });
     }
     for (const a of m.exposes.actions ?? []) {
@@ -119,6 +121,9 @@ export async function syncManifestRegistries(): Promise<{
           exposable_fields: k.exposable_fields
             ? sql`${JSON.stringify(k.exposable_fields)}::jsonb`
             : null,
+          field_read_scopes: k.field_read_scopes
+            ? sql`${JSON.stringify(k.field_read_scopes)}::jsonb`
+            : null,
         })
         .onConflict((b) =>
           b.column("id").doUpdateSet({
@@ -136,6 +141,9 @@ export async function syncManifestRegistries(): Promise<{
             profile: k.profile,
             exposable_fields: k.exposable_fields
               ? sql`${JSON.stringify(k.exposable_fields)}::jsonb`
+              : null,
+            field_read_scopes: k.field_read_scopes
+              ? sql`${JSON.stringify(k.field_read_scopes)}::jsonb`
               : null,
           }),
         )

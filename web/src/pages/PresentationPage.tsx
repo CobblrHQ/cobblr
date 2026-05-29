@@ -17,6 +17,7 @@ import {
   type EntityKindOverride,
 } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { HeadingsBuilder } from "../components/HeadingsBuilder";
 
 export function PresentationPage() {
   usePageTitle("Presentation");
@@ -145,6 +146,14 @@ export function PresentationPage() {
         Workspace edits override module / bundle defaults; reinstalling
         a bundle doesn't clobber your edits.
       </p>
+
+      <HeadingsBuilder />
+
+      <div className="border-t border-slate-200 dark:border-slate-700 pt-3">
+        <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500 mb-1">
+          // entries
+        </div>
+      </div>
 
       <div className="space-y-1">
         {rows.map((row) => (
@@ -292,6 +301,8 @@ function PresentationCreateModal({
   const [icon, setIcon] = useState("");
   const [hidden, setHidden] = useState(false);
   const [navOrder, setNavOrder] = useState<string>("");
+  const [groupLabel, setGroupLabel] = useState("");
+  const showGroupLabel = isModuleDefaultInstance(target.target_kind, target.target_id);
   const toast = useToast();
 
   const save = useMutation({
@@ -304,6 +315,7 @@ function PresentationCreateModal({
         icon: icon.trim() || null,
         hidden,
         nav_order: navOrder === "" ? null : Number(navOrder),
+        config: groupLabel.trim() ? { group_label: groupLabel.trim() } : {},
       }),
     onSuccess: () => {
       toast.success("Override saved.");
@@ -332,6 +344,9 @@ function PresentationCreateModal({
           setHidden={setHidden}
           navOrder={navOrder}
           setNavOrder={setNavOrder}
+          groupLabel={groupLabel}
+          setGroupLabel={setGroupLabel}
+          showGroupLabel={showGroupLabel}
         />
         <div className="flex justify-end gap-2 pt-2">
           <button
@@ -371,11 +386,20 @@ function PresentationEditModal({
   const [navOrder, setNavOrder] = useState<string>(
     override.nav_order != null ? String(override.nav_order) : "",
   );
+  const [groupLabel, setGroupLabel] = useState(
+    (override.config?.group_label as string | undefined) ?? "",
+  );
+  const showGroupLabel = isModuleDefaultInstance(override.target_kind, override.target_id);
   const toast = useToast();
 
   const save = useMutation({
-    mutationFn: () =>
-      api.upsertOverride(activeSlug, {
+    mutationFn: () => {
+      // Preserve any other config keys; only touch group_label.
+      const config: Record<string, unknown> = { ...(override.config ?? {}) };
+      const gl = groupLabel.trim();
+      if (gl) config.group_label = gl;
+      else delete config.group_label;
+      return api.upsertOverride(activeSlug, {
         target_kind: override.target_kind,
         target_id: override.target_id,
         display_label: label.trim() || null,
@@ -383,7 +407,9 @@ function PresentationEditModal({
         icon: icon.trim() || null,
         hidden,
         nav_order: navOrder === "" ? null : Number(navOrder),
-      }),
+        config,
+      });
+    },
     onSuccess: () => {
       toast.success("Override saved.");
       onSaved();
@@ -411,6 +437,9 @@ function PresentationEditModal({
           setHidden={setHidden}
           navOrder={navOrder}
           setNavOrder={setNavOrder}
+          groupLabel={groupLabel}
+          setGroupLabel={setGroupLabel}
+          showGroupLabel={showGroupLabel}
         />
         <div className="flex justify-end gap-2 pt-2">
           <button
@@ -433,6 +462,15 @@ function PresentationEditModal({
   );
 }
 
+/** A module's default instance (the nav parent that owns the
+ *  specialisations/instances dropdown) has target_id "<m>:<m>" — both
+ *  halves equal. Only those rows show the specialisations-heading field. */
+function isModuleDefaultInstance(targetKind: string, targetId: string): boolean {
+  if (targetKind !== "instance") return false;
+  const [mod, inst] = targetId.split(":");
+  return !!mod && mod === inst;
+}
+
 function PresentationFields({
   label,
   setLabel,
@@ -444,6 +482,9 @@ function PresentationFields({
   setHidden,
   navOrder,
   setNavOrder,
+  groupLabel,
+  setGroupLabel,
+  showGroupLabel,
 }: {
   label: string;
   setLabel: (v: string) => void;
@@ -455,6 +496,9 @@ function PresentationFields({
   setHidden: (v: boolean) => void;
   navOrder: string;
   setNavOrder: (v: string) => void;
+  groupLabel?: string;
+  setGroupLabel?: (v: string) => void;
+  showGroupLabel?: boolean;
 }) {
   return (
     <>
@@ -482,6 +526,25 @@ function PresentationFields({
           className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
         />
       </label>
+      {showGroupLabel && setGroupLabel && (
+        <label className="block">
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+            Specialisations heading (optional)
+          </span>
+          <input
+            type="text"
+            value={groupLabel ?? ""}
+            onChange={(e) => setGroupLabel(e.target.value)}
+            placeholder={`${(label || "module").toLowerCase()} specialisations`}
+            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+          />
+          <span className="mt-1 block text-[11px] text-slate-400 dark:text-slate-500">
+            The heading over this module's dropdown of lenses / instances
+            in the nav. Defaults to "{(label || "module").toLowerCase()}{" "}
+            specialisations".
+          </span>
+        </label>
+      )}
       <label className="block">
         <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
           Icon (lucide name, optional)

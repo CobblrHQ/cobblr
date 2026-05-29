@@ -2,7 +2,7 @@
 // low-stock toggle. Clicking a row opens the part detail page.
 
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -29,6 +29,7 @@ import {
 import { useInventory } from "./context";
 import { NewPartDialog } from "./NewPartDialog";
 import { ImportDialog } from "./ImportDialog";
+import { PartDetailModal } from "./PartDetailPage";
 import type { PartListItem } from "./api";
 
 type StateFilter = "active" | "draft" | "needs_review" | "all";
@@ -37,6 +38,10 @@ export function PartsListPage() {
   usePageTitle("Inventory");
   const { api, orgSlug, getToken } = useInventory();
   const qc = useQueryClient();
+  // /inventory/parts/:id keeps this list mounted and opens the detail
+  // modal (D4). Closing returns to /inventory.
+  const { id: detailId } = useParams<{ id?: string }>();
+  const navigate = useNavigate();
   const [search, setSearch] = useState("");
   const [categoryId, setCategoryId] = useState<string>("");
   const [locationId, setLocationId] = useState<string>("");
@@ -377,6 +382,12 @@ export function PartsListPage() {
           }}
         />
       )}
+      {detailId && (
+        <PartDetailModal
+          id={detailId}
+          onClose={() => navigate("/inventory")}
+        />
+      )}
       <BulkActionBar
         count={selected.size}
         onClear={() => setSelected(new Set())}
@@ -492,10 +503,11 @@ function PartsTable({
   onSelectAll: (checked: boolean) => void;
 }) {
   return (
-    <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
-      {/* min-w keeps the table wider than a narrow viewport so the
-          parent's overflow-x-auto scrolls, instead of w-full squishing
-          9 columns into ~350px and clipping them off-screen. */}
+    <>
+      {/* Desktop: the full table. Mobile: a stacked-card list (D7) —
+          a 9-column table side-scrolling on a phone reads poorly, so
+          below md we render one card per row with label:value pairs. */}
+      <div className="hidden md:block rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
       <table className="w-full min-w-[640px] text-sm">
         <thead>
           <tr className="bg-mortar-100 dark:bg-slate-800 text-[10px] font-mono uppercase tracking-widest text-slate-500 dark:text-slate-400">
@@ -584,7 +596,69 @@ function PartsTable({
           ))}
         </tbody>
       </table>
-    </div>
+      </div>
+
+      {/* Mobile stacked cards (D7) */}
+      <div className="md:hidden space-y-2">
+        {items.map((p) => (
+          <div
+            key={p.id}
+            className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3"
+          >
+            <div className="flex items-start gap-3">
+              <input
+                type="checkbox"
+                checked={selected.has(p.id)}
+                onChange={(e) => onToggle(p.id, e.target.checked)}
+                className="accent-cobble-600 mt-1 shrink-0"
+                aria-label={`Select ${p.name}`}
+              />
+              <EntityThumb src={p.image_path} alt={p.name} size={48} />
+              <div className="flex-1 min-w-0">
+                <Link
+                  to={`/inventory/parts/${p.id}`}
+                  className="font-medium text-slate-700 dark:text-mortar-100 hover:text-cobble-600"
+                >
+                  {p.name}
+                </Link>
+                {p.manufacturer && (
+                  <span className="ml-2 text-[11px] text-slate-400 dark:text-slate-500">
+                    {p.manufacturer}
+                  </span>
+                )}
+                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] font-mono text-slate-500 dark:text-slate-400">
+                  <span>
+                    qty {fmt(p.qty)} {p.unit}
+                  </span>
+                  <span>avail {fmt(p.available_qty)}</span>
+                  {p.min_qty != null && <span>min {fmt(p.min_qty)}</span>}
+                  {p.category_name && <span>{p.category_name}</span>}
+                  {p.location_name && <span>@ {p.location_name}</span>}
+                </div>
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {p.low_stock && (
+                    <span className="inline-flex items-center gap-1 text-[10px] text-ember-500 border border-ember-200 dark:border-ember-800 rounded px-1.5 py-0.5">
+                      <AlertTriangle size={10} /> low
+                    </span>
+                  )}
+                  {warrantyChip(p.warranty_days_until, p.lifetime_warranty)}
+                  {p.insured && (
+                    <span className="inline-flex items-center gap-1 text-[10px] text-cobble-600 border border-cobble-200 dark:border-cobble-800 rounded px-1.5 py-0.5">
+                      <ShieldCheck size={10} /> ins
+                    </span>
+                  )}
+                  {p.archived && (
+                    <span className="inline-flex items-center gap-1 text-[10px] text-slate-500 border border-slate-300 dark:border-slate-600 rounded px-1.5 py-0.5">
+                      <Archive size={10} /> arch
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </>
   );
 }
 

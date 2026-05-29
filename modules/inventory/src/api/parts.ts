@@ -9,7 +9,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
-import { sessionUser, tenantContext, tenantDb } from "../db.js";
+import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireCapability, requireRole } from "./util.js";
 import { routeUnknownToMetadata } from "./route-helpers.js";
 
@@ -139,7 +139,10 @@ partsRouter.get(
       // Stable order: name, then id as tiebreaker (names aren't
       // unique) — required for correct cursor pagination.
       .orderBy("p.name")
-      .orderBy("p.id");
+      .orderBy("p.id")
+      // Scope to the request's instance (default "inventory" on legacy
+      // /modules/inventory/parts; the instance slug on /instances/:n/items).
+      .where("p.instance", "=", instanceOf(req));
 
     if (filter.search) {
       const raw = filter.search.trim();
@@ -149,16 +152,13 @@ partsRouter.get(
       if (assetMatch) {
         query = query.where("p.asset_id", "=", Number(assetMatch[1]));
       } else {
+        // H8: one trigram-GIN-indexed column (search_blob) instead of a
+        // 5-column OR of LIKE '%…%' (which can't use indexes and
+        // seq-scans at scale). search_blob is already lower()'d and
+        // concatenates name + notes + serial + model + manufacturer, so
+        // this matches the old behaviour but is an index scan at 40k+.
         const like = `%${raw.toLowerCase()}%`;
-        query = query.where((eb) =>
-          eb.or([
-            eb(sql<string>`lower(p.name)`, "like", like),
-            eb(sql<string>`lower(coalesce(p.notes,''))`, "like", like),
-            eb(sql<string>`lower(coalesce(p.serial_number,''))`, "like", like),
-            eb(sql<string>`lower(coalesce(p.model_number,''))`, "like", like),
-            eb(sql<string>`lower(coalesce(p.manufacturer,''))`, "like", like),
-          ]),
-        );
+        query = query.where(sql<boolean>`p.search_blob like ${like}`);
       }
     }
     if (filter.category_id) query = query.where("p.category_id", "=", filter.category_id);
@@ -366,7 +366,8 @@ partsRouter.get(
         "p.location_id",
         "p.created_at",
       ])
-      .orderBy("p.asset_id", "asc");
+      .orderBy("p.asset_id", "asc")
+      .where("p.instance", "=", instanceOf(req));
 
     if (filter.search) {
       const raw = filter.search.trim();
@@ -495,6 +496,7 @@ partsRouter.get(
       .selectFrom("inventory_parts")
       .selectAll()
       .where("id", "=", id)
+      .where("instance", "=", instanceOf(req))
       .executeTakeFirst();
     if (!row) {
       res.status(404).json({ error: { code: "not_found", message: "part not found" } });
@@ -524,6 +526,7 @@ partsRouter.post(
     const inserted = await db
       .insertInto("inventory_parts")
       .values({
+        instance: instanceOf(req),
         name: parsed.data.name,
         description: parsed.data.description ?? null,
         category_id: parsed.data.category_id ?? null,
@@ -600,6 +603,7 @@ partsRouter.patch(
       .updateTable("inventory_parts")
       .set(patch)
       .where("id", "=", id)
+      .where("instance", "=", instanceOf(req))
       .returning(["id", "name", "qty", "state", "updated_at"])
       .executeTakeFirst();
     if (!updated) {
@@ -639,6 +643,7 @@ partsRouter.delete(
     const deleted = await db
       .deleteFrom("inventory_parts")
       .where("id", "=", id)
+      .where("instance", "=", instanceOf(req))
       .returning(["id", "name"])
       .executeTakeFirst();
     if (!deleted) {
@@ -684,6 +689,7 @@ partsRouter.post(
         updated_at: new Date(),
       })
       .where("id", "=", id)
+      .where("instance", "=", instanceOf(req))
       .returning(["id", "name", "qty"])
       .executeTakeFirst();
     if (!updated) {

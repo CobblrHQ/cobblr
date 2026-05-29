@@ -74,3 +74,10 @@ export function sessionUser(req: Request) {
   if (!s) throw new Error("purchases route called without session");
   return s;
 }
+
+/** Instance scope for the request — set by resolveInstance on
+ *  /instances/:name/items; falls back to "purchases" (the DB column
+ *  default) on legacy routes. */
+export function instanceOf(req: Request): string {
+  return (req as unknown as { instance?: string }).instance ?? "purchases";
+}

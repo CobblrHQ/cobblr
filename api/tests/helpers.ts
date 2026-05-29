@@ -52,7 +52,48 @@ export async function signupFreshOrg(label: string): Promise<TestSession> {
   // every registered workspace at end-of-file. Without this the
   // dev/CI DB accumulates orphan tenant DBs forever.
   registerOrgForTeardown({ token: session.token, slug: session.slug });
+  // Signup now enables ONLY the foundational substrate (blank-slate
+  // onboarding — see enableFoundationalForOrg). Tests exercise module
+  // functionality, not the empty-workspace default, so the harness
+  // turns every module on — mirroring the pre-blank-slate behaviour the
+  // suite was written against. (The blank-slate default itself is
+  // covered by the driven walkthrough, not the unit suite.)
+  await enableAllModulesForTests(session);
   return session;
+}
+
+/** Best-effort: enable every registered module that isn't already on
+ *  for the test org. Single pass in list order; failures (e.g. a
+ *  specialisation whose dep hasn't been reached yet) are ignored —
+ *  the base modules every test relies on have no deps. Exported so
+ *  tests that create SECONDARY workspaces (POST /orgs) — which signup
+ *  no longer auto-enables under blank-slate onboarding — can turn their
+ *  modules on too. */
+export async function enableAllModulesForTests(session: {
+  token: string;
+  slug: string;
+}): Promise<void> {
+  const res = await fetch(`${BASE}/api/v1/orgs/${session.slug}/modules`, {
+    headers: { Authorization: `Bearer ${session.token}` },
+  });
+  if (!res.ok) return;
+  const { items } = (await res.json()) as {
+    items: { name: string; enabled: boolean }[];
+  };
+  for (const m of items) {
+    if (m.enabled) continue;
+    await fetch(
+      `${BASE}/api/v1/orgs/${session.slug}/modules/${m.name}/enable`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.token}`,
+          "Content-Type": "application/json",
+        },
+        body: "{}",
+      },
+    ).catch(() => {});
+  }
 }
 
 export async function http<T = unknown>(

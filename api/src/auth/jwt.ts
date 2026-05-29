@@ -35,6 +35,33 @@ export async function signSession(userId: string): Promise<string> {
     .sign(secretKey());
 }
 
+// Capability-scoped app token (H1 Tier B). A SHORT-LIVED token carrying
+// the member's own identity (sub = userId) + an `app:<slug>` audience.
+// It verifies as a normal session (verifySession ignores aud), so every
+// call it makes runs as the member — bounded by their capabilities +
+// field-read-scope (H2). It can NEVER exceed the member; the short TTL
+// and audience just limit blast radius + make it auditable. Minted for
+// a sandboxed custom-app frontend to read through (mediated by the App
+// Player), never the long-lived session.
+const APP_TOKEN_TTL_SECONDS = 30 * 60; // 30 minutes
+
+export async function signAppToken(
+  userId: string,
+  appSlug: string,
+): Promise<{ token: string; expires_in: number }> {
+  const now = Math.floor(Date.now() / 1000);
+  const exp = now + APP_TOKEN_TTL_SECONDS;
+  const token = await new SignJWT({})
+    .setProtectedHeader({ alg: ALG })
+    .setIssuer(ISSUER)
+    .setSubject(userId)
+    .setAudience(`app:${appSlug}`)
+    .setIssuedAt(now)
+    .setExpirationTime(exp)
+    .sign(secretKey());
+  return { token, expires_in: APP_TOKEN_TTL_SECONDS };
+}
+
 export async function verifySession(token: string): Promise<SessionClaims> {
   const { payload } = await jwtVerify(token, secretKey(), { issuer: ISSUER });
   if (typeof payload.sub !== "string") {

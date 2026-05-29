@@ -7,7 +7,7 @@
 
 import { Link, useOutletContext } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, LayoutGrid, Settings } from "lucide-react";
+import { ChevronRight, LayoutDashboard, LayoutGrid, Settings } from "lucide-react";
 import { api, type PortalConfig } from "../lib/api";
 import { usePageTitle } from "@cobblr/platform-web";
 
@@ -34,6 +34,16 @@ export function PortalHomePage() {
   });
   const isAdmin = caps.data?.role === "owner" || caps.data?.role === "admin";
 
+  // Custom worker apps (H1) this member can open. The server already
+  // filters to apps the caller's capabilities grant, so we render
+  // whatever comes back.
+  const apps = useQuery({
+    queryKey: ["portal-apps", activeSlug],
+    queryFn: () => api.listApps(activeSlug!),
+    enabled: !!activeSlug,
+  });
+  const appItems = apps.data?.items ?? [];
+
   const pinnedViews = (allViews.data?.items ?? []).filter((v) =>
     portalConfig.pinned_views.includes(v.id),
   );
@@ -52,7 +62,41 @@ export function PortalHomePage() {
         </div>
       )}
 
-      {pinnedViews.length === 0 && (
+      {appItems.length > 0 && (
+        <div className="space-y-2">
+          <div className="text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500">
+            // apps
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {appItems.map((a) => (
+              <Link
+                key={a.id}
+                to={`/portal/${activeSlug}/app/${a.slug}`}
+                className="group rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 hover:border-cobble-400 dark:hover:border-cobble-600 transition flex items-center gap-3"
+              >
+                <LayoutDashboard
+                  size={18}
+                  className="text-cobble-500 dark:text-cobble-400 shrink-0"
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium text-slate-700 dark:text-mortar-100 truncate">
+                    {a.name}
+                  </div>
+                  <div className="text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 truncate">
+                    app
+                  </div>
+                </div>
+                <ChevronRight
+                  size={14}
+                  className="text-slate-300 dark:text-slate-600 group-hover:text-cobble-500 transition shrink-0"
+                />
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {pinnedViews.length === 0 && appItems.length === 0 && (
         <div className="rounded-xl border border-dashed border-slate-200 dark:border-slate-700 bg-mortar-50/30 dark:bg-slate-800/30 p-8 text-center">
           <LayoutGrid size={24} className="mx-auto text-slate-300 dark:text-slate-600 mb-2" />
           <p className="text-sm text-slate-500 dark:text-slate-400">

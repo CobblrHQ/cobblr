@@ -200,6 +200,8 @@ export interface OrgModuleListItem {
   displayName: string;
   description: string;
   icon: string | null;
+  /** Icon-only quick-action pinned to the navbar's right cluster. */
+  headerAction: { icon: string; label: string; route: string } | null;
   dependencies: string[];
   contributes: { fieldDefs: number; wires: number };
   enabled: boolean;
@@ -216,6 +218,17 @@ export interface ModuleListItem {
   intents: { name: string; description: string }[];
   exposes: { events: string[]; api: string[] };
   dependencies: string[];
+}
+
+/** Primary-entity base for a host module (machines/assets/purchases).
+ *  Instance-scoped when an instance slug is given (the platform's
+ *  /instances/:name/items dispatches to the module's primary router);
+ *  the legacy module route otherwise. `moduleRoute` is "<module>/<entity>"
+ *  e.g. "machines/machines", "purchases/orders". */
+function primaryBase(slug: string, moduleRoute: string, instance?: string): string {
+  return instance
+    ? `/orgs/${slug}/instances/${instance}/items`
+    : `/orgs/${slug}/modules/${moduleRoute}`;
 }
 
 export const api = {
@@ -264,29 +277,31 @@ export const api = {
   disableModule: (slug: string, name: string) =>
     request<void>("POST", `/orgs/${slug}/modules/${name}/disable`),
 
-  // machines module
-  listMachines: (slug: string) =>
-    request<{ items: Machine[] }>("GET", `/orgs/${slug}/modules/machines/machines`),
-  getMachine: (slug: string, id: string) =>
-    request<Machine>("GET", `/orgs/${slug}/modules/machines/machines/${id}`),
-  createMachine: (slug: string, body: Partial<Machine>) =>
-    request<Machine>("POST", `/orgs/${slug}/modules/machines/machines`, body),
-  updateMachine: (slug: string, id: string, body: Partial<Machine>) =>
-    request<Machine>("PATCH", `/orgs/${slug}/modules/machines/machines/${id}`, body),
-  deleteMachine: (slug: string, id: string) =>
-    request<void>("DELETE", `/orgs/${slug}/modules/machines/machines/${id}`),
+  // machines module (instance? scopes to /instances/:name/items)
+  listMachines: (slug: string, instance?: string) =>
+    request<{ items: Machine[] }>("GET", primaryBase(slug, "machines/machines", instance)),
+  getMachine: (slug: string, id: string, instance?: string) =>
+    request<Machine>("GET", `${primaryBase(slug, "machines/machines", instance)}/${id}`),
+  createMachine: (slug: string, body: Partial<Machine>, instance?: string) =>
+    request<Machine>("POST", primaryBase(slug, "machines/machines", instance), body),
+  updateMachine: (slug: string, id: string, body: Partial<Machine>, instance?: string) =>
+    request<Machine>("PATCH", `${primaryBase(slug, "machines/machines", instance)}/${id}`, body),
+  deleteMachine: (slug: string, id: string, instance?: string) =>
+    request<void>("DELETE", `${primaryBase(slug, "machines/machines", instance)}/${id}`),
 
-  // purchases module
-  listOrders: (slug: string) =>
-    request<{ items: Order[] }>("GET", `/orgs/${slug}/modules/purchases/orders`),
-  getOrder: (slug: string, id: string) =>
-    request<Order & { items: OrderItem[] }>("GET", `/orgs/${slug}/modules/purchases/orders/${id}`),
-  createOrder: (slug: string, body: Partial<Order>) =>
-    request<Order>("POST", `/orgs/${slug}/modules/purchases/orders`, body),
-  updateOrder: (slug: string, id: string, body: Partial<Order>) =>
-    request<Order>("PATCH", `/orgs/${slug}/modules/purchases/orders/${id}`, body),
-  deleteOrder: (slug: string, id: string) =>
-    request<void>("DELETE", `/orgs/${slug}/modules/purchases/orders/${id}`),
+  // purchases module (instance? scopes to /instances/:name/items)
+  listOrders: (slug: string, instance?: string) =>
+    request<{ items: Order[] }>("GET", primaryBase(slug, "purchases/orders", instance)),
+  getOrder: (slug: string, id: string, instance?: string) =>
+    request<Order & { items: OrderItem[] }>("GET", `${primaryBase(slug, "purchases/orders", instance)}/${id}`),
+  createOrder: (slug: string, body: Partial<Order>, instance?: string) =>
+    request<Order>("POST", primaryBase(slug, "purchases/orders", instance), body),
+  updateOrder: (slug: string, id: string, body: Partial<Order>, instance?: string) =>
+    request<Order>("PATCH", `${primaryBase(slug, "purchases/orders", instance)}/${id}`, body),
+  deleteOrder: (slug: string, id: string, instance?: string) =>
+    request<void>("DELETE", `${primaryBase(slug, "purchases/orders", instance)}/${id}`),
+  // Order items are keyed by orderId (their instance rides the parent
+  // order), so this stays on the legacy nested route either way.
   addOrderItem: (slug: string, orderId: string, body: Partial<OrderItem>) =>
     request<OrderItem>("POST", `/orgs/${slug}/modules/purchases/orders/${orderId}/items`, body),
 
@@ -299,17 +314,17 @@ export const api = {
       `/orgs/${slug}/modules/inventory/parts`,
     ),
 
-  // assets module
-  listAssets: (slug: string) =>
-    request<{ items: Asset[] }>("GET", `/orgs/${slug}/modules/assets/assets`),
-  getAsset: (slug: string, id: string) =>
-    request<Asset>("GET", `/orgs/${slug}/modules/assets/assets/${id}`),
-  createAsset: (slug: string, body: Partial<Asset>) =>
-    request<Asset>("POST", `/orgs/${slug}/modules/assets/assets`, body),
-  updateAsset: (slug: string, id: string, body: Partial<Asset>) =>
-    request<Asset>("PATCH", `/orgs/${slug}/modules/assets/assets/${id}`, body),
-  deleteAsset: (slug: string, id: string) =>
-    request<void>("DELETE", `/orgs/${slug}/modules/assets/assets/${id}`),
+  // assets module (instance? scopes to /instances/:name/items)
+  listAssets: (slug: string, instance?: string) =>
+    request<{ items: Asset[] }>("GET", primaryBase(slug, "assets/assets", instance)),
+  getAsset: (slug: string, id: string, instance?: string) =>
+    request<Asset>("GET", `${primaryBase(slug, "assets/assets", instance)}/${id}`),
+  createAsset: (slug: string, body: Partial<Asset>, instance?: string) =>
+    request<Asset>("POST", primaryBase(slug, "assets/assets", instance), body),
+  updateAsset: (slug: string, id: string, body: Partial<Asset>, instance?: string) =>
+    request<Asset>("PATCH", `${primaryBase(slug, "assets/assets", instance)}/${id}`, body),
+  deleteAsset: (slug: string, id: string, instance?: string) =>
+    request<void>("DELETE", `${primaryBase(slug, "assets/assets", instance)}/${id}`),
 
   // Members + invites
   listMembers: (slug: string) =>
@@ -414,6 +429,13 @@ export const api = {
   // Pillar C — bindings (wires)
   listBindings: (slug: string) =>
     request<{ items: PlatformBinding[] }>("GET", `/orgs/${slug}/bindings`),
+  // Available trigger events (enabled modules' manifest-declared events)
+  // for the wire composer's typeahead.
+  listWireEvents: (slug: string) =>
+    request<{ items: { event: string; module: string }[] }>(
+      "GET",
+      `/orgs/${slug}/wire-events`,
+    ),
   createBinding: (slug: string, body: Partial<PlatformBinding>) =>
     request<PlatformBinding>("POST", `/orgs/${slug}/bindings`, body),
   updateBinding: (slug: string, id: string, body: Partial<PlatformBinding>) =>
@@ -614,11 +636,50 @@ export const api = {
     );
   },
 
+  // ─── core-apps (custom worker apps, H1) ───────────────────────────
+  listApps: (slug: string) =>
+    request<{ items: WorkspaceAppMeta[] }>(
+      "GET",
+      `/orgs/${slug}/modules/core-apps/apps`,
+    ),
+  getApp: (slug: string, appSlug: string) =>
+    request<WorkspaceApp>(
+      "GET",
+      `/orgs/${slug}/modules/core-apps/apps/${appSlug}`,
+    ),
+  createApp: (slug: string, body: Partial<WorkspaceApp>) =>
+    request<WorkspaceApp>("POST", `/orgs/${slug}/modules/core-apps/apps`, body),
+  updateApp: (slug: string, appSlug: string, body: Partial<WorkspaceApp>) =>
+    request<WorkspaceApp>(
+      "PATCH",
+      `/orgs/${slug}/modules/core-apps/apps/${appSlug}`,
+      body,
+    ),
+  deleteApp: (slug: string, appSlug: string) =>
+    request<void>("DELETE", `/orgs/${slug}/modules/core-apps/apps/${appSlug}`),
+  /** Mint a short-lived capability-scoped token (Tier B) for the App
+   *  Player to mediate a sandboxed custom frontend's reads. */
+  mintAppToken: (slug: string, appSlug: string) =>
+    request<{ token: string; expires_in: number }>(
+      "POST",
+      `/orgs/${slug}/modules/core-apps/apps/${appSlug}/token`,
+    ),
+
   // ─── core-tags ────────────────────────────────────────────────────
   listTags: (slug: string) =>
     request<{ items: TagRecord[] }>("GET", `/orgs/${slug}/modules/core-tags/tags`),
   createTag: (slug: string, body: { name: string; color?: string | null }) =>
     request<TagRecord>("POST", `/orgs/${slug}/modules/core-tags/tags`, body),
+  updateTag: (
+    slug: string,
+    id: string,
+    body: { name?: string; color?: string | null },
+  ) =>
+    request<TagRecord>(
+      "PATCH",
+      `/orgs/${slug}/modules/core-tags/tags/${id}`,
+      body,
+    ),
   deleteTag: (slug: string, id: string) =>
     request<void>("DELETE", `/orgs/${slug}/modules/core-tags/tags/${id}`),
   listTagAttachments: (
@@ -686,6 +747,21 @@ export const api = {
       `/orgs/${slug}/modules/core-public-surfaces/surfaces`,
       body,
     ),
+  updateSurface: (
+    slug: string,
+    id: string,
+    body: {
+      name?: string;
+      config?: Record<string, unknown>;
+      enabled?: boolean;
+      expires_at?: string | null;
+    },
+  ) =>
+    request<SurfaceRecord>(
+      "PATCH",
+      `/orgs/${slug}/modules/core-public-surfaces/surfaces/${id}`,
+      body,
+    ),
   revokeSurface: (slug: string, id: string) =>
     request<void>(
       "DELETE",
@@ -695,6 +771,99 @@ export const api = {
     request<SurfaceStats>(
       "GET",
       `/orgs/${slug}/modules/core-public-surfaces/surfaces/${id}/stats`,
+    ),
+
+  // ─── core-farm (print-farm connections) ──────────────────────────
+  listFarmConnections: (slug: string) =>
+    request<{ items: FarmConnection[]; types: string[] }>(
+      "GET",
+      `/orgs/${slug}/modules/core-farm/connections`,
+    ),
+  createFarmConnection: (
+    slug: string,
+    body: {
+      type: string;
+      label: string;
+      base_url: string;
+      api_key?: string;
+      username?: string;
+      password?: string;
+    },
+  ) => request<FarmConnection>("POST", `/orgs/${slug}/modules/core-farm/connections`, body),
+  testFarmConnection: (slug: string, id: string) =>
+    request<{ ok: boolean; detail?: string; capabilities: { routing: boolean } }>(
+      "POST",
+      `/orgs/${slug}/modules/core-farm/connections/${id}/test`,
+      {},
+    ),
+  listFarmPrinters: (slug: string, id: string) =>
+    request<{ items: FarmPrinter[] }>(
+      "GET",
+      `/orgs/${slug}/modules/core-farm/connections/${id}/printers`,
+    ),
+  deleteFarmConnection: (slug: string, id: string) =>
+    request<void>("DELETE", `/orgs/${slug}/modules/core-farm/connections/${id}`),
+
+  // ─── core-maintenance (workspace-wide service log) ────────────────
+  listMaintenance: (
+    slug: string,
+    params?: {
+      kind?: "history" | "scheduled" | "all";
+      due_within_days?: number;
+      limit?: number;
+    },
+  ) => {
+    const qs = new URLSearchParams();
+    if (params?.kind) qs.set("kind", params.kind);
+    if (params?.due_within_days != null)
+      qs.set("due_within_days", String(params.due_within_days));
+    if (params?.limit != null) qs.set("limit", String(params.limit));
+    const q = qs.toString();
+    return request<{ items: MaintenanceEntry[] }>(
+      "GET",
+      `/orgs/${slug}/modules/core-maintenance/entries${q ? `?${q}` : ""}`,
+    );
+  },
+  updateMaintenance: (
+    slug: string,
+    id: string,
+    body: Partial<{
+      name: string;
+      description: string | null;
+      performed_at: string | null;
+      scheduled_at: string | null;
+      cost_cents: number | null;
+      notes: string | null;
+      recurrence_rule: string | null;
+    }>,
+  ) =>
+    request<MaintenanceEntry>(
+      "PATCH",
+      `/orgs/${slug}/modules/core-maintenance/entries/${id}`,
+      body,
+    ),
+  completeMaintenance: (slug: string, id: string, performed_at?: string) =>
+    request<MaintenanceEntry>(
+      "POST",
+      `/orgs/${slug}/modules/core-maintenance/entries/${id}/complete`,
+      performed_at ? { performed_at } : {},
+    ),
+  deleteMaintenance: (slug: string, id: string) =>
+    request<void>(
+      "DELETE",
+      `/orgs/${slug}/modules/core-maintenance/entries/${id}`,
+    ),
+
+  // ─── core-labels-qr (minted QR tokens) ────────────────────────────
+  listQrTokens: (slug: string) =>
+    request<{ items: QrToken[] }>(
+      "GET",
+      `/orgs/${slug}/modules/core-labels-qr/tokens`,
+    ),
+  revokeQrToken: (slug: string, id: string) =>
+    request<QrToken>(
+      "POST",
+      `/orgs/${slug}/modules/core-labels-qr/tokens/${id}/revoke`,
     ),
 
   // ─── core-healthcheck ─────────────────────────────────────────────
@@ -778,6 +947,31 @@ export const api = {
   deleteInstance: (slug: string, instanceName: string) =>
     request<void>("DELETE", `/orgs/${slug}/instances/${instanceName}`),
 
+  // Nav-builder #2 — user-defined navbar headings (org-wide). Group nav
+  // entries (modules + instances) under custom headings, cross-module.
+  // See docs/design-decisions/nav-builder.md.
+  listNavHeadings: (slug: string) =>
+    request<{ items: NavHeading[] }>("GET", `/orgs/${slug}/nav-headings`),
+  createNavHeading: (slug: string, body: { name: string; icon?: string | null }) =>
+    request<{ id: string }>("POST", `/orgs/${slug}/nav-headings`, body),
+  updateNavHeading: (
+    slug: string,
+    id: string,
+    body: { name?: string; icon?: string | null; position?: number },
+  ) => request<void>("PATCH", `/orgs/${slug}/nav-headings/${id}`, body),
+  deleteNavHeading: (slug: string, id: string) =>
+    request<void>("DELETE", `/orgs/${slug}/nav-headings/${id}`),
+  addNavHeadingMember: (
+    slug: string,
+    headingId: string,
+    body: { target_kind: "module" | "instance"; target_id: string },
+  ) => request<void>("POST", `/orgs/${slug}/nav-headings/${headingId}/members`, body),
+  removeNavHeadingMember: (slug: string, targetKind: string, targetId: string) =>
+    request<void>(
+      "DELETE",
+      `/orgs/${slug}/nav-headings/members/${encodeURIComponent(targetKind)}/${encodeURIComponent(targetId)}`,
+    ),
+
   // Workspace presentation overrides — rename / hide / re-icon / reorder
   // for any nav entry (entity kind, instance, bundle).
   listOverrides: (slug: string) =>
@@ -795,6 +989,7 @@ export const api = {
       icon?: string | null;
       hidden?: boolean;
       nav_order?: number | null;
+      config?: Record<string, unknown>;
     },
   ) =>
     request<EntityKindOverride>("PUT", `/orgs/${slug}/entity-kind-overrides`, body),
@@ -1214,6 +1409,23 @@ export const api = {
       "GET",
       `/orgs/${slug}/permissions/grantable-actions`,
     ),
+  // H2 admin-configurable field read-scope (per-workspace gated fields).
+  listFieldScopes: (slug: string) =>
+    request<{ items: { kind: string; field: string; capability: string }[] }>(
+      "GET",
+      `/orgs/${slug}/field-scopes`,
+    ),
+  setFieldScope: (
+    slug: string,
+    body: { kind: string; field: string; capability: string },
+  ) => request<void>("PUT", `/orgs/${slug}/field-scopes`, body),
+  deleteFieldScope: (slug: string, kind: string, field: string) =>
+    request<void>(
+      "DELETE",
+      `/orgs/${slug}/field-scopes?kind=${encodeURIComponent(
+        kind,
+      )}&field=${encodeURIComponent(field)}`,
+    ),
   getMyCapabilities: (slug: string) =>
     request<{ role: string; grants: string[] }>(
       "GET",
@@ -1529,6 +1741,19 @@ export interface ModuleInstance {
   created_at: string;
 }
 
+export interface NavHeadingMember {
+  target_kind: "module" | "instance";
+  target_id: string;
+  position: number;
+}
+export interface NavHeading {
+  id: string;
+  name: string;
+  icon: string | null;
+  position: number;
+  members: NavHeadingMember[];
+}
+
 export interface EntityKindOverride {
   id: string;
   org_id: string;
@@ -1818,6 +2043,37 @@ export interface SavedView {
   updated_at: string;
 }
 
+// ─── core-apps (custom worker apps, H1) ──────────────────────────
+/** A block is a structured, capability-gated unit on an app page. */
+export type AppBlock =
+  | { type: "view"; view_id: string; title?: string }
+  | { type: "record"; kind: string; id_from: string }
+  | { type: "action"; action_id: string; label?: string; kind?: string }
+  | { type: "form"; kind: string; mode: "create" | "edit"; fields?: string[] }
+  | { type: "stat"; view_id: string; agg: "count" | "sum"; field?: string; label?: string }
+  | { type: "markdown"; body: string }
+  | { type: "scan" }
+  | { type: "custom"; html: string; height?: number };
+export interface AppPage {
+  slug: string;
+  title: string;
+  blocks: AppBlock[];
+}
+/** List/nav metadata for an app (no page bodies). */
+export interface WorkspaceAppMeta {
+  id: string;
+  slug: string;
+  name: string;
+  icon: string | null;
+  visible_capability: string | null;
+}
+/** Full app definition returned by getApp. */
+export interface WorkspaceApp extends WorkspaceAppMeta {
+  pages: AppPage[];
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface ViewDataResponse {
   view: { id: string; entity_kind: string; view_type: string };
   items: Array<{
@@ -1873,6 +2129,58 @@ export interface SurfaceRecord {
   revoked_at: string | null;
   created_at: string;
   public_url: string;
+}
+
+export interface FarmConnection {
+  id: string;
+  type: string;
+  label: string;
+  base_url: string;
+  enabled: boolean;
+  capabilities: { routing?: boolean } & Record<string, unknown>;
+  last_sync_at: string | null;
+  last_sync_status: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FarmPrinter {
+  id: string;
+  name: string;
+  enabled: boolean;
+  state?: string | null;
+  tags?: string[];
+}
+
+export interface MaintenanceEntry {
+  id: string;
+  entity_module: string;
+  entity_type: string;
+  entity_id: string;
+  name: string;
+  description: string | null;
+  performed_at: string | null;
+  scheduled_at: string | null;
+  cost_cents: number | null;
+  performed_by: string | null;
+  notes: string | null;
+  recurrence_rule: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface QrToken {
+  id: string;
+  token: string;
+  entity_kind: string;
+  entity_id: string;
+  mode: "navigate" | "action";
+  action_id: string | null;
+  auth: "public" | "session";
+  config: Record<string, unknown>;
+  created_at: string;
+  revoked_at: string | null;
+  expires_at: string | null;
 }
 
 export interface SurfaceStats {

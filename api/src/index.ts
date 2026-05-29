@@ -22,6 +22,7 @@ import { env } from "./env.js";
 import { meta, metaPool, pingMeta } from "./db/meta.js";
 import { runMigrations } from "./db/migrate.js";
 import { getTenantDb } from "./db/tenant.js";
+import { signAppToken } from "./auth/jwt.js";
 import { loadAllModules } from "./modules/loader.js";
 import { loadAllSandboxedModules } from "./sandbox/loader.js";
 import { syncTenantMigrations } from "./modules/enable.js";
@@ -206,6 +207,7 @@ async function boot() {
           .executeTakeFirst();
         return !!viaRole;
       },
+      mintAppToken: ({ userId, appSlug }) => signAppToken(userId, appSlug),
     },
     // B1 from 2026-05-25-audit.md: pairings + catalogs platform
     // surfaces so modules stop SELECTing each other's tables.

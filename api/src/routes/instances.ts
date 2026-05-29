@@ -221,6 +221,11 @@ const UpsertOverrideBody = z.object({
   icon: z.string().max(80).nullable().optional(),
   hidden: z.boolean().optional(),
   nav_order: z.number().int().nullable().optional(),
+  // Free-form presentation config. Today carries `group_label` — the
+  // custom heading for this module's specialisations/instances dropdown
+  // (overrides the default "<module> specialisations"). Stored wholesale
+  // on the override's JSONB column, so callers read-modify-write it.
+  config: z.record(z.unknown()).optional(),
 });
 
 overridesRouter.get(
@@ -264,6 +269,7 @@ overridesRouter.put(
         icon: parsed.data.icon,
         hidden: parsed.data.hidden,
         navOrder: parsed.data.nav_order,
+        config: parsed.data.config,
       });
       res.json(row);
     } catch (err) {

@@ -61,6 +61,10 @@ services:
       # Defaults to cobblrhq/registry's modules.json on GitHub.
       COBBLR_REGISTRY_URL: ${COBBLR_REGISTRY_URL:-}
       COBBLR_REGISTRY_TOKEN: ${COBBLR_REGISTRY_TOKEN:-}
+      # Local dev/test only: let webhooks target host.docker.internal /
+      # loopback (the e2e webhook mock runs on the host). MUST stay unset
+      # in production — the webhook SSRF guard relies on it being off.
+      COBBLR_WEBHOOK_ALLOW_INTERNAL: ${COBBLR_WEBHOOK_ALLOW_INTERNAL:-1}
     depends_on:
       db:
         condition: service_healthy

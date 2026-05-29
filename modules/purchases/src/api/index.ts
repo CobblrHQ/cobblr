@@ -12,3 +12,7 @@ const router = Router({ mergeParams: true });
 router.use("/orders", ordersRouter);
 
 export default router;
+
+// Primary-entity router for instance-scoped item CRUD (orders are the
+// primary entity; order_items stay scoped via their parent order).
+export { ordersRouter as primaryRouter };

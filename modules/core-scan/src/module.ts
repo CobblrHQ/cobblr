@@ -23,6 +23,15 @@ export default defineModule({
   icon: "scan-line",
   band: "stock",
 
+  // The scan/camera button earns a permanent icon slot in the navbar's
+  // right cluster — it's the most-used action for camera-first intake
+  // (companion app hits it constantly). Shows only while core-scan is on.
+  headerAction: {
+    icon: "scan-line",
+    label: "Scan",
+    route: "/scan",
+  },
+
   schema: {
     tablePrefix: "core_scan_",
     migrationsDir: "./migrations",

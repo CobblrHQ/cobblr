@@ -212,20 +212,28 @@ viewsRouter.get(
     const parsedQuery = DataQuery.safeParse(req.query);
     if (!parsedQuery.success) return badBody(res, parsedQuery.error);
     const cfg = view.config as Record<string, unknown>;
-    const result = await platform().entities.list(ctx.org.id, view.entity_kind, {
-      limit: parsedQuery.data.limit,
-      offset: parsedQuery.data.offset,
-      q: parsedQuery.data.q,
-      // Pull filter/sort from the persisted view config. The shape
-      // is "whatever the view editor wrote" — modules ignore unknown
-      // keys, so a request-level override layered on top is safe.
-      filter: (cfg.filter as Record<string, unknown> | undefined) ?? undefined,
-      // D10: comparison predicates beyond equality (qty < min_qty,
-      // due_date <= now, etc). Resolvers that don't support them
-      // ignore — degrades to "no extra filter" rather than erroring.
-      where: (cfg.where as never) ?? undefined,
-      sort: (cfg.sort as string[] | undefined) ?? undefined,
-    });
+    const result = await platform().entities.list(
+      ctx.org.id,
+      view.entity_kind,
+      {
+        limit: parsedQuery.data.limit,
+        offset: parsedQuery.data.offset,
+        q: parsedQuery.data.q,
+        // Pull filter/sort from the persisted view config. The shape
+        // is "whatever the view editor wrote" — modules ignore unknown
+        // keys, so a request-level override layered on top is safe.
+        filter: (cfg.filter as Record<string, unknown> | undefined) ?? undefined,
+        // D10: comparison predicates beyond equality (qty < min_qty,
+        // due_date <= now, etc). Resolvers that don't support them
+        // ignore — degrades to "no extra filter" rather than erroring.
+        where: (cfg.where as never) ?? undefined,
+        sort: (cfg.sort as string[] | undefined) ?? undefined,
+      },
+      // H2 — viewer identity so the kernel applies per-field read-scope:
+      // a member sees only the fields their capabilities permit (e.g.
+      // parts but not prices); owner/admin see everything.
+      { userId: sessionUser(req)?.id, role: ctx.role },
+    );
     res.json({
       view: { id: view.id, entity_kind: view.entity_kind, view_type: view.view_type },
       ...result,

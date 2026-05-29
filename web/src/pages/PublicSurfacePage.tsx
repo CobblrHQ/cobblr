@@ -29,16 +29,24 @@ interface SurfaceItem {
   fields?: Record<string, unknown>;
 }
 
+interface SurfaceSection {
+  title: string;
+  entity_kind: string;
+  view_type: string;
+  items: SurfaceItem[];
+}
+
 interface SurfaceResponse {
   surface: {
     name: string;
-    scope_type: "view" | "entity" | "collection";
+    scope_type: "view" | "entity" | "collection" | "board";
     config: Record<string, unknown>;
   };
   view?: { name: string; entity_kind: string; view_type: string };
   collection?: { kind: string; query: Record<string, unknown> };
   entity?: SurfaceItem | null;
   items?: SurfaceItem[];
+  sections?: SurfaceSection[];
 }
 
 interface SurfaceTheme {
@@ -124,6 +132,26 @@ export function PublicSurfacePage() {
       )}
       {data.surface.scope_type === "entity" && data.entity && (
         <EntityCard item={data.entity} />
+      )}
+      {data.surface.scope_type === "board" && (
+        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+          {(data.sections ?? []).map((section, i) => (
+            <div key={`${section.title}-${i}`}>
+              <header className="mb-3 flex items-baseline gap-2 border-b border-slate-200 dark:border-slate-700 pb-2">
+                <h2 className="font-display text-lg font-extrabold text-slate-700 dark:text-mortar-100 lowercase">
+                  {section.title}
+                </h2>
+                <span className="text-xs text-slate-400">{section.items.length}</span>
+              </header>
+              <ListGrid items={section.items} />
+            </div>
+          ))}
+          {(data.sections ?? []).length === 0 && (
+            <div className="text-sm text-slate-500 italic py-12 text-center sm:col-span-2 lg:col-span-3">
+              nothing here yet.
+            </div>
+          )}
+        </div>
       )}
       {(data.surface.scope_type === "view" ||
         data.surface.scope_type === "collection") && (

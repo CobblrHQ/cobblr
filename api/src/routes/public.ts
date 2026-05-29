@@ -24,7 +24,7 @@ export const publicRouter = Router();
 interface SurfaceRow {
   id: string;
   name: string;
-  scope_type: "view" | "entity" | "collection";
+  scope_type: "view" | "entity" | "collection" | "board";
   scope_id: string;
   config: Record<string, unknown>;
   enabled: boolean;
@@ -142,6 +142,39 @@ publicRouter.get("/:token", (req, res, next) => {
         query,
       };
       payload.items = result.items;
+    } else if (surface.scope_type === "board") {
+      // Multi-column TV board: config.sections = [{ title, view_id }].
+      // Each column resolves a saved view (same path as scope_type
+      // 'view'), capped small so a wall display stays glanceable. This
+      // is companion app's recently-done / in-progress / coming-up display.
+      const cfg = (surface.config ?? {}) as Record<string, unknown>;
+      const sections = Array.isArray(cfg.sections) ? cfg.sections : [];
+      const perColumn = Math.min(Number(cfg.per_column) || 8, 30);
+      const resolved: Array<Record<string, unknown>> = [];
+      for (const raw of sections) {
+        const s = (raw ?? {}) as Record<string, unknown>;
+        const viewId = typeof s.view_id === "string" ? s.view_id : null;
+        if (!viewId) continue;
+        const view = await tenantDb
+          .selectFrom("core_views_views")
+          .selectAll()
+          .where("id", "=", viewId)
+          .executeTakeFirst();
+        if (!view) continue;
+        const vcfg = (view.config as Record<string, unknown>) ?? {};
+        const result = await platform().entities.list(tokenRow.org_id, view.entity_kind, {
+          filter: (vcfg.filter as Record<string, unknown> | undefined) ?? undefined,
+          sort: (vcfg.sort as string[] | undefined) ?? undefined,
+          limit: perColumn,
+        });
+        resolved.push({
+          title: typeof s.title === "string" && s.title ? s.title : view.name,
+          entity_kind: view.entity_kind,
+          view_type: view.view_type,
+          items: result.items,
+        });
+      }
+      payload.sections = resolved;
     } else {
       res.status(500).json({ error: { code: "unknown_scope", message: `unsupported scope_type ${surface.scope_type}` } });
       return;

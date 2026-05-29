@@ -39,12 +39,20 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         },
       ],
       field_defs: [
-        { entity_kind: "inventory:part", name: "set_id", display_label: "Set ID", type: "text", position: 1 },
-        { entity_kind: "inventory:part", name: "year", display_label: "Release year", type: "number", position: 2 },
-        { entity_kind: "inventory:part", name: "theme", display_label: "Theme", type: "text", position: 3 },
-        { entity_kind: "inventory:part", name: "color", display_label: "Primary color", type: "text", position: 4 },
-        { entity_kind: "inventory:part", name: "condition", display_label: "Condition", type: "text", position: 5 },
-        { entity_kind: "inventory:part", name: "minifig_count", display_label: "Minifig count", type: "number", position: 6 },
+        // Kit lifecycle (H6): the declarative half of sealed → built →
+        // disassembled. The user marks a kit `sealed` (boxed) or `built`
+        // here; the platform sets `parted-out` (and spawns `loose` parts)
+        // when the disassemble-kit action runs. Stored in metadata.lifecycle
+        // — the same key the parts list's lifecycle filter and the
+        // disassemble handler read, so the field, the filter, and the
+        // action all compose with no custom code.
+        { entity_kind: "inventory:part", name: "lifecycle", display_label: "Kit state", type: "text", choices: ["loose", "sealed", "built", "parted-out"], position: 1 },
+        { entity_kind: "inventory:part", name: "set_id", display_label: "Set ID", type: "text", position: 2 },
+        { entity_kind: "inventory:part", name: "year", display_label: "Release year", type: "number", position: 3 },
+        { entity_kind: "inventory:part", name: "theme", display_label: "Theme", type: "text", position: 4 },
+        { entity_kind: "inventory:part", name: "color", display_label: "Primary color", type: "text", position: 5 },
+        { entity_kind: "inventory:part", name: "condition", display_label: "Condition", type: "text", position: 6 },
+        { entity_kind: "inventory:part", name: "minifig_count", display_label: "Minifig count", type: "number", position: 7 },
       ],
     },
   },

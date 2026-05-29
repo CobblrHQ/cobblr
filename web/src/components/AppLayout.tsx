@@ -16,6 +16,7 @@ import { CobblestoneMark } from "../CobblestoneMark";
 import { NotificationsBell } from "./NotificationsBell";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 import { ModuleNav, ConfigurationLink } from "./ModuleNav";
+import { HeaderActions } from "./HeaderActions";
 import { MobileNav } from "./MobileNav";
 import { SearchBar } from "./SearchBar";
 import { ErrorBoundary } from "./ErrorBoundary";
@@ -56,18 +57,19 @@ export function AppLayout(_props: { activeSlug: string }) {
             <WorkspaceSwitcher />
           </div>
 
-          {/* Center nav (desktop): wraps to a second row when it
-              overflows so every module link stays reachable. The old
-              `overflow-x-auto no-scrollbar` scrolled horizontally with
-              a hidden scrollbar, which left links past the fold (e.g.
-              projects, purchases) unreachable. Hidden on mobile —
-              MobileNav takes over. */}
-          <nav className="hidden md:flex flex-wrap items-center gap-0.5 flex-1 min-w-0">
+          {/* Center nav (desktop): a single non-wrapping row. ModuleNav
+              measures its own width and folds any links that don't fit
+              into a trailing "more ▾" dropdown — so it never wraps to a
+              second line (the author's ask) and nothing past the fold is lost.
+              Hidden on mobile — MobileNav takes over. */}
+          <nav className="hidden md:flex flex-nowrap items-center gap-0.5 flex-1 min-w-0">
             <ModuleNav />
           </nav>
 
           {/* Right cluster (desktop) — never shrinks */}
           <div className="hidden md:flex items-center gap-1 shrink-0">
+            {/* Module-contributed critical quick-actions (e.g. scan). */}
+            <HeaderActions />
             <SearchBar />
             {user?.is_platform_admin && (
               <Link

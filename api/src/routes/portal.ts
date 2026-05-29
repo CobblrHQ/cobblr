@@ -10,6 +10,7 @@ import { sql } from "kysely";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import { meta } from "../db/meta.js";
+import { effectiveCapabilities } from "../auth/effective-capabilities.js";
 import * as activity from "../platform/activity.js";
 
 export const portalRouter = Router({ mergeParams: true });
@@ -165,9 +166,9 @@ const ENDPOINT_CAPABILITIES = [
 /** Every capability an admin can grant a member: the registered actions
  *  (entity_actions) plus the endpoint-gate caps above. Single source of
  *  truth for both the matrix columns and grant validation. */
-async function grantableActions(): Promise<
-  Array<{ action_id: string; label: string; description: string }>
-> {
+async function grantableActions(
+  orgId?: string,
+): Promise<Array<{ action_id: string; label: string; description: string }>> {
   const registered = await meta
     .selectFrom("entity_actions")
     .select(["id", "label", "description"])
@@ -180,6 +181,47 @@ async function grantableActions(): Promise<
   }));
   const have = new Set(items.map((a) => a.action_id));
   for (const c of ENDPOINT_CAPABILITIES) if (!have.has(c.action_id)) items.push(c);
+  // H2 — per-field read-scope capabilities declared by entity kinds
+  // (entity_kinds.field_read_scopes values). Auto-grantable so an admin
+  // can assign a "view costs"-style cap from the matrix without any
+  // central registry: any module that gates a field makes its
+  // capability appear here automatically.
+  const gatedKinds = await meta
+    .selectFrom("entity_kinds")
+    .select(["field_read_scopes"])
+    .where("field_read_scopes", "is not", null)
+    .execute();
+  for (const k of gatedKinds) {
+    const scopes = (k.field_read_scopes as Record<string, string> | null) ?? {};
+    for (const [field, cap] of Object.entries(scopes)) {
+      if (have.has(cap)) continue;
+      have.add(cap);
+      items.push({
+        action_id: cap,
+        label: `View ${field}`,
+        description: `See the "${field}" field on records that restrict it.`,
+      });
+    }
+  }
+  // H2 admin-configurable — per-workspace field scopes the admin defined
+  // (workspace_field_scopes). Same auto-grantable treatment so a
+  // workspace's own "view X" caps show in its matrix.
+  if (orgId) {
+    const perOrg = await meta
+      .selectFrom("workspace_field_scopes")
+      .select(["field", "capability"])
+      .where("org_id", "=", orgId)
+      .execute();
+    for (const s of perOrg) {
+      if (have.has(s.capability)) continue;
+      have.add(s.capability);
+      items.push({
+        action_id: s.capability,
+        label: `View ${s.field}`,
+        description: `See the "${s.field}" field (restricted in this workspace).`,
+      });
+    }
+  }
   return items;
 }
 
@@ -217,7 +259,7 @@ portalRouter.post(
       }
       // Don't persist arbitrary action_id strings: a grant for a cap
       // that no gate checks is dead, and it pollutes the matrix.
-      const grantable = await grantableActions();
+      const grantable = await grantableActions(req.tenant!.org.id);
       if (!grantable.some((a) => a.action_id === parsed.data.action_id)) {
         res.status(400).json({
           error: {
@@ -299,14 +341,88 @@ portalRouter.get(
   "/:slug/permissions/grantable-actions",
   requireAuth,
   withTenant,
-  async (_req, res, next) => {
+  async (req, res, next) => {
     try {
-      res.json({ items: await grantableActions() });
+      res.json({ items: await grantableActions(req.tenant!.org.id) });
     } catch (err) {
       next(err);
     }
   },
 );
+
+// ── H2 admin-configurable field read-scope ──────────────────────────
+// Owner/admin define which fields are sensitive PER WORKSPACE + the
+// capability that gates each. Merged over the manifest scopes at read
+// time (see getFieldReadScopes); the capability is auto-grantable.
+function adminOnly(req: Parameters<typeof requireAuth>[0], res: Parameters<typeof requireAuth>[1]): boolean {
+  const role = (req as { tenant?: { role?: string } }).tenant?.role;
+  if (role === "owner" || role === "admin") return true;
+  res.status(403).json({ error: { code: "forbidden", message: "Admins only." } });
+  return false;
+}
+const FieldScopeBody = z.object({
+  kind: z.string().min(1).max(120),
+  field: z.string().min(1).max(120),
+  capability: z.string().min(1).max(120),
+});
+portalRouter.get("/:slug/field-scopes", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    if (!adminOnly(req, res)) return;
+    const items = await meta
+      .selectFrom("workspace_field_scopes")
+      .select(["kind", "field", "capability"])
+      .where("org_id", "=", req.tenant!.org.id)
+      .orderBy(["kind", "field"])
+      .execute();
+    res.json({ items });
+  } catch (err) {
+    next(err);
+  }
+});
+portalRouter.put("/:slug/field-scopes", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    if (!adminOnly(req, res)) return;
+    const parsed = FieldScopeBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Bad body", details: parsed.error.issues } });
+      return;
+    }
+    await meta
+      .insertInto("workspace_field_scopes")
+      .values({
+        org_id: req.tenant!.org.id,
+        kind: parsed.data.kind,
+        field: parsed.data.field,
+        capability: parsed.data.capability,
+        created_by: req.session!.id,
+      })
+      .onConflict((c) => c.columns(["org_id", "kind", "field"]).doUpdateSet({ capability: parsed.data.capability }))
+      .execute();
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+portalRouter.delete("/:slug/field-scopes", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    if (!adminOnly(req, res)) return;
+    const kind = String(req.query.kind ?? "");
+    const field = String(req.query.field ?? "");
+    if (!kind || !field) {
+      res.status(400).json({ error: { code: "missing_params", message: "kind + field required" } });
+      return;
+    }
+    await meta
+      .deleteFrom("workspace_field_scopes")
+      .where("org_id", "=", req.tenant!.org.id)
+      .where("kind", "=", kind)
+      .where("field", "=", field)
+      .execute();
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
 
 // What capabilities does the *current* user have? Used by the
 // portal shell to decide whether to render edit affordances.
@@ -317,18 +433,16 @@ portalRouter.get(
   async (req, res, next) => {
     try {
       const role = req.tenant!.role;
-      const grants =
-        role === "owner" || role === "admin"
-          ? [] // admins have everything implicitly; UI sees role and skips the check
-          : await meta
-              .selectFrom("workspace_capability_grants")
-              .select("action_id")
-              .where("org_id", "=", req.tenant!.org.id)
-              .where("user_id", "=", req.session!.id)
-              .execute();
+      // Shared resolution so UI-gating here matches the read-time
+      // field-scope enforcement (H2) exactly — same caps, one query.
+      const ec = await effectiveCapabilities(
+        req.tenant!.org.id,
+        req.session!.id,
+        role,
+      );
       res.json({
         role,
-        grants: grants.map((g) => g.action_id),
+        grants: ec.all ? [] : Array.from(ec.caps).sort(),
       });
     } catch (err) {
       next(err);

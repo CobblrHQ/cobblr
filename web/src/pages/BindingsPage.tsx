@@ -37,6 +37,15 @@ export function BindingsPage() {
     enabled: !!slug && !!sourceKind,
   });
 
+  // Available trigger events (enabled modules' declared events) for the
+  // composer typeahead — so the user picks a real event instead of
+  // having to know the exact string.
+  const wireEvents = useQuery({
+    queryKey: ["wire-events", slug],
+    queryFn: () => api.listWireEvents(slug),
+    enabled: !!slug,
+  });
+
   const [actionId, setActionId] = useState("");
   const [triggerType, setTriggerType] = useState<PlatformBinding["trigger_type"]>("user-invoked");
   const [triggerEvent, setTriggerEvent] = useState("");
@@ -158,13 +167,24 @@ export function BindingsPage() {
             <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
               Trigger event (if type=event)
             </span>
+            {/* Datalist gives a typeahead of every enabled module's
+                declared events while still allowing a hand-typed string
+                (advanced / not-yet-declared events). */}
             <input
               value={triggerEvent}
               onChange={(e) => setTriggerEvent(e.target.value)}
-              placeholder="e.g. inventory.stock.changed"
+              placeholder="pick or type — e.g. inventory.stock.changed"
+              list="wire-events-list"
               className="input font-mono text-xs"
               disabled={triggerType !== "event"}
             />
+            <datalist id="wire-events-list">
+              {(wireEvents.data?.items ?? []).map((e) => (
+                <option key={e.event} value={e.event}>
+                  {e.module}
+                </option>
+              ))}
+            </datalist>
           </label>
         </div>
         <label className="block">

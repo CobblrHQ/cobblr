@@ -10,7 +10,6 @@ import { Routes, Route, NavLink } from "react-router-dom";
 import { Boxes } from "lucide-react";
 import { InventoryProvider } from "./context";
 import { PartsListPage } from "./PartsListPage";
-import { PartDetailPage } from "./PartDetailPage";
 import { SettingsPage } from "./SettingsPage";
 
 // Re-export the NewPartDialog + Provider so the portal shell can
@@ -27,16 +26,25 @@ export const navItems = [
 interface InventoryUIProps {
   orgSlug: string;
   getToken: () => string | null;
+  /** When set, scopes every parts query to this module instance — the
+   *  page renders that instance's items, isolated from the others. */
+  instance?: string;
+  /** Heading to show (the instance's display label). Default
+   *  "inventory" = the default instance. */
+  displayName?: string;
 }
 
-export function InventoryUI({ orgSlug, getToken }: InventoryUIProps) {
+export function InventoryUI({ orgSlug, getToken, instance, displayName }: InventoryUIProps) {
   return (
-    <InventoryProvider orgSlug={orgSlug} getToken={getToken}>
+    <InventoryProvider orgSlug={orgSlug} getToken={getToken} instance={instance}>
       <div className="space-y-4">
-        <Header />
+        <Header title={displayName ?? "inventory"} scoped={!!instance} />
         <Routes>
+          {/* Both render the list; parts/:id additionally opens the
+              detail MODAL (D4) — the list stays mounted underneath,
+              mirroring machines. */}
           <Route index element={<PartsListPage />} />
-          <Route path="parts/:id" element={<PartDetailPage />} />
+          <Route path="parts/:id" element={<PartsListPage />} />
           <Route path="settings" element={<SettingsPage />} />
         </Routes>
       </div>
@@ -44,17 +52,21 @@ export function InventoryUI({ orgSlug, getToken }: InventoryUIProps) {
   );
 }
 
-function Header() {
+function Header({ title, scoped }: { title: string; scoped: boolean }) {
   const cls = ({ isActive }: { isActive: boolean }) =>
     isActive ? "text-cobble-600 font-semibold" : "text-slate-400 dark:text-slate-500 hover:text-cobble-500";
   return (
     <div className="flex items-baseline gap-4 border-b border-slate-200 dark:border-slate-700 pb-3">
       <h1 className="font-display text-2xl font-extrabold text-slate-700 dark:text-mortar-100 lowercase">
-        inventory
+        {title}
       </h1>
       <nav className="flex gap-3 text-xs font-mono">
         <NavLink to="." end className={cls}>// parts</NavLink>
-        <NavLink to="settings" className={cls}>// settings</NavLink>
+        {/* Settings (categories) live in the default instance — only
+            expose them on the default inventory page. */}
+        {!scoped && (
+          <NavLink to="settings" className={cls}>// settings</NavLink>
+        )}
       </nav>
     </div>
   );

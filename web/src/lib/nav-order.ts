@@ -48,3 +48,89 @@ export function applyNavOrder<T extends { name: string }>(items: T[], order: str
     return a.name.localeCompare(b.name);
   });
 }
+
+// ── per-device hidden nav entries (the "enable flag") ────────────────
+// A user hides nav entries they don't want cluttering their header
+// (e.g. dev/sample modules) without disabling the module. Per-device
+// like nav-order — a personal preference, not an org-wide edit. Layers
+// on top of the org-wide `entity_kind_overrides.hidden` an admin can set.
+const HKEY = (slug: string) => `cobblr:nav-hidden:${slug}`;
+
+export function readNavHidden(slug: string): string[] {
+  if (!slug) return [];
+  try {
+    const raw = localStorage.getItem(HKEY(slug));
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed)
+      ? parsed.filter((x): x is string => typeof x === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+export function writeNavHidden(slug: string, hidden: string[]) {
+  if (!slug) return;
+  try {
+    localStorage.setItem(HKEY(slug), JSON.stringify(hidden));
+    window.dispatchEvent(
+      new CustomEvent("cobblr:nav-order-changed", { detail: { slug } }),
+    );
+  } catch {
+    /* quota or disabled — silently keep all visible */
+  }
+}
+
+export function toggleNavHidden(slug: string, name: string) {
+  const cur = readNavHidden(slug);
+  writeNavHidden(
+    slug,
+    cur.includes(name) ? cur.filter((n) => n !== name) : [...cur, name],
+  );
+}
+
+// ── per-device hidden header quick-actions (the right-cluster icons) ──
+// Separate from nav-hidden so a module that contributes BOTH a left-nav
+// entry and a right-cluster icon can have each toggled independently.
+// Keyed by module name (a module contributes at most one header action).
+const AKEY = (slug: string) => `cobblr:nav-actions-hidden:${slug}`;
+
+export function readNavActionsHidden(slug: string): string[] {
+  if (!slug) return [];
+  try {
+    const raw = localStorage.getItem(AKEY(slug));
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed)
+      ? parsed.filter((x): x is string => typeof x === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+export function toggleNavActionHidden(slug: string, name: string) {
+  const cur = readNavActionsHidden(slug);
+  const next = cur.includes(name)
+    ? cur.filter((n) => n !== name)
+    : [...cur, name];
+  try {
+    localStorage.setItem(AKEY(slug), JSON.stringify(next));
+    window.dispatchEvent(
+      new CustomEvent("cobblr:nav-order-changed", { detail: { slug } }),
+    );
+  } catch {
+    /* quota or disabled — keep all visible */
+  }
+}
+
+/** Move `name` one slot up (dir=-1) or down (dir=+1) within `names`,
+ *  returning the new order. Powers the navbar customize control's
+ *  reorder arrows. */
+export function moveInOrder(names: string[], name: string, dir: -1 | 1): string[] {
+  const i = names.indexOf(name);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= names.length) return names;
+  const next = [...names];
+  [next[i], next[j]] = [next[j]!, next[i]!];
+  return next;
+}

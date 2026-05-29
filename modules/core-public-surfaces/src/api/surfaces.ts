@@ -21,7 +21,11 @@ const SurfaceCreate = z.object({
   //                config.query is the EntityListQuery to apply.
   //                Lets a builder share an ad-hoc filter without first
   //                creating a saved view.
-  scope_type: z.enum(["view", "entity", "collection"]),
+  // 'board'      — scope_id is a placeholder ("board"); config.sections
+  //                is [{ title, view_id }] — a multi-column TV board
+  //                (e.g. companion app's recently-done / in-progress / coming-up),
+  //                each column resolved from a saved view.
+  scope_type: z.enum(["view", "entity", "collection", "board"]),
   scope_id: z.string().min(1),
   config: z.record(z.unknown()).optional(),
   expires_at: z.string().datetime().nullable().optional(),
@@ -197,6 +201,83 @@ surfacesRouter.get(
       last_viewed: totals.last_viewed,
       recent,
     });
+  }),
+);
+
+const SurfaceUpdate = z.object({
+  name: z.string().min(1).max(160).optional(),
+  config: z.record(z.unknown()).optional(),
+  // Pause/resume without revoking the token — the URL stays valid but
+  // /public/:token 404s while disabled, then resumes when re-enabled.
+  enabled: z.boolean().optional(),
+  // null clears the expiry (never expires); a datetime sets it.
+  expires_at: z.string().datetime().nullable().optional(),
+});
+
+// Edit a live surface in place — rename, pause/resume, change the
+// expiry, or tweak config — without delete-and-recreate (which would
+// mint a new token and break any printed/shared URL).
+surfacesRouter.patch(
+  "/:id",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const id = req.params.id;
+    if (!id) {
+      res.status(400).json({ error: { code: "missing_id", message: "id required" } });
+      return;
+    }
+    const parsed = SurfaceUpdate.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const db = tenantDb(req);
+    const ctx = tenantContext(req);
+
+    const expiresProvided = parsed.data.expires_at !== undefined;
+    const expiresAt = expiresProvided
+      ? parsed.data.expires_at
+        ? new Date(parsed.data.expires_at)
+        : null
+      : undefined;
+
+    const patch: Record<string, unknown> = { updated_at: new Date() };
+    if (parsed.data.name !== undefined) patch.name = parsed.data.name;
+    if (parsed.data.config !== undefined) {
+      patch.config = sql`${JSON.stringify(parsed.data.config)}::jsonb` as never;
+    }
+    if (parsed.data.enabled !== undefined) patch.enabled = parsed.data.enabled;
+    if (expiresProvided) patch.expires_at = expiresAt;
+
+    const row = await db
+      .updateTable("core_public_surfaces_surfaces")
+      .set(patch as never)
+      .where("id", "=", id)
+      .where("revoked_at", "is", null)
+      .returningAll()
+      .executeTakeFirst();
+    if (!row) {
+      res.status(404).json({ error: { code: "not_found", message: "surface not found" } });
+      return;
+    }
+
+    // Mirror enabled / expires_at to the meta-side token row — the
+    // public /api/v1/public/:token route checks the meta copy, so a
+    // pause or expiry change has to land there to take effect at once.
+    if (parsed.data.enabled !== undefined || expiresProvided) {
+      const metaSet: Record<string, unknown> = {};
+      if (parsed.data.enabled !== undefined) metaSet.enabled = parsed.data.enabled;
+      if (expiresProvided) metaSet.expires_at = expiresAt;
+      await metaDb()
+        .updateTable("public_surface_tokens")
+        .set(metaSet)
+        .where("token", "=", row.token)
+        .execute();
+    }
+
+    await platform().events.emit("core-public-surfaces.surface.updated", {
+      orgId: ctx.org.id,
+      surfaceId: row.id,
+      name: row.name,
+    });
+    res.json({ ...row, public_url: `/api/v1/public/${row.token}` });
   }),
 );
 

@@ -36,6 +36,11 @@ function assertSafeOutboundUrl(raw: string): void {
   if (u.protocol !== "http:" && u.protocol !== "https:") {
     throw new Error("webhook: only http(s) URLs are allowed");
   }
+  // Escape hatch for local dev / tests, where webhooks legitimately
+  // target the host gateway (host.docker.internal) or a loopback mock.
+  // OFF by default → production stays locked against SSRF. The scheme
+  // check above still applies (no file:// etc. even with this set).
+  if (process.env.COBBLR_WEBHOOK_ALLOW_INTERNAL === "1") return;
   const host = u.hostname.toLowerCase();
   if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".internal")) {
     throw new Error("webhook: internal host blocked");

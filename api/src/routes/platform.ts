@@ -12,6 +12,7 @@ import { requireAuth } from "../auth/middleware.js";
 import { requireCapability } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
 import { meta } from "../db/meta.js";
+import { listEntries } from "../modules/registry.js";
 import * as activity from "../platform/activity.js";
 import { effectiveAppliesTo, matchAction } from "../platform/actions.js";
 import type { ActionAppliesToDecl } from "@cobblr/platform-contract";
@@ -419,6 +420,37 @@ const BindingCreate = z
       });
     }
   });
+
+// The events an event-triggered wire can fire on — the union of every
+// ENABLED module's manifest-declared `exposes.events`. Powers the wire
+// composer's trigger-event typeahead so a user picks from real events
+// instead of having to know the string (e.g. "purchases.order.arrived").
+platformOrgRouter.get(
+  "/:slug/wire-events",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      const enabled = await meta
+        .selectFrom("org_modules")
+        .select("module_name")
+        .where("org_id", "=", req.tenant!.org.id)
+        .execute();
+      const enabledNames = new Set(enabled.map((e) => e.module_name));
+      const items: { event: string; module: string }[] = [];
+      for (const entry of listEntries()) {
+        if (!enabledNames.has(entry.manifest.name)) continue;
+        for (const ev of entry.manifest.exposes?.events ?? []) {
+          items.push({ event: ev, module: entry.manifest.name });
+        }
+      }
+      items.sort((a, b) => a.event.localeCompare(b.event));
+      res.json({ items });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 platformOrgRouter.get(
   "/:slug/bindings",

@@ -6,6 +6,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, FileUp } from "lucide-react";
+import { Modal } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import type { ImportResponse } from "./api";
 import { InventoryApiError } from "./api";
@@ -62,26 +63,14 @@ export function ImportDialog({ onClose }: { onClose: (importedCount: number) => 
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4"
-      onClick={() => onClose(0)}
+    <Modal
+      open
+      onClose={() => onClose(0)}
+      title="Import parts from CSV"
+      subtitle="paste a CSV — common headers auto-detected; at minimum a name column"
+      size="lg"
     >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Import parts from CSV"
-        onClick={(e) => e.stopPropagation()}
-        className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 max-w-3xl w-full p-5 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto"
-      >
-        <div className="flex items-baseline gap-3">
-          <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500">
-            // bulk import
-          </div>
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            Paste a CSV. Common headers are auto-detected — at minimum we need a name column.
-          </p>
-        </div>
-
+      <div className="space-y-4">
         {!preview && (
           <>
             <textarea
@@ -209,7 +198,7 @@ export function ImportDialog({ onClose }: { onClose: (importedCount: number) => 
           </>
         )}
       </div>
-    </div>
+    </Modal>
   );
 }
 

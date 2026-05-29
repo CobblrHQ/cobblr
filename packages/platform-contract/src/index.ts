@@ -223,6 +223,16 @@ const EntityKind = z
     // is returned and a one-time deprecation warning is logged per kind.
     // New modules SHOULD declare exposableFields.
     exposableFields: z.array(z.string().min(1)).optional(),
+    // Per-field read-scope (H2): map a field name to the capability
+    // (action_id) a viewer must hold to read it. Layered ON TOP of
+    // exposableFields — a field must be exposable AND (if listed here)
+    // the viewer must hold its capability, else the kernel omits it
+    // from the read. Owner/admin and viewer-less internal reads see
+    // everything; the member-facing views/portal path passes the
+    // viewer. Enables tiered member access ("Tier 1 sees parts, not
+    // prices"). The capability should be a grantable action so admins
+    // can assign it via roles / the permission matrix.
+    fieldReadScopes: z.record(z.string().min(1), z.string().min(1)).optional(),
     // Path template (relative to PUBLIC_BASE_URL) for the entity's
     // canonical detail page. {id} placeholder gets substituted.
     detailRoute: z.string().optional(),
@@ -274,6 +284,30 @@ const EntityKind = z
             code: z.ZodIssueCode.custom,
             message: `entity kind '${data.id}': exposableFields references '${name}' which is neither a declared field nor an implicit cross-cutting prop (id/title/subtitle/image_path/detailUrl)`,
             path: ["exposableFields"],
+          });
+        }
+      }
+    }
+    // fieldReadScopes keys must be declared fields, and a gated field
+    // should also be exposable — gating a field the whitelist already
+    // hides is a no-op and almost always a mistake.
+    if (data.fieldReadScopes) {
+      const declared = new Set(data.fields.map((f) => f.name));
+      const exposable = data.exposableFields
+        ? new Set(data.exposableFields)
+        : null;
+      for (const name of Object.keys(data.fieldReadScopes)) {
+        if (!declared.has(name)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `entity kind '${data.id}': fieldReadScopes gates '${name}', which is not a declared field`,
+            path: ["fieldReadScopes"],
+          });
+        } else if (exposable && !exposable.has(name)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `entity kind '${data.id}': fieldReadScopes gates '${name}' but it isn't in exposableFields, so the whitelist already hides it — add it to exposableFields or drop the scope`,
+            path: ["fieldReadScopes"],
           });
         }
       }
@@ -405,6 +439,23 @@ const ModuleManifest = z.object({
   // modules are always 'single' regardless of declaration.
   // See docs/design-decisions/instances.md.
   instanceability: z.enum(["single", "multi"]).default("single"),
+
+  // Optional icon-only quick-action pinned to the navbar's RIGHT
+  // cluster — a module's single most-used action that earns prime,
+  // always-visible placement (e.g. core-scan's camera button, which a
+  // companion app user hits constantly). Rendered only while the module
+  // is enabled. Distinct from `ui.navItems` (the left-nav text links):
+  // this is the one critical icon, not a page entry.
+  headerAction: z
+    .object({
+      /** Kebab-case lucide icon name, e.g. "scan-line" / "camera". */
+      icon: z.string().min(1),
+      /** Tooltip + aria-label (icon-only, so this is the only text). */
+      label: z.string().min(1),
+      /** Web route to navigate to on click. */
+      route: z.string().min(1),
+    })
+    .optional(),
 
   // Optional. Pillar-E specialisation modules (3d-printers,
   // workshop-mods, etc.) often have NO tables of their own — they
@@ -777,12 +828,20 @@ export interface PlatformEntities {
    *  module — same projection rule as lookup().
    *
    *  See lookup() for viewer semantics — same gate applies to the
-   *  cross-workspace union. */
+   *  cross-workspace union.
+   *
+   *  H2 — per-field read-scope: pass the viewer's identity
+   *  (`userId` + `role`) and the kernel resolves their effective
+   *  capabilities, dropping any field the viewer lacks the capability
+   *  for. Owner/admin see everything; omitting the viewer entirely
+   *  (trusted internal / admin-module reads) also sees everything; a
+   *  member-facing caller passes the viewer so "Tier 1 sees parts, not
+   *  prices" is enforced at the read boundary. */
   list(
     orgId: string,
     kind: string,
     query?: EntityListQuery,
-    viewer?: { userId?: string },
+    viewer?: { userId?: string; role?: string },
   ): Promise<EntityListResult>;
   /** Batched lookup — resolve N (kind, id) refs in one call. Foreign
    *  callers that need joined data should use this instead of N
@@ -1289,6 +1348,16 @@ export interface PlatformAuth {
     role: string;
     actionId: string;
   }): Promise<boolean>;
+  /** Mint a SHORT-LIVED, capability-scoped token carrying `userId`'s
+   *  own identity + an `app:<slug>` audience (H1 Tier B). It verifies
+   *  as a normal session, so it acts AS the member — bounded by their
+   *  capabilities + field-read-scope; it can never exceed them. The
+   *  App Player uses it to mediate reads for a sandboxed custom
+   *  frontend, so the untrusted bundle never holds the real session. */
+  mintAppToken(args: {
+    userId: string;
+    appSlug: string;
+  }): Promise<{ token: string; expires_in: number }>;
 }
 
 /** Reads + writes against entity_pairings, the polymorphic

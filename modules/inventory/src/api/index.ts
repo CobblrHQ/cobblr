@@ -26,3 +26,8 @@ router.use("/allocations", allocationsRouter);
 router.use(importRouter);
 
 export default router;
+
+// Primary-entity router for instance-scoped item CRUD. The platform
+// mounts this at /orgs/:slug/instances/:name/items and dispatches with
+// req.instance set; partsRouter reads instanceOf(req) on every query.
+export { partsRouter as primaryRouter };

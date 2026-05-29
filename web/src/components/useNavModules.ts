@@ -20,11 +20,21 @@ import {
   type ModuleInstance,
   type OrgModuleListItem,
 } from "../lib/api";
-import { applyNavOrder, readNavOrder } from "../lib/nav-order";
+import { readNavHidden, readNavOrder } from "../lib/nav-order";
+
+/** Synthetic top-level name prefix for a user-defined heading group. */
+export const HEADING_PREFIX = "__heading__";
 
 export interface NavModules {
-  /** Top-level modules, in the user's persisted order. */
+  /** Top-level modules the user sees — ordered + with per-device hidden
+   *  entries removed. */
   tops: OrgModuleListItem[];
+  /** Every candidate top-level entry (ordered) INCLUDING ones the user
+   *  has hidden — the navbar customize control needs the full set so it
+   *  can offer to re-show them. */
+  allTops: OrgModuleListItem[];
+  /** Names the user has hidden from their nav (per-device). */
+  hiddenNames: Set<string>;
   /** parentModuleName → its enabled specialisation children
    *  (either real Pillar-E modules OR installed lens bundles
    *  rendered as synthetic module items). */
@@ -67,13 +77,24 @@ export function useNavModules(activeSlug: string): NavModules {
     enabled: !!activeSlug,
     staleTime: 30_000,
   });
+  // User-defined headings (#2b) — group nav entries under custom
+  // dropdowns. Org-wide; folded into childrenByParent below.
+  const headings = useQuery({
+    queryKey: ["nav-headings", activeSlug],
+    queryFn: () => api.listNavHeadings(activeSlug),
+    enabled: !!activeSlug,
+    staleTime: 30_000,
+  });
 
-  // Re-read persisted nav order whenever the picker writes one.
+  // Re-read persisted nav order + hidden set whenever they change.
   const [navOrder, setNavOrder] = useState<string[]>(() => readNavOrder(activeSlug));
+  const [navHidden, setNavHidden] = useState<string[]>(() => readNavHidden(activeSlug));
   useEffect(() => {
     setNavOrder(readNavOrder(activeSlug));
+    setNavHidden(readNavHidden(activeSlug));
     function reload() {
       setNavOrder(readNavOrder(activeSlug));
+      setNavHidden(readNavHidden(activeSlug));
     }
     window.addEventListener("cobblr:nav-order-changed", reload);
     window.addEventListener("storage", reload);
@@ -93,7 +114,7 @@ export function useNavModules(activeSlug: string): NavModules {
   for (const o of overrides.data?.items ?? []) {
     overridesByKey.set(`${o.target_kind}:${o.target_id}`, o);
   }
-  function applyEntityKindOverride<T extends { name: string; displayName: string }>(m: T): T & { hidden: boolean; navOrder: number | null } {
+  function applyEntityKindOverride<T extends { name: string; displayName: string }>(m: T): T & { hidden: boolean; navOrder: number | null; groupLabel: string | null } {
     // Apply override for the module's default entity kind (e.g.,
     // assets:asset for assets module). Entity-kind override applies
     // to the kind ID; the module name -> kind ID mapping is one-of
@@ -101,12 +122,16 @@ export function useNavModules(activeSlug: string): NavModules {
     // so fall back to overriding by instance:<module>:<module> for
     // default instances.
     const o = overridesByKey.get(`instance:${m.name}:${m.name}`);
-    if (!o) return { ...m, hidden: false, navOrder: null };
+    if (!o) return { ...m, hidden: false, navOrder: null, groupLabel: null };
     return {
       ...m,
       displayName: o.display_label ?? m.displayName,
       hidden: o.hidden,
       navOrder: o.nav_order,
+      // Custom heading for this module's specialisations/instances
+      // dropdown (ModuleGroupChip reads it; falls back to the default
+      // "<module> specialisations").
+      groupLabel: (o.config?.group_label as string | undefined) ?? null,
     };
   }
   // Hide platform-utility modules from the top-level nav. They have
@@ -131,10 +156,12 @@ export function useNavModules(activeSlug: string): NavModules {
     }
   }
 
-  // Non-default instances → synthetic top-level nav entries.
-  // Default instance (instance_name == module_name) is already
-  // represented by the module's own entry above; user-created
-  // instances get their own peer row.
+  // Non-default instances nest under their owning module's nav entry —
+  // "inventory ▾ → screws · printer-parts" (nav-builder increment #1).
+  // The module's own entry is the default instance; user-created
+  // instances become dropdown children of it (reusing ModuleGroupChip).
+  // The default instance (instance_name == module_name) is the parent
+  // itself, so it's skipped here.
   for (const inst of instances.data?.items ?? []) {
     if (inst.is_default) continue;
     const key = `instance:${inst.module_name}:${inst.instance_name}`;
@@ -147,6 +174,7 @@ export function useNavModules(activeSlug: string): NavModules {
       displayName: display,
       description: `Instance of ${inst.module_name}`,
       icon: o?.icon ?? null,
+      headerAction: null,
       dependencies: [],
       contributes: { fieldDefs: 0, wires: 0 },
       enabled: true,
@@ -154,7 +182,16 @@ export function useNavModules(activeSlug: string): NavModules {
       enabled_at: inst.created_at,
       _instance: inst,
     };
-    rawTops.push(synth);
+    // Nest under the owning module when it's a visible top-level entry;
+    // otherwise (module disabled / core utility) keep it reachable as a
+    // top-level row.
+    if (enabledNames.has(inst.module_name) && !inst.module_name.startsWith("core-")) {
+      const arr = childrenByParent.get(inst.module_name) ?? [];
+      arr.push(synth);
+      childrenByParent.set(inst.module_name, arr);
+    } else {
+      rawTops.push(synth);
+    }
   }
   // Lens bundles → synthetic OrgModuleListItem entries under the
   // module that owns their entity_kind. entity_kind "machines:machine"
@@ -171,6 +208,7 @@ export function useNavModules(activeSlug: string): NavModules {
       displayName: lens.display_name,
       description: b.description ?? "",
       icon: null,
+      headerAction: null,
       dependencies: [parent],
       contributes: { fieldDefs: b.manifest?.field_defs?.length ?? 0, wires: 0 },
       enabled: true,
@@ -181,14 +219,102 @@ export function useNavModules(activeSlug: string): NavModules {
     arr.push(synth);
     childrenByParent.set(parent, arr);
   }
+
+  // Fold user-defined headings (#2b): each heading becomes a synthetic
+  // top-level GROUP; its members move out of their default position
+  // (top row / under-module) into the heading's dropdown. Instance
+  // members move from their module's children; module members move from
+  // the top row (their own instance-children flatten in alongside, so
+  // nothing is orphaned). The HEADING_PREFIX marks a label-only group
+  // (no page of its own).
+  for (const h of headings.data?.items ?? []) {
+    const hkey = `${HEADING_PREFIX}${h.id}`;
+    const hkids: OrgModuleListItem[] = [];
+    for (const mem of h.members) {
+      if (mem.target_kind === "instance") {
+        const childName = `__instance__${mem.target_id}`;
+        for (const [parent, arr] of childrenByParent) {
+          const idx = arr.findIndex((c) => c.name === childName);
+          if (idx >= 0) {
+            hkids.push(arr[idx]!);
+            arr.splice(idx, 1);
+            childrenByParent.set(parent, arr);
+            break;
+          }
+        }
+      } else {
+        const idx = rawTops.findIndex((t) => t.name === mem.target_id);
+        if (idx >= 0) {
+          hkids.push(rawTops[idx]!);
+          rawTops.splice(idx, 1);
+          const sub = childrenByParent.get(mem.target_id);
+          if (sub && sub.length) {
+            hkids.push(...sub);
+            childrenByParent.delete(mem.target_id);
+          }
+        }
+      }
+    }
+    if (hkids.length > 0) {
+      childrenByParent.set(hkey, hkids);
+      rawTops.push({
+        name: hkey,
+        version: "0.1.0",
+        displayName: h.name,
+        description: "Heading",
+        icon: h.icon,
+        headerAction: null,
+        dependencies: [],
+        contributes: { fieldDefs: 0, wires: 0 },
+        enabled: true,
+        enabled_version: "0.1.0",
+        enabled_at: "",
+      });
+    }
+  }
+
+  // The memo key must include the override-mutable presentation fields —
+  // display label, icon, and the specialisations group label — not just
+  // the names. Overrides resolve asynchronously; keying on names alone
+  // returns the stale pre-override array when they arrive after the first
+  // render (a rename / re-icon / heading edit then silently no-ops until
+  // a name changes). Including the content makes it deterministic.
+  const rawTopsKey = rawTops
+    .map((t) => {
+      const x = t as OrgModuleListItem & { groupLabel?: string | null; navOrder?: number | null };
+      return `${x.name}${x.displayName}${x.icon ?? ""}${x.groupLabel ?? ""}${x.navOrder ?? ""}`;
+    })
+    .join("|");
+  // Order precedence: (1) the member's per-device reorder (localStorage)
+  // wins; then (2) the org-wide `nav_order` set in Configuration →
+  // Presentation; then (3) alphabetical. Before this, the sort honoured
+  // only the per-device order, so the admin "Nav order" field was dead
+  // and important modules (e.g. machines) fell to the end alphabetically
+  // and overflowed into "more".
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const tops = useMemo(
-    () => applyNavOrder(rawTops, navOrder),
-    [rawTops.map((t) => t.name).join("|"), navOrder.join("|")],
-  );
+  const allTops = useMemo(() => {
+    const pos = new Map(navOrder.map((n, i) => [n, i] as const));
+    return [...rawTops].sort((a, b) => {
+      const ap = pos.has(a.name) ? pos.get(a.name)! : null;
+      const bp = pos.has(b.name) ? pos.get(b.name)! : null;
+      if (ap !== null && bp !== null) return ap - bp;
+      if (ap !== null) return -1;
+      if (bp !== null) return 1;
+      const ao = (a as { navOrder?: number | null }).navOrder ?? null;
+      const bo = (b as { navOrder?: number | null }).navOrder ?? null;
+      if (ao !== null && bo !== null && ao !== bo) return ao - bo;
+      if (ao !== null && bo === null) return -1;
+      if (bo !== null && ao === null) return 1;
+      return a.name.localeCompare(b.name);
+    });
+  }, [rawTopsKey, navOrder.join("|")]);
+  const hiddenNames = new Set(navHidden);
+  const tops = allTops.filter((t) => !hiddenNames.has(t.name));
 
   return {
     tops,
+    allTops,
+    hiddenNames,
     childrenByParent,
     enabledNames,
     isLoading: modules.isLoading || bundles.isLoading,

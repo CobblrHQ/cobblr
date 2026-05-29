@@ -12,6 +12,8 @@ interface InventoryCtx {
   orgSlug: string;
   getToken: () => string | null;
   api: InventoryApi;
+  /** The module instance this UI is scoped to (undefined = default). */
+  instance?: string;
 }
 
 const Ctx = createContext<InventoryCtx | null>(null);
@@ -19,14 +21,23 @@ const Ctx = createContext<InventoryCtx | null>(null);
 export function InventoryProvider({
   orgSlug,
   getToken,
+  instance,
   children,
 }: {
   orgSlug: string;
   getToken: () => string | null;
+  instance?: string;
   children: ReactNode;
 }) {
-  const api = useMemo(() => new InventoryApi(orgSlug, { getToken }), [orgSlug, getToken]);
-  return <Ctx.Provider value={{ orgSlug, getToken, api }}>{children}</Ctx.Provider>;
+  const api = useMemo(
+    () => new InventoryApi(orgSlug, { getToken, instance }),
+    [orgSlug, getToken, instance],
+  );
+  return (
+    <Ctx.Provider value={{ orgSlug, getToken, api, instance }}>
+      {children}
+    </Ctx.Provider>
+  );
 }
 
 export function useInventory(): InventoryCtx {

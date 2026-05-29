@@ -29,6 +29,8 @@ import {
   MousePointerClick,
   Package,
   Plug,
+  Printer,
+  QrCode,
   Sliders,
   Sparkles,
   Tag,
@@ -159,6 +161,22 @@ export function ConfigurationPage() {
         "Per-workspace entity templates — stamp out new parts / assets / machines pre-filled with defaults + tags. \"Household appliance template\" / \"new Voron printer\" / \"Lego set acquired\".",
       to: "/configuration/templates",
     },
+    {
+      group: "data",
+      icon: Wrench,
+      label: "Maintenance",
+      description:
+        "Workspace-wide service log — everything scheduled, what's overdue, and the full history across every machine / asset / part. Complete, edit, or delete entries in one place.",
+      to: "/configuration/maintenance",
+    },
+    {
+      group: "data",
+      icon: QrCode,
+      label: "QR codes",
+      description:
+        "Every QR token the workspace has minted — what each points at, whether it's public, when it expires. Copy a scan URL or revoke a token whose printed label walked off.",
+      to: "/configuration/qr-tokens",
+    },
     // ── people + access ────────────────────────────────────────────
     {
       group: "access",
@@ -227,6 +245,14 @@ export function ConfigurationPage() {
     },
     {
       group: "extend",
+      icon: Printer,
+      label: "Print farm",
+      description:
+        "Connect a print farm — FDM Monster + — over its REST API. Test it, list its printers, and send jobs that track to completion. Routing-aware.",
+      to: "/configuration/farm",
+    },
+    {
+      group: "extend",
       icon: FileText,
       label: "OpenAPI",
       description:
@@ -248,6 +274,14 @@ export function ConfigurationPage() {
       description:
         "Branding + pinned views for the slimmed-down member portal at /portal/:slug. Members + guests land here by default; admins can preview.",
       to: "/configuration/portal",
+    },
+    {
+      group: "access",
+      icon: LayoutGrid,
+      label: "Apps",
+      description:
+        "Build structured worker apps (pages of views, stats, forms, actions) that members open in the portal. Capability-gated; members see only what they're allowed.",
+      to: "/configuration/apps",
     },
     {
       group: "access",

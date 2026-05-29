@@ -112,3 +112,13 @@ export function sessionUser(req: Request): { id: string; email: string; display_
   if (!s) throw new Error("inventory route called without session");
   return s;
 }
+
+/** The instance this request is scoped to. Set by the platform's
+ *  resolveInstance middleware on /instances/:name/items routes; absent
+ *  on legacy /modules/inventory/parts requests, where it falls back to
+ *  "inventory" — matching the DB column default, so legacy rows and the
+ *  default instance line up with zero behaviour change. Every parts
+ *  query filters on this; every insert stamps it. */
+export function instanceOf(req: Request): string {
+  return (req as unknown as { instance?: string }).instance ?? "inventory";
+}

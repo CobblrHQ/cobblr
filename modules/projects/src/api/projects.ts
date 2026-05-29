@@ -3,7 +3,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
-import { sessionUser, tenantContext, tenantDb } from "../db.js";
+import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody } from "./util.js";
 import { routeUnknownToMetadata } from "./route-helpers.js";
 
@@ -33,6 +33,7 @@ projectsRouter.get(
     const rows = await db
       .selectFrom("projects_projects")
       .selectAll()
+      .where("instance", "=", instanceOf(req))
       .orderBy("created_at", "desc")
       .execute();
     res.json({ items: rows });
@@ -52,6 +53,7 @@ projectsRouter.get(
       .selectFrom("projects_projects")
       .selectAll()
       .where("id", "=", id)
+      .where("instance", "=", instanceOf(req))
       .executeTakeFirst();
     if (!row) {
       res.status(404).json({ error: { code: "not_found", message: "project not found" } });
@@ -74,6 +76,7 @@ projectsRouter.post(
     const inserted = await db
       .insertInto("projects_projects")
       .values({
+        instance: instanceOf(req),
         name: parsed.data.name,
         description: parsed.data.description ?? null,
         status: parsed.data.status ?? "active",
@@ -136,6 +139,7 @@ projectsRouter.patch(
       .updateTable("projects_projects")
       .set(patch)
       .where("id", "=", id)
+      .where("instance", "=", instanceOf(req))
       .returningAll()
       .executeTakeFirst();
     if (!updated) {
@@ -171,6 +175,7 @@ projectsRouter.delete(
     const deleted = await db
       .deleteFrom("projects_projects")
       .where("id", "=", id)
+      .where("instance", "=", instanceOf(req))
       .returning("id")
       .executeTakeFirst();
     if (!deleted) {

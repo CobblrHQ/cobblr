@@ -51,19 +51,27 @@ export interface TaskDependency {
 export class ProjectsApi {
   constructor(
     private readonly slug: string,
-    private readonly opts: { getToken: () => string | null },
+    private readonly opts: { getToken: () => string | null; instance?: string },
   ) {}
 
   private base(): string {
     return `/api/v1/orgs/${this.slug}/modules/projects`;
   }
 
-  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  /** Base for the primary-entity (projects) CRUD. Instance-scoped when
+   *  an instance is set; the legacy module route otherwise. */
+  private projectsBase(): string {
+    return this.opts.instance
+      ? `/api/v1/orgs/${this.slug}/instances/${this.opts.instance}/items`
+      : `${this.base()}/projects`;
+  }
+
+  private async requestUrl<T>(method: string, url: string, body?: unknown): Promise<T> {
     const headers: Record<string, string> = {};
     if (body !== undefined) headers["Content-Type"] = "application/json";
     const token = this.opts.getToken();
     if (token) headers["Authorization"] = `Bearer ${token}`;
-    const res = await fetch(`${this.base()}${path}`, {
+    const res = await fetch(url, {
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -77,13 +85,20 @@ export class ProjectsApi {
     return parsed as T;
   }
 
-  listProjects = () => this.request<{ items: Project[] }>("GET", "/projects");
-  getProject = (id: string) => this.request<Project>("GET", `/projects/${id}`);
+  private request<T>(method: string, path: string, body?: unknown): Promise<T> {
+    return this.requestUrl<T>(method, `${this.base()}${path}`, body);
+  }
+  private projectsRequest<T>(method: string, subpath: string, body?: unknown): Promise<T> {
+    return this.requestUrl<T>(method, `${this.projectsBase()}${subpath}`, body);
+  }
+
+  listProjects = () => this.projectsRequest<{ items: Project[] }>("GET", "");
+  getProject = (id: string) => this.projectsRequest<Project>("GET", `/${id}`);
   createProject = (b: { name: string; description?: string | null; status?: ProjectStatus; priority?: Priority | null }) =>
-    this.request<Project>("POST", "/projects", b);
+    this.projectsRequest<Project>("POST", "", b);
   updateProject = (id: string, b: Record<string, unknown>) =>
-    this.request<Project>("PATCH", `/projects/${id}`, b);
-  deleteProject = (id: string) => this.request<void>("DELETE", `/projects/${id}`);
+    this.projectsRequest<Project>("PATCH", `/${id}`, b);
+  deleteProject = (id: string) => this.projectsRequest<void>("DELETE", `/${id}`);
 
   listTasks = (q: { project_id?: string; status?: TaskStatus; energy?: Energy } = {}) => {
     const params = new URLSearchParams();

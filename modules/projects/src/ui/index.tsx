@@ -14,11 +14,13 @@ export const navItems = [
 interface ProjectsUIProps {
   orgSlug: string;
   getToken: () => string | null;
+  /** When set, scopes project CRUD to this module instance. */
+  instance?: string;
 }
 
-export function ProjectsUI({ orgSlug, getToken }: ProjectsUIProps) {
+export function ProjectsUI({ orgSlug, getToken, instance }: ProjectsUIProps) {
   return (
-    <ProjectsProvider orgSlug={orgSlug} getToken={getToken}>
+    <ProjectsProvider orgSlug={orgSlug} getToken={getToken} instance={instance}>
       <Routes>
         <Route index element={<ProjectsListPage />} />
         <Route path=":id" element={<ProjectDetailPage />} />

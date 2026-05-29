@@ -30,6 +30,11 @@ import { superAdminRouter } from "./routes/super-admin.js";
 import { sandboxInstallRouter } from "./routes/sandbox-install.js";
 import { customRolesRouter } from "./routes/custom-roles.js";
 import { instancesRouter, overridesRouter } from "./routes/instances.js";
+import { navHeadingsRouter } from "./routes/nav-headings.js";
+import { requireAuth } from "./auth/middleware.js";
+import { withTenant } from "./middleware/tenant.js";
+import { resolveInstance } from "./middleware/instance.js";
+import { dispatchInstanceItems } from "./modules/mount.js";
 import { qrScanRouter } from "./routes/qr-scan.js";
 import { integrationsInboundRouter } from "./routes/integrations-inbound.js";
 
@@ -129,7 +134,18 @@ export function createApp(): AppHandles {
   v1.use("/orgs/:slug/members", membersRouter);
   v1.use("/orgs/:slug/pairings", pairingsRouter);
   v1.use("/orgs/:slug/instances", instancesRouter);
+  // Instance-scoped item CRUD — resolves :instanceName → (module,
+  // instance) then dispatches to the owning module's primary router
+  // with req.instance set, so every query scopes to the instance.
+  v1.use(
+    "/orgs/:slug/instances/:instanceName/items",
+    requireAuth,
+    withTenant,
+    resolveInstance,
+    dispatchInstanceItems,
+  );
   v1.use("/orgs/:slug/entity-kind-overrides", overridesRouter);
+  v1.use("/orgs/:slug/nav-headings", navHeadingsRouter);
   // /invites/:token + accept don't take a tenant slug — auth-only.
   v1.use(invitesRootRouter);
   v1.use("/modules", modulesRouter);

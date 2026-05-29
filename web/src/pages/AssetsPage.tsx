@@ -172,9 +172,9 @@ export function AssetsPage() {
         <ViewModeToggle mode={viewMode} onChange={setViewMode} />
         <button
           onClick={() => setNewOpen(true)}
-          className="text-[10px] font-mono uppercase tracking-widest text-cobble-600 hover:text-cobble-700 transition flex items-center gap-1 px-2 py-1 rounded border border-slate-200 dark:border-slate-700"
+          className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
         >
-          <Plus size={11} /> new
+          <Plus size={14} /> New asset
         </button>
       </div>
 

@@ -11,9 +11,15 @@ interface Props {
   entityKind: string;
   entityId: string;
   className?: string;
+  /** Action IDs to hide for THIS specific entity instance. The
+   *  platform's `appliesTo` predicate matches at the entity-KIND level
+   *  (every `inventory:part` looks alike to it), so per-instance
+   *  applicability — "disassemble only on a kit, not a plain brick" —
+   *  must be decided by the owning page and passed down here. */
+  excludeActionIds?: string[];
 }
 
-export function EntityActionsBar({ entityKind, entityId, className }: Props) {
+export function EntityActionsBar({ entityKind, entityId, className, excludeActionIds }: Props) {
   const { api, orgSlug } = usePlatformWeb();
   const { data } = useQuery({
     queryKey: ["platform-actions", orgSlug, entityKind],
@@ -22,16 +28,22 @@ export function EntityActionsBar({ entityKind, entityId, className }: Props) {
   });
   const rawActions = data?.items ?? [];
   const bindings = data?.bindings ?? [];
+  const excluded = new Set(excludeActionIds ?? []);
   // A user-invoked binding overrides the platform-registered action
   // (it carries the user's template). Suppress the raw button so we
   // don't render two side-by-side "Print label" buttons. Also drop
   // wire-only actions (user_invokable === false) — they exist for
-  // wires to target on events, not to be clicked on a detail page.
+  // wires to target on events, not to be clicked on a detail page —
+  // and any action the page excluded for this instance.
   const overriddenActionIds = new Set(bindings.map((b) => b.action_id));
   const actions = rawActions.filter(
-    (a) => !overriddenActionIds.has(a.id) && a.user_invokable !== false,
+    (a) =>
+      !overriddenActionIds.has(a.id) &&
+      a.user_invokable !== false &&
+      !excluded.has(a.id),
   );
-  if (actions.length === 0 && bindings.length === 0) return null;
+  const visibleBindings = bindings.filter((b) => !excluded.has(b.action_id));
+  if (actions.length === 0 && visibleBindings.length === 0) return null;
   return (
     <div className={`flex flex-wrap gap-2 ${className ?? ""}`}>
       {actions.map((a) => (
@@ -42,7 +54,7 @@ export function EntityActionsBar({ entityKind, entityId, className }: Props) {
           action={a}
         />
       ))}
-      {bindings.map((b) => (
+      {visibleBindings.map((b) => (
         <BindingButton
           key={b.binding_id}
           entityKind={entityKind}

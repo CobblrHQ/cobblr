@@ -72,6 +72,9 @@ orgsRouter.get("/:slug/modules", requireAuth, withTenant, async (req, res, next)
         displayName: m.displayName,
         description: m.description,
         icon: m.icon ?? null,
+        // Icon-only quick-action for the navbar's right cluster (only
+        // surfaced when the module is enabled — the web filters on that).
+        headerAction: m.headerAction ?? null,
         dependencies: m.dependencies,
         contributes: {
           fieldDefs: m.contributes.fieldDefs.length,

@@ -17,3 +17,7 @@ router.use("/projects", projectsRouter);
 router.use("/tasks", tasksRouter);
 
 export default router;
+
+// Primary-entity router for instance-scoped item CRUD (projects are the
+// primary entity; tasks remain default-instance for now).
+export { projectsRouter as primaryRouter };

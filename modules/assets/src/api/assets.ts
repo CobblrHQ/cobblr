@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
-import { sessionUser, tenantContext, tenantDb } from "../db.js";
+import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody } from "./util.js";
 import { routeUnknownToMetadata } from "./route-helpers.js";
 
@@ -38,6 +38,7 @@ assetsRouter.get(
     const items = await db
       .selectFrom("assets_assets")
       .selectAll()
+      .where("instance", "=", instanceOf(req))
       .orderBy("name")
       .limit(500)
       .execute();
@@ -58,6 +59,7 @@ assetsRouter.get(
       .selectFrom("assets_assets")
       .selectAll()
       .where("id", "=", id)
+      .where("instance", "=", instanceOf(req))
       .executeTakeFirst();
     if (!row) {
       res.status(404).json({ error: { code: "not_found", message: "asset not found" } });
@@ -79,6 +81,7 @@ assetsRouter.post(
       .insertInto("assets_assets")
       .values({
         ...parsed.data,
+        instance: instanceOf(req),
         flags: parsed.data.flags ?? [],
         metadata: parsed.data.metadata ?? {},
       } as never)
@@ -116,6 +119,7 @@ assetsRouter.patch(
       .updateTable("assets_assets")
       .set({ ...parsed.data, updated_at: new Date() } as never)
       .where("id", "=", id)
+      .where("instance", "=", instanceOf(req))
       .returningAll()
       .executeTakeFirst();
     if (!updated) {
@@ -146,6 +150,7 @@ assetsRouter.delete(
     const deleted = await db
       .deleteFrom("assets_assets")
       .where("id", "=", id)
+      .where("instance", "=", instanceOf(req))
       .returning("id")
       .executeTakeFirst();
     if (!deleted) {

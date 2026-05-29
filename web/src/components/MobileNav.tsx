@@ -100,31 +100,55 @@ export function MobileNav() {
 
               {tops.map((m) => {
                 const kids = childrenByParent.get(m.name) ?? [];
+                const isHeading = m.name.startsWith("__heading__");
                 return (
                   <div key={m.name}>
-                    <NavLink
-                      to={`/${m.name}`}
-                      className={linkClass}
-                      onClick={() => setOpen(false)}
-                    >
-                      {m.displayName.toLowerCase()}
-                    </NavLink>
-                    {kids.map((k) => (
-                      <button
-                        key={k.name}
-                        type="button"
-                        onClick={() => go(`/${m.name}?lens=${k.name}`)}
-                        className={
-                          linkClass +
-                          " w-full text-left pl-8 text-slate-500 dark:text-slate-400"
+                    {isHeading ? (
+                      // A heading has no page — just a section label above
+                      // its members.
+                      <div className={linkClass + " text-slate-400 dark:text-slate-500 uppercase text-[10px] font-mono tracking-widest"}>
+                        {m.displayName.toLowerCase()}
+                      </div>
+                    ) : (
+                      <NavLink
+                        to={
+                          m.name.startsWith("__instance__")
+                            ? `/instances/${m.name.slice("__instance__".length)}`
+                            : `/${m.name}`
                         }
+                        className={linkClass}
+                        onClick={() => setOpen(false)}
                       >
-                        {k.displayName}
-                        <span className="ml-2 text-[10px] font-mono text-slate-400">
-                          lens
-                        </span>
-                      </button>
-                    ))}
+                        {m.displayName.toLowerCase()}
+                      </NavLink>
+                    )}
+                    {kids.map((k) => {
+                      const isInstance = k.name.startsWith("__instance__");
+                      const to = isInstance
+                        ? `/instances/${k.name.slice("__instance__".length)}`
+                        : isHeading
+                          ? `/${k.name}`
+                          : `/${m.name}?lens=${k.name}`;
+                      const badge = isInstance ? "instance" : isHeading ? "" : "lens";
+                      return (
+                        <button
+                          key={k.name}
+                          type="button"
+                          onClick={() => go(to)}
+                          className={
+                            linkClass +
+                            " w-full text-left pl-8 text-slate-500 dark:text-slate-400"
+                          }
+                        >
+                          {k.displayName}
+                          {badge && (
+                            <span className="ml-2 text-[10px] font-mono text-slate-400">
+                              {badge}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
                   </div>
                 );
               })}

@@ -3,10 +3,9 @@
 // don't silently rewrite history.
 
 import { useState, type FocusEvent } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, ArrowLeft, Library, Printer, ShieldCheck, Trash2 } from "lucide-react";
-import { CustomFieldsPanel, EntityActionsBar, EntityThumb, useConfirm, usePageTitle, useToast } from "@cobblr/platform-web";
+import { Archive, Library, Printer, ShieldCheck, Trash2 } from "lucide-react";
+import { CustomFieldsPanel, EntityActionsBar, EntityThumb, Modal, useConfirm, usePageTitle, useToast } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { useMatchedCatalogEntry } from "./useMatchedCatalogEntry";
 import { AllocationsPanel } from "./AllocationsPanel";
@@ -14,10 +13,12 @@ import { StockAdjustButton } from "./StockAdjustButton";
 import { PartGallery } from "./PartGallery";
 import { MaintenancePanel } from "./MaintenancePanel";
 
-export function PartDetailPage() {
-  const { id } = useParams<{ id: string }>();
+// The part-detail body. Rendered inside PartDetailModal (below) — the
+// detail view is a modal over the list now (consistent with machines),
+// not a separate full page. Takes the part id + an onClose from the
+// list route, instead of reading the route param itself.
+export function PartDetailPage({ id, onClose }: { id: string; onClose: () => void }) {
   const { api, orgSlug, getToken } = useInventory();
-  const navigate = useNavigate();
   const qc = useQueryClient();
 
   const part = useQuery({
@@ -46,7 +47,7 @@ export function PartDetailPage() {
     onSuccess: () => {
       toast.success("Part deleted.");
       void qc.invalidateQueries({ queryKey: ["inventory-parts"] });
-      navigate("/inventory");
+      onClose();
     },
     onError: (e: unknown) => toast.error((e as Error).message),
   });
@@ -64,11 +65,21 @@ export function PartDetailPage() {
   if (!part.data) return null;
   const p = part.data;
 
+  // "Disassemble into parts" only makes sense for a KIT — a part
+  // matched to a catalog set, still sealed/built (not yet parted out).
+  // The platform's action `appliesTo` matches at the entity-KIND level
+  // (every inventory:part looks alike), so this per-instance decision
+  // lives here and is passed to EntityActionsBar. Hide it on plain
+  // bricks (unmatched), explicitly-loose parts, and already-parted-out
+  // kits — which is what a beta tester saw it wrongly offered on.
+  const pmeta = (p.metadata as Record<string, unknown> | null) ?? {};
+  const lifecycle = String(pmeta.lifecycle ?? pmeta.state ?? "");
+  const looseOrDone = ["loose", "bulk", "spare", "parted-out"].includes(lifecycle);
+  const canDisassemble = !!matched.data && !looseOrDone;
+  const excludeActionIds = canDisassemble ? undefined : ["inventory:disassemble-kit"];
+
   return (
-    <div className="space-y-5 max-w-3xl">
-      <Link to="/inventory" className="inline-flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 hover:text-cobble-600">
-        <ArrowLeft size={12} /> back to parts
-      </Link>
+    <div className="space-y-5">
 
       <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 space-y-3">
         <div className="flex items-start gap-4">
@@ -118,7 +129,12 @@ export function PartDetailPage() {
                 )}
               </div>
             </div>
-            <EntityActionsBar entityKind="inventory:part" entityId={p.id} className="mt-1" />
+            <EntityActionsBar
+              entityKind="inventory:part"
+              entityId={p.id}
+              excludeActionIds={excludeActionIds}
+              className="mt-1"
+            />
           </div>
         </div>
         <div className="grid grid-cols-2 gap-3">
@@ -505,4 +521,28 @@ function fmt(n: number | string): string {
   const v = typeof n === "string" ? Number(n) : n;
   if (Number.isNaN(v)) return String(n);
   return Number.isInteger(v) ? String(v) : String(parseFloat(v.toFixed(3)));
+}
+
+// Part detail rendered as a MODAL over the list (D4 — consistent with
+// machine detail). The list route /inventory/parts/:id keeps the list
+// mounted and opens this; the title comes from a light name query
+// (deduped with the body's part query by react-query).
+export function PartDetailModal({
+  id,
+  onClose,
+}: {
+  id: string;
+  onClose: () => void;
+}) {
+  const { api } = useInventory();
+  const part = useQuery({
+    queryKey: ["inventory-part", id],
+    queryFn: () => api.getPart(id),
+    enabled: !!id,
+  });
+  return (
+    <Modal open onClose={onClose} title={part.data?.name ?? "Part"} size="xl">
+      <PartDetailPage id={id} onClose={onClose} />
+    </Modal>
+  );
 }

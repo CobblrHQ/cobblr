@@ -15,6 +15,12 @@ export default defineConfig({
     // operations like DELETE /orgs (DROP DATABASE + cascade) can
     // push past 20s under load. Generous so CI flake isn't a thing.
     testTimeout: 60_000,
+    // Tests hit a real, shared API container over HTTP. A cold
+    // container warming its tenant-DB + wasm-sandbox pools under the
+    // serial suite can spike and time a request out; the container
+    // recovers, so one retry absorbs that transient without masking a
+    // genuine logic failure (which fails deterministically on retry).
+    retry: 1,
     // hookTimeout has to be generous enough for the afterAll
     // teardown sweep — a file that signs up 10 orgs needs to drop 10
     // tenant DBs, each is a DROP DATABASE which can take seconds

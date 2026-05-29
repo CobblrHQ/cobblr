@@ -140,6 +140,11 @@ export interface InventoryApiOptions {
   /** Returns the current Bearer token. Re-invoked on every call so
    *  the host's logout / refresh flow stays in charge. */
   getToken: () => string | null;
+  /** When set, parts CRUD targets
+   *  /orgs/:slug/instances/<instance>/items instead of
+   *  /modules/inventory/parts — scopes the page to one module
+   *  instance. Unset = the default inventory instance (legacy URLs). */
+  instance?: string;
 }
 
 export class InventoryApi {
@@ -151,6 +156,20 @@ export class InventoryApi {
 
   private request<T>(method: string, path: string, body?: unknown): Promise<T> {
     return this.requestAbs<T>(method, `${this.base()}${path}`, body);
+  }
+
+  /** Base for the primary-entity (parts) CRUD. Instance-scoped when an
+   *  instance is set; the legacy module route otherwise. The platform's
+   *  /instances/:name/items dispatches to inventory's parts router, so
+   *  the sub-paths ("", "/:id", "/export.csv", "/:id/stock-adjust")
+   *  line up identically either way. */
+  private partsBase(): string {
+    return this.opts.instance
+      ? `/api/v1/orgs/${this.slug}/instances/${this.opts.instance}/items`
+      : `${this.base()}/parts`;
+  }
+  private partsRequest<T>(method: string, subpath: string, body?: unknown): Promise<T> {
+    return this.requestAbs<T>(method, `${this.partsBase()}${subpath}`, body);
   }
 
   private async requestAbs<T>(method: string, url: string, body?: unknown): Promise<T> {
@@ -235,9 +254,9 @@ export class InventoryApi {
     if (q.lifecycle) params.set("lifecycle", q.lifecycle);
     if (q.cursor) params.set("cursor", q.cursor);
     const qs = params.toString();
-    return this.request<{ items: PartListItem[]; next_cursor: string | null }>(
+    return this.partsRequest<{ items: PartListItem[]; next_cursor: string | null }>(
       "GET",
-      `/parts${qs ? "?" + qs : ""}`,
+      qs ? `?${qs}` : "",
     );
   };
 
@@ -260,7 +279,7 @@ export class InventoryApi {
     if (q.archived_only) params.set("archived_only", "1");
     if (q.insured_only) params.set("insured_only", "1");
     const qs = params.toString();
-    return `${this.base()}/parts/export.csv${qs ? "?" + qs : ""}`;
+    return `${this.partsBase()}/export.csv${qs ? "?" + qs : ""}`;
   };
 
   /** Download the CSV by fetching with Bearer auth then saving the
@@ -282,14 +301,14 @@ export class InventoryApi {
     a.click();
     URL.revokeObjectURL(a.href);
   };
-  getPart = (id: string) => this.request<Part>("GET", `/parts/${id}`);
+  getPart = (id: string) => this.partsRequest<Part>("GET", `/${id}`);
   createPart = (b: Partial<Omit<PartListItem, "id" | "created_at" | "updated_at" | "assigned_qty" | "available_qty" | "low_stock">> & { name: string }) =>
-    this.request<Part>("POST", "/parts", b);
+    this.partsRequest<Part>("POST", "", b);
   updatePart = (id: string, b: Record<string, unknown>) =>
-    this.request<Part>("PATCH", `/parts/${id}`, b);
-  deletePart = (id: string) => this.request<void>("DELETE", `/parts/${id}`);
+    this.partsRequest<Part>("PATCH", `/${id}`, b);
+  deletePart = (id: string) => this.partsRequest<void>("DELETE", `/${id}`);
   stockAdjust = (id: string, delta: number, reason?: string) =>
-    this.request<{ id: string; name: string; qty: number }>("POST", `/parts/${id}/stock-adjust`, {
+    this.partsRequest<{ id: string; name: string; qty: number }>("POST", `/${id}/stock-adjust`, {
       delta,
       reason,
     });

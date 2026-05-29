@@ -63,3 +63,12 @@ export function sessionUser(req: Request) {
   if (!s) throw new Error("assets route called without session");
   return s;
 }
+
+/** The instance this request is scoped to. Set by the platform's
+ *  resolveInstance middleware on /instances/:name/items routes; absent
+ *  on legacy /modules/assets/assets requests, where it falls back to
+ *  "assets" — matching the DB column default. Every asset query filters
+ *  on this; every insert stamps it. */
+export function instanceOf(req: Request): string {
+  return (req as unknown as { instance?: string }).instance ?? "assets";
+}

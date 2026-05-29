@@ -73,11 +73,23 @@ export default defineModule({
           // for the bricklink connector to match against). Exposing
           // it lets foreign modules read those keys via
           // platform.entities.lookupMany instead of reaching into
-          // inventory_parts directly. Sensitive procurement fields
-          // (cost, supplier_url, manufacturer, notes) stay
-          // restricted — they're absent from this list on purpose.
+          // inventory_parts directly.
           "metadata",
+          // `cost` IS exposable but capability-gated below — it flows
+          // to member-facing reads only for viewers who hold
+          // inventory:view-costs. supplier_url / manufacturer / notes
+          // stay fully internal (absent here on purpose).
+          "cost",
         ],
+        // H2 — per-field read-scope: `cost` is the commercial figure.
+        // Exposable (above) so it CAN reach the portal/views, but gated
+        // so only viewers granted `inventory:view-costs` actually see
+        // it. This is a beta tester's "Tier 1 sees parts, Tier 2 also sees
+        // prices": admins/owners see everything; a member sees cost
+        // only once granted the capability (via a role or direct grant).
+        fieldReadScopes: {
+          cost: "inventory:view-costs",
+        },
         detailRoute: "/inventory/parts/{id}",
       },
     ],

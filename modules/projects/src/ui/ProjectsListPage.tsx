@@ -116,7 +116,7 @@ export function ProjectsListPage() {
           disabled={create.isPending || !name.trim()}
           className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5 disabled:opacity-50"
         >
-          <Plus size={14} /> Create
+          <Plus size={14} /> New project
         </button>
       </form>
 

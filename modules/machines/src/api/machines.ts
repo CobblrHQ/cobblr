@@ -7,7 +7,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
-import { sessionUser, tenantContext, tenantDb } from "../db.js";
+import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody } from "./util.js";
 import { routeUnknownToMetadata } from "./route-helpers.js";
 
@@ -38,6 +38,7 @@ machinesRouter.get(
     const items = await db
       .selectFrom("machines_machines")
       .selectAll()
+      .where("instance", "=", instanceOf(req))
       .orderBy("name")
       .limit(500)
       .execute();
@@ -58,6 +59,7 @@ machinesRouter.get(
       .selectFrom("machines_machines")
       .selectAll()
       .where("id", "=", id)
+      .where("instance", "=", instanceOf(req))
       .executeTakeFirst();
     if (!row) {
       res.status(404).json({ error: { code: "not_found", message: "machine not found" } });
@@ -80,6 +82,7 @@ machinesRouter.post(
       .insertInto("machines_machines")
       .values({
         ...parsed.data,
+        instance: instanceOf(req),
         metadata: parsed.data.metadata ?? {},
       } as never)
       .returningAll()
@@ -116,6 +119,7 @@ machinesRouter.patch(
       .selectFrom("machines_machines")
       .select("state")
       .where("id", "=", id)
+      .where("instance", "=", instanceOf(req))
       .executeTakeFirst();
     if (!before) {
       res.status(404).json({ error: { code: "not_found", message: "machine not found" } });
@@ -125,6 +129,7 @@ machinesRouter.patch(
       .updateTable("machines_machines")
       .set({ ...parsed.data, updated_at: new Date() } as never)
       .where("id", "=", id)
+      .where("instance", "=", instanceOf(req))
       .returningAll()
       .executeTakeFirstOrThrow();
     await platform().activity.log({
@@ -159,6 +164,7 @@ machinesRouter.delete(
     const deleted = await db
       .deleteFrom("machines_machines")
       .where("id", "=", id)
+      .where("instance", "=", instanceOf(req))
       .returning("id")
       .executeTakeFirst();
     if (!deleted) {

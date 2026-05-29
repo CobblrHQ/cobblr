@@ -24,6 +24,7 @@ import type {
   ResolvedEntity,
 } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
+import { effectiveCapabilities } from "../auth/effective-capabilities.js";
 
 const resolvers = new Map<string, EntityResolver>();
 const listResolvers = new Map<string, EntityListResolver>();
@@ -34,9 +35,25 @@ const listResolvers = new Map<string, EntityListResolver>();
 // boot anyway).
 const exposableFieldsCache = new Map<string, string[] | null>();
 
+// In-process cache of the per-field read-scope map per kind (H2):
+// { field_name: required_capability }. Same lifecycle as the
+// exposable-fields cache. Null = no per-field gating for the kind.
+const fieldReadScopesCache = new Map<string, Record<string, string> | null>();
+
 // One-time deprecation warning per kind that's still on the legacy
 // (null) whitelist. Avoids log spam on hot paths.
 const legacyWarnedKinds = new Set<string>();
+
+/** A viewer's effective field-read access, resolved by the caller
+ *  (the member-facing read endpoint) and passed into the projection.
+ *  `all` — owner/admin: see every field regardless of scope.
+ *  `caps` — the capability action_ids the viewer holds.
+ *  Omitting the readScope entirely (viewer-less system / admin module
+ *  API reads) means "see everything" — fully backward-compatible. */
+export interface ViewerReadScope {
+  all: boolean;
+  caps: ReadonlySet<string>;
+}
 
 // Implicit cross-cutting props on ResolvedEntity that are ALWAYS
 // exposable regardless of the manifest's `exposableFields`. These are
@@ -65,14 +82,62 @@ async function getExposableFields(kind: string): Promise<string[] | null> {
   return list;
 }
 
-/** Apply the read-trust whitelist to a resolved entity. Implicit
- *  cross-cutting props pass through untouched; `fields` is projected
- *  to the declared list. Legacy (null) kinds pass everything through
- *  with a one-time deprecation warning. */
+/** Per-field read-scope map for a kind (H2): { field: capability }, or
+ *  null when the kind gates no fields. The MANIFEST-declared scopes are
+ *  cached by kind; per-WORKSPACE admin overrides (workspace_field_scopes)
+ *  are merged on top when an orgId is given — "a beta tester defines his own
+ *  tiers." Per-org entries win. The per-org read is one small indexed
+ *  query per resolver call (not per row), so it's cheap; not cached, so
+ *  admin edits take effect immediately. */
+async function getFieldReadScopes(
+  kind: string,
+  orgId?: string,
+): Promise<Record<string, string> | null> {
+  let manifest: Record<string, string> | null;
+  if (fieldReadScopesCache.has(kind)) {
+    manifest = fieldReadScopesCache.get(kind) ?? null;
+  } else {
+    const row = await meta
+      .selectFrom("entity_kinds")
+      .select(["field_read_scopes"])
+      .where("id", "=", kind)
+      .executeTakeFirst();
+    manifest =
+      (row?.field_read_scopes as Record<string, string> | null | undefined) ??
+      null;
+    fieldReadScopesCache.set(kind, manifest);
+  }
+  if (!orgId) return manifest;
+  const perOrg = await meta
+    .selectFrom("workspace_field_scopes")
+    .select(["field", "capability"])
+    .where("org_id", "=", orgId)
+    .where("kind", "=", kind)
+    .execute();
+  if (perOrg.length === 0) return manifest;
+  const merged: Record<string, string> = { ...(manifest ?? {}) };
+  for (const r of perOrg) merged[r.field] = r.capability; // per-org wins
+  return merged;
+}
+
+/** Apply the read-trust boundary to a resolved entity, in two layers:
+ *
+ *  1. Kind whitelist (`exposableFields`): implicit cross-cutting props
+ *     pass through untouched; `fields` is projected to the declared
+ *     list. Legacy (null) kinds pass everything through with a one-time
+ *     deprecation warning.
+ *  2. Per-field read-scope (H2): if the kind gates fields by capability
+ *     AND a viewer readScope is supplied that isn't all-access, drop any
+ *     gated field the viewer lacks the capability for. A viewer-less
+ *     read (system / admin module API) or an all-access viewer
+ *     (owner/admin) sees everything — fully backward-compatible. */
 function applyExposableProjection(
   resolved: ResolvedEntity,
   whitelist: string[] | null,
+  fieldReadScopes?: Record<string, string> | null,
+  readScope?: ViewerReadScope,
 ): ResolvedEntity {
+  let fields: Record<string, unknown>;
   if (whitelist === null) {
     if (!legacyWarnedKinds.has(resolved.kind)) {
       legacyWarnedKinds.add(resolved.kind);
@@ -83,16 +148,32 @@ function applyExposableProjection(
           `See docs/design-decisions/entity-resolver.md.`,
       );
     }
-    return resolved;
-  }
-  const allowed = new Set(whitelist);
-  const projected: Record<string, unknown> = {};
-  for (const [name, value] of Object.entries(resolved.fields)) {
-    if (allowed.has(name) || IMPLICIT_EXPOSABLE_PROPS.has(name)) {
-      projected[name] = value;
+    fields = { ...resolved.fields };
+  } else {
+    const allowed = new Set(whitelist);
+    fields = {};
+    for (const [name, value] of Object.entries(resolved.fields)) {
+      if (allowed.has(name) || IMPLICIT_EXPOSABLE_PROPS.has(name)) {
+        fields[name] = value;
+      }
     }
   }
-  return { ...resolved, fields: projected };
+  // Layer 2 — per-field read-scope gating, FAIL-CLOSED. When a kind
+  // gates fields, a gated field is dropped UNLESS the viewer is
+  // privileged (all-access — owner/admin) or holds the field's
+  // capability. Crucially, a viewer-LESS read (public surfaces,
+  // cross-module, system/cron) is treated as UNPRIVILEGED here: a gated
+  // commercial field like `cost` must never leak to an unauthenticated
+  // public reader just because no viewer was attached. A privileged
+  // internal caller that legitimately needs everything passes a
+  // readScope with `all: true`.
+  if (fieldReadScopes && readScope?.all !== true) {
+    const caps = readScope?.caps;
+    for (const [field, cap] of Object.entries(fieldReadScopes)) {
+      if (!caps || !caps.has(cap)) delete fields[field];
+    }
+  }
+  return { ...resolved, fields };
 }
 
 export function registerResolver(kind: string, resolver: EntityResolver): void {
@@ -111,6 +192,7 @@ export function registerListResolver(
  *  whitelist. */
 export function clearExposableFieldsCache(): void {
   exposableFieldsCache.clear();
+  fieldReadScopesCache.clear();
   legacyWarnedKinds.clear();
 }
 
@@ -208,11 +290,17 @@ export async function lookup(
   const resolver = resolvers.get(kind);
   if (!resolver) return null;
   const whitelist = await getExposableFields(kind);
+  // Single-hop / cross-module lookups carry no resolved capability set,
+  // so read-scope gating here is fail-closed: gated fields are withheld
+  // (these paths feed cross-module renderers + internal callers, which
+  // never need commercial fields like cost). Member-facing field
+  // visibility flows through list() with a viewer.
+  const fieldReadScopes = await getFieldReadScopes(kind, orgId);
 
   // Own workspace first — common case, no cross-workspace traffic.
   try {
     const resolved = await resolver(orgId, id);
-    if (resolved) return applyExposableProjection(resolved, whitelist);
+    if (resolved) return applyExposableProjection(resolved, whitelist, fieldReadScopes);
   } catch (err) {
     console.error(`[entities] resolver for ${kind} failed:`, err);
   }
@@ -227,7 +315,7 @@ export async function lookup(
     try {
       const resolved = await resolver(src.id, id);
       if (!resolved) continue;
-      const projected = applyExposableProjection(resolved, whitelist);
+      const projected = applyExposableProjection(resolved, whitelist, fieldReadScopes);
       return {
         ...projected,
         fields: {
@@ -280,11 +368,15 @@ export async function lookupMany(
       const resolver = resolvers.get(kind);
       if (!resolver) return [] as ResolvedEntity[];
       const whitelist = await getExposableFields(kind);
+      // Cross-module batched read — fail-closed on gated fields (no
+      // viewer capability set here; commercial fields never flow to
+      // foreign module renderers).
+      const fieldReadScopes = await getFieldReadScopes(kind, orgId);
       const resolved = await Promise.all(
         ids.map(async (id) => {
           try {
             const r = await resolver(orgId, id);
-            return r ? applyExposableProjection(r, whitelist) : null;
+            return r ? applyExposableProjection(r, whitelist, fieldReadScopes) : null;
           } catch (err) {
             console.error(`[entities] resolver for ${kind}:${id} failed:`, err);
             return null;
@@ -443,18 +535,31 @@ export async function list(
   orgId: string,
   kind: string,
   query: EntityListQuery = {},
-  viewer?: { userId?: string },
+  viewer?: { userId?: string; role?: string },
 ): Promise<EntityListResult> {
   const resolver = listResolvers.get(kind);
   if (!resolver) return { items: [] };
   const whitelist = await getExposableFields(kind);
+  const fieldReadScopes = await getFieldReadScopes(kind, orgId);
+  // Resolve the viewer's field-read access ONLY when the kind actually
+  // gates fields AND a viewer was supplied. No viewer = trusted
+  // internal / admin-module-API path = see everything (backward compat).
+  // A supplied-but-unidentified viewer is gated conservatively (no caps).
+  let readScope: ViewerReadScope | undefined;
+  if (fieldReadScopes && viewer) {
+    readScope = viewer.userId
+      ? await effectiveCapabilities(orgId, viewer.userId, viewer.role ?? "member")
+      : { all: false, caps: new Set() };
+  }
 
   // Own-workspace results first.
   let items: ResolvedEntity[] = [];
   let total: number | undefined;
   try {
     const result = await resolver(orgId, query);
-    items = result.items.map((r) => applyExposableProjection(r, whitelist));
+    items = result.items.map((r) =>
+      applyExposableProjection(r, whitelist, fieldReadScopes, readScope),
+    );
     total = result.total;
   } catch (err) {
     console.error(`[entities] list resolver for ${kind} failed:`, err);
@@ -473,7 +578,12 @@ export async function list(
     try {
       const result = await resolver(src.id, query);
       for (const r of result.items) {
-        const projected = applyExposableProjection(r, whitelist);
+        const projected = applyExposableProjection(
+          r,
+          whitelist,
+          fieldReadScopes,
+          readScope,
+        );
         items.push({
           ...projected,
           fields: {

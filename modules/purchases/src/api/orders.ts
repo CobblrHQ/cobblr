@@ -6,7 +6,7 @@ import { Router } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
-import { sessionUser, tenantContext, tenantDb } from "../db.js";
+import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody } from "./util.js";
 import { routeUnknownToMetadata } from "./route-helpers.js";
 
@@ -56,6 +56,7 @@ ordersRouter.get(
     const items = await db
       .selectFrom("purchases_orders")
       .selectAll()
+      .where("instance", "=", instanceOf(req))
       .orderBy("ordered_at", "desc")
       .orderBy("created_at", "desc")
       .limit(500)
@@ -77,6 +78,7 @@ ordersRouter.get(
       .selectFrom("purchases_orders")
       .selectAll()
       .where("id", "=", id)
+      .where("instance", "=", instanceOf(req))
       .executeTakeFirst();
     if (!order) {
       res.status(404).json({ error: { code: "not_found", message: "order not found" } });
@@ -105,6 +107,7 @@ ordersRouter.post(
       .insertInto("purchases_orders")
       .values({
         ...parsed.data,
+        instance: instanceOf(req),
         status: parsed.data.status ?? "ordered",
         metadata: parsed.data.metadata ?? {},
       } as never)
@@ -143,6 +146,7 @@ ordersRouter.patch(
       .selectFrom("purchases_orders")
       .select(["status"])
       .where("id", "=", id)
+      .where("instance", "=", instanceOf(req))
       .executeTakeFirst();
     if (!before) {
       res.status(404).json({ error: { code: "not_found", message: "order not found" } });
@@ -152,6 +156,7 @@ ordersRouter.patch(
       .updateTable("purchases_orders")
       .set({ ...parsed.data, updated_at: new Date() } as never)
       .where("id", "=", id)
+      .where("instance", "=", instanceOf(req))
       .returningAll()
       .executeTakeFirstOrThrow();
     await platform().activity.log({
@@ -214,6 +219,7 @@ ordersRouter.delete(
     const deleted = await db
       .deleteFrom("purchases_orders")
       .where("id", "=", id)
+      .where("instance", "=", instanceOf(req))
       .returning("id")
       .executeTakeFirst();
     if (!deleted) {

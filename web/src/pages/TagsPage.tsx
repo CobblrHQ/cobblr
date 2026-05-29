@@ -6,7 +6,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, Plus, Tag as TagIcon, Trash2 } from "lucide-react";
+import { ExternalLink, Pencil, Plus, Tag as TagIcon, Trash2 } from "lucide-react";
 import { ApiError, api, type TagRecord } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
@@ -44,6 +44,7 @@ export function TagsPage() {
   const confirm = useConfirm();
   const [createOpen, setCreateOpen] = useState(false);
   const [exploring, setExploring] = useState<TagRecord | null>(null);
+  const [editing, setEditing] = useState<TagRecord | null>(null);
 
   const list = useQuery({
     queryKey: ["tags", activeSlug],
@@ -105,6 +106,13 @@ export function TagsPage() {
               {t.name}
             </button>
             <button
+              onClick={() => setEditing(t)}
+              className="text-slate-400 hover:text-cobble-600 transition"
+              title="Rename / recolor"
+            >
+              <Pencil size={12} />
+            </button>
+            <button
               onClick={async () => {
                 const ok = await confirm({
                   title: "Delete tag?",
@@ -141,7 +149,97 @@ export function TagsPage() {
           }}
         />
       )}
+
+      {editing && (
+        <EditTagModal
+          slug={activeSlug}
+          tag={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            void qc.invalidateQueries({ queryKey: ["tags", activeSlug] });
+            setEditing(null);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function EditTagModal({
+  slug,
+  tag,
+  onClose,
+  onSaved,
+}: {
+  slug: string;
+  tag: TagRecord;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [name, setName] = useState(tag.name);
+  const [color, setColor] = useState(tag.color ?? "#888888");
+  const toast = useToast();
+  const save = useMutation({
+    mutationFn: () => api.updateTag(slug, tag.id, { name: name.trim(), color }),
+    onSuccess: () => {
+      toast.success("Tag updated — change applies everywhere it's attached");
+      onSaved();
+    },
+    onError: (e: unknown) =>
+      toast.error(e instanceof ApiError ? e.message : "Couldn't save"),
+  });
+
+  return (
+    <Modal open onClose={onClose} title={`Edit — ${tag.name}`}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (name.trim()) save.mutate();
+        }}
+        className="space-y-3"
+      >
+        <label className="block">
+          <div className="text-xs text-slate-500 mb-1">Name</div>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            autoFocus
+          />
+        </label>
+        <label className="flex items-center gap-3 text-sm">
+          <span className="text-xs text-slate-500">Color</span>
+          <input
+            type="color"
+            value={color}
+            onChange={(e) => setColor(e.target.value)}
+            className="h-8 w-12 border border-slate-300 dark:border-slate-600 rounded"
+          />
+          <span className="font-mono text-xs">{color}</span>
+        </label>
+        <p className="text-[11px] text-slate-400">
+          Renaming updates the tag everywhere it's attached — it's the same tag,
+          not a copy.
+        </p>
+        <div className="flex justify-end gap-2 pt-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={!name.trim() || save.isPending}
+            className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white"
+          >
+            Save
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
