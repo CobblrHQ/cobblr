@@ -30,6 +30,7 @@ import { mountModules } from "./modules/mount.js";
 import * as activity from "./platform/activity.js";
 import * as actions from "./platform/actions.js";
 import * as entities from "./platform/entities.js";
+import * as files from "./platform/files.js";
 import * as events from "./platform/events.js";
 import * as templates from "./platform/templates.js";
 import * as wires from "./platform/wires.js";
@@ -176,6 +177,10 @@ async function boot() {
       listProviders: aiImpl.listProviders,
       getProvider: aiImpl.getProvider,
       invoke: aiImpl.invoke,
+    },
+    files: {
+      registerReader: files.registerReader,
+      read: files.read,
     },
     auth: {
       // Capability check walks three sources in order:

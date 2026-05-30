@@ -15,6 +15,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Plus, ScanLine } from "lucide-react";
+import ReactMarkdown from "react-markdown";
 import {
   EntityActionsBar,
   EntityThumb,
@@ -168,8 +169,10 @@ function BlockRenderer({
       );
     case "markdown":
       return (
-        <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 text-slate-700 dark:text-mortar-100 text-sm whitespace-pre-wrap">
-          {block.body}
+        <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5">
+          <div className="prose prose-sm dark:prose-invert max-w-none text-slate-700 dark:text-mortar-100">
+            <ReactMarkdown>{block.body}</ReactMarkdown>
+          </div>
         </div>
       );
     case "form":
@@ -262,7 +265,9 @@ function StatBlock({
 }) {
   const data = useQuery({
     queryKey: ["app-stat-data", slug, viewId, agg, field],
-    queryFn: () => api.viewData(slug, viewId, { limit: 1000 }),
+    // The views-data endpoint caps limit at 500; asking for more 400s and
+    // the stat never resolves (shows "…"). 500 is the practical ceiling.
+    queryFn: () => api.viewData(slug, viewId, { limit: 500 }),
     enabled: !!viewId,
   });
   const items = data.data?.items ?? [];

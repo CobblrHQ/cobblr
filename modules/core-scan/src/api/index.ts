@@ -3,6 +3,9 @@
 
 import { Router } from "express";
 import { inboxRouter } from "./inbox.js";
+import { registerScanHandlers } from "./handlers.js";
+
+registerScanHandlers();
 
 const router = Router({ mergeParams: true });
 router.use("/", inboxRouter);

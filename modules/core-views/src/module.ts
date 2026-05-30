@@ -24,6 +24,7 @@ export default defineModule({
     "Saved filtered/sorted views per entity kind. List today; kanban, calendar, table land as renderers ship. Removes the need for every module to invent its own list page.",
   icon: "layout-list",
   band: "stock",
+  autoEnable: true, // ambient capability — on for every workspace
 
   schema: {
     tablePrefix: "core_views_",

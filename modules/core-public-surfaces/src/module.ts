@@ -30,6 +30,7 @@ export default defineModule({
     "Token-gated public read URLs. Share a view or an entity over a long-random URL without anyone needing to sign in. Per-surface enable/disable + revoke.",
   icon: "globe",
   band: "stock",
+  autoEnable: true, // ambient capability — on for every workspace
 
   schema: {
     tablePrefix: "core_public_surfaces_",

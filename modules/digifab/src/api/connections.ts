@@ -1,4 +1,4 @@
-// /api/v1/orgs/:slug/modules/core-farm/connections —
+// /api/v1/orgs/:slug/modules/digifab/connections —
 // CRUD + test + list-printers + resolve. Managing farm connections is
 // owner/admin only (they can start/stop machines). API credentials are
 // encrypted at write and never returned. Every driver call here is
@@ -11,8 +11,11 @@ import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { driverFor, FARM_TYPES } from "../drivers/registry.js";
-import type { FarmDriver } from "../drivers/types.js";
+import { resolveDriver, availableDriverKeys } from "../drivers/registry.js";
+import { assertSafeMachineUrl } from "../drivers/ssrf.js";
+import type { Kysely } from "kysely";
+import type { DigifabDB } from "../db.js";
+import type { MachineDriver } from "../drivers/types.js";
 
 export const connectionsRouter = Router({ mergeParams: true });
 
@@ -33,7 +36,9 @@ const PUBLIC_COLS = [
 // FDM Monster v2 authenticates by login (username+password → JWT) or an
 // x-api-key — accept whichever the user has.
 const ConnectionCreate = z.object({
-  type: z.enum(FARM_TYPES),
+  // A driver key — a built-in or an installed driver. Validated against
+  // the available set at request time (the enum isn't static anymore).
+  type: z.string().min(1).max(64),
   label: z.string().min(1).max(120),
   base_url: z.string().min(1).max(500),
   api_key: z.string().max(500).optional(),
@@ -69,12 +74,13 @@ function credsFrom(d: { api_key?: string | null; username?: string | null; passw
 }
 
 /** Build a live driver from a connection row (decrypts creds). */
-async function buildDriver(orgId: string, row: ConnRow): Promise<FarmDriver> {
+async function buildDriver(db: Kysely<DigifabDB>, orgId: string, row: ConnRow): Promise<MachineDriver> {
   let creds: Record<string, unknown> = {};
   if (row.credentials_enc) {
     creds = await platform().integrations.decryptCredentials(orgId, row.credentials_enc);
   }
-  return driverFor(
+  return resolveDriver(
+    db,
     row.type,
     {
       baseUrl: row.base_url,
@@ -88,7 +94,7 @@ async function buildDriver(orgId: string, row: ConnRow): Promise<FarmDriver> {
 
 async function loadRow(req: import("express").Request, id: string): Promise<ConnRow | undefined> {
   return (await tenantDb(req)
-    .selectFrom("core_farm_connections")
+    .selectFrom("digifab_connections")
     .select(["id", "type", "base_url", "credentials_enc"])
     .where("id", "=", id)
     .executeTakeFirst()) as ConnRow | undefined;
@@ -98,11 +104,11 @@ connectionsRouter.get(
   "/",
   asyncHandler(async (req, res) => {
     const rows = await tenantDb(req)
-      .selectFrom("core_farm_connections")
+      .selectFrom("digifab_connections")
       .select(PUBLIC_COLS)
       .orderBy("created_at", "desc")
       .execute();
-    res.json({ items: rows, types: FARM_TYPES });
+    res.json({ items: rows, types: await availableDriverKeys(tenantDb(req)) });
   }),
 );
 
@@ -113,12 +119,25 @@ connectionsRouter.post(
     const parsed = ConnectionCreate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const ctx = tenantContext(req);
+    // The driver key must be a built-in or an installed driver.
+    if (!(await availableDriverKeys(tenantDb(req))).includes(parsed.data.type)) {
+      return void res.status(400).json({ error: { code: "unknown_driver", message: `no driver "${parsed.data.type}" installed` } });
+    }
+    // SSRF: a connection points the server at a URL — block loopback/metadata.
+    // Only police http(s) here; non-http sentinels (mock://) never get fetched.
+    if (/^https?:\/\//i.test(parsed.data.base_url)) {
+      try {
+        assertSafeMachineUrl(parsed.data.base_url);
+      } catch (e) {
+        return void res.status(400).json({ error: { code: "unsafe_url", message: (e as Error).message } });
+      }
+    }
     const creds = credsFrom(parsed.data);
     const enc = Object.keys(creds).length
       ? await platform().integrations.encryptCredentials(ctx.org.id, creds)
       : "";
     const row = await tenantDb(req)
-      .insertInto("core_farm_connections")
+      .insertInto("digifab_connections")
       .values({
         type: parsed.data.type,
         label: parsed.data.label,
@@ -128,7 +147,7 @@ connectionsRouter.post(
       })
       .returning(PUBLIC_COLS)
       .executeTakeFirstOrThrow();
-    void platform().events.emit("core-farm.connection.created", { orgId: ctx.org.id, rowId: (row as { id: string }).id });
+    void platform().events.emit("digifab.connection.created", { orgId: ctx.org.id, rowId: (row as { id: string }).id });
     res.status(201).json(row);
   }),
 );
@@ -137,7 +156,7 @@ connectionsRouter.get(
   "/:id",
   asyncHandler(async (req, res) => {
     const row = await tenantDb(req)
-      .selectFrom("core_farm_connections")
+      .selectFrom("digifab_connections")
       .select(PUBLIC_COLS)
       .where("id", "=", req.params.id!)
       .executeTakeFirst();
@@ -155,7 +174,16 @@ connectionsRouter.patch(
     const ctx = tenantContext(req);
     const set: Record<string, unknown> = { updated_at: new Date() };
     if (parsed.data.label !== undefined) set.label = parsed.data.label;
-    if (parsed.data.base_url !== undefined) set.base_url = parsed.data.base_url;
+    if (parsed.data.base_url !== undefined) {
+      if (/^https?:\/\//i.test(parsed.data.base_url)) {
+        try {
+          assertSafeMachineUrl(parsed.data.base_url);
+        } catch (e) {
+          return void res.status(400).json({ error: { code: "unsafe_url", message: (e as Error).message } });
+        }
+      }
+      set.base_url = parsed.data.base_url;
+    }
     if (parsed.data.enabled !== undefined) set.enabled = parsed.data.enabled;
     if (parsed.data.config !== undefined) set.config = sql`${JSON.stringify(parsed.data.config)}::jsonb`;
     if (
@@ -166,7 +194,7 @@ connectionsRouter.patch(
       // Merge with existing creds so updating one field (e.g. swapping a
       // login for an api-key) doesn't wipe the others. null clears a field.
       const existing = await tenantDb(req)
-        .selectFrom("core_farm_connections")
+        .selectFrom("digifab_connections")
         .select(["credentials_enc"])
         .where("id", "=", req.params.id!)
         .executeTakeFirst();
@@ -185,7 +213,7 @@ connectionsRouter.patch(
         : "";
     }
     const row = await tenantDb(req)
-      .updateTable("core_farm_connections")
+      .updateTable("digifab_connections")
       .set(set as never)
       .where("id", "=", req.params.id!)
       .returning(PUBLIC_COLS)
@@ -200,8 +228,8 @@ connectionsRouter.delete(
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin")) return;
     const ctx = tenantContext(req);
-    await tenantDb(req).deleteFrom("core_farm_connections").where("id", "=", req.params.id!).execute();
-    void platform().events.emit("core-farm.connection.deleted", { orgId: ctx.org.id, rowId: req.params.id! });
+    await tenantDb(req).deleteFrom("digifab_connections").where("id", "=", req.params.id!).execute();
+    void platform().events.emit("digifab.connection.deleted", { orgId: ctx.org.id, rowId: req.params.id! });
     res.status(204).end();
   }),
 );
@@ -215,10 +243,10 @@ connectionsRouter.post(
     const ctx = tenantContext(req);
     const row = await loadRow(req, req.params.id!);
     if (!row) return void res.status(404).json({ error: { code: "not_found", message: "no such connection" } });
-    const driver = await buildDriver(ctx.org.id, row);
+    const driver = await buildDriver(tenantDb(req), ctx.org.id, row);
     const result = await driver.testConnection();
     await tenantDb(req)
-      .updateTable("core_farm_connections")
+      .updateTable("digifab_connections")
       .set({
         capabilities: sql`${JSON.stringify(result.capabilities)}::jsonb` as never,
         last_sync_at: new Date(),
@@ -227,7 +255,7 @@ connectionsRouter.post(
       })
       .where("id", "=", req.params.id!)
       .execute();
-    void platform().events.emit("core-farm.connection.tested", { orgId: ctx.org.id, rowId: req.params.id!, ok: result.ok });
+    void platform().events.emit("digifab.connection.tested", { orgId: ctx.org.id, rowId: req.params.id!, ok: result.ok });
     res.json(result);
   }),
 );
@@ -238,8 +266,8 @@ connectionsRouter.get(
     const ctx = tenantContext(req);
     const row = await loadRow(req, req.params.id!);
     if (!row) return void res.status(404).json({ error: { code: "not_found", message: "no such connection" } });
-    const driver = await buildDriver(ctx.org.id, row);
-    res.json({ items: await driver.listPrinters() });
+    const driver = await buildDriver(tenantDb(req), ctx.org.id, row);
+    res.json({ items: await driver.listDevices() });
   }),
 );
 
@@ -249,7 +277,7 @@ connectionsRouter.get(
     const ctx = tenantContext(req);
     const row = await loadRow(req, req.params.id!);
     if (!row) return void res.status(404).json({ error: { code: "not_found", message: "no such connection" } });
-    const driver = await buildDriver(ctx.org.id, row);
+    const driver = await buildDriver(tenantDb(req), ctx.org.id, row);
     res.json(await driver.resolvePlacement(req.params.fileId!));
   }),
 );

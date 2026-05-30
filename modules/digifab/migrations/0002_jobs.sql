@@ -1,10 +1,10 @@
--- core-farm jobs — a print job placed on a farm connection. Tracks the
+-- digifab jobs — a print job placed on a farm connection. Tracks the
 -- queued → sent → printing → completed/failed lifecycle + the farm's job
 -- id, polled by a core-queue worker until terminal.
 
-create table core_farm_jobs (
+create table digifab_jobs (
   id                 uuid primary key default gen_random_uuid(),
-  connection_id      uuid not null references core_farm_connections(id) on delete cascade,
+  connection_id      uuid not null references digifab_connections(id) on delete cascade,
   file_ref           text not null,                   -- filename / slicer output reference
   target_printer     text,                            -- explicit farm printer id, or null
   target_tag         text,                            -- tag name, or null
@@ -20,4 +20,4 @@ create table core_farm_jobs (
   last_polled_at     timestamptz
 );
 
-create index core_farm_jobs_status_idx on core_farm_jobs(connection_id, status);
+create index digifab_jobs_status_idx on digifab_jobs(connection_id, status);

@@ -430,6 +430,17 @@ const ModuleManifest = z.object({
   // §"Foundational modules — the strict-test band").
   band: z.enum(["foundational", "stock", "marketplace", "user"]).default("user"),
 
+  // Capability vs. domain. A *capability* module is ambient plumbing that
+  // makes other things work (views, search, scan, ai, recurrence, …) — it
+  // has no decision content ("do you want search?") and no behavioural
+  // side-effects until used, so it's enabled for every new workspace
+  // automatically. A *domain* / connector module (inventory, machines,
+  // digifab, …) adds nav nouns + per-user relevance, so it stays an
+  // explicit opt-in (the module picker / "+ New thing" funnel). Foundational
+  // modules are always-on regardless; this flag is for the stock band.
+  // See docs/design-decisions/module-layers.md.
+  autoEnable: z.boolean().default(false),
+
   // Whether a workspace can install this module multiple times under
   // different "instance" names. "multi" modules add an `instance`
   // column to their tables (via a migration) and gain instance-
@@ -1233,6 +1244,7 @@ export interface PlatformIntegrations {
 
 export const AiCapabilities = [
   "classify-image",
+  "identify-image",
   "extract-text",
   "summarise",
   "embed-text",
@@ -1482,6 +1494,41 @@ export interface PlatformCatalogs {
   >;
 }
 
+/** Which stored rendition to read. Images have medium/thumb; other
+ *  files only have `original`. */
+export type FileVariant = "original" | "medium" | "thumb";
+
+/** A stored file's bytes + just-enough metadata to forward it on
+ *  (e.g. upload to a print farm, send to a vision model). */
+export interface FileBytes {
+  bytes: Uint8Array;
+  filename: string;
+  mimeType: string;
+}
+
+/** The byte-reading function a file-storage module (core-files)
+ *  registers with the platform. */
+export type FileReader = (
+  orgId: string,
+  fileId: string,
+  variant: FileVariant,
+) => Promise<FileBytes | null>;
+
+/** Server-side access to stored file bytes, brokered so a module never
+ *  imports core-files or touches its on-disk layout. core-files
+ *  registers the reader at boot; everyone else just calls read(). */
+export interface PlatformFiles {
+  /** A file-storage module registers the byte reader once at boot. */
+  registerReader(reader: FileReader): void;
+  /** Read a stored file's bytes. Returns null if no reader is
+   *  registered, the file doesn't exist, or the variant is missing. */
+  read(
+    orgId: string,
+    fileId: string,
+    variant?: FileVariant,
+  ): Promise<FileBytes | null>;
+}
+
 export interface Platform {
   activity: PlatformActivity;
   events: PlatformEvents;
@@ -1500,6 +1547,7 @@ export interface Platform {
   auth: PlatformAuth;
   pairings: PlatformPairings;
   catalogs: PlatformCatalogs;
+  files: PlatformFiles;
 }
 
 let _platform: Platform | null = null;

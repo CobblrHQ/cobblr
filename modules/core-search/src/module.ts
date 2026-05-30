@@ -21,6 +21,7 @@ export default defineModule({
     "One search bar, all entity kinds. Each kind opts in by declaring a list resolver; core-search fans the query out and merges.",
   icon: "search",
   band: "stock",
+  autoEnable: true, // ambient capability — on for every workspace
 
   api: () => import("./api/index.js"),
 

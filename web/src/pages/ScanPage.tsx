@@ -182,7 +182,12 @@ function InboxRow({
   const catalogImg =
     item.catalog_image_file_id
       ? `/api/v1/orgs/${activeSlug}/modules/core-files/files/${item.catalog_image_file_id}/raw?variant=thumb`
-      : item.catalog_image_url;
+      : item.catalog_image_url
+        ? item.catalog_image_url
+        : // Photo scans have no catalog image — show the user's own photo.
+          item.image_file_id
+          ? `/api/v1/orgs/${activeSlug}/modules/core-files/files/${item.image_file_id}/raw?variant=thumb`
+          : null;
 
   return (
     <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 flex items-start gap-3">
@@ -262,8 +267,15 @@ function ConfirmModal({
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
-  const [targetKey, setTargetKey] = useState<string>(`${TARGET_KINDS[0]!.module}:${TARGET_KINDS[0]!.kind}`);
+  // Default the kind from the identify's asset/part hint: asset →
+  // assets:asset, else inventory:part.
+  const hintedKey =
+    (item.suggested_metadata as { entity_type?: string } | null)?.entity_type === "asset"
+      ? "assets:asset"
+      : `${TARGET_KINDS[0]!.module}:${TARGET_KINDS[0]!.kind}`;
+  const [targetKey, setTargetKey] = useState<string>(hintedKey);
   const [name, setName] = useState(item.suggested_name ?? "");
+  const [quantity, setQuantity] = useState<number>(item.quantity ?? 1);
   const [locationId, setLocationId] = useState<string>("");
 
   const locs = useQuery({
@@ -282,6 +294,7 @@ function ConfirmModal({
         target_module,
         target_kind,
         name: name.trim() || (item.suggested_name ?? "Untitled"),
+        quantity: Number.isFinite(quantity) && quantity > 0 ? quantity : undefined,
         location_id: locationId || undefined,
       });
     },
@@ -359,6 +372,18 @@ function ConfirmModal({
             className="w-full px-2 py-1.5 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
             required
             autoFocus
+          />
+        </label>
+        <label className="block">
+          <div className="text-[10px] font-mono uppercase tracking-widest text-slate-500 dark:text-slate-400 mb-1">
+            Quantity
+          </div>
+          <input
+            type="number"
+            min={1}
+            value={quantity}
+            onChange={(e) => setQuantity(Number(e.target.value))}
+            className="w-full px-2 py-1.5 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
           />
         </label>
         <label className="block">

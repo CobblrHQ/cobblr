@@ -25,6 +25,7 @@ export default defineModule({
     "Schedule-triggered wires. Enable any wire to fire on an RRULE (every Monday 9am, the 1st of every month, etc.). Q4 from the wires-and-bundles spec.",
   icon: "calendar",
   band: "stock",
+  autoEnable: true, // ambient capability — on for every workspace
 
   intents: [],
   dependencies: [],

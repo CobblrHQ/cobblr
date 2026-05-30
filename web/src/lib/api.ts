@@ -773,13 +773,13 @@ export const api = {
       `/orgs/${slug}/modules/core-public-surfaces/surfaces/${id}/stats`,
     ),
 
-  // ─── core-farm (print-farm connections) ──────────────────────────
-  listFarmConnections: (slug: string) =>
-    request<{ items: FarmConnection[]; types: string[] }>(
+  // ─── digifab (print-farm connections) ──────────────────────────
+  listDigifabConnections: (slug: string) =>
+    request<{ items: DigifabConnection[]; types: string[] }>(
       "GET",
-      `/orgs/${slug}/modules/core-farm/connections`,
+      `/orgs/${slug}/modules/digifab/connections`,
     ),
-  createFarmConnection: (
+  createDigifabConnection: (
     slug: string,
     body: {
       type: string;
@@ -789,20 +789,69 @@ export const api = {
       username?: string;
       password?: string;
     },
-  ) => request<FarmConnection>("POST", `/orgs/${slug}/modules/core-farm/connections`, body),
-  testFarmConnection: (slug: string, id: string) =>
+  ) => request<DigifabConnection>("POST", `/orgs/${slug}/modules/digifab/connections`, body),
+  testDigifabConnection: (slug: string, id: string) =>
     request<{ ok: boolean; detail?: string; capabilities: { routing: boolean } }>(
       "POST",
-      `/orgs/${slug}/modules/core-farm/connections/${id}/test`,
+      `/orgs/${slug}/modules/digifab/connections/${id}/test`,
       {},
     ),
-  listFarmPrinters: (slug: string, id: string) =>
-    request<{ items: FarmPrinter[] }>(
+  listDigifabDevices: (slug: string, id: string) =>
+    request<{ items: DigifabDevice[] }>(
       "GET",
-      `/orgs/${slug}/modules/core-farm/connections/${id}/printers`,
+      `/orgs/${slug}/modules/digifab/connections/${id}/printers`,
     ),
-  deleteFarmConnection: (slug: string, id: string) =>
-    request<void>("DELETE", `/orgs/${slug}/modules/core-farm/connections/${id}`),
+  deleteDigifabConnection: (slug: string, id: string) =>
+    request<void>("DELETE", `/orgs/${slug}/modules/digifab/connections/${id}`),
+  listDigifabDrivers: (slug: string) =>
+    request<{ builtins: { key: string; name: string; kind: string }[]; installed: DigifabDriver[] }>(
+      "GET",
+      `/orgs/${slug}/modules/digifab/drivers`,
+    ),
+  installDigifabDriver: (slug: string, manifest: unknown) =>
+    request<DigifabDriver>("POST", `/orgs/${slug}/modules/digifab/drivers`, manifest as object),
+  deleteDigifabDriver: (slug: string, key: string) =>
+    request<void>("DELETE", `/orgs/${slug}/modules/digifab/drivers/${encodeURIComponent(key)}`),
+  listDigifabLinks: (slug: string) =>
+    request<{ items: DigifabLink[] }>("GET", `/orgs/${slug}/modules/digifab/links`),
+  createDigifabLink: (
+    slug: string,
+    body: {
+      connection_id: string;
+      remote_device_id: string;
+      remote_device_name?: string | null;
+      machine_id: string;
+      machine_label?: string | null;
+    },
+  ) => request<DigifabLink>("POST", `/orgs/${slug}/modules/digifab/links`, body),
+  deleteDigifabLink: (slug: string, id: string) =>
+    request<void>("DELETE", `/orgs/${slug}/modules/digifab/links/${id}`),
+  listDigifabJobs: (slug: string) =>
+    request<{ items: DigifabJob[] }>("GET", `/orgs/${slug}/modules/digifab/jobs`),
+  createDigifabJob: (
+    slug: string,
+    body: {
+      connection_id: string;
+      file_ref: string;
+      target_device?: string | null;
+      target_tag?: string | null;
+      file_id?: string | null;
+      linked_machine_id?: string | null;
+      linked_task_id?: string | null;
+    },
+  ) => request<DigifabJob>("POST", `/orgs/${slug}/modules/digifab/jobs`, body),
+  sendDigifabJob: (slug: string, id: string) =>
+    request<{ status: string; remote_job_id: string | null; placement: unknown; uploaded_bytes?: number }>(
+      "POST",
+      `/orgs/${slug}/modules/digifab/jobs/${id}/send`,
+      {},
+    ),
+  pollDigifabJob: (slug: string, id: string) =>
+    request<{ status: string; terminal: boolean }>(
+      "POST",
+      `/orgs/${slug}/modules/digifab/jobs/${id}/poll`,
+      {},
+    ),
 
   // ─── core-maintenance (workspace-wide service log) ────────────────
   listMaintenance: (
@@ -1129,10 +1178,11 @@ export const api = {
     slug: string,
     id: string,
     body: {
-      target_module: string;
-      target_kind: string;
+      target_module?: string;
+      target_kind?: string;
       name?: string;
       location_id?: string;
+      quantity?: number;
       extras?: Record<string, unknown>;
     },
   ) =>
@@ -2131,7 +2181,7 @@ export interface SurfaceRecord {
   public_url: string;
 }
 
-export interface FarmConnection {
+export interface DigifabConnection {
   id: string;
   type: string;
   label: string;
@@ -2144,12 +2194,51 @@ export interface FarmConnection {
   updated_at: string;
 }
 
-export interface FarmPrinter {
+export interface DigifabDevice {
   id: string;
   name: string;
   enabled: boolean;
   state?: string | null;
   tags?: string[];
+}
+
+export interface DigifabDriver {
+  id: string;
+  key: string;
+  name: string;
+  kind: string;
+  spec: Record<string, unknown>;
+  enabled: boolean;
+  created_at: string;
+}
+
+export interface DigifabLink {
+  id: string;
+  connection_id: string;
+  remote_device_id: string;
+  remote_device_name: string | null;
+  machine_id: string;
+  machine_label: string | null;
+  created_at: string;
+}
+
+export interface DigifabJob {
+  id: string;
+  connection_id: string;
+  file_ref: string;
+  target_device: string | null;
+  target_tag: string | null;
+  remote_file_id: string | null;
+  remote_job_id: string | null;
+  status: string;
+  progress: number | null;
+  error: string | null;
+  file_id: string | null;
+  linked_machine_id: string | null;
+  linked_task_id: string | null;
+  created_at: string;
+  updated_at: string;
+  last_polled_at: string | null;
 }
 
 export interface MaintenanceEntry {

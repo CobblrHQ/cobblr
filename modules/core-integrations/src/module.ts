@@ -24,6 +24,7 @@ export default defineModule({
     "Connect your workspace to Slack, Discord, email, and any service with a webhook. Fire on entity events, receive external pings.",
   icon: "plug",
   band: "stock",
+  autoEnable: true, // ambient capability — on for every workspace
 
   schema: {
     tablePrefix: "core_integrations_",

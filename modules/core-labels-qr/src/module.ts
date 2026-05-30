@@ -19,6 +19,7 @@ export default defineModule({
     "QR codes on printed labels. Scan with any camera to jump to an entity's detail page or fire an action.",
   icon: "qr-code",
   band: "stock",
+  autoEnable: true, // ambient capability — on for every workspace
 
   schema: {
     tablePrefix: "core_labels_qr_",

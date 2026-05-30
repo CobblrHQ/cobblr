@@ -22,6 +22,7 @@ export default defineModule({
     "Scan a barcode or take a photo of a thing; end up with a draft inventory row, pre-filled with the resolved name + brand + catalog photo. One tap to commit.",
   icon: "scan-line",
   band: "stock",
+  autoEnable: true, // ambient capability — on for every workspace
 
   // The scan/camera button earns a permanent icon slot in the navbar's
   // right cluster — it's the most-used action for camera-first intake
@@ -54,8 +55,37 @@ export default defineModule({
       "core-scan.scan.discarded",
     ],
     api: [],
-    actions: [],
+    actions: [
+      {
+        id: "core-scan:identify-photo",
+        label: "Identify a scanned photo",
+        description:
+          "Vision-identify a photo-only inbox row (no barcode) into a draft. Wire-fired on scan.received; no-ops for barcode/url scans.",
+        appliesTo: { any: true },
+        invokeHandler: "core-scan.identify-photo",
+        // Wire-only — the autonomous-sort binding fires it, not a button.
+        userInvokable: false,
+      },
+    ],
   },
 
-  subscribes: [],
+  // Informational — the reaction runs through the seeded wire below.
+  subscribes: ["core-scan.scan.received"],
+
+  // The autonomous photo-sort ships as a default WIRE, not a cron baked
+  // into the module: every scan.received fires identify-photo, which
+  // vision-identifies photo-only rows detached. Editable / disable-able
+  // on /bindings like any wire — Pillar-C consistency over hardcoded
+  // automation. source_kind "core-scan:item" → the engine reads the
+  // row id from payload.itemId; target defaults to "self".
+  contributes: {
+    wires: [
+      {
+        source_kind: "core-scan:item",
+        action_id: "core-scan:identify-photo",
+        trigger_type: "event",
+        trigger_event: "core-scan.scan.received",
+      },
+    ],
+  },
 });

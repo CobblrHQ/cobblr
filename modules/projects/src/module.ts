@@ -96,6 +96,7 @@ export default defineModule({
       "projects.project.updated",
       "projects.task.created",
       "projects.task.updated",
+      "projects.task.completed",
       "projects.task.unblocked",
     ],
     api: ["getProjectById", "getTaskById", "createTask", "completeTask"],
@@ -111,25 +112,43 @@ export default defineModule({
         // Clicking it manually on an arbitrary entity is meaningless.
         userInvokable: false,
       },
+      {
+        id: "projects:mark-task-done",
+        label: "Mark linked task done",
+        description:
+          "Set the task named by the event's linkedTaskId to done (e.g. when a linked print completes)",
+        appliesTo: { any: true },
+        invokeHandler: "projects.mark-task-done",
+        // Wire-only — fired by an upstream completion event, not a button.
+        userInvokable: false,
+      },
     ],
   },
 
   // Subscribes is informational — the actual reaction happens
-  // through a user-configurable wire (seeded at signup).
-  subscribes: ["inventory.stock.changed"],
+  // through user-configurable wires (seeded at signup / module enable).
+  subscribes: ["inventory.stock.changed", "digifab.print.completed"],
 
-  // The "auto-unblock a task when its part comes back in stock" flow
-  // is a wire, not hardcoded code. We ship it as a default so out-of-
-  // the-box behaviour matches the old hardcoded subscription; users
-  // can edit / disable / replace it. The wire belongs to projects
-  // because projects owns the action it fires.
+  // Reactions ship as wires, not hardcoded code, so users can edit /
+  // disable / replace them. The wires belong to projects because
+  // projects owns the actions they fire.
   contributes: {
     wires: [
+      // Auto-unblock a task when its part comes back in stock.
       {
         source_kind: "inventory:part",
         action_id: "projects:set-dep-satisfied",
         trigger_type: "event",
         trigger_event: "inventory.stock.changed",
+      },
+      // Auto-close a task when its linked print job completes. The
+      // job carries linkedTaskId on the event payload; the handler
+      // reads it directly (target defaults to "self" = the job).
+      {
+        source_kind: "digifab:job",
+        action_id: "projects:mark-task-done",
+        trigger_type: "event",
+        trigger_event: "digifab.print.completed",
       },
     ],
   },

@@ -21,6 +21,7 @@ import { platform } from "@cobblr/platform-contract";
 import { bearer, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { enrichBarcodeItem } from "../services/enrich.js";
+import { enrichPhotoItem } from "../services/enrich-photo.js";
 
 export const inboxRouter = Router({ mergeParams: true });
 
@@ -47,11 +48,10 @@ inboxRouter.post(
     if (!parsed.success) return badBody(res, parsed.error);
     const body = parsed.data;
 
-    // v0.1: require either a barcode or an image_file_id. The
-    // photo-only AI path lands when image_file_id is set but no
-    // barcode — today we stage that as pending+no-enrichment so
-    // the user fills it in manually. v0.2 wires the
-    // classify-image queue worker.
+    // Require either a barcode or an image_file_id. A barcode takes the
+    // fast path (catalog lookup → web-search fallback); a photo with no
+    // barcode takes the vision path (core-ai identify-image), fired
+    // detached below so intake stays instant.
     if (!body.barcode && !body.image_file_id) {
       res.status(400).json({
         error: {
@@ -97,6 +97,7 @@ inboxRouter.post(
         `${req.protocol}://${req.headers.host ?? "localhost"}`;
       const enrichTask = enrichBarcodeItem({
         db,
+        orgId: ctx.org.id,
         itemId: inserted.id,
         orgSlug: ctx.org.slug,
         bearer: token,
@@ -119,6 +120,10 @@ inboxRouter.post(
       await Promise.race([enrichTask, timed]);
       // Read back the (possibly-enriched) row to return current state.
     }
+    // Photo-only scans (no barcode) are identified by the autonomous
+    // photo-sort WIRE (core-scan.scan.received → core-scan:identify-photo,
+    // seeded on enable) — fired detached via the emit above, so intake
+    // stays instant and the user can edit / disable it on /bindings.
 
     const fresh = await db
       .selectFrom("core_scan_inbox_items")
@@ -187,11 +192,16 @@ inboxRouter.get(
 // ──────────────────────── POST /inbox/:id/confirm ──────────────────
 
 const ConfirmBody = z.object({
-  target_module: z.string().min(1).max(80),
-  target_kind: z.string().min(1).max(80),
+  /** Optional — when absent, routed from the identify's asset/part hint
+   *  (suggested_metadata.entity_type): asset → assets:asset, else
+   *  inventory:part. Both must be given together to override. */
+  target_module: z.string().min(1).max(80).optional(),
+  target_kind: z.string().min(1).max(80).optional(),
   /** Name override. Falls back to suggested_name if absent. */
   name: z.string().min(1).max(160).optional(),
   location_id: z.string().uuid().optional(),
+  /** Quantity override. Falls back to the inbox row's quantity. */
+  quantity: z.number().nonnegative().optional(),
   /** Module-specific extras forwarded verbatim to the create endpoint. */
   extras: z.record(z.unknown()).optional(),
 });
@@ -201,6 +211,27 @@ const KIND_CREATE_ENDPOINTS: Record<string, string> = {
   "machines:machine": "machines/machines",
   "assets:asset": "assets/assets",
 };
+
+// Each target kind names its quantity field differently — map the inbox
+// row's quantity onto the right one so a commit carries the count.
+const KIND_QTY_FIELD: Record<string, string> = {
+  "inventory:part": "qty",
+  "assets:asset": "quantity",
+  "machines:machine": "quantity",
+};
+
+/** Route a draft to its target kind: an explicit choice wins; otherwise
+ *  the identify's asset/part hint (asset → assets:asset, else the safe
+ *  inventory:part default). */
+function resolveTargetKind(
+  explicitModule: string | undefined,
+  explicitKind: string | undefined,
+  entityType: unknown,
+): { module: string; kind: string } {
+  if (explicitModule && explicitKind) return { module: explicitModule, kind: explicitKind };
+  if (entityType === "asset") return { module: "assets", kind: "asset" };
+  return { module: "inventory", kind: "part" };
+}
 
 inboxRouter.post(
   "/inbox/:id/confirm",
@@ -237,7 +268,15 @@ inboxRouter.post(
       return;
     }
 
-    const kindKey = `${parsed.data.target_module}:${parsed.data.target_kind}`;
+    const meta = (row.suggested_metadata as Record<string, unknown> | null) ?? {};
+    // Route to the right kind: explicit choice wins, else the identify's
+    // asset/part hint (asset → assets:asset, else inventory:part).
+    const target = resolveTargetKind(
+      parsed.data.target_module,
+      parsed.data.target_kind,
+      (meta as { entity_type?: unknown }).entity_type,
+    );
+    const kindKey = `${target.module}:${target.kind}`;
     const createPath = KIND_CREATE_ENDPOINTS[kindKey];
     if (!createPath) {
       res.status(400).json({
@@ -249,9 +288,10 @@ inboxRouter.post(
       return;
     }
 
-    // Build the create body. Defaults from the suggestion +
-    // extras win.
-    const meta = (row.suggested_metadata as Record<string, unknown> | null) ?? {};
+    // Build the create body. Defaults from the suggestion + extras win.
+    // The quantity rides on the kind's own field name (qty vs quantity).
+    const qty = parsed.data.quantity ?? Number(row.quantity ?? 1);
+    const qtyField = KIND_QTY_FIELD[kindKey];
     const body: Record<string, unknown> = {
       name: parsed.data.name ?? row.suggested_name ?? "Untitled",
       manufacturer: row.suggested_manufacturer ?? undefined,
@@ -263,6 +303,7 @@ inboxRouter.post(
         category: (meta as { category?: string }).category ?? undefined,
         scan_source: (meta as { source?: string }).source ?? undefined,
       },
+      ...(qtyField && qty ? { [qtyField]: qty } : {}),
       ...(parsed.data.location_id ? { location_id: parsed.data.location_id } : {}),
       ...(parsed.data.extras ?? {}),
     };
@@ -307,8 +348,8 @@ inboxRouter.post(
           },
           body: JSON.stringify({
             file_id: row.catalog_image_file_id,
-            source_module: parsed.data.target_module,
-            source_type: parsed.data.target_kind,
+            source_module: target.module,
+            source_type: target.kind,
             source_id: created.id,
             role: "gallery",
           }),
@@ -334,8 +375,8 @@ inboxRouter.post(
       .updateTable("core_scan_inbox_items")
       .set({
         status: "resolved",
-        target_module: parsed.data.target_module,
-        target_kind: parsed.data.target_kind,
+        target_module: target.module,
+        target_kind: target.kind,
         target_entity_id: created.id,
         resolved_at: new Date(),
         updated_at: new Date(),
@@ -347,8 +388,8 @@ inboxRouter.post(
     void platform().events.emit("core-scan.scan.confirmed", {
       orgId: ctx.org.id,
       itemId: id,
-      targetModule: parsed.data.target_module,
-      targetKind: parsed.data.target_kind,
+      targetModule: target.module,
+      targetKind: target.kind,
       entityId: created.id,
     });
 
@@ -415,13 +456,20 @@ inboxRouter.post(
       return;
     }
     if (!row.barcode_text) {
-      // Photo-only path — v0.2.
-      res.status(400).json({
-        error: {
-          code: "no_barcode",
-          message: "Photo-only rerun is v0.2. Today this only re-runs the barcode lookup.",
-        },
-      });
+      // Photo-only path → re-run the vision identify (awaited here so the
+      // response reflects the fresh result, unlike the detached POST).
+      if (!row.image_file_id) {
+        res.status(400).json({ error: { code: "no_input", message: "item has neither a barcode nor a photo" } });
+        return;
+      }
+      await enrichPhotoItem({ db, orgId: ctx.org.id, itemId: id, imageFileId: row.image_file_id });
+      void platform().events.emit("core-scan.scan.enriched", { orgId: ctx.org.id, itemId: id });
+      const freshPhoto = await db
+        .selectFrom("core_scan_inbox_items")
+        .selectAll()
+        .where("id", "=", id)
+        .executeTakeFirstOrThrow();
+      res.json(freshPhoto);
       return;
     }
 
@@ -440,6 +488,7 @@ inboxRouter.post(
       `${req.protocol}://${req.headers.host ?? "localhost"}`;
     await enrichBarcodeItem({
       db,
+      orgId: ctx.org.id,
       itemId: id,
       orgSlug: ctx.org.slug,
       bearer: token,

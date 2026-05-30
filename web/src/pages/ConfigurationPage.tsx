@@ -246,10 +246,10 @@ export function ConfigurationPage() {
     {
       group: "extend",
       icon: Printer,
-      label: "Print farm",
+      label: "Digital Fabrication",
       description:
-        "Connect a print farm — FDM Monster + — over its REST API. Test it, list its printers, and send jobs that track to completion. Routing-aware.",
-      to: "/configuration/farm",
+        "Send a design file to the software that runs your machine — FDM Monster, OctoPrint + — and track the job to completion. Map its printers to your machines and route files to them. Sends files; never drives hardware.",
+      to: "/configuration/digifab",
     },
     {
       group: "extend",

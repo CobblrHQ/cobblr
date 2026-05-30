@@ -25,6 +25,7 @@ export default defineModule({
     "Import reference datasets (parts catalogs, ingredient databases, etc.) and MATCH your own entities to entries inside them. v0.1 supports CSV upload; live-API pullers + auto-match deferred.",
   icon: "library",
   band: "stock",
+  autoEnable: true, // ambient capability — on for every workspace
 
   schema: {
     tablePrefix: "core_catalogs_",

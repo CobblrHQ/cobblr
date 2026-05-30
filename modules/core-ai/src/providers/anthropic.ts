@@ -1,6 +1,7 @@
 // anthropic — Claude provider. Messages API.
 
 import { platform, type AiCapability } from "@cobblr/platform-contract";
+import { IDENTIFY_PROMPT } from "./identify-prompt.js";
 
 const SUPPORTED: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>> = {
   chat: {
@@ -12,6 +13,10 @@ const SUPPORTED: Partial<Record<AiCapability, { models: string[]; defaultModel?:
     defaultModel: "claude-haiku-4-5",
   },
   "classify-image": {
+    models: ["claude-sonnet-4-5", "claude-haiku-4-5"],
+    defaultModel: "claude-haiku-4-5",
+  },
+  "identify-image": {
     models: ["claude-sonnet-4-5", "claude-haiku-4-5"],
     defaultModel: "claude-haiku-4-5",
   },
@@ -131,6 +136,16 @@ function buildMessages(
           `${prompt}\n\nAllowed labels: ${labels.join(", ")}\n` +
           `Reply with JSON shaped {"labels": [{"label": string, "confidence": number}]} ordered desc. JSON only.`,
       });
+      return { messages: [{ role: "user", content }] };
+    }
+    case "identify-image": {
+      const imageB64 = typeof input.image_b64 === "string" ? input.image_b64 : null;
+      const mediaType = String(input.image_media_type ?? "image/jpeg");
+      const content: ClaudeContentBlock[] = [];
+      if (imageB64) {
+        content.push({ type: "image", source: { type: "base64", media_type: mediaType, data: imageB64 } });
+      }
+      content.push({ type: "text", text: IDENTIFY_PROMPT });
       return { messages: [{ role: "user", content }] };
     }
     case "extract-text": {

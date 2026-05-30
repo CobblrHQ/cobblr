@@ -5,10 +5,10 @@
 
 import { platform } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
-import type { CoreFarmDB } from "./db.js";
+import type { DigifabDB } from "./db.js";
 import { pollJob } from "./jobs-core.js";
 
-export const POLL_QUEUE = "core-farm.poll";
+export const POLL_QUEUE = "digifab.poll";
 // Poll cadence. Real farms are happy at ~60s; tighter here so a mock job
 // (and the dev demo) reaches completed quickly.
 const INTERVAL_MS = 4000;
@@ -21,7 +21,7 @@ export function registerPollWorker(): void {
   platform().queue.registerWorker(POLL_QUEUE, async (job) => {
     const jobId = String((job.payload as { jobId?: unknown }).jobId ?? "");
     if (!jobId) return;
-    const db = (await platform().tenants.getDb(job.orgId)) as Kysely<CoreFarmDB>;
+    const db = (await platform().tenants.getDb(job.orgId)) as Kysely<DigifabDB>;
     const res = await pollJob(db, job.orgId, jobId);
     if (res && !res.terminal) {
       await platform().queue.enqueue({

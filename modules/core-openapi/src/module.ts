@@ -21,6 +21,7 @@ export default defineModule({
     "Auto-generated API description from the live module registry. Hand it to Swagger UI / Insomnia / any external integration.",
   icon: "file-text",
   band: "stock",
+  autoEnable: true, // ambient capability — on for every workspace
 
   api: () => import("./api/index.js"),
 

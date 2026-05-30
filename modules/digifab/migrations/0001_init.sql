@@ -1,4 +1,4 @@
--- core-farm — print-farm connections (FDM Monster +).
+-- digifab — print-farm connections (FDM Monster +).
 --
 -- A connection is a server-to-server link to a print farm's REST API.
 -- API credentials are AES-GCM encrypted with the per-org key in
@@ -7,7 +7,7 @@
 
 create extension if not exists "pgcrypto";
 
-create table core_farm_connections (
+create table digifab_connections (
   id                uuid primary key default gen_random_uuid(),
   type              text not null,                       -- "fdm_monster" | "mock" | …
   label             text not null,
@@ -22,4 +22,4 @@ create table core_farm_connections (
   updated_at        timestamptz not null default now()
 );
 
-create index core_farm_connections_type_idx on core_farm_connections(type);
+create index digifab_connections_type_idx on digifab_connections(type);

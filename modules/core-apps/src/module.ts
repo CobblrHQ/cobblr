@@ -28,6 +28,7 @@ export default defineModule({
     "Structured worker apps for the member portal — composed pages of views, actions, forms and stats, rendered by the App Player. Every block stays inside the capability + read-scope boundary.",
   icon: "layout-dashboard",
   band: "stock",
+  autoEnable: true, // ambient capability — on for every workspace
 
   schema: {
     tablePrefix: "core_apps_",

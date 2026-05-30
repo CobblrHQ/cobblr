@@ -13,6 +13,7 @@ import net from "node:net";
 import type { Kysely } from "kysely";
 import { sql } from "kysely";
 import { lookupBarcode, type BarcodeHit } from "./barcode-lookup.js";
+import { resolveBarcodeViaWebSearch } from "./barcode-websearch.js";
 import type { CoreScanDB } from "../db.js";
 
 // The catalog-image upload re-uses the caller's bearer token, so it MUST
@@ -47,6 +48,8 @@ function assertSafeOutboundUrl(raw: string): void {
 interface EnrichContext {
   /** Tenant DB for this workspace. */
   db: Kysely<CoreScanDB>;
+  /** Org UUID — for the metered core-ai web-search identify call. */
+  orgId: string;
   /** Inbox row id. */
   itemId: string;
   /** Org slug — used to build core-files URLs for the catalog
@@ -121,11 +124,44 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
   }
 
   if (!hit) {
+    // Catalog DBs have nothing — fall back to web search (what a person
+    // does: search the UPC, read the name off the agreeing results).
+    const web = await resolveBarcodeViaWebSearch(ctx.orgId, ctx.upc).catch(() => null);
+    if (web) {
+      await ctx.db
+        .updateTable("core_scan_inbox_items")
+        .set({
+          suggested_name: web.name,
+          suggested_manufacturer: web.brand,
+          suggested_sku: web.sku,
+          catalog_image_url: web.imageUrl,
+          suggested_metadata: sql`${JSON.stringify({
+            source: "web-search",
+            method: web.method,
+            category: web.category,
+            entity_type: web.entityType,
+          })}::jsonb` as never,
+          ai_confidence: String(web.confidence),
+          ai_notes: web.evidence,
+          ai_suggested_at: new Date(),
+          updated_at: new Date(),
+        })
+        .where("id", "=", ctx.itemId)
+        .execute();
+      // Promote the cached miss to a hit so re-scans skip the search.
+      await ctx.db
+        .updateTable("core_scan_barcode_cache")
+        .set({ found: true, source: "web-search", title: web.name, brand: web.brand, model: web.sku, category: web.category, image_url: web.imageUrl })
+        .where("upc", "=", ctx.upc)
+        .execute();
+      if (web.imageUrl) await downloadCatalogImage(ctx, web.imageUrl);
+      return;
+    }
     // Definitive miss — leave the inbox row barcode-only.
     await ctx.db
       .updateTable("core_scan_inbox_items")
       .set({
-        ai_notes: "No catalog hit for this barcode. Fill in manually.",
+        ai_notes: "No catalog hit for this barcode, and web search turned up nothing. Fill in manually.",
         ai_suggested_at: new Date(),
         updated_at: new Date(),
       })
@@ -160,48 +196,43 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
     .execute();
 
   // 3. Download the catalog image into core-files (best-effort).
-  // Network failures here aren't fatal — the URL is already on
-  // the row for the UI to fetch directly if needed.
-  if (hit.image_url) {
-    try {
-      // image_url is from an external lookup — guard against SSRF and
-      // bound the download (timeout + Content-Length).
-      assertSafeOutboundUrl(hit.image_url);
-      const dlRes = await fetch(hit.image_url, {
-        headers: { "user-agent": "cobblr-core-scan/0.1" },
-        signal: AbortSignal.timeout(8_000),
-      });
-      const len = Number(dlRes.headers.get("content-length") ?? 0);
-      if (dlRes.ok && len <= 10 * 1024 * 1024) {
-        const blob = await dlRes.blob();
-        const fd = new FormData();
-        // Try to keep the source filename for forensics.
-        const filename = hit.image_url.split("/").pop() ?? "catalog.jpg";
-        fd.append("file", blob, filename);
-        // INTERNAL_API, not ctx.baseUrl: this call carries the bearer
-        // token, so it must never target a caller-influenced URL.
-        const upRes = await fetch(
-          `${INTERNAL_API}/api/v1/orgs/${ctx.orgSlug}/modules/core-files/files`,
-          {
-            method: "POST",
-            headers: { Authorization: `Bearer ${ctx.bearer}` },
-            body: fd,
-          },
-        );
-        if (upRes.ok) {
-          const f = (await upRes.json()) as { id: string };
-          await ctx.db
-            .updateTable("core_scan_inbox_items")
-            .set({ catalog_image_file_id: f.id, updated_at: new Date() })
-            .where("id", "=", ctx.itemId)
-            .execute();
-        }
-      }
-    } catch (err) {
-      console.error(
-        "[core-scan] catalog image download failed:",
-        (err as Error).message,
+  if (hit.image_url) await downloadCatalogImage(ctx, hit.image_url);
+}
+
+/** Best-effort: pull an externally-sourced catalog/web-search image into
+ *  core-files and stamp catalog_image_file_id on the inbox row. Network
+ *  failures aren't fatal — the URL is already on the row for the UI to
+ *  fetch directly. SSRF-guarded + size/time-bounded; uses the caller's
+ *  bearer against our own API so the upload runs through normal auth. */
+async function downloadCatalogImage(ctx: EnrichContext, imageUrl: string): Promise<void> {
+  try {
+    assertSafeOutboundUrl(imageUrl);
+    const dlRes = await fetch(imageUrl, {
+      headers: { "user-agent": "cobblr-core-scan/0.1" },
+      signal: AbortSignal.timeout(8_000),
+    });
+    const len = Number(dlRes.headers.get("content-length") ?? 0);
+    if (dlRes.ok && len <= 10 * 1024 * 1024) {
+      const blob = await dlRes.blob();
+      const fd = new FormData();
+      const filename = imageUrl.split("/").pop() ?? "catalog.jpg";
+      fd.append("file", blob, filename);
+      // INTERNAL_API, not ctx.baseUrl: this call carries the bearer
+      // token, so it must never target a caller-influenced URL.
+      const upRes = await fetch(
+        `${INTERNAL_API}/api/v1/orgs/${ctx.orgSlug}/modules/core-files/files`,
+        { method: "POST", headers: { Authorization: `Bearer ${ctx.bearer}` }, body: fd },
       );
+      if (upRes.ok) {
+        const f = (await upRes.json()) as { id: string };
+        await ctx.db
+          .updateTable("core_scan_inbox_items")
+          .set({ catalog_image_file_id: f.id, updated_at: new Date() })
+          .where("id", "=", ctx.itemId)
+          .execute();
+      }
     }
+  } catch (err) {
+    console.error("[core-scan] catalog image download failed:", (err as Error).message);
   }
 }

@@ -1,11 +1,11 @@
-// FarmDriver — the common interface every print-farm backend implements.
+// MachineDriver — the common interface every print-farm backend implements.
 // Pure TypeScript (no platform deps) so it unit-tests in isolation. companion app's
-// FarmDriver shape, made routing-aware for FDM Monster's print-file
+// MachineDriver shape, made routing-aware for FDM Monster's print-file
 // routing (fdm-monster/fdm-monster#5303): submitJob is "place this file"
 // (resolve → queue, or explicit printer) rather than "submit to printer N".
 
-export interface RemotePrinter {
-  /** The id inside the farm system (stored locally as farm_printer_id). */
+export interface RemoteDevice {
+  /** The id inside the farm system (stored locally as remote_device_id). */
   id: string;
   name: string;
   enabled: boolean;
@@ -30,7 +30,7 @@ export interface JobStatus {
   state: JobState;
   /** 0..1 when known. */
   progress?: number | null;
-  printerId?: string | null;
+  deviceId?: string | null;
   /** The raw upstream payload, for debugging / fields we don't model. */
   raw?: unknown;
 }
@@ -42,7 +42,7 @@ export interface PlacementResolution {
   /** The matched printer or tag name, if any. */
   matchedName: string | null;
   /** The printer ids the target resolves to (1 for a printer, N for a tag). */
-  printerIds: string[];
+  deviceIds: string[];
 }
 
 export interface UploadResult {
@@ -54,14 +54,14 @@ export interface SubmitResult {
   /** The farm's job id, when a job was actually queued on a printer. */
   jobId: string | null;
   /** The printer it landed on (null when awaiting manual assignment). */
-  printerId: string | null;
+  deviceId: string | null;
   /** True when queued on exactly one printer; false when awaiting a pick. */
   queued: boolean;
   status: "queued" | "awaiting-assignment";
 }
 
 /** What the connected server can do — probed at testConnection. */
-export interface FarmCapabilities {
+export interface ManagerCapabilities {
   /** Has the print-file-routing API (resolve/queue) — the author's PR / newer FDMM. */
   routing: boolean;
 }
@@ -69,7 +69,7 @@ export interface FarmCapabilities {
 export interface ConnectionResult {
   ok: boolean;
   detail?: string;
-  capabilities: FarmCapabilities;
+  capabilities: ManagerCapabilities;
 }
 
 /** Args for placing a file. Exactly one of printer/tag is the target;
@@ -77,18 +77,18 @@ export interface ConnectionResult {
 export interface SubmitArgs {
   fileId: string;
   /** Explicit printer id → classic submit (the companion app path). */
-  printerId?: string | null;
+  deviceId?: string | null;
   /** A tag name → routed to the tag's printer set (may await assignment). */
   tag?: string | null;
 }
 
-export interface FarmDriver {
+export interface MachineDriver {
   /** Liveness + capability probe. Read-only. */
   testConnection(): Promise<ConnectionResult>;
   /** Pull the printer list (for the one-time machine↔printer mapping). Read-only. */
-  listPrinters(): Promise<RemotePrinter[]>;
+  listDevices(): Promise<RemoteDevice[]>;
   /** Enable/disable a printer (outbound state sync). */
-  setPrinterEnabled(printerId: string, enabled: boolean): Promise<void>;
+  setDeviceEnabled(deviceId: string, enabled: boolean): Promise<void>;
   /** Upload a sliced file; returns the farm's file id. */
   uploadFile(file: Uint8Array, filename: string): Promise<UploadResult>;
   /** Preview where an uploaded file would route (routing API). Read-only. */
@@ -102,11 +102,11 @@ export interface FarmDriver {
 /** Config a driver is constructed from (creds decrypted by the caller).
  *  FDM Monster v2 authenticates by login (username+password → JWT) or an
  *  x-api-key; supply whichever the connection stored. */
-export interface FarmConnectionConfig {
+export interface ManagerConfig {
   baseUrl: string;
   apiKey?: string | null;
   username?: string | null;
   password?: string | null;
 }
 
-export type FarmDriverFactory = (cfg: FarmConnectionConfig) => FarmDriver;
+export type MachineDriverFactory = (cfg: ManagerConfig) => MachineDriver;

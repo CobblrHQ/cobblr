@@ -20,6 +20,7 @@ export default defineModule({
     "Use AI on your workspace data — classify photos, extract text, summarise, match to catalogs. Configure OpenAI, Anthropic, Ollama, or any provider.",
   icon: "sparkles",
   band: "stock",
+  autoEnable: true, // ambient capability — on for every workspace
 
   schema: {
     tablePrefix: "core_ai_",

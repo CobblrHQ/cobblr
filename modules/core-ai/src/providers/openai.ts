@@ -3,11 +3,13 @@
 // static price table (rough, updated on doc-PR cadence).
 
 import { platform, type AiCapability } from "@cobblr/platform-contract";
+import { IDENTIFY_PROMPT } from "./identify-prompt.js";
 
 const SUPPORTED: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>> = {
   chat: { models: ["gpt-4o", "gpt-4o-mini", "o1-mini"], defaultModel: "gpt-4o-mini" },
   summarise: { models: ["gpt-4o", "gpt-4o-mini"], defaultModel: "gpt-4o-mini" },
   "classify-image": { models: ["gpt-4o", "gpt-4o-mini"], defaultModel: "gpt-4o-mini" },
+  "identify-image": { models: ["gpt-4o", "gpt-4o-mini"], defaultModel: "gpt-4o-mini" },
   "extract-text": { models: ["gpt-4o", "gpt-4o-mini"], defaultModel: "gpt-4o-mini" },
   "embed-text": {
     models: ["text-embedding-3-small", "text-embedding-3-large"],
@@ -72,6 +74,7 @@ export function register(): void {
         case "chat":
         case "summarise":
         case "classify-image":
+        case "identify-image":
         case "extract-text":
         case "match-to-catalog": {
           const messages = buildMessages(ctx.capability, ctx.input);
@@ -81,6 +84,7 @@ export function register(): void {
           };
           if (
             ctx.capability === "classify-image" ||
+            ctx.capability === "identify-image" ||
             ctx.capability === "match-to-catalog"
           ) {
             body.response_format = { type: "json_object" };
@@ -158,6 +162,17 @@ function buildMessages(
           type: "image_url",
           image_url: { url: `data:image/png;base64,${imageB64}` },
         });
+      }
+      return [{ role: "user", content }];
+    }
+    case "identify-image": {
+      const mediaType = String(input.image_media_type ?? "image/jpeg");
+      const imageUrl = typeof input.image_url === "string" ? input.image_url : null;
+      const imageB64 = typeof input.image_b64 === "string" ? input.image_b64 : null;
+      const content: Array<Record<string, unknown>> = [{ type: "text", text: IDENTIFY_PROMPT }];
+      if (imageUrl) content.push({ type: "image_url", image_url: { url: imageUrl } });
+      else if (imageB64) {
+        content.push({ type: "image_url", image_url: { url: `data:${mediaType};base64,${imageB64}` } });
       }
       return [{ role: "user", content }];
     }

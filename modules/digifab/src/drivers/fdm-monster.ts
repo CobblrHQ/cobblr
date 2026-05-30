@@ -3,19 +3,19 @@
 // /api/v2/printer/; routing (the author's PR) lives at /api/v2/routing/. Upload +
 // place a file, then poll /api/v2/print-jobs.
 //
-// Read-only calls (testConnection, listPrinters, resolvePlacement) are
+// Read-only calls (testConnection, listDevices, resolvePlacement) are
 // verified live. submitJob / getJobStatus are wired to the v2 routing +
 // print-jobs endpoints and confirmed when a real send is authorized
 // (the bits still worth re-checking with a real job are marked VERIFY).
 
 import type {
   ConnectionResult,
-  FarmConnectionConfig,
-  FarmDriver,
+  ManagerConfig,
+  MachineDriver,
   JobState,
   JobStatus,
   PlacementResolution,
-  RemotePrinter,
+  RemoteDevice,
   SubmitArgs,
   SubmitResult,
   UploadResult,
@@ -29,7 +29,7 @@ const EP = {
   printJob: (id: string) => `/api/v2/print-jobs/${id}`,
   routingResolve: (fileId: string) => `/api/v2/routing/resolve/${fileId}`,
   routingQueue: (fileId: string) => `/api/v2/routing/queue/${fileId}`,
-  queueFromFile: (printerId: string) => `/api/v2/print-queue/${printerId}/from-file`,
+  queueFromFile: (deviceId: string) => `/api/v2/print-queue/${deviceId}/from-file`,
   spec: "/api-docs/swagger.json",
 };
 
@@ -53,9 +53,9 @@ function toJobState(raw: unknown): JobState {
   return s ? "unknown" : "queued";
 }
 
-export class FdmMonsterDriver implements FarmDriver {
+export class FdmMonsterDriver implements MachineDriver {
   private base: string;
-  private cfg: FarmConnectionConfig;
+  private cfg: ManagerConfig;
   private token: string | null = null;
   private routing: boolean | null = null;
   // Discovered from the spec at probe time — the routing endpoints have
@@ -63,7 +63,7 @@ export class FdmMonsterDriver implements FarmDriver {
   private routingResolvePath: ((id: string) => string) | null = null;
   private routingQueuePath: ((id: string) => string) | null = null;
 
-  constructor(cfg: FarmConnectionConfig) {
+  constructor(cfg: ManagerConfig) {
     this.base = cfg.baseUrl.replace(/\/+$/, "");
     this.cfg = cfg;
   }
@@ -149,7 +149,7 @@ export class FdmMonsterDriver implements FarmDriver {
     return this.routing;
   }
 
-  async listPrinters(): Promise<RemotePrinter[]> {
+  async listDevices(): Promise<RemoteDevice[]> {
     const data = await this.json(EP.printers);
     const arr = Array.isArray(data) ? data : (pick<unknown[]>(data, "printers", "items") ?? []);
     return (arr as unknown[]).map((p) => ({
@@ -161,10 +161,10 @@ export class FdmMonsterDriver implements FarmDriver {
     }));
   }
 
-  async setPrinterEnabled(printerId: string, enabled: boolean): Promise<void> {
+  async setDeviceEnabled(deviceId: string, enabled: boolean): Promise<void> {
     // VERIFY against a real toggle. FDM Monster v2 also has a
     // /api/v2/batch/toggle-enabled; the per-printer PATCH is the simplest.
-    await this.json(EP.printer(printerId), {
+    await this.json(EP.printer(deviceId), {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ enabled }),
@@ -180,37 +180,37 @@ export class FdmMonsterDriver implements FarmDriver {
   }
 
   async resolvePlacement(fileId: string): Promise<PlacementResolution> {
-    if (!(await this.probeRouting()) || !this.routingResolvePath) return { kind: "none", matchedName: null, printerIds: [] };
+    if (!(await this.probeRouting()) || !this.routingResolvePath) return { kind: "none", matchedName: null, deviceIds: [] };
     const data = await this.json(this.routingResolvePath(fileId));
     return {
       kind: (pick<string>(data, "kind") ?? "none") as PlacementResolution["kind"],
       matchedName: (pick<string>(data, "matchedName") ?? null) as string | null,
-      printerIds: ((pick<unknown[]>(data, "printerIds") ?? []) as unknown[]).map(String),
+      deviceIds: ((pick<unknown[]>(data, "deviceIds") ?? []) as unknown[]).map(String),
     };
   }
 
   async submitJob(args: SubmitArgs): Promise<SubmitResult> {
     // Routed path (the author's PR): hand the file to FDM Monster routing.
-    if ((await this.probeRouting()) && this.routingQueuePath && !args.printerId) {
+    if ((await this.probeRouting()) && this.routingQueuePath && !args.deviceId) {
       const data = await this.json(this.routingQueuePath(args.fileId), { method: "POST" });
-      const printerId = pick<unknown>(data, "printerId");
-      const queued = Boolean(pick(data, "queued") ?? printerId != null);
+      const deviceId = pick<unknown>(data, "deviceId");
+      const queued = Boolean(pick(data, "queued") ?? deviceId != null);
       return {
         jobId: (pick<string>(data, "jobId", "id") ?? null) as string | null,
-        printerId: printerId != null ? String(printerId) : null,
+        deviceId: deviceId != null ? String(deviceId) : null,
         queued,
         status: queued ? "queued" : "awaiting-assignment",
       };
     }
     // Explicit printer → v2 print-queue from-file. VERIFY body + response.
-    const data = await this.json(EP.queueFromFile(String(args.printerId)), {
+    const data = await this.json(EP.queueFromFile(String(args.deviceId)), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ fileStorageId: args.fileId }),
     });
     return {
       jobId: String(pick(data, "id", "jobId", "_id") ?? ""),
-      printerId: args.printerId ?? null,
+      deviceId: args.deviceId ?? null,
       queued: true,
       status: "queued",
     };
@@ -223,10 +223,10 @@ export class FdmMonsterDriver implements FarmDriver {
       jobId,
       state: toJobState(data),
       progress: prog != null ? (prog > 1 ? prog / 100 : prog) : null,
-      printerId: (pick<string>(data, "printerId") ?? null) as string | null,
+      deviceId: (pick<string>(data, "deviceId") ?? null) as string | null,
       raw: data,
     };
   }
 }
 
-export const fdmMonsterFactory = (cfg: FarmConnectionConfig) => new FdmMonsterDriver(cfg);
+export const fdmMonsterFactory = (cfg: ManagerConfig) => new FdmMonsterDriver(cfg);

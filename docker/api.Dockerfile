@@ -40,7 +40,7 @@ COPY modules/core-maintenance/package.json ./modules/core-maintenance/
 COPY modules/core-templates/package.json ./modules/core-templates/
 COPY modules/core-scan/package.json ./modules/core-scan/
 COPY modules/core-apps/package.json ./modules/core-apps/
-COPY modules/core-farm/package.json ./modules/core-farm/
+COPY modules/digifab/package.json ./modules/digifab/
 COPY modules/bricklink-connector/package.json ./modules/bricklink-connector/
 # v0.3 sandbox SDK + AS sample module. Workspace-resolved so the
 # AS author repo (sandboxed-modules/hello-as) sees the SDK at build
@@ -104,7 +104,7 @@ RUN npm run --if-present build -w @cobblr/core-maintenance
 RUN npm run --if-present build -w @cobblr/core-templates
 RUN npm run --if-present build -w @cobblr/core-scan
 RUN npm run --if-present build -w @cobblr/core-apps
-RUN npm run --if-present build -w @cobblr/core-farm
+RUN npm run --if-present build -w @cobblr/digifab
 RUN npm run --if-present build -w @cobblr/bricklink-connector
 WORKDIR /app/api
 RUN npm run build

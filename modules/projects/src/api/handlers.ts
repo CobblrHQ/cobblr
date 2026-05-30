@@ -205,6 +205,32 @@ export function registerProjectsHandlers(): void {
       return { ok: true, flipped: updated.length };
     },
   );
+
+  // Mark a linked task done when an upstream event reports its work is
+  // finished. Default wire: digifab.print.completed (a print job that
+  // completes auto-closes the task it was linked to). The task id rides
+  // on the event payload as `linkedTaskId` — the wire's target entity is
+  // the *source* (the print job), which this handler ignores; it reads
+  // the payload directly. Loose-coupled: digifab never imports projects.
+  platform().actions.registerHandler("projects.mark-task-done", async (ctx) => {
+    const taskId = ctx.event?.payload?.linkedTaskId;
+    if (typeof taskId !== "string" || !taskId) {
+      return { ok: true, completed: 0, reason: "no linked task" };
+    }
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<ProjectsDB>;
+    // Idempotent — only flips a task that isn't already done, so a
+    // re-fired wire never re-stamps completed_at.
+    const updated = await db
+      .updateTable("projects_tasks")
+      .set({ status: "done", completed_at: new Date(), updated_at: new Date() })
+      .where("id", "=", taskId)
+      .where("status", "!=", "done")
+      .returning(["id"])
+      .executeTakeFirst();
+    if (!updated) return { ok: true, completed: 0, reason: "missing or already done" };
+    platform().events.emit("projects.task.completed", { orgId: ctx.orgId, taskId: updated.id });
+    return { ok: true, completed: 1, taskId: updated.id };
+  });
 }
 
 function toResolvedProject(row: {

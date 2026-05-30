@@ -1,33 +1,33 @@
 // Standalone driver test — no platform, no DB, no hardware.
-// Run: npx tsx modules/core-farm/src/drivers/test-drivers.ts
-import { MockFarmDriver } from "./mock.js";
+// Run: npx tsx modules/digifab/src/drivers/test-drivers.ts
+import { MockDriver } from "./mock.js";
 import { FdmMonsterDriver } from "./fdm-monster.js";
 
 const checks: { l: string; ok: boolean }[] = [];
 const note = (l: string, ok: boolean, d = "") => { checks.push({ l, ok }); console.log(`${ok ? "✓" : "✗"} ${l}${d ? ` — ${d}` : ""}`); };
 
-const d = new MockFarmDriver();
+const d = new MockDriver();
 
 // 1. connection + capabilities
 const conn = await d.testConnection();
 note("testConnection ok + routing capability", conn.ok && conn.capabilities.routing);
 
 // 2. list printers (for the machine↔printer mapping)
-const printers = await d.listPrinters();
-note("listPrinters returns the fleet", printers.length === 2 && printers.some((p) => p.name === "Voron 2.4"));
+const printers = await d.listDevices();
+note("listDevices returns the fleet", printers.length === 2 && printers.some((p) => p.name === "Voron 2.4"));
 
 // 3. upload + routing resolve (the approve-and-send preview)
 const upPrinter = await d.uploadFile(new Uint8Array([1, 2, 3]), "bracket@Voron 2.4.gcode");
 const rPrinter = await d.resolvePlacement(upPrinter.fileId);
-note("resolve a printer-targeted file → kind=printer, 1 printer", rPrinter.kind === "printer" && rPrinter.printerIds.length === 1 && rPrinter.matchedName === "Voron 2.4");
+note("resolve a printer-targeted file → kind=printer, 1 printer", rPrinter.kind === "printer" && rPrinter.deviceIds.length === 1 && rPrinter.matchedName === "Voron 2.4");
 
 const upTag = await d.uploadFile(new Uint8Array([1]), "batch#pla.gcode");
 const rTag = await d.resolvePlacement(upTag.fileId);
-note("resolve a tag-targeted file (2 printers) → kind=tag, ambiguous for auto-queue", rTag.kind === "tag" && rTag.printerIds.length === 2);
+note("resolve a tag-targeted file (2 printers) → kind=tag, ambiguous for auto-queue", rTag.kind === "tag" && rTag.deviceIds.length === 2);
 
 // 4. explicit-printer submit → queued, then poll to completion
 const up = await d.uploadFile(new Uint8Array([9]), "thing.gcode");
-const sub = await d.submitJob({ fileId: up.fileId, printerId: "p1" });
+const sub = await d.submitJob({ fileId: up.fileId, deviceId: "p1" });
 note("submitJob(explicit printer) → queued with a jobId", sub.queued && sub.status === "queued" && !!sub.jobId);
 
 const seen: string[] = [];
@@ -40,17 +40,17 @@ note("poll walks queued/printing → completed", st.state === "completed" && see
 const subTagMulti = await d.submitJob({ fileId: upTag.fileId, tag: "pla" });
 note("submitJob(tag, 2 printers) → awaiting-assignment (no auto-pick)", !subTagMulti.queued && subTagMulti.status === "awaiting-assignment");
 const subTagOne = await d.submitJob({ fileId: up.fileId, tag: "corexy" });
-note("submitJob(tag, 1 printer) → queued", subTagOne.queued && subTagOne.printerId === "p1");
+note("submitJob(tag, 1 printer) → queued", subTagOne.queued && subTagOne.deviceId === "p1");
 
 // 6. failure path
-const subF = await d.submitJob({ fileId: up.fileId, printerId: "p2" });
+const subF = await d.submitJob({ fileId: up.fileId, deviceId: "p2" });
 d.failJob(subF.jobId!);
 const sf = await d.getJobStatus(subF.jobId!);
 note("a failed job reports state=failed", sf.state === "failed");
 
 // 7. outbound enable/disable
-await d.setPrinterEnabled("p1", false);
-note("setPrinterEnabled toggles the printer", (await d.listPrinters()).find((p) => p.id === "p1")!.enabled === false);
+await d.setDeviceEnabled("p1", false);
+note("setDeviceEnabled toggles the printer", (await d.listDevices()).find((p) => p.id === "p1")!.enabled === false);
 
 // 8. FDM Monster driver constructs cleanly (live calls are the dev-instance test)
 const fdm = new FdmMonsterDriver({ baseUrl: "http://example.invalid/", apiKey: "k" });

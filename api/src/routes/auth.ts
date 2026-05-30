@@ -19,7 +19,7 @@ import { hashPassword, verifyPassword } from "../auth/password.js";
 import { signSession } from "../auth/jwt.js";
 import { publicSignupEnabled } from "../auth/signup-gate.js";
 import * as activity from "../platform/activity.js";
-import { enableFoundationalForOrg } from "../modules/enable.js";
+import { enableDefaultModulesForOrg } from "../modules/enable.js";
 import type { OrgRole } from "../db/schema.js";
 
 export const authRouter = Router();
@@ -165,17 +165,21 @@ export async function provisionOrgForUser(
 
   if (provisioned) {
     try {
-      // Blank slate: enable ONLY the always-on foundational substrate.
-      // Domain + marketplace modules stay off until the user opts in.
-      const enabled = await enableFoundationalForOrg(orgId, userId);
+      // New workspace gets the always-on substrate (foundational) plus
+      // the ambient capability modules (autoEnable) — views, search,
+      // scan, ai, apps, … — which carry no decision content and do
+      // nothing until used. Only DOMAIN modules (inventory, machines,
+      // digifab, …) stay off until the user opts in: choosing what you
+      // *manage* is the one decision worth surfacing.
+      const enabled = await enableDefaultModulesForOrg(orgId, userId);
       if (enabled.length > 0) {
-        console.log(`[org-provision] enabled foundational modules for ${orgId}: ${enabled.join(", ")}`);
+        console.log(`[org-provision] enabled default modules for ${orgId}: ${enabled.join(", ")}`);
       }
     } catch (err) {
-      console.error("[org-provision] foundational enable failed:", err);
+      console.error("[org-provision] default-module enable failed:", err);
     }
     // Default wires for the org get installed transitively when
-    // `enableFoundationalForOrg` enables each module — `enableModuleForOrg`
+    // `enableDefaultModulesForOrg` enables each module — `enableModuleForOrg`
     // iterates `manifest.contributes.wires` and inserts every entry.
     // The backfillDefaultBindings call at boot covers orgs created
     // before a given default wire was added to the manifest.

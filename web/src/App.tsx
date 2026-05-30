@@ -42,7 +42,7 @@ const MeProfilePage = lazy(() => import("./pages/MeProfilePage").then((m) => ({ 
 const ApiTokensPage = lazy(() => import("./pages/ApiTokensPage").then((m) => ({ default: m.ApiTokensPage })));
 const ActivityPage = lazy(() => import("./pages/ActivityPage").then((m) => ({ default: m.ActivityPage })));
 const SurfacesPage = lazy(() => import("./pages/SurfacesPage").then((m) => ({ default: m.SurfacesPage })));
-const PrintFarmPage = lazy(() => import("./pages/PrintFarmPage").then((m) => ({ default: m.PrintFarmPage })));
+const DigifabPage = lazy(() => import("./pages/DigifabPage").then((m) => ({ default: m.DigifabPage })));
 const MaintenancePage = lazy(() => import("./pages/MaintenancePage").then((m) => ({ default: m.MaintenancePage })));
 const QrTokensPage = lazy(() => import("./pages/QrTokensPage").then((m) => ({ default: m.QrTokensPage })));
 const HealthPage = lazy(() => import("./pages/HealthPage").then((m) => ({ default: m.HealthPage })));
@@ -211,7 +211,7 @@ function ActiveOrgScopedRoutes() {
           <Route path="/fields" element={<FieldsPage />} />
           <Route path="/configuration/tokens" element={<ApiTokensPage />} />
           <Route path="/configuration/surfaces" element={<SurfacesPage />} />
-          <Route path="/configuration/farm" element={<PrintFarmPage />} />
+          <Route path="/configuration/digifab" element={<DigifabPage />} />
           <Route path="/configuration/maintenance" element={<MaintenancePage />} />
           <Route path="/configuration/qr-tokens" element={<QrTokensPage />} />
           <Route path="/configuration/health" element={<HealthPage />} />

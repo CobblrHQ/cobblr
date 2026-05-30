@@ -310,20 +310,24 @@ export async function syncTenantMigrations(): Promise<number> {
  *  tabs it never asked for. The platform's whole premise is that the
  *  user builds their own app; we don't pre-pick it for them.
  *
- *  Foundational modules (`band: "foundational"`) are the one exception:
- *  they're the substrate the kernel, the dashboard, and other modules
- *  assume exists (activity-log, files, tags, locations, notifications,
- *  queue, healthcheck, maintenance). Nobody thinks to "enable the
- *  activity log" — it's plumbing, always on. Sorted so any foundational
- *  that depends on another foundational runs after it.
+ *  Two classes are the exception and get enabled automatically:
+ *  - Foundational modules (`band: "foundational"`): the substrate the
+ *    kernel + dashboard assume exists (activity-log, files, tags,
+ *    locations, notifications, queue, healthcheck, maintenance).
+ *  - Capability modules (`autoEnable: true`): ambient plumbing with no
+ *    decision content + no side-effects until used (views, search, scan,
+ *    ai, recurrence, apps, public-surfaces, …). Asking "enable views?" is
+ *    overhead; they just work. Domains (inventory, machines, digifab, …)
+ *    stay opt-in — choosing what you *manage* is the one decision worth
+ *    surfacing. Sorted so any module that depends on another runs after it.
  */
-export async function enableFoundationalForOrg(
+export async function enableDefaultModulesForOrg(
   orgId: string,
   userId?: string,
 ): Promise<string[]> {
   const enabled: string[] = [];
   const foundationals = listEntries().filter(
-    (e) => e.manifest.band === "foundational",
+    (e) => e.manifest.band === "foundational" || e.manifest.autoEnable === true,
   );
 
   // Sort foundationals so any with deps run AFTER their deps. (Today

@@ -1,10 +1,16 @@
 // Entity-kind resolver for core-files:file. Lets other modules
 // look up a file via platform.entities.lookup() — typically to
 // render a thumbnail or pull the medium-variant URL into a card.
+//
+// Also registers the platform files-byte reader: the server-side
+// seam (platform().files.read) other modules use to pull a stored
+// file's raw bytes — print farm uploading gcode, vision reading a
+// scan photo — without importing core-files or its disk layout.
 
 import type { Kysely } from "kysely";
 import { platform, type ResolvedEntity } from "@cobblr/platform-contract";
 import type { CoreFilesDB, FileVariants } from "../db.js";
+import { readVariantBytes } from "./storage.js";
 
 let registered = false;
 
@@ -26,6 +32,27 @@ export function registerFileResolvers(): void {
       return toResolvedFile(orgId, row);
     },
   );
+
+  // The byte-reading seam. core-files owns the disk layout, so it's
+  // the natural place to satisfy platform().files.read().
+  platform().files.registerReader(async (orgId, fileId, variant) => {
+    const db = (await platform().tenants.getDb(orgId)) as Kysely<CoreFilesDB>;
+    const row = await db
+      .selectFrom("core_files_files")
+      .select(["filename", "mime_type", "variants"])
+      .where("id", "=", fileId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (!row) return null;
+    const buf = await readVariantBytes(orgId, fileId, row.variants as FileVariants, variant);
+    if (!buf) return null;
+    return {
+      bytes: new Uint8Array(buf),
+      filename: row.filename,
+      // Derived variants are always JPEG; the original keeps its mime.
+      mimeType: variant === "original" ? row.mime_type : "image/jpeg",
+    };
+  });
 }
 
 function toResolvedFile(
