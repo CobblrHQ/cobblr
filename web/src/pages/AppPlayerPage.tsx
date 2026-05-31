@@ -12,10 +12,12 @@
 // than breaking the page.
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Plus, ScanLine } from "lucide-react";
+import { ArrowLeft, Plus, ScanLine, LogOut, LayoutDashboard } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import { useAuth } from "../auth/AuthContext";
 import {
   EntityActionsBar,
   EntityThumb,
@@ -23,7 +25,78 @@ import {
   useToast,
 } from "@cobblr/platform-web";
 import { NewPartDialog, InventoryProvider } from "@cobblr/inventory/ui";
-import { api, getToken, type AppBlock } from "../lib/api";
+import { api, getToken, type AppBlock, type AppTheme } from "../lib/api";
+
+// ── Per-app theme → CSS variables ────────────────────────────────
+// The whole point of an App is that it can look like the builder's
+// thing, not Cobblr. An unthemed app returns `undefined` here and
+// renders byte-identical to before (dark mode etc. intact). When a
+// theme is set, the wrapper publishes `--app-*` vars and every block
+// reads them via the small *Style helpers below (inline styles win over
+// the Tailwind defaults, so no per-block class surgery / no !important).
+const FONT_STACKS: Record<NonNullable<AppTheme["font"]>, string> = {
+  sans: "ui-sans-serif, system-ui, -apple-system, sans-serif",
+  serif: "ui-serif, Georgia, 'Times New Roman', serif",
+  mono: "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace",
+  rounded: "'SF Pro Rounded', 'Nunito', 'Segoe UI', system-ui, sans-serif",
+  slab: "'Rockwell', 'Roboto Slab', Georgia, serif",
+};
+const CUSTOM_FONT_FAMILY = "cobblr-app-font";
+// A custom (uploaded/hosted) font wins over the keyword stack. Guard the
+// URL so it can't break out of the CSS `url("…")` string (data: URLs are
+// base64; normal URLs don't contain quotes/newlines).
+function customFontUrl(t?: AppTheme | null): string | null {
+  if (!t?.font_url || /["\\\n\r]/.test(t.font_url)) return null;
+  return t.font_url;
+}
+function fontFaceCss(t?: AppTheme | null): string | null {
+  const url = customFontUrl(t);
+  return url
+    ? `@font-face{font-family:'${CUSTOM_FONT_FAMILY}';src:url("${url}");font-display:swap}`
+    : null;
+}
+function themeWrapperStyle(t?: AppTheme | null): React.CSSProperties | undefined {
+  if (!t) return undefined;
+  const vars = {
+    "--app-bg": t.bg ?? "#f4f2ee",
+    "--app-surface": t.surface ?? "#ffffff",
+    "--app-text": t.text ?? "#334155",
+    "--app-muted": t.muted ?? "#8a94a6",
+    "--app-accent": t.accent ?? "#3b82f6",
+    "--app-accent-text": t.accent_text ?? "#ffffff",
+    "--app-border": t.border ?? "#e2e8f0",
+    "--app-radius": `${t.radius ?? 12}px`,
+  } as React.CSSProperties;
+  const fontFamily = customFontUrl(t)
+    ? `'${CUSTOM_FONT_FAMILY}', ui-sans-serif, system-ui, sans-serif`
+    : t.font
+      ? FONT_STACKS[t.font]
+      : undefined;
+  return { ...vars, background: "var(--app-bg)", color: "var(--app-text)", fontFamily };
+}
+const cardStyle = (t?: AppTheme | null): React.CSSProperties | undefined =>
+  t ? { background: "var(--app-surface)", borderColor: "var(--app-border)", borderRadius: "var(--app-radius)", color: "var(--app-text)" } : undefined;
+const accentStyle = (t?: AppTheme | null): React.CSSProperties | undefined =>
+  t ? { color: "var(--app-accent)" } : undefined;
+const mutedStyle = (t?: AppTheme | null): React.CSSProperties | undefined =>
+  t ? { color: "var(--app-muted)" } : undefined;
+const textStyle = (t?: AppTheme | null): React.CSSProperties | undefined =>
+  t ? { color: "var(--app-text)" } : undefined;
+// Tailwind `prose` colours its children via its own --tw-prose-* vars, so
+// a plain `color` won't reach the markdown heading/body. Override the prose
+// vars too, so themed markdown renders in the app's text colour.
+const proseStyle = (t?: AppTheme | null): React.CSSProperties | undefined =>
+  t
+    ? ({
+        color: "var(--app-text)",
+        "--tw-prose-body": "var(--app-text)",
+        "--tw-prose-headings": "var(--app-text)",
+        "--tw-prose-bold": "var(--app-text)",
+        "--tw-prose-links": "var(--app-accent)",
+      } as React.CSSProperties)
+    : undefined;
+const btnStyle = (t?: AppTheme | null): React.CSSProperties | undefined =>
+  t ? { background: "var(--app-accent)", color: "var(--app-accent-text)", borderColor: "transparent", borderRadius: "var(--app-radius)" } : undefined;
 
 interface Caps {
   role: string;
@@ -46,6 +119,7 @@ const CREATE_CAPABILITY_BY_KIND: Record<string, string> = {
 export function AppPlayerPage() {
   const { slug, appSlug } = useParams<{ slug: string; appSlug: string }>();
   const [pageIdx, setPageIdx] = useState(0);
+  const { user, logout } = useAuth();
 
   const app = useQuery({
     queryKey: ["app", slug, appSlug],
@@ -80,7 +154,94 @@ export function AppPlayerPage() {
 
   const pages = app.data.pages ?? [];
   const page = pages[pageIdx] ?? pages[0];
+  const theme = app.data.theme ?? null;
 
+  // Page-tabs (only when >1 page) + the block stack — shared between the
+  // in-portal (unthemed) and full-bleed (themed) shells.
+  const tabsEl = pages.length > 1 && (
+    <div className="flex flex-wrap gap-1 mt-2">
+      {pages.map((p, i) => (
+        <button
+          key={p.slug}
+          type="button"
+          onClick={() => setPageIdx(i)}
+          className={
+            "px-3 py-1 rounded-md text-sm transition " +
+            (i === pageIdx
+              ? "bg-cobble-600 text-white"
+              : "text-slate-500 dark:text-slate-400 hover:bg-mortar-50 dark:hover:bg-slate-800")
+          }
+          style={i === pageIdx ? btnStyle(theme) : mutedStyle(theme)}
+        >
+          {p.title}
+        </button>
+      ))}
+    </div>
+  );
+  const blocksEl =
+    !page || page.blocks.length === 0 ? (
+      <div className="text-xs text-slate-400 italic py-8 text-center" style={mutedStyle(theme)}>
+        This page has no blocks yet.
+      </div>
+    ) : (
+      <div className="space-y-5">
+        {page.blocks.map((block, i) => (
+          <BlockRenderer key={i} slug={slug} appSlug={appSlug} block={block} caps={caps.data} theme={theme} />
+        ))}
+      </div>
+    );
+
+  // ── Themed → full-bleed standalone app ──
+  // A theme means "this should look like the builder's app, not Cobblr."
+  // So it OWNS the viewport: a fixed, theme-coloured surface portaled to
+  // <body> (escaping the portal shell's backdrop-blur trap) covers the
+  // Cobblr header + background entirely. The themed top bar carries the
+  // app's own logo/name AND the identity controls the Cobblr header would
+  // have had — who you are, Log out (everyone), and a Dashboard hop for
+  // dual-access (owner/admin) users. App-only users just get Exit + Log
+  // out; the standalone look never strands anyone without a way out.
+  if (theme) {
+    const isAdmin = caps.data?.role === "owner" || caps.data?.role === "admin";
+    const ff = fontFaceCss(theme);
+    return createPortal(
+      <div className="fixed inset-0 z-50 overflow-y-auto" style={themeWrapperStyle(theme)}>
+        {ff && <style>{ff}</style>}
+        <div className="min-h-full max-w-3xl mx-auto px-5 py-7 sm:py-9 space-y-6">
+          <div className="flex items-start justify-between gap-4 border-b pb-3" style={{ borderColor: "var(--app-border)" }}>
+            <div className="min-w-0 flex items-center gap-3">
+              {theme.logo && (
+                <img src={theme.logo} alt="" className="w-9 h-9 rounded object-contain shrink-0" />
+              )}
+              <div className="min-w-0">
+                <h1 className="text-2xl font-bold truncate leading-tight" style={textStyle(theme)}>
+                  {app.data.name}
+                </h1>
+                {tabsEl}
+              </div>
+            </div>
+            <div className="flex items-center gap-3 shrink-0 text-xs" style={mutedStyle(theme)}>
+              {user?.display_name && <span className="hidden sm:inline">{user.display_name}</span>}
+              {isAdmin && (
+                <Link to="/" className="inline-flex items-center gap-1 hover:opacity-80 transition" title="Switch to the admin dashboard">
+                  <LayoutDashboard size={13} /> <span className="hidden sm:inline">Dashboard</span>
+                </Link>
+              )}
+              <Link to={`/portal/${slug}`} className="inline-flex items-center gap-1 hover:opacity-80 transition" title="Back to the portal">
+                <ArrowLeft size={13} /> Exit
+              </Link>
+              <button type="button" onClick={logout} className="inline-flex items-center gap-1 hover:opacity-80 transition" title="Log out">
+                <LogOut size={13} /> <span className="hidden sm:inline">Log out</span>
+              </button>
+            </div>
+          </div>
+          {blocksEl}
+        </div>
+      </div>,
+      document.body,
+    );
+  }
+
+  // ── Unthemed → renders inside the Cobblr portal shell, as before ──
   return (
     <div className="space-y-5">
       <Link
@@ -94,44 +255,10 @@ export function AppPlayerPage() {
         <h1 className="text-xl font-semibold text-slate-700 dark:text-mortar-100">
           {app.data.name}
         </h1>
-        {pages.length > 1 && (
-          <div className="flex flex-wrap gap-1 mt-2">
-            {pages.map((p, i) => (
-              <button
-                key={p.slug}
-                type="button"
-                onClick={() => setPageIdx(i)}
-                className={
-                  "px-3 py-1 rounded-md text-sm transition " +
-                  (i === pageIdx
-                    ? "bg-cobble-600 text-white"
-                    : "text-slate-500 dark:text-slate-400 hover:bg-mortar-50 dark:hover:bg-slate-800")
-                }
-              >
-                {p.title}
-              </button>
-            ))}
-          </div>
-        )}
+        {tabsEl}
       </div>
 
-      {!page || page.blocks.length === 0 ? (
-        <div className="text-xs text-slate-400 italic py-8 text-center">
-          This page has no blocks yet.
-        </div>
-      ) : (
-        <div className="space-y-5">
-          {page.blocks.map((block, i) => (
-            <BlockRenderer
-              key={i}
-              slug={slug}
-              appSlug={appSlug}
-              block={block}
-              caps={caps.data}
-            />
-          ))}
-        </div>
-      )}
+      {blocksEl}
     </div>
   );
 }
@@ -141,11 +268,13 @@ function BlockRenderer({
   appSlug,
   block,
   caps,
+  theme,
 }: {
   slug: string;
   appSlug: string;
   block: AppBlock;
   caps?: Caps;
+  theme?: AppTheme | null;
 }) {
   switch (block.type) {
     case "view":
@@ -155,6 +284,7 @@ function BlockRenderer({
           appSlug={appSlug}
           viewId={block.view_id}
           title={block.title}
+          theme={theme}
         />
       );
     case "stat":
@@ -165,18 +295,25 @@ function BlockRenderer({
           agg={block.agg}
           field={block.field}
           label={block.label}
+          theme={theme}
         />
       );
     case "markdown":
       return (
-        <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5">
-          <div className="prose prose-sm dark:prose-invert max-w-none text-slate-700 dark:text-mortar-100">
+        <div
+          className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5"
+          style={cardStyle(theme)}
+        >
+          <div
+            className="prose prose-sm dark:prose-invert max-w-none text-slate-700 dark:text-mortar-100"
+            style={proseStyle(theme)}
+          >
             <ReactMarkdown>{block.body}</ReactMarkdown>
           </div>
         </div>
       );
     case "form":
-      return <FormBlock slug={slug} kind={block.kind} mode={block.mode} caps={caps} />;
+      return <FormBlock slug={slug} kind={block.kind} mode={block.mode} caps={caps} theme={theme} />;
     case "action":
       return (
         <ActionBlock
@@ -185,14 +322,15 @@ function BlockRenderer({
           label={block.label}
           kind={block.kind}
           caps={caps}
+          theme={theme}
         />
       );
     case "record":
       return <RecordView slug={slug} appSlug={appSlug} kind={block.kind} id={block.id_from} />;
     case "scan":
-      return <ScanBlock slug={slug} />;
+      return <ScanBlock slug={slug} theme={theme} />;
     case "custom":
-      return <CustomBlock slug={slug} appSlug={appSlug} html={block.html} height={block.height} />;
+      return <CustomBlock slug={slug} appSlug={appSlug} html={block.html} height={block.height} theme={theme} />;
     default:
       return null;
   }
@@ -203,11 +341,13 @@ function ViewBlock({
   appSlug,
   viewId,
   title,
+  theme,
 }: {
   slug: string;
   appSlug: string;
   viewId: string;
   title?: string;
+  theme?: AppTheme | null;
 }) {
   const data = useQuery({
     queryKey: ["app-view-data", slug, viewId],
@@ -217,7 +357,7 @@ function ViewBlock({
   return (
     <div className="space-y-2">
       {title && (
-        <h2 className="text-sm font-medium text-slate-600 dark:text-mortar-200">{title}</h2>
+        <h2 className="text-sm font-medium text-slate-600 dark:text-mortar-200" style={textStyle(theme)}>{title}</h2>
       )}
       {data.isLoading && <div className="text-xs text-slate-400 italic">Loading…</div>}
       {data.data && data.data.items.length === 0 && (
@@ -230,14 +370,15 @@ function ViewBlock({
               key={`${item.kind}:${item.id}`}
               to={`/portal/${slug}/app/${appSlug}/r/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.id)}`}
               className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 flex items-center gap-3 hover:border-cobble-400 dark:hover:border-cobble-600 transition"
+              style={cardStyle(theme)}
             >
               <EntityThumb src={item.image_path ?? null} alt={item.title} size={48} />
               <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium text-slate-700 dark:text-mortar-100 truncate">
+                <div className="text-sm font-medium text-slate-700 dark:text-mortar-100 truncate" style={textStyle(theme)}>
                   {item.title}
                 </div>
                 {item.subtitle && (
-                  <div className="text-[10px] font-mono uppercase tracking-widest text-slate-400 truncate">
+                  <div className="text-[10px] font-mono uppercase tracking-widest text-slate-400 truncate" style={mutedStyle(theme)}>
                     {item.subtitle}
                   </div>
                 )}
@@ -256,12 +397,14 @@ function StatBlock({
   agg,
   field,
   label,
+  theme,
 }: {
   slug: string;
   viewId: string;
   agg: "count" | "sum";
   field?: string;
   label?: string;
+  theme?: AppTheme | null;
 }) {
   const data = useQuery({
     queryKey: ["app-stat-data", slug, viewId, agg, field],
@@ -282,11 +425,11 @@ function StatBlock({
       }, 0);
   }
   return (
-    <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 inline-flex flex-col min-w-[8rem]">
-      <span className="text-2xl font-bold text-slate-700 dark:text-mortar-100 tabular-nums">
+    <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 inline-flex flex-col min-w-[8rem]" style={cardStyle(theme)}>
+      <span className="text-2xl font-bold text-slate-700 dark:text-mortar-100 tabular-nums" style={accentStyle(theme)}>
         {value === null ? "…" : value.toLocaleString()}
       </span>
-      <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400 mt-0.5">
+      <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400 mt-0.5" style={mutedStyle(theme)}>
         {label ?? (agg === "count" ? "count" : `sum ${field ?? ""}`)}
       </span>
     </div>
@@ -303,11 +446,13 @@ function FormBlock({
   kind,
   mode,
   caps,
+  theme,
 }: {
   slug: string;
   kind: string;
   mode: "create" | "edit";
   caps?: Caps;
+  theme?: AppTheme | null;
 }) {
   const [open, setOpen] = useState(false);
   const qc = useQueryClient();
@@ -320,6 +465,7 @@ function FormBlock({
         type="button"
         onClick={() => setOpen(true)}
         className="inline-flex items-center gap-1.5 rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-1.5 transition"
+        style={btnStyle(theme)}
       >
         <Plus size={14} /> New {label}
       </button>
@@ -349,12 +495,14 @@ function ActionBlock({
   label,
   kind,
   caps,
+  theme,
 }: {
   slug: string;
   actionId: string;
   label?: string;
   kind?: string;
   caps?: Caps;
+  theme?: AppTheme | null;
 }) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
@@ -375,6 +523,7 @@ function ActionBlock({
         }
       }}
       className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-mortar-100 hover:bg-mortar-50 dark:hover:bg-slate-800 text-sm font-medium px-3 py-1.5 transition disabled:opacity-50"
+      style={theme ? { borderColor: "var(--app-border)", color: "var(--app-text)", borderRadius: "var(--app-radius)" } : undefined}
     >
       {label ?? actionId}
     </button>
@@ -382,12 +531,13 @@ function ActionBlock({
 }
 
 /** Scan entry point — links to the workspace scanner. */
-function ScanBlock({ slug }: { slug: string }) {
+function ScanBlock({ slug, theme }: { slug: string; theme?: AppTheme | null }) {
   void slug;
   return (
     <Link
       to="/scan"
       className="inline-flex items-center gap-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-3 py-1.5 transition"
+      style={btnStyle(theme)}
     >
       <ScanLine size={16} /> Scan an item
     </Link>
@@ -477,10 +627,35 @@ function RecordView({
   );
 }
 
-// Tiny SDK injected into every custom bundle: `cobblr.get(path)` does a
-// postMessage round-trip to the App Player (the parent), which mediates
-// the read. The bundle never holds a token nor touches the API directly.
-const SDK_SCRIPT = `<script>(function(){var pending={},seq=0;window.addEventListener("message",function(e){var m=e.data;if(!m||m.type!=="cobblr:result")return;var p=pending[m.id];if(!p)return;delete pending[m.id];m.ok?p.resolve(m.data):p.reject(new Error(m.error||"request failed"));});window.cobblr={get:function(path){return new Promise(function(res,rej){var id=++seq;pending[id]={resolve:res,reject:rej};parent.postMessage({type:"cobblr:fetch",id:id,path:path},"*");});},invoke:function(actionId,opts){opts=opts||{};return new Promise(function(res,rej){var id=++seq;pending[id]={resolve:res,reject:rej};parent.postMessage({type:"cobblr:invoke",id:id,actionId:actionId,entityKind:opts.entityKind||"",entityId:opts.entityId||"",args:opts.args||null},"*");});}};})();</script>`;
+// The SDK injected into every Tier-B custom bundle. Every call is a
+// postMessage round-trip the App Player mediates with the capability-
+// scoped token — the bundle never holds a token nor touches the API
+// directly, and the Player + server clamp restrict it to H2-scoped reads
+// and capability-gated actions. Surface:
+//   cobblr.get(path)                 — raw allowlisted GET
+//   cobblr.viewData(viewId,{limit})  — a saved view's rows (H2-scoped) → []
+//   cobblr.entity(kind,id)           — one entity (H2-scoped)
+//   cobblr.me()                      — { role, grants } for the viewer
+//   cobblr.can(actionId)             — bool: may the viewer run this action
+//   cobblr.invoke(id,{entityKind,entityId,args}) / cobblr.action(…) — a write
+//   cobblr.mount(el, loader, render) — loading/error boilerplate, done once
+const SDK_SCRIPT = `<script>(function(){
+var pending={},seq=0;
+window.addEventListener("message",function(e){var m=e.data;if(!m||m.type!=="cobblr:result")return;var p=pending[m.id];if(!p)return;delete pending[m.id];m.ok?p.resolve(m.data):p.reject(new Error(m.error||"request failed"));});
+function fetchPath(path){return new Promise(function(res,rej){var id=++seq;pending[id]={resolve:res,reject:rej};parent.postMessage({type:"cobblr:fetch",id:id,path:path},"*");});}
+function invoke(actionId,opts){opts=opts||{};return new Promise(function(res,rej){var id=++seq;pending[id]={resolve:res,reject:rej};parent.postMessage({type:"cobblr:invoke",id:id,actionId:actionId,entityKind:opts.entityKind||"",entityId:opts.entityId||"",args:opts.args||null},"*");});}
+function qs(o){if(!o)return"";var s=[];for(var k in o){if(o[k]!=null)s.push(encodeURIComponent(k)+"="+encodeURIComponent(o[k]));}return s.length?"?"+s.join("&"):"";}
+window.cobblr={
+get:fetchPath,
+viewData:function(viewId,opts){return fetchPath("/modules/core-views/views/"+encodeURIComponent(viewId)+"/data"+qs(opts)).then(function(r){return (r&&r.items)||[];});},
+entity:function(kind,id){return fetchPath("/entities/"+encodeURIComponent(kind)+"/"+encodeURIComponent(id));},
+me:function(){return fetchPath("/me/capabilities");},
+can:function(actionId){return window.cobblr.me().then(function(c){return !!c&&(c.role==="owner"||c.role==="admin"||((c.grants||[]).indexOf(actionId)>=0));});},
+invoke:invoke,
+action:invoke,
+mount:function(target,loader,render){var el=typeof target==="string"?document.querySelector(target):target;if(!el)return Promise.resolve();el.textContent="Loading\\u2026";return Promise.resolve().then(loader).then(function(data){el.innerHTML="";render(el,data);}).catch(function(err){el.textContent="\\u26a0 "+((err&&err.message)||err);});}
+};
+})();</script>`;
 
 /** Tier B — a custom, author/AI-written frontend bundle rendered in a
  *  SANDBOXED iframe (opaque origin: it can't read the parent's session
@@ -494,11 +669,13 @@ function CustomBlock({
   appSlug,
   html,
   height,
+  theme,
 }: {
   slug: string;
   appSlug: string;
   html: string;
   height?: number;
+  theme?: AppTheme | null;
 }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const tokenRef = useRef<string | null>(null);
@@ -597,13 +774,25 @@ function CustomBlock({
   }, [slug]);
 
   // SDK first so `cobblr.get` is defined before the author's scripts run.
-  const srcDoc = `<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:system-ui,-apple-system,sans-serif;margin:0;padding:14px;color:#334155;font-size:14px}</style>${SDK_SCRIPT}</head><body>${html}</body></html>`;
+  // In a themed app, seed the sandbox body with the app's bg + text +
+  // font so a custom block coheres by default (no white card, readable
+  // text) — the author can still override everything.
+  const bodyBg = theme ? (theme.bg ?? "#11223a") : "#ffffff";
+  const bodyText = theme ? (theme.text ?? "#f3f6fb") : "#334155";
+  const bodyFont = theme && customFontUrl(theme)
+    ? `'${CUSTOM_FONT_FAMILY}', system-ui, sans-serif`
+    : theme?.font
+      ? FONT_STACKS[theme.font]
+      : "system-ui,-apple-system,sans-serif";
+  const fontFace = fontFaceCss(theme) ?? "";
+  const srcDoc = `<!doctype html><html><head><meta charset="utf-8"><style>${fontFace}body{font-family:${bodyFont};margin:0;padding:14px;color:${bodyText};background:${bodyBg};font-size:14px}</style>${SDK_SCRIPT}</head><body>${html}</body></html>`;
+  const frameClass = theme ? "w-full border" : "w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white";
+  const frameStyle: React.CSSProperties = theme
+    ? { height: `${height ?? 360}px`, background: "var(--app-bg)", borderColor: "var(--app-border)", borderRadius: "var(--app-radius)" }
+    : { height: `${height ?? 360}px` };
   if (!ready)
     return (
-      <div
-        className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white flex items-center justify-center text-xs text-slate-400 italic"
-        style={{ height: `${height ?? 360}px` }}
-      >
+      <div className={frameClass + " flex items-center justify-center text-xs text-slate-400 italic"} style={frameStyle}>
         Loading…
       </div>
     );
@@ -613,8 +802,8 @@ function CustomBlock({
       sandbox="allow-scripts"
       srcDoc={srcDoc}
       title="custom app"
-      className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white"
-      style={{ height: `${height ?? 360}px` }}
+      className={frameClass}
+      style={frameStyle}
     />
   );
 }

@@ -34,6 +34,7 @@ import { ConfigurationPage } from "./pages/ConfigurationPage";
 const BindingsPage = lazy(() => import("./pages/BindingsPage").then((m) => ({ default: m.BindingsPage })));
 const ActionsPage = lazy(() => import("./pages/ActionsPage").then((m) => ({ default: m.ActionsPage })));
 const BundlesPage = lazy(() => import("./pages/BundlesPage").then((m) => ({ default: m.BundlesPage })));
+const BuildPage = lazy(() => import("./pages/BuildPage").then((m) => ({ default: m.BuildPage })));
 const FieldsPage = lazy(() => import("./pages/FieldsPage").then((m) => ({ default: m.FieldsPage })));
 const MeActivityPage = lazy(() => import("./pages/MeActivityPage").then((m) => ({ default: m.MeActivityPage })));
 const MeNotificationsPage = lazy(() => import("./pages/MeNotificationsPage").then((m) => ({ default: m.MeNotificationsPage })));
@@ -207,6 +208,7 @@ function ActiveOrgScopedRoutes() {
           <Route path="/bindings" element={<BindingsPage />} />
           <Route path="/actions" element={<ActionsPage />} />
           <Route path="/bundles" element={<BundlesPage />} />
+          <Route path="/build" element={<BuildPage />} />
           <Route path="/bundles/compose" element={<BundleComposerPage />} />
           <Route path="/fields" element={<FieldsPage />} />
           <Route path="/configuration/tokens" element={<ApiTokensPage />} />

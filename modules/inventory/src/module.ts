@@ -139,6 +139,15 @@ export default defineModule({
         appliesTo: { kinds: ["inventory:part"] },
         invokeHandler: "inventory.disassemble-kit",
       },
+      {
+        id: "inventory:set-status",
+        label: "Set status",
+        description:
+          "Set a part's `metadata.status` (e.g. a Lego set's Built / Unbuilt / Missing pieces). A member-appropriate, user-invokable action: grant it and a worker can update status from their app — the canonical write a custom (Tier B) app block performs. Args: { partId?, status }; partId falls back to the targeted entity.",
+        appliesTo: { kinds: ["inventory:part"] },
+        invokeHandler: "inventory.set-status",
+        userInvokable: true,
+      },
     ],
   },
 

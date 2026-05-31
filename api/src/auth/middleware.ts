@@ -37,6 +37,40 @@ export interface SessionUser {
    *  /super-admin/* surface. Per-workspace roles are unaffected;
    *  this is a SEPARATE tier above admin/owner. */
   is_platform_admin: boolean;
+  /** Set when the request was authenticated with an H1 Tier-B
+   *  capability-scoped app token (`aud: app:<slug>`): the app slug it
+   *  was minted for. Null for a normal session / API token. Such a
+   *  request is clamped server-side to the Tier-B allowlist (see
+   *  `appTokenPathAllowed`). */
+  app_scope: string | null;
+}
+
+// H1 Tier B — server-side clamp for capability-scoped app tokens. The
+// App Player's client-side mediator already restricts what a sandboxed
+// bundle can request; this is the defense-in-depth twin so the boundary
+// doesn't live only in browser JS. An app token may ONLY hit the same
+// H2-scoped read surfaces + the one capability-gated action endpoint the
+// mediator allows. Everything else (raw module writes, token minting,
+// admin surfaces, …) is 403, even though the token carries the member's
+// identity. Mirror of the allowlist in web `AppPlayerPage.tsx`.
+function orgRelativePath(originalUrl: string): string | null {
+  const path = (originalUrl.split("?")[0] ?? "").replace(/\/+$/, "") || "/";
+  const m = path.match(/^\/api\/v1\/orgs\/[^/]+(\/.*)?$/);
+  if (!m) return null; // not an org-scoped path → not reachable by an app token
+  return m[1] ?? "/";
+}
+function appTokenPathAllowed(method: string, rel: string): boolean {
+  if (rel.includes("..")) return false;
+  if (method === "GET") {
+    return (
+      rel.startsWith("/modules/core-views/views") ||
+      rel.startsWith("/entities/") ||
+      rel.startsWith("/entity-kinds") ||
+      rel === "/me/capabilities"
+    );
+  }
+  if (method === "POST") return rel === "/actions/invoke";
+  return false;
 }
 
 // Augment Express's Request without leaking the field globally —
@@ -68,6 +102,7 @@ export async function requireAuth(
     let userId: string | null = null;
     let authMethod: "session" | "api_token" = "session";
     let apiTokenId: string | null = null;
+    let appScope: string | null = null;
     if (token.startsWith("cbt_")) {
       const resolved = await resolveApiToken(token);
       if (resolved) {
@@ -78,6 +113,9 @@ export async function requireAuth(
     } else {
       const claims = await verifySession(token);
       userId = claims.sub;
+      if (typeof claims.aud === "string" && claims.aud.startsWith("app:")) {
+        appScope = claims.aud.slice("app:".length);
+      }
     }
     if (!userId) {
       res.status(401).json({
@@ -96,6 +134,22 @@ export async function requireAuth(
       });
       return;
     }
+    // H1 Tier B — an app token is clamped to the Tier-B allowlist before
+    // it can touch any handler. Server-side twin of the Player's
+    // client-side mediator: the boundary holds even if that JS is bypassed.
+    if (appScope) {
+      const rel = orgRelativePath(req.originalUrl);
+      if (rel === null || !appTokenPathAllowed(req.method, rel)) {
+        res.status(403).json({
+          error: {
+            code: "app_token_out_of_scope",
+            message:
+              "This app token may only read H2-scoped views/entities and invoke capability-gated actions.",
+          },
+        });
+        return;
+      }
+    }
     req.session = {
       id: user.id,
       email: user.email,
@@ -103,6 +157,7 @@ export async function requireAuth(
       auth_method: authMethod,
       api_token_id: apiTokenId,
       is_platform_admin: isPlatformAdmin(user.email),
+      app_scope: appScope,
     };
     // Wrap the rest of the request chain in actor context so any
     // deeply-nested activity.log() call automatically picks up

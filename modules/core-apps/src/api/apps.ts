@@ -61,18 +61,55 @@ const Page = z.object({
 });
 const Pages = z.array(Page).max(30);
 
+// ── Per-app theme tokens ─────────────────────────────────────────
+// The point of an App is that it can look like the BUILDER'S thing, not
+// like Cobblr. The structured blocks render through CSS variables; this
+// is the palette that drives them. We store TOKENS, never raw CSS:
+// colors are validated hex, `font` is a vetted keyword the Player maps
+// to a real family, `radius` is a number — so a hand-/AI-authored theme
+// can restyle the app without being able to inject a stylesheet. Every
+// field is optional; anything unset falls back to Cobblr's defaults, so
+// existing (theme-less) apps are unchanged.
+const hex = z.string().regex(/^#[0-9a-fA-F]{3,8}$/, "must be a hex color");
+// A logo / font reference: either an http(s) URL or an inline `data:` URL
+// (image/font/app). `data:` is how an in-app *upload* is stored — no
+// auth-gated file fetch, no external CDN, fully self-hosted. Inert in
+// <img src> / CSS url() (no script execution), and length-capped so the
+// theme JSON stays bounded.
+const assetRef = z
+  .string()
+  .regex(/^(https?:\/\/|data:(image|font|application)\/)/, "must be an http(s) or data: URL");
+const Theme = z
+  .object({
+    bg: hex.optional(),          // page background
+    surface: hex.optional(),     // card / block background
+    text: hex.optional(),        // primary text
+    muted: hex.optional(),       // labels / secondary text
+    accent: hex.optional(),      // buttons, active, big numbers
+    accent_text: hex.optional(), // text ON the accent
+    border: hex.optional(),      // card borders
+    font: z.enum(["sans", "serif", "mono", "rounded", "slab"]).optional(),
+    radius: z.number().int().min(0).max(36).optional(), // card corner px
+    logo: assetRef.max(500_000).optional(),       // wordmark image in the app's top bar
+    font_url: assetRef.max(1_200_000).optional(), // a custom font (uploaded → data: URL, or a hosted URL)
+    font_name: z.string().max(60).optional(),     // family name for the custom font
+  })
+  .strict();
+
 const AppCreate = z.object({
   slug: z.string().regex(/^[a-z0-9-]+$/, "app slug must be kebab-case").max(80),
   name: z.string().min(1).max(160),
   icon: z.string().max(80).optional(),
   visible_capability: z.string().min(1).max(120).nullable().optional(),
   pages: Pages.default([]),
+  theme: Theme.nullable().optional(),
 });
 const AppUpdate = z.object({
   name: z.string().min(1).max(160).optional(),
   icon: z.string().max(80).nullable().optional(),
   visible_capability: z.string().min(1).max(120).nullable().optional(),
   pages: Pages.optional(),
+  theme: Theme.nullable().optional(),
 });
 
 interface AppRow {
@@ -82,6 +119,7 @@ interface AppRow {
   icon: string | null;
   visible_capability: string | null;
   pages: unknown;
+  theme: unknown;
   created_by: string | null;
   created_at: Date;
   updated_at: Date;
@@ -109,7 +147,7 @@ function toMeta(r: AppRow) {
   return { id: r.id, slug: r.slug, name: r.name, icon: r.icon, visible_capability: r.visible_capability };
 }
 function toFull(r: AppRow) {
-  return { ...toMeta(r), pages: r.pages ?? [], created_at: r.created_at, updated_at: r.updated_at };
+  return { ...toMeta(r), pages: r.pages ?? [], theme: r.theme ?? null, created_at: r.created_at, updated_at: r.updated_at };
 }
 
 // GET /apps — apps the caller can open. Members see only the ones
@@ -205,6 +243,7 @@ appsRouter.post(
         icon: parsed.data.icon ?? null,
         visible_capability: parsed.data.visible_capability ?? null,
         pages: JSON.stringify(parsed.data.pages) as unknown as object,
+        theme: parsed.data.theme ? (JSON.stringify(parsed.data.theme) as unknown as object) : null,
         created_by: user?.id ?? null,
       })
       .returningAll()
@@ -226,6 +265,7 @@ appsRouter.patch(
     if (parsed.data.icon !== undefined) patch.icon = parsed.data.icon;
     if (parsed.data.visible_capability !== undefined) patch.visible_capability = parsed.data.visible_capability;
     if (parsed.data.pages !== undefined) patch.pages = JSON.stringify(parsed.data.pages);
+    if (parsed.data.theme !== undefined) patch.theme = parsed.data.theme ? JSON.stringify(parsed.data.theme) : null;
     const updated = (await db
       .updateTable("core_apps_apps")
       .set(patch)

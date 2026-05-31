@@ -267,5 +267,35 @@ export function registerInventoryActionHandlers(): void {
       message: `Spawned ${spawned} parts from set ${setNum}.`,
     };
   });
+
+  // ─────────────────────── set-status ──────────────────────────────
+  // A small, member-appropriate write: set a part's metadata.status
+  // (the Lego set Built/Unbuilt/Missing-pieces field). This is the
+  // canonical action a custom (Tier B) app block invokes — capability
+  // -gated (`inventory:set-status`) like any other, so a worker can only
+  // run it if granted. partId comes from args or the targeted entity.
+  platform().actions.registerHandler("inventory.set-status", async (ctx) => {
+    const args = (ctx.args as { partId?: string; status?: string } | null) ?? {};
+    const partId = args.partId ?? (ctx.entity as { id?: string } | null)?.id;
+    const status = typeof args.status === "string" ? args.status.trim().slice(0, 60) : undefined;
+    if (!partId || !status) return { ok: false, error: "missing partId or status" };
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
+    const row = await db
+      .selectFrom("inventory_parts")
+      .select(["metadata"])
+      .where("id", "=", partId)
+      .executeTakeFirst();
+    if (!row) return { ok: false, error: "part_not_found" };
+    const existing = (row.metadata as Record<string, unknown> | null) ?? {};
+    await db
+      .updateTable("inventory_parts")
+      .set({
+        metadata: sql`${JSON.stringify({ ...existing, status })}::jsonb` as never,
+        updated_at: new Date(),
+      })
+      .where("id", "=", partId)
+      .execute();
+    return { ok: true, partId, status };
+  });
 }
 

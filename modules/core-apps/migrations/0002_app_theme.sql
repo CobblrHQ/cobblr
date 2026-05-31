@@ -1,0 +1,11 @@
+-- Per-app theme tokens (palette / font / radius) so an App can look like
+-- the builder's own thing, not like Cobblr. Additive + nullable: existing
+-- apps stay null and render with Cobblr's defaults. The shape is validated
+-- by the Theme zod schema in api/apps.ts; opaque jsonb here.
+--
+-- manual recovery if this fails partway (per-tenant DB; the runner tracks
+-- applied files in the tenant's own `migrations` table as
+-- `tenant <orgId> / module core-apps::0002_app_theme.sql`):
+--   ALTER TABLE core_apps_apps DROP COLUMN theme;
+--   DELETE FROM migrations WHERE name LIKE '%module core-apps::0002_app_theme.sql';
+ALTER TABLE core_apps_apps ADD COLUMN theme jsonb;

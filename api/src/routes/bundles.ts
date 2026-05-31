@@ -5,6 +5,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { sql, type Kysely } from "kysely";
+import { platform } from "@cobblr/platform-contract";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import { meta } from "../db/meta.js";
@@ -53,7 +54,7 @@ interface BundleTenantDB {
 
 export const bundlesRouter = Router({ mergeParams: true });
 
-const BundleManifest = z.object({
+export const BundleManifest = z.object({
   id: z.string().min(1),
   version: z.string().min(1),
   name: z.string().min(1),
@@ -255,7 +256,196 @@ const BundleManifest = z.object({
     .optional(),
 });
 
-type BundleManifestT = z.infer<typeof BundleManifest>;
+export type BundleManifestT = z.infer<typeof BundleManifest>;
+
+// ── The single source of validation truth ──────────────────────────
+// Pure (no writes): structural (zod) + referential (kinds/actions/
+// requires exist + are applicable) + dependency (modules registered/
+// enabled) + collision (field-def name clashes). Called by BOTH the
+// install endpoint and the validate-only endpoint, so the manifest is
+// graded exactly once way — no drift. Error messages are MODEL-REPAIRABLE:
+// they name the bad id and list the valid ones, so a candidate from any
+// model can be fed its own errors and fix itself (the kernel-owns-
+// correctness gate from the ai-bundle-builder spec).
+export interface BundleValidationError {
+  path: string;
+  code: string;
+  message: string;
+  detail?: unknown;
+}
+export interface BundleValidationPreview {
+  fields_added: Array<{ entity_kind: string; name: string; type: string; display_label: string }>;
+  wires_added: Array<{ source_kind: string; action_id: string; trigger_type: string }>;
+  modules_required: string[];
+  modules_to_enable: string[];
+}
+export interface BundleValidationResult {
+  valid: boolean;
+  errors: BundleValidationError[];
+  preview: BundleValidationPreview | null;
+  /** The parsed manifest when structural validation passed — so the
+   *  install path doesn't re-parse. Undefined on structural failure. */
+  manifest?: BundleManifestT;
+}
+
+const moduleOf = (id: string): string | null => (id.includes(":") ? (id.split(":")[0] ?? null) : null);
+
+export async function validateBundle(
+  orgId: string,
+  rawManifest: unknown,
+  opts: { autoEnable?: boolean } = {},
+): Promise<BundleValidationResult> {
+  // 1. Structural.
+  const parsed = BundleManifest.safeParse(rawManifest);
+  if (!parsed.success) {
+    return {
+      valid: false,
+      preview: null,
+      errors: parsed.error.issues.map((i) => ({
+        path: i.path.join(".") || "<root>",
+        code: "invalid_bundle",
+        message: i.message,
+      })),
+    };
+  }
+  const m = parsed.data;
+  const errors: BundleValidationError[] = [];
+
+  // 2. Referential — every referenced kind/action exists + is applicable.
+  const knownKinds = await platform().entities.listKinds();
+  const knownKindIds = new Set(knownKinds.map((k) => k.id));
+  const kindList = [...knownKindIds].sort().join(", ") || "(none)";
+
+  for (const f of m.field_defs) {
+    if (!knownKindIds.has(f.entity_kind)) {
+      errors.push({
+        path: "field_defs.entity_kind",
+        code: "unknown_entity_kind",
+        message: `Unknown entity kind "${f.entity_kind}". Use one of: ${kindList}.`,
+      });
+    }
+  }
+
+  // Actions applicable to each referenced source_kind (resolves appliesTo).
+  const referencedKinds = new Set<string>([...m.wires.map((w) => w.source_kind)]);
+  const actionsByKind = new Map<string, Set<string>>();
+  for (const kind of referencedKinds) {
+    if (!knownKindIds.has(kind)) continue;
+    const apps = await platform().actions.listApplicable(kind, orgId);
+    actionsByKind.set(kind, new Set(apps.map((a) => a.id)));
+  }
+  for (const w of m.wires) {
+    if (!knownKindIds.has(w.source_kind)) {
+      errors.push({
+        path: "wires.source_kind",
+        code: "unknown_entity_kind",
+        message: `Unknown entity kind "${w.source_kind}" in a wire. Use one of: ${kindList}.`,
+      });
+      continue;
+    }
+    const applicable = actionsByKind.get(w.source_kind) ?? new Set<string>();
+    if (!applicable.has(w.action_id)) {
+      const list = [...applicable].sort().join(", ") || "(none)";
+      errors.push({
+        path: "wires.action_id",
+        code: "action_not_applicable",
+        message: `Action "${w.action_id}" can't be wired to "${w.source_kind}". Actions available for "${w.source_kind}": ${list}.`,
+      });
+    }
+  }
+
+  // requires[] must name the module owning every referenced kind + action.
+  const declaredRequires = new Set(m.requires.map((r) => r.module));
+  const neededModules = new Set<string>();
+  for (const f of m.field_defs) { const mod = moduleOf(f.entity_kind); if (mod) neededModules.add(mod); }
+  for (const w of m.wires) {
+    const k = moduleOf(w.source_kind); if (k) neededModules.add(k);
+    const a = moduleOf(w.action_id); if (a) neededModules.add(a);
+  }
+  for (const mod of neededModules) {
+    if (!declaredRequires.has(mod)) {
+      errors.push({
+        path: "requires",
+        code: "missing_requires_module",
+        message: `requires[] is missing module "${mod}" — a referenced kind or action belongs to it. Add { "module": "${mod}" }.`,
+      });
+    }
+  }
+
+  // 3. Dependency — required modules must be registered, then enabled.
+  const allRequired = [...new Set([...declaredRequires, ...neededModules])];
+  const modulesToEnable: string[] = [];
+  if (allRequired.length > 0) {
+    const enabledRows = await meta
+      .selectFrom("org_modules")
+      .select("module_name")
+      .where("org_id", "=", orgId)
+      .where("module_name", "in", allRequired)
+      .execute();
+    const enabledSet = new Set(enabledRows.map((r) => r.module_name));
+    for (const mod of allRequired) {
+      if (enabledSet.has(mod)) continue;
+      if (!getEntry(mod)) {
+        errors.push({
+          path: "requires",
+          code: "unknown_module",
+          message: `Bundle requires module "${mod}" which isn't registered with this platform.`,
+          detail: { missing_module: mod },
+        });
+        continue;
+      }
+      modulesToEnable.push(mod);
+      if (!opts.autoEnable) {
+        errors.push({
+          path: "requires",
+          code: "needs_enable",
+          message: `Module "${mod}" is required but not enabled in this workspace.`,
+          detail: { module: mod },
+        });
+      }
+    }
+  }
+
+  // 4. Collision — field_defs that duplicate an existing (entity_kind,
+  //    name). A bundle re-installing its OWN previous version doesn't
+  //    collide with itself (install replaces it), so exclude rows owned
+  //    by a bundle sharing this manifest's external id.
+  if (m.field_defs.length > 0) {
+    const selfBundles = await meta
+      .selectFrom("bundles")
+      .select("id")
+      .where("org_id", "=", orgId)
+      .where("external_id", "=", m.id)
+      .execute();
+    const selfIds = new Set(selfBundles.map((b) => b.id));
+    const conflicts = await meta
+      .selectFrom("module_field_defs")
+      .select(["entity_kind", "name", "bundle_id", "source_module"])
+      .where("org_id", "=", orgId)
+      .where((eb) =>
+        eb.or(m.field_defs.map((f) => eb.and([eb("entity_kind", "=", f.entity_kind), eb("name", "=", f.name)]))),
+      )
+      .execute();
+    for (const c of conflicts) {
+      if (c.bundle_id && selfIds.has(c.bundle_id)) continue;
+      const ownedBy = c.bundle_id ? "another-bundle" : c.source_module ? `module:${c.source_module}` : "user-authored";
+      errors.push({
+        path: "field_defs.name",
+        code: "field_def_collision",
+        message: `Field "${c.entity_kind}.${c.name}" already exists in this workspace (${ownedBy.replace("-", " ")}). Choose a different field name.`,
+        detail: { entity_kind: c.entity_kind, field_name: c.name, owned_by: ownedBy },
+      });
+    }
+  }
+
+  const preview: BundleValidationPreview = {
+    fields_added: m.field_defs.map((f) => ({ entity_kind: f.entity_kind, name: f.name, type: f.type, display_label: f.display_label })),
+    wires_added: m.wires.map((w) => ({ source_kind: w.source_kind, action_id: w.action_id, trigger_type: w.trigger_type })),
+    modules_required: [...declaredRequires],
+    modules_to_enable: modulesToEnable,
+  };
+  return { valid: errors.length === 0, errors, preview, manifest: m };
+}
 
 bundlesRouter.get(
   "/",
@@ -501,6 +691,31 @@ bundlesRouter.get(
   },
 );
 
+// POST /bundles/validate — grade a manifest WITHOUT applying it. Runs
+// the same validateBundle() gate as /install (single source of truth),
+// so a candidate that validates here is guaranteed installable. Always
+// 200; validity + repairable errors + a preview are in the body. Used by
+// the authoring module's candidate flow and the BuildPage live preview.
+bundlesRouter.post(
+  "/validate",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      const Body = z.object({ manifest: z.unknown(), autoEnable: z.boolean().optional() });
+      const body = Body.safeParse(req.body);
+      if (!body.success) {
+        res.status(400).json({ error: { code: "invalid_body", message: "Bad request body", details: body.error.issues } });
+        return;
+      }
+      const result = await validateBundle(req.tenant!.org.id, body.data.manifest, { autoEnable: body.data.autoEnable ?? false });
+      res.json({ valid: result.valid, errors: result.errors, preview: result.preview });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 bundlesRouter.post(
   "/install",
   requireAuth,
@@ -513,82 +728,66 @@ bundlesRouter.post(
       // auto-enabling silently. Caller re-POSTs with `confirm:true`
       // to proceed.
       const ManifestBody = z.object({
-        manifest: BundleManifest,
+        manifest: z.unknown(),
         confirm: z.boolean().optional(),
       });
-      const parsed = ManifestBody.safeParse(req.body);
-      if (!parsed.success) {
-        res.status(400).json({
-          error: {
-            code: "invalid_bundle",
-            message: "Bundle manifest failed validation",
-            details: parsed.error.issues,
-          },
-        });
+      const body = ManifestBody.safeParse(req.body);
+      if (!body.success) {
+        res.status(400).json({ error: { code: "invalid_bundle", message: "Bad request body", details: body.error.issues } });
         return;
       }
-      const m: BundleManifestT = parsed.data.manifest;
+      const confirm = !!body.data.confirm;
 
-      // Compatibility — every required module must be enabled for
-      // this org. Q5 resolution: if any required modules aren't
-      // enabled, return 409 with `needs_enable: [...]` so the UI can
-      // prompt the user. Caller re-POSTs with `confirm: true` to
-      // proceed; that path then enables the missing modules (and
-      // their transitive deps via enableModuleForOrg's own dep-check
-      // loop) as part of the atomic install.
-      //
-      // If a required module isn't even *registered* with the
-      // platform, we still fail loud immediately: that's a real
-      // incompatibility, not a setup gap the user can resolve.
-      const required = m.requires.map((r) => r.module);
-      const autoEnabled: string[] = [];
-      if (required.length > 0) {
-        const installed = await meta
-          .selectFrom("org_modules")
-          .select("module_name")
-          .where("org_id", "=", req.tenant!.org.id)
-          .where("module_name", "in", required)
-          .execute();
-        const installedSet = new Set(installed.map((r) => r.module_name));
-        const missing = required.filter((r) => !installedSet.has(r));
-        if (missing.length > 0) {
-          // Fail early if any are unknown to the platform — that's
-          // not user-resolvable.
-          for (const name of missing) {
-            if (!getEntry(name)) {
-              res.status(400).json({
-                error: {
-                  code: "unknown_module",
-                  message: `Bundle requires module '${name}' which isn't registered with this platform.`,
-                  details: { missing_module: name },
-                },
-              });
-              return;
-            }
-          }
-          // Q5: needs_enable confirmation gate.
-          if (!parsed.data.confirm) {
-            res.status(409).json({
-              error: {
-                code: "needs_enable",
-                message: `This bundle requires module(s) not enabled in your workspace: ${missing.join(", ")}. Re-POST with confirm:true to enable and install in one step.`,
-                details: { needs_enable: missing },
-              },
-            });
-            return;
-          }
-          // Confirmed: enable the missing modules in dependency order
-          // (parents before children: machines before 3d-printers).
-          const ordered = [...missing].sort((a, b) => {
-            const ea = getEntry(a);
-            const eb = getEntry(b);
-            return (ea?.manifest.dependencies.length ?? 0) - (eb?.manifest.dependencies.length ?? 0);
-          });
-          for (const name of ordered) {
-            await enableModuleForOrg(req.tenant!.org.id, name, { userId: req.session!.id });
-            autoEnabled.push(name);
-          }
+      // SINGLE SOURCE OF VALIDATION TRUTH — same helper the /validate
+      // endpoint + the authoring module use. autoEnable = confirm: when
+      // confirmed, modules that need enabling are reported in
+      // preview.modules_to_enable (not a needs_enable error) and enabled
+      // below. The HTTP error codes below preserve the prior contract the
+      // bundle-install UI depends on.
+      const v = await validateBundle(req.tenant!.org.id, body.data.manifest, { autoEnable: confirm });
+      if (!v.valid) {
+        const unknownModule = v.errors.find((e) => e.code === "unknown_module");
+        if (unknownModule) {
+          res.status(400).json({ error: { code: "unknown_module", message: unknownModule.message, details: unknownModule.detail } });
+          return;
         }
+        const needsEnable = v.errors.filter((e) => e.code === "needs_enable");
+        if (needsEnable.length > 0) {
+          const mods = needsEnable.map((e) => (e.detail as { module: string }).module);
+          res.status(409).json({
+            error: {
+              code: "needs_enable",
+              message: `This bundle requires module(s) not enabled in your workspace: ${mods.join(", ")}. Re-POST with confirm:true to enable and install in one step.`,
+              details: { needs_enable: mods },
+            },
+          });
+          return;
+        }
+        const collisions = v.errors.filter((e) => e.code === "field_def_collision");
+        if (collisions.length > 0) {
+          res.status(409).json({
+            error: {
+              code: "field_def_collision",
+              message: collisions.map((e) => e.message).join(" "),
+              details: { conflicts: collisions.map((e) => e.detail) },
+            },
+          });
+          return;
+        }
+        res.status(400).json({ error: { code: "invalid_bundle", message: "Bundle manifest failed validation", details: { errors: v.errors } } });
+        return;
+      }
+      const m = v.manifest!;
+
+      // Confirmed path: enable the modules that need enabling, parents
+      // before children (dependency order).
+      const autoEnabled: string[] = [];
+      const toEnable = [...(v.preview?.modules_to_enable ?? [])].sort(
+        (a, b) => (getEntry(a)?.manifest.dependencies.length ?? 0) - (getEntry(b)?.manifest.dependencies.length ?? 0),
+      );
+      for (const name of toEnable) {
+        await enableModuleForOrg(req.tenant!.org.id, name, { userId: req.session!.id });
+        autoEnabled.push(name);
       }
 
       // Already installed (same external_id + version)? Idempotent
@@ -604,67 +803,7 @@ bundlesRouter.post(
         await uninstallBundleId(existing.id);
       }
 
-      // Q6 (wires-and-bundles.md): pre-check field-def collisions.
-      // Field defs are storage-level (one column-name per entity kind);
-      // two different bundles trying to add the same (entity_kind, name)
-      // is genuinely ambiguous. Fail loud with the collision list so
-      // the user can uninstall the conflicting bundle first.
-      //
-      // This runs AFTER the existing-version uninstall above, so a
-      // bundle that defines `set_id` and then ships v2 also defining
-      // `set_id` doesn't trip itself up.
-      if (m.field_defs.length > 0) {
-        const conflicts = await meta
-          .selectFrom("module_field_defs")
-          .select(["entity_kind", "name", "bundle_id", "source_module"])
-          .where("org_id", "=", req.tenant!.org.id)
-          .where((eb) =>
-            eb.or(
-              m.field_defs.map((f) =>
-                eb.and([
-                  eb("entity_kind", "=", f.entity_kind),
-                  eb("name", "=", f.name),
-                ]),
-              ),
-            ),
-          )
-          .execute();
-        if (conflicts.length > 0) {
-          // Resolve each collision to a human-readable owner so the
-          // UI / user knows what's blocking the install.
-          const ownerNames = new Map<string, string>();
-          const bundleIds = conflicts
-            .map((c) => c.bundle_id)
-            .filter((b): b is string => !!b);
-          if (bundleIds.length > 0) {
-            const bundleRows = await meta
-              .selectFrom("bundles")
-              .select(["id", "name"])
-              .where("id", "in", bundleIds)
-              .execute();
-            for (const b of bundleRows) ownerNames.set(b.id, b.name);
-          }
-          const details = conflicts.map((c) => ({
-            entity_kind: c.entity_kind,
-            field_name: c.name,
-            owned_by: c.bundle_id
-              ? `bundle:${ownerNames.get(c.bundle_id) ?? c.bundle_id}`
-              : c.source_module
-                ? `module:${c.source_module}`
-                : "user-authored",
-          }));
-          res.status(409).json({
-            error: {
-              code: "field_def_collision",
-              message: `Bundle adds field def(s) that already exist in this workspace: ${details
-                .map((d) => `${d.entity_kind}.${d.field_name} (${d.owned_by})`)
-                .join(", ")}. Uninstall the conflicting bundle/module or remove the user-authored field first.`,
-              details: { conflicts: details },
-            },
-          });
-          return;
-        }
-      }
+      // (Field-def collisions are checked inside validateBundle above.)
 
       const inserted = await meta.transaction().execute(async (trx) => {
         const bundle = await trx

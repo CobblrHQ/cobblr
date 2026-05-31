@@ -21,6 +21,11 @@ export interface SessionClaims {
   sub: string;       // user id
   iat: number;
   exp: number;
+  /** Audience. For a capability-scoped app token (H1 Tier B) this is
+   *  `app:<slug>`; for a normal session it's undefined. Used by
+   *  requireAuth to clamp app tokens to the Tier-B allowlist server-side
+   *  (defense-in-depth — not just the client-side mediator). */
+  aud?: string;
 }
 
 export async function signSession(userId: string): Promise<string> {
@@ -71,5 +76,6 @@ export async function verifySession(token: string): Promise<SessionClaims> {
     sub: payload.sub,
     iat: payload.iat as number,
     exp: payload.exp as number,
+    aud: typeof payload.aud === "string" ? payload.aud : Array.isArray(payload.aud) ? payload.aud[0] : undefined,
   };
 }

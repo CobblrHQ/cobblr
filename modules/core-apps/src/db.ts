@@ -16,6 +16,10 @@ export interface AppsTable {
   /** Ordered pages → ordered blocks. Validated by the AppDefinition
    *  zod schema in api/apps.ts; opaque jsonb at the DB layer. */
   pages: Generated<unknown>;
+  /** Optional per-app theme tokens (palette/font/radius) the App Player
+   *  applies as CSS variables. Validated by the Theme zod schema in
+   *  api/apps.ts; null = Cobblr defaults. */
+  theme: unknown | null;
   created_by: string | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;

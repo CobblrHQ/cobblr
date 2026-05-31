@@ -473,6 +473,30 @@ export const api = {
     ),
   uninstallBundle: (slug: string, id: string) =>
     request<void>("DELETE", `/orgs/${slug}/bundles/${id}`),
+
+  // ─── core-authoring (AI bundle builder, Phase 1: copy-paste) ───────
+  authoringContext: (slug: string, selected_kinds?: string[]) =>
+    request<AuthoringContext>("POST", `/orgs/${slug}/modules/core-authoring/context`, { selected_kinds }),
+  authoringCompile: (slug: string, body: { intent: string; selected_kinds?: string[] }) =>
+    request<{ draft_id: string; prompt: string; warnings: string[] }>(
+      "POST",
+      `/orgs/${slug}/modules/core-authoring/compile`,
+      body,
+    ),
+  authoringCandidate: (slug: string, draftId: string, manifest: unknown) =>
+    request<BundleValidation>(
+      "POST",
+      `/orgs/${slug}/modules/core-authoring/drafts/${draftId}/candidate`,
+      { manifest },
+    ),
+  authoringRepairPrompt: (slug: string, draftId: string) =>
+    request<{ prompt: string }>("POST", `/orgs/${slug}/modules/core-authoring/drafts/${draftId}/repair-prompt`),
+  authoringApply: (slug: string, draftId: string, confirm = true) =>
+    request<{ applied: boolean; bundle: unknown }>(
+      "POST",
+      `/orgs/${slug}/modules/core-authoring/drafts/${draftId}/apply`,
+      { confirm },
+    ),
   getBundle: (slug: string, id: string) =>
     request<{
       bundle: PlatformBundle & { manifest: unknown };
@@ -2109,6 +2133,27 @@ export interface AppPage {
   title: string;
   blocks: AppBlock[];
 }
+/** Per-app theme tokens. All optional; unset → Cobblr defaults. Colors
+ *  are hex; `font` is a keyword the Player maps to a real family;
+ *  `radius` is card-corner px. Stored + validated server-side (no raw
+ *  CSS — can't inject a stylesheet). */
+export interface AppTheme {
+  bg?: string;
+  surface?: string;
+  text?: string;
+  muted?: string;
+  accent?: string;
+  accent_text?: string;
+  border?: string;
+  font?: "sans" | "serif" | "mono" | "rounded" | "slab";
+  radius?: number;
+  /** Wordmark image for the app's top bar — an http(s) or inline `data:` URL. */
+  logo?: string;
+  /** A custom font: an uploaded font stored as a `data:` URL, or a hosted
+   *  font/CSS URL. Player injects an @font-face and uses `font_name`. */
+  font_url?: string;
+  font_name?: string;
+}
 /** List/nav metadata for an app (no page bodies). */
 export interface WorkspaceAppMeta {
   id: string;
@@ -2120,6 +2165,7 @@ export interface WorkspaceAppMeta {
 /** Full app definition returned by getApp. */
 export interface WorkspaceApp extends WorkspaceAppMeta {
   pages: AppPage[];
+  theme?: AppTheme | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -2442,6 +2488,40 @@ export interface PlatformEntityKind {
   traits: Record<string, string | null | { trait: string; uncertain: true }> | null;
   /** Preset name if declared via shorthand. */
   profile: string | null;
+}
+
+// core-authoring — context assembler + validation result shapes.
+export interface AuthoringContextKind {
+  id: string;
+  displayName: string;
+  fields: { name: string; type: string; role?: string; required?: boolean }[];
+}
+export interface AuthoringContextAction {
+  id: string;
+  label: string;
+  description: string;
+}
+export interface AuthoringContext {
+  kinds: AuthoringContextKind[];
+  actions: AuthoringContextAction[];
+  output_contract: string;
+  warnings: string[];
+}
+export interface BundleValidationError {
+  path: string;
+  code: string;
+  message: string;
+}
+export interface BundleValidationPreview {
+  fields_added: { entity_kind: string; name: string; type: string; display_label: string }[];
+  wires_added: { source_kind: string; action_id: string; trigger_type: string }[];
+  modules_required: string[];
+  modules_to_enable: string[];
+}
+export interface BundleValidation {
+  valid: boolean;
+  errors: BundleValidationError[];
+  preview: BundleValidationPreview | null;
 }
 
 export interface PlatformResolvedEntity {
