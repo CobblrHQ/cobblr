@@ -1,0 +1,47 @@
+{
+  "id": "fluidnc",
+  "name": "FluidNC (GRBL laser/CNC)",
+  "version": "1.0.0",
+  "routing": false,
+  "test": { "method": "GET", "path": "/command?commandText=%3F" },
+  "listDevices": {
+    "method": "GET",
+    "path": "/command?commandText=%24I",
+    "result": "single",
+    "map": { "id": "='fluidnc'", "name": "='FluidNC'" }
+  },
+  "upload": {
+    "method": "POST",
+    "path": "/upload",
+    "body": "multipart",
+    "fileField": "myfile",
+    "result": { "fileId": "={filename}" }
+  },
+  "submit": {
+    "method": "GET",
+    "path": "/command?commandText=%24SD%2FRun%3D%2F{fileId}",
+    "result": { "jobId": "={fileId}", "queued": "='true'" }
+  },
+  "status": {
+    "method": "GET",
+    "path": "/command?commandText=%3F",
+    "parse": "text",
+    "result": {
+      "state": {
+        "from": "<([A-Za-z]+)",
+        "map": {
+          "Idle": "completed",
+          "Run": "printing",
+          "Hold": "paused",
+          "Jog": "printing",
+          "Home": "printing",
+          "Alarm": "failed",
+          "Door": "paused",
+          "Check": "printing",
+          "Sleep": "completed"
+        }
+      },
+      "progress": "SD:([0-9.]+)"
+    }
+  }
+}

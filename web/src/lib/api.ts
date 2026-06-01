@@ -760,7 +760,7 @@ export const api = {
     slug: string,
     body: {
       name: string;
-      scope_type: "view" | "entity" | "collection";
+      scope_type: "view" | "entity" | "collection" | "board" | "app";
       scope_id: string;
       config?: Record<string, unknown>;
       expires_at?: string | null;
@@ -1991,6 +1991,14 @@ export interface PortalConfig {
   theme?: "light" | "dark" | "auto";
   pinned_views: string[];
   welcome_markdown?: string;
+  /** App slug a member lands in directly (the portal becomes a fallback). */
+  default_app?: string | null;
+  /** Override skin for the portal launcher. Unset → inherit the
+   *  workspace's default-app / sole-app theme (resolved in PortalLayout). */
+  theme_tokens?: AppTheme | null;
+  /** Brand theme for the admin dashboard shell (chrome: page bg + accent
+   *  + logo, keeps the Cobblr mark). See AppLayout. */
+  admin_theme?: AppTheme | null;
 }
 
 export interface PermissionsMember {
@@ -2161,6 +2169,8 @@ export interface WorkspaceAppMeta {
   name: string;
   icon: string | null;
   visible_capability: string | null;
+  /** Carried on the list so the portal launcher can inherit a skin. */
+  theme?: AppTheme | null;
 }
 /** Full app definition returned by getApp. */
 export interface WorkspaceApp extends WorkspaceAppMeta {
@@ -2217,7 +2227,7 @@ export interface SurfaceRecord {
   id: string;
   name: string;
   token: string;
-  scope_type: "view" | "entity" | "collection";
+  scope_type: "view" | "entity" | "collection" | "board" | "app";
   scope_id: string;
   config: Record<string, unknown>;
   enabled: boolean;

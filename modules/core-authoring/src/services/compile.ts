@@ -9,6 +9,7 @@
 // wire-event, …), each with its own context recipe + output contract.
 
 import { platform, type EntityKindRecord } from "@cobblr/platform-contract";
+import { getTemplate, type TemplateEntry } from "./templates.js";
 
 export interface ContextField {
   name: string;
@@ -31,6 +32,8 @@ export interface AuthoringContext {
   kinds: ContextKind[];
   actions: ContextAction[];
   outputContract: string;
+  /** Present only for task "customize-template": the manifest to start from. */
+  baseTemplate?: { id: string; name: string; manifest: Record<string, unknown> };
   warnings: string[];
 }
 
@@ -58,8 +61,24 @@ export async function assembleContext(
   orgId: string,
   selectedKinds?: string[],
   task = "create-bundle",
+  baseTemplateId?: string,
 ): Promise<AuthoringContext> {
   const warnings: string[] = [];
+
+  // customize-template: start from a catalog template. Default the kind
+  // scope to the kinds that template touches, so context stays minimal.
+  let template: TemplateEntry | undefined;
+  if (task === "customize-template") {
+    if (!baseTemplateId) {
+      throw new Error('Task "customize-template" requires a base_template_id.');
+    }
+    template = getTemplate(baseTemplateId);
+    if (!template) {
+      throw new Error(`Unknown template "${baseTemplateId}". Use GET /templates to list available ids.`);
+    }
+    if (!selectedKinds || selectedKinds.length === 0) selectedKinds = template.kinds;
+  }
+
   const all = await platform().entities.listKinds();
   let chosen: EntityKindRecord[];
   if (selectedKinds && selectedKinds.length > 0) {
@@ -96,7 +115,11 @@ export async function assembleContext(
   }
   const actions = [...actionMap.values()];
 
-  return { task, kinds, actions, outputContract: OUTPUT_CONTRACT, warnings };
+  const baseTemplate = template
+    ? { id: template.id, name: template.name, manifest: template.manifest }
+    : undefined;
+
+  return { task, kinds, actions, outputContract: OUTPUT_CONTRACT, baseTemplate, warnings };
 }
 
 // The compact output contract — field_defs + wires ONLY (v1 scope guard).
@@ -160,6 +183,48 @@ RULES:
 - trigger_type is one of {user-invoked,event,on-create,on-update,on-delete}; for "event" also set trigger_event.
 - requires must list every module owning a referenced kind/action (module = the id prefix before ":").
 - id = "cobblr.user.<kebab-slug>"; version = "0.1.0".`;
+  },
+
+  // customize-template: start from a refined template and DIFF it for the
+  // user's intent. Cheaper + higher quality than from-scratch — the model
+  // edits a known-good manifest instead of inventing one. Same output
+  // contract, same kernel gate.
+  "customize-template": (ctx, intent) => {
+    if (!ctx.baseTemplate) throw new Error("customize-template requires a base template in context.");
+    const kinds = ctx.kinds
+      .map(
+        (k) =>
+          `- ${k.id} (${k.displayName}) — existing fields: ${
+            k.fields.map((f) => `${f.name}:${f.type}`).join(", ") || "(none)"
+          }`,
+      )
+      .join("\n");
+    const actions = ctx.actions.length
+      ? ctx.actions.map((a) => `- ${a.id} — ${a.label}: ${a.description}`).join("\n")
+      : "(none — you can only add/change field_defs)";
+    return `You are customizing an existing Cobblr "${ctx.baseTemplate.name}" template for a user. Start from the template below and MODIFY it to fit what they want — keep what fits, change labels/fields/choices, add what's missing, remove what's irrelevant. Output ONLY the resulting JSON bundle object, nothing else.
+
+STARTING TEMPLATE (modify this):
+${JSON.stringify(ctx.baseTemplate.manifest, null, 2)}
+
+ENTITY KINDS you may use (use these ids exactly; do not invent kinds):
+${kinds}
+
+ACTIONS you may wire to (use these action ids exactly):
+${actions}
+
+THE USER WANTS:
+"${intent}"
+
+OUTPUT — same shape as the template, matching this contract:
+${ctx.outputContract}
+
+RULES:
+- Keep the template's structure; this is an EDIT, not a rewrite.
+- field_defs.name must match ^[a-z][a-z0-9_]*$ (snake_case). type is one of {text,number,boolean,date,url}.
+- wires.source_kind / action_id must be ids listed above. Never reference an id not listed.
+- requires must list every module owning a referenced kind/action.
+- Give it a fresh id "cobblr.user.<kebab-slug>" reflecting the user's use case; version "0.1.0".`;
   },
 };
 

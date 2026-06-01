@@ -202,7 +202,10 @@ function ViewDataModal({
         {items.length > 0 && view.view_type === "table" && (
           <TableRenderer items={items} columns={cfg.visible_fields} />
         )}
-        {items.length > 0 && view.view_type !== "kanban" && view.view_type !== "table" && (
+        {items.length > 0 && view.view_type === "trend" && (
+          <TrendRenderer items={items} cfg={cfg} />
+        )}
+        {items.length > 0 && view.view_type !== "kanban" && view.view_type !== "table" && view.view_type !== "trend" && (
           <ListRenderer items={items} />
         )}
       </div>
@@ -222,6 +225,71 @@ interface ViewRow {
   title: string;
   subtitle?: string;
   fields?: Record<string, unknown>;
+}
+
+// Trend renderer — a dependency-free SVG line chart for time-series rows
+// (core-fitness measurements, or any kind with a numeric value + a date).
+// Reads cfg.x (date field, default "measured_at"), cfg.y (numeric field,
+// default "value"), and optional cfg.goal (a horizontal target line). No
+// charting library — a small inline SVG keeps the web bundle dep-free.
+function TrendRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) {
+  const xField = (cfg.x as string) ?? "measured_at";
+  const yField = (cfg.y as string) ?? "value";
+  const goal = typeof cfg.goal === "number" ? cfg.goal : undefined;
+
+  const pts = items
+    .map((r) => {
+      const t = new Date(String(r.fields?.[xField] ?? "")).getTime();
+      const v = Number(r.fields?.[yField]);
+      return Number.isFinite(t) && Number.isFinite(v) ? { t, v } : null;
+    })
+    .filter((p): p is { t: number; v: number } => p !== null)
+    .sort((a, b) => a.t - b.t);
+
+  if (pts.length < 2) {
+    return <div className="text-sm text-slate-500 italic">Need at least two data points to chart a trend.</div>;
+  }
+
+  const W = 560, H = 220, PAD = 28;
+  const ts = pts.map((p) => p.t), vs = pts.map((p) => p.v);
+  const tMin = Math.min(...ts), tMax = Math.max(...ts);
+  let vMin = Math.min(...vs, ...(goal != null ? [goal] : []));
+  let vMax = Math.max(...vs, ...(goal != null ? [goal] : []));
+  if (vMin === vMax) { vMin -= 1; vMax += 1; }
+  const x = (t: number) => PAD + ((t - tMin) / (tMax - tMin || 1)) * (W - 2 * PAD);
+  const y = (v: number) => H - PAD - ((v - vMin) / (vMax - vMin || 1)) * (H - 2 * PAD);
+  const path = pts.map((p, i) => `${i === 0 ? "M" : "L"}${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join(" ");
+  const latest = pts[pts.length - 1]!.v;
+
+  return (
+    <div className="border border-slate-200 dark:border-slate-700 rounded p-2">
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Trend chart">
+        {/* axes */}
+        <line x1={PAD} y1={H - PAD} x2={W - PAD} y2={H - PAD} className="stroke-slate-300 dark:stroke-slate-600" strokeWidth={1} />
+        <line x1={PAD} y1={PAD} x2={PAD} y2={H - PAD} className="stroke-slate-300 dark:stroke-slate-600" strokeWidth={1} />
+        {/* goal line */}
+        {goal != null && (
+          <>
+            <line x1={PAD} y1={y(goal)} x2={W - PAD} y2={y(goal)} className="stroke-emerald-500" strokeWidth={1} strokeDasharray="4 3" />
+            <text x={W - PAD} y={y(goal) - 4} textAnchor="end" className="fill-emerald-600 text-[10px]">goal {goal}</text>
+          </>
+        )}
+        {/* the trend line */}
+        <path d={path} fill="none" className="stroke-cobble-500" strokeWidth={2} />
+        {/* points */}
+        {pts.map((p, i) => (
+          <circle key={i} cx={x(p.t)} cy={y(p.v)} r={2.5} className="fill-cobble-600" />
+        ))}
+        {/* latest value label */}
+        <text x={x(pts[pts.length - 1]!.t)} y={y(latest) - 6} textAnchor="end" className="fill-slate-600 dark:fill-slate-300 text-[10px]">{latest}</text>
+      </svg>
+      <div className="text-xs text-slate-500 px-1 flex justify-between">
+        <span>{new Date(tMin).toLocaleDateString()}</span>
+        <span>latest: <b>{latest}</b>{goal != null ? ` · goal ${goal}` : ""}</span>
+        <span>{new Date(tMax).toLocaleDateString()}</span>
+      </div>
+    </div>
+  );
 }
 
 function ListRenderer({ items }: { items: ViewRow[] }) {
@@ -363,7 +431,7 @@ function CreateViewModal({
 }) {
   const [entityKind, setEntityKind] = useState("inventory:part");
   const [name, setName] = useState("");
-  const [viewType, setViewType] = useState<"list" | "table" | "kanban">("list");
+  const [viewType, setViewType] = useState<"list" | "table" | "kanban" | "trend">("list");
   const [groupBy, setGroupBy] = useState("subtitle");
   const [visibleFields, setVisibleFields] = useState("title, subtitle");
   const [shared, setShared] = useState(true);
@@ -438,7 +506,7 @@ function CreateViewModal({
         <label className="block">
           <div className="text-xs text-slate-500 mb-1">Layout</div>
           <div className="flex gap-1">
-            {(["list", "table", "kanban"] as const).map((t) => (
+            {(["list", "table", "kanban", "trend"] as const).map((t) => (
               <button
                 key={t}
                 type="button"
@@ -533,8 +601,8 @@ function EditViewModal({
   // changing it would invalidate the config's filter / where /
   // sort which are kind-specific.
   const [name, setName] = useState(view.name);
-  const [viewType, setViewType] = useState<"list" | "table" | "kanban">(
-    (view.view_type as "list" | "table" | "kanban") ?? "list",
+  const [viewType, setViewType] = useState<"list" | "table" | "kanban" | "trend">(
+    (view.view_type as "list" | "table" | "kanban" | "trend") ?? "list",
   );
   const cfg = (view.config ?? {}) as ViewConfig;
   const [groupBy, setGroupBy] = useState((cfg.group_by as string) ?? "subtitle");
@@ -611,7 +679,7 @@ function EditViewModal({
         <label className="block">
           <div className="text-xs text-slate-500 mb-1">Layout</div>
           <div className="flex gap-1">
-            {(["list", "table", "kanban"] as const).map((t) => (
+            {(["list", "table", "kanban", "trend"] as const).map((t) => (
               <button
                 key={t}
                 type="button"

@@ -10,10 +10,19 @@ import { useEffect, useState } from "react";
 const TOKEN_KEY = "cobblr.token";
 
 function needsAuth(src: string): boolean {
-  if (src.startsWith("/api/v1/")) return true;
+  // /api/v1/public/... is the no-auth, token-gated public route — it must
+  // load WITHOUT a Bearer token (the public /p/:token page holds none).
+  // Pass it straight to <img>; only the authed /api/v1/... routes get the
+  // token-fetch-to-blob treatment.
+  const isPublic = (p: string) => p.startsWith("/api/v1/public/");
+  if (src.startsWith("/api/v1/")) return !isPublic(src);
   try {
     const u = new URL(src, window.location.href);
-    if (u.origin === window.location.origin && u.pathname.startsWith("/api/v1/")) {
+    if (
+      u.origin === window.location.origin &&
+      u.pathname.startsWith("/api/v1/") &&
+      !isPublic(u.pathname)
+    ) {
       return true;
     }
   } catch {

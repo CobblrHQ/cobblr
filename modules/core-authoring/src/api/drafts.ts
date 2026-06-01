@@ -22,6 +22,8 @@ import {
   repairPrompt,
   type ValidationError,
 } from "../services/compile.js";
+import { listTemplates, getTemplate } from "../services/templates.js";
+import { matchTemplateHosted } from "../services/match-template.js";
 
 export const draftsRouter = Router({ mergeParams: true });
 
@@ -54,6 +56,49 @@ async function callBundles(
 
 const jsonb = (v: unknown) => sql`${JSON.stringify(v ?? null)}::jsonb`;
 
+// ── GET /templates — the flagship template catalog (match-template, Phase 1) ──
+// The driving model / user reads this list and picks the nearest template;
+// no kernel inference (hosted LLM match is Phase 2). See
+// docs/design-decisions/templates-first-authoring.md.
+draftsRouter.get(
+  "/templates",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    res.json({ items: listTemplates() });
+  }),
+);
+
+// ── GET /templates/:id — one template incl. its starting manifest ──
+draftsRouter.get(
+  "/templates/:id",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const t = getTemplate(req.params.id!);
+    if (!t) {
+      res.status(404).json({ error: { code: "not_found", message: "Template not found." } });
+      return;
+    }
+    res.json(t);
+  }),
+);
+
+// ── POST /match-template — hosted match (Phase 2, the non-dev path) ──
+// One cheap core-ai call maps the intent → nearest template + confidence.
+// Degrades to { template_id: null, ai: false } when no AI provider is
+// configured (the caller then shows the full catalog). See
+// docs/design-decisions/templates-first-authoring.md.
+const MatchBody = z.object({ intent: z.string().min(1).max(4000) });
+draftsRouter.post(
+  "/match-template",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const parsed = MatchBody.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const match = await matchTemplateHosted(tenantContext(req).org.id, parsed.data.intent);
+    res.json(match);
+  }),
+);
+
 // ── POST /context — preview the assembled context (+ warnings) ──
 const ContextBody = z.object({ selected_kinds: z.array(z.string()).optional() });
 draftsRouter.post(
@@ -72,6 +117,7 @@ const CompileBody = z.object({
   intent: z.string().min(1).max(4000),
   selected_kinds: z.array(z.string()).optional(),
   task: z.string().optional(),
+  base_template_id: z.string().optional(),
 });
 draftsRouter.post(
   "/compile",
@@ -81,7 +127,19 @@ draftsRouter.post(
     if (!parsed.success) return badBody(res, parsed.error);
     const orgId = tenantContext(req).org.id;
     const user = sessionUser(req);
-    const ctx = await assembleContext(orgId, parsed.data.selected_kinds, parsed.data.task ?? "create-bundle");
+    let ctx;
+    try {
+      ctx = await assembleContext(
+        orgId,
+        parsed.data.selected_kinds,
+        parsed.data.task ?? "create-bundle",
+        parsed.data.base_template_id,
+      );
+    } catch (e) {
+      // Bad task/template selection → a clean 400, not a 500.
+      res.status(400).json({ error: { code: "bad_task", message: e instanceof Error ? e.message : String(e) } });
+      return;
+    }
     const prompt = compilePrompt(ctx, parsed.data.intent);
     const db = tenantDb(req);
     const draft = await db
@@ -94,6 +152,7 @@ draftsRouter.post(
         compiled_prompt: prompt,
         mode: "copy-paste",
         status: "prompt-built",
+        base_template_id: parsed.data.base_template_id ?? null,
         created_by: user?.id ?? null,
       })
       .returning(["id"])

@@ -144,7 +144,10 @@ async function canOpen(req: Parameters<typeof tenantContext>[0], app: { visible_
 }
 
 function toMeta(r: AppRow) {
-  return { id: r.id, slug: r.slug, name: r.name, icon: r.icon, visible_capability: r.visible_capability };
+  // `theme` rides along on the list so the member portal can resolve its
+  // launcher skin (default-app's / sole-app's theme) without a second
+  // round-trip per app. See web PortalLayout. Page bodies stay omitted.
+  return { id: r.id, slug: r.slug, name: r.name, icon: r.icon, visible_capability: r.visible_capability, theme: r.theme ?? null };
 }
 function toFull(r: AppRow) {
   return { ...toMeta(r), pages: r.pages ?? [], theme: r.theme ?? null, created_at: r.created_at, updated_at: r.updated_at };

@@ -15,7 +15,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Plus, ScanLine, LogOut, LayoutDashboard } from "lucide-react";
+import { ArrowLeft, Plus, ScanLine, LogOut, LayoutDashboard, LayoutGrid, ChevronDown } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { useAuth } from "../auth/AuthContext";
 import {
@@ -26,77 +26,21 @@ import {
 } from "@cobblr/platform-web";
 import { NewPartDialog, InventoryProvider } from "@cobblr/inventory/ui";
 import { api, getToken, type AppBlock, type AppTheme } from "../lib/api";
-
-// ── Per-app theme → CSS variables ────────────────────────────────
-// The whole point of an App is that it can look like the builder's
-// thing, not Cobblr. An unthemed app returns `undefined` here and
-// renders byte-identical to before (dark mode etc. intact). When a
-// theme is set, the wrapper publishes `--app-*` vars and every block
-// reads them via the small *Style helpers below (inline styles win over
-// the Tailwind defaults, so no per-block class surgery / no !important).
-const FONT_STACKS: Record<NonNullable<AppTheme["font"]>, string> = {
-  sans: "ui-sans-serif, system-ui, -apple-system, sans-serif",
-  serif: "ui-serif, Georgia, 'Times New Roman', serif",
-  mono: "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace",
-  rounded: "'SF Pro Rounded', 'Nunito', 'Segoe UI', system-ui, sans-serif",
-  slab: "'Rockwell', 'Roboto Slab', Georgia, serif",
-};
-const CUSTOM_FONT_FAMILY = "cobblr-app-font";
-// A custom (uploaded/hosted) font wins over the keyword stack. Guard the
-// URL so it can't break out of the CSS `url("…")` string (data: URLs are
-// base64; normal URLs don't contain quotes/newlines).
-function customFontUrl(t?: AppTheme | null): string | null {
-  if (!t?.font_url || /["\\\n\r]/.test(t.font_url)) return null;
-  return t.font_url;
-}
-function fontFaceCss(t?: AppTheme | null): string | null {
-  const url = customFontUrl(t);
-  return url
-    ? `@font-face{font-family:'${CUSTOM_FONT_FAMILY}';src:url("${url}");font-display:swap}`
-    : null;
-}
-function themeWrapperStyle(t?: AppTheme | null): React.CSSProperties | undefined {
-  if (!t) return undefined;
-  const vars = {
-    "--app-bg": t.bg ?? "#f4f2ee",
-    "--app-surface": t.surface ?? "#ffffff",
-    "--app-text": t.text ?? "#334155",
-    "--app-muted": t.muted ?? "#8a94a6",
-    "--app-accent": t.accent ?? "#3b82f6",
-    "--app-accent-text": t.accent_text ?? "#ffffff",
-    "--app-border": t.border ?? "#e2e8f0",
-    "--app-radius": `${t.radius ?? 12}px`,
-  } as React.CSSProperties;
-  const fontFamily = customFontUrl(t)
-    ? `'${CUSTOM_FONT_FAMILY}', ui-sans-serif, system-ui, sans-serif`
-    : t.font
-      ? FONT_STACKS[t.font]
-      : undefined;
-  return { ...vars, background: "var(--app-bg)", color: "var(--app-text)", fontFamily };
-}
-const cardStyle = (t?: AppTheme | null): React.CSSProperties | undefined =>
-  t ? { background: "var(--app-surface)", borderColor: "var(--app-border)", borderRadius: "var(--app-radius)", color: "var(--app-text)" } : undefined;
-const accentStyle = (t?: AppTheme | null): React.CSSProperties | undefined =>
-  t ? { color: "var(--app-accent)" } : undefined;
-const mutedStyle = (t?: AppTheme | null): React.CSSProperties | undefined =>
-  t ? { color: "var(--app-muted)" } : undefined;
-const textStyle = (t?: AppTheme | null): React.CSSProperties | undefined =>
-  t ? { color: "var(--app-text)" } : undefined;
-// Tailwind `prose` colours its children via its own --tw-prose-* vars, so
-// a plain `color` won't reach the markdown heading/body. Override the prose
-// vars too, so themed markdown renders in the app's text colour.
-const proseStyle = (t?: AppTheme | null): React.CSSProperties | undefined =>
-  t
-    ? ({
-        color: "var(--app-text)",
-        "--tw-prose-body": "var(--app-text)",
-        "--tw-prose-headings": "var(--app-text)",
-        "--tw-prose-bold": "var(--app-text)",
-        "--tw-prose-links": "var(--app-accent)",
-      } as React.CSSProperties)
-    : undefined;
-const btnStyle = (t?: AppTheme | null): React.CSSProperties | undefined =>
-  t ? { background: "var(--app-accent)", color: "var(--app-accent-text)", borderColor: "transparent", borderRadius: "var(--app-radius)" } : undefined;
+// Per-surface theme → CSS variables. Shared with the member portal so the
+// launcher can wear the same brand. See web/src/lib/appTheme.ts.
+import {
+  accentStyle,
+  btnStyle,
+  cardStyle,
+  CUSTOM_FONT_FAMILY,
+  customFontUrl,
+  FONT_STACKS,
+  fontFaceCss,
+  mutedStyle,
+  proseStyle,
+  textStyle,
+  themeWrapperStyle,
+} from "../lib/appTheme";
 
 interface Caps {
   role: string;
@@ -221,6 +165,7 @@ export function AppPlayerPage() {
             </div>
             <div className="flex items-center gap-3 shrink-0 text-xs" style={mutedStyle(theme)}>
               {user?.display_name && <span className="hidden sm:inline">{user.display_name}</span>}
+              <AppSwitcher slug={slug} currentSlug={appSlug} theme={theme} />
               {isAdmin && (
                 <Link to="/" className="inline-flex items-center gap-1 hover:opacity-80 transition" title="Switch to the admin dashboard">
                   <LayoutDashboard size={13} /> <span className="hidden sm:inline">Dashboard</span>
@@ -251,14 +196,75 @@ export function AppPlayerPage() {
         <ArrowLeft size={12} /> back
       </Link>
 
-      <div className="border-b border-slate-200 dark:border-slate-700 pb-3">
-        <h1 className="text-xl font-semibold text-slate-700 dark:text-mortar-100">
-          {app.data.name}
-        </h1>
-        {tabsEl}
+      <div className="border-b border-slate-200 dark:border-slate-700 pb-3 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-xl font-semibold text-slate-700 dark:text-mortar-100">
+            {app.data.name}
+          </h1>
+          {tabsEl}
+        </div>
+        <div className="text-xs text-slate-500 dark:text-slate-400 shrink-0 pt-1">
+          <AppSwitcher slug={slug} currentSlug={appSlug} theme={null} />
+        </div>
       </div>
 
       {blocksEl}
+    </div>
+  );
+}
+
+/** In-app switcher (worker-navigation-and-identity.md, Phase 2): flip to
+ *  another app you can open without bouncing to the portal. Renders only
+ *  when there's somewhere to go (≥1 OTHER openable app). The portal stays
+ *  reachable as the fallback via "All apps" (?all=1, which suppresses the
+ *  auto-land). Styles to the app's theme when one is set. */
+function AppSwitcher({ slug, currentSlug, theme }: { slug: string; currentSlug: string; theme?: AppTheme | null }) {
+  const [open, setOpen] = useState(false);
+  const apps = useQuery({ queryKey: ["portal-apps", slug], queryFn: () => api.listApps(slug) });
+  const others = (apps.data?.items ?? []).filter((a) => a.slug !== currentSlug);
+  if (others.length === 0) return null;
+  const menuStyle: React.CSSProperties | undefined = theme
+    ? { background: "var(--app-surface)", borderColor: "var(--app-border)", color: "var(--app-text)", borderRadius: "var(--app-radius)" }
+    : undefined;
+  const menuClass = theme
+    ? "absolute right-0 mt-1 z-10 min-w-[11rem] border py-1 text-sm shadow-lg"
+    : "absolute right-0 mt-1 z-10 min-w-[11rem] rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-1 text-sm shadow-lg";
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="inline-flex items-center gap-1 hover:opacity-80 transition"
+        style={mutedStyle(theme)}
+        title="Switch app"
+      >
+        <LayoutGrid size={13} /> <span className="hidden sm:inline">Apps</span> <ChevronDown size={11} />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-0" onClick={() => setOpen(false)} />
+          <div className={menuClass} style={menuStyle}>
+            {others.map((a) => (
+              <Link
+                key={a.slug}
+                to={`/portal/${slug}/app/${a.slug}`}
+                onClick={() => setOpen(false)}
+                className="block px-3 py-1.5 hover:opacity-80 truncate"
+              >
+                {a.name}
+              </Link>
+            ))}
+            <Link
+              to={`/portal/${slug}?all=1`}
+              onClick={() => setOpen(false)}
+              className="block px-3 py-1.5 hover:opacity-80 border-t"
+              style={{ ...mutedStyle(theme), borderColor: theme ? "var(--app-border)" : undefined }}
+            >
+              All apps…
+            </Link>
+          </div>
+        </>
+      )}
     </div>
   );
 }

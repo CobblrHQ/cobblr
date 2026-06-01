@@ -15,12 +15,56 @@ import * as activity from "../platform/activity.js";
 
 export const portalRouter = Router({ mergeParams: true });
 
+// Portal launcher override theme — the SAME token shape as a core-apps
+// app theme (mirrored here; the module can't be imported from core). When
+// unset, the launcher INHERITS the workspace's default-app / sole-app
+// theme (resolved client-side in PortalLayout); when set, this wins. The
+// per-workspace portal is the builder's, so it carries the builder's
+// brand — not Cobblr's. Tokens only (validated hex / vetted keyword / a
+// bounded asset URL), never raw CSS.
+const hexColor = z.string().regex(/^#[0-9a-fA-F]{3,8}$/, "must be a hex color");
+const assetRef = z
+  .string()
+  .regex(/^(https?:\/\/|data:(image|font|application)\/)/, "must be an http(s) or data: URL");
+const ThemeTokens = z
+  .object({
+    bg: hexColor.optional(),
+    surface: hexColor.optional(),
+    text: hexColor.optional(),
+    muted: hexColor.optional(),
+    accent: hexColor.optional(),
+    accent_text: hexColor.optional(),
+    border: hexColor.optional(),
+    font: z.enum(["sans", "serif", "mono", "rounded", "slab"]).optional(),
+    radius: z.number().int().min(0).max(36).optional(),
+    logo: assetRef.max(500_000).optional(),
+    font_url: assetRef.max(1_200_000).optional(),
+    font_name: z.string().max(60).optional(),
+  })
+  .strict();
+
 const PortalConfigShape = z.object({
   display_name: z.string().max(120).optional(),
   logo_path: z.string().max(500).nullable().optional(),
   theme: z.enum(["light", "dark", "auto"]).optional(),
+  /** Override skin for the portal launcher. Unset → inherit the
+   *  workspace's default-app / sole-app theme. See PortalLayout. */
+  theme_tokens: ThemeTokens.nullable().optional(),
+  /** Brand theme for the ADMIN dashboard shell. v1 (chrome): drives the
+   *  page background + accent + workspace logo, keeping the Cobblr mark;
+   *  the dense module-page palette is a later migration. See AppLayout +
+   *  worker-navigation-and-identity.md §4. */
+  admin_theme: ThemeTokens.nullable().optional(),
   pinned_views: z.array(z.string().uuid()).default([]),
   welcome_markdown: z.string().max(20000).optional(),
+  /** Worker-landing (worker-navigation-and-identity.md): the app slug a
+   *  member lands in directly instead of this portal. The portal then
+   *  serves only as the fallback "drawer of everything". A member who
+   *  can't open it (capabilities) falls through to the launcher; an
+   *  unset value + exactly one openable app + no pinned views also
+   *  auto-lands. Not cross-checked here — the resolver tolerates a stale
+   *  slug by showing the launcher. */
+  default_app: z.string().max(80).nullable().optional(),
 });
 
 // ──────────────────────── /portal-config ────────────────────────

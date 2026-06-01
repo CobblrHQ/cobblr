@@ -7,6 +7,9 @@
 //   "$.a.b.c"  — dot-path into the JSON response
 //   "='lit'"   — a literal string
 //   "={var}"   — a template var (fileId / jobId from the call args)
+//
+// Template vars (in `path` strings as `{var}`, and in `submit.body` string
+// values as `{var}`): fileId, jobId, deviceId, tag, filename.
 // See docs/design-decisions/digifab-drivers.md.
 
 import { z } from "zod";
@@ -38,8 +41,15 @@ export const DriverManifest = z.object({
   upload: z.object({
     method: Method,
     path: z.string(),
-    /** multipart field name for the file. */
+    /** How the file bytes are sent. "multipart" (default): a form part named
+     *  `fileField`. "raw": the file bytes ARE the request body (Duet
+     *  rr_upload, PrusaLink PUT) — `fileField` is then ignored and the
+     *  filename usually goes in the path via {filename}. */
+    body: z.enum(["multipart", "raw"]).default("multipart"),
+    /** multipart field name for the file (body="multipart" only). */
     fileField: z.string().default("file"),
+    /** Content-Type for body="raw" (default application/octet-stream). */
+    contentType: z.string().optional(),
     result: z.object({ fileId: Extract }),
   }),
   submit: z.object({
@@ -51,6 +61,11 @@ export const DriverManifest = z.object({
   status: z.object({
     method: Method,
     path: z.string(),
+    /** How to read the status response. "json" (default): `from`/`progress`
+     *  are JSON-path/extract exprs. "text": the body is plain text (e.g. a
+     *  GRBL `<Idle|MPos:..>` report) and `from`/`progress` are REGEXES whose
+     *  first capture group is the value. */
+    parse: z.enum(["json", "text"]).default("json"),
     result: z.object({
       state: z.object({ from: Extract, map: z.record(z.string()) }),
       progress: Extract.optional(),

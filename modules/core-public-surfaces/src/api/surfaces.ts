@@ -25,7 +25,10 @@ const SurfaceCreate = z.object({
   //                is [{ title, view_id }] — a multi-column TV board
   //                (e.g. companion app's recently-done / in-progress / coming-up),
   //                each column resolved from a saved view.
-  scope_type: z.enum(["view", "entity", "collection", "board"]),
+  // 'app'        — scope_id is a core-apps app SLUG. Renders the whole
+  //                composed app read-only + no-login (markdown / stat /
+  //                view / custom blocks; write/member blocks dropped).
+  scope_type: z.enum(["view", "entity", "collection", "board", "app"]),
   scope_id: z.string().min(1),
   config: z.record(z.unknown()).optional(),
   expires_at: z.string().datetime().nullable().optional(),

@@ -50,6 +50,12 @@ services:
       # returns 403); flip via .env to open self-service signup.
       # Dev default: unset → falls back to NODE_ENV check (open in dev).
       PUBLIC_SIGNUP_ENABLED: ${PUBLIC_SIGNUP_ENABLED:-}
+      # Instance kill-switch for ALL built-in LLM features. Default
+      # "true". Set "false" for a guaranteed no-outbound-LLM deploy —
+      # platform().ai.invoke() then refuses every call and AI features
+      # degrade gracefully. Operator's hard floor, above per-workspace
+      # BYO-key config.
+      COBBLR_AI_ENABLED: ${COBBLR_AI_ENABLED:-true}
       # Marketplace v0.3.x runtime install — sandboxed module
       # tarballs go here. Bind-mounted so installs persist across
       # api restarts AND survive image rebuilds.

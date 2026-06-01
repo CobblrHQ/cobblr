@@ -10,6 +10,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, ArrowUp, ArrowDown, ExternalLink } from "lucide-react";
 import { useConfirm, usePageTitle, useToast } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { ThemeEditor } from "../components/ThemeEditor";
 import {
   api,
   type AppBlock,
@@ -102,22 +103,6 @@ export function AppsConfigPage() {
   const setPages = (pages: AppPage[]) => setEditing((a) => (a ? { ...a, pages } : a));
   const setTheme = (patch: Partial<NonNullable<WorkspaceApp["theme"]>> | null) =>
     setEditing((a) => (a ? { ...a, theme: patch === null ? null : { ...(a.theme ?? {}), ...patch } } : a));
-  // Read an uploaded logo/font as an inline data: URL (self-hosted, no
-  // auth-gated file fetch). Reject oversize so the save doesn't 400 on the
-  // server's length cap. maxKb: logo ~360KB, font ~880KB of base64.
-  const uploadAsset = (file: File | undefined, key: "logo" | "font_url", maxBytes: number) => {
-    if (!file) return;
-    const r = new FileReader();
-    r.onload = () => {
-      const url = String(r.result);
-      if (url.length > maxBytes) {
-        toast.error(`That file is too large (${Math.round(url.length / 1024)}KB encoded; max ${Math.round(maxBytes / 1024)}KB).`);
-        return;
-      }
-      setTheme({ [key]: url });
-    };
-    r.readAsDataURL(file);
-  };
   const addPage = () =>
     editing &&
     setPages([...editing.pages, { slug: `page-${editing.pages.length + 1}`, title: "New page", blocks: [] }]);
@@ -190,6 +175,16 @@ export function AppsConfigPage() {
                   {a.visible_capability ?? "any member"}
                 </div>
               </div>
+              <a
+                href={`/portal/${slug}/app/${a.slug}`}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="text-slate-300 hover:text-cobble-600 p-1"
+                title="Open app in the portal"
+              >
+                <ExternalLink size={13} />
+              </a>
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); void remove(a); }}
@@ -223,9 +218,10 @@ export function AppsConfigPage() {
                   href={`/portal/${slug}/app/${editing.slug}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="text-xs text-cobble-600 hover:underline inline-flex items-center gap-1"
+                  className="inline-flex items-center gap-1.5 rounded-md border border-cobble-300 text-cobble-600 hover:bg-cobble-50 dark:hover:bg-cobble-900/20 text-sm font-medium px-3 py-1.5 whitespace-nowrap"
+                  title="Open this app in the portal (new tab)"
                 >
-                  <ExternalLink size={11} /> open
+                  <ExternalLink size={14} /> Open app
                 </a>
               </div>
 
@@ -248,114 +244,13 @@ export function AppsConfigPage() {
               </label>
 
               {/* Look & feel — per-app theme so the members' app can look
-                  like the builder's thing, not Cobblr. Tokens only (no raw
-                  CSS); unset = Cobblr default; the workspace header is
-                  unaffected. */}
-              <div className="rounded-lg border border-slate-200 dark:border-slate-700 p-3 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400">Look &amp; feel</span>
-                  {editing.theme && (
-                    <button type="button" onClick={() => setTheme(null)} className="text-[11px] text-slate-400 hover:text-ember-500">
-                      Reset to default
-                    </button>
-                  )}
-                </div>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {(
-                    [
-                      ["bg", "Background", "#f4f2ee"],
-                      ["surface", "Cards", "#ffffff"],
-                      ["text", "Text", "#334155"],
-                      ["muted", "Labels", "#8a94a6"],
-                      ["accent", "Accent", "#3b82f6"],
-                      ["accent_text", "On accent", "#ffffff"],
-                      ["border", "Borders", "#e2e8f0"],
-                    ] as const
-                  ).map(([key, label, def]) => (
-                    <label key={key} className="flex items-center gap-2 text-xs text-slate-600 dark:text-mortar-200">
-                      <input
-                        type="color"
-                        value={editing.theme?.[key] ?? def}
-                        onChange={(e) => setTheme({ [key]: e.target.value })}
-                        className="w-7 h-7 rounded border border-slate-300 dark:border-slate-600 bg-transparent cursor-pointer p-0"
-                      />
-                      {label}
-                    </label>
-                  ))}
-                </div>
-                <div className="flex flex-wrap gap-4 items-end">
-                  <label className="text-xs text-slate-600 dark:text-mortar-200">
-                    <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 mb-1">Font</span>
-                    <select
-                      value={editing.theme?.font ?? "sans"}
-                      onChange={(e) => setTheme({ font: e.target.value as NonNullable<WorkspaceApp["theme"]>["font"] })}
-                      className="px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
-                    >
-                      <option value="sans">Sans</option>
-                      <option value="serif">Serif</option>
-                      <option value="mono">Mono</option>
-                      <option value="rounded">Rounded</option>
-                      <option value="slab">Slab</option>
-                    </select>
-                  </label>
-                  <label className="text-xs text-slate-600 dark:text-mortar-200">
-                    <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 mb-1">Corners (px)</span>
-                    <input
-                      type="number"
-                      min={0}
-                      max={36}
-                      value={editing.theme?.radius ?? 12}
-                      onChange={(e) => setTheme({ radius: Number(e.target.value) })}
-                      className="w-20 px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
-                    />
-                  </label>
-                  <p className="text-[11px] text-slate-400 flex-1 min-w-[12rem]">
-                    Restyles the app's content for members. Unset = Cobblr default. <strong>Save</strong>, then <em>open</em> to preview.
-                  </p>
-                </div>
-                {/* Logo + custom font — uploaded inline (stored as data: URLs,
-                    so they work in the standalone app with no auth / no CDN). */}
-                <div className="flex flex-wrap gap-6 items-start pt-1 border-t border-slate-100 dark:border-slate-800">
-                  <div className="flex items-center gap-3">
-                    {editing.theme?.logo ? (
-                      <img src={editing.theme.logo} alt="" className="w-9 h-9 rounded object-contain border border-slate-200 dark:border-slate-700" />
-                    ) : (
-                      <div className="w-9 h-9 rounded border border-dashed border-slate-300 dark:border-slate-600" />
-                    )}
-                    <div className="text-xs">
-                      <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 mb-1">Logo</span>
-                      <label className="text-cobble-600 hover:underline cursor-pointer">
-                        upload
-                        <input type="file" accept="image/*" className="hidden" onChange={(e) => uploadAsset(e.target.files?.[0], "logo", 500_000)} />
-                      </label>
-                      {editing.theme?.logo && (
-                        <button type="button" onClick={() => setTheme({ logo: undefined })} className="ml-2 text-slate-400 hover:text-ember-500">clear</button>
-                      )}
-                    </div>
-                  </div>
-                  <div className="text-xs">
-                    <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 mb-1">Custom font</span>
-                    <div className="flex items-center gap-2">
-                      <label className="text-cobble-600 hover:underline cursor-pointer">
-                        {editing.theme?.font_url ? "replace" : "upload"}
-                        <input type="file" accept=".woff,.woff2,.ttf,.otf,font/*" className="hidden" onChange={(e) => uploadAsset(e.target.files?.[0], "font_url", 1_200_000)} />
-                      </label>
-                      {editing.theme?.font_url && (
-                        <>
-                          <input
-                            value={editing.theme.font_name ?? ""}
-                            onChange={(e) => setTheme({ font_name: e.target.value })}
-                            placeholder="font label"
-                            className="w-28 px-2 py-0.5 text-xs border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
-                          />
-                          <button type="button" onClick={() => setTheme({ font_url: undefined, font_name: undefined })} className="text-slate-400 hover:text-ember-500">clear</button>
-                        </>
-                      )}
-                    </div>
-                    <span className="block text-[10px] text-slate-400 mt-1">woff2/ttf/otf — overrides the keyword font above.</span>
-                  </div>
-                </div>
-              </div>
+                  like the builder's thing, not Cobblr. Shared with the
+                  portal launcher's theme editor (components/ThemeEditor). */}
+              <ThemeEditor
+                theme={editing.theme}
+                onChange={setTheme}
+                helpText="Restyles the app's content for members. Unset = Cobblr default. Save, then open to preview."
+              />
 
               {editing.pages.map((page, pi) => (
                 <div key={pi} className="rounded-lg border border-slate-200 dark:border-slate-700 p-3 space-y-3">

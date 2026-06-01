@@ -504,8 +504,9 @@ function CreateSurfaceModal({
   onCreated: () => void;
 }) {
   const [name, setName] = useState("");
-  const [scopeType, setScopeType] = useState<"view" | "collection">("view");
+  const [scopeType, setScopeType] = useState<"view" | "collection" | "app">("view");
   const [viewId, setViewId] = useState("");
+  const [appSlug, setAppSlug] = useState("");
   const [collectionKind, setCollectionKind] = useState("inventory:part");
   const [collectionFilterRaw, setCollectionFilterRaw] = useState("");
   const [theme, setTheme] = useState<"auto" | "dark" | "light">("auto");
@@ -523,13 +524,19 @@ function CreateSurfaceModal({
     queryFn: () => api.listEntityKinds(slug),
     enabled: !!slug && scopeType === "collection",
   });
+  const apps = useQuery({
+    queryKey: ["apps", slug],
+    queryFn: () => api.listApps(slug),
+    enabled: !!slug && scopeType === "app",
+  });
 
   const items: SavedView[] = views.data?.items ?? [];
   const kindList = entityKinds.data?.items ?? [];
+  const appList = apps.data?.items ?? [];
 
   const canSubmit =
     name.trim() !== "" &&
-    (scopeType === "view" ? !!viewId : !!collectionKind);
+    (scopeType === "view" ? !!viewId : scopeType === "app" ? !!appSlug : !!collectionKind);
 
   return (
     <Modal open onClose={onClose} title="Publish a public surface">
@@ -559,7 +566,12 @@ function CreateSurfaceModal({
             const created = await api.createSurface(slug, {
               name: name.trim(),
               scope_type: scopeType,
-              scope_id: scopeType === "view" ? viewId : collectionKind,
+              scope_id:
+                scopeType === "view"
+                  ? viewId
+                  : scopeType === "app"
+                    ? appSlug
+                    : collectionKind,
               config: Object.keys(config).length > 0 ? config : undefined,
             });
             toast.success("Published");
@@ -589,7 +601,7 @@ function CreateSurfaceModal({
         <label className="block">
           <div className="text-xs text-slate-500 mb-1">Source</div>
           <div className="flex gap-1">
-            {(["view", "collection"] as const).map((t) => (
+            {(["view", "collection", "app"] as const).map((t) => (
               <button
                 key={t}
                 type="button"
@@ -600,7 +612,7 @@ function CreateSurfaceModal({
                     : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
                 }`}
               >
-                {t === "view" ? "Saved view" : "Ad-hoc collection"}
+                {t === "view" ? "Saved view" : t === "collection" ? "Ad-hoc collection" : "App"}
               </button>
             ))}
           </div>
@@ -663,6 +675,30 @@ function CreateSurfaceModal({
                 of this kind.
               </div>
             </label>
+          </>
+        )}
+        {scopeType === "app" && (
+          <>
+            <label className="block">
+              <div className="text-xs text-slate-500 mb-1">App to publish</div>
+              <select
+                value={appSlug}
+                onChange={(e) => setAppSlug(e.target.value)}
+                className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+              >
+                <option value="">— pick an app —</option>
+                {appList.map((a) => (
+                  <option key={a.slug} value={a.slug}>
+                    {a.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p className="text-[11px] text-slate-400">
+              Renders the whole app read-only, no login: markdown, stat tiles,
+              views, and custom blocks. Write blocks (forms, action buttons,
+              scan) are dropped, and the app's own theme is used.
+            </p>
           </>
         )}
         <div className="border-t border-slate-200 dark:border-slate-700 pt-3 space-y-3">

@@ -1280,8 +1280,30 @@ export interface AiProviderDef {
   testConnection?: (credentials: Record<string, unknown>) => Promise<{ ok: boolean; error?: string }>;
 }
 
+/** A pluggable entitlement guard. Called by invoke() AFTER the provider +
+ *  model are resolved but BEFORE caching/inference. Returning { allow:false }
+ *  makes invoke() refuse exactly like "no provider configured" — so every
+ *  caller's existing degrade path (the ai:false contract) handles it.
+ *
+ *  Open core ships NO guard (everything is allowed — self-host runs free).
+ *  The hosted overlay registers one that denies the managed providers unless
+ *  the org's plan/allowance permits it. This is the seam the proprietary
+ *  cloud layer plugs into; the billing logic itself is NOT in the open core.
+ *  See business-models/docs/09. */
+export interface AiEntitlementGuard {
+  (ctx: {
+    orgId: string;
+    capability: AiCapability;
+    providerId: string;
+    model: string;
+  }): Promise<{ allow: boolean; reason?: string }>;
+}
+
 export interface PlatformAi {
   registerProvider(p: AiProviderDef): void;
+  /** Register the (single) entitlement guard. Last registration wins;
+   *  open core never calls this — only the hosted overlay does. */
+  registerEntitlementGuard(g: AiEntitlementGuard): void;
   listProviders(): Array<{
     id: string;
     label: string;

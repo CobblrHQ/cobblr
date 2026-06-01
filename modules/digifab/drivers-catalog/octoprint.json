@@ -1,0 +1,50 @@
+{
+  "id": "octoprint",
+  "name": "OctoPrint",
+  "version": "1.0.0",
+  "auth": { "kind": "header", "header": "X-Api-Key", "from": "apiKey" },
+  "routing": false,
+  "test": { "method": "GET", "path": "/api/version" },
+  "listDevices": {
+    "method": "GET",
+    "path": "/api/printer",
+    "result": "single",
+    "map": {
+      "id": "='octoprint'",
+      "name": "='OctoPrint'",
+      "state": "$.state.text"
+    }
+  },
+  "upload": {
+    "method": "POST",
+    "path": "/api/files/local",
+    "body": "multipart",
+    "fileField": "file",
+    "result": { "fileId": "$.files.local.name" }
+  },
+  "submit": {
+    "method": "POST",
+    "path": "/api/files/local/{fileId}",
+    "body": { "command": "select", "print": true },
+    "result": { "jobId": "={fileId}", "queued": "='true'" }
+  },
+  "status": {
+    "method": "GET",
+    "path": "/api/job",
+    "result": {
+      "state": {
+        "from": "$.state",
+        "map": {
+          "Operational": "completed",
+          "Printing": "printing",
+          "Paused": "paused",
+          "Pausing": "paused",
+          "Cancelling": "cancelled",
+          "Error": "failed",
+          "Offline": "failed"
+        }
+      },
+      "progress": "$.progress.completion"
+    }
+  }
+}

@@ -19,6 +19,11 @@ import { useQuery } from "@tanstack/react-query";
 import { useParams, useSearchParams } from "react-router-dom";
 import { CobblestoneMark } from "../CobblestoneMark";
 import { EntityTile, EntityThumb, usePageTitle } from "@cobblr/platform-web";
+import {
+  PublicAppPlayer,
+  type PublicAppPayload,
+  type PublicAppData,
+} from "../components/PublicAppPlayer";
 
 interface SurfaceItem {
   kind: string;
@@ -39,7 +44,7 @@ interface SurfaceSection {
 interface SurfaceResponse {
   surface: {
     name: string;
-    scope_type: "view" | "entity" | "collection" | "board";
+    scope_type: "view" | "entity" | "collection" | "board" | "app";
     config: Record<string, unknown>;
   };
   view?: { name: string; entity_kind: string; view_type: string };
@@ -47,6 +52,8 @@ interface SurfaceResponse {
   entity?: SurfaceItem | null;
   items?: SurfaceItem[];
   sections?: SurfaceSection[];
+  app?: PublicAppPayload;
+  data?: PublicAppData;
 }
 
 interface SurfaceTheme {
@@ -118,6 +125,12 @@ export function PublicSurfacePage() {
   }
   const data = surface.data;
   if (!data) return <PublicShell theme={theme}>—</PublicShell>;
+
+  // scope_type "app" renders a full-bleed, themed, read-only App Player —
+  // its own header/theme, no PublicShell chrome.
+  if (data.surface.scope_type === "app" && data.app && data.data) {
+    return <PublicAppPlayer app={data.app} data={data.data} />;
+  }
 
   return (
     <PublicShell title={data.surface.name} theme={theme}>

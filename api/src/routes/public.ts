@@ -24,7 +24,7 @@ export const publicRouter = Router();
 interface SurfaceRow {
   id: string;
   name: string;
-  scope_type: "view" | "entity" | "collection" | "board";
+  scope_type: "view" | "entity" | "collection" | "board" | "app";
   scope_id: string;
   config: Record<string, unknown>;
   enabled: boolean;
@@ -40,37 +40,103 @@ interface ViewRow {
   name: string;
 }
 
+interface AppRow {
+  slug: string;
+  name: string;
+  pages: unknown;
+  theme: unknown;
+}
+
+// Minimal block shape — we only read the fields the public render needs.
+interface AppBlock {
+  type: string;
+  view_id?: string;
+  agg?: "count" | "sum";
+  field?: string;
+  label?: string;
+  title?: string;
+  html?: string;
+  height?: number;
+  body?: string;
+}
+interface AppPage {
+  slug?: string;
+  title?: string;
+  blocks?: AppBlock[];
+}
+
+// Resolve + validate a surface token against the meta index. Shared by
+// the data route and the public file route so the gate is identical.
+async function resolveToken(token: string | undefined): Promise<
+  | { ok: true; orgId: string; surfaceId: string }
+  | { ok: false; status: number; code: string; message: string }
+> {
+  if (!token || token.length < 16) {
+    return { ok: false, status: 404, code: "not_found", message: "no such surface" };
+  }
+  const tokenRow = await meta
+    .selectFrom("public_surface_tokens")
+    .selectAll()
+    .where("token", "=", token)
+    .executeTakeFirst();
+  if (!tokenRow || tokenRow.revoked_at !== null || !tokenRow.enabled) {
+    return { ok: false, status: 404, code: "not_found", message: "no such surface" };
+  }
+  if (tokenRow.expires_at && tokenRow.expires_at < new Date()) {
+    return { ok: false, status: 410, code: "expired", message: "this surface has expired" };
+  }
+  return { ok: true, orgId: tokenRow.org_id, surfaceId: tokenRow.surface_id };
+}
+
+// Image fields resolve to an authed member URL (/api/v1/orgs/<slug>/…
+// /files/<id>/raw or a bare /files/<id>/raw). The public page holds no
+// token, so rewrite to the no-auth, token-gated public file route below.
+const FILE_ID_RE = /\/files\/([0-9a-fA-F-]{36})\/raw/;
+function publicImg(p: unknown, token: string): unknown {
+  if (typeof p !== "string") return p;
+  const m = p.match(FILE_ID_RE);
+  return m ? `/api/v1/public/${token}/files/${m[1]}/raw` : p;
+}
+function curateItem(it: unknown, token: string): unknown {
+  if (!it || typeof it !== "object") return it;
+  const src = it as Record<string, unknown>;
+  const out: Record<string, unknown> = { ...src };
+  if (out.image_path) out.image_path = publicImg(out.image_path, token);
+  if (out.fields && typeof out.fields === "object") {
+    const f = { ...(out.fields as Record<string, unknown>) };
+    if (f.image_path) f.image_path = publicImg(f.image_path, token);
+    out.fields = f;
+  }
+  return out;
+}
+function curateItems(items: unknown, token: string): unknown {
+  return Array.isArray(items) ? items.map((i) => curateItem(i, token)) : items;
+}
+const UUID_RE = /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/g;
+
 publicRouter.get("/:token", (req, res, next) => {
   void (async () => {
     const token = req.params.token;
-    if (!token || token.length < 16) {
-      res.status(404).json({ error: { code: "not_found", message: "no such surface" } });
-      return;
-    }
 
-    // 1. Meta-side token lookup. Cheap indexed query.
-    const tokenRow = await meta
-      .selectFrom("public_surface_tokens")
-      .selectAll()
-      .where("token", "=", token)
-      .executeTakeFirst();
-    if (!tokenRow || tokenRow.revoked_at !== null || !tokenRow.enabled) {
-      res.status(404).json({ error: { code: "not_found", message: "no such surface" } });
-      return;
-    }
-    if (tokenRow.expires_at && tokenRow.expires_at < new Date()) {
-      res.status(410).json({ error: { code: "expired", message: "this surface has expired" } });
+    // 1. Meta-side token lookup (shared with the public file route).
+    const tok = await resolveToken(token);
+    if (!tok.ok) {
+      res.status(tok.status).json({ error: { code: tok.code, message: tok.message } });
       return;
     }
 
     // 2. Open the tenant DB + read the surface config.
     const tenantDb = (await platform().tenants.getDb(
-      tokenRow.org_id,
-    )) as Kysely<{ core_public_surfaces_surfaces: SurfaceRow; core_views_views: ViewRow }>;
+      tok.orgId,
+    )) as Kysely<{
+      core_public_surfaces_surfaces: SurfaceRow;
+      core_views_views: ViewRow;
+      core_apps_apps: AppRow;
+    }>;
     const surface = await tenantDb
       .selectFrom("core_public_surfaces_surfaces")
       .selectAll()
-      .where("id", "=", tokenRow.surface_id)
+      .where("id", "=", tok.surfaceId)
       .executeTakeFirst();
     if (!surface || surface.revoked_at !== null || !surface.enabled) {
       res.status(404).json({ error: { code: "not_found", message: "no such surface" } });
@@ -96,8 +162,8 @@ publicRouter.get("/:token", (req, res, next) => {
       const lastSep = surface.scope_id.lastIndexOf(":");
       const kind = surface.scope_id.slice(0, lastSep);
       const entityId = surface.scope_id.slice(lastSep + 1);
-      const entity = await platform().entities.lookup(tokenRow.org_id, kind, entityId);
-      payload.entity = entity;
+      const entity = await platform().entities.lookup(tok.orgId,kind, entityId);
+      payload.entity = curateItem(entity, token!);
     } else if (surface.scope_type === "view") {
       // scope_id is a core_views_views row id. Read the view, then
       // call platform.entities.list with its persisted config.
@@ -111,7 +177,7 @@ publicRouter.get("/:token", (req, res, next) => {
         return;
       }
       const cfg = (view.config as Record<string, unknown>) ?? {};
-      const result = await platform().entities.list(tokenRow.org_id, view.entity_kind, {
+      const result = await platform().entities.list(tok.orgId,view.entity_kind, {
         filter: (cfg.filter as Record<string, unknown> | undefined) ?? undefined,
         sort: (cfg.sort as string[] | undefined) ?? undefined,
         limit: 50,
@@ -121,7 +187,7 @@ publicRouter.get("/:token", (req, res, next) => {
         entity_kind: view.entity_kind,
         view_type: view.view_type,
       };
-      payload.items = result.items;
+      payload.items = curateItems(result.items, token!);
     } else if (surface.scope_type === "collection") {
       // scope_id is the entity kind; surface.config.query holds the
       // EntityListQuery (filter / where / sort / limit). Lets a
@@ -130,7 +196,7 @@ publicRouter.get("/:token", (req, res, next) => {
       const kind = surface.scope_id;
       const cfg = (surface.config ?? {}) as Record<string, unknown>;
       const query = (cfg.query as Record<string, unknown> | undefined) ?? {};
-      const result = await platform().entities.list(tokenRow.org_id, kind, {
+      const result = await platform().entities.list(tok.orgId,kind, {
         q: typeof query.q === "string" ? query.q : undefined,
         filter: (query.filter as Record<string, unknown> | undefined) ?? undefined,
         where: (query.where as never) ?? undefined,
@@ -141,7 +207,7 @@ publicRouter.get("/:token", (req, res, next) => {
         kind,
         query,
       };
-      payload.items = result.items;
+      payload.items = curateItems(result.items, token!);
     } else if (surface.scope_type === "board") {
       // Multi-column TV board: config.sections = [{ title, view_id }].
       // Each column resolves a saved view (same path as scope_type
@@ -162,7 +228,7 @@ publicRouter.get("/:token", (req, res, next) => {
           .executeTakeFirst();
         if (!view) continue;
         const vcfg = (view.config as Record<string, unknown>) ?? {};
-        const result = await platform().entities.list(tokenRow.org_id, view.entity_kind, {
+        const result = await platform().entities.list(tok.orgId,view.entity_kind, {
           filter: (vcfg.filter as Record<string, unknown> | undefined) ?? undefined,
           sort: (vcfg.sort as string[] | undefined) ?? undefined,
           limit: perColumn,
@@ -171,10 +237,92 @@ publicRouter.get("/:token", (req, res, next) => {
           title: typeof s.title === "string" && s.title ? s.title : view.name,
           entity_kind: view.entity_kind,
           view_type: view.view_type,
-          items: result.items,
+          items: curateItems(result.items, token!),
         });
       }
       payload.sections = resolved;
+    } else if (surface.scope_type === "app") {
+      // scope_id is a core_apps_apps slug. Render the whole composed app
+      // read-only + no-login: keep markdown / stat / view / custom blocks,
+      // DROP everything that writes or needs a member context (form /
+      // action / scan / record). All data the blocks need is RESOLVED HERE
+      // (curated, identity-less projection) and injected — the public page
+      // never holds a token and never hits a live member endpoint.
+      const appRow = await tenantDb
+        .selectFrom("core_apps_apps")
+        .selectAll()
+        .where("slug", "=", surface.scope_id)
+        .executeTakeFirst();
+      if (!appRow) {
+        res.status(404).json({ error: { code: "app_missing", message: "surface points at a deleted app" } });
+        return;
+      }
+      const pages = (Array.isArray(appRow.pages) ? appRow.pages : []) as AppPage[];
+
+      // Build the allowlist of views this app references: structured
+      // view_id on stat/view blocks + any view-id literal embedded in a
+      // custom block's html (the SVG/widget reads it via cobblr.viewData).
+      const allViews = await tenantDb
+        .selectFrom("core_views_views")
+        .selectAll()
+        .execute();
+      const viewById = new Map(allViews.map((v) => [v.id, v]));
+      const wanted = new Set<string>();
+      for (const page of pages) {
+        for (const b of page.blocks ?? []) {
+          if ((b.type === "stat" || b.type === "view") && b.view_id) wanted.add(b.view_id);
+          if (b.type === "custom" && typeof b.html === "string") {
+            for (const id of b.html.match(UUID_RE) ?? []) {
+              if (viewById.has(id)) wanted.add(id);
+            }
+          }
+        }
+      }
+
+      // Resolve each wanted view once (curated), build viewsById +
+      // precomputed stats so the public player needs zero live calls.
+      const viewsById: Record<string, unknown[]> = {};
+      const statsById: Record<string, number> = {};
+      for (const vid of wanted) {
+        const view = viewById.get(vid);
+        if (!view) continue;
+        const vcfg = (view.config as Record<string, unknown>) ?? {};
+        const result = await platform().entities.list(tok.orgId, view.entity_kind, {
+          filter: (vcfg.filter as Record<string, unknown> | undefined) ?? undefined,
+          sort: (vcfg.sort as string[] | undefined) ?? undefined,
+          limit: 200,
+        });
+        viewsById[vid] = curateItems(result.items, token!) as unknown[];
+      }
+      // Precompute every stat block's number (count / sum of a field).
+      for (const page of pages) {
+        for (const b of page.blocks ?? []) {
+          if (b.type !== "stat" || !b.view_id) continue;
+          const rows = (viewsById[b.view_id] ?? []) as Array<{ fields?: Record<string, unknown> }>;
+          if (b.agg === "sum" && b.field) {
+            statsById[b.view_id + ":" + b.field] = rows.reduce((acc, r) => {
+              const fields = r.fields ?? {};
+              const meta = (fields.metadata as Record<string, unknown> | undefined) ?? {};
+              const raw = fields[b.field!] ?? meta[b.field!];
+              const n = Number(raw);
+              return acc + (Number.isFinite(n) ? n : 0);
+            }, 0);
+          } else {
+            statsById[b.view_id] = rows.length;
+          }
+        }
+      }
+
+      // Strip the page tree to only the public-safe blocks.
+      const PUBLIC_BLOCKS = new Set(["markdown", "stat", "view", "custom"]);
+      const publicPages = pages.map((p) => ({
+        slug: p.slug,
+        title: p.title,
+        blocks: (p.blocks ?? []).filter((b) => PUBLIC_BLOCKS.has(b.type)),
+      }));
+
+      payload.app = { name: appRow.name, theme: appRow.theme ?? null, pages: publicPages };
+      payload.data = { viewsById, statsById };
     } else {
       res.status(500).json({ error: { code: "unknown_scope", message: `unsupported scope_type ${surface.scope_type}` } });
       return;
@@ -186,7 +334,7 @@ publicRouter.get("/:token", (req, res, next) => {
     // signal (wires can subscribe); the views-log row is the
     // module's own rollup source.
     void platform().events.emit("core-public-surfaces.surface.viewed", {
-      orgId: tokenRow.org_id,
+      orgId: tok.orgId,
       surfaceId: surface.id,
       scope_type: surface.scope_type,
     });
@@ -208,5 +356,37 @@ publicRouter.get("/:token", (req, res, next) => {
       });
 
     res.json(payload);
+  })().catch(next);
+});
+
+// No-auth, token-gated image serve. The public render payload rewrites
+// every image_path to this route so a logged-out page (no Bearer token)
+// can still show photos. Bounded by: a valid surface token (org gate) +
+// images only (no docs/gcode leak) + unguessable file uuid. Bytes come
+// through the platform files seam (org-scoped) — we never touch disk or
+// the core-files router here.
+publicRouter.get("/:token/files/:id/raw", (req, res, next) => {
+  void (async () => {
+    const tok = await resolveToken(req.params.token);
+    if (!tok.ok) {
+      res.status(tok.status).json({ error: { code: tok.code, message: tok.message } });
+      return;
+    }
+    const id = req.params.id;
+    if (!id) {
+      res.status(404).json({ error: { code: "not_found", message: "no such file" } });
+      return;
+    }
+    const file =
+      (await platform().files.read(tok.orgId, id, "medium")) ??
+      (await platform().files.read(tok.orgId, id, "original"));
+    // Images only on the public path — never serve documents / gcode / etc.
+    if (!file || !file.mimeType.startsWith("image/")) {
+      res.status(404).json({ error: { code: "not_found", message: "no such image" } });
+      return;
+    }
+    res.type(file.mimeType);
+    res.setHeader("Cache-Control", "public, max-age=3600");
+    res.send(Buffer.from(file.bytes));
   })().catch(next);
 });

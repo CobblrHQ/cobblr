@@ -1,0 +1,51 @@
+{
+  "id": "duet-rrf",
+  "name": "Duet (RepRapFirmware)",
+  "version": "1.0.0",
+  "routing": false,
+  "test": { "method": "GET", "path": "/rr_status?type=1" },
+  "listDevices": {
+    "method": "GET",
+    "path": "/rr_status?type=1",
+    "result": "single",
+    "map": {
+      "id": "='duet'",
+      "name": "='Duet'",
+      "state": "$.status"
+    }
+  },
+  "upload": {
+    "method": "PUT",
+    "path": "/rr_upload?name=0:/gcodes/{filename}",
+    "body": "raw",
+    "contentType": "application/octet-stream",
+    "result": { "fileId": "={filename}" }
+  },
+  "submit": {
+    "method": "GET",
+    "path": "/rr_gcode?gcode=M32%20%22{fileId}%22",
+    "result": { "jobId": "={fileId}", "queued": "='true'" }
+  },
+  "status": {
+    "method": "GET",
+    "path": "/rr_status?type=3",
+    "result": {
+      "state": {
+        "from": "$.status",
+        "map": {
+          "I": "completed",
+          "P": "printing",
+          "S": "paused",
+          "D": "printing",
+          "R": "printing",
+          "B": "printing",
+          "F": "completed",
+          "A": "failed",
+          "H": "paused",
+          "M": "printing"
+        }
+      },
+      "progress": "$.fractionPrinted"
+    }
+  }
+}

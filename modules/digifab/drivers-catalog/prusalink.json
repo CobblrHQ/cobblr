@@ -1,0 +1,51 @@
+{
+  "id": "prusalink",
+  "name": "PrusaLink",
+  "version": "1.0.0",
+  "auth": { "kind": "header", "header": "X-Api-Key", "from": "apiKey" },
+  "routing": false,
+  "test": { "method": "GET", "path": "/api/version" },
+  "listDevices": {
+    "method": "GET",
+    "path": "/api/v1/status",
+    "result": "single",
+    "map": {
+      "id": "='prusalink'",
+      "name": "='PrusaLink'",
+      "state": "$.printer.state"
+    }
+  },
+  "upload": {
+    "method": "PUT",
+    "path": "/api/v1/files/usb/{filename}",
+    "body": "raw",
+    "contentType": "application/octet-stream",
+    "result": { "fileId": "={filename}" }
+  },
+  "submit": {
+    "method": "POST",
+    "path": "/api/v1/files/usb/{fileId}",
+    "result": { "jobId": "={fileId}", "queued": "='true'" }
+  },
+  "status": {
+    "method": "GET",
+    "path": "/api/v1/status",
+    "result": {
+      "state": {
+        "from": "$.printer.state",
+        "map": {
+          "IDLE": "completed",
+          "READY": "completed",
+          "PRINTING": "printing",
+          "PAUSED": "paused",
+          "FINISHED": "completed",
+          "STOPPED": "cancelled",
+          "ERROR": "failed",
+          "ATTENTION": "paused",
+          "BUSY": "printing"
+        }
+      },
+      "progress": "$.job.progress"
+    }
+  }
+}

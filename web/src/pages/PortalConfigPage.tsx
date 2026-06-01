@@ -7,8 +7,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { ChevronUp, ChevronDown, ExternalLink, X } from "lucide-react";
 import { useToast, usePageTitle } from "@cobblr/platform-web";
-import { ApiError, api, type PortalConfig } from "../lib/api";
+import { ApiError, api, type AppTheme, type PortalConfig } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { ThemeEditor } from "../components/ThemeEditor";
 
 export function PortalConfigPage() {
   usePageTitle("Portal config");
@@ -24,12 +25,19 @@ export function PortalConfigPage() {
     queryKey: ["all-saved-views", activeSlug],
     queryFn: () => api.listSavedViews(activeSlug),
   });
+  const appsQ = useQuery({
+    queryKey: ["portal-config-apps", activeSlug],
+    queryFn: () => api.listApps(activeSlug),
+  });
 
   const [displayName, setDisplayName] = useState("");
   const [logoPath, setLogoPath] = useState("");
   const [theme, setTheme] = useState<"light" | "dark" | "auto">("auto");
   const [welcomeMd, setWelcomeMd] = useState("");
   const [pinnedIds, setPinnedIds] = useState<string[]>([]);
+  const [defaultApp, setDefaultApp] = useState("");
+  const [themeTokens, setThemeTokens] = useState<AppTheme | null>(null);
+  const [adminTheme, setAdminTheme] = useState<AppTheme | null>(null);
 
   useEffect(() => {
     if (!configQ.data) return;
@@ -39,7 +47,17 @@ export function PortalConfigPage() {
     setTheme(c.theme ?? "auto");
     setWelcomeMd(c.welcome_markdown ?? "");
     setPinnedIds(c.pinned_views);
+    setDefaultApp(c.default_app ?? "");
+    setThemeTokens(c.theme_tokens ?? null);
+    setAdminTheme(c.admin_theme ?? null);
   }, [configQ.data]);
+
+  // What the launcher would INHERIT if there's no override — the default
+  // app's, else the sole app's, theme. Drives the editor's hint.
+  const apps = appsQ.data?.items ?? [];
+  const inheritApp =
+    (defaultApp && apps.find((a) => a.slug === defaultApp)) ||
+    (apps.length === 1 ? apps[0] : undefined);
 
   const save = useMutation({
     mutationFn: () => {
@@ -49,6 +67,9 @@ export function PortalConfigPage() {
         theme,
         welcome_markdown: welcomeMd.trim() || undefined,
         pinned_views: pinnedIds,
+        default_app: defaultApp || null,
+        theme_tokens: themeTokens,
+        admin_theme: adminTheme,
       };
       return api.updatePortalConfig(activeSlug, body);
     },
@@ -127,6 +148,20 @@ export function PortalConfigPage() {
               className="input"
             />
           </label>
+          <label className="block">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+              Members land in
+            </span>
+            <select value={defaultApp} onChange={(e) => setDefaultApp(e.target.value)} className="input">
+              <option value="">Launcher (this portal)</option>
+              {(appsQ.data?.items ?? []).map((a) => (
+                <option key={a.slug} value={a.slug}>{a.name}</option>
+              ))}
+            </select>
+            <span className="block text-[10px] text-slate-400 dark:text-slate-500 mt-1">
+              The app a member opens directly instead of this portal. (A lone app auto-lands even when this is blank.)
+            </span>
+          </label>
           <label className="block col-span-2">
             <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
               Welcome markdown
@@ -140,6 +175,70 @@ export function PortalConfigPage() {
             />
           </label>
         </div>
+      </div>
+
+      <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 space-y-3">
+        <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500">
+          // launcher theme
+        </div>
+        <p className="text-[11px] text-slate-400 dark:text-slate-500">
+          {themeTokens ? (
+            <>This portal launcher uses its own theme below.</>
+          ) : inheritApp ? (
+            <>
+              The launcher currently <strong>inherits</strong> the{" "}
+              <strong>{inheritApp.name}</strong> app's theme. Set one below to override it.
+            </>
+          ) : (
+            <>The launcher uses Cobblr's default look. Set a theme below to brand it.</>
+          )}
+        </p>
+        {themeTokens ? (
+          <ThemeEditor
+            theme={themeTokens}
+            onChange={(patch) =>
+              setThemeTokens(patch === null ? null : { ...(themeTokens ?? {}), ...patch })
+            }
+            helpText="Brands the member launcher (the page at /portal/:slug). Tokens only; Save to apply."
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => setThemeTokens(inheritApp?.theme ?? {})}
+            className="text-xs rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 hover:border-cobble-400 dark:hover:border-cobble-600 transition text-slate-600 dark:text-mortar-200"
+          >
+            {inheritApp ? "Override the inherited theme" : "Give the launcher its own theme"}
+          </button>
+        )}
+      </div>
+
+      <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 space-y-3">
+        <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500">
+          // admin dashboard theme
+        </div>
+        <p className="text-[11px] text-slate-400 dark:text-slate-500">
+          Brands <strong>this</strong> admin dashboard (the shell you're in now): the whole thing
+          recolors — page, header bar, every card / table / label — plus your workspace logo beside
+          the Cobblr mark, which always stays. Buttons and form inputs stay neutral so actions stay
+          legible on any palette. Save, then reload the dashboard.
+        </p>
+        {adminTheme ? (
+          <ThemeEditor
+            theme={adminTheme}
+            onChange={(patch) =>
+              setAdminTheme(patch === null ? null : { ...(adminTheme ?? {}), ...patch })
+            }
+            helpText="Recolors the whole admin dashboard. Save, then reload the dashboard."
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => setAdminTheme({})}
+            className="text-xs rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 hover:border-cobble-400 dark:hover:border-cobble-600 transition text-slate-600 dark:text-mortar-200"
+          >
+            Brand the admin dashboard
+          </button>
+        )}
       </div>
 
       <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 space-y-3">

@@ -690,7 +690,7 @@ partsRouter.post(
       })
       .where("id", "=", id)
       .where("instance", "=", instanceOf(req))
-      .returning(["id", "name", "qty"])
+      .returning(["id", "name", "qty", "min_qty"])
       .executeTakeFirst();
     if (!updated) {
       res.status(404).json({ error: { code: "not_found", message: "part not found" } });
@@ -714,6 +714,21 @@ partsRouter.post(
       newQty: Number(updated.qty),
     });
 
-    res.json({ ...updated, qty: Number(updated.qty) });
+    // Low-stock signal: on a DECREASE that lands at/below min_qty, fire
+    // inventory.stock.low (manifest-declared; this is its emit point). Wires
+    // like the food-cluster "running low → shopping list" hang off it. Only on
+    // a decrease, so re-stocking doesn't re-alert.
+    const newQty = Number(updated.qty);
+    const minQty = updated.min_qty == null ? null : Number(updated.min_qty);
+    if (parsed.data.delta < 0 && minQty != null && minQty > 0 && newQty <= minQty) {
+      await platform().events.emit("inventory.stock.low", {
+        orgId: ctx.org.id,
+        partId: updated.id,
+        newQty,
+        minQty,
+      });
+    }
+
+    res.json({ ...updated, qty: newQty });
   }),
 );

@@ -8,7 +8,9 @@
 // specialisations (3D Printers, Laser Cutters, etc.) into a hover
 // popover under the parent rather than as broken top-level links.
 
+import { useEffect } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { LogOut, Moon, Server, Sun } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
@@ -20,14 +22,45 @@ import { HeaderActions } from "./HeaderActions";
 import { MobileNav } from "./MobileNav";
 import { SearchBar } from "./SearchBar";
 import { ErrorBoundary } from "./ErrorBoundary";
+import { api } from "../lib/api";
+import { adminShellCss, fontFaceCss, themeVars } from "../lib/appTheme";
 
-export function AppLayout(_props: { activeSlug: string }) {
-  // activeSlug is still threaded through from App.tsx for back-compat
-  // but the bell + display-name link no longer need it (cross-
-  // workspace notifications + /me/activity respectively).
+export function AppLayout({ activeSlug }: { activeSlug: string }) {
   const { user, logout } = useAuth();
   const { theme, toggle } = useTheme();
   const location = useLocation();
+
+  // Workspace brand for the admin shell. The whole dashboard recolours to
+  // `admin_theme`: page background + accent + the workspace logo (chrome),
+  // AND every module page / table / the header bar, via the scoped
+  // utility-remap stylesheet (adminShellCss). The Cobblr mark always
+  // stays. Button fills stay neutral (legible on any palette) — that seam
+  // is where a future semantic-token migration takes over.
+  const config = useQuery({
+    queryKey: ["portal-config", activeSlug],
+    queryFn: () => api.getPortalConfig(activeSlug),
+    enabled: !!activeSlug,
+  });
+  const skin = config.data?.config.admin_theme ?? null;
+  const wsLogo = config.data?.config.logo_path ?? null;
+  const fontFace = fontFaceCss(skin);
+  const recolor = adminShellCss(skin);
+
+  // Publish the palette on <html data-ws-themed> so the scoped recolor
+  // resolves its vars AND reaches modals/toasts that portal to <body>.
+  // Cleaned up on unmount (leaving for the portal/auth surface) and when
+  // the theme is cleared, so the marker never leaks onto another surface.
+  useEffect(() => {
+    const el = document.documentElement;
+    const vars = themeVars(skin);
+    if (!vars) return;
+    el.setAttribute("data-ws-themed", "");
+    for (const [k, v] of Object.entries(vars)) el.style.setProperty(k, String(v));
+    return () => {
+      el.removeAttribute("data-ws-themed");
+      for (const k of Object.keys(vars)) el.style.removeProperty(k);
+    };
+  }, [skin]);
 
   return (
     // grid-cols-1 pins the column to viewport width. We deliberately
@@ -39,10 +72,24 @@ export function AppLayout(_props: { activeSlug: string }) {
     // shrink-0 on flex children. If something does push wider than
     // viewport, that's a layout bug to fix locally rather than mask
     // here.
-    <div className="min-h-screen grid grid-rows-[auto_1fr] grid-cols-1">
-      <header className="border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/80 backdrop-blur overflow-x-clip">
+    <div
+      className="min-h-screen grid grid-rows-[auto_1fr] grid-cols-1"
+      style={skin ? { ...themeVars(skin), background: "var(--app-bg)" } : undefined}
+    >
+      {(fontFace || recolor) && (
+        <style dangerouslySetInnerHTML={{ __html: (fontFace ?? "") + (recolor ?? "") }} />
+      )}
+      {/* The root is grid-rows-[auto_1fr] = exactly two row-children
+          (header, main). The accent strip lives INSIDE the header as its
+          top edge — a third grid child would steal the 1fr row and
+          stretch the header. A thin branded edge over the (still neutral +
+          readable) functional header; the Cobblr mark stays. */}
+      <header
+        className="border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/80 backdrop-blur overflow-x-clip"
+        style={skin ? { borderTop: "4px solid var(--app-accent)" } : undefined}
+      >
         <div className="max-w-6xl mx-auto px-5 py-3 flex items-center gap-3 min-w-0">
-          {/* Brand — never compressed */}
+          {/* Brand — never compressed. Cobblr mark always present. */}
           <Link
             to="/"
             className="flex items-center gap-2 shrink-0 hover:opacity-80 transition"
@@ -53,6 +100,14 @@ export function AppLayout(_props: { activeSlug: string }) {
             </span>
           </Link>
           <span className="text-slate-200 dark:text-slate-700 shrink-0">/</span>
+          {/* Workspace logo — the builder's brand, alongside the Cobblr mark. */}
+          {wsLogo && (
+            <img
+              src={wsLogo}
+              alt=""
+              className="w-6 h-6 rounded object-contain shrink-0 border border-slate-200 dark:border-slate-700"
+            />
+          )}
           <div className="shrink-0">
             <WorkspaceSwitcher />
           </div>
@@ -89,13 +144,17 @@ export function AppLayout(_props: { activeSlug: string }) {
             >
               {user?.display_name}
             </Link>
-            <button
-              onClick={toggle}
-              className="text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-mortar-100 transition p-1.5"
-              title={theme === "dark" ? "Switch to light" : "Switch to dark"}
-            >
-              {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
-            </button>
+            {/* A workspace theme owns the palette, so the per-user
+                light/dark toggle would just fight it — hide when themed. */}
+            {!skin && (
+              <button
+                onClick={toggle}
+                className="text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-mortar-100 transition p-1.5"
+                title={theme === "dark" ? "Switch to light" : "Switch to dark"}
+              >
+                {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
+              </button>
+            )}
             <button
               onClick={logout}
               className="text-slate-400 dark:text-slate-500 hover:text-ember-500 transition p-1.5"

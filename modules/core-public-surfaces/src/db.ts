@@ -1,7 +1,7 @@
 import type { Generated, Kysely } from "kysely";
 import type { Request } from "express";
 
-export type ScopeType = "view" | "entity" | "collection" | "board";
+export type ScopeType = "view" | "entity" | "collection" | "board" | "app";
 
 export interface SurfacesTable {
   id: Generated<string>;

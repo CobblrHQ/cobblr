@@ -42,6 +42,20 @@ export class DeclarativeDriver implements MachineDriver {
     return this.base + template.replace(/\{(\w+)\}/g, (_, k) => encodeURIComponent(vars[k] ?? ""));
   }
 
+  /** Substitute {var} in the string values of a submit body (deep). Lets a
+   *  manifest put `{filename}` into a JSON command body (Duet's M32, etc.). */
+  private fillBody(body: Record<string, unknown>, vars: Record<string, string>): Record<string, unknown> {
+    const sub = (v: unknown): unknown =>
+      typeof v === "string"
+        ? v.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? "")
+        : Array.isArray(v)
+          ? v.map(sub)
+          : v && typeof v === "object"
+            ? Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, val]) => [k, sub(val)]))
+            : v;
+    return sub(body) as Record<string, unknown>;
+  }
+
   /** Evaluate an extract expr against a response + vars. */
   private extract(expr: string, data: unknown, vars: Record<string, string> = {}): string {
     if (expr.startsWith("='") && expr.endsWith("'")) return expr.slice(2, -1);
@@ -112,10 +126,21 @@ export class DeclarativeDriver implements MachineDriver {
 
   async uploadFile(file: Uint8Array, filename: string): Promise<UploadResult> {
     const m = this.manifest.upload;
-    const form = new FormData();
-    form.append(m.fileField, new Blob([file]), filename);
-    const data = await this.json(m.method, this.path(m.path), { body: form });
-    return { fileId: this.extract(m.result.fileId, data) || filename, filename };
+    const url = this.path(m.path, { filename });
+    let data: unknown;
+    if (m.body === "raw") {
+      // The file bytes ARE the request body (Duet rr_upload, PrusaLink PUT).
+      // Filename rides in the path via {filename}.
+      data = await this.json(m.method, url, {
+        headers: { "content-type": m.contentType ?? "application/octet-stream" },
+        body: file,
+      });
+    } else {
+      const form = new FormData();
+      form.append(m.fileField, new Blob([file]), filename);
+      data = await this.json(m.method, url, { body: form });
+    }
+    return { fileId: this.extract(m.result.fileId, data, { filename }) || filename, filename };
   }
 
   async resolvePlacement(): Promise<PlacementResolution> {
@@ -125,10 +150,11 @@ export class DeclarativeDriver implements MachineDriver {
 
   async submitJob(args: SubmitArgs): Promise<SubmitResult> {
     const m = this.manifest.submit;
-    const vars = { fileId: args.fileId, deviceId: args.deviceId ?? "", tag: args.tag ?? "" };
+    // For raw-upload managers the "fileId" IS the filename, so expose both.
+    const vars = { fileId: args.fileId, filename: args.fileId, deviceId: args.deviceId ?? "", tag: args.tag ?? "" };
     const data = await this.json(m.method, this.path(m.path, vars), {
       headers: m.body ? { "content-type": "application/json" } : {},
-      body: m.body ? JSON.stringify(m.body) : undefined,
+      body: m.body ? JSON.stringify(this.fillBody(m.body, vars)) : undefined,
     });
     const jobId = this.extract(m.result.jobId, data, vars) || null;
     const queued = m.result.queued ? this.extract(m.result.queued, data, vars) === "true" : !!jobId;
@@ -137,15 +163,41 @@ export class DeclarativeDriver implements MachineDriver {
 
   async getJobStatus(jobId: string): Promise<JobStatus> {
     const m = this.manifest.status;
-    const data = await this.json(m.method, this.path(m.path, { jobId }));
-    const upstream = this.extract(m.result.state.from, data, { jobId });
+    const url = this.path(m.path, { jobId });
+    let upstream: string;
+    let progressStr: string | null = null;
+    let raw: unknown;
+    if (m.parse === "text") {
+      // Plain-text status (GRBL `<Idle|MPos:..>` etc.): `from`/`progress` are
+      // REGEXES; use the first capture group against the raw body.
+      const res = await this.req(m.method, url);
+      const text = res.ok ? await res.text() : "";
+      raw = text;
+      upstream = matchGroup(m.result.state.from, text);
+      if (m.result.progress) progressStr = matchGroup(m.result.progress, text);
+    } else {
+      const data = await this.json(m.method, url);
+      raw = data;
+      upstream = this.extract(m.result.state.from, data, { jobId });
+      if (m.result.progress) progressStr = this.extract(m.result.progress, data, { jobId });
+    }
     const mapped = m.result.state.map[upstream] ?? "unknown";
     const state = (JOB_STATES.has(mapped as JobState) ? mapped : "unknown") as JobState;
     let progress: number | null = null;
-    if (m.result.progress) {
-      const p = Number(this.extract(m.result.progress, data, { jobId }));
+    if (progressStr != null && progressStr !== "") {
+      const p = Number(progressStr);
       if (Number.isFinite(p)) progress = p > 1 ? p / 100 : p;
     }
-    return { jobId, state, progress, deviceId: null, raw: data };
+    return { jobId, state, progress, deviceId: null, raw };
+  }
+}
+
+/** First capture group of `pattern` against `text`, or "" if no match. */
+function matchGroup(pattern: string, text: string): string {
+  try {
+    const m = new RegExp(pattern).exec(text);
+    return m?.[1] ?? "";
+  } catch {
+    return "";
   }
 }

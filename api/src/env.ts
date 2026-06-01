@@ -37,6 +37,20 @@ const Schema = z.object({
   // Empty / unset → no super-admins (single-tenant deploy where the
   // workspace owner is also the host operator).
   SUPERADMIN_EMAILS: z.string().optional(),
+
+  // Instance-level kill-switch for ALL built-in LLM features. When
+  // false, platform().ai.invoke() refuses every call regardless of
+  // per-workspace provider config — AI features degrade exactly as
+  // they do with no provider (the ai:false path). Default true.
+  // A self-hoster who wants a guaranteed no-outbound-LLM deployment
+  // sets this false; it's the operator's hard floor, above any
+  // per-workspace BYO-key config. (Per-customer / paid-inference
+  // entitlement is a SEPARATE hosted-only layer — see
+  // business-models/docs/09; it is NOT in the open core.)
+  COBBLR_AI_ENABLED: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((v) => v === "true"),
 });
 
 export type Env = z.infer<typeof Schema>;

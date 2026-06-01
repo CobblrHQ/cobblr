@@ -11,10 +11,26 @@ import { tenantDb, tenantContext } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { BUILTIN_DRIVERS } from "../drivers/registry.js";
 import { DriverManifest } from "../drivers/manifest.js";
+import { DRIVER_CATALOG, EDGE_ADAPTER_CATALOG } from "../drivers/catalog.js";
 
 export const driversRouter = Router({ mergeParams: true });
 
 const DRIVER_COLS = ["id", "key", "name", "kind", "spec", "enabled", "created_at", "updated_at"] as const;
+
+// The "app store" shelf: ready-to-install firmware drivers that ship with
+// digifab. Browse here, then POST the chosen manifest to install it. Static
+// (no DB, no auth beyond being in the workspace) — it's a catalog, not state.
+driversRouter.get(
+  "/catalog",
+  asyncHandler(async (_req, res) => {
+    res.json({
+      drivers: DRIVER_CATALOG.map((e) => ({
+        id: e.id, name: e.name, summary: e.summary, credentialHint: e.credentialHint, kind: e.kind, manifest: e.manifest,
+      })),
+      edgeAdapters: EDGE_ADAPTER_CATALOG,
+    });
+  }),
+);
 
 driversRouter.get(
   "/",

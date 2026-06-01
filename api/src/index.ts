@@ -174,6 +174,7 @@ async function boot() {
     },
     ai: {
       registerProvider: aiImpl.registerProvider,
+      registerEntitlementGuard: aiImpl.registerEntitlementGuard,
       listProviders: aiImpl.listProviders,
       getProvider: aiImpl.getProvider,
       invoke: aiImpl.invoke,

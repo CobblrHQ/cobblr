@@ -16,16 +16,27 @@
 import { createHash } from "node:crypto";
 import type {
   AiCapability,
+  AiEntitlementGuard,
   AiProviderDef,
   PlatformAi,
 } from "@cobblr/platform-contract";
 import { getTenantDb } from "../db/tenant.js";
 import * as integrationsImpl from "./integrations.js";
+import { env } from "../env.js";
 
 const providers = new Map<string, AiProviderDef>();
 
 export function registerProvider(p: AiProviderDef): void {
   providers.set(p.id, p);
+}
+
+// Pluggable entitlement guard. Open core registers none (allow-all →
+// self-host is free); the hosted overlay registers one that gates the
+// managed providers by plan/allowance. Last registration wins.
+let entitlementGuard: AiEntitlementGuard | null = null;
+
+export function registerEntitlementGuard(g: AiEntitlementGuard): void {
+  entitlementGuard = g;
 }
 
 export function listProviders(): ReturnType<PlatformAi["listProviders"]> {
@@ -137,18 +148,28 @@ async function resolveProviderAndModel(
   if (!providerId) {
     throw new Error(`no provider configured for capability ${capability}`);
   }
-  const row = await tdb
+  const def = providers.get(providerId);
+  if (!def) {
+    throw new Error(`provider ${providerId} not registered with the platform`);
+  }
+  let row = await tdb
     .selectFrom("core_ai_providers")
     .selectAll()
     .where("provider_id", "=", providerId)
     .where("enabled", "=", true)
     .executeTakeFirst();
   if (!row) {
-    throw new Error(`provider ${providerId} not installed (or disabled) in this workspace`);
-  }
-  const def = providers.get(providerId);
-  if (!def) {
-    throw new Error(`provider ${providerId} not registered with the platform`);
+    // A "credential-less" provider (describeCredentials() → {}) needs no
+    // per-workspace row — it supplies its own credentials (e.g. a managed
+    // provider reading an instance key). Synthesize a virtual row so the
+    // workspace doesn't have to "install" something it has no secret for.
+    // Whether the workspace may USE it is the entitlement guard's call,
+    // not a row-existence check. Credentialed providers still require a row.
+    const needsCreds = Object.keys(def.describeCredentials()).length > 0;
+    if (needsCreds) {
+      throw new Error(`provider ${providerId} not installed (or disabled) in this workspace`);
+    }
+    row = { id: `virtual:${providerId}`, provider_id: providerId, credentials_enc: "", enabled: true, config: {} };
   }
   if (!model) {
     model = def.capabilities[capability]?.defaultModel ??
@@ -165,10 +186,33 @@ function truncate(s: string, n = 200): string {
 }
 
 export const invoke: PlatformAi["invoke"] = async (req) => {
+  // Instance kill-switch: when AI is disabled for the whole deployment,
+  // refuse before touching any per-workspace config. Same error family as
+  // "no provider configured" so every caller's existing degrade path
+  // (the ai:false contract) handles it with no per-feature changes.
+  if (!env.COBBLR_AI_ENABLED) {
+    throw new Error("no provider configured: AI features are disabled for this instance (COBBLR_AI_ENABLED=false)");
+  }
   const { row, model } = await resolveProviderAndModel(req.orgId, req.capability, {
     provider_id: req.provider_id,
     model: req.model,
   });
+
+  // Entitlement gate (hosted overlay only — open core registers no guard).
+  // Denials surface in the "no provider" error family so existing degrade
+  // paths (ai:false) handle them with no per-feature changes.
+  if (entitlementGuard) {
+    const verdict = await entitlementGuard({
+      orgId: req.orgId,
+      capability: req.capability,
+      providerId: row.provider_id,
+      model,
+    });
+    if (!verdict.allow) {
+      throw new Error(`no provider available: ${verdict.reason ?? "not entitled for this workspace"}`);
+    }
+  }
+
   const def = providers.get(row.provider_id)!;
   const cacheKey = hashInput(req.capability, row.provider_id, model, req.input);
 
@@ -234,8 +278,12 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
     }
   }
 
-  // Real call.
-  const credentials = await integrationsImpl.decryptCredentials(req.orgId, row.credentials_enc);
+  // Real call. A virtual (credential-less) row has no ciphertext to
+  // decrypt — the provider supplies its own credentials (e.g. an instance
+  // key), so pass an empty bag.
+  const credentials = row.credentials_enc
+    ? await integrationsImpl.decryptCredentials(req.orgId, row.credentials_enc)
+    : {};
   const start = Date.now();
   let ok = false;
   let errMsg: string | null = null;
