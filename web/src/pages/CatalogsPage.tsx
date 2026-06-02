@@ -42,11 +42,11 @@ export function CatalogsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
-        <h1 className="text-2xl font-semibold text-slate-700 dark:text-mortar-100">
+      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
+        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">
           Catalogs
         </h1>
-        <span className="text-sm text-slate-500 dark:text-slate-400">
+        <span className="text-sm text-muted dark:text-slate-400">
           {items.length} {items.length === 1 ? "catalog" : "catalogs"}
         </span>
         <div className="flex-1" />
@@ -58,16 +58,16 @@ export function CatalogsPage() {
         </button>
       </div>
 
-      <p className="text-sm text-slate-600 dark:text-mortar-200">
+      <p className="text-sm text-content dark:text-mortar-200">
         Imported reference datasets — Rebrickable parts, McMaster, USDA,
         anything you have a CSV for. Your own entities (parts, machines,
         assets) can <em>match</em> a row in a catalog; once matched, the
         catalog's photo + metadata is shown alongside your entity.
       </p>
 
-      {list.isLoading && <div className="text-sm text-slate-500">Loading…</div>}
+      {list.isLoading && <div className="text-sm text-muted">Loading…</div>}
       {items.length === 0 && !list.isLoading && (
-        <div className="text-sm italic text-slate-500 dark:text-slate-400">
+        <div className="text-sm italic text-muted dark:text-slate-400">
           No catalogs yet. Click "New catalog" to start one — give it a name,
           then upload a CSV.
         </div>
@@ -113,27 +113,27 @@ function CatalogCard({
   onDelete: () => void;
 }) {
   return (
-    <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
-      <div className="px-4 py-3 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
-        <Library size={18} className="text-cobble-500 shrink-0" />
+    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden">
+      <div className="px-4 py-3 bg-subtle dark:bg-slate-800/50 border-b border-line dark:border-slate-700 flex items-center gap-3">
+        <Library size={18} className="text-accent shrink-0" />
         <Link
           to={`/configuration/catalogs/${catalog.id}`}
-          className="flex-1 min-w-0 hover:text-cobble-600 transition"
+          className="flex-1 min-w-0 hover:text-accent transition"
         >
-          <div className="font-medium text-slate-700 dark:text-mortar-100 truncate">
+          <div className="font-medium text-content dark:text-mortar-100 truncate">
             {catalog.name}
           </div>
           {catalog.description && (
-            <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
+            <div className="text-xs text-muted dark:text-slate-400 truncate">
               {catalog.description}
             </div>
           )}
         </Link>
-        <span className="text-[10px] font-mono text-cobble-600 dark:text-cobble-400">
+        <span className="text-[10px] font-mono text-accent dark:text-cobble-400">
           {catalog.entry_count} {catalog.entry_count === 1 ? "entry" : "entries"}
         </span>
         {catalog.puller_id && (
-          <span className="text-[10px] uppercase font-mono tracking-widest text-slate-400 dark:text-slate-500">
+          <span className="text-[10px] uppercase font-mono tracking-widest text-faint dark:text-slate-500">
             {catalog.puller_id}
           </span>
         )}
@@ -141,7 +141,7 @@ function CatalogCard({
           type="button"
           onClick={onDelete}
           title="Delete catalog"
-          className="text-slate-400 hover:text-ember-500 transition p-1"
+          className="text-faint hover:text-ember-500 transition p-1"
         >
           <Trash2 size={14} />
         </button>
@@ -185,7 +185,7 @@ function CreateCatalogModal({
         className="space-y-3"
       >
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
             Name
           </span>
           <input
@@ -193,23 +193,23 @@ function CreateCatalogModal({
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. Rebrickable parts"
-            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             autoFocus
           />
         </label>
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
             Description (optional)
           </span>
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             rows={2}
-            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           />
         </label>
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
             Source URL (optional)
           </span>
           <input
@@ -217,9 +217,9 @@ function CreateCatalogModal({
             value={sourceUrl}
             onChange={(e) => setSourceUrl(e.target.value)}
             placeholder="https://rebrickable.com/downloads/"
-            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           />
-          <div className="text-[10px] text-slate-500 mt-1">
+          <div className="text-[10px] text-muted mt-1">
             Just for your reference. The actual import is the CSV upload on
             the detail page.
           </div>
@@ -228,7 +228,7 @@ function CreateCatalogModal({
           <button
             type="button"
             onClick={onClose}
-            className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
           >
             Cancel
           </button>

@@ -79,7 +79,7 @@ export function PortalLayout() {
     >
       {fontFace && <style dangerouslySetInnerHTML={{ __html: fontFace }} />}
       <header
-        className="border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/80 backdrop-blur"
+        className="border-b border-line dark:border-slate-700 bg-surface dark:bg-slate-900/80 backdrop-blur"
         style={skin ? { background: "var(--app-surface)", borderColor: "var(--app-border)" } : undefined}
       >
         <div className="max-w-5xl mx-auto px-5 py-3 flex items-center gap-3 min-w-0">
@@ -91,12 +91,12 @@ export function PortalLayout() {
               <img
                 src={headerLogo}
                 alt=""
-                className="w-7 h-7 rounded object-cover border border-slate-200 dark:border-slate-700"
+                className="w-7 h-7 rounded object-cover border border-line dark:border-slate-700"
                 style={skin ? { borderColor: "var(--app-border)" } : undefined}
               />
             )}
             <span
-              className="font-display font-extrabold text-slate-700 dark:text-mortar-100 truncate"
+              className="font-display font-extrabold text-content dark:text-mortar-100 truncate"
               style={textStyle(skin)}
             >
               {headerName}
@@ -109,7 +109,7 @@ export function PortalLayout() {
             {isAdmin && (
               <button
                 onClick={() => navigate("/")}
-                className="text-[11px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 hover:text-cobble-600 transition px-2 py-1"
+                className="text-[11px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 hover:text-accent transition px-2 py-1"
                 style={mutedStyle(skin)}
                 title="Switch to the admin shell"
               >
@@ -118,7 +118,7 @@ export function PortalLayout() {
               </button>
             )}
             <span
-              className="text-xs text-slate-500 dark:text-slate-400 hidden md:inline"
+              className="text-xs text-muted dark:text-slate-400 hidden md:inline"
               style={mutedStyle(skin)}
             >
               {user?.display_name}
@@ -128,7 +128,7 @@ export function PortalLayout() {
             {!skin && (
               <button
                 onClick={toggle}
-                className="text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-mortar-100 transition p-1.5"
+                className="text-faint dark:text-slate-500 hover:text-content dark:hover:text-mortar-100 transition p-1.5"
                 title={theme === "dark" ? "Switch to light" : "Switch to dark"}
               >
                 {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
@@ -136,7 +136,7 @@ export function PortalLayout() {
             )}
             <button
               onClick={logout}
-              className="text-slate-400 dark:text-slate-500 hover:text-ember-500 transition p-1.5"
+              className="text-faint dark:text-slate-500 hover:text-ember-500 transition p-1.5"
               style={mutedStyle(skin)}
               title="Sign out"
             >

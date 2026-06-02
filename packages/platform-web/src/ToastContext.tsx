@@ -155,7 +155,7 @@ function ToastCard({ toast, dismiss }: { toast: Toast; dismiss: (id: number) => 
             </button>
             <button
               onClick={() => dismiss(toast.id)}
-              className="text-xs text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+              className="text-xs text-muted hover:text-slate-800 dark:hover:text-slate-200"
             >
               Dismiss
             </button>
@@ -192,15 +192,15 @@ function paletteFor(kind: Kind) {
     case "action":
       return {
         container: "bg-cobble-50 dark:bg-cobble-500/10 border-cobble-200 dark:border-cobble-500/30",
-        icon: "text-cobble-600 dark:text-cobble-300",
+        icon: "text-accent dark:text-cobble-300",
         text: "text-cobble-900 dark:text-cobble-100",
       };
     case "info":
     default:
       return {
-        container: "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700",
-        icon: "text-slate-500 dark:text-slate-400",
-        text: "text-slate-700 dark:text-mortar-100",
+        container: "bg-surface dark:bg-slate-800 border-line dark:border-slate-700",
+        icon: "text-muted dark:text-slate-400",
+        text: "text-content dark:text-mortar-100",
       };
   }
 }

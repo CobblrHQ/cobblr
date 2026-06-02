@@ -119,10 +119,10 @@ export function HeadingsBuilder() {
   return (
     <section className="space-y-3">
       <div>
-        <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500">
+        <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
           // navigation headings
         </div>
-        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+        <p className="text-xs text-muted dark:text-slate-400 mt-1">
           Group nav entries under your own headings — e.g. a{" "}
           <span className="font-mono">Motorcycle</span> heading holding both
           Motorcycle Parts (inventory) and Motorcycles (assets). Each shows as
@@ -141,7 +141,7 @@ export function HeadingsBuilder() {
           value={newName}
           onChange={(e) => setNewName(e.target.value)}
           placeholder="New heading name (e.g. Motorcycle)"
-          className="flex-1 px-2 py-1.5 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+          className="flex-1 px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           data-testid="new-heading-name"
         />
         <button
@@ -155,7 +155,7 @@ export function HeadingsBuilder() {
       </form>
 
       {headingList.length === 0 && (
-        <div className="text-xs text-slate-400 italic">
+        <div className="text-xs text-faint italic">
           No headings yet. Create one above, then add modules / instances to it.
         </div>
       )}
@@ -164,14 +164,14 @@ export function HeadingsBuilder() {
         {headingList.map((h) => (
           <div
             key={h.id}
-            className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3"
+            className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3"
             data-heading-id={h.id}
           >
             <div className="flex items-center gap-2 mb-2">
-              <span className="font-medium text-slate-700 dark:text-mortar-100">
+              <span className="font-medium text-content dark:text-mortar-100">
                 {h.name}
               </span>
-              <span className="text-[10px] font-mono text-slate-400">
+              <span className="text-[10px] font-mono text-faint">
                 {h.members.length} item{h.members.length === 1 ? "" : "s"}
               </span>
               <div className="flex-1" />
@@ -186,7 +186,7 @@ export function HeadingsBuilder() {
                   });
                   if (ok) deleteHeading.mutate(h.id);
                 }}
-                className="text-slate-400 hover:text-ember-500 transition p-0.5"
+                className="text-faint hover:text-ember-500 transition p-0.5"
                 title="Delete heading"
               >
                 <Trash2 size={14} />
@@ -197,7 +197,7 @@ export function HeadingsBuilder() {
               {h.members.map((m) => (
                 <span
                   key={`${m.target_kind}:${m.target_id}`}
-                  className="inline-flex items-center gap-1 text-xs rounded-full border border-slate-200 dark:border-slate-700 pl-2 pr-1 py-0.5 bg-mortar-50 dark:bg-slate-800/60"
+                  className="inline-flex items-center gap-1 text-xs rounded-full border border-line dark:border-slate-700 pl-2 pr-1 py-0.5 bg-subtle dark:bg-slate-800/60"
                 >
                   {labelFor(m.target_kind, m.target_id)}
                   <button
@@ -207,7 +207,7 @@ export function HeadingsBuilder() {
                         target_id: m.target_id,
                       })
                     }
-                    className="text-slate-400 hover:text-ember-500"
+                    className="text-faint hover:text-ember-500"
                     title="Remove from heading"
                   >
                     <X size={12} />
@@ -215,11 +215,11 @@ export function HeadingsBuilder() {
                 </span>
               ))}
               {h.members.length === 0 && (
-                <span className="text-xs text-slate-400 italic">empty</span>
+                <span className="text-xs text-faint italic">empty</span>
               )}
             </div>
 
-            <label className="flex items-center gap-2 text-xs text-slate-500">
+            <label className="flex items-center gap-2 text-xs text-muted">
               <Plus size={12} />
               <select
                 value=""
@@ -232,7 +232,7 @@ export function HeadingsBuilder() {
                     target_id: id!,
                   });
                 }}
-                className="text-sm rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-2 py-1"
+                className="text-sm rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1"
                 data-testid={`add-member-${h.id}`}
               >
                 <option value="">add module / instance…</option>
@@ -246,7 +246,7 @@ export function HeadingsBuilder() {
                 ))}
               </select>
               {candidates.length === 0 && (
-                <span className="italic text-slate-400">
+                <span className="italic text-faint">
                   everything's already grouped
                 </span>
               )}

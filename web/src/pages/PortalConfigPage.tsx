@@ -102,12 +102,12 @@ export function PortalConfigPage() {
 
   return (
     <div className="space-y-5 max-w-3xl">
-      <div className="flex items-baseline justify-between border-b border-slate-200 dark:border-slate-700 pb-3">
+      <div className="flex items-baseline justify-between border-b border-line dark:border-slate-700 pb-3">
         <div>
-          <h1 className="font-display text-2xl font-extrabold text-slate-700 dark:text-mortar-100 lowercase">
+          <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">
             portal config
           </h1>
-          <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
+          <span className="text-[10px] font-mono text-faint dark:text-slate-500">
             branding + pinned views shown to members at{" "}
             <code className="font-mono">/portal/{activeSlug}</code>
           </span>
@@ -115,19 +115,19 @@ export function PortalConfigPage() {
         <Link
           to={`/portal/${activeSlug}`}
           target="_blank"
-          className="text-[11px] font-mono uppercase tracking-widest text-cobble-600 hover:text-cobble-700 transition inline-flex items-center gap-1"
+          className="text-[11px] font-mono uppercase tracking-widest text-accent hover:text-accent transition inline-flex items-center gap-1"
         >
           preview <ExternalLink size={10} />
         </Link>
       </div>
 
-      <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 space-y-3">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500">
+      <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
+        <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
           // branding
         </div>
         <div className="grid grid-cols-2 gap-3">
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Display name
             </span>
             <input
@@ -138,7 +138,7 @@ export function PortalConfigPage() {
             />
           </label>
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Logo URL
             </span>
             <input
@@ -149,7 +149,7 @@ export function PortalConfigPage() {
             />
           </label>
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Members land in
             </span>
             <select value={defaultApp} onChange={(e) => setDefaultApp(e.target.value)} className="input">
@@ -158,12 +158,12 @@ export function PortalConfigPage() {
                 <option key={a.slug} value={a.slug}>{a.name}</option>
               ))}
             </select>
-            <span className="block text-[10px] text-slate-400 dark:text-slate-500 mt-1">
+            <span className="block text-[10px] text-faint dark:text-slate-500 mt-1">
               The app a member opens directly instead of this portal. (A lone app auto-lands even when this is blank.)
             </span>
           </label>
           <label className="block col-span-2">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Welcome markdown
             </span>
             <textarea
@@ -177,11 +177,11 @@ export function PortalConfigPage() {
         </div>
       </div>
 
-      <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 space-y-3">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500">
+      <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
+        <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
           // launcher theme
         </div>
-        <p className="text-[11px] text-slate-400 dark:text-slate-500">
+        <p className="text-[11px] text-faint dark:text-slate-500">
           {themeTokens ? (
             <>This portal launcher uses its own theme below.</>
           ) : inheritApp ? (
@@ -205,18 +205,18 @@ export function PortalConfigPage() {
           <button
             type="button"
             onClick={() => setThemeTokens(inheritApp?.theme ?? {})}
-            className="text-xs rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 hover:border-cobble-400 dark:hover:border-cobble-600 transition text-slate-600 dark:text-mortar-200"
+            className="text-xs rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-3 py-1.5 hover:border-accent dark:hover:border-cobble-600 transition text-content dark:text-mortar-200"
           >
             {inheritApp ? "Override the inherited theme" : "Give the launcher its own theme"}
           </button>
         )}
       </div>
 
-      <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 space-y-3">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500">
+      <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
+        <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
           // admin dashboard theme
         </div>
-        <p className="text-[11px] text-slate-400 dark:text-slate-500">
+        <p className="text-[11px] text-faint dark:text-slate-500">
           Brands <strong>this</strong> admin dashboard (the shell you're in now): the whole thing
           recolors — page, header bar, every card / table / label — plus your workspace logo beside
           the Cobblr mark, which always stays. Buttons and form inputs stay neutral so actions stay
@@ -234,19 +234,19 @@ export function PortalConfigPage() {
           <button
             type="button"
             onClick={() => setAdminTheme({})}
-            className="text-xs rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 hover:border-cobble-400 dark:hover:border-cobble-600 transition text-slate-600 dark:text-mortar-200"
+            className="text-xs rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-3 py-1.5 hover:border-accent dark:hover:border-cobble-600 transition text-content dark:text-mortar-200"
           >
             Brand the admin dashboard
           </button>
         )}
       </div>
 
-      <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 space-y-3">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500">
+      <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
+        <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
           // pinned views
         </div>
         {pinnedViews.length === 0 && (
-          <div className="text-xs text-slate-400 italic">
+          <div className="text-xs text-faint italic">
             No views pinned. Add some below.
           </div>
         )}
@@ -254,14 +254,14 @@ export function PortalConfigPage() {
           {pinnedViews.map((v, i) => (
             <li
               key={v.id}
-              className="flex items-center gap-2 px-2 py-1.5 rounded border border-slate-200 dark:border-slate-700 bg-mortar-50/50 dark:bg-slate-800/50"
+              className="flex items-center gap-2 px-2 py-1.5 rounded border border-line dark:border-slate-700 bg-subtle/50 dark:bg-slate-800/50"
             >
-              <span className="text-[10px] font-mono text-slate-400 w-5">
+              <span className="text-[10px] font-mono text-faint w-5">
                 {i + 1}.
               </span>
-              <span className="flex-1 text-sm text-slate-700 dark:text-mortar-100 truncate">
+              <span className="flex-1 text-sm text-content dark:text-mortar-100 truncate">
                 {v.name}{" "}
-                <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400">
+                <span className="text-[10px] font-mono uppercase tracking-widest text-faint">
                   ({v.entity_kind})
                 </span>
               </span>
@@ -269,7 +269,7 @@ export function PortalConfigPage() {
                 type="button"
                 onClick={() => move(v.id, -1)}
                 disabled={i === 0}
-                className="text-slate-400 hover:text-cobble-600 transition p-1 disabled:opacity-30"
+                className="text-faint hover:text-accent transition p-1 disabled:opacity-30"
               >
                 <ChevronUp size={12} />
               </button>
@@ -277,14 +277,14 @@ export function PortalConfigPage() {
                 type="button"
                 onClick={() => move(v.id, 1)}
                 disabled={i === pinnedViews.length - 1}
-                className="text-slate-400 hover:text-cobble-600 transition p-1 disabled:opacity-30"
+                className="text-faint hover:text-accent transition p-1 disabled:opacity-30"
               >
                 <ChevronDown size={12} />
               </button>
               <button
                 type="button"
                 onClick={() => setPinnedIds((p) => p.filter((x) => x !== v.id))}
-                className="text-slate-400 hover:text-ember-500 transition p-1"
+                className="text-faint hover:text-ember-500 transition p-1"
                 title="Unpin"
               >
                 <X size={12} />
@@ -294,8 +294,8 @@ export function PortalConfigPage() {
         </ul>
 
         {unpinnedViews.length > 0 && (
-          <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
-            <div className="text-[10px] font-mono uppercase tracking-widest text-slate-400 mb-2">
+          <div className="pt-2 border-t border-line dark:border-slate-800">
+            <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-2">
               + available saved views
             </div>
             <div className="flex flex-wrap gap-1.5">
@@ -304,7 +304,7 @@ export function PortalConfigPage() {
                   key={v.id}
                   type="button"
                   onClick={() => setPinnedIds((p) => [...p, v.id])}
-                  className="text-xs rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 hover:border-cobble-400 dark:hover:border-cobble-600 transition text-slate-600 dark:text-mortar-200"
+                  className="text-xs rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2 py-1 hover:border-accent dark:hover:border-cobble-600 transition text-content dark:text-mortar-200"
                 >
                   + {v.name}
                 </button>

@@ -99,7 +99,7 @@ function TagsSection({
 
   return (
     <section>
-      <h3 className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">
+      <h3 className="text-xs font-medium text-muted uppercase tracking-wide mb-2">
         Tags
       </h3>
       <div className="flex flex-wrap gap-2 items-center">
@@ -116,7 +116,7 @@ function TagsSection({
             <span>{a.tag_name}</span>
             <button
               onClick={() => detach.mutate(a.id)}
-              className="text-slate-400 hover:text-ember-500 transition"
+              className="text-faint hover:text-ember-500 transition"
               title="Detach"
             >
               <X size={10} />
@@ -125,7 +125,7 @@ function TagsSection({
         ))}
         <button
           onClick={() => setPickerOpen(true)}
-          className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs border border-dashed border-slate-300 dark:border-slate-600 text-slate-500 hover:border-cobble-500 hover:text-cobble-600 transition"
+          className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs border border-dashed border-line dark:border-slate-600 text-muted hover:border-cobble-500 hover:text-accent transition"
         >
           <Plus size={10} /> Tag
         </button>
@@ -197,7 +197,7 @@ function TagPickerModal({
       <div className="space-y-3">
         {available.length > 0 && (
           <>
-            <div className="text-xs text-slate-500">Existing</div>
+            <div className="text-xs text-muted">Existing</div>
             <div className="flex flex-wrap gap-2">
               {available.map((t) => (
                 <button
@@ -216,8 +216,8 @@ function TagPickerModal({
             </div>
           </>
         )}
-        <div className="border-t border-slate-200 dark:border-slate-700 pt-3">
-          <div className="text-xs text-slate-500 mb-1">Or create new</div>
+        <div className="border-t border-line dark:border-slate-700 pt-3">
+          <div className="text-xs text-muted mb-1">Or create new</div>
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -231,7 +231,7 @@ function TagPickerModal({
               value={newTag}
               onChange={(e) => setNewTag(e.target.value)}
               placeholder="urgent, perennial, technic…"
-              className="flex-1 px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+              className="flex-1 px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
               autoFocus
             />
             <button
@@ -407,10 +407,10 @@ function FilesSection({
           : "")
       }
     >
-      <h3 className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2 flex items-center gap-2">
+      <h3 className="text-xs font-medium text-muted uppercase tracking-wide mb-2 flex items-center gap-2">
         Files
         {dragOver && (
-          <span className="text-cobble-600 font-normal normal-case tracking-normal">
+          <span className="text-accent font-normal normal-case tracking-normal">
             drop to upload
           </span>
         )}
@@ -462,7 +462,7 @@ function FilesSection({
               href={api.fileRawUrl(activeSlug, att.file_id, "original")}
               target="_blank"
               rel="noopener noreferrer"
-              className="aspect-square flex flex-col items-center justify-center text-xs text-slate-500 border border-slate-200 dark:border-slate-700 rounded hover:border-cobble-500 transition p-2 text-center"
+              className="aspect-square flex flex-col items-center justify-center text-xs text-muted border border-line dark:border-slate-700 rounded hover:border-cobble-500 transition p-2 text-center"
               title={att.filename}
             >
               <div className="font-mono text-[10px] uppercase">
@@ -474,7 +474,7 @@ function FilesSection({
         )}
         <button
           onClick={() => fileInput.current?.click()}
-          className="aspect-square flex flex-col items-center justify-center gap-1 text-xs text-slate-500 border border-dashed border-slate-300 dark:border-slate-600 rounded hover:border-cobble-500 hover:text-cobble-600 transition"
+          className="aspect-square flex flex-col items-center justify-center gap-1 text-xs text-muted border border-dashed border-line dark:border-slate-600 rounded hover:border-cobble-500 hover:text-accent transition"
         >
           <Upload size={14} />
           <span>Add</span>
@@ -536,18 +536,18 @@ function PairingsSection({ kind, entityId }: { kind: string; entityId: string })
   return (
     <section>
       <div className="flex items-center justify-between mb-2">
-        <h3 className="text-xs font-medium text-slate-600 dark:text-slate-300 flex items-center gap-1.5">
+        <h3 className="text-xs font-medium text-content dark:text-slate-300 flex items-center gap-1.5">
           <Link size={12} /> Linked entities
         </h3>
         <button
           onClick={() => setPickerOpen(true)}
-          className="text-xs text-cobble-600 hover:text-cobble-700 inline-flex items-center gap-1"
+          className="text-xs text-accent hover:text-accent inline-flex items-center gap-1"
         >
           <Plus size={12} /> Link
         </button>
       </div>
       {all.length === 0 ? (
-        <p className="text-xs text-slate-400 italic">No links yet.</p>
+        <p className="text-xs text-faint italic">No links yet.</p>
       ) : (
         <ul className="space-y-1">
           {outRows.map((p) => (
@@ -614,29 +614,29 @@ function PairingRow({
   const left = direction === "out" ? pairing.target_kind : pairing.source_kind;
   const leftId = direction === "out" ? pairing.target_id : pairing.source_id;
   return (
-    <li className="flex items-center gap-2 px-2 py-1 text-xs border border-slate-200 dark:border-slate-700 rounded group">
-      <span className="font-mono text-[10px] text-slate-400">
+    <li className="flex items-center gap-2 px-2 py-1 text-xs border border-line dark:border-slate-700 rounded group">
+      <span className="font-mono text-[10px] text-faint">
         {direction === "out" ? "→" : "←"}
       </span>
-      <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-mono text-[10px] text-slate-500">
+      <span className="px-1.5 py-0.5 rounded bg-subtle dark:bg-slate-800 font-mono text-[10px] text-muted">
         {pairing.relationship_kind}
       </span>
-      <ArrowRight size={10} className="text-slate-300" />
-      <span className="font-medium text-slate-700 dark:text-mortar-100 truncate">
+      <ArrowRight size={10} className="text-faint" />
+      <span className="font-medium text-content dark:text-mortar-100 truncate">
         {left}
       </span>
-      <span className="font-mono text-[10px] text-slate-400 truncate">
+      <span className="font-mono text-[10px] text-faint truncate">
         {leftId.slice(0, 8)}
       </span>
       <div className="flex-1" />
       {pairing.notes && (
-        <span className="text-slate-500 italic truncate max-w-[200px]" title={pairing.notes}>
+        <span className="text-muted italic truncate max-w-[200px]" title={pairing.notes}>
           {pairing.notes}
         </span>
       )}
       <button
         onClick={onDelete}
-        className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-ember-500 transition"
+        className="opacity-0 group-hover:opacity-100 text-faint hover:text-ember-500 transition"
         title="Remove link"
       >
         <X size={12} />
@@ -700,18 +700,18 @@ function PairingCreateModal({
     <Modal open onClose={onClose} title="Link to another entity">
       <div className="space-y-3">
         <label className="block">
-          <div className="text-xs text-slate-500 mb-1">Search target</div>
+          <div className="text-xs text-muted mb-1">Search target</div>
           <input
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="part name, asset, project…"
             autoFocus
-            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           />
         </label>
         {hits.length > 0 && !targetId && (
-          <ul className="border border-slate-200 dark:border-slate-700 rounded max-h-48 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
+          <ul className="border border-line dark:border-slate-700 rounded max-h-48 overflow-y-auto divide-y divide-line dark:divide-slate-800">
             {hits.slice(0, 10).map((h) => (
               <li key={`${h.kind}:${h.id}`}>
                 <button
@@ -721,9 +721,9 @@ function PairingCreateModal({
                     setTargetId(h.id);
                     setTargetLabel(h.title);
                   }}
-                  className="w-full px-3 py-2 text-left hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2"
+                  className="w-full px-3 py-2 text-left hover:bg-subtle dark:hover:bg-slate-800 flex items-center gap-2"
                 >
-                  <span className="font-mono text-[10px] text-slate-400">{h.kind}</span>
+                  <span className="font-mono text-[10px] text-faint">{h.kind}</span>
                   <span className="text-sm truncate">{h.title}</span>
                 </button>
               </li>
@@ -732,7 +732,7 @@ function PairingCreateModal({
         )}
         {targetId && (
           <div className="flex items-center gap-2 px-3 py-2 text-sm border border-cobble-200 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/20 rounded">
-            <span className="font-mono text-[10px] text-slate-500">{targetKind}</span>
+            <span className="font-mono text-[10px] text-muted">{targetKind}</span>
             <span className="font-medium truncate">{targetLabel}</span>
             <div className="flex-1" />
             <button
@@ -742,36 +742,36 @@ function PairingCreateModal({
                 setTargetKind("");
                 setTargetLabel("");
               }}
-              className="text-slate-400 hover:text-slate-700"
+              className="text-faint hover:text-content"
             >
               <X size={12} />
             </button>
           </div>
         )}
         <label className="block">
-          <div className="text-xs text-slate-500 mb-1">Relationship</div>
+          <div className="text-xs text-muted mb-1">Relationship</div>
           <input
             type="text"
             value={rel}
             onChange={(e) => setRel(e.target.value)}
             placeholder="related-to"
-            className="w-full px-2 py-1 text-sm font-mono border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           />
         </label>
         <label className="block">
-          <div className="text-xs text-slate-500 mb-1">Notes (optional)</div>
+          <div className="text-xs text-muted mb-1">Notes (optional)</div>
           <textarea
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             rows={2}
-            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           />
         </label>
         <div className="flex justify-end gap-2">
           <button
             type="button"
             onClick={onClose}
-            className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
           >
             Cancel
           </button>
@@ -815,11 +815,11 @@ function AttachmentThumb({
   const resolved = useImageSrc(url);
   void attachmentId;
   return (
-    <div className="group relative aspect-square rounded overflow-hidden border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
+    <div className="group relative aspect-square rounded overflow-hidden border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800">
       {resolved ? (
         <img src={resolved} alt={filename} className="w-full h-full object-cover" />
       ) : (
-        <div className="w-full h-full flex items-center justify-center text-[10px] text-slate-400">…</div>
+        <div className="w-full h-full flex items-center justify-center text-[10px] text-faint">…</div>
       )}
       <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition">
         <button

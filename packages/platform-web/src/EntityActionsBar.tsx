@@ -121,7 +121,7 @@ function ActionButton({
           ? "border-moss-200 bg-moss-50 text-moss-600"
           : flash === "err"
           ? "border-ember-200 bg-ember-50 text-ember-600"
-          : "border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:bg-mortar-50 dark:hover:bg-slate-800/70 hover:text-cobble-600 dark:hover:text-cobble-300")
+          : "border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:bg-subtle dark:hover:bg-slate-800/70 hover:text-accent dark:hover:text-cobble-300")
       }
     >
       {flash === "ok"
@@ -181,7 +181,7 @@ function BindingButton({
           ? "border-moss-200 bg-moss-50 text-moss-600"
           : flash === "err"
           ? "border-ember-200 bg-ember-50 text-ember-600"
-          : "border-cobble-200 dark:border-cobble-700 text-cobble-600 dark:text-cobble-300 hover:bg-cobble-50 dark:hover:bg-slate-800/70")
+          : "border-cobble-200 dark:border-cobble-700 text-accent dark:text-cobble-300 hover:bg-cobble-50 dark:hover:bg-slate-800/70")
       }
     >
       {flash === "ok"

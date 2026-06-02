@@ -73,7 +73,7 @@ export function NotificationsBell() {
     <div className="relative" ref={wrapperRef}>
       <button
         onClick={() => setOpen((o) => !o)}
-        className="text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-mortar-100 transition p-1.5 relative"
+        className="text-faint dark:text-slate-500 hover:text-content dark:hover:text-mortar-100 transition p-1.5 relative"
         title={
           count > 0
             ? `${count} unread notification${count === 1 ? "" : "s"}`
@@ -94,32 +94,32 @@ export function NotificationsBell() {
         )}
       </button>
       {open && (
-        <div className="absolute right-0 top-9 w-80 max-h-96 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg z-50">
-          <div className="flex items-center justify-between px-3 py-2 border-b border-slate-100 dark:border-slate-700">
-            <div className="text-[10px] font-mono uppercase tracking-widest text-slate-500 dark:text-slate-400">
+        <div className="absolute right-0 top-9 w-80 max-h-96 overflow-y-auto rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg z-50">
+          <div className="flex items-center justify-between px-3 py-2 border-b border-line dark:border-slate-700">
+            <div className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
               notifications
             </div>
             {count > 0 && (
               <button
                 onClick={() => markAll.mutate()}
                 disabled={markAll.isPending}
-                className="text-[10px] font-mono text-cobble-600 hover:text-cobble-500 transition"
+                className="text-[10px] font-mono text-accent hover:text-accent transition"
               >
                 mark all read
               </button>
             )}
           </div>
           {list.isLoading && (
-            <div className="px-3 py-4 text-[11px] text-slate-400">loading…</div>
+            <div className="px-3 py-4 text-[11px] text-faint">loading…</div>
           )}
           {list.data && list.data.items.length === 0 && (
-            <div className="px-3 py-4 text-[11px] text-slate-400 italic">
+            <div className="px-3 py-4 text-[11px] text-faint italic">
               No notifications yet.
             </div>
           )}
           <ul>
             {list.data && list.data.items.length === 0 && (
-              <li className="px-3 py-4 text-[11px] text-slate-400 italic">
+              <li className="px-3 py-4 text-[11px] text-faint italic">
                 Nothing yet.
               </li>
             )}
@@ -128,17 +128,17 @@ export function NotificationsBell() {
                 <button
                   onClick={() => handleItemClick(n)}
                   className={
-                    "w-full text-left px-3 py-2 border-b border-slate-100 dark:border-slate-700 last:border-0 transition " +
+                    "w-full text-left px-3 py-2 border-b border-line dark:border-slate-700 last:border-0 transition " +
                     (n.read_at
-                      ? "opacity-60 hover:bg-mortar-50/50 dark:hover:bg-slate-800/50"
-                      : "hover:bg-mortar-50 dark:hover:bg-slate-800")
+                      ? "opacity-60 hover:bg-subtle/50 dark:hover:bg-slate-800/50"
+                      : "hover:bg-subtle dark:hover:bg-slate-800")
                   }
                 >
-                  <div className="text-sm text-slate-700 dark:text-mortar-100">
+                  <div className="text-sm text-content dark:text-mortar-100">
                     {n.message}
                   </div>
-                  <div className="text-[10px] font-mono text-slate-400 dark:text-slate-500 mt-1 flex items-center gap-1.5">
-                    <span className="px-1 py-0.5 rounded bg-cobble-50 dark:bg-cobble-900/30 text-cobble-700 dark:text-cobble-300">
+                  <div className="text-[10px] font-mono text-faint dark:text-slate-500 mt-1 flex items-center gap-1.5">
+                    <span className="px-1 py-0.5 rounded bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300">
                       {n.org_name}
                     </span>
                     <span>·</span>
@@ -153,7 +153,7 @@ export function NotificationsBell() {
           <Link
             to="/me/notifications"
             onClick={() => setOpen(false)}
-            className="block px-3 py-2 border-t border-slate-100 dark:border-slate-700 text-[11px] font-mono uppercase tracking-widest text-cobble-600 hover:text-cobble-500 transition text-center"
+            className="block px-3 py-2 border-t border-line dark:border-slate-700 text-[11px] font-mono uppercase tracking-widest text-accent hover:text-accent transition text-center"
           >
             see all →
           </Link>

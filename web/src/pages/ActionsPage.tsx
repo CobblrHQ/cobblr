@@ -106,16 +106,16 @@ export function ActionsPage() {
 
   return (
     <div className="space-y-5 max-w-3xl">
-      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-slate-700 dark:text-mortar-100 lowercase">
+      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">
           actions
         </h1>
-        <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
+        <span className="text-[10px] font-mono text-faint dark:text-slate-500">
           cross-module action predicates
         </span>
       </div>
 
-      <p className="text-sm text-slate-600 dark:text-mortar-200">
+      <p className="text-sm text-content dark:text-mortar-200">
         Each cross-module action declares which entities it applies to. For
         trait-based actions you can adjust that per-axis here — e.g. broaden
         "Print label" to also cover digital entities like tasks. Within an axis
@@ -124,7 +124,7 @@ export function ActionsPage() {
       </p>
 
       {(actions.isLoading || kinds.isLoading) && (
-        <div className="text-sm text-slate-400">Loading…</div>
+        <div className="text-sm text-faint">Loading…</div>
       )}
       {actions.error && (
         <div className="text-sm text-ember-500">
@@ -221,14 +221,14 @@ function ActionCard({
   }
 
   return (
-    <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
-      <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-700 flex items-baseline gap-2 flex-wrap">
-        <span className="font-medium text-slate-700 dark:text-mortar-100">
+    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900">
+      <div className="px-4 py-3 border-b border-line dark:border-slate-700 flex items-baseline gap-2 flex-wrap">
+        <span className="font-medium text-content dark:text-mortar-100">
           {action.label}
         </span>
-        <span className="text-[10px] font-mono text-slate-400">{action.id}</span>
+        <span className="text-[10px] font-mono text-faint">{action.id}</span>
         {action.overridden && (
-          <span className="text-[10px] font-mono uppercase tracking-widest text-cobble-600 dark:text-cobble-300 border border-cobble-200 dark:border-cobble-800 rounded px-1.5 py-0.5">
+          <span className="text-[10px] font-mono uppercase tracking-widest text-accent dark:text-cobble-300 border border-cobble-200 dark:border-cobble-800 rounded px-1.5 py-0.5">
             overridden
           </span>
         )}
@@ -236,18 +236,18 @@ function ActionCard({
 
       <div className="px-4 py-3 space-y-3">
         {action.description && (
-          <div className="text-xs text-slate-600 dark:text-mortar-200">
+          <div className="text-xs text-content dark:text-mortar-200">
             {action.description}
           </div>
         )}
 
         {!editable && (
-          <div className="text-xs text-slate-500 dark:text-slate-400">
+          <div className="text-xs text-muted dark:text-slate-400">
             Predicate:{" "}
             <span className="font-mono">
               {predicateSummary(action.effective_applies_to)}
             </span>
-            <div className="text-[10px] text-slate-400 mt-1">
+            <div className="text-[10px] text-faint mt-1">
               Not a trait-based predicate — not editable here. Matches{" "}
               {action.matched_kinds.length} kind
               {action.matched_kinds.length === 1 ? "" : "s"}.
@@ -257,13 +257,13 @@ function ActionCard({
 
         {editable && (
           <>
-            <div className="text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500">
+            <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
               applies to entities matching
             </div>
             <div className="space-y-1.5">
               {AXES.map(({ axis, poles }) => (
                 <div key={axis} className="flex items-center gap-3 text-sm">
-                  <span className="w-28 shrink-0 text-[11px] font-mono uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                  <span className="w-28 shrink-0 text-[11px] font-mono uppercase tracking-wide text-faint dark:text-slate-500">
                     {axis}
                   </span>
                   {poles.map((pole) => (
@@ -278,7 +278,7 @@ function ActionCard({
                         onChange={() => toggle(pole.trait)}
                         className="accent-cobble-500"
                       />
-                      <span className="text-slate-700 dark:text-mortar-100">
+                      <span className="text-content dark:text-mortar-100">
                         {pole.trait}
                       </span>
                     </label>
@@ -288,12 +288,12 @@ function ActionCard({
             </div>
 
             {/* Live match preview */}
-            <div className="rounded-md bg-mortar-50 dark:bg-slate-800/50 px-3 py-2">
-              <div className="text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+            <div className="rounded-md bg-subtle dark:bg-slate-800/50 px-3 py-2">
+              <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                 {dirty ? "would match" : "matches"} {previewMatches.length}{" "}
                 entity kind{previewMatches.length === 1 ? "" : "s"}
                 {dirty && (
-                  <span className="text-cobble-500"> · unsaved</span>
+                  <span className="text-accent"> · unsaved</span>
                 )}
               </div>
               {previewMatches.length > 0 ? (
@@ -302,7 +302,7 @@ function ActionCard({
                     const k = kinds.find((x) => x.id === kid);
                     return (
                       <div key={kid} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-mortar-200">
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-surface dark:bg-slate-900 border border-line dark:border-slate-700 text-content dark:text-mortar-200">
                           {kid}
                         </span>
                         {k && (
@@ -323,7 +323,7 @@ function ActionCard({
               <button
                 onClick={() => save.mutate()}
                 disabled={!dirty || selected.size === 0 || save.isPending}
-                className="text-[10px] font-mono uppercase tracking-widest px-3 py-1.5 rounded border border-cobble-300 dark:border-cobble-700 text-cobble-600 dark:text-cobble-300 hover:bg-mortar-50 dark:hover:bg-slate-800 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                className="text-[10px] font-mono uppercase tracking-widest px-3 py-1.5 rounded border border-cobble-300 dark:border-cobble-700 text-accent dark:text-cobble-300 hover:bg-subtle dark:hover:bg-slate-800 transition disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 save
               </button>
@@ -331,13 +331,13 @@ function ActionCard({
                 <button
                   onClick={() => revert.mutate()}
                   disabled={revert.isPending}
-                  className="text-[10px] font-mono uppercase tracking-widest px-3 py-1.5 rounded text-slate-400 hover:text-ember-500 transition flex items-center gap-1"
+                  className="text-[10px] font-mono uppercase tracking-widest px-3 py-1.5 rounded text-faint hover:text-ember-500 transition flex items-center gap-1"
                 >
                   <RotateCcw size={11} />
                   revert to default
                 </button>
               )}
-              <span className="text-[10px] font-mono text-slate-400 ml-auto">
+              <span className="text-[10px] font-mono text-faint ml-auto">
                 default: {predicateSummary(action.default_applies_to)}
               </span>
             </div>

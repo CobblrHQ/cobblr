@@ -23,9 +23,9 @@ export function MeProfilePage() {
 
   return (
     <div className="space-y-6 max-w-xl">
-      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
-        <UserCog size={20} className="text-cobble-600" />
-        <h1 className="text-2xl font-semibold text-slate-700 dark:text-mortar-100">
+      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
+        <UserCog size={20} className="text-accent" />
+        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">
           Your profile
         </h1>
       </div>
@@ -49,14 +49,14 @@ export function MeProfilePage() {
       <div className="flex flex-col gap-2">
         <Link
           to="/me/activity"
-          className="inline-flex items-center gap-2 text-sm text-cobble-600 hover:text-cobble-700"
+          className="inline-flex items-center gap-2 text-sm text-accent hover:text-accent"
         >
           <History size={14} />
           Your activity across all workspaces →
         </Link>
         <Link
           to="/me/notification-channels"
-          className="inline-flex items-center gap-2 text-sm text-cobble-600 hover:text-cobble-700"
+          className="inline-flex items-center gap-2 text-sm text-accent hover:text-accent"
         >
           <Bell size={14} />
           Notification channels (Discord / Slack / email / SMS / webhook) →
@@ -84,29 +84,29 @@ function DisplayNameSection({
   });
   const dirty = name.trim() !== initial && name.trim().length > 0;
   return (
-    <section className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 space-y-3">
-      <h2 className="text-sm font-medium text-slate-600 dark:text-slate-300">
+    <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
+      <h2 className="text-sm font-medium text-content dark:text-slate-300">
         Identity
       </h2>
       <label className="block">
-        <div className="text-xs text-slate-500 mb-1">Email</div>
+        <div className="text-xs text-muted mb-1">Email</div>
         <input
           type="email"
           value={email}
           readOnly
-          className="w-full px-2 py-1 text-sm border border-slate-200 dark:border-slate-700 rounded bg-slate-50 dark:bg-slate-800/40 text-slate-500 cursor-not-allowed"
+          className="w-full px-2 py-1 text-sm border border-line dark:border-slate-700 rounded bg-subtle dark:bg-slate-800/40 text-muted cursor-not-allowed"
         />
-        <div className="text-[11px] text-slate-400 mt-1">
+        <div className="text-[11px] text-faint mt-1">
           Email changes go through a separate flow — not in v0.1.
         </div>
       </label>
       <label className="block">
-        <div className="text-xs text-slate-500 mb-1">Display name</div>
+        <div className="text-xs text-muted mb-1">Display name</div>
         <input
           type="text"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+          className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
         />
       </label>
       <div className="flex justify-end pt-2">
@@ -144,32 +144,32 @@ function PasswordSection({ onChanged }: { onChanged: () => void }) {
   const canSubmit =
     current.length > 0 && next.length >= 8 && confirm === next && !change.isPending;
   return (
-    <section className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 space-y-3">
-      <h2 className="text-sm font-medium text-slate-600 dark:text-slate-300 flex items-center gap-2">
+    <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
+      <h2 className="text-sm font-medium text-content dark:text-slate-300 flex items-center gap-2">
         <KeyRound size={14} /> Password
       </h2>
       <label className="block">
-        <div className="text-xs text-slate-500 mb-1">Current password</div>
+        <div className="text-xs text-muted mb-1">Current password</div>
         <input
           type="password"
           value={current}
           autoComplete="current-password"
           onChange={(e) => setCurrent(e.target.value)}
-          className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+          className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
         />
       </label>
       <label className="block">
-        <div className="text-xs text-slate-500 mb-1">New password (min 8 chars)</div>
+        <div className="text-xs text-muted mb-1">New password (min 8 chars)</div>
         <input
           type="password"
           value={next}
           autoComplete="new-password"
           onChange={(e) => setNext(e.target.value)}
           className={
-            "w-full px-2 py-1 text-sm border rounded bg-white dark:bg-slate-900 " +
+            "w-full px-2 py-1 text-sm border rounded bg-surface dark:bg-slate-900 " +
             (tooShort
               ? "border-ember-400"
-              : "border-slate-300 dark:border-slate-600")
+              : "border-line dark:border-slate-600")
           }
         />
         {tooShort && (
@@ -179,17 +179,17 @@ function PasswordSection({ onChanged }: { onChanged: () => void }) {
         )}
       </label>
       <label className="block">
-        <div className="text-xs text-slate-500 mb-1">Confirm new password</div>
+        <div className="text-xs text-muted mb-1">Confirm new password</div>
         <input
           type="password"
           value={confirm}
           autoComplete="new-password"
           onChange={(e) => setConfirm(e.target.value)}
           className={
-            "w-full px-2 py-1 text-sm border rounded bg-white dark:bg-slate-900 " +
+            "w-full px-2 py-1 text-sm border rounded bg-surface dark:bg-slate-900 " +
             (mismatch
               ? "border-ember-400"
-              : "border-slate-300 dark:border-slate-600")
+              : "border-line dark:border-slate-600")
           }
         />
         {mismatch && (

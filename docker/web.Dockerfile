@@ -17,6 +17,8 @@ COPY modules/projects/package.json ./modules/projects/
 COPY modules/purchases/package.json ./modules/purchases/
 COPY modules/machines/package.json ./modules/machines/
 COPY modules/assets/package.json ./modules/assets/
+COPY modules/core-lists/package.json ./modules/core-lists/
+COPY modules/core-fitness/package.json ./modules/core-fitness/
 
 RUN npm install --workspaces --include-workspace-root --no-audit --no-fund
 
@@ -30,6 +32,8 @@ COPY modules/projects ./modules/projects
 COPY modules/purchases ./modules/purchases
 COPY modules/machines ./modules/machines
 COPY modules/assets ./modules/assets
+COPY modules/core-lists ./modules/core-lists
+COPY modules/core-fitness ./modules/core-fitness
 COPY web ./web
 
 WORKDIR /app/web

@@ -52,15 +52,15 @@ export function ForcePasswordResetPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-mortar dark:bg-slate-900 p-6">
-      <div className="w-full max-w-md rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 space-y-4">
+    <div className="min-h-screen flex items-center justify-center bg-canvas dark:bg-slate-900 p-6">
+      <div className="w-full max-w-md rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-6 space-y-4">
         <div className="flex items-start gap-3">
-          <ShieldAlert size={20} className="text-cobble-500 shrink-0 mt-0.5" />
+          <ShieldAlert size={20} className="text-accent shrink-0 mt-0.5" />
           <div>
-            <h1 className="font-display text-xl font-bold text-slate-700 dark:text-mortar-100">
+            <h1 className="font-display text-xl font-bold text-content dark:text-mortar-100">
               Set your own password
             </h1>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+            <p className="text-xs text-muted dark:text-slate-400 mt-1">
               Your admin gave you a temporary password. Pick a new one before
               continuing.
             </p>
@@ -69,7 +69,7 @@ export function ForcePasswordResetPage() {
 
         <form onSubmit={submit} className="space-y-3">
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Current (temp) password
             </span>
             <input
@@ -83,7 +83,7 @@ export function ForcePasswordResetPage() {
             />
           </label>
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               New password (8+ chars)
             </span>
             <input
@@ -96,7 +96,7 @@ export function ForcePasswordResetPage() {
             />
           </label>
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Confirm new password
             </span>
             <input
@@ -122,7 +122,7 @@ export function ForcePasswordResetPage() {
           </button>
         </form>
 
-        <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px] text-slate-400">
+        <div className="pt-3 border-t border-line dark:border-slate-800 flex items-center justify-between text-[11px] text-faint">
           <span>Signed in as {user?.email}</span>
           <button
             type="button"

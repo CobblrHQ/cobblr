@@ -23,9 +23,9 @@ export function HealthPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
-        <HeartPulse size={20} className="text-cobble-600" />
-        <h1 className="text-2xl font-semibold text-slate-700 dark:text-mortar-100">
+      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
+        <HeartPulse size={20} className="text-accent" />
+        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">
           Healthcheck
         </h1>
         <span
@@ -41,7 +41,7 @@ export function HealthPage() {
         </span>
       </div>
 
-      <p className="text-sm text-slate-500 dark:text-slate-400">
+      <p className="text-sm text-muted dark:text-slate-400">
         Each module can register a probe via{" "}
         <code className="font-mono text-xs">
           platform().health.registerProbe()
@@ -55,7 +55,7 @@ export function HealthPage() {
         endpoint and look at the HTTP status (503 ⇒ red).
       </p>
 
-      <div className="border border-slate-200 dark:border-slate-700 rounded divide-y divide-slate-100 dark:divide-slate-800">
+      <div className="border border-line dark:border-slate-700 rounded divide-y divide-line dark:divide-slate-800">
         {Object.entries(probes).map(([name, p]) => (
           <div key={name} className="px-3 py-2 text-sm flex items-baseline gap-3">
             {p.status === "ok" ? (
@@ -64,11 +64,11 @@ export function HealthPage() {
               <AlertTriangle size={14} className="text-ember-500" />
             )}
             <span className="font-mono">{name}</span>
-            <span className="text-xs uppercase tracking-wide text-slate-500">
+            <span className="text-xs uppercase tracking-wide text-muted">
               {p.status}
             </span>
             {p.message && (
-              <span className="text-xs text-slate-500 italic truncate">
+              <span className="text-xs text-muted italic truncate">
                 {p.message}
               </span>
             )}

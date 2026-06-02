@@ -35,14 +35,14 @@ export function InstancePage() {
   });
 
   if (instancesQ.isLoading) {
-    return <div className="text-sm text-slate-500 p-4">Loading…</div>;
+    return <div className="text-sm text-muted p-4">Loading…</div>;
   }
   const inst = (instancesQ.data?.items ?? []).find(
     (i) => i.instance_name === name,
   );
   if (!inst) {
     return (
-      <div className="text-sm text-slate-500 dark:text-slate-400 italic p-4">
+      <div className="text-sm text-muted dark:text-slate-400 italic p-4">
         No instance "{name}" in this workspace. It may have been deleted —
         check Configuration → "+ New thing".
       </div>
@@ -70,8 +70,8 @@ export function InstancePage() {
   if (inst.module_name === "projects") {
     return (
       <div className="space-y-4">
-        <div className="border-b border-slate-200 dark:border-slate-700 pb-3">
-          <h1 className="font-display text-2xl font-extrabold text-slate-700 dark:text-mortar-100 lowercase">
+        <div className="border-b border-line dark:border-slate-700 pb-3">
+          <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">
             {displayName.toLowerCase()}
           </h1>
         </div>
@@ -102,15 +102,15 @@ export function InstancePage() {
 
   return (
     <div className="space-y-4 max-w-2xl">
-      <div className="border-b border-slate-200 dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-slate-700 dark:text-mortar-100 lowercase">
+      <div className="border-b border-line dark:border-slate-700 pb-3">
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">
           {displayName.toLowerCase()}
         </h1>
-        <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
+        <span className="text-[10px] font-mono text-faint dark:text-slate-500">
           instance of {inst.module_name}
         </span>
       </div>
-      <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 text-sm text-slate-600 dark:text-mortar-200">
+      <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 text-sm text-content dark:text-mortar-200">
         The dashboard view for <span className="font-mono">{inst.module_name}</span>{" "}
         instances isn't wired up yet — but this instance is fully usable
         through the API + CLI at{" "}
@@ -181,11 +181,11 @@ function HostInstanceList({
 
   return (
     <div className="space-y-4 max-w-2xl" data-testid="host-instance-list">
-      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-slate-700 dark:text-mortar-100 lowercase">
+      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">
           {displayName.toLowerCase()}
         </h1>
-        <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
+        <span className="text-[10px] font-mono text-faint dark:text-slate-500">
           {items.length} · instance of {moduleName}
         </span>
       </div>
@@ -201,7 +201,7 @@ function HostInstanceList({
           value={newName}
           onChange={(e) => setNewName(e.target.value)}
           placeholder={`New ${moduleName === "machines" ? "machine" : "asset"} name`}
-          className="flex-1 px-2 py-1.5 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+          className="flex-1 px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           data-testid="host-new-name"
         />
         <button
@@ -213,20 +213,20 @@ function HostInstanceList({
         </button>
       </form>
 
-      {list.isLoading && <div className="text-sm text-slate-500">Loading…</div>}
+      {list.isLoading && <div className="text-sm text-muted">Loading…</div>}
       {!list.isLoading && items.length === 0 && (
-        <div className="text-sm text-slate-500 dark:text-slate-400 italic">
+        <div className="text-sm text-muted dark:text-slate-400 italic">
           Nothing here yet — add the first one above.
         </div>
       )}
-      <ul className="border border-slate-200 dark:border-slate-700 rounded divide-y divide-slate-100 dark:divide-slate-800">
+      <ul className="border border-line dark:border-slate-700 rounded divide-y divide-line dark:divide-slate-800">
         {items.map((it) => (
           <li
             key={it.id}
             className="px-3 py-2 text-sm flex items-center gap-2"
             data-item-name={it.name}
           >
-            <span className="flex-1 text-slate-700 dark:text-mortar-100">
+            <span className="flex-1 text-content dark:text-mortar-100">
               {it.name}
             </span>
             <button
@@ -239,7 +239,7 @@ function HostInstanceList({
                 });
                 if (ok) del.mutate(it.id);
               }}
-              className="text-slate-400 hover:text-ember-500 transition"
+              className="text-faint hover:text-ember-500 transition"
               title="Delete"
             >
               <Trash2 size={14} />
@@ -248,7 +248,7 @@ function HostInstanceList({
         ))}
       </ul>
 
-      <p className="text-[11px] text-slate-400">
+      <p className="text-[11px] text-faint">
         This is the lightweight view for {moduleName} instances — full
         detail / edit is on the default {moduleName} page for now.
       </p>

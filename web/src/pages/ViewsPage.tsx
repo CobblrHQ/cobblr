@@ -42,9 +42,9 @@ export function ViewsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
-        <h1 className="text-2xl font-semibold text-slate-700 dark:text-mortar-100">Views</h1>
-        <span className="text-sm text-slate-500 dark:text-slate-400">
+      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
+        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">Views</h1>
+        <span className="text-sm text-muted dark:text-slate-400">
           {items.length} saved
         </span>
         <div className="flex-1" />
@@ -56,26 +56,26 @@ export function ViewsPage() {
         </button>
       </div>
 
-      {list.isLoading && <div className="text-sm text-slate-500">Loading…</div>}
+      {list.isLoading && <div className="text-sm text-muted">Loading…</div>}
       {items.length === 0 && !list.isLoading && (
-        <div className="text-sm text-slate-500 dark:text-slate-400 italic">
+        <div className="text-sm text-muted dark:text-slate-400 italic">
           No saved views yet. Each module's pages can save their current filters as a view.
         </div>
       )}
 
-      <ul className="border border-slate-200 dark:border-slate-700 rounded divide-y divide-slate-100 dark:divide-slate-800">
+      <ul className="border border-line dark:border-slate-700 rounded divide-y divide-line dark:divide-slate-800">
         {items.map((v) => (
           <li
             key={v.id}
-            className="flex items-center gap-3 px-3 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800/40 cursor-pointer"
+            className="flex items-center gap-3 px-3 py-2 text-sm hover:bg-subtle dark:hover:bg-slate-800/40 cursor-pointer"
             onClick={() => setActive(v)}
           >
-            <LayoutList size={14} className="text-slate-400" />
+            <LayoutList size={14} className="text-faint" />
             <span className="font-medium truncate">{v.name}</span>
-            <span className="text-xs text-slate-500 dark:text-slate-400 truncate">
+            <span className="text-xs text-muted dark:text-slate-400 truncate">
               {v.entity_kind}
             </span>
-            <span className="ml-auto text-xs uppercase text-slate-400 tracking-wide">
+            <span className="ml-auto text-xs uppercase text-faint tracking-wide">
               {v.view_type}
               {v.is_default && " · default"}
               {v.owner_user_id === null && " · shared"}
@@ -88,8 +88,8 @@ export function ViewsPage() {
               }}
               className={
                 v.pinned
-                  ? "text-cobble-600 hover:text-cobble-700"
-                  : "text-slate-400 hover:text-cobble-600"
+                  ? "text-accent hover:text-accent"
+                  : "text-faint hover:text-accent"
               }
               title={v.pinned ? "Unpin from dashboard" : "Pin to dashboard"}
             >
@@ -100,7 +100,7 @@ export function ViewsPage() {
                 e.stopPropagation();
                 setEditing(v);
               }}
-              className="text-slate-400 hover:text-cobble-600"
+              className="text-faint hover:text-accent"
               title="Edit"
             >
               <Pencil size={14} />
@@ -123,7 +123,7 @@ export function ViewsPage() {
                   toast.error(`Delete failed: ${(err as Error).message}`);
                 }
               }}
-              className="text-slate-400 hover:text-ember-500"
+              className="text-faint hover:text-ember-500"
               title="Delete"
             >
               <Trash2 size={14} />
@@ -185,16 +185,16 @@ function ViewDataModal({
   return (
     <Modal open onClose={onClose} title={view.name} size="lg">
       <div className="space-y-2">
-        <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2">
+        <div className="text-xs text-muted dark:text-slate-400 flex items-center gap-2">
           <span>{view.entity_kind}</span>
-          <span className="px-1.5 py-0.5 rounded bg-cobble-50 dark:bg-cobble-900/30 text-cobble-700 dark:text-cobble-300 font-mono text-[10px] uppercase">
+          <span className="px-1.5 py-0.5 rounded bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300 font-mono text-[10px] uppercase">
             {view.view_type}
           </span>
           <span>{items.length} rows</span>
         </div>
-        {data.isLoading && <div className="text-sm text-slate-500">Loading…</div>}
+        {data.isLoading && <div className="text-sm text-muted">Loading…</div>}
         {items.length === 0 && !data.isLoading && (
-          <div className="text-sm text-slate-500 italic">No matching rows.</div>
+          <div className="text-sm text-muted italic">No matching rows.</div>
         )}
         {items.length > 0 && view.view_type === "kanban" && (
           <KanbanRenderer items={items} groupBy={cfg.group_by ?? "subtitle"} />
@@ -247,7 +247,7 @@ function TrendRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) {
     .sort((a, b) => a.t - b.t);
 
   if (pts.length < 2) {
-    return <div className="text-sm text-slate-500 italic">Need at least two data points to chart a trend.</div>;
+    return <div className="text-sm text-muted italic">Need at least two data points to chart a trend.</div>;
   }
 
   const W = 560, H = 220, PAD = 28;
@@ -262,7 +262,7 @@ function TrendRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) {
   const latest = pts[pts.length - 1]!.v;
 
   return (
-    <div className="border border-slate-200 dark:border-slate-700 rounded p-2">
+    <div className="border border-line dark:border-slate-700 rounded p-2">
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Trend chart">
         {/* axes */}
         <line x1={PAD} y1={H - PAD} x2={W - PAD} y2={H - PAD} className="stroke-slate-300 dark:stroke-slate-600" strokeWidth={1} />
@@ -283,7 +283,7 @@ function TrendRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) {
         {/* latest value label */}
         <text x={x(pts[pts.length - 1]!.t)} y={y(latest) - 6} textAnchor="end" className="fill-slate-600 dark:fill-slate-300 text-[10px]">{latest}</text>
       </svg>
-      <div className="text-xs text-slate-500 px-1 flex justify-between">
+      <div className="text-xs text-muted px-1 flex justify-between">
         <span>{new Date(tMin).toLocaleDateString()}</span>
         <span>latest: <b>{latest}</b>{goal != null ? ` · goal ${goal}` : ""}</span>
         <span>{new Date(tMax).toLocaleDateString()}</span>
@@ -294,13 +294,13 @@ function TrendRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) {
 
 function ListRenderer({ items }: { items: ViewRow[] }) {
   return (
-    <ul className="divide-y divide-slate-100 dark:divide-slate-800 border border-slate-200 dark:border-slate-700 rounded">
+    <ul className="divide-y divide-line dark:divide-slate-800 border border-line dark:border-slate-700 rounded">
       {items.map((row) => (
         <li key={`${row.kind}:${row.id}`} className="px-3 py-2 text-sm">
           <div className="flex items-baseline gap-3">
             <span className="font-medium">{row.title}</span>
             {row.subtitle && (
-              <span className="text-xs text-slate-500">{row.subtitle}</span>
+              <span className="text-xs text-muted">{row.subtitle}</span>
             )}
           </div>
         </li>
@@ -336,23 +336,23 @@ function KanbanRenderer({
       {cols.map(([col, rows]) => (
         <div
           key={col}
-          className="min-w-[200px] max-w-[260px] shrink-0 border border-slate-200 dark:border-slate-700 rounded bg-slate-50/50 dark:bg-slate-900/40"
+          className="min-w-[200px] max-w-[260px] shrink-0 border border-line dark:border-slate-700 rounded bg-subtle/50 dark:bg-slate-900/40"
         >
-          <div className="px-2 py-1.5 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
-            <span className="text-xs font-medium text-slate-600 dark:text-slate-300 truncate">
+          <div className="px-2 py-1.5 border-b border-line dark:border-slate-700 flex items-center justify-between">
+            <span className="text-xs font-medium text-content dark:text-slate-300 truncate">
               {col}
             </span>
-            <span className="text-[10px] text-slate-400">{rows.length}</span>
+            <span className="text-[10px] text-faint">{rows.length}</span>
           </div>
           <ul className="p-2 space-y-1.5">
             {rows.map((r) => (
               <li
                 key={`${r.kind}:${r.id}`}
-                className="px-2 py-1.5 text-xs rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+                className="px-2 py-1.5 text-xs rounded bg-surface dark:bg-slate-800 border border-line dark:border-slate-700"
               >
                 <div className="font-medium truncate">{r.title}</div>
                 {r.subtitle && col !== r.subtitle && (
-                  <div className="text-[10px] text-slate-500 truncate">
+                  <div className="text-[10px] text-muted truncate">
                     {r.subtitle}
                   </div>
                 )}
@@ -376,14 +376,14 @@ function TableRenderer({
   // When declared, render each as a column read from row.fields.
   const cols = columns && columns.length > 0 ? columns : ["title", "subtitle"];
   return (
-    <div className="overflow-x-auto border border-slate-200 dark:border-slate-700 rounded">
+    <div className="overflow-x-auto border border-line dark:border-slate-700 rounded">
       <table className="w-full text-xs">
         <thead>
-          <tr className="border-b border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/40">
+          <tr className="border-b border-line dark:border-slate-700 bg-subtle/60 dark:bg-slate-800/40">
             {cols.map((c) => (
               <th
                 key={c}
-                className="px-3 py-1.5 text-left font-mono text-[10px] uppercase text-slate-500 tracking-wider"
+                className="px-3 py-1.5 text-left font-mono text-[10px] uppercase text-muted tracking-wider"
               >
                 {c}
               </th>
@@ -394,7 +394,7 @@ function TableRenderer({
           {items.map((r) => (
             <tr
               key={`${r.kind}:${r.id}`}
-              className="border-b border-slate-100 dark:border-slate-800 last:border-b-0"
+              className="border-b border-line dark:border-slate-800 last:border-b-0"
             >
               {cols.map((c) => (
                 <td key={c} className="px-3 py-1.5 align-top truncate max-w-[260px]">
@@ -479,11 +479,11 @@ function CreateViewModal({
         className="space-y-3"
       >
         <label className="block">
-          <div className="text-xs text-slate-500 mb-1">Entity kind</div>
+          <div className="text-xs text-muted mb-1">Entity kind</div>
           <select
             value={entityKind}
             onChange={(e) => setEntityKind(e.target.value)}
-            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           >
             {(kinds.data?.items ?? []).map((k) => (
               <option key={k.id} value={k.id}>
@@ -493,18 +493,18 @@ function CreateViewModal({
           </select>
         </label>
         <label className="block">
-          <div className="text-xs text-slate-500 mb-1">Name</div>
+          <div className="text-xs text-muted mb-1">Name</div>
           <input
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. Low stock"
-            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             autoFocus
           />
         </label>
         <label className="block">
-          <div className="text-xs text-slate-500 mb-1">Layout</div>
+          <div className="text-xs text-muted mb-1">Layout</div>
           <div className="flex gap-1">
             {(["list", "table", "kanban", "trend"] as const).map((t) => (
               <button
@@ -514,7 +514,7 @@ function CreateViewModal({
                 className={`flex-1 px-3 py-1.5 text-xs rounded transition ${
                   viewType === t
                     ? "bg-cobble-600 text-white"
-                    : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
+                    : "bg-subtle dark:bg-slate-800 text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-700"
                 }`}
               >
                 {t}
@@ -524,15 +524,15 @@ function CreateViewModal({
         </label>
         {viewType === "kanban" && (
           <label className="block">
-            <div className="text-xs text-slate-500 mb-1">Group by</div>
+            <div className="text-xs text-muted mb-1">Group by</div>
             <input
               type="text"
               value={groupBy}
               onChange={(e) => setGroupBy(e.target.value)}
               placeholder="status, state, subtitle…"
-              className="w-full px-2 py-1 text-sm font-mono border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+              className="w-full px-2 py-1 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             />
-            <div className="text-[11px] text-slate-400 mt-1">
+            <div className="text-[11px] text-faint mt-1">
               Field name to group columns by. Tried as top-level field first,
               then row.fields[field]. Default <code>subtitle</code> uses the
               entity's subtitle string (state for assets, status for orders…).
@@ -541,15 +541,15 @@ function CreateViewModal({
         )}
         {viewType === "table" && (
           <label className="block">
-            <div className="text-xs text-slate-500 mb-1">Columns (comma-separated)</div>
+            <div className="text-xs text-muted mb-1">Columns (comma-separated)</div>
             <input
               type="text"
               value={visibleFields}
               onChange={(e) => setVisibleFields(e.target.value)}
               placeholder="title, subtitle, qty, unit"
-              className="w-full px-2 py-1 text-sm font-mono border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+              className="w-full px-2 py-1 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             />
-            <div className="text-[11px] text-slate-400 mt-1">
+            <div className="text-[11px] text-faint mt-1">
               <code>title</code> and <code>subtitle</code> read from the resolved
               entity; anything else reads <code>row.fields[col]</code>.
             </div>
@@ -567,7 +567,7 @@ function CreateViewModal({
           <button
             type="button"
             onClick={onClose}
-            className="px-3 py-1.5 text-sm rounded text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="px-3 py-1.5 text-sm rounded text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800"
           >
             Cancel
           </button>
@@ -663,21 +663,21 @@ function EditViewModal({
         className="space-y-3"
       >
         <label className="block">
-          <div className="text-xs text-slate-500 mb-1">Name</div>
+          <div className="text-xs text-muted mb-1">Name</div>
           <input
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             autoFocus
           />
         </label>
-        <div className="text-xs text-slate-400">
+        <div className="text-xs text-faint">
           Entity kind: <span className="font-mono">{view.entity_kind}</span>{" "}
           (locked)
         </div>
         <label className="block">
-          <div className="text-xs text-slate-500 mb-1">Layout</div>
+          <div className="text-xs text-muted mb-1">Layout</div>
           <div className="flex gap-1">
             {(["list", "table", "kanban", "trend"] as const).map((t) => (
               <button
@@ -687,7 +687,7 @@ function EditViewModal({
                 className={`flex-1 px-3 py-1.5 text-xs rounded transition ${
                   viewType === t
                     ? "bg-cobble-600 text-white"
-                    : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
+                    : "bg-subtle dark:bg-slate-800 text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-700"
                 }`}
               >
                 {t}
@@ -697,28 +697,28 @@ function EditViewModal({
         </label>
         {viewType === "kanban" && (
           <label className="block">
-            <div className="text-xs text-slate-500 mb-1">Group by</div>
+            <div className="text-xs text-muted mb-1">Group by</div>
             <input
               type="text"
               value={groupBy}
               onChange={(e) => setGroupBy(e.target.value)}
-              className="w-full px-2 py-1 text-sm font-mono border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+              className="w-full px-2 py-1 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             />
           </label>
         )}
         {viewType === "table" && (
           <label className="block">
-            <div className="text-xs text-slate-500 mb-1">Columns</div>
+            <div className="text-xs text-muted mb-1">Columns</div>
             <input
               type="text"
               value={visibleFields}
               onChange={(e) => setVisibleFields(e.target.value)}
-              className="w-full px-2 py-1 text-sm font-mono border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+              className="w-full px-2 py-1 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             />
           </label>
         )}
         <label className="block">
-          <div className="text-xs text-slate-500 mb-1">
+          <div className="text-xs text-muted mb-1">
             Filter (comma-separated <code>key=value</code>)
           </div>
           <input
@@ -726,9 +726,9 @@ function EditViewModal({
             value={filterRaw}
             onChange={(e) => setFilterRaw(e.target.value)}
             placeholder="status=active, _tag=urgent"
-            className="w-full px-2 py-1 text-sm font-mono border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           />
-          <div className="text-[11px] text-slate-400 mt-1">
+          <div className="text-[11px] text-faint mt-1">
             Native cols, metadata fields, and <code>_tag</code> are all
             supported per the resolver's filter rules.
           </div>
@@ -745,7 +745,7 @@ function EditViewModal({
           <button
             type="button"
             onClick={onClose}
-            className="px-3 py-1.5 text-sm rounded text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="px-3 py-1.5 text-sm rounded text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800"
           >
             Cancel
           </button>

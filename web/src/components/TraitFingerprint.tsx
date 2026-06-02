@@ -37,7 +37,7 @@ function AxisCell({
   if (value === null || value === undefined) {
     return (
       <span
-        className="text-slate-300 dark:text-slate-600"
+        className="text-faint dark:text-slate-600"
         title={`${axis}: skipped`}
       >
         —
@@ -74,18 +74,18 @@ export function TraitFingerprint({
 }) {
   if (!traits) {
     return (
-      <span className={`text-[10px] font-mono text-slate-400 ${className}`}>
+      <span className={`text-[10px] font-mono text-faint ${className}`}>
         (no traits declared)
       </span>
     );
   }
   return (
-    <span className={`text-[10px] font-mono text-slate-500 dark:text-slate-400 ${className}`}>
+    <span className={`text-[10px] font-mono text-muted dark:text-slate-400 ${className}`}>
       {AXIS_ORDER.map((axis, i) => {
         const value = traits[axis];
         return (
           <span key={axis}>
-            {i > 0 && <span className="mx-1 text-slate-300 dark:text-slate-600">·</span>}
+            {i > 0 && <span className="mx-1 text-faint dark:text-slate-600">·</span>}
             <AxisCell axis={axis} value={value ?? null} />
           </span>
         );
@@ -109,7 +109,7 @@ export function TraitProfileBadge({
   }
   return (
     <span className="inline-flex flex-wrap items-baseline gap-x-1.5 gap-y-0">
-      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-cobble-50 dark:bg-cobble-900/30 text-cobble-700 dark:text-cobble-300 border border-cobble-200 dark:border-cobble-800">
+      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300 border border-cobble-200 dark:border-cobble-800">
         {profile}
       </span>
       <TraitFingerprint traits={traits} />

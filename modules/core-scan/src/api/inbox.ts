@@ -204,6 +204,11 @@ const ConfirmBody = z.object({
   quantity: z.number().nonnegative().optional(),
   /** Module-specific extras forwarded verbatim to the create endpoint. */
   extras: z.record(z.unknown()).optional(),
+  /** Route into a specific module INSTANCE (e.g. a food-skinned "pantry"
+   *  instance of inventory) instead of the module's default instance. The
+   *  workspace-level instance slug; the platform's instance router resolves
+   *  it to (module, instance) and scopes the create. Absent → default. */
+  instance: z.string().regex(/^[a-z0-9][a-z0-9-]*$/).max(80).optional(),
 });
 
 const KIND_CREATE_ENDPOINTS: Record<string, string> = {
@@ -314,7 +319,13 @@ inboxRouter.post(
     const baseUrl =
       (req.headers["x-cobblr-base-url"] as string | undefined) ??
       `${req.protocol}://${req.headers.host ?? "localhost"}`;
-    const createUrl = `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/${createPath}`;
+    // An explicit instance routes through the platform instance dispatcher
+    // (/instances/:name/items), which scopes the create to that instance of
+    // the owning module. The kind still drives the qty-field mapping above —
+    // an inventory instance keeps `qty`. Absent → the module's default path.
+    const createUrl = parsed.data.instance
+      ? `${baseUrl}/api/v1/orgs/${ctx.org.slug}/instances/${parsed.data.instance}/items`
+      : `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/${createPath}`;
     const createRes = await fetch(createUrl, {
       method: "POST",
       headers: {

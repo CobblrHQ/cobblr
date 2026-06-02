@@ -98,7 +98,7 @@ export function CatalogMatchPage() {
   if (!sourceKind || !sourceId) {
     return (
       <div className="space-y-3">
-        <h1 className="text-2xl font-semibold text-slate-700 dark:text-mortar-100">
+        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">
           Match to catalog
         </h1>
         <p className="text-sm text-ember-500">
@@ -116,26 +116,26 @@ export function CatalogMatchPage() {
         <button
           type="button"
           onClick={() => navigate(-1)}
-          className="text-[10px] font-mono uppercase tracking-widest text-slate-400 hover:text-cobble-500 transition inline-flex items-center gap-1"
+          className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-accent transition inline-flex items-center gap-1"
         >
           <ArrowLeft size={10} /> back
         </button>
       </div>
-      <div className="border-b border-slate-200 dark:border-slate-700 pb-3">
-        <h1 className="text-2xl font-semibold text-slate-700 dark:text-mortar-100">
+      <div className="border-b border-line dark:border-slate-700 pb-3">
+        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">
           Match to catalog
         </h1>
-        <p className="text-xs text-slate-500 dark:text-slate-400 font-mono mt-1">
+        <p className="text-xs text-muted dark:text-slate-400 font-mono mt-1">
           {sourceKind} · {sourceId}
         </p>
       </div>
 
       {catalogs.length === 0 && (
-        <div className="text-sm italic text-slate-500 dark:text-slate-400">
+        <div className="text-sm italic text-muted dark:text-slate-400">
           No catalogs installed yet. Add one at{" "}
           <button
             onClick={() => navigate("/configuration/catalogs")}
-            className="text-cobble-600 hover:underline"
+            className="text-accent hover:underline"
           >
             /configuration/catalogs
           </button>
@@ -146,7 +146,7 @@ export function CatalogMatchPage() {
       {catalogs.length > 0 && (
         <div className="grid grid-cols-12 gap-3">
           <div className="col-span-3 space-y-1">
-            <div className="text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+            <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Catalogs
             </div>
             {catalogs.map((c) => (
@@ -157,14 +157,14 @@ export function CatalogMatchPage() {
                 className={
                   "w-full text-left rounded border px-2 py-1.5 text-sm transition " +
                   (selectedId === c.id
-                    ? "border-cobble-500 bg-cobble-50 dark:bg-cobble-900/30 text-cobble-700 dark:text-cobble-200"
-                    : "border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-700 dark:text-mortar-100")
+                    ? "border-cobble-500 bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-200"
+                    : "border-line dark:border-slate-700 hover:bg-subtle dark:hover:bg-slate-800/50 text-content dark:text-mortar-100")
                 }
               >
                 <div className="flex items-center gap-2">
                   <Library size={12} />
                   <span className="flex-1 truncate">{c.name}</span>
-                  <span className="text-[10px] font-mono text-slate-400">
+                  <span className="text-[10px] font-mono text-faint">
                     {c.entry_count}
                   </span>
                 </div>
@@ -178,15 +178,15 @@ export function CatalogMatchPage() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder={`Search ${selectedCatalog.name} by ${titleColumn}…`}
-                className="w-full px-2 py-1.5 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+                className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
                 autoFocus
               />
             )}
             {entriesQ.isLoading && (
-              <div className="text-sm text-slate-500">Loading…</div>
+              <div className="text-sm text-muted">Loading…</div>
             )}
             {entries.length === 0 && !entriesQ.isLoading && debounced && (
-              <div className="text-sm italic text-slate-500 dark:text-slate-400">
+              <div className="text-sm italic text-muted dark:text-slate-400">
                 No entries match "{debounced}".
               </div>
             )}
@@ -194,11 +194,11 @@ export function CatalogMatchPage() {
               !entriesQ.isLoading &&
               !debounced &&
               selectedCatalog?.entry_count === 0 && (
-                <div className="text-sm italic text-slate-500 dark:text-slate-400">
+                <div className="text-sm italic text-muted dark:text-slate-400">
                   This catalog has no entries yet. Import a CSV at{" "}
                   <button
                     onClick={() => navigate(`/configuration/catalogs/${selectedId}`)}
-                    className="text-cobble-600 hover:underline"
+                    className="text-accent hover:underline"
                   >
                     its detail page
                   </button>
@@ -219,27 +219,27 @@ export function CatalogMatchPage() {
                     type="button"
                     disabled={matchMut.isPending}
                     onClick={() => matchMut.mutate(entry)}
-                    className="text-left rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-2 hover:border-cobble-400 dark:hover:border-cobble-700 transition flex gap-2 disabled:opacity-50"
+                    className="text-left rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-2 hover:border-accent dark:hover:border-cobble-700 transition flex gap-2 disabled:opacity-50"
                   >
                     {image && (
                       <img
                         src={image}
                         alt={title}
-                        className="w-12 h-12 rounded object-cover border border-slate-200 dark:border-slate-700 shrink-0"
+                        className="w-12 h-12 rounded object-cover border border-line dark:border-slate-700 shrink-0"
                         loading="lazy"
                       />
                     )}
                     <div className="min-w-0 flex-1">
-                      <div className="text-sm font-medium text-slate-700 dark:text-mortar-100 truncate">
+                      <div className="text-sm font-medium text-content dark:text-mortar-100 truncate">
                         {title}
                       </div>
-                      <div className="text-[10px] font-mono text-slate-400 dark:text-slate-500 truncate">
+                      <div className="text-[10px] font-mono text-faint dark:text-slate-500 truncate">
                         #{entry.external_id}
                       </div>
                     </div>
                     <Check
                       size={14}
-                      className="text-cobble-500 opacity-0 group-hover:opacity-100 shrink-0"
+                      className="text-accent opacity-0 group-hover:opacity-100 shrink-0"
                     />
                   </button>
                 );

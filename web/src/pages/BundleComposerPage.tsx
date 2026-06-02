@@ -213,10 +213,10 @@ export function BundleComposerPage() {
   if (loading) {
     return (
       <div className="space-y-3 max-w-4xl">
-        <h1 className="font-display text-2xl font-extrabold lowercase text-slate-700 dark:text-mortar-100">
+        <h1 className="font-display text-2xl font-extrabold lowercase text-content dark:text-mortar-100">
           compose bundle
         </h1>
-        <div className="text-sm text-slate-400">loading workspace…</div>
+        <div className="text-sm text-faint">loading workspace…</div>
       </div>
     );
   }
@@ -231,19 +231,19 @@ export function BundleComposerPage() {
 
   return (
     <div className="space-y-5 max-w-4xl">
-      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
+      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
         <Link
           to="/bundles"
-          className="text-sm text-slate-500 hover:text-cobble-600 inline-flex items-center gap-1"
+          className="text-sm text-muted hover:text-accent inline-flex items-center gap-1"
         >
           <ArrowLeft size={14} /> bundles
         </Link>
-        <h1 className="font-display text-2xl font-extrabold lowercase text-slate-700 dark:text-mortar-100 flex items-center gap-2">
-          <Package size={20} className="text-cobble-500" />
+        <h1 className="font-display text-2xl font-extrabold lowercase text-content dark:text-mortar-100 flex items-center gap-2">
+          <Package size={20} className="text-accent" />
           compose bundle
         </h1>
       </div>
-      <p className="text-sm text-slate-500 dark:text-slate-400">
+      <p className="text-sm text-muted dark:text-slate-400">
         Pick the wires and field defs you want to ship together. The
         metadata becomes the bundle's identity (id / version / readme).
         On the right you can preview the JSON or skip JSON entirely and
@@ -251,16 +251,16 @@ export function BundleComposerPage() {
       </p>
 
       {empty && (
-        <div className="rounded-md border border-dashed border-slate-200 dark:border-slate-700 p-8 text-center">
-          <Package size={28} className="mx-auto text-slate-300 dark:text-slate-600 mb-2" />
-          <div className="text-sm text-slate-500 dark:text-slate-400">
+        <div className="rounded-md border border-dashed border-line dark:border-slate-700 p-8 text-center">
+          <Package size={28} className="mx-auto text-faint dark:text-slate-600 mb-2" />
+          <div className="text-sm text-muted dark:text-slate-400">
             No user-authored wires or field defs in this workspace yet.
             Create some via{" "}
-            <Link to="/bindings" className="text-cobble-600 hover:text-cobble-700 underline">
+            <Link to="/bindings" className="text-accent hover:text-accent underline">
               wires
             </Link>{" "}
             and{" "}
-            <Link to="/fields" className="text-cobble-600 hover:text-cobble-700 underline">
+            <Link to="/fields" className="text-accent hover:text-accent underline">
               custom fields
             </Link>{" "}
             first.
@@ -271,8 +271,8 @@ export function BundleComposerPage() {
       {!empty && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
           <div className="space-y-4">
-            <section className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
-              <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500 mb-3">
+            <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
+              <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-3">
                 // metadata
               </div>
               <div className="grid grid-cols-2 gap-3">
@@ -333,7 +333,7 @@ export function BundleComposerPage() {
                 </Field>
               </div>
               {requires.length > 0 && (
-                <div className="mt-3 text-[11px] font-mono text-slate-500">
+                <div className="mt-3 text-[11px] font-mono text-muted">
                   // auto-requires:{" "}
                   {requires.map((r, i) => (
                     <span key={r.module}>
@@ -357,7 +357,7 @@ export function BundleComposerPage() {
                   return (
                     <li
                       key={k}
-                      className="rounded border border-slate-200 dark:border-slate-700 p-2 text-xs flex items-start gap-2"
+                      className="rounded border border-line dark:border-slate-700 p-2 text-xs flex items-start gap-2"
                     >
                       <button
                         type="button"
@@ -366,27 +366,27 @@ export function BundleComposerPage() {
                         aria-label={on ? "Exclude" : "Include"}
                       >
                         {on ? (
-                          <SquareCheck size={16} className="text-cobble-600" />
+                          <SquareCheck size={16} className="text-accent" />
                         ) : (
-                          <Square size={16} className="text-slate-300" />
+                          <Square size={16} className="text-faint" />
                         )}
                       </button>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-baseline gap-2 flex-wrap">
-                          <code className="font-mono text-cobble-600 dark:text-cobble-300">
+                          <code className="font-mono text-accent dark:text-cobble-300">
                             {w.source_kind}
                           </code>
-                          <span className="text-slate-400">→</span>
-                          <code className="font-mono text-cobble-600 dark:text-cobble-300">
+                          <span className="text-faint">→</span>
+                          <code className="font-mono text-accent dark:text-cobble-300">
                             {w.action_id}
                           </code>
-                          <span className="text-[10px] font-mono text-slate-400">
+                          <span className="text-[10px] font-mono text-faint">
                             ({w.trigger_type ?? "user-invoked"}
                             {w.trigger_event ? ` on ${w.trigger_event}` : ""})
                           </span>
                         </div>
                         {w.template && (
-                          <div className="mt-1 font-mono text-[11px] text-slate-500 dark:text-mortar-200 bg-mortar-50 dark:bg-slate-800/70 rounded px-2 py-1 break-all">
+                          <div className="mt-1 font-mono text-[11px] text-muted dark:text-mortar-200 bg-subtle dark:bg-slate-800/70 rounded px-2 py-1 break-all">
                             {w.template}
                           </div>
                         )}
@@ -409,7 +409,7 @@ export function BundleComposerPage() {
                   return (
                     <li
                       key={k}
-                      className="flex items-center gap-2 text-sm border-b border-slate-100 dark:border-slate-700 last:border-0 py-1"
+                      className="flex items-center gap-2 text-sm border-b border-line dark:border-slate-700 last:border-0 py-1"
                     >
                       <button
                         type="button"
@@ -417,21 +417,21 @@ export function BundleComposerPage() {
                         aria-label={on ? "Exclude" : "Include"}
                       >
                         {on ? (
-                          <SquareCheck size={16} className="text-cobble-600" />
+                          <SquareCheck size={16} className="text-accent" />
                         ) : (
-                          <Square size={16} className="text-slate-300" />
+                          <Square size={16} className="text-faint" />
                         )}
                       </button>
-                      <code className="font-mono text-xs text-cobble-600 dark:text-cobble-300 w-40 truncate">
+                      <code className="font-mono text-xs text-accent dark:text-cobble-300 w-40 truncate">
                         {f.entity_kind}
                       </code>
-                      <code className="font-mono text-xs text-slate-400 w-32 truncate">
+                      <code className="font-mono text-xs text-faint w-32 truncate">
                         {f.name}
                       </code>
-                      <span className="flex-1 text-slate-600 dark:text-mortar-200 truncate">
+                      <span className="flex-1 text-content dark:text-mortar-200 truncate">
                         {f.display_label ?? f.name}
                       </span>
-                      <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400">
+                      <span className="text-[10px] font-mono uppercase tracking-widest text-faint">
                         {f.type}
                       </span>
                     </li>
@@ -442,16 +442,16 @@ export function BundleComposerPage() {
           </div>
 
           <div className="space-y-3 lg:sticky lg:top-4 lg:self-start">
-            <section className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+            <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
               <div className="flex items-center justify-between mb-2">
-                <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500">
+                <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
                   // preview
                 </div>
-                <div className="text-[10px] font-mono text-slate-400">
+                <div className="text-[10px] font-mono text-faint">
                   {selectedWires.size} wires · {selectedFields.size} fields
                 </div>
               </div>
-              <pre className="max-h-96 overflow-auto text-[10px] font-mono p-3 rounded bg-mortar-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-mortar-200">
+              <pre className="max-h-96 overflow-auto text-[10px] font-mono p-3 rounded bg-subtle dark:bg-slate-800 border border-line dark:border-slate-700 text-content dark:text-mortar-200">
                 {json}
               </pre>
             </section>
@@ -459,14 +459,14 @@ export function BundleComposerPage() {
               <button
                 type="button"
                 onClick={copy}
-                className="inline-flex items-center justify-center gap-1 px-3 py-2 text-sm rounded border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-mortar-200 hover:bg-mortar-50 dark:hover:bg-slate-800"
+                className="inline-flex items-center justify-center gap-1 px-3 py-2 text-sm rounded border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800"
               >
                 <Copy size={14} /> Copy
               </button>
               <button
                 type="button"
                 onClick={download}
-                className="inline-flex items-center justify-center gap-1 px-3 py-2 text-sm rounded border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-mortar-200 hover:bg-mortar-50 dark:hover:bg-slate-800"
+                className="inline-flex items-center justify-center gap-1 px-3 py-2 text-sm rounded border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800"
               >
                 <Download size={14} /> Download
               </button>
@@ -484,7 +484,7 @@ export function BundleComposerPage() {
                 {install.isPending ? "Installing…" : "Install"}
               </button>
             </div>
-            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+            <p className="text-[11px] text-muted dark:text-slate-400">
               Install creates a bundle row in this workspace bound to the
               picked items. Download or copy if you want to share the
               manifest with another workspace.
@@ -508,9 +508,9 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+    <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
       <div className="flex items-center justify-between mb-2">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500">
+        <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
           // {title}
         </div>
         {hasAny && (
@@ -518,14 +518,14 @@ function Section({
             <button
               type="button"
               onClick={() => onAll(true)}
-              className="text-cobble-600 hover:text-cobble-700 mr-2"
+              className="text-accent hover:text-accent mr-2"
             >
               all
             </button>
             <button
               type="button"
               onClick={() => onAll(false)}
-              className="text-slate-500 hover:text-slate-700"
+              className="text-muted hover:text-content"
             >
               none
             </button>
@@ -548,7 +548,7 @@ function Field({
 }) {
   return (
     <label className={`block ${className ?? ""}`}>
-      <div className="text-[10px] font-mono uppercase tracking-widest text-slate-500 mb-1">
+      <div className="text-[10px] font-mono uppercase tracking-widest text-muted mb-1">
         {label}
       </div>
       {children}

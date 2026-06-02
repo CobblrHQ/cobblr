@@ -156,12 +156,16 @@ export function useNavModules(activeSlug: string): NavModules {
     }
   }
 
-  // Non-default instances nest under their owning module's nav entry —
-  // "inventory ▾ → screws · printer-parts" (nav-builder increment #1).
-  // The module's own entry is the default instance; user-created
-  // instances become dropdown children of it (reusing ModuleGroupChip).
-  // The default instance (instance_name == module_name) is the parent
-  // itself, so it's skipped here.
+  // A non-default instance is a SEPARATE TOP-LEVEL domain by default — per
+  // instances.md it's "a new top-level thing to the user, never mixed." So it
+  // gets its OWN top-level nav heading ("Pantry"), no dropdown, no trace of the
+  // source module's name. The workshop "inventory → types of parts" shape
+  // (Screws / Printer-parts nested under inventory, from c050605) is now an
+  // OPT-IN per-instance choice: set `config.presents_as_top_level = false` on
+  // the instance's presentation override and it nests as a dropdown child of its
+  // module instead. (Lenses — sub-categories within a domain — always nest.)
+  // The default instance (instance_name == module_name) is the module's own
+  // entry, so it's skipped here.
   for (const inst of instances.data?.items ?? []) {
     if (inst.is_default) continue;
     const key = `instance:${inst.module_name}:${inst.instance_name}`;
@@ -182,10 +186,12 @@ export function useNavModules(activeSlug: string): NavModules {
       enabled_at: inst.created_at,
       _instance: inst,
     };
-    // Nest under the owning module when it's a visible top-level entry;
-    // otherwise (module disabled / core utility) keep it reachable as a
-    // top-level row.
-    if (enabledNames.has(inst.module_name) && !inst.module_name.startsWith("core-")) {
+    // Top-level unless the override explicitly opts into nesting.
+    const nestUnderModule =
+      o?.config?.presents_as_top_level === false &&
+      enabledNames.has(inst.module_name) &&
+      !inst.module_name.startsWith("core-");
+    if (nestUnderModule) {
       const arr = childrenByParent.get(inst.module_name) ?? [];
       arr.push(synth);
       childrenByParent.set(inst.module_name, arr);
@@ -233,13 +239,21 @@ export function useNavModules(activeSlug: string): NavModules {
     for (const mem of h.members) {
       if (mem.target_kind === "instance") {
         const childName = `__instance__${mem.target_id}`;
-        for (const [parent, arr] of childrenByParent) {
-          const idx = arr.findIndex((c) => c.name === childName);
-          if (idx >= 0) {
-            hkids.push(arr[idx]!);
-            arr.splice(idx, 1);
-            childrenByParent.set(parent, arr);
-            break;
+        // Instances are top-level rows now — pull from rawTops first; fall back
+        // to a parent's children for any legacy still-nested instance.
+        const ti = rawTops.findIndex((t) => t.name === childName);
+        if (ti >= 0) {
+          hkids.push(rawTops[ti]!);
+          rawTops.splice(ti, 1);
+        } else {
+          for (const [parent, arr] of childrenByParent) {
+            const idx = arr.findIndex((c) => c.name === childName);
+            if (idx >= 0) {
+              hkids.push(arr[idx]!);
+              arr.splice(idx, 1);
+              childrenByParent.set(parent, arr);
+              break;
+            }
           }
         }
       } else {

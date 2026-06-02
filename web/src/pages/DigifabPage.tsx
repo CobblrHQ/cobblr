@@ -51,13 +51,13 @@ export function DigifabPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
-        <h1 className="text-2xl font-semibold text-slate-700 dark:text-mortar-100">Digital Fabrication</h1>
-        <span className="text-sm text-slate-500 dark:text-slate-400">{items.length} connection{items.length === 1 ? "" : "s"}</span>
+      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
+        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">Digital Fabrication</h1>
+        <span className="text-sm text-muted dark:text-slate-400">{items.length} connection{items.length === 1 ? "" : "s"}</span>
         <div className="flex-1" />
         <button
           onClick={() => setDriversOpen(true)}
-          className="inline-flex items-center gap-2 rounded border border-slate-300 dark:border-slate-600 hover:border-cobble-400 text-slate-600 dark:text-mortar-200 px-3 py-1.5 text-sm transition"
+          className="inline-flex items-center gap-2 rounded border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200 px-3 py-1.5 text-sm transition"
         >
           <Boxes size={14} /> Drivers
         </button>
@@ -69,31 +69,31 @@ export function DigifabPage() {
         </button>
       </div>
 
-      <p className="text-sm text-slate-500 dark:text-slate-400">
+      <p className="text-sm text-muted dark:text-slate-400">
         Connect to the software that runs your machines — FDM Monster, OctoPrint, and friends. Send a file to be made, map its
         printers to your machines, then queue and send print jobs that track to completion.
       </p>
 
-      {list.isLoading && <div className="text-sm text-slate-500">Loading…</div>}
+      {list.isLoading && <div className="text-sm text-muted">Loading…</div>}
       {items.length === 0 && !list.isLoading && (
-        <div className="text-sm text-slate-500 dark:text-slate-400 italic">
+        <div className="text-sm text-muted dark:text-slate-400 italic">
           No connections yet. Add one to point Cobblr at your machine manager.
         </div>
       )}
 
-      <ul className="border border-slate-200 dark:border-slate-700 rounded divide-y divide-slate-100 dark:divide-slate-800">
+      <ul className="border border-line dark:border-slate-700 rounded divide-y divide-line dark:divide-slate-800">
         {items.map((c) => (
           <li key={c.id} className="px-3 py-2.5 flex items-center gap-3">
-            <Printer size={16} className="text-slate-400 shrink-0" />
+            <Printer size={16} className="text-faint shrink-0" />
             <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium text-slate-700 dark:text-mortar-100 truncate flex items-center gap-2">
+              <div className="text-sm font-medium text-content dark:text-mortar-100 truncate flex items-center gap-2">
                 {c.label}
-                <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400">{c.type}</span>
+                <span className="text-[10px] font-mono uppercase tracking-wider text-faint">{c.type}</span>
                 {c.capabilities?.routing && (
                   <span className="text-[10px] font-mono text-moss-600 dark:text-moss-400">routing</span>
                 )}
               </div>
-              <div className="text-[11px] font-mono text-slate-400 truncate">{c.base_url}</div>
+              <div className="text-[11px] font-mono text-faint truncate">{c.base_url}</div>
               {c.last_sync_status && (
                 <div className={"text-[11px] " + (c.last_sync_status === "ok" ? "text-moss-600 dark:text-moss-400" : "text-ember-500")}>
                   {c.last_sync_status === "ok" ? "✓ reachable" : c.last_sync_status}
@@ -104,14 +104,14 @@ export function DigifabPage() {
               onClick={() => test.mutate(c.id)}
               disabled={test.isPending}
               title="Test connection"
-              className="text-slate-400 hover:text-cobble-600 transition p-1.5 disabled:opacity-50"
+              className="text-faint hover:text-accent transition p-1.5 disabled:opacity-50"
             >
               {test.isPending && test.variables === c.id ? <RefreshCw size={15} className="animate-spin" /> : <Wifi size={15} />}
             </button>
             <button
               onClick={() => setPrintersFor(c)}
               title="List printers"
-              className="text-slate-400 hover:text-cobble-600 transition p-1.5"
+              className="text-faint hover:text-accent transition p-1.5"
             >
               <Printer size={15} />
             </button>
@@ -126,7 +126,7 @@ export function DigifabPage() {
                 if (ok) del.mutate(c.id);
               }}
               title="Remove"
-              className="text-slate-400 hover:text-ember-500 transition p-1.5"
+              className="text-faint hover:text-ember-500 transition p-1.5"
             >
               <Trash2 size={15} />
             </button>
@@ -196,40 +196,40 @@ function DriversModal({ onClose }: { onClose: () => void }) {
 
   const builtins = list.data?.builtins ?? [];
   const installed = list.data?.installed ?? [];
-  const field = "w-full px-2 py-1.5 text-xs font-mono border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900";
+  const field = "w-full px-2 py-1.5 text-xs font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900";
 
   return (
     <Modal open onClose={onClose} title="Drivers" size="lg">
-      <p className="text-sm text-slate-500 dark:text-slate-400 mb-3">
+      <p className="text-sm text-muted dark:text-slate-400 mb-3">
         A driver connects digifab to the software that runs a machine. Built-ins ship with Cobblr;
         install your own by pasting a declarative manifest — no deploy. Installed drivers appear in
         the <span className="font-medium">Add connection</span> dropdown.
       </p>
 
-      <div className="text-[10px] font-mono uppercase tracking-widest text-slate-400 mb-1">Built-in</div>
+      <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Built-in</div>
       <ul className="flex flex-wrap gap-2 mb-4">
         {builtins.map((b) => (
-          <li key={b.key} className="text-xs px-2 py-1 rounded border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-mortar-200">
-            {b.name} <span className="text-slate-400 font-mono">{b.key}</span>
+          <li key={b.key} className="text-xs px-2 py-1 rounded border border-line dark:border-slate-700 text-content dark:text-mortar-200">
+            {b.name} <span className="text-faint font-mono">{b.key}</span>
           </li>
         ))}
       </ul>
 
-      <div className="text-[10px] font-mono uppercase tracking-widest text-slate-400 mb-1">Installed</div>
+      <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Installed</div>
       {installed.length === 0 ? (
-        <div className="text-[13px] text-slate-500 italic mb-4">None yet — paste a manifest below.</div>
+        <div className="text-[13px] text-muted italic mb-4">None yet — paste a manifest below.</div>
       ) : (
-        <ul className="divide-y divide-slate-100 dark:divide-slate-800 mb-4">
+        <ul className="divide-y divide-line dark:divide-slate-800 mb-4">
           {installed.map((d) => (
             <li key={d.id} className="py-2 flex items-center gap-2 text-sm">
-              <Boxes size={14} className="text-slate-400" />
-              <span className="flex-1 text-slate-700 dark:text-mortar-100">{d.name} <span className="text-[11px] font-mono text-slate-400">{d.key}</span></span>
-              <span className="text-[10px] font-mono text-slate-400">{d.kind}</span>
+              <Boxes size={14} className="text-faint" />
+              <span className="flex-1 text-content dark:text-mortar-100">{d.name} <span className="text-[11px] font-mono text-faint">{d.key}</span></span>
+              <span className="text-[10px] font-mono text-faint">{d.kind}</span>
               <button
                 onClick={async () => {
                   if (await confirm({ title: `Remove "${d.name}"?`, message: "Connections using it will stop resolving.", confirmLabel: "Remove", destructive: true })) remove.mutate(d.key);
                 }}
-                className="text-slate-400 hover:text-ember-500 transition p-1"
+                className="text-faint hover:text-ember-500 transition p-1"
               >
                 <Trash2 size={14} />
               </button>
@@ -238,7 +238,7 @@ function DriversModal({ onClose }: { onClose: () => void }) {
         </ul>
       )}
 
-      <div className="text-[10px] font-mono uppercase tracking-widest text-slate-400 mb-1">Install a declarative driver</div>
+      <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Install a declarative driver</div>
       <textarea
         value={manifest}
         onChange={(e) => setManifest(e.target.value)}
@@ -247,7 +247,7 @@ function DriversModal({ onClose }: { onClose: () => void }) {
         className={field}
       />
       <div className="flex justify-end gap-2 pt-2">
-        <button onClick={onClose} className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800">Close</button>
+        <button onClick={onClose} className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800">Close</button>
         <button
           onClick={() => install.mutate()}
           disabled={install.isPending || !manifest.trim()}
@@ -262,13 +262,13 @@ function DriversModal({ onClose }: { onClose: () => void }) {
 
 // ── status pill + which jobs can be sent / polled ──────────────────────
 const JOB_STATUS_STYLE: Record<string, string> = {
-  queued: "text-slate-500 bg-slate-100 dark:bg-slate-800",
+  queued: "text-muted bg-subtle dark:bg-slate-800",
   "awaiting-assignment": "text-amber-600 bg-amber-50 dark:bg-amber-950/40",
-  sent: "text-cobble-600 bg-cobble-50 dark:bg-cobble-950/40",
-  printing: "text-cobble-600 bg-cobble-50 dark:bg-cobble-950/40",
+  sent: "text-accent bg-cobble-50 dark:bg-cobble-950/40",
+  printing: "text-accent bg-cobble-50 dark:bg-cobble-950/40",
   completed: "text-moss-600 bg-moss-50 dark:bg-moss-950/40",
   failed: "text-ember-600 bg-ember-50 dark:bg-ember-950/40",
-  cancelled: "text-slate-400 bg-slate-100 dark:bg-slate-800",
+  cancelled: "text-faint bg-subtle dark:bg-slate-800",
 };
 const canSend = (j: DigifabJob) => j.status === "queued" && !j.remote_job_id;
 const canPoll = (j: DigifabJob) => !!j.remote_job_id && j.status !== "completed" && j.status !== "failed" && j.status !== "cancelled";
@@ -325,27 +325,27 @@ function PrintQueueSection({ connections }: { connections: DigifabConnection[] }
 
   return (
     <section className="space-y-2 pt-2">
-      <div className="flex items-center gap-3 border-b border-slate-200 dark:border-slate-700 pb-2">
-        <ListChecks size={16} className="text-cobble-500" />
-        <h2 className="text-sm font-semibold text-slate-700 dark:text-mortar-100">Print queue</h2>
-        <span className="text-[11px] text-slate-400">{items.length} job{items.length === 1 ? "" : "s"}</span>
+      <div className="flex items-center gap-3 border-b border-line dark:border-slate-700 pb-2">
+        <ListChecks size={16} className="text-accent" />
+        <h2 className="text-sm font-semibold text-content dark:text-mortar-100">Print queue</h2>
+        <span className="text-[11px] text-faint">{items.length} job{items.length === 1 ? "" : "s"}</span>
         <div className="flex-1" />
         <button
           onClick={() => setNewOpen(true)}
-          className="inline-flex items-center gap-1.5 rounded border border-slate-300 dark:border-slate-600 hover:border-cobble-400 text-slate-600 dark:text-mortar-200 px-2.5 py-1 text-xs transition"
+          className="inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200 px-2.5 py-1 text-xs transition"
         >
           <Plus size={13} /> New job
         </button>
       </div>
 
-      {jobs.isLoading && <div className="text-sm text-slate-500">Loading queue…</div>}
+      {jobs.isLoading && <div className="text-sm text-muted">Loading queue…</div>}
       {items.length === 0 && !jobs.isLoading && (
-        <div className="text-[13px] text-slate-500 dark:text-slate-400 italic">
+        <div className="text-[13px] text-muted dark:text-slate-400 italic">
           No jobs queued. Create one — then <span className="font-medium">Send</span> it to the farm when you're ready.
         </div>
       )}
 
-      <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+      <ul className="divide-y divide-line dark:divide-slate-800">
         {items.map((jb) => {
           const conn = connById.get(jb.connection_id);
           const target = jb.target_device
@@ -359,15 +359,15 @@ function PrintQueueSection({ connections }: { connections: DigifabConnection[] }
             <li key={jb.id} className="py-2.5 flex items-center gap-3 text-sm">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="font-mono text-[13px] text-slate-700 dark:text-mortar-100 truncate">{jb.file_ref}</span>
-                  <span className={"text-[10px] px-1.5 py-0.5 rounded font-medium " + (JOB_STATUS_STYLE[jb.status] ?? "text-slate-500 bg-slate-100")}>
+                  <span className="font-mono text-[13px] text-content dark:text-mortar-100 truncate">{jb.file_ref}</span>
+                  <span className={"text-[10px] px-1.5 py-0.5 rounded font-medium " + (JOB_STATUS_STYLE[jb.status] ?? "text-muted bg-subtle")}>
                     {jb.status}
                   </span>
                   {jb.status === "printing" && jb.progress != null && (
-                    <span className="text-[11px] text-cobble-500">{Math.round(jb.progress * 100)}%</span>
+                    <span className="text-[11px] text-accent">{Math.round(jb.progress * 100)}%</span>
                   )}
                 </div>
-                <div className="text-[11px] text-slate-400 truncate">
+                <div className="text-[11px] text-faint truncate">
                   {conn?.label ?? "—"} · {target}
                   {jb.error && <span className="text-ember-500"> · {jb.error}</span>}
                 </div>
@@ -377,7 +377,7 @@ function PrintQueueSection({ connections }: { connections: DigifabConnection[] }
                   onClick={() => poll.mutate(jb.id)}
                   disabled={poll.isPending}
                   title="Refresh status"
-                  className="text-slate-400 hover:text-cobble-600 transition p-1.5 disabled:opacity-50"
+                  className="text-faint hover:text-accent transition p-1.5 disabled:opacity-50"
                 >
                   <RefreshCw size={14} className={poll.isPending && poll.variables === jb.id ? "animate-spin" : ""} />
                 </button>
@@ -463,8 +463,8 @@ function NewJobModal({
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
 
-  const field = "w-full px-2 py-1.5 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900";
-  const lbl = "block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1";
+  const field = "w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900";
+  const lbl = "block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
   const machineList = machines.data?.items ?? [];
   const printerList = printers.data?.items ?? [];
   const fileList = files.data?.items ?? [];
@@ -513,7 +513,7 @@ function NewJobModal({
               <option key={f.id} value={f.id}>{f.filename}</option>
             ))}
           </select>
-          <span className="text-[11px] text-slate-400">
+          <span className="text-[11px] text-faint">
             Pick a stored file to upload its real bytes on send. Leave blank to send routing only.
           </span>
         </label>
@@ -535,7 +535,7 @@ function NewJobModal({
                 <option key={m.id} value={m.id}>{m.name}</option>
               ))}
             </select>
-            <span className="text-[11px] text-slate-400">Routes to the farm printer that machine is linked to.</span>
+            <span className="text-[11px] text-faint">Routes to the farm printer that machine is linked to.</span>
           </label>
         )}
         {routeBy === "printer" && (
@@ -556,7 +556,7 @@ function NewJobModal({
           </label>
         )}
         <div className="flex justify-end gap-2 pt-2">
-          <button type="button" onClick={onClose} className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800">Cancel</button>
+          <button type="button" onClick={onClose} className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800">Cancel</button>
           <button type="submit" disabled={save.isPending || !connectionId || !fileRef.trim() || !routeValid} className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white">
             {save.isPending ? "Queuing…" : "Queue job"}
           </button>
@@ -604,8 +604,8 @@ function CreateConnectionModal({
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
 
-  const field = "w-full px-2 py-1.5 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900";
-  const lbl = "block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1";
+  const field = "w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900";
+  const lbl = "block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
 
   return (
     <Modal open onClose={onClose} title="Add a connection" size="md">
@@ -640,7 +640,7 @@ function CreateConnectionModal({
                   key={m}
                   type="button"
                   onClick={() => setAuthMode(m)}
-                  className={"px-2 py-1 rounded border transition " + (authMode === m ? "border-cobble-500 text-cobble-600" : "border-slate-300 dark:border-slate-600 text-slate-500")}
+                  className={"px-2 py-1 rounded border transition " + (authMode === m ? "border-cobble-500 text-accent" : "border-line dark:border-slate-600 text-muted")}
                 >
                   {m === "api_key" ? "API key" : "Username + password"}
                 </button>
@@ -666,7 +666,7 @@ function CreateConnectionModal({
           </>
         )}
         <div className="flex justify-end gap-2 pt-2">
-          <button type="button" onClick={onClose} className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800">Cancel</button>
+          <button type="button" onClick={onClose} className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800">Cancel</button>
           <button type="submit" disabled={save.isPending || !label.trim() || !baseUrl.trim()} className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white">
             {save.isPending ? "Adding…" : "Add"}
           </button>
@@ -714,31 +714,31 @@ function PrintersModal({ connection, onClose }: { connection: DigifabConnection;
   const linkByPrinter = new Map(
     (links.data?.items ?? []).filter((l) => l.connection_id === connection.id).map((l) => [l.remote_device_id, l]),
   );
-  const field = "px-2 py-1 text-xs border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900 max-w-[14rem]";
+  const field = "px-2 py-1 text-xs border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900 max-w-[14rem]";
 
   return (
     <Modal open onClose={onClose} title={`${connection.label} — printers`} size="md">
-      {printers.isLoading && <div className="text-sm text-slate-500">Loading printers…</div>}
+      {printers.isLoading && <div className="text-sm text-muted">Loading printers…</div>}
       {printers.isError && <div className="text-sm text-ember-500">Couldn't reach the farm — test the connection.</div>}
       {!printers.isLoading && !printers.isError && items.length === 0 && (
-        <div className="text-sm text-slate-500 italic">No printers reported.</div>
+        <div className="text-sm text-muted italic">No printers reported.</div>
       )}
-      <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+      <ul className="divide-y divide-line dark:divide-slate-800">
         {items.map((p) => {
           const linked = linkByPrinter.get(p.id);
           return (
             <li key={p.id} className="py-2.5 flex items-center gap-2 text-sm">
-              <Printer size={14} className="text-slate-400 shrink-0" />
+              <Printer size={14} className="text-faint shrink-0" />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="text-slate-700 dark:text-mortar-100 truncate">{p.name}</span>
-                  {p.state && <span className="text-[11px] text-slate-400">{p.state}</span>}
-                  <span className={"text-[11px] " + (p.enabled ? "text-moss-600 dark:text-moss-400" : "text-slate-400")}>
+                  <span className="text-content dark:text-mortar-100 truncate">{p.name}</span>
+                  {p.state && <span className="text-[11px] text-faint">{p.state}</span>}
+                  <span className={"text-[11px] " + (p.enabled ? "text-moss-600 dark:text-moss-400" : "text-faint")}>
                     {p.enabled ? "enabled" : "disabled"}
                   </span>
                 </div>
                 {linked && (
-                  <div className="text-[11px] text-cobble-600 dark:text-cobble-400 mt-0.5">
+                  <div className="text-[11px] text-accent dark:text-cobble-400 mt-0.5">
                     → {linked.machine_label ?? "linked machine"}
                   </div>
                 )}
@@ -771,7 +771,7 @@ function PrintersModal({ connection, onClose }: { connection: DigifabConnection;
           );
         })}
       </ul>
-      <p className="mt-3 text-[11px] text-slate-400">
+      <p className="mt-3 text-[11px] text-faint">
         Link a farm printer to one of your machines — a job linked to that machine then routes to its printer automatically.
       </p>
     </Modal>

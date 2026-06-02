@@ -87,14 +87,14 @@ export function ProjectsListPage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-slate-700 dark:text-mortar-100 lowercase">projects</h1>
-        <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
+      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">projects</h1>
+        <span className="text-[10px] font-mono text-faint dark:text-slate-500">
           {query ? `${filtered.length} of ${items.length}` : `${items.length} total`}
         </span>
         <div className="flex-1" />
         <div className="relative">
-          <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
+          <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-faint" />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -121,12 +121,12 @@ export function ProjectsListPage() {
       </form>
 
       {items.length === 0 && !list.isLoading && (
-        <div className="border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl p-12 text-center text-slate-400 dark:text-slate-500">
+        <div className="border-2 border-dashed border-line dark:border-slate-700 rounded-xl p-12 text-center text-faint dark:text-slate-500">
           No projects yet — create one above.
         </div>
       )}
       {items.length > 0 && filtered.length === 0 && (
-        <div className="text-xs text-slate-400 dark:text-slate-500 italic">
+        <div className="text-xs text-faint dark:text-slate-500 italic">
           No projects match "{query}".
         </div>
       )}
@@ -136,11 +136,11 @@ export function ProjectsListPage() {
         if (rows.length === 0) return null;
         return (
           <section key={s}>
-            <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500 mb-2">
+            <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
               // {STATUS_LABEL[s] ?? s}{" "}
-              <span className="text-slate-400 dark:text-slate-500">({rows.length})</span>
+              <span className="text-faint dark:text-slate-500">({rows.length})</span>
             </div>
-            <ul className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 divide-y divide-slate-100 dark:divide-slate-700">
+            <ul className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 divide-y divide-line dark:divide-slate-700">
               {rows.map((p) => (
                 <li key={p.id} className="flex items-stretch">
                   <label
@@ -157,25 +157,25 @@ export function ProjectsListPage() {
                   </label>
                   <Link
                     to={`/projects/${p.id}`}
-                    className="flex-1 px-2 py-3 hover:bg-mortar-50 dark:hover:bg-slate-800/70 transition"
+                    className="flex-1 px-2 py-3 hover:bg-subtle dark:hover:bg-slate-800/70 transition"
                   >
                     <div className="flex items-baseline gap-3">
-                      <span className="font-medium text-slate-700 dark:text-mortar-100">{p.name}</span>
+                      <span className="font-medium text-content dark:text-mortar-100">{p.name}</span>
                       {p.priority && (
-                        <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500 uppercase">
+                        <span className="text-[10px] font-mono text-faint dark:text-slate-500 uppercase">
                           {p.priority}
                         </span>
                       )}
                       <Excitement value={p.metadata?.excitement} />
                       <span className="flex-1" />
                       {p.target_date && (
-                        <span className="text-[11px] font-mono text-slate-400 dark:text-slate-500 shrink-0">
+                        <span className="text-[11px] font-mono text-faint dark:text-slate-500 shrink-0">
                           target {new Date(p.target_date).toLocaleDateString()}
                         </span>
                       )}
                     </div>
                     {p.description && (
-                      <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400 line-clamp-1">
+                      <p className="mt-0.5 text-xs text-muted dark:text-slate-400 line-clamp-1">
                         {p.description}
                       </p>
                     )}
@@ -225,7 +225,7 @@ function Excitement({ value }: { value: unknown }) {
           key={i}
           className={
             "w-1 h-1 rounded-full " +
-            (i < clamped ? "bg-cobble-400" : "bg-slate-200 dark:bg-slate-700")
+            (i < clamped ? "bg-cobble-400" : "bg-subtle dark:bg-slate-700")
           }
         />
       ))}

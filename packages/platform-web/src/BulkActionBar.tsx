@@ -21,15 +21,15 @@ interface Props {
 export function BulkActionBar({ count, actions, onClear }: Props) {
   if (count === 0) return null;
   return (
-    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg">
-      <span className="text-sm font-medium text-slate-700 dark:text-mortar-100">
+    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2 rounded-full border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg">
+      <span className="text-sm font-medium text-content dark:text-mortar-100">
         {count} selected
       </span>
-      <span className="text-slate-300 dark:text-slate-600">·</span>
+      <span className="text-faint dark:text-slate-600">·</span>
       <div className="flex items-center gap-2">{actions}</div>
       <button
         onClick={onClear}
-        className="text-slate-400 hover:text-slate-700 dark:hover:text-mortar-100 transition p-1"
+        className="text-faint hover:text-content dark:hover:text-mortar-100 transition p-1"
         title="Clear selection"
       >
         <X size={14} />

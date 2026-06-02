@@ -164,14 +164,14 @@ export function ModulePickerModal({ open, onClose, scopeToParent }: Props) {
       <div className="space-y-3">
         {scopeToParent && (
           <div className="flex items-center justify-between text-xs">
-            <span className="text-slate-500 dark:text-slate-400">
+            <span className="text-muted dark:text-slate-400">
               {showAll
                 ? "Showing every module."
                 : `Showing modules that depend on ${scopeToParent}.`}
             </span>
             <button
               onClick={() => setShowAll((s) => !s)}
-              className="font-mono uppercase tracking-widest text-[10px] text-cobble-600 hover:text-cobble-500 transition"
+              className="font-mono uppercase tracking-widest text-[10px] text-accent hover:text-accent transition"
             >
               {showAll ? `back to ${scopeToParent}` : "show all modules"}
             </button>
@@ -209,19 +209,19 @@ export function ModulePickerModal({ open, onClose, scopeToParent }: Props) {
             </li>
           ))}
           {userParents.length === 0 && visibleOrphans.length === 0 && corePlatform.length === 0 && (
-            <li className="text-xs text-slate-400 italic text-center py-6">
+            <li className="text-xs text-faint italic text-center py-6">
               No modules match this filter.
             </li>
           )}
         </ul>
 
         {corePlatform.length > 0 && (
-          <details className="mt-5 pt-3 border-t border-slate-200 dark:border-slate-700 group">
-            <summary className="cursor-pointer list-none flex items-center justify-between text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 hover:text-cobble-500 dark:hover:text-cobble-400 transition">
+          <details className="mt-5 pt-3 border-t border-line dark:border-slate-700 group">
+            <summary className="cursor-pointer list-none flex items-center justify-between text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 hover:text-accent dark:hover:text-cobble-400 transition">
               <span>// platform infrastructure ({corePlatform.length})</span>
-              <span className="text-slate-300 dark:text-slate-600 group-open:rotate-90 transition-transform">▸</span>
+              <span className="text-faint dark:text-slate-600 group-open:rotate-90 transition-transform">▸</span>
             </summary>
-            <div className="text-[10px] font-mono text-slate-400 dark:text-slate-500 mt-2 mb-2 italic">
+            <div className="text-[10px] font-mono text-faint dark:text-slate-500 mt-2 mb-2 italic">
               Foundational modules. Modules built on top of cobblr assume
               these are on. Disabling something here will likely break
               every user-facing module in the workspace — flip with care.
@@ -242,10 +242,10 @@ export function ModulePickerModal({ open, onClose, scopeToParent }: Props) {
           </details>
         )}
 
-        <div className="pt-3 border-t border-slate-100 dark:border-slate-700 flex justify-end">
+        <div className="pt-3 border-t border-line dark:border-slate-700 flex justify-end">
           <button
             onClick={onClose}
-            className="px-3 py-1.5 rounded-md text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-mortar-50 dark:hover:bg-slate-800 transition"
+            className="px-3 py-1.5 rounded-md text-sm font-medium text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800 transition"
           >
             Close
           </button>
@@ -306,10 +306,10 @@ function ParentCard({
         }
       }}
       className={
-        "rounded-lg border bg-white dark:bg-slate-900 transition " +
+        "rounded-lg border bg-surface dark:bg-slate-900 transition " +
         (dragOver
-          ? "border-cobble-400 ring-2 ring-cobble-200 dark:ring-cobble-900"
-          : "border-slate-200 dark:border-slate-700")
+          ? "border-accent ring-2 ring-accent dark:ring-cobble-900"
+          : "border-line dark:border-slate-700")
       }
     >
       <Row
@@ -323,7 +323,7 @@ function ParentCard({
       />
       {kids.length > 0 && (
         <div className="pl-9 pr-3 pb-3 space-y-1.5">
-          <div className="text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+          <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
             specialisations
           </div>
           {kids.map((k) => (
@@ -384,16 +384,16 @@ function Row({
     <div
       className={
         (compact
-          ? "rounded-md border border-slate-200 dark:border-slate-700 bg-mortar-25 dark:bg-slate-800/40 p-2.5"
+          ? "rounded-md border border-line dark:border-slate-700 bg-mortar-25 dark:bg-slate-800/40 p-2.5"
           : "p-3") +
-        (framed && !compact ? " rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900" : "") +
+        (framed && !compact ? " rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900" : "") +
         " flex items-start gap-2"
       }
     >
       {dragHandle ? (
         <button
           aria-label="Reorder"
-          className="mt-0.5 shrink-0 text-slate-300 hover:text-cobble-500 dark:text-slate-600 dark:hover:text-cobble-400 cursor-grab active:cursor-grabbing transition"
+          className="mt-0.5 shrink-0 text-faint hover:text-accent dark:text-slate-600 dark:hover:text-cobble-400 cursor-grab active:cursor-grabbing transition"
           onMouseDown={(e) => e.stopPropagation()}
           title="Drag to reorder in navbar"
         >
@@ -406,28 +406,28 @@ function Row({
         {m.enabled ? (
           <CheckCircle2 size={16} className="text-moss-600" />
         ) : blocked ? (
-          <Lock size={16} className="text-slate-400" />
+          <Lock size={16} className="text-faint" />
         ) : (
-          <Circle size={16} className="text-slate-300" />
+          <Circle size={16} className="text-faint" />
         )}
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-baseline gap-2 flex-wrap">
-          <span className={(compact ? "text-sm" : "text-sm") + " font-medium text-slate-700 dark:text-mortar-100"}>
+          <span className={(compact ? "text-sm" : "text-sm") + " font-medium text-content dark:text-mortar-100"}>
             {m.displayName}
           </span>
-          <span className="text-[10px] font-mono text-slate-400">v{m.version}</span>
+          <span className="text-[10px] font-mono text-faint">v{m.version}</span>
           {m.dependencies.length > 0 && (
-            <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
+            <span className="text-[10px] font-mono text-faint dark:text-slate-500">
               · needs {m.dependencies.join(", ")}
             </span>
           )}
         </div>
-        <div className={(compact ? "text-xs" : "text-xs") + " text-slate-600 dark:text-mortar-200 mt-0.5"}>
+        <div className={(compact ? "text-xs" : "text-xs") + " text-content dark:text-mortar-200 mt-0.5"}>
           {m.description}
         </div>
         {(m.contributes.fieldDefs > 0 || m.contributes.wires > 0) && (
-          <div className="text-[10px] font-mono text-cobble-500 mt-1">
+          <div className="text-[10px] font-mono text-accent mt-1">
             contributes: {m.contributes.fieldDefs} field-def{m.contributes.fieldDefs === 1 ? "" : "s"}
             {m.contributes.wires > 0 && `, ${m.contributes.wires} wire${m.contributes.wires === 1 ? "" : "s"}`}
           </div>
@@ -443,7 +443,7 @@ function Row({
           <button
             onClick={onDisable}
             disabled={busy}
-            className="text-[10px] font-mono uppercase tracking-widest text-slate-400 hover:text-ember-500 transition px-2 py-1"
+            className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-ember-500 transition px-2 py-1"
           >
             disable
           </button>
@@ -451,7 +451,7 @@ function Row({
           <button
             onClick={onEnable}
             disabled={busy || blocked}
-            className="text-[10px] font-mono uppercase tracking-widest px-2 py-1 rounded border border-slate-200 dark:border-slate-700 text-cobble-600 hover:bg-mortar-50 dark:hover:bg-slate-800 transition disabled:opacity-40 disabled:cursor-not-allowed"
+            className="text-[10px] font-mono uppercase tracking-widest px-2 py-1 rounded border border-line dark:border-slate-700 text-accent hover:bg-subtle dark:hover:bg-slate-800 transition disabled:opacity-40 disabled:cursor-not-allowed"
           >
             enable
           </button>
@@ -482,22 +482,22 @@ function CoreRow({
   const missingDeps = m.dependencies.filter((d) => !enabledNames.has(d));
   const blocked = missingDeps.length > 0;
   return (
-    <div className="flex items-center gap-2 py-1 px-2 rounded hover:bg-mortar-50 dark:hover:bg-slate-800/40 transition">
+    <div className="flex items-center gap-2 py-1 px-2 rounded hover:bg-subtle dark:hover:bg-slate-800/40 transition">
       <span className="shrink-0">
         {m.enabled ? (
           <CheckCircle2 size={12} className="text-moss-600" />
         ) : blocked ? (
-          <Lock size={12} className="text-slate-400" />
+          <Lock size={12} className="text-faint" />
         ) : (
-          <Circle size={12} className="text-slate-300" />
+          <Circle size={12} className="text-faint" />
         )}
       </span>
-      <span className="text-xs font-medium text-slate-600 dark:text-mortar-200 shrink-0">
+      <span className="text-xs font-medium text-content dark:text-mortar-200 shrink-0">
         {m.displayName}
       </span>
-      <span className="text-[10px] font-mono text-slate-400 shrink-0">v{m.version}</span>
+      <span className="text-[10px] font-mono text-faint shrink-0">v{m.version}</span>
       <span
-        className="text-[11px] text-slate-400 dark:text-slate-500 truncate flex-1"
+        className="text-[11px] text-faint dark:text-slate-500 truncate flex-1"
         title={m.description}
       >
         {m.description}
@@ -506,7 +506,7 @@ function CoreRow({
         <button
           onClick={onDisable}
           disabled={busy}
-          className="text-[10px] font-mono uppercase tracking-widest text-slate-400 hover:text-ember-500 transition px-2 shrink-0"
+          className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-ember-500 transition px-2 shrink-0"
         >
           disable
         </button>
@@ -514,7 +514,7 @@ function CoreRow({
         <button
           onClick={onEnable}
           disabled={busy || blocked}
-          className="text-[10px] font-mono uppercase tracking-widest px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700 text-cobble-600 hover:bg-mortar-50 dark:hover:bg-slate-800 transition disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+          className="text-[10px] font-mono uppercase tracking-widest px-2 py-0.5 rounded border border-line dark:border-slate-700 text-accent hover:bg-subtle dark:hover:bg-slate-800 transition disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
         >
           enable
         </button>

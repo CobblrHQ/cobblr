@@ -137,34 +137,34 @@ export function PermissionsPage() {
 
   return (
     <div className="space-y-6 max-w-5xl">
-      <div className="border-b border-slate-200 dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-slate-700 dark:text-mortar-100 lowercase">
+      <div className="border-b border-line dark:border-slate-700 pb-3">
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">
           permissions
         </h1>
-        <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
+        <span className="text-[10px] font-mono text-faint dark:text-slate-500">
           per-member capability grants + field visibility. admins / owners have
           everything implicitly.
         </span>
       </div>
 
       {actions.length === 0 && (
-        <div className="text-xs text-slate-400 italic">
+        <div className="text-xs text-faint italic">
           No grantable actions registered yet.
         </div>
       )}
 
       {actions.length > 0 && members.length > 0 && (
-        <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
+        <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-mortar-50 dark:bg-slate-800/40">
+            <thead className="bg-subtle dark:bg-slate-800/40">
               <tr>
-                <th className="text-left text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 px-3 py-2">
+                <th className="text-left text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 px-3 py-2">
                   Member
                 </th>
                 {actions.map((a) => (
                   <th
                     key={a.action_id}
-                    className="text-center text-[10px] font-mono text-cobble-600 dark:text-cobble-300 px-3 py-2"
+                    className="text-center text-[10px] font-mono text-accent dark:text-cobble-300 px-3 py-2"
                     title={a.description}
                   >
                     {a.label}
@@ -172,16 +172,16 @@ export function PermissionsPage() {
                 ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+            <tbody className="divide-y divide-line dark:divide-slate-800">
               {members.map((m) => {
                 const isAdmin = m.role === "owner" || m.role === "admin";
                 return (
                   <tr key={m.id}>
                     <td className="px-3 py-2">
-                      <div className="text-sm text-slate-700 dark:text-mortar-100">
+                      <div className="text-sm text-content dark:text-mortar-100">
                         {m.display_name}
                       </div>
-                      <div className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
+                      <div className="text-[10px] font-mono text-faint dark:text-slate-500">
                         {m.email} · {m.role}
                       </div>
                     </td>
@@ -196,7 +196,7 @@ export function PermissionsPage() {
                           >
                             <Shield
                               size={12}
-                              className="inline text-cobble-500"
+                              className="inline text-accent"
                             />
                           </td>
                         );
@@ -216,7 +216,7 @@ export function PermissionsPage() {
                               "w-6 h-6 rounded inline-flex items-center justify-center transition " +
                               (granted
                                 ? "bg-cobble-600 text-white hover:bg-cobble-700"
-                                : "border border-slate-300 dark:border-slate-600 text-slate-300 dark:text-slate-600 hover:border-cobble-400")
+                                : "border border-line dark:border-slate-600 text-faint dark:text-slate-600 hover:border-accent")
                             }
                             title={granted ? "Revoke" : "Grant"}
                             data-action-id={a.action_id}
@@ -236,23 +236,23 @@ export function PermissionsPage() {
       )}
 
       {/* ── Field visibility (H2) ──────────────────────────────────── */}
-      <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
-        <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800">
+      <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900">
+        <div className="px-4 py-3 border-b border-line dark:border-slate-800">
           <div className="flex items-center gap-2">
-            <EyeOff size={14} className="text-cobble-500" />
-            <h2 className="font-display text-sm font-bold text-slate-700 dark:text-mortar-100 lowercase">
+            <EyeOff size={14} className="text-accent" />
+            <h2 className="font-display text-sm font-bold text-content dark:text-mortar-100 lowercase">
               field visibility
             </h2>
           </div>
-          <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
+          <span className="text-[10px] font-mono text-faint dark:text-slate-500">
             hide a field unless the viewer holds a capability. members without
             it see the record but not the field. admins always see it.
           </span>
         </div>
 
-        <div className="divide-y divide-slate-100 dark:divide-slate-800">
+        <div className="divide-y divide-line dark:divide-slate-800">
           {scopes.length === 0 && (
-            <div className="px-4 py-3 text-xs text-slate-400 italic">
+            <div className="px-4 py-3 text-xs text-faint italic">
               No fields gated yet — every exposable field is visible to all
               members. Module-declared scopes (e.g. cost) still apply.
             </div>
@@ -265,19 +265,19 @@ export function PermissionsPage() {
               data-scope-field={s.field}
             >
               <div className="flex-1 min-w-0">
-                <span className="text-sm text-slate-700 dark:text-mortar-100 font-mono">
+                <span className="text-sm text-content dark:text-mortar-100 font-mono">
                   {kindLabel(s.kind)}
-                  <span className="text-slate-300 dark:text-slate-600">.</span>
+                  <span className="text-faint dark:text-slate-600">.</span>
                   {s.field}
                 </span>
               </div>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cobble-50 dark:bg-cobble-900/30 text-cobble-700 dark:text-cobble-300">
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300">
                 {s.capability}
               </span>
               <button
                 type="button"
                 onClick={() => delScope.mutate({ kind: s.kind, field: s.field })}
-                className="text-slate-300 hover:text-rose-500 dark:text-slate-600 dark:hover:text-rose-400 transition"
+                className="text-faint hover:text-rose-500 dark:text-slate-600 dark:hover:text-rose-400 transition"
                 title="Remove — field becomes visible to all members again"
                 aria-label={`Remove ${s.field} gate`}
               >
@@ -288,16 +288,16 @@ export function PermissionsPage() {
         </div>
 
         {/* add row */}
-        <div className="px-4 py-3 border-t border-slate-100 dark:border-slate-800 bg-mortar-50/50 dark:bg-slate-800/20">
+        <div className="px-4 py-3 border-t border-line dark:border-slate-800 bg-subtle/50 dark:bg-slate-800/20">
           <div className="flex flex-wrap items-end gap-2">
             <label className="flex flex-col gap-1">
-              <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400">
+              <span className="text-[10px] font-mono uppercase tracking-widest text-faint">
                 kind
               </span>
               <select
                 value={newKind}
                 onChange={(e) => pickKind(e.target.value)}
-                className="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-2 py-1.5 text-slate-700 dark:text-mortar-100"
+                className="text-sm rounded-lg border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5 text-content dark:text-mortar-100"
                 data-testid="scope-kind"
               >
                 <option value="">select…</option>
@@ -309,14 +309,14 @@ export function PermissionsPage() {
               </select>
             </label>
             <label className="flex flex-col gap-1">
-              <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400">
+              <span className="text-[10px] font-mono uppercase tracking-widest text-faint">
                 field
               </span>
               <select
                 value={newField}
                 onChange={(e) => pickField(e.target.value)}
                 disabled={!newKind}
-                className="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-2 py-1.5 text-slate-700 dark:text-mortar-100 disabled:opacity-40"
+                className="text-sm rounded-lg border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5 text-content dark:text-mortar-100 disabled:opacity-40"
                 data-testid="scope-field"
               >
                 {availableFields.length === 0 && (
@@ -332,14 +332,14 @@ export function PermissionsPage() {
               </select>
             </label>
             <label className="flex flex-col gap-1 flex-1 min-w-[160px]">
-              <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400">
+              <span className="text-[10px] font-mono uppercase tracking-widest text-faint">
                 capability
               </span>
               <input
                 value={newCap}
                 onChange={(e) => setNewCap(e.target.value)}
                 placeholder="module:view-field"
-                className="text-sm font-mono rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-2 py-1.5 text-slate-700 dark:text-mortar-100"
+                className="text-sm font-mono rounded-lg border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5 text-content dark:text-mortar-100"
                 data-testid="scope-capability"
               />
             </label>

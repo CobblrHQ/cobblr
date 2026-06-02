@@ -86,18 +86,18 @@ export function CatalogDetailPage() {
       <div>
         <Link
           to="/configuration/catalogs"
-          className="text-[10px] font-mono uppercase tracking-widest text-slate-400 hover:text-cobble-500 transition inline-flex items-center gap-1"
+          className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-accent transition inline-flex items-center gap-1"
         >
           <ArrowLeft size={10} /> back to catalogs
         </Link>
       </div>
-      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
-        <Library size={20} className="text-cobble-500" />
-        <h1 className="text-2xl font-semibold text-slate-700 dark:text-mortar-100">
+      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
+        <Library size={20} className="text-accent" />
+        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">
           {catalog?.name ?? "…"}
         </h1>
         {catalog && (
-          <span className="text-sm text-slate-500 dark:text-slate-400">
+          <span className="text-sm text-muted dark:text-slate-400">
             {catalog.entry_count} {catalog.entry_count === 1 ? "entry" : "entries"}
           </span>
         )}
@@ -111,7 +111,7 @@ export function CatalogDetailPage() {
       </div>
 
       {catalog?.description && (
-        <p className="text-sm text-slate-600 dark:text-mortar-200">
+        <p className="text-sm text-content dark:text-mortar-200">
           {catalog.description}
         </p>
       )}
@@ -128,18 +128,18 @@ export function CatalogDetailPage() {
         </dl>
       )}
 
-      <div className="flex items-center gap-2 border-t border-slate-100 dark:border-slate-700 pt-3">
+      <div className="flex items-center gap-2 border-t border-line dark:border-slate-700 pt-3">
         <input
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder={`Search entries by ${titleCol}…`}
-          className="flex-1 px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+          className="flex-1 px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
         />
       </div>
 
       {entries.length === 0 && !entriesQ.isLoading && (
-        <div className="text-sm italic text-slate-500 dark:text-slate-400">
+        <div className="text-sm italic text-muted dark:text-slate-400">
           No entries{debounced ? ` matching "${debounced}"` : " yet"}.
           {!debounced && catalog?.entry_count === 0 && " Click 'Import CSV' to start."}
         </div>
@@ -151,7 +151,7 @@ export function CatalogDetailPage() {
         ))}
       </div>
 
-      <div ref={sentinelRef} className="py-4 text-center text-xs text-slate-400">
+      <div ref={sentinelRef} className="py-4 text-center text-xs text-faint">
         {entriesQ.isFetchingNextPage && "loading more…"}
         {!entriesQ.isFetchingNextPage && entriesQ.hasNextPage && entries.length > 0 && (
           <span>scroll for more</span>
@@ -185,10 +185,10 @@ export function CatalogDetailPage() {
 function Stat({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-0.5">
+      <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-0.5">
         {label}
       </div>
-      <div className="text-slate-700 dark:text-mortar-100 truncate">{children}</div>
+      <div className="text-content dark:text-mortar-100 truncate">{children}</div>
     </div>
   );
 }
@@ -248,23 +248,23 @@ function EntryCard({
   );
 
   return (
-    <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 flex gap-3">
+    <div className="rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 flex gap-3">
       <div className="w-32 h-32 shrink-0 flex items-center justify-center">
         {hero}
       </div>
       <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium text-slate-700 dark:text-mortar-100 truncate">
+        <div className="text-sm font-medium text-content dark:text-mortar-100 truncate">
           {title}
         </div>
-        <div className="text-[10px] font-mono text-slate-400 dark:text-slate-500 truncate">
+        <div className="text-[10px] font-mono text-faint dark:text-slate-500 truncate">
           #{entry.external_id}
         </div>
         {otherKeys.map((k) => (
           <div
             key={k}
-            className="text-xs text-slate-500 dark:text-mortar-200 truncate flex items-center gap-1"
+            className="text-xs text-muted dark:text-mortar-200 truncate flex items-center gap-1"
           >
-            <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400">
+            <span className="text-[10px] font-mono uppercase tracking-widest text-faint">
               {labels[k] ?? k}:
             </span>
             <CatalogFieldValue
@@ -342,7 +342,7 @@ function ImportCsvModal({
     <Modal open onClose={onClose} title="Import CSV" size="lg">
       <div className="space-y-3">
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
             CSV file
           </span>
           <input
@@ -354,10 +354,10 @@ function ImportCsvModal({
         </label>
         {csvText && (
           <details className="text-xs">
-            <summary className="cursor-pointer text-slate-500">
+            <summary className="cursor-pointer text-muted">
               Preview ({csvText.length} chars)
             </summary>
-            <pre className="mt-2 p-2 bg-mortar-50 dark:bg-slate-800 rounded text-[10px] max-h-32 overflow-auto">
+            <pre className="mt-2 p-2 bg-subtle dark:bg-slate-800 rounded text-[10px] max-h-32 overflow-auto">
               {csvText.slice(0, 600)}
               {csvText.length > 600 ? "\n…" : ""}
             </pre>
@@ -365,7 +365,7 @@ function ImportCsvModal({
         )}
         <div className="grid grid-cols-3 gap-2">
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               ID column
             </span>
             <input
@@ -373,11 +373,11 @@ function ImportCsvModal({
               value={idColumn}
               onChange={(e) => setIdColumn(e.target.value)}
               placeholder="(auto-detect)"
-              className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+              className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             />
           </label>
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Title column
             </span>
             <input
@@ -385,11 +385,11 @@ function ImportCsvModal({
               value={titleColumn}
               onChange={(e) => setTitleColumn(e.target.value)}
               placeholder="name"
-              className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+              className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             />
           </label>
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Image column
             </span>
             <input
@@ -397,15 +397,15 @@ function ImportCsvModal({
               value={imageColumn}
               onChange={(e) => setImageColumn(e.target.value)}
               placeholder="image_url"
-              className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+              className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             />
           </label>
         </div>
-        <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-700">
+        <div className="flex justify-end gap-2 pt-2 border-t border-line dark:border-slate-700">
           <button
             type="button"
             onClick={onClose}
-            className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
           >
             Cancel
           </button>

@@ -125,7 +125,7 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
   return (
     <section
       className={
-        "rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 transition " +
+        "rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 transition " +
         (dragOver
           ? "ring-2 ring-cobble-400 ring-offset-2 dark:ring-offset-slate-900"
           : "")
@@ -152,15 +152,15 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
       }}
     >
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-[10px] font-mono uppercase tracking-widest text-slate-500 dark:text-slate-400 flex items-center gap-2">
+        <h3 className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 flex items-center gap-2">
           <Camera size={11} /> Photos
           {dragOver && (
-            <span className="text-cobble-600 normal-case tracking-normal font-normal">
+            <span className="text-accent normal-case tracking-normal font-normal">
               drop to upload
             </span>
           )}
         </h3>
-        <label className="text-[11px] font-mono uppercase tracking-widest text-slate-500 hover:text-cobble-600 cursor-pointer inline-flex items-center gap-1">
+        <label className="text-[11px] font-mono uppercase tracking-widest text-muted hover:text-accent cursor-pointer inline-flex items-center gap-1">
           <Upload size={11} /> {upload.isPending ? "uploading…" : "add"}
           <input
             ref={fileInput}
@@ -173,10 +173,10 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
         </label>
       </div>
       {list.isLoading && (
-        <div className="text-xs text-slate-400">loading…</div>
+        <div className="text-xs text-faint">loading…</div>
       )}
       {items.length === 0 && !list.isLoading && (
-        <div className="text-xs text-slate-400 italic border border-dashed border-slate-200 dark:border-slate-700 rounded-lg p-6 text-center">
+        <div className="text-xs text-faint italic border border-dashed border-line dark:border-slate-700 rounded-lg p-6 text-center">
           No photos yet. Drag-and-drop or click "add" above.
         </div>
       )}
@@ -190,8 +190,8 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
                 className={
                   "relative group rounded-md overflow-hidden border " +
                   (isCover
-                    ? "border-cobble-400 dark:border-cobble-500 ring-2 ring-cobble-300/40"
-                    : "border-slate-200 dark:border-slate-700")
+                    ? "border-accent dark:border-cobble-500 ring-2 ring-cobble-300/40"
+                    : "border-line dark:border-slate-700")
                 }
               >
                 <a href={fullUrl(att.file_id)} target="_blank" rel="noopener noreferrer">
@@ -242,7 +242,7 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
       )}
       {/* Surface a tiny X if uploading mid-drag so the user can cancel/reset if needed. */}
       {upload.isPending && (
-        <div className="text-[10px] font-mono text-cobble-500 mt-2 inline-flex items-center gap-1">
+        <div className="text-[10px] font-mono text-accent mt-2 inline-flex items-center gap-1">
           <Upload size={10} className="animate-pulse" /> uploading
           <button type="button" onClick={() => upload.reset()} title="Reset state">
             <X size={10} />

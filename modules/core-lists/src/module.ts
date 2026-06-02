@@ -43,7 +43,7 @@ export default defineModule({
           { name: "metadata", type: "object" },
         ],
         exposableFields: ["title", "description"],
-        detailRoute: "/lists/{id}",
+        detailRoute: "/core-lists/{id}",
         getEndpoint: "/lists/{id}",
       },
       {
@@ -63,7 +63,7 @@ export default defineModule({
           { name: "metadata", type: "object" },
         ],
         exposableFields: ["title", "note", "qty", "checked", "checked_at", "list_id"],
-        detailRoute: "/lists/items/{id}",
+        detailRoute: "/core-lists/items/{id}",
         getEndpoint: "/items/{id}",
       },
     ],

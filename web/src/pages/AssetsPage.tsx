@@ -143,25 +143,25 @@ export function AssetsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2 border-b border-slate-200 dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-slate-700 dark:text-mortar-100 lowercase">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2 border-b border-line dark:border-slate-700 pb-3">
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">
           assets
         </h1>
         {lensModule && (
           <Link
             to="/assets"
-            className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-cobble-100 text-cobble-700 dark:bg-cobble-700/40 dark:text-cobble-200 text-[10px] font-mono uppercase tracking-widest hover:bg-cobble-200 transition"
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-cobble-100 text-accent dark:bg-cobble-700/40 dark:text-cobble-200 text-[10px] font-mono uppercase tracking-widest hover:bg-cobble-200 transition"
             title="Clear lens"
           >
             lens: {lensModule.displayName} ×
           </Link>
         )}
-        <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
+        <span className="text-[10px] font-mono text-faint dark:text-slate-500">
           {filtered.length} of {allRows.length}
         </span>
         <div className="flex-1" />
         <div className="relative">
-          <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
+          <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-faint" />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -196,7 +196,7 @@ export function AssetsPage() {
             </button>
           ))}
           {filtered.length === 0 && (
-            <div className="col-span-full px-3 py-10 text-center text-xs text-slate-400 italic">
+            <div className="col-span-full px-3 py-10 text-center text-xs text-faint italic">
               {allRows.length === 0
                 ? "No assets yet. Click + new to add one."
                 : "No matches with the current filters."}
@@ -206,9 +206,9 @@ export function AssetsPage() {
       )}
 
       {viewMode === "list" && (
-      <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
+      <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-x-auto">
         <table className="w-full text-sm">
-          <thead className="bg-mortar-50/60 dark:bg-slate-800/40 text-[10px] font-mono uppercase tracking-widest text-slate-500 dark:text-slate-400">
+          <thead className="bg-subtle/60 dark:bg-slate-800/40 text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
             <tr>
               <th className="w-8 px-3 py-2">
                 <input
@@ -230,12 +230,12 @@ export function AssetsPage() {
               <th className="w-6"></th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+          <tbody className="divide-y divide-line dark:divide-slate-700">
             {filtered.map((a) => (
               <tr
                 key={a.id}
                 onClick={() => navigate(`/assets/${a.id}${searchParams.toString() ? `?${searchParams}` : ""}`)}
-                className="hover:bg-mortar-50 dark:hover:bg-slate-800/40 transition cursor-pointer"
+                className="hover:bg-subtle dark:hover:bg-slate-800/40 transition cursor-pointer"
               >
                 <td
                   className="px-3 py-2 w-8"
@@ -249,41 +249,41 @@ export function AssetsPage() {
                     aria-label={`Select ${a.name}`}
                   />
                 </td>
-                <td className="px-3 py-2 text-slate-700 dark:text-mortar-100 font-medium">
+                <td className="px-3 py-2 text-content dark:text-mortar-100 font-medium">
                   <div className="flex items-center gap-3">
                     <EntityThumb src={a.image_path} alt={a.name} size={56} />
                     <span className="truncate">
                       {a.name}
                       {a.short_name && (
-                        <span className="ml-1.5 text-[10px] font-mono text-slate-400">{a.short_name}</span>
+                        <span className="ml-1.5 text-[10px] font-mono text-faint">{a.short_name}</span>
                       )}
                     </span>
                   </div>
                 </td>
-                <td className="px-3 py-2 text-slate-500 dark:text-slate-400">{a.manufacturer || "—"}</td>
-                <td className="px-3 py-2 text-slate-500 dark:text-slate-400">{a.model || "—"}</td>
+                <td className="px-3 py-2 text-muted dark:text-slate-400">{a.manufacturer || "—"}</td>
+                <td className="px-3 py-2 text-muted dark:text-slate-400">{a.model || "—"}</td>
                 <td className="px-3 py-2">
-                  <span className="font-mono text-[10px] uppercase tracking-widest text-slate-500 dark:text-slate-400">
+                  <span className="font-mono text-[10px] uppercase tracking-widest text-muted dark:text-slate-400">
                     {a.state}
                   </span>
                 </td>
                 {lensFieldDefs.map((d) => {
                   const v = (a.metadata as Record<string, unknown>)[d.name];
                   return (
-                    <td key={d.id} className="px-3 py-2 text-slate-600 dark:text-mortar-200 text-xs">
+                    <td key={d.id} className="px-3 py-2 text-content dark:text-mortar-200 text-xs">
                       {v === null || v === undefined || v === "" ? "—" : String(v)}
                     </td>
                   );
                 })}
-                <td className="px-3 py-2 text-right font-mono text-xs text-slate-500">{a.quantity}</td>
-                <td className="px-2 py-2 text-slate-300 dark:text-slate-600">
+                <td className="px-3 py-2 text-right font-mono text-xs text-muted">{a.quantity}</td>
+                <td className="px-2 py-2 text-faint dark:text-slate-600">
                   <ChevronRight size={14} />
                 </td>
               </tr>
             ))}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={6 + lensFieldDefs.length + 1} className="px-3 py-10 text-center text-xs text-slate-400 italic">
+                <td colSpan={6 + lensFieldDefs.length + 1} className="px-3 py-10 text-center text-xs text-faint italic">
                   {allRows.length === 0
                     ? "No assets yet. Click + new to add one."
                     : "No matches with the current filters."}
@@ -308,7 +308,7 @@ export function AssetsPage() {
             <button
               type="button"
               onClick={() => setBulkTagOpen(true)}
-              className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-cobble-600 hover:text-cobble-700"
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-accent hover:text-accent"
             >
               <TagIcon size={12} /> Tag
             </button>
@@ -332,7 +332,7 @@ export function AssetsPage() {
                 }
                 setSelected(new Set());
               }}
-              className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-cobble-600 hover:text-cobble-700"
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-accent hover:text-accent"
             >
               <Printer size={12} /> Print labels
             </button>
@@ -390,16 +390,16 @@ function BulkTagPromptModal({
         className="space-y-3"
       >
         <label className="block">
-          <div className="text-xs text-slate-500 mb-1">Tag name</div>
+          <div className="text-xs text-muted mb-1">Tag name</div>
           <input
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. urgent, summer-2026, archive"
-            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             autoFocus
           />
-          <div className="text-[11px] text-slate-400 mt-1">
+          <div className="text-[11px] text-faint mt-1">
             Existing tag? It'll be reused. New name? Created on the fly.
           </div>
         </label>
@@ -407,7 +407,7 @@ function BulkTagPromptModal({
           <button
             type="button"
             onClick={onClose}
-            className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
           >
             Cancel
           </button>
@@ -472,7 +472,7 @@ function AssetDetailModal({ assetId, onClose }: { assetId: string | null; onClos
               src={a.image_path}
               alt={a.name}
               size={128}
-              className="ring-1 ring-slate-200 dark:ring-slate-700"
+              className="ring-1 ring-line dark:ring-slate-700"
             />
             <div className="flex-1">
               <EntityActionsBar entityKind={ENTITY_KIND} entityId={a.id} />
@@ -507,23 +507,23 @@ function AssetDetailModal({ assetId, onClose }: { assetId: string | null; onClos
           />
           <EntityAttachments kind={ENTITY_KIND} entityId={a.id} />
           <EditField label="Notes" value={a.notes ?? ""} multiline onCommit={(v) => update.mutate({ notes: v || null })} />
-          <div className="pt-3 border-t border-slate-100 dark:border-slate-700 flex items-center justify-between">
+          <div className="pt-3 border-t border-line dark:border-slate-700 flex items-center justify-between">
             <button
               onClick={handleDelete}
-              className="text-[10px] font-mono uppercase tracking-widest text-slate-400 hover:text-ember-500 transition flex items-center gap-1"
+              className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-ember-500 transition flex items-center gap-1"
             >
               <Trash2 size={11} /> delete asset
             </button>
             <button
               onClick={onClose}
-              className="px-3 py-1.5 rounded-md text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-mortar-50 dark:hover:bg-slate-800 transition"
+              className="px-3 py-1.5 rounded-md text-sm font-medium text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800 transition"
             >
               Close
             </button>
           </div>
         </div>
       ) : (
-        <div className="text-xs text-slate-400">loading…</div>
+        <div className="text-xs text-faint">loading…</div>
       )}
     </Modal>
   );
@@ -574,15 +574,15 @@ function NewAssetModal({ open, onClose }: { open: boolean; onClose: () => void }
     <Modal open={open} onClose={onClose} title="new asset" size="sm">
       <form onSubmit={submit} className="space-y-3">
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">Name</span>
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Name</span>
           <input value={name} onChange={(e) => setName(e.target.value)} autoFocus className="input" />
         </label>
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">Manufacturer</span>
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Manufacturer</span>
           <input value={manufacturer} onChange={(e) => setManufacturer(e.target.value)} className="input" />
         </label>
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">Type / category</span>
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Type / category</span>
           <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder='e.g. "Appliance", "Hand tool"' className="input" />
         </label>
         <LocationPicker
@@ -590,8 +590,8 @@ function NewAssetModal({ open, onClose }: { open: boolean; onClose: () => void }
           value={locationId}
           onChange={setLocationId}
         />
-        <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-700">
-          <button type="button" onClick={onClose} className="px-3 py-1.5 rounded-md text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-mortar-50 dark:hover:bg-slate-800 transition">
+        <div className="flex items-center justify-end gap-2 pt-2 border-t border-line dark:border-slate-700">
+          <button type="button" onClick={onClose} className="px-3 py-1.5 rounded-md text-sm font-medium text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800 transition">
             Cancel
           </button>
           <button type="submit" disabled={!name.trim() || create.isPending} className="px-3 py-1.5 rounded-md text-sm font-medium bg-slate-700 hover:bg-slate-600 text-mortar-50 transition disabled:opacity-50">
@@ -621,7 +621,7 @@ function EditField({
   const Cmp = multiline ? "textarea" : "input";
   return (
     <label className={"block " + (multiline ? "col-span-2" : "")}>
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
         {label}
       </span>
       <Cmp

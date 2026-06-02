@@ -90,7 +90,7 @@ const STATUS_STYLE: Record<DiffEntry["status"], string> = {
   have: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-700/40",
   partial: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-700/40",
   need: "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/20 dark:text-rose-300 dark:border-rose-700/40",
-  "no-catalog-match": "bg-slate-50 text-slate-500 border-slate-200 dark:bg-slate-800/40 dark:text-slate-400 dark:border-slate-700",
+  "no-catalog-match": "bg-subtle text-muted border-line dark:bg-slate-800/40 dark:text-slate-400 dark:border-slate-700",
 };
 
 type Tab = "wanted" | "order";
@@ -168,17 +168,17 @@ export function BrickLinkPage() {
 
   return (
     <div className="space-y-5 max-w-5xl">
-      <div className="border-b border-slate-200 dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-slate-700 dark:text-mortar-100 lowercase">
+      <div className="border-b border-line dark:border-slate-700 pb-3">
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">
           bricklink
         </h1>
-        <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
+        <span className="text-[10px] font-mono text-faint dark:text-slate-500">
           import wanted lists + order csvs; diff a wanted list against
           your lego inventory. v0.2.
         </span>
       </div>
 
-      <div className="flex gap-1 border-b border-slate-200 dark:border-slate-700">
+      <div className="flex gap-1 border-b border-line dark:border-slate-700">
         <TabButton active={tab === "wanted"} onClick={() => setTab("wanted")}>
           Wanted list
         </TabButton>
@@ -189,9 +189,9 @@ export function BrickLinkPage() {
 
       {tab === "wanted" && (
         <div className="space-y-5">
-          <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 space-y-3">
+          <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
             <label className="block">
-              <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+              <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                 Wanted-list XML
               </span>
               <textarea
@@ -238,9 +238,9 @@ export function BrickLinkPage() {
 
       {tab === "order" && (
         <div className="space-y-5">
-          <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 space-y-3">
+          <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
             <label className="block">
-              <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+              <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                 Order CSV
               </span>
               <textarea
@@ -289,8 +289,8 @@ function TabButton({
       className={
         "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition " +
         (active
-          ? "border-cobble-600 text-cobble-700 dark:text-cobble-400"
-          : "border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-mortar-100")
+          ? "border-cobble-600 text-accent dark:text-cobble-400"
+          : "border-transparent text-muted hover:text-content dark:hover:text-mortar-100")
       }
     >
       {children}
@@ -300,29 +300,29 @@ function TabButton({
 
 function ParsedWantedTable({ result }: { result: ParseWantedResponse }) {
   return (
-    <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
-      <div className="px-4 py-2 bg-mortar-50/50 dark:bg-slate-800/40 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
-        <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400">
+    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden">
+      <div className="px-4 py-2 bg-subtle/50 dark:bg-slate-800/40 border-b border-line dark:border-slate-700 flex items-center gap-3">
+        <span className="text-[10px] font-mono uppercase tracking-widest text-faint">
           {result.counts.items} items
         </span>
         {result.counts.parts > 0 && (
-          <span className="text-[10px] font-mono uppercase tracking-widest text-cobble-600">
+          <span className="text-[10px] font-mono uppercase tracking-widest text-accent">
             {result.counts.parts} parts
           </span>
         )}
         {result.counts.sets > 0 && (
-          <span className="text-[10px] font-mono uppercase tracking-widest text-cobble-600">
+          <span className="text-[10px] font-mono uppercase tracking-widest text-accent">
             {result.counts.sets} sets
           </span>
         )}
         {result.counts.minifigs > 0 && (
-          <span className="text-[10px] font-mono uppercase tracking-widest text-cobble-600">
+          <span className="text-[10px] font-mono uppercase tracking-widest text-accent">
             {result.counts.minifigs} minifigs
           </span>
         )}
       </div>
       <table className="w-full text-sm">
-        <thead className="bg-mortar-50/30 dark:bg-slate-800/20">
+        <thead className="bg-subtle/30 dark:bg-slate-800/20">
           <tr>
             <Th>Type</Th>
             <Th>Item</Th>
@@ -332,11 +332,11 @@ function ParsedWantedTable({ result }: { result: ParseWantedResponse }) {
             <Th>Condition</Th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+        <tbody className="divide-y divide-line dark:divide-slate-800">
           {result.items.map((item, i) => (
             <tr key={`${item.item_type}-${item.item_id}-${item.color_id}-${i}`}>
               <Td>
-                <span className="text-[10px] font-mono uppercase tracking-widest text-cobble-600">
+                <span className="text-[10px] font-mono uppercase tracking-widest text-accent">
                   {TYPE_LABEL[item.item_type] ?? item.item_type}
                 </span>
               </Td>
@@ -361,16 +361,16 @@ function ParsedWantedTable({ result }: { result: ParseWantedResponse }) {
 
 function DiffTable({ diff }: { diff: DiffResponse }) {
   return (
-    <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
-      <div className="px-4 py-2 bg-mortar-50/50 dark:bg-slate-800/40 border-b border-slate-200 dark:border-slate-700 flex flex-wrap items-center gap-3">
-        <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400">diff</span>
+    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden">
+      <div className="px-4 py-2 bg-subtle/50 dark:bg-slate-800/40 border-b border-line dark:border-slate-700 flex flex-wrap items-center gap-3">
+        <span className="text-[10px] font-mono uppercase tracking-widest text-faint">diff</span>
         <CountChip n={diff.counts.have} label="have" tone="emerald" />
         <CountChip n={diff.counts.partial} label="partial" tone="amber" />
         <CountChip n={diff.counts.need} label="need" tone="rose" />
         <CountChip n={diff.counts.unmatched} label="unmatched" tone="slate" />
       </div>
       <table className="w-full text-sm">
-        <thead className="bg-mortar-50/30 dark:bg-slate-800/20">
+        <thead className="bg-subtle/30 dark:bg-slate-800/20">
           <tr>
             <Th>Status</Th>
             <Th>Type</Th>
@@ -381,7 +381,7 @@ function DiffTable({ diff }: { diff: DiffResponse }) {
             <Th>Color</Th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+        <tbody className="divide-y divide-line dark:divide-slate-800">
           {diff.entries.map((e, i) => (
             <tr key={`${e.wanted.item_id}-${e.wanted.color_id}-${i}`}>
               <Td>
@@ -395,7 +395,7 @@ function DiffTable({ diff }: { diff: DiffResponse }) {
                 </span>
               </Td>
               <Td>
-                <span className="text-[10px] font-mono uppercase tracking-widest text-cobble-600">
+                <span className="text-[10px] font-mono uppercase tracking-widest text-accent">
                   {TYPE_LABEL[e.wanted.item_type] ?? e.wanted.item_type}
                 </span>
               </Td>
@@ -428,32 +428,32 @@ function DiffTable({ diff }: { diff: DiffResponse }) {
 
 function ParsedOrderTable({ result }: { result: ParseOrderResponse }) {
   return (
-    <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
-      <div className="px-4 py-2 bg-mortar-50/50 dark:bg-slate-800/40 border-b border-slate-200 dark:border-slate-700 flex flex-wrap items-center gap-3">
-        <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400">
+    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden">
+      <div className="px-4 py-2 bg-subtle/50 dark:bg-slate-800/40 border-b border-line dark:border-slate-700 flex flex-wrap items-center gap-3">
+        <span className="text-[10px] font-mono uppercase tracking-widest text-faint">
           {result.summary.line_count} lines
         </span>
         {result.summary.order_id && (
-          <span className="text-[10px] font-mono uppercase tracking-widest text-cobble-600">
+          <span className="text-[10px] font-mono uppercase tracking-widest text-accent">
             order {result.summary.order_id}
           </span>
         )}
-        <span className="text-[10px] font-mono uppercase tracking-widest text-slate-500">
+        <span className="text-[10px] font-mono uppercase tracking-widest text-muted">
           ${result.summary.total.toFixed(2)} total
         </span>
         {result.summary.parts > 0 && (
-          <span className="text-[10px] font-mono uppercase tracking-widest text-cobble-600">
+          <span className="text-[10px] font-mono uppercase tracking-widest text-accent">
             {result.summary.parts} parts
           </span>
         )}
         {result.summary.sets > 0 && (
-          <span className="text-[10px] font-mono uppercase tracking-widest text-cobble-600">
+          <span className="text-[10px] font-mono uppercase tracking-widest text-accent">
             {result.summary.sets} sets
           </span>
         )}
       </div>
       <table className="w-full text-sm">
-        <thead className="bg-mortar-50/30 dark:bg-slate-800/20">
+        <thead className="bg-subtle/30 dark:bg-slate-800/20">
           <tr>
             <Th>Type</Th>
             <Th>Item</Th>
@@ -465,11 +465,11 @@ function ParsedOrderTable({ result }: { result: ParseOrderResponse }) {
             <Th>Condition</Th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+        <tbody className="divide-y divide-line dark:divide-slate-800">
           {result.lines.map((line, i) => (
             <tr key={`${line.item_id}-${line.color_id}-${i}`}>
               <Td>
-                <span className="text-[10px] font-mono uppercase tracking-widest text-cobble-600">
+                <span className="text-[10px] font-mono uppercase tracking-widest text-accent">
                   {TYPE_LABEL[line.item_type] ?? line.item_type}
                 </span>
               </Td>
@@ -506,7 +506,7 @@ function CountChip({
     emerald: "text-emerald-700 dark:text-emerald-400",
     amber: "text-amber-700 dark:text-amber-400",
     rose: "text-rose-700 dark:text-rose-400",
-    slate: "text-slate-500",
+    slate: "text-muted",
   };
   return (
     <span className={`text-[10px] font-mono uppercase tracking-widest ${colors[tone]}`}>
@@ -537,7 +537,7 @@ function Th({
 }) {
   return (
     <th
-      className={`px-3 py-2 text-[10px] font-mono uppercase tracking-widest text-slate-400 ${
+      className={`px-3 py-2 text-[10px] font-mono uppercase tracking-widest text-faint ${
         align === "right" ? "text-right" : "text-left"
       }`}
     >
@@ -563,7 +563,7 @@ function Td({
         "px-3 py-1.5 text-xs " +
         (align === "right" ? "text-right " : "") +
         (mono ? "font-mono " : "") +
-        (dim ? "text-slate-500 " : "text-slate-700 dark:text-mortar-100 ")
+        (dim ? "text-muted " : "text-content dark:text-mortar-100 ")
       }
     >
       {children}

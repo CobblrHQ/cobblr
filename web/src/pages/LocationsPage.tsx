@@ -176,11 +176,11 @@ export function LocationsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
-        <h1 className="text-2xl font-semibold text-slate-700 dark:text-mortar-100">
+      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
+        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">
           Locations
         </h1>
-        <span className="text-sm text-slate-500 dark:text-slate-400">
+        <span className="text-sm text-muted dark:text-slate-400">
           {items.length} {items.length === 1 ? "place" : "places"}
         </span>
         <div className="flex-1" />
@@ -195,17 +195,17 @@ export function LocationsPage() {
         </button>
       </div>
 
-      <p className="text-sm text-slate-600 dark:text-mortar-200">
+      <p className="text-sm text-content dark:text-mortar-200">
         Hierarchical tree of physical places — rooms, shelves, bins. Anything
         tangible in the workspace (machines, assets, parts) can point at a row
         here via its <code>location_id</code> field.
       </p>
 
       {list.isLoading && (
-        <div className="text-sm text-slate-500">Loading…</div>
+        <div className="text-sm text-muted">Loading…</div>
       )}
       {tree.length === 0 && !list.isLoading && (
-        <div className="text-sm italic text-slate-500 dark:text-slate-400">
+        <div className="text-sm italic text-muted dark:text-slate-400">
           No locations yet. Add a top-level area (a room, a workshop, a garage)
           and start nesting bins and shelves inside it.
         </div>
@@ -288,7 +288,7 @@ export function LocationsPage() {
             type="button"
             disabled={printing}
             onClick={() => void bulkPrint()}
-            className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-cobble-600 hover:text-cobble-700 disabled:opacity-50"
+            className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-accent hover:text-accent disabled:opacity-50"
           >
             <Printer size={12} />
             {printing ? "Queuing…" : "Print labels"}
@@ -320,8 +320,8 @@ function LocationCard({
   const usage = usageByLocation.get(node.id);
   const usageTotal = totalUsage(usage);
   return (
-    <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
-      <div className="px-4 py-2.5 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700 flex items-center gap-2">
+    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden">
+      <div className="px-4 py-2.5 bg-subtle dark:bg-slate-800/50 border-b border-line dark:border-slate-700 flex items-center gap-2">
         <input
           type="checkbox"
           checked={selected.has(node.id)}
@@ -330,36 +330,36 @@ function LocationCard({
           aria-label={`Select ${node.name}`}
           title="Select for bulk actions"
         />
-        <KindIcon size={16} className="text-cobble-500 shrink-0" />
+        <KindIcon size={16} className="text-accent shrink-0" />
         <div className="flex-1 min-w-0">
           <Link
             to={`/configuration/locations/${node.id}`}
-            className="font-medium text-slate-700 dark:text-mortar-100 hover:text-cobble-600 truncate block"
+            className="font-medium text-content dark:text-mortar-100 hover:text-accent truncate block"
           >
             {node.name}
           </Link>
           {node.short_name && node.short_name !== node.name && (
-            <div className="text-xs text-slate-500 dark:text-slate-400 font-mono truncate">
+            <div className="text-xs text-muted dark:text-slate-400 font-mono truncate">
               {node.short_name}
             </div>
           )}
         </div>
         {usageTotal > 0 && (
           <span
-            className="text-[10px] font-mono text-cobble-600 dark:text-cobble-400"
+            className="text-[10px] font-mono text-accent dark:text-cobble-400"
             title={`${usage?.machines ?? 0} machine(s) · ${usage?.assets ?? 0} asset(s) · ${usage?.parts ?? 0} part(s) point here`}
           >
             {usageTotal} item{usageTotal === 1 ? "" : "s"}
           </span>
         )}
-        <span className="text-[10px] uppercase font-mono tracking-widest text-slate-400 dark:text-slate-500">
+        <span className="text-[10px] uppercase font-mono tracking-widest text-faint dark:text-slate-500">
           {node.kind}
         </span>
         <button
           type="button"
           onClick={() => onAddChild(node.id)}
           title="Add child"
-          className="text-slate-400 hover:text-cobble-600 transition p-1"
+          className="text-faint hover:text-accent transition p-1"
         >
           <Plus size={14} />
         </button>
@@ -367,7 +367,7 @@ function LocationCard({
           type="button"
           onClick={() => onEdit(node)}
           title="Edit"
-          className="text-slate-400 hover:text-cobble-600 transition p-1"
+          className="text-faint hover:text-accent transition p-1"
         >
           <Pencil size={14} />
         </button>
@@ -375,13 +375,13 @@ function LocationCard({
           type="button"
           onClick={() => onDelete(node)}
           title="Delete"
-          className="text-slate-400 hover:text-ember-500 transition p-1"
+          className="text-faint hover:text-ember-500 transition p-1"
         >
           <Trash2 size={14} />
         </button>
       </div>
       {node.children.length > 0 && (
-        <div className="p-3 pl-6 space-y-2 bg-slate-50/50 dark:bg-slate-900/40">
+        <div className="p-3 pl-6 space-y-2 bg-subtle/50 dark:bg-slate-900/40">
           {node.children.map((c) => (
             <LocationCard
               key={c.id}
@@ -496,7 +496,7 @@ function LocationFormModal({
         className="space-y-3"
       >
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
             Name
           </span>
           <input
@@ -504,23 +504,23 @@ function LocationFormModal({
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. Garage / Shelf 3 / Bin 17 — or Drawer 1-3 to bulk-create"
-            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             autoFocus
           />
           {expansion && expansion.names.length > 1 && (
-            <div className="text-[11px] text-cobble-600 dark:text-cobble-300 mt-1">
+            <div className="text-[11px] text-accent dark:text-cobble-300 mt-1">
               → will create {expansion.names.length} locations: {expansion.preview}
             </div>
           )}
           {!editing && !expansion && (
-            <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">
+            <div className="text-[10px] text-faint dark:text-slate-500 mt-1">
               Tip: type a range like <code className="font-mono">Drawer 1-3</code> to create
               three siblings at once.
             </div>
           )}
         </label>
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
             Short name (optional)
           </span>
           <input
@@ -528,20 +528,20 @@ function LocationFormModal({
             value={shortName}
             onChange={(e) => setShortName(e.target.value)}
             placeholder="Bin 17"
-            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           />
-          <div className="text-[10px] text-slate-500 mt-1">
+          <div className="text-[10px] text-muted mt-1">
             Shown on labels when the canonical name is too long.
           </div>
         </label>
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
             Kind
           </span>
           <select
             value={kind}
             onChange={(e) => setKind(e.target.value as "area" | "container")}
-            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           >
             <option value="area">
               area — a region (room, corner, workshop)
@@ -552,13 +552,13 @@ function LocationFormModal({
           </select>
         </label>
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
             Parent (optional — leave blank for top-level)
           </span>
           <select
             value={parentId}
             onChange={(e) => setParentId(e.target.value)}
-            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           >
             <option value="">(top-level)</option>
             {selectableParents.map((p) => (
@@ -573,7 +573,7 @@ function LocationFormModal({
           <button
             type="button"
             onClick={onClose}
-            className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
           >
             Cancel
           </button>

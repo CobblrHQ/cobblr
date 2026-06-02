@@ -47,12 +47,12 @@ export function LinksPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
-        <Link2 size={20} className="text-cobble-600" />
-        <h1 className="text-2xl font-semibold text-slate-700 dark:text-mortar-100">
+      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
+        <Link2 size={20} className="text-accent" />
+        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">
           Workspace links
         </h1>
-        <span className="text-sm text-slate-500 dark:text-slate-400">
+        <span className="text-sm text-muted dark:text-slate-400">
           {active.length} active · {pending.length} pending
         </span>
         <div className="flex-1" />
@@ -64,7 +64,7 @@ export function LinksPage() {
         </button>
       </div>
 
-      <p className="text-sm text-slate-500 dark:text-slate-400">
+      <p className="text-sm text-muted dark:text-slate-400">
         A link grants read access from a <em>source</em> workspace to a{" "}
         <em>target</em> workspace for selected entity kinds. Reads union
         with the target's own data — items get a{" "}
@@ -99,7 +99,7 @@ export function LinksPage() {
                       });
                       if (ok) revoke.mutate(l.id);
                     }}
-                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs text-slate-500 hover:text-ember-500"
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs text-muted hover:text-ember-500"
                   >
                     <X size={12} /> Revoke
                   </button>
@@ -112,7 +112,7 @@ export function LinksPage() {
 
       <Section title="Active">
         {active.length === 0 ? (
-          <p className="text-sm text-slate-500 italic">
+          <p className="text-sm text-muted italic">
             No active links. Click "New link" to share data from one
             workspace to another.
           </p>
@@ -132,7 +132,7 @@ export function LinksPage() {
                     });
                     if (ok) revoke.mutate(l.id);
                   }}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs text-slate-500 hover:text-ember-500"
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs text-muted hover:text-ember-500"
                 >
                   <X size={12} /> Revoke
                 </button>
@@ -166,7 +166,7 @@ export function LinksPage() {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="space-y-2">
-      <h2 className="text-sm font-medium text-slate-600 dark:text-slate-300">{title}</h2>
+      <h2 className="text-sm font-medium text-content dark:text-slate-300">{title}</h2>
       <div className="space-y-2">{children}</div>
     </section>
   );
@@ -188,18 +188,18 @@ function LinkRow({
     link.status !== "revoked";
   return (
     <div
-      className={`flex items-center gap-3 px-3 py-2 text-sm border border-slate-200 dark:border-slate-700 rounded ${
+      className={`flex items-center gap-3 px-3 py-2 text-sm border border-line dark:border-slate-700 rounded ${
         dim ? "opacity-50" : ""
       }`}
     >
       <span className="font-medium truncate">{link.source_org_name}</span>
-      <ArrowRight size={14} className="text-slate-400 shrink-0" />
+      <ArrowRight size={14} className="text-faint shrink-0" />
       <span className="font-medium truncate">{link.target_org_name}</span>
       <div className="flex flex-wrap gap-1 ml-2">
         {link.kinds.map((k) => (
           <span
             key={k}
-            className="px-1.5 py-0.5 rounded text-[10px] font-mono text-slate-500 bg-slate-100 dark:bg-slate-800"
+            className="px-1.5 py-0.5 rounded text-[10px] font-mono text-muted bg-subtle dark:bg-slate-800"
           >
             {k}
           </span>
@@ -208,7 +208,7 @@ function LinkRow({
       <ExpiryBadge expiresAt={link.expires_at} />
       {link.min_target_role && (
         <span
-          className="px-1.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider text-cobble-700 bg-cobble-50 dark:text-cobble-300 dark:bg-cobble-900/30"
+          className="px-1.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider text-accent bg-cobble-50 dark:text-cobble-300 dark:bg-cobble-900/30"
           title={`Only target-side ${link.min_target_role}s+ can read this share`}
         >
           {link.min_target_role}+
@@ -217,7 +217,7 @@ function LinkRow({
       {canEdit && (
         <button
           onClick={() => setEditExpiryOpen(true)}
-          className="text-slate-400 hover:text-cobble-600 transition"
+          className="text-faint hover:text-accent transition"
           title="Edit expiry"
         >
           <Clock size={12} />
@@ -275,15 +275,15 @@ function EditExpiryModal({
     <Modal open onClose={onClose} title="Edit link expiry">
       <div className="space-y-3">
         <label className="block">
-          <div className="text-xs text-slate-500 mb-1">Expires on</div>
+          <div className="text-xs text-muted mb-1">Expires on</div>
           <input
             type="date"
             value={dateStr}
             onChange={(e) => setDateStr(e.target.value)}
             min={new Date().toISOString().slice(0, 10)}
-            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           />
-          <div className="text-[11px] text-slate-400 mt-1">
+          <div className="text-[11px] text-faint mt-1">
             Local time, end-of-day. Cross-workspace reads stop honouring
             the link the moment it expires.
           </div>
@@ -292,7 +292,7 @@ function EditExpiryModal({
           <button
             type="button"
             onClick={onClose}
-            className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
           >
             Cancel
           </button>
@@ -300,7 +300,7 @@ function EditExpiryModal({
             type="button"
             onClick={() => void save(true)}
             disabled={busy}
-            className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
+            className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800 disabled:opacity-50"
           >
             Never expire
           </button>
@@ -333,7 +333,7 @@ function ExpiryBadge({ expiresAt }: { expiresAt: string | null }) {
   }
   return (
     <span
-      className="px-1.5 py-0.5 rounded text-[10px] font-mono text-slate-500 bg-slate-100 dark:bg-slate-800"
+      className="px-1.5 py-0.5 rounded text-[10px] font-mono text-muted bg-subtle dark:bg-slate-800"
       title={new Date(expiresAt).toLocaleString()}
     >
       expires in {days}d
@@ -402,11 +402,11 @@ function CreateLinkModal({
         className="space-y-3"
       >
         <label className="block">
-          <div className="text-xs text-slate-500 mb-1">Share FROM (source)</div>
+          <div className="text-xs text-muted mb-1">Share FROM (source)</div>
           <select
             value={sourceOrg}
             onChange={(e) => setSourceOrg(e.target.value)}
-            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           >
             <option value="">— pick a workspace —</option>
             {orgList.map((o) => (
@@ -417,11 +417,11 @@ function CreateLinkModal({
           </select>
         </label>
         <label className="block">
-          <div className="text-xs text-slate-500 mb-1">Share INTO (target)</div>
+          <div className="text-xs text-muted mb-1">Share INTO (target)</div>
           <select
             value={targetOrg}
             onChange={(e) => setTargetOrg(e.target.value)}
-            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           >
             <option value="">— pick a workspace —</option>
             {orgList
@@ -434,7 +434,7 @@ function CreateLinkModal({
           </select>
         </label>
         <label className="block">
-          <div className="text-xs text-slate-500 mb-1">
+          <div className="text-xs text-muted mb-1">
             Entity kinds (comma-separated)
           </div>
           <input
@@ -442,23 +442,23 @@ function CreateLinkModal({
             value={kindsRaw}
             onChange={(e) => setKindsRaw(e.target.value)}
             placeholder="inventory:part, core-tags:tag"
-            className="w-full px-2 py-1 text-sm font-mono border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           />
           {kinds.data?.items && (
-            <div className="text-xs text-slate-400 mt-1">
+            <div className="text-xs text-faint mt-1">
               Available in source:{" "}
               {kinds.data.items.map((k) => k.id).join(", ")}
             </div>
           )}
         </label>
         <label className="block">
-          <div className="text-xs text-slate-500 mb-1">
+          <div className="text-xs text-muted mb-1">
             Restrict to target-side role (optional)
           </div>
           <select
             value={minRole}
             onChange={(e) => setMinRole(e.target.value as typeof minRole)}
-            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           >
             <option value="">no restriction — every target member can read</option>
             <option value="guest">guest or higher</option>
@@ -466,13 +466,13 @@ function CreateLinkModal({
             <option value="admin">admin or higher</option>
             <option value="owner">owner only</option>
           </select>
-          <div className="text-[11px] text-slate-400 mt-1">
+          <div className="text-[11px] text-faint mt-1">
             Only target-workspace members whose role meets-or-exceeds
             this threshold will see the share. Default no restriction.
           </div>
         </label>
         <label className="block">
-          <div className="text-xs text-slate-500 mb-1">
+          <div className="text-xs text-muted mb-1">
             Expires after (days, optional)
           </div>
           <input
@@ -482,14 +482,14 @@ function CreateLinkModal({
             value={expiryDays}
             onChange={(e) => setExpiryDays(e.target.value)}
             placeholder="leave blank to never expire"
-            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           />
-          <div className="text-[11px] text-slate-400 mt-1">
+          <div className="text-[11px] text-faint mt-1">
             Cross-workspace reads stop honouring the link the moment it
             expires — no scheduled sweep required.
           </div>
         </label>
-        <div className="text-xs text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-800/40 rounded p-2">
+        <div className="text-xs text-muted dark:text-slate-400 bg-subtle dark:bg-slate-800/40 rounded p-2">
           <strong>Auto-accept:</strong> if you own both workspaces the
           link flips to active immediately. Otherwise it waits for the
           target's owner to accept.
@@ -498,7 +498,7 @@ function CreateLinkModal({
           <button
             type="button"
             onClick={onClose}
-            className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
           >
             Cancel
           </button>

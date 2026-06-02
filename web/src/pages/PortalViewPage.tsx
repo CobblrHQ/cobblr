@@ -64,13 +64,13 @@ export function PortalViewPage() {
     <div className="space-y-4">
       <Link
         to={`/portal/${activeSlug}`}
-        className="inline-flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 hover:text-cobble-600"
+        className="inline-flex items-center gap-1.5 text-xs text-muted dark:text-slate-400 hover:text-accent"
       >
         <ArrowLeft size={12} /> back
       </Link>
 
-      <div className="flex items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
-        <h1 className="text-xl font-semibold text-slate-700 dark:text-mortar-100">
+      <div className="flex items-center justify-between gap-3 border-b border-line dark:border-slate-700 pb-3">
+        <h1 className="text-xl font-semibold text-content dark:text-mortar-100">
           {data.data?.view.entity_kind ?? "…"}
         </h1>
         <div className="flex items-center gap-2">
@@ -83,24 +83,24 @@ export function PortalViewPage() {
               <Plus size={14} /> New
             </button>
           )}
-          <div className="flex items-center gap-2 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2">
-            <Search size={14} className="text-slate-400" />
+          <div className="flex items-center gap-2 rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2">
+            <Search size={14} className="text-faint" />
             <input
               type="text"
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="search…"
-              className="bg-transparent text-sm py-1.5 focus:outline-none text-slate-700 dark:text-mortar-100 placeholder:text-slate-400 w-48"
+              className="bg-transparent text-sm py-1.5 focus:outline-none text-content dark:text-mortar-100 placeholder:text-faint w-48"
             />
           </div>
         </div>
       </div>
 
       {data.isLoading && (
-        <div className="text-xs text-slate-400 italic">Loading…</div>
+        <div className="text-xs text-faint italic">Loading…</div>
       )}
       {data.data && data.data.items.length === 0 && (
-        <div className="text-xs text-slate-400 italic py-8 text-center">
+        <div className="text-xs text-faint italic py-8 text-center">
           No items match.
         </div>
       )}
@@ -109,7 +109,7 @@ export function PortalViewPage() {
           {data.data.items.map((item) => (
             <div
               key={`${item.kind}:${item.id}`}
-              className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 flex items-center gap-3"
+              className="rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 flex items-center gap-3"
             >
               <EntityThumb
                 src={item.image_path ?? null}
@@ -117,11 +117,11 @@ export function PortalViewPage() {
                 size={56}
               />
               <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium text-slate-700 dark:text-mortar-100 truncate">
+                <div className="text-sm font-medium text-content dark:text-mortar-100 truncate">
                   {item.title}
                 </div>
                 {item.subtitle && (
-                  <div className="text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 truncate">
+                  <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 truncate">
                     {item.subtitle}
                   </div>
                 )}

@@ -108,15 +108,15 @@ export function QueuePage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3 flex-wrap">
-        <h1 className="font-display text-2xl font-extrabold text-slate-700 dark:text-mortar-100 lowercase">labels</h1>
-        <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
+      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3 flex-wrap">
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">labels</h1>
+        <span className="text-[10px] font-mono text-faint dark:text-slate-500">
           {items.length} item{items.length === 1 ? "" : "s"} · {total} label{total === 1 ? "" : "s"}
           {size ? ` · ${sheets} sheet${sheets === 1 ? "" : "s"}` : ""}
         </span>
         <div className="flex-1" />
         <label className="flex items-center gap-1.5">
-          <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500">paper</span>
+          <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">paper</span>
           <select
             value={paperKey}
             onChange={(e) => setPaperKey(e.target.value)}
@@ -128,7 +128,7 @@ export function QueuePage() {
           </select>
         </label>
         <label className="flex items-center gap-1.5">
-          <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500">label</span>
+          <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">label</span>
           <select
             value={sizeKey}
             onChange={(e) => setPickedSize(e.target.value)}
@@ -149,26 +149,26 @@ export function QueuePage() {
         </button>
       </div>
 
-      {list.isLoading && <div className="text-sm text-slate-400 dark:text-slate-500">loading…</div>}
+      {list.isLoading && <div className="text-sm text-faint dark:text-slate-500">loading…</div>}
       {items.length === 0 && !list.isLoading && (
-        <div className="border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl p-12 text-center text-slate-400 dark:text-slate-500">
+        <div className="border-2 border-dashed border-line dark:border-slate-700 rounded-xl p-12 text-center text-faint dark:text-slate-500">
           Queue is empty. Add labels from any module that supports them (e.g. inventory parts).
         </div>
       )}
 
       {items.length > 0 && (
         <>
-          <ul className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 divide-y divide-slate-100 dark:divide-slate-700">
+          <ul className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 divide-y divide-line dark:divide-slate-700">
             {items.map((it) => (
               <li key={it.id} className="px-4 py-3 flex items-baseline gap-3 text-sm">
-                <span className="font-mono text-[10px] text-slate-400 dark:text-slate-500 shrink-0">
+                <span className="font-mono text-[10px] text-faint dark:text-slate-500 shrink-0">
                   {it.module_name}/{it.entity_type}
                 </span>
-                <span className="text-slate-700 dark:text-mortar-100 flex-1 truncate">{it.description}</span>
-                <span className="font-mono text-xs text-slate-500 dark:text-slate-400 shrink-0">×{it.qty}</span>
+                <span className="text-content dark:text-mortar-100 flex-1 truncate">{it.description}</span>
+                <span className="font-mono text-xs text-muted dark:text-slate-400 shrink-0">×{it.qty}</span>
                 <button
                   onClick={() => remove.mutate(it.id)}
-                  className="text-slate-300 dark:text-slate-600 hover:text-ember-500 transition"
+                  className="text-faint dark:text-slate-600 hover:text-ember-500 transition"
                   title="Remove from queue"
                 >
                   <Trash2 size={14} />
@@ -214,12 +214,12 @@ function SheetPreview({
 
   return (
     <div>
-      <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500 mb-2">
-        // sheet preview <span className="text-slate-400 dark:text-slate-500">— {paperW}″ × {paperH}″, first sheet</span>
+      <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
+        // sheet preview <span className="text-faint dark:text-slate-500">— {paperW}″ × {paperH}″, first sheet</span>
       </div>
-      <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-mortar-50/40 dark:bg-slate-800/40 p-5 flex justify-center">
+      <div className="rounded-xl border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/40 p-5 flex justify-center">
         <div
-          className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white overflow-hidden shadow-md"
+          className="rounded-lg border border-line dark:border-slate-700 bg-surface overflow-hidden shadow-md"
           style={{ width: natW * scale, height: natH * scale }}
         >
           <iframe

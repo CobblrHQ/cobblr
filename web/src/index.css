@@ -3,6 +3,23 @@
 @tailwind utilities;
 
 @layer base {
+  /* Semantic role tokens — defaults = the EXACT current palette (as
+     R G B triplets for <alpha-value>), so unthemed renders identically.
+     AppLayout overrides these on <html> when a workspace admin_theme is
+     set, recolouring the whole shell by role. Dark mode is unchanged —
+     components keep their `dark:` shade variants, which win in .dark and
+     are neutralised (force-light) only when a workspace theme is active. */
+  :root {
+    --c-surface: 255 255 255; /* white  — cards */
+    --c-canvas: 232 226 213;  /* mortar #E8E2D5 — page bg */
+    --c-subtle: 251 249 244;  /* mortar-50 #FBF9F4 — subtle fills */
+    --c-content: 38 43 51;    /* slate-700 #262B33 — primary text */
+    --c-muted: 61 68 81;      /* slate-500 #3D4451 — secondary text */
+    --c-faint: 107 114 128;   /* slate-400 #6B7280 — faint text */
+    --c-line: 200 204 210;    /* slate-200 #C8CCD2 — borders */
+    --c-accent: 111 92 68;    /* cobble-600 #6F5C44 — links / focus */
+  }
+
   /* color-scheme makes the browser render *native* controls —
      <select> chrome, checkboxes, scrollbars, date pickers — in the
      matching light/dark variant. Without this, native selects stay
@@ -16,7 +33,7 @@
   html.dark { color-scheme: dark; @apply bg-slate-800; }
 
   html, body, #root {
-    @apply h-full bg-mortar text-slate-700 font-sans antialiased
+    @apply h-full bg-canvas text-content font-sans antialiased
            dark:bg-slate-800 dark:text-mortar-100;
   }
   body {
@@ -50,11 +67,11 @@
   .input {
     /* dark: fields take the page tone (slate-800) — a step darker
        than the slate-900 card they sit on, so they read as inset. */
-    @apply w-full rounded-md border border-slate-200 dark:border-slate-700
-           bg-white dark:bg-slate-800
+    @apply w-full rounded-md border border-line dark:border-slate-700
+           bg-surface dark:bg-slate-800
            px-3 py-2 text-sm
-           text-slate-700 dark:text-mortar-100
-           placeholder:text-slate-400 dark:placeholder:text-slate-500
+           text-content dark:text-mortar-100
+           placeholder:text-faint dark:placeholder:text-slate-500
            focus:outline-none focus:border-cobble-400 focus:ring-2 focus:ring-cobble-200 dark:focus:ring-cobble-700
            transition;
   }

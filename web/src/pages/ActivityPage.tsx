@@ -33,19 +33,19 @@ export function ActivityPage() {
 
   return (
     <div className="space-y-4 max-w-4xl">
-      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-slate-700 dark:text-mortar-100 lowercase">
+      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">
           activity
         </h1>
-        <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
+        <span className="text-[10px] font-mono text-faint dark:text-slate-500">
           everything that's happened in this workspace
         </span>
       </div>
 
       <div className="flex items-center gap-4 flex-wrap text-xs">
         <div className="flex items-center gap-1.5">
-          <Filter size={11} className="text-slate-400" />
-          <span className="font-mono uppercase tracking-widest text-[10px] text-slate-500">auth</span>
+          <Filter size={11} className="text-faint" />
+          <span className="font-mono uppercase tracking-widest text-[10px] text-muted">auth</span>
           {(["all", "session", "api_token", "system"] as const).map((f) => (
             <button
               key={f}
@@ -54,8 +54,8 @@ export function ActivityPage() {
               className={
                 "px-1.5 py-0.5 rounded font-mono text-[10px] transition " +
                 (authFilter === f
-                  ? "bg-cobble-100 text-cobble-700 dark:bg-cobble-700 dark:text-mortar-100"
-                  : "text-slate-400 hover:text-cobble-600")
+                  ? "bg-cobble-100 text-accent dark:bg-cobble-700 dark:text-mortar-100"
+                  : "text-faint hover:text-accent")
               }
             >
               {f === "api_token" ? "api" : f}
@@ -63,7 +63,7 @@ export function ActivityPage() {
           ))}
         </div>
         <label className="flex items-center gap-1.5">
-          <span className="font-mono uppercase tracking-widest text-[10px] text-slate-500">entity</span>
+          <span className="font-mono uppercase tracking-widest text-[10px] text-muted">entity</span>
           <input
             value={entityFilter}
             onChange={(e) => setEntityFilter(e.target.value)}
@@ -74,10 +74,10 @@ export function ActivityPage() {
       </div>
 
       {activity.isLoading && (
-        <div className="text-xs text-slate-400">loading…</div>
+        <div className="text-xs text-faint">loading…</div>
       )}
       {!activity.isLoading && items.length === 0 && (
-        <div className="text-xs text-slate-400 italic">No activity matches these filters.</div>
+        <div className="text-xs text-faint italic">No activity matches these filters.</div>
       )}
 
       <ul className="space-y-1.5">
@@ -93,25 +93,25 @@ function ActivityRow({ entry }: { entry: ActivityEntry }) {
   const tone = entry.action.includes("failed")
     ? "border-ember-200 bg-ember-50/40 dark:bg-slate-900 dark:border-ember-700/40"
     : entry.auth_method === "system"
-    ? "border-slate-200 bg-slate-50/40 dark:bg-slate-900 dark:border-slate-700"
-    : "border-slate-200 bg-white dark:bg-slate-900 dark:border-slate-700";
+    ? "border-line bg-subtle/40 dark:bg-slate-900 dark:border-slate-700"
+    : "border-line bg-surface dark:bg-slate-900 dark:border-slate-700";
   return (
     <li className={"rounded-md border p-2.5 text-xs " + tone}>
       <div className="flex items-baseline gap-2 flex-wrap">
         <AuthBadge method={entry.auth_method} />
-        <span className="font-mono text-cobble-600 dark:text-cobble-300 font-semibold">
+        <span className="font-mono text-accent dark:text-cobble-300 font-semibold">
           {entry.action}
         </span>
-        <span className="font-mono text-[10px] text-slate-400">
+        <span className="font-mono text-[10px] text-faint">
           {entry.entity_type}
           {entry.entity_id ? `:${entry.entity_id.slice(0, 8)}` : ""}
         </span>
         <span className="flex-1" />
-        <span className="font-mono text-[10px] text-slate-400">
+        <span className="font-mono text-[10px] text-faint">
           {new Date(entry.occurred_at).toLocaleString()}
         </span>
       </div>
-      <div className="flex items-baseline gap-2 mt-1 text-[10px] text-slate-500 dark:text-slate-400">
+      <div className="flex items-baseline gap-2 mt-1 text-[10px] text-muted dark:text-slate-400">
         {entry.actor && (
           <span className="flex items-center gap-1">
             <User size={9} /> {entry.actor.display_name ?? entry.actor.email ?? "?"}
@@ -129,10 +129,10 @@ function ActivityRow({ entry }: { entry: ActivityEntry }) {
       </div>
       {entry.diff != null && (
         <details className="mt-1.5">
-          <summary className="text-[10px] font-mono text-slate-400 cursor-pointer hover:text-cobble-600">
+          <summary className="text-[10px] font-mono text-faint cursor-pointer hover:text-accent">
             diff
           </summary>
-          <pre className="mt-1 p-2 rounded bg-mortar-50/60 dark:bg-slate-800/60 font-mono text-[10px] overflow-x-auto text-slate-600 dark:text-mortar-200">
+          <pre className="mt-1 p-2 rounded bg-subtle/60 dark:bg-slate-800/60 font-mono text-[10px] overflow-x-auto text-content dark:text-mortar-200">
             {JSON.stringify(entry.diff, null, 2)}
           </pre>
         </details>
@@ -144,9 +144,9 @@ function ActivityRow({ entry }: { entry: ActivityEntry }) {
 function AuthBadge({ method }: { method: AuthMethod }) {
   const cfg =
     method === "api_token"
-      ? { label: "api", icon: KeyRound, cls: "bg-cobble-100 text-cobble-700 dark:bg-cobble-700/40 dark:text-cobble-200" }
+      ? { label: "api", icon: KeyRound, cls: "bg-cobble-100 text-accent dark:bg-cobble-700/40 dark:text-cobble-200" }
       : method === "system"
-      ? { label: "sys", icon: Wrench, cls: "bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300" }
+      ? { label: "sys", icon: Wrench, cls: "bg-subtle text-content dark:bg-slate-700 dark:text-slate-300" }
       : { label: "ui", icon: ShieldCheck, cls: "bg-moss-100 text-moss-700 dark:bg-moss-700/40 dark:text-moss-200" };
   const Icon = cfg.icon;
   return (

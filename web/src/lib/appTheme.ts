@@ -86,33 +86,47 @@ export const proseStyle = (t?: AppTheme | null): CSSProperties | undefined =>
 export const btnStyle = (t?: AppTheme | null): CSSProperties | undefined =>
   t ? { background: "var(--app-accent)", color: "var(--app-accent-text)", borderColor: "transparent", borderRadius: "var(--app-radius)" } : undefined;
 
-// ── Admin-shell full recolor (chrome → whole dashboard) ──────────────
-// The admin UI hard-codes its palette as Tailwind utility classes
-// (bg-white, text-slate-700, border-slate-200, …) across hundreds of
-// components — too many to migrate to semantic tokens by hand. Instead,
-// when a workspace sets `admin_theme`, we publish the `--app-*` vars on
-// <html data-ws-themed> and inject THIS scoped stylesheet, which remaps
-// the structural utilities the admin UI actually uses (measured by
-// frequency) onto those vars. Scoped to `[data-ws-themed]`, so it's inert
-// for unthemed workspaces and for the login/portal surfaces; because the
-// marker sits on <html>, it also reaches modals/toasts that portal to
-// <body>. `!important` beats the utility's own rule (and Tailwind's dark:
-// variants, which we list explicitly so dark-mode users theme too).
-//
-// Deliberately NOT remapped: button fills (bg-slate-700 / bg-cobble-600)
-// — leaving them keeps actions legible on an arbitrary palette; that's
-// the seam where the future semantic-token migration takes over.
-const ADMIN_RECOLOR: Array<[string[], string]> = [
-  [["bg-white", "dark:bg-slate-900", "bg-slate-50", "bg-slate-100"], "background-color:var(--app-surface)"],
-  [["bg-mortar", "bg-mortar-50", "dark:bg-slate-800"], "background-color:var(--app-bg)"],
-  [["text-slate-700", "text-slate-600", "dark:text-mortar-100", "dark:text-mortar-200"], "color:var(--app-text)"],
-  [["text-slate-400", "text-slate-500", "dark:text-slate-400", "dark:text-slate-500"], "color:var(--app-muted)"],
-  [["border-slate-200", "border-slate-300", "border-slate-100", "dark:border-slate-700", "dark:border-slate-800"], "border-color:var(--app-border)"],
-  [["divide-slate-200", "dark:divide-slate-700", "dark:divide-slate-800"], "border-color:var(--app-border)"],
-  [["text-cobble-600", "text-cobble-500", "text-cobble-400"], "color:var(--app-accent)"],
-];
-export function adminShellCss(t?: AppTheme | null): string | null {
+// ── Admin-shell brand → semantic tokens ─────────────────────────────
+// The admin UI is built on the semantic role tokens (bg-surface,
+// text-content, border-line, …) defined in tailwind.config + index.css
+// :root. Those are CSS-variable-backed, so branding the dashboard is just
+// overriding the `--c-*` vars — no `!important`, no per-class remap, no
+// drift. AppLayout sets these (as `R G B` triplets, for `<alpha-value>`)
+// on `<html>` when a workspace `admin_theme` is set; on <html> so they
+// also reach modals/toasts that portal to <body>. We publish the `--app-*`
+// hex vars too, for the few inline `var(--app-*)` uses in the shell
+// (accent strip, logo border). Button fills + form inputs stay neutral
+// (their own non-semantic classes) so actions read on any palette.
+function hexTriplet(hex: string): string {
+  let h = hex.replace("#", "").trim();
+  if (h.length === 3) h = h.split("").map((c) => c + c).join("");
+  const n = parseInt(h.slice(0, 6), 16);
+  return `${(n >> 16) & 255} ${(n >> 8) & 255} ${n & 255}`;
+}
+/** The CSS custom properties to set on `<html>` to brand the admin shell.
+ *  Returns null when unthemed (caller leaves :root defaults in place). */
+export function adminHtmlVars(t?: AppTheme | null): Record<string, string> | null {
   if (!t) return null;
-  const esc = (c: string) => "[data-ws-themed] ." + c.replace(/:/g, "\\:");
-  return ADMIN_RECOLOR.map(([classes, decl]) => `${classes.map(esc).join(",")}{${decl} !important}`).join("");
+  const tri = (hex: string | undefined, fb: string) => hexTriplet(hex ?? fb);
+  return {
+    // Semantic role tokens (triplets) — the workspace has one of each,
+    // so the dashboard's shade tiers collapse onto them when themed.
+    "--c-surface": tri(t.surface, "#ffffff"),
+    "--c-canvas": tri(t.bg, "#f4f2ee"),
+    "--c-subtle": tri(t.surface, "#ffffff"),
+    "--c-content": tri(t.text, "#334155"),
+    "--c-muted": tri(t.muted, "#8a94a6"),
+    "--c-faint": tri(t.muted, "#8a94a6"),
+    "--c-line": tri(t.border, "#e2e8f0"),
+    "--c-accent": tri(t.accent, "#3b82f6"),
+    // Hex vars for inline var(--app-*) uses in the shell.
+    "--app-bg": t.bg ?? "#f4f2ee",
+    "--app-surface": t.surface ?? "#ffffff",
+    "--app-text": t.text ?? "#334155",
+    "--app-muted": t.muted ?? "#8a94a6",
+    "--app-accent": t.accent ?? "#3b82f6",
+    "--app-accent-text": t.accent_text ?? "#ffffff",
+    "--app-border": t.border ?? "#e2e8f0",
+    "--app-radius": `${t.radius ?? 12}px`,
+  };
 }

@@ -149,15 +149,15 @@ export function ScanCameraPage() {
 
   return (
     <div className="space-y-4 max-w-2xl">
-      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
+      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
         <Link
           to="/scan"
-          className="text-sm text-slate-500 hover:text-cobble-600 inline-flex items-center gap-1"
+          className="text-sm text-muted hover:text-accent inline-flex items-center gap-1"
         >
           <ArrowLeft size={14} /> Back to inbox
         </Link>
-        <h1 className="text-2xl font-semibold text-slate-700 dark:text-mortar-100 flex items-center gap-2">
-          <Camera size={20} className="text-cobble-500" /> Camera scan
+        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100 flex items-center gap-2">
+          <Camera size={20} className="text-accent" /> Camera scan
         </h1>
       </div>
 
@@ -168,7 +168,7 @@ export function ScanCameraPage() {
         </div>
       )}
 
-      <div className="rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 bg-black aspect-[3/4] relative">
+      <div className="rounded-xl overflow-hidden border border-line dark:border-slate-700 bg-black aspect-[3/4] relative">
         <video
           ref={videoRef}
           playsInline
@@ -204,7 +204,7 @@ export function ScanCameraPage() {
           </div>
         )}
         {running && (
-          <div className="absolute inset-x-6 top-1/2 -translate-y-1/2 border-2 border-cobble-400/80 rounded-md h-32 pointer-events-none" />
+          <div className="absolute inset-x-6 top-1/2 -translate-y-1/2 border-2 border-accent/80 rounded-md h-32 pointer-events-none" />
         )}
       </div>
 
@@ -219,16 +219,16 @@ export function ScanCameraPage() {
           scan.mutate(manual.trim());
           setManual("");
         }}
-        className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 flex gap-2 items-center"
+        className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 flex gap-2 items-center"
       >
-        <ScanLine size={16} className="text-slate-400" />
+        <ScanLine size={16} className="text-faint" />
         <input
           type="text"
           inputMode="numeric"
           value={manual}
           onChange={(e) => setManual(e.target.value)}
           placeholder="Or type the UPC manually"
-          className="flex-1 px-2 py-1.5 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900 font-mono"
+          className="flex-1 px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900 font-mono"
         />
         <button
           type="submit"
@@ -241,23 +241,23 @@ export function ScanCameraPage() {
 
       {recent.length > 0 && (
         <section>
-          <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500 mb-2">
+          <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
             // this session ({recent.length})
           </div>
           <ul className="space-y-1.5">
             {recent.map((item) => (
               <li
                 key={item.id}
-                className="flex items-center gap-3 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-2 text-sm"
+                className="flex items-center gap-3 rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-2 text-sm"
               >
                 <Check size={14} className="text-moss-600 shrink-0" />
                 <div className="min-w-0 flex-1">
-                  <div className="font-medium text-slate-700 dark:text-mortar-100 truncate">
+                  <div className="font-medium text-content dark:text-mortar-100 truncate">
                     {item.suggested_name ?? (
-                      <span className="text-slate-400 italic">no catalog hit</span>
+                      <span className="text-faint italic">no catalog hit</span>
                     )}
                   </div>
-                  <div className="text-[10px] font-mono text-slate-400 truncate">
+                  <div className="text-[10px] font-mono text-faint truncate">
                     {item.barcode_text}
                   </div>
                 </div>
@@ -266,7 +266,7 @@ export function ScanCameraPage() {
           </ul>
           <Link
             to="/scan"
-            className="block text-center text-xs text-cobble-600 hover:text-cobble-700 mt-3"
+            className="block text-center text-xs text-accent hover:text-accent mt-3"
           >
             Open inbox to confirm →
           </Link>

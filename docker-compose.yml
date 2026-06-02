@@ -66,7 +66,20 @@ services:
       # Optional: registry URL + auth token for /sandbox/install.
       # Defaults to cobblrhq/registry's modules.json on GitHub.
       COBBLR_REGISTRY_URL: ${COBBLR_REGISTRY_URL:-}
+      # COBBLR_REGISTRY_TOKEN is reused by the extension-registry proxy
+      # (GET /registry/index) to read the PRIVATE cobblr-extensions repo.
+      # Without it the marketplace falls back to the app's built-in list.
       COBBLR_REGISTRY_TOKEN: ${COBBLR_REGISTRY_TOKEN:-}
+      # Extension registry (the marketplace index). Defaults in code to the
+      # cobblr-extensions repo's index.json via the GitHub API contents
+      # endpoint; override only to point at a different/local index.
+      COBBLR_EXTENSIONS_URL: ${COBBLR_EXTENSIONS_URL:-}
+      COBBLR_EXTENSIONS_SIG_URL: ${COBBLR_EXTENSIONS_SIG_URL:-}
+      # Notarised-open trust anchor (Phase D): the PUBLIC ed25519 root key
+      # (base64 SPKI). When set, the proxy verifies the official index's
+      # detached signature + only then trusts its `trusted_keys`. Generate
+      # with `node scripts/keygen-root.mjs`; keep the PRIVATE key secret.
+      COBBLR_ROOT_PUBKEY: ${COBBLR_ROOT_PUBKEY:-}
       # Local dev/test only: let webhooks target host.docker.internal /
       # loopback (the e2e webhook mock runs on the host). MUST stay unset
       # in production — the webhook SSRF guard relies on it being off.

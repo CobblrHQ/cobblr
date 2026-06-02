@@ -70,18 +70,18 @@ export function TemplatesPage() {
 
   return (
     <div className="space-y-5 max-w-4xl">
-      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
+      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
         <Link
           to="/configuration"
-          className="text-sm text-slate-500 hover:text-cobble-600 inline-flex items-center gap-1"
+          className="text-sm text-muted hover:text-accent inline-flex items-center gap-1"
         >
           <ArrowLeft size={14} /> back
         </Link>
-        <h1 className="text-2xl font-semibold text-slate-700 dark:text-mortar-100 flex items-center gap-2">
-          <CopyPlus size={20} className="text-cobble-500" />
+        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100 flex items-center gap-2">
+          <CopyPlus size={20} className="text-accent" />
           Templates
         </h1>
-        <span className="text-sm text-slate-500 dark:text-slate-400">
+        <span className="text-sm text-muted dark:text-slate-400">
           {items.length} template{items.length === 1 ? "" : "s"}
         </span>
         <div className="flex-1" />
@@ -93,7 +93,7 @@ export function TemplatesPage() {
         </button>
       </div>
 
-      <p className="text-sm text-slate-500 dark:text-slate-400">
+      <p className="text-sm text-muted dark:text-slate-400">
         Save a set of default field values + tags against an entity
         kind. When you "create from template," those defaults get
         merged into the new entity's body before it's POSTed to the
@@ -104,12 +104,12 @@ export function TemplatesPage() {
       </p>
 
       {list.isLoading && (
-        <div className="text-sm text-slate-500">Loading…</div>
+        <div className="text-sm text-muted">Loading…</div>
       )}
       {!list.isLoading && items.length === 0 && (
-        <div className="rounded-md border border-dashed border-slate-200 dark:border-slate-700 p-8 text-center">
-          <CopyPlus size={28} className="mx-auto text-slate-300 dark:text-slate-600 mb-2" />
-          <div className="text-sm text-slate-500 dark:text-slate-400">
+        <div className="rounded-md border border-dashed border-line dark:border-slate-700 p-8 text-center">
+          <CopyPlus size={28} className="mx-auto text-faint dark:text-slate-600 mb-2" />
+          <div className="text-sm text-muted dark:text-slate-400">
             No templates yet. Click "New template" to define one.
           </div>
         </div>
@@ -117,22 +117,22 @@ export function TemplatesPage() {
 
       {grouped.map(({ kind, items }) => (
         <section key={kind.id}>
-          <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500 mb-2">
+          <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
             // {kind.label} ({items.length})
           </div>
           <ul className="space-y-2">
             {items.map((t) => (
               <li
                 key={t.id}
-                className="border border-slate-200 dark:border-slate-700 rounded-md bg-white dark:bg-slate-900 p-3"
+                className="border border-line dark:border-slate-700 rounded-md bg-surface dark:bg-slate-900 p-3"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
-                    <div className="font-medium text-slate-700 dark:text-mortar-100">
+                    <div className="font-medium text-content dark:text-mortar-100">
                       {t.name}
                     </div>
                     {t.description && (
-                      <div className="text-sm text-slate-500 mt-0.5">
+                      <div className="text-sm text-muted mt-0.5">
                         {t.description}
                       </div>
                     )}
@@ -140,7 +140,7 @@ export function TemplatesPage() {
                       {Object.keys(t.defaults).map((k) => (
                         <span
                           key={k}
-                          className="text-[10px] font-mono bg-mortar-100 dark:bg-slate-800 text-slate-500 dark:text-mortar-200 rounded px-1.5 py-0.5"
+                          className="text-[10px] font-mono bg-mortar-100 dark:bg-slate-800 text-muted dark:text-mortar-200 rounded px-1.5 py-0.5"
                         >
                           {k} = {fmtValue(t.defaults[k])}
                         </span>
@@ -148,7 +148,7 @@ export function TemplatesPage() {
                       {t.default_tags.map((tag) => (
                         <span
                           key={tag}
-                          className="text-[10px] font-mono rounded px-1.5 py-0.5 border border-cobble-200 dark:border-cobble-800 text-cobble-600"
+                          className="text-[10px] font-mono rounded px-1.5 py-0.5 border border-cobble-200 dark:border-cobble-800 text-accent"
                         >
                           #{tag}
                         </span>
@@ -160,7 +160,7 @@ export function TemplatesPage() {
                       type="button"
                       onClick={() => setEditing(t)}
                       title="Edit"
-                      className="text-slate-400 hover:text-cobble-600 p-1"
+                      className="text-faint hover:text-accent p-1"
                     >
                       <Pencil size={14} />
                     </button>
@@ -176,7 +176,7 @@ export function TemplatesPage() {
                         if (ok) del.mutate(t.id);
                       }}
                       title="Delete"
-                      className="text-slate-400 hover:text-ember-500 p-1"
+                      className="text-faint hover:text-ember-500 p-1"
                     >
                       <Trash2 size={14} />
                     </button>
@@ -300,11 +300,11 @@ function TemplateFormModal({
         className="space-y-3"
       >
         <label className="block">
-          <div className="text-xs text-slate-500 mb-1">Target kind</div>
+          <div className="text-xs text-muted mb-1">Target kind</div>
           <select
             value={targetKind}
             onChange={(e) => setTargetKind(e.target.value)}
-            className="w-full px-2 py-1.5 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           >
             {SUPPORTED_KINDS.map((k) => (
               <option key={k.id} value={k.id}>
@@ -314,36 +314,36 @@ function TemplateFormModal({
           </select>
         </label>
         <label className="block">
-          <div className="text-xs text-slate-500 mb-1">Name</div>
+          <div className="text-xs text-muted mb-1">Name</div>
           <input
             type="text"
             required
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. Household appliance"
-            className="w-full px-2 py-1.5 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             autoFocus
           />
         </label>
         <label className="block">
-          <div className="text-xs text-slate-500 mb-1">Description (optional)</div>
+          <div className="text-xs text-muted mb-1">Description (optional)</div>
           <input
             type="text"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="What's this template for?"
-            className="w-full px-2 py-1.5 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           />
         </label>
         <label className="block">
-          <div className="text-xs text-slate-500 mb-1">
+          <div className="text-xs text-muted mb-1">
             Default field values (JSON object)
           </div>
           <textarea
             value={defaultsText}
             onChange={(e) => onDefaultsChange(e.target.value)}
             rows={6}
-            className="w-full px-2 py-1.5 text-sm font-mono border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1.5 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             placeholder='{"insured": true, "lifetime_warranty": false}'
           />
           {defaultsErr && (
@@ -351,7 +351,7 @@ function TemplateFormModal({
           )}
         </label>
         <label className="block">
-          <div className="text-xs text-slate-500 mb-1">
+          <div className="text-xs text-muted mb-1">
             Default tags (comma-separated)
           </div>
           <input
@@ -359,14 +359,14 @@ function TemplateFormModal({
             value={tagsText}
             onChange={(e) => setTagsText(e.target.value)}
             placeholder="appliance, household, insured"
-            className="w-full px-2 py-1.5 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           />
         </label>
         <div className="flex justify-end gap-2 pt-2">
           <button
             type="button"
             onClick={onClose}
-            className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
           >
             Cancel
           </button>

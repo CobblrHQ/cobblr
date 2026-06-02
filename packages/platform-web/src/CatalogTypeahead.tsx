@@ -109,15 +109,15 @@ export function CatalogTypeahead({
           <img
             src={image}
             alt={selected.title}
-            className="w-9 h-9 rounded object-cover border border-slate-200 dark:border-slate-700"
+            className="w-9 h-9 rounded object-cover border border-line dark:border-slate-700"
             loading="lazy"
           />
         )}
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium text-slate-700 dark:text-mortar-100 truncate">
+          <div className="text-sm font-medium text-content dark:text-mortar-100 truncate">
             {selected.title}
           </div>
-          <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-600 dark:text-cobble-300 truncate">
+          <div className="text-[10px] font-mono uppercase tracking-widest text-accent dark:text-cobble-300 truncate">
             {subtitleFor
               ? subtitleFor(selected)
               : `${selected.catalog_name} · #${selected.external_id}`}
@@ -126,7 +126,7 @@ export function CatalogTypeahead({
         <button
           type="button"
           onClick={() => onSelect(null)}
-          className="text-slate-400 hover:text-ember-500 transition p-1"
+          className="text-faint hover:text-ember-500 transition p-1"
           aria-label="Clear match"
           title="Clear match"
         >
@@ -138,8 +138,8 @@ export function CatalogTypeahead({
 
   return (
     <div ref={wrapRef} className="relative">
-      <div className="flex items-center gap-2 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2">
-        <Search size={14} className="text-slate-400 shrink-0" />
+      <div className="flex items-center gap-2 rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2">
+        <Search size={14} className="text-faint shrink-0" />
         <input
           type="text"
           value={q}
@@ -149,22 +149,22 @@ export function CatalogTypeahead({
           }}
           onFocus={() => setOpen(true)}
           placeholder={placeholder}
-          className="flex-1 bg-transparent text-sm py-1.5 focus:outline-none text-slate-700 dark:text-mortar-100 placeholder:text-slate-400"
+          className="flex-1 bg-transparent text-sm py-1.5 focus:outline-none text-content dark:text-mortar-100 placeholder:text-faint"
         />
         {loading && (
-          <span className="text-[10px] font-mono text-slate-400">…</span>
+          <span className="text-[10px] font-mono text-faint">…</span>
         )}
       </div>
       {open && q.trim().length >= 2 && (
-        <div className="absolute left-0 right-0 top-full mt-1 z-30 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg max-h-80 overflow-y-auto">
+        <div className="absolute left-0 right-0 top-full mt-1 z-30 rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg max-h-80 overflow-y-auto">
           {hits.length === 0 && !loading && (
-            <div className="text-xs text-slate-400 italic px-3 py-2">
+            <div className="text-xs text-faint italic px-3 py-2">
               No matches in any installed catalog.
             </div>
           )}
           {groupByCatalog(hits).map(([catalogName, group]) => (
             <div key={catalogName}>
-              <div className="text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 px-3 pt-2 pb-1 sticky top-0 bg-white dark:bg-slate-900">
+              <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 px-3 pt-2 pb-1 sticky top-0 bg-surface dark:bg-slate-900">
                 {catalogName}
               </div>
               {group.map((h) => {
@@ -178,23 +178,23 @@ export function CatalogTypeahead({
                       setOpen(false);
                       setQ("");
                     }}
-                    className="w-full text-left flex items-center gap-2 px-3 py-2 hover:bg-mortar-50 dark:hover:bg-slate-800/60 transition"
+                    className="w-full text-left flex items-center gap-2 px-3 py-2 hover:bg-subtle dark:hover:bg-slate-800/60 transition"
                   >
                     {image ? (
                       <img
                         src={image}
                         alt={h.title}
-                        className="w-8 h-8 rounded object-cover border border-slate-200 dark:border-slate-700 shrink-0"
+                        className="w-8 h-8 rounded object-cover border border-line dark:border-slate-700 shrink-0"
                         loading="lazy"
                       />
                     ) : (
-                      <div className="w-8 h-8 shrink-0 rounded border border-dashed border-slate-200 dark:border-slate-700" />
+                      <div className="w-8 h-8 shrink-0 rounded border border-dashed border-line dark:border-slate-700" />
                     )}
                     <div className="min-w-0 flex-1">
-                      <div className="text-sm text-slate-700 dark:text-mortar-100 truncate">
+                      <div className="text-sm text-content dark:text-mortar-100 truncate">
                         {h.title}
                       </div>
-                      <div className="text-[10px] font-mono text-slate-400 truncate">
+                      <div className="text-[10px] font-mono text-faint truncate">
                         #{h.external_id}
                       </div>
                     </div>

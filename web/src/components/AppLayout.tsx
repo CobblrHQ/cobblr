@@ -23,7 +23,7 @@ import { MobileNav } from "./MobileNav";
 import { SearchBar } from "./SearchBar";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { api } from "../lib/api";
-import { adminShellCss, fontFaceCss, themeVars } from "../lib/appTheme";
+import { adminHtmlVars, fontFaceCss } from "../lib/appTheme";
 
 export function AppLayout({ activeSlug }: { activeSlug: string }) {
   const { user, logout } = useAuth();
@@ -31,11 +31,11 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
   const location = useLocation();
 
   // Workspace brand for the admin shell. The whole dashboard recolours to
-  // `admin_theme`: page background + accent + the workspace logo (chrome),
-  // AND every module page / table / the header bar, via the scoped
-  // utility-remap stylesheet (adminShellCss). The Cobblr mark always
-  // stays. Button fills stay neutral (legible on any palette) — that seam
-  // is where a future semantic-token migration takes over.
+  // `admin_theme` — page, header bar, every module page / card / table —
+  // by overriding the semantic `--c-*` role tokens (the admin UI is built
+  // on them). No remap, no !important. The Cobblr mark always stays;
+  // button fills + form inputs keep their own non-semantic classes so
+  // actions read on any palette.
   const config = useQuery({
     queryKey: ["portal-config", activeSlug],
     queryFn: () => api.getPortalConfig(activeSlug),
@@ -44,20 +44,24 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
   const skin = config.data?.config.admin_theme ?? null;
   const wsLogo = config.data?.config.logo_path ?? null;
   const fontFace = fontFaceCss(skin);
-  const recolor = adminShellCss(skin);
 
-  // Publish the palette on <html data-ws-themed> so the scoped recolor
-  // resolves its vars AND reaches modals/toasts that portal to <body>.
-  // Cleaned up on unmount (leaving for the portal/auth surface) and when
-  // the theme is cleared, so the marker never leaks onto another surface.
+  // Publish the theme on <html> so the semantic tokens resolve to the
+  // workspace palette AND modals/toasts that portal to <body> theme too.
+  // Force light while themed — the tokens own the colours, so leaving the
+  // user's `dark:` shade variants active would fight them. Everything is
+  // restored on unmount (leaving for the portal/auth surface) or when the
+  // theme is cleared, so nothing leaks onto another surface.
   useEffect(() => {
     const el = document.documentElement;
-    const vars = themeVars(skin);
+    const vars = adminHtmlVars(skin);
     if (!vars) return;
+    const wasDark = el.classList.contains("dark");
     el.setAttribute("data-ws-themed", "");
-    for (const [k, v] of Object.entries(vars)) el.style.setProperty(k, String(v));
+    if (wasDark) el.classList.remove("dark");
+    for (const [k, v] of Object.entries(vars)) el.style.setProperty(k, v);
     return () => {
       el.removeAttribute("data-ws-themed");
+      if (wasDark) el.classList.add("dark");
       for (const k of Object.keys(vars)) el.style.removeProperty(k);
     };
   }, [skin]);
@@ -72,20 +76,15 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
     // shrink-0 on flex children. If something does push wider than
     // viewport, that's a layout bug to fix locally rather than mask
     // here.
-    <div
-      className="min-h-screen grid grid-rows-[auto_1fr] grid-cols-1"
-      style={skin ? { ...themeVars(skin), background: "var(--app-bg)" } : undefined}
-    >
-      {(fontFace || recolor) && (
-        <style dangerouslySetInnerHTML={{ __html: (fontFace ?? "") + (recolor ?? "") }} />
-      )}
+    <div className="min-h-screen grid grid-rows-[auto_1fr] grid-cols-1">
+      {fontFace && <style dangerouslySetInnerHTML={{ __html: fontFace }} />}
       {/* The root is grid-rows-[auto_1fr] = exactly two row-children
           (header, main). The accent strip lives INSIDE the header as its
           top edge — a third grid child would steal the 1fr row and
           stretch the header. A thin branded edge over the (still neutral +
           readable) functional header; the Cobblr mark stays. */}
       <header
-        className="border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/80 backdrop-blur overflow-x-clip"
+        className="border-b border-line dark:border-slate-700 bg-surface dark:bg-slate-900/80 backdrop-blur overflow-x-clip"
         style={skin ? { borderTop: "4px solid var(--app-accent)" } : undefined}
       >
         <div className="max-w-6xl mx-auto px-5 py-3 flex items-center gap-3 min-w-0">
@@ -95,17 +94,17 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
             className="flex items-center gap-2 shrink-0 hover:opacity-80 transition"
           >
             <CobblestoneMark size={26} />
-            <span className="font-display font-extrabold text-slate-700 dark:text-mortar-100 lowercase">
+            <span className="font-display font-extrabold text-content dark:text-mortar-100 lowercase">
               cobblr
             </span>
           </Link>
-          <span className="text-slate-200 dark:text-slate-700 shrink-0">/</span>
+          <span className="text-faint dark:text-slate-700 shrink-0">/</span>
           {/* Workspace logo — the builder's brand, alongside the Cobblr mark. */}
           {wsLogo && (
             <img
               src={wsLogo}
               alt=""
-              className="w-6 h-6 rounded object-contain shrink-0 border border-slate-200 dark:border-slate-700"
+              className="w-6 h-6 rounded object-contain shrink-0 border border-line dark:border-slate-700"
             />
           )}
           <div className="shrink-0">
@@ -130,7 +129,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
               <Link
                 to="/super-admin"
                 title="Platform-operator dashboards"
-                className="text-slate-400 dark:text-slate-500 hover:text-cobble-600 transition p-1.5"
+                className="text-faint dark:text-slate-500 hover:text-accent transition p-1.5"
               >
                 <Server size={14} />
               </Link>
@@ -139,7 +138,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
             <NotificationsBell />
             <Link
               to="/me"
-              className="text-xs text-slate-500 dark:text-slate-400 hidden md:inline hover:text-cobble-600 transition"
+              className="text-xs text-muted dark:text-slate-400 hidden md:inline hover:text-accent transition"
               title="Your profile + recent activity"
             >
               {user?.display_name}
@@ -149,7 +148,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
             {!skin && (
               <button
                 onClick={toggle}
-                className="text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-mortar-100 transition p-1.5"
+                className="text-faint dark:text-slate-500 hover:text-content dark:hover:text-mortar-100 transition p-1.5"
                 title={theme === "dark" ? "Switch to light" : "Switch to dark"}
               >
                 {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
@@ -157,7 +156,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
             )}
             <button
               onClick={logout}
-              className="text-slate-400 dark:text-slate-500 hover:text-ember-500 transition p-1.5"
+              className="text-faint dark:text-slate-500 hover:text-ember-500 transition p-1.5"
               title="Sign out"
             >
               <LogOut size={14} />

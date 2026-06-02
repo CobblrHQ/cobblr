@@ -44,7 +44,7 @@ export default defineModule({
           { name: "metadata", type: "object" },
         ],
         exposableFields: ["name", "unit", "goal_value", "goal_direction"],
-        detailRoute: "/tracking/{id}",
+        detailRoute: "/core-fitness/{id}",
         getEndpoint: "/metrics/{id}",
       },
       {
@@ -73,7 +73,17 @@ export default defineModule({
       "core-fitness.goal.reached",
     ],
     api: [],
-    actions: [],
+    actions: [
+      {
+        id: "core-fitness:log-measurement",
+        label: "Log a measurement",
+        description:
+          "Record a number against a metric (by id, or by name — created on miss). Wire it to an event to feed a metric automatically (e.g. an order arriving → a 'Grocery spend' trend). Value comes from a static arg, a named event-payload key, or the wire template.",
+        appliesTo: { any: true },
+        invokeHandler: "core-fitness.log-measurement",
+        userInvokable: false,
+      },
+    ],
   },
 
   subscribes: [],

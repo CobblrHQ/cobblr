@@ -82,7 +82,7 @@ export function ImportDialog({ onClose }: { onClose: (importedCount: number) => 
             />
             <div className="grid grid-cols-2 gap-3">
               <label className="block">
-                <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                   Default category (if row's blank)
                 </span>
                 <select value={defaultCat} onChange={(e) => setDefaultCat(e.target.value)} className="input">
@@ -95,7 +95,7 @@ export function ImportDialog({ onClose }: { onClose: (importedCount: number) => 
                 </select>
               </label>
               <label className="block">
-                <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                   Default location (if row's blank)
                 </span>
                 <select value={defaultLoc} onChange={(e) => setDefaultLoc(e.target.value)} className="input">
@@ -114,7 +114,7 @@ export function ImportDialog({ onClose }: { onClose: (importedCount: number) => 
               <button
                 type="button"
                 onClick={() => onClose(0)}
-                className="flex-1 rounded-md border border-slate-200 dark:border-slate-700 text-sm text-slate-600 dark:text-mortar-200 hover:bg-mortar-50 dark:bg-slate-800/70 transition py-2"
+                className="flex-1 rounded-md border border-line dark:border-slate-700 text-sm text-content dark:text-mortar-200 hover:bg-subtle dark:bg-slate-800/70 transition py-2"
               >
                 Cancel
               </button>
@@ -150,10 +150,10 @@ export function ImportDialog({ onClose }: { onClose: (importedCount: number) => 
                 </ul>
               </div>
             )}
-            <div className="rounded-md border border-slate-200 dark:border-slate-700 max-h-[280px] overflow-y-auto">
+            <div className="rounded-md border border-line dark:border-slate-700 max-h-[280px] overflow-y-auto">
               <table className="w-full text-xs">
                 <thead className="bg-mortar-100 dark:bg-slate-800 sticky top-0">
-                  <tr className="text-[10px] font-mono uppercase tracking-widest text-slate-500 dark:text-slate-400">
+                  <tr className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
                     <th className="px-2 py-1.5 text-left">#</th>
                     <th className="px-2 py-1.5 text-left">Name</th>
                     <th className="px-2 py-1.5 text-right">Qty</th>
@@ -164,13 +164,13 @@ export function ImportDialog({ onClose }: { onClose: (importedCount: number) => 
                 </thead>
                 <tbody>
                   {preview.rows.map((r) => (
-                    <tr key={r.row_number} className="border-t border-slate-100 dark:border-slate-700">
-                      <td className="px-2 py-1 text-slate-400 dark:text-slate-500 font-mono">{r.row_number}</td>
-                      <td className="px-2 py-1 text-slate-700 dark:text-mortar-100">{r.name}</td>
+                    <tr key={r.row_number} className="border-t border-line dark:border-slate-700">
+                      <td className="px-2 py-1 text-faint dark:text-slate-500 font-mono">{r.row_number}</td>
+                      <td className="px-2 py-1 text-content dark:text-mortar-100">{r.name}</td>
                       <td className="px-2 py-1 text-right font-mono">{r.qty}</td>
-                      <td className="px-2 py-1 text-slate-500 dark:text-slate-400">{r.unit ?? "—"}</td>
-                      <td className="px-2 py-1 text-slate-500 dark:text-slate-400">{r.category_name ?? "—"}</td>
-                      <td className="px-2 py-1 text-slate-500 dark:text-slate-400">{r.location_name ?? "—"}</td>
+                      <td className="px-2 py-1 text-muted dark:text-slate-400">{r.unit ?? "—"}</td>
+                      <td className="px-2 py-1 text-muted dark:text-slate-400">{r.category_name ?? "—"}</td>
+                      <td className="px-2 py-1 text-muted dark:text-slate-400">{r.location_name ?? "—"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -181,7 +181,7 @@ export function ImportDialog({ onClose }: { onClose: (importedCount: number) => 
               <button
                 type="button"
                 onClick={reset}
-                className="flex-1 rounded-md border border-slate-200 dark:border-slate-700 text-sm text-slate-600 dark:text-mortar-200 hover:bg-mortar-50 dark:bg-slate-800/70 transition py-2"
+                className="flex-1 rounded-md border border-line dark:border-slate-700 text-sm text-content dark:text-mortar-200 hover:bg-subtle dark:bg-slate-800/70 transition py-2"
               >
                 Back
               </button>
@@ -206,12 +206,12 @@ function DetectedHeaders({ headers }: { headers: Record<string, string | null> }
   const hits = Object.entries(headers).filter(([_, v]) => v !== null);
   if (hits.length === 0) return null;
   return (
-    <div className="text-[10px] font-mono text-slate-500 dark:text-slate-400 bg-mortar-100 dark:bg-slate-800 rounded-md px-3 py-2">
-      <div className="text-cobble-600 mb-1">detected columns</div>
+    <div className="text-[10px] font-mono text-muted dark:text-slate-400 bg-mortar-100 dark:bg-slate-800 rounded-md px-3 py-2">
+      <div className="text-accent mb-1">detected columns</div>
       <div className="grid grid-cols-3 gap-x-3 gap-y-0.5">
         {hits.map(([field, src]) => (
           <div key={field}>
-            <span className="text-slate-400 dark:text-slate-500">{field}:</span> {src}
+            <span className="text-faint dark:text-slate-500">{field}:</span> {src}
           </div>
         ))}
       </div>

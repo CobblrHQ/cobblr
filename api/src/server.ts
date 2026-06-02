@@ -28,6 +28,7 @@ import { portalRouter } from "./routes/portal.js";
 import { adminUsersRouter } from "./routes/admin-users.js";
 import { superAdminRouter } from "./routes/super-admin.js";
 import { sandboxInstallRouter } from "./routes/sandbox-install.js";
+import { registryRouter } from "./routes/registry.js";
 import { customRolesRouter } from "./routes/custom-roles.js";
 import { instancesRouter, overridesRouter } from "./routes/instances.js";
 import { navHeadingsRouter } from "./routes/nav-headings.js";
@@ -128,6 +129,7 @@ export function createApp(): AppHandles {
   // register without restart. See sandbox-install.ts +
   // docs/design-decisions/module-isolation.md.
   v1.use("/sandbox", sandboxInstallRouter);
+  v1.use("/registry", registryRouter);
   // Bundles live one layer further down — same auth + tenant
   // middleware, dedicated mount for clarity.
   v1.use("/orgs/:slug/bundles", bundlesRouter);

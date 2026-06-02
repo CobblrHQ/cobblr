@@ -126,21 +126,21 @@ export function PresentationPage() {
       <div>
         <Link
           to="/configuration"
-          className="text-[10px] font-mono uppercase tracking-widest text-slate-400 hover:text-cobble-500 transition inline-flex items-center gap-1"
+          className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-accent transition inline-flex items-center gap-1"
         >
           <ArrowLeft size={10} /> back to configuration
         </Link>
       </div>
-      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
-        <h1 className="text-2xl font-semibold text-slate-700 dark:text-mortar-100">
+      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
+        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">
           Presentation
         </h1>
-        <span className="text-sm text-slate-500 dark:text-slate-400">
+        <span className="text-sm text-muted dark:text-slate-400">
           {rows.length} things in your workspace
         </span>
       </div>
 
-      <p className="text-sm text-slate-600 dark:text-mortar-200">
+      <p className="text-sm text-content dark:text-mortar-200">
         Customise how every top-level thing in your workspace renders —
         rename it, swap its icon, hide it from the nav, change its order.
         Workspace edits override module / bundle defaults; reinstalling
@@ -149,8 +149,8 @@ export function PresentationPage() {
 
       <HeadingsBuilder />
 
-      <div className="border-t border-slate-200 dark:border-slate-700 pt-3">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500 mb-1">
+      <div className="border-t border-line dark:border-slate-700 pt-3">
+        <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-1">
           // entries
         </div>
       </div>
@@ -230,41 +230,41 @@ function PresentationRow({
   return (
     <div
       className={
-        "rounded border bg-white dark:bg-slate-900 px-3 py-2 flex items-center gap-3 " +
-        (hidden ? "border-slate-200 dark:border-slate-700 opacity-60" : "border-slate-200 dark:border-slate-700")
+        "rounded border bg-surface dark:bg-slate-900 px-3 py-2 flex items-center gap-3 " +
+        (hidden ? "border-line dark:border-slate-700 opacity-60" : "border-line dark:border-slate-700")
       }
     >
       <span
         className={
           "shrink-0 text-[10px] font-mono uppercase tracking-widest " +
-          (row.target_kind === "instance" ? "text-cobble-500" : "text-slate-400")
+          (row.target_kind === "instance" ? "text-accent" : "text-faint")
         }
       >
         {row.target_kind === "instance" ? "instance" : "kind"}
       </span>
       <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium text-slate-700 dark:text-mortar-100 truncate">
+        <div className="text-sm font-medium text-content dark:text-mortar-100 truncate">
           {label}
           {o?.display_label && o.display_label !== row.defaultLabel && (
-            <span className="ml-2 text-[10px] font-mono text-slate-400">
+            <span className="ml-2 text-[10px] font-mono text-faint">
               (default: {row.defaultLabel})
             </span>
           )}
         </div>
-        <div className="text-[10px] font-mono text-slate-400 truncate">
+        <div className="text-[10px] font-mono text-faint truncate">
           {row.target_id}
         </div>
       </div>
       {navOrder != null && (
-        <span className="text-[10px] font-mono text-slate-400">order:{navOrder}</span>
+        <span className="text-[10px] font-mono text-faint">order:{navOrder}</span>
       )}
-      {hidden && <EyeOff size={14} className="text-slate-400" />}
-      {!hidden && <Eye size={14} className="text-slate-400" />}
+      {hidden && <EyeOff size={14} className="text-faint" />}
+      {!hidden && <Eye size={14} className="text-faint" />}
       <button
         type="button"
         onClick={onEdit}
         title="Edit"
-        className="text-slate-400 hover:text-cobble-600 transition p-1"
+        className="text-faint hover:text-accent transition p-1"
       >
         <Pencil size={14} />
       </button>
@@ -273,7 +273,7 @@ function PresentationRow({
           type="button"
           onClick={onReset}
           title="Reset to manifest default"
-          className="text-slate-400 hover:text-ember-500 transition p-1"
+          className="text-faint hover:text-ember-500 transition p-1"
         >
           <RotateCcw size={14} />
         </button>
@@ -302,12 +302,18 @@ function PresentationCreateModal({
   const [hidden, setHidden] = useState(false);
   const [navOrder, setNavOrder] = useState<string>("");
   const [groupLabel, setGroupLabel] = useState("");
+  const [nestUnderModule, setNestUnderModule] = useState(false);
   const showGroupLabel = isModuleDefaultInstance(target.target_kind, target.target_id);
+  const showNestToggle = target.target_kind === "instance" && !showGroupLabel;
+  const moduleName = target.target_id.split(":")[0];
   const toast = useToast();
 
   const save = useMutation({
-    mutationFn: () =>
-      api.upsertOverride(activeSlug, {
+    mutationFn: () => {
+      const config: Record<string, unknown> = {};
+      if (groupLabel.trim()) config.group_label = groupLabel.trim();
+      if (nestUnderModule) config.presents_as_top_level = false;
+      return api.upsertOverride(activeSlug, {
         target_kind: target.target_kind,
         target_id: target.target_id,
         display_label: label.trim() || null,
@@ -315,8 +321,9 @@ function PresentationCreateModal({
         icon: icon.trim() || null,
         hidden,
         nav_order: navOrder === "" ? null : Number(navOrder),
-        config: groupLabel.trim() ? { group_label: groupLabel.trim() } : {},
-      }),
+        config,
+      });
+    },
     onSuccess: () => {
       toast.success("Override saved.");
       onSaved();
@@ -347,12 +354,16 @@ function PresentationCreateModal({
           groupLabel={groupLabel}
           setGroupLabel={setGroupLabel}
           showGroupLabel={showGroupLabel}
+          nestUnderModule={nestUnderModule}
+          setNestUnderModule={setNestUnderModule}
+          showNestToggle={showNestToggle}
+          moduleName={moduleName}
         />
         <div className="flex justify-end gap-2 pt-2">
           <button
             type="button"
             onClick={onClose}
-            className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
           >
             Cancel
           </button>
@@ -389,16 +400,23 @@ function PresentationEditModal({
   const [groupLabel, setGroupLabel] = useState(
     (override.config?.group_label as string | undefined) ?? "",
   );
+  const [nestUnderModule, setNestUnderModule] = useState(
+    override.config?.presents_as_top_level === false,
+  );
   const showGroupLabel = isModuleDefaultInstance(override.target_kind, override.target_id);
+  const showNestToggle = override.target_kind === "instance" && !showGroupLabel;
+  const moduleName = override.target_id.split(":")[0];
   const toast = useToast();
 
   const save = useMutation({
     mutationFn: () => {
-      // Preserve any other config keys; only touch group_label.
+      // Preserve any other config keys; only touch the ones this form owns.
       const config: Record<string, unknown> = { ...(override.config ?? {}) };
       const gl = groupLabel.trim();
       if (gl) config.group_label = gl;
       else delete config.group_label;
+      if (nestUnderModule) config.presents_as_top_level = false;
+      else delete config.presents_as_top_level;
       return api.upsertOverride(activeSlug, {
         target_kind: override.target_kind,
         target_id: override.target_id,
@@ -440,12 +458,16 @@ function PresentationEditModal({
           groupLabel={groupLabel}
           setGroupLabel={setGroupLabel}
           showGroupLabel={showGroupLabel}
+          nestUnderModule={nestUnderModule}
+          setNestUnderModule={setNestUnderModule}
+          showNestToggle={showNestToggle}
+          moduleName={moduleName}
         />
         <div className="flex justify-end gap-2 pt-2">
           <button
             type="button"
             onClick={onClose}
-            className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
           >
             Cancel
           </button>
@@ -485,6 +507,10 @@ function PresentationFields({
   groupLabel,
   setGroupLabel,
   showGroupLabel,
+  nestUnderModule,
+  setNestUnderModule,
+  showNestToggle,
+  moduleName,
 }: {
   label: string;
   setLabel: (v: string) => void;
@@ -499,11 +525,15 @@ function PresentationFields({
   groupLabel?: string;
   setGroupLabel?: (v: string) => void;
   showGroupLabel?: boolean;
+  nestUnderModule?: boolean;
+  setNestUnderModule?: (v: boolean) => void;
+  showNestToggle?: boolean;
+  moduleName?: string;
 }) {
   return (
     <>
       <label className="block">
-        <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+        <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
           Display label
         </span>
         <input
@@ -511,24 +541,24 @@ function PresentationFields({
           value={label}
           onChange={(e) => setLabel(e.target.value)}
           placeholder="(use manifest default)"
-          className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+          className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           autoFocus
         />
       </label>
       <label className="block">
-        <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+        <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
           Plural label (optional)
         </span>
         <input
           type="text"
           value={plural}
           onChange={(e) => setPlural(e.target.value)}
-          className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+          className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
         />
       </label>
       {showGroupLabel && setGroupLabel && (
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
             Specialisations heading (optional)
           </span>
           <input
@@ -536,9 +566,9 @@ function PresentationFields({
             value={groupLabel ?? ""}
             onChange={(e) => setGroupLabel(e.target.value)}
             placeholder={`${(label || "module").toLowerCase()} specialisations`}
-            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           />
-          <span className="mt-1 block text-[11px] text-slate-400 dark:text-slate-500">
+          <span className="mt-1 block text-[11px] text-faint dark:text-slate-500">
             The heading over this module's dropdown of lenses / instances
             in the nav. Defaults to "{(label || "module").toLowerCase()}{" "}
             specialisations".
@@ -546,7 +576,7 @@ function PresentationFields({
         </label>
       )}
       <label className="block">
-        <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+        <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
           Icon (lucide name, optional)
         </span>
         <input
@@ -554,11 +584,11 @@ function PresentationFields({
           value={icon}
           onChange={(e) => setIcon(e.target.value)}
           placeholder="e.g. car, wrench, package"
-          className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+          className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
         />
       </label>
       <label className="block">
-        <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+        <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
           Nav order (optional)
         </span>
         <input
@@ -566,9 +596,26 @@ function PresentationFields({
           value={navOrder}
           onChange={(e) => setNavOrder(e.target.value)}
           placeholder="lower numbers come first"
-          className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+          className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
         />
       </label>
+      {showNestToggle && setNestUnderModule && (
+        <label className="flex items-start gap-2">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={nestUnderModule ?? false}
+            onChange={(e) => setNestUnderModule(e.target.checked)}
+          />
+          <span className="text-sm">
+            Nest under <span className="font-medium">{moduleName ?? "its module"}</span>
+            <span className="mt-0.5 block text-[11px] text-faint dark:text-slate-500">
+              Off (default): shows as its own top-level nav heading. On: becomes a
+              dropdown item under {moduleName ?? "its module"} — the "types of {moduleName ?? "thing"}" shape.
+            </span>
+          </span>
+        </label>
+      )}
       <label className="flex items-center gap-2">
         <input
           type="checkbox"

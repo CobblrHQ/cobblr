@@ -88,7 +88,7 @@ export function CustomFieldsPanel({
         (className ?? "")
       }
     >
-      <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-600">
+      <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
         // custom fields
       </div>
       {visible.length > 0 && (
@@ -106,7 +106,7 @@ export function CustomFieldsPanel({
         </div>
       )}
       {visible.length === 0 && !showAll && (
-        <div className="text-[11px] text-slate-400 dark:text-slate-500 italic">
+        <div className="text-[11px] text-faint dark:text-slate-500 italic">
           No fields set.
         </div>
       )}
@@ -114,7 +114,7 @@ export function CustomFieldsPanel({
         <button
           type="button"
           onClick={() => setShowAll((v) => !v)}
-          className="text-[10px] font-mono uppercase tracking-widest text-cobble-600 hover:text-cobble-700 transition"
+          className="text-[10px] font-mono uppercase tracking-widest text-accent hover:text-accent transition"
         >
           {showAll
             ? "− hide empty fields"
@@ -188,11 +188,11 @@ function PlainRow({
   const showPreview = !!def.renderer && def.renderer !== "text";
   return (
     <label className="block">
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
         {def.display_label}
         {def.required ? <span className="text-ember-500"> *</span> : null}
         {usingFallback && (
-          <span className="ml-2 italic text-cobble-500 normal-case tracking-normal">
+          <span className="ml-2 italic text-accent normal-case tracking-normal">
             from {fallbackLabel ?? "match"}
           </span>
         )}
@@ -210,7 +210,7 @@ function PlainRow({
           className={
             "input flex-1 " +
             (usingFallback
-              ? "italic placeholder:text-cobble-500 placeholder:not-italic"
+              ? "italic placeholder:text-accent placeholder:not-italic"
               : "")
           }
           data-draft={draft}
@@ -262,9 +262,9 @@ function ChoiceRow({
   if (pendingNew !== null) {
     return (
       <label className="block">
-        <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+        <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
           {def.display_label}{" "}
-          <span className="text-cobble-500">— new value</span>
+          <span className="text-accent">— new value</span>
         </span>
         <input
           type="text"
@@ -288,7 +288,7 @@ function ChoiceRow({
 
   return (
     <label className="block">
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
         {def.display_label}
         {def.required ? <span className="text-ember-500"> *</span> : null}
       </span>

@@ -47,35 +47,35 @@ export function ThemeEditor({
   };
 
   return (
-    <div className="rounded-lg border border-slate-200 dark:border-slate-700 p-3 space-y-3">
+    <div className="rounded-lg border border-line dark:border-slate-700 p-3 space-y-3">
       <div className="flex items-center justify-between">
-        <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400">Look &amp; feel</span>
+        <span className="text-[10px] font-mono uppercase tracking-widest text-faint">Look &amp; feel</span>
         {theme && (
-          <button type="button" onClick={() => onChange(null)} className="text-[11px] text-slate-400 hover:text-ember-500">
+          <button type="button" onClick={() => onChange(null)} className="text-[11px] text-faint hover:text-ember-500">
             Reset to default
           </button>
         )}
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         {COLOR_FIELDS.map(([key, label, def]) => (
-          <label key={key} className="flex items-center gap-2 text-xs text-slate-600 dark:text-mortar-200">
+          <label key={key} className="flex items-center gap-2 text-xs text-content dark:text-mortar-200">
             <input
               type="color"
               value={theme?.[key] ?? def}
               onChange={(e) => onChange({ [key]: e.target.value })}
-              className="w-7 h-7 rounded border border-slate-300 dark:border-slate-600 bg-transparent cursor-pointer p-0"
+              className="w-7 h-7 rounded border border-line dark:border-slate-600 bg-transparent cursor-pointer p-0"
             />
             {label}
           </label>
         ))}
       </div>
       <div className="flex flex-wrap gap-4 items-end">
-        <label className="text-xs text-slate-600 dark:text-mortar-200">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 mb-1">Font</span>
+        <label className="text-xs text-content dark:text-mortar-200">
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Font</span>
           <select
             value={theme?.font ?? "sans"}
             onChange={(e) => onChange({ font: e.target.value as AppTheme["font"] })}
-            className="px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           >
             <option value="sans">Sans</option>
             <option value="serif">Serif</option>
@@ -84,43 +84,43 @@ export function ThemeEditor({
             <option value="slab">Slab</option>
           </select>
         </label>
-        <label className="text-xs text-slate-600 dark:text-mortar-200">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 mb-1">Corners (px)</span>
+        <label className="text-xs text-content dark:text-mortar-200">
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Corners (px)</span>
           <input
             type="number"
             min={0}
             max={36}
             value={theme?.radius ?? 12}
             onChange={(e) => onChange({ radius: Number(e.target.value) })}
-            className="w-20 px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-20 px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           />
         </label>
-        {helpText && <p className="text-[11px] text-slate-400 flex-1 min-w-[12rem]">{helpText}</p>}
+        {helpText && <p className="text-[11px] text-faint flex-1 min-w-[12rem]">{helpText}</p>}
       </div>
       {/* Logo + custom font — uploaded inline (stored as data: URLs, so
           they work standalone with no auth / no CDN). */}
-      <div className="flex flex-wrap gap-6 items-start pt-1 border-t border-slate-100 dark:border-slate-800">
+      <div className="flex flex-wrap gap-6 items-start pt-1 border-t border-line dark:border-slate-800">
         <div className="flex items-center gap-3">
           {theme?.logo ? (
-            <img src={theme.logo} alt="" className="w-9 h-9 rounded object-contain border border-slate-200 dark:border-slate-700" />
+            <img src={theme.logo} alt="" className="w-9 h-9 rounded object-contain border border-line dark:border-slate-700" />
           ) : (
-            <div className="w-9 h-9 rounded border border-dashed border-slate-300 dark:border-slate-600" />
+            <div className="w-9 h-9 rounded border border-dashed border-line dark:border-slate-600" />
           )}
           <div className="text-xs">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 mb-1">Logo</span>
-            <label className="text-cobble-600 hover:underline cursor-pointer">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Logo</span>
+            <label className="text-accent hover:underline cursor-pointer">
               upload
               <input type="file" accept="image/*" className="hidden" onChange={(e) => uploadAsset(e.target.files?.[0], "logo", 500_000)} />
             </label>
             {theme?.logo && (
-              <button type="button" onClick={() => onChange({ logo: undefined })} className="ml-2 text-slate-400 hover:text-ember-500">clear</button>
+              <button type="button" onClick={() => onChange({ logo: undefined })} className="ml-2 text-faint hover:text-ember-500">clear</button>
             )}
           </div>
         </div>
         <div className="text-xs">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 mb-1">Custom font</span>
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Custom font</span>
           <div className="flex items-center gap-2">
-            <label className="text-cobble-600 hover:underline cursor-pointer">
+            <label className="text-accent hover:underline cursor-pointer">
               {theme?.font_url ? "replace" : "upload"}
               <input type="file" accept=".woff,.woff2,.ttf,.otf,font/*" className="hidden" onChange={(e) => uploadAsset(e.target.files?.[0], "font_url", 1_200_000)} />
             </label>
@@ -130,13 +130,13 @@ export function ThemeEditor({
                   value={theme.font_name ?? ""}
                   onChange={(e) => onChange({ font_name: e.target.value })}
                   placeholder="font label"
-                  className="w-28 px-2 py-0.5 text-xs border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+                  className="w-28 px-2 py-0.5 text-xs border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
                 />
-                <button type="button" onClick={() => onChange({ font_url: undefined, font_name: undefined })} className="text-slate-400 hover:text-ember-500">clear</button>
+                <button type="button" onClick={() => onChange({ font_url: undefined, font_name: undefined })} className="text-faint hover:text-ember-500">clear</button>
               </>
             )}
           </div>
-          <span className="block text-[10px] text-slate-400 mt-1">woff2/ttf/otf — overrides the keyword font above.</span>
+          <span className="block text-[10px] text-faint mt-1">woff2/ttf/otf — overrides the keyword font above.</span>
         </div>
       </div>
     </div>

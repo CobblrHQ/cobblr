@@ -32,16 +32,16 @@ interface Props {
 export function EntityTile({ src, title, subtitle, badge, attention }: Props) {
   const borderCls = attention
     ? "border-ember-300 dark:border-ember-700"
-    : "border-slate-200 dark:border-slate-700";
+    : "border-line dark:border-slate-700";
   // Internal /api/v1/files URLs need Bearer auth, so route them
   // through useImageSrc which blob-loads them. External URLs and
   // null both pass through unchanged.
   const resolved = useImageSrc(src);
   return (
     <div
-      className={`rounded-xl overflow-hidden border bg-white dark:bg-slate-900 hover:border-cobble-400 dark:hover:border-cobble-600 transition flex flex-col h-full ${borderCls}`}
+      className={`rounded-xl overflow-hidden border bg-surface dark:bg-slate-900 hover:border-accent dark:hover:border-cobble-600 transition flex flex-col h-full ${borderCls}`}
     >
-      <div className="aspect-square relative bg-slate-50 dark:bg-slate-800">
+      <div className="aspect-square relative bg-subtle dark:bg-slate-800">
         {resolved ? (
           <img
             src={resolved}
@@ -50,22 +50,22 @@ export function EntityTile({ src, title, subtitle, badge, attention }: Props) {
             className="w-full h-full object-cover"
           />
         ) : (
-          <div className="w-full h-full flex items-center justify-center text-3xl font-mono text-slate-300 dark:text-slate-600">
+          <div className="w-full h-full flex items-center justify-center text-3xl font-mono text-faint dark:text-slate-600">
             {title.trim().slice(0, 1).toUpperCase() || "?"}
           </div>
         )}
         {badge && (
-          <span className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider bg-white/85 dark:bg-slate-900/85 backdrop-blur text-slate-700 dark:text-mortar-100">
+          <span className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider bg-surface/85 dark:bg-slate-900/85 backdrop-blur text-content dark:text-mortar-100">
             {badge}
           </span>
         )}
       </div>
       <div className="p-3 flex-1 flex flex-col gap-0.5">
-        <div className="font-medium text-slate-700 dark:text-mortar-100 truncate">
+        <div className="font-medium text-content dark:text-mortar-100 truncate">
           {title}
         </div>
         {subtitle && (
-          <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
+          <div className="text-xs text-muted dark:text-slate-400 truncate">
             {subtitle}
           </div>
         )}

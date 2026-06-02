@@ -50,7 +50,7 @@ export function InviteAcceptPage() {
 
   if (preview.isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center text-sm text-slate-400">
+      <div className="min-h-screen flex items-center justify-center text-sm text-faint">
         loading invite…
       </div>
     );
@@ -93,10 +93,10 @@ export function InviteAcceptPage() {
   if (!user) {
     return (
       <CenteredCard tone="info" title={`You're invited to ${p.org_name}`}>
-        <p className="text-sm text-slate-600 dark:text-mortar-200">
+        <p className="text-sm text-content dark:text-mortar-200">
           {p.invited_by_name} invited you as <strong>{p.role}</strong>.
         </p>
-        <p className="text-xs text-slate-500 dark:text-slate-400 mt-3">
+        <p className="text-xs text-muted dark:text-slate-400 mt-3">
           Sign in or create a cobblr account to accept.
         </p>
         <button
@@ -113,19 +113,19 @@ export function InviteAcceptPage() {
 
   return (
     <CenteredCard tone="info" title={`Join ${p.org_name}`}>
-      <p className="text-sm text-slate-600 dark:text-mortar-200">
+      <p className="text-sm text-content dark:text-mortar-200">
         <strong>{p.invited_by_name}</strong> invited you to{" "}
         <strong>{p.org_name}</strong> as <strong>{p.role}</strong>.
       </p>
       {p.expires_at && (
-        <p className="text-[10px] font-mono text-slate-400 dark:text-slate-500 mt-2">
+        <p className="text-[10px] font-mono text-faint dark:text-slate-500 mt-2">
           Expires {new Date(p.expires_at).toLocaleString()}
         </p>
       )}
       <div className="flex items-center gap-2 mt-5">
         <button
           onClick={() => navigate("/")}
-          className="px-3 py-1.5 rounded-md text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-mortar-50 dark:hover:bg-slate-800 transition"
+          className="px-3 py-1.5 rounded-md text-sm font-medium text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800 transition"
         >
           Not now
         </button>
@@ -153,15 +153,15 @@ function CenteredCard({
   const Icon = tone === "error" ? AlertTriangle : CheckCircle2;
   return (
     <div className="min-h-screen flex items-center justify-center px-4">
-      <div className="max-w-md w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6">
+      <div className="max-w-md w-full rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-6">
         <div
           className={
             "flex items-center gap-2 mb-3 " +
-            (tone === "error" ? "text-ember-500" : "text-cobble-500")
+            (tone === "error" ? "text-ember-500" : "text-accent")
           }
         >
           <Icon size={16} />
-          <h1 className="font-display text-lg font-bold text-slate-700 dark:text-mortar-100 lowercase">
+          <h1 className="font-display text-lg font-bold text-content dark:text-mortar-100 lowercase">
             {title}
           </h1>
         </div>

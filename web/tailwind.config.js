@@ -21,6 +21,23 @@ export default {
   theme: {
     extend: {
       colors: {
+        // ── Semantic role tokens (CSS-variable-backed) ──────────────
+        // The structural palette by ROLE, not shade — so a workspace
+        // theme recolours the admin shell by overriding the vars (no
+        // !important remap, no per-component drift). Defaults live in
+        // index.css :root = the exact current hex, so unthemed renders
+        // identically; AppLayout overrides the --c-* triplets on
+        // <html> when a workspace admin_theme is set. rgb(var/<alpha>)
+        // so opacity modifiers (bg-subtle/50, …) still work. Dark mode
+        // is unchanged — components keep their `dark:` shade variants.
+        surface: "rgb(var(--c-surface) / <alpha-value>)", // cards (was bg-white)
+        canvas: "rgb(var(--c-canvas) / <alpha-value>)",   // page bg (was bg-mortar)
+        subtle: "rgb(var(--c-subtle) / <alpha-value>)",   // subtle fills (was bg-mortar-50)
+        content: "rgb(var(--c-content) / <alpha-value>)", // primary text (was text-slate-700/600)
+        muted: "rgb(var(--c-muted) / <alpha-value>)",     // secondary text (was text-slate-500)
+        faint: "rgb(var(--c-faint) / <alpha-value>)",     // faint text (was text-slate-400)
+        line: "rgb(var(--c-line) / <alpha-value>)",       // borders (was border-slate-200/300/100)
+        accent: "rgb(var(--c-accent) / <alpha-value>)",   // links / focus (was text-cobble-*)
         slate: {
           DEFAULT: "#3D4451",
           50: "#F4F5F6",

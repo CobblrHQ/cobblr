@@ -35,6 +35,10 @@ const InstallBody = z.object({
   /** Override the registry URL. Defaults to the operator-curated
    *  cobblrhq/registry. Useful for testing against a local fixture. */
   registry_url: z.string().url().optional(),
+  /** TOFU override: a module's signing key is pinned on first install;
+   *  an update signed by a DIFFERENT key is rejected unless this is set
+   *  (the operator re-consents to the key change). */
+  allow_key_change: z.boolean().optional(),
 });
 
 const DEFAULT_REGISTRY =
@@ -110,6 +114,26 @@ sandboxInstallRouter.post("/install", async (req, res, next) => {
     if (!versionSpec.sha256 || !modSpec.public_key_ed25519 || !versionSpec.signature) {
       res.status(400).json({
         error: { code: "unsigned", message: "registry entry missing sha256 / public key / signature" },
+      });
+      return;
+    }
+
+    // TOFU key-pinning: a module's signing key is pinned on first install.
+    // An update signed by a DIFFERENT key is rejected unless the operator
+    // re-consents (allow_key_change) — this is what catches a hijacked
+    // repo serving a re-signed malicious update under the same name.
+    const prior = await meta
+      .selectFrom("installed_modules")
+      .select("signed_by")
+      .where("name", "=", name)
+      .executeTakeFirst();
+    if (prior?.signed_by && prior.signed_by !== modSpec.public_key_ed25519 && !parsed.data.allow_key_change) {
+      res.status(409).json({
+        error: {
+          code: "signing_key_changed",
+          message: `${name}'s signing key changed since it was installed. Re-consent (allow_key_change) to accept the new key.`,
+          details: { pinned: prior.signed_by, incoming: modSpec.public_key_ed25519 },
+        },
       });
       return;
     }

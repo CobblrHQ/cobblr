@@ -185,18 +185,24 @@ ordersRouter.patch(
         // collections itself (D9 from BACKLOG).
         const items = await db
           .selectFrom("purchases_order_items")
-          .select(["id", "part_id", "qty", "description"])
+          .select(["id", "part_id", "qty", "unit_cost", "description"])
           .where("order_id", "=", id)
           .where("part_id", "is not", null)
           .execute();
         for (const it of items) {
           if (!it.part_id) continue;
+          const qty = Number(it.qty);
+          const unitCost = it.unit_cost == null ? null : Number(it.unit_cost);
           await platform().events.emit("purchases.order_item.received", {
             orgId: ctx.org.id,
             orderId: id,
             orderItemId: it.id,
             partId: it.part_id,
-            delta: Number(it.qty),
+            delta: qty,
+            // Cost fields let a bundle wire log spend into a metric (e.g. a
+            // "Grocery spend" trend) without coupling purchases to anything.
+            unitCost,
+            lineCost: unitCost == null ? null : Number((unitCost * qty).toFixed(2)),
             reason: `Order arrived (${it.description ?? "item"})`,
           });
         }

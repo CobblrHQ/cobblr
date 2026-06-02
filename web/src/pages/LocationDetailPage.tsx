@@ -108,7 +108,7 @@ export function LocationDetailPage() {
   });
 
   if (!id) return <Navigate to="/configuration/locations" replace />;
-  if (location.isLoading) return <div className="text-sm text-slate-400">loading…</div>;
+  if (location.isLoading) return <div className="text-sm text-faint">loading…</div>;
   if (location.error)
     return <div className="text-sm text-ember-500">{(location.error as Error).message}</div>;
   if (!location.data) return null;
@@ -131,47 +131,47 @@ export function LocationDetailPage() {
     <div className="space-y-5 max-w-4xl">
       <Link
         to="/configuration/locations"
-        className="inline-flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 hover:text-cobble-600"
+        className="inline-flex items-center gap-1.5 text-xs text-muted dark:text-slate-400 hover:text-accent"
       >
         <ArrowLeft size={12} /> back to all locations
       </Link>
 
       {breadcrumbs.length > 0 && (
-        <nav className="flex items-center gap-1 text-[11px] font-mono text-slate-400 dark:text-slate-500">
+        <nav className="flex items-center gap-1 text-[11px] font-mono text-faint dark:text-slate-500">
           {breadcrumbs.map((b) => (
             <span key={b.id} className="inline-flex items-center gap-1">
-              <Link to={`/configuration/locations/${b.id}`} className="hover:text-cobble-600">
+              <Link to={`/configuration/locations/${b.id}`} className="hover:text-accent">
                 {b.name}
               </Link>
               <ChevronRight size={11} />
             </span>
           ))}
-          <span className="text-slate-600 dark:text-mortar-200">{l.name}</span>
+          <span className="text-content dark:text-mortar-200">{l.name}</span>
         </nav>
       )}
 
-      <header className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5">
+      <header className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5">
         <div className="flex items-start gap-4">
           <EntityThumb
             src={l.image_path}
             alt={l.name}
             size={96}
-            className="ring-1 ring-slate-200 dark:ring-slate-700"
+            className="ring-1 ring-line dark:ring-slate-700"
           />
           <div className="flex-1 min-w-0">
-            <h1 className="text-2xl font-display font-bold text-slate-700 dark:text-mortar-100">
+            <h1 className="text-2xl font-display font-bold text-content dark:text-mortar-100">
               {l.name}
             </h1>
             <div className="flex flex-wrap items-center gap-2 mt-1 text-[11px] font-mono">
-              <span className="bg-mortar-100 dark:bg-slate-800 rounded px-2 py-0.5 uppercase tracking-widest text-slate-500">
+              <span className="bg-mortar-100 dark:bg-slate-800 rounded px-2 py-0.5 uppercase tracking-widest text-muted">
                 {l.kind}
               </span>
               {l.short_name && (
-                <span className="text-slate-400 dark:text-slate-500">{l.short_name}</span>
+                <span className="text-faint dark:text-slate-500">{l.short_name}</span>
               )}
             </div>
             {l.description && (
-              <p className="text-sm text-slate-600 dark:text-mortar-200 mt-3">
+              <p className="text-sm text-content dark:text-mortar-200 mt-3">
                 {l.description}
               </p>
             )}
@@ -181,18 +181,18 @@ export function LocationDetailPage() {
             <button
               type="button"
               onClick={() => setEditing(true)}
-              className="text-[11px] font-mono uppercase tracking-widest text-cobble-600 hover:text-cobble-700 border border-cobble-200 dark:border-cobble-800 rounded px-2 py-1"
+              className="text-[11px] font-mono uppercase tracking-widest text-accent hover:text-accent border border-cobble-200 dark:border-cobble-800 rounded px-2 py-1"
             >
               edit
             </button>
           </div>
         </div>
         {l.notes && (
-          <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-700">
-            <div className="text-[10px] font-mono uppercase tracking-widest text-slate-500 mb-1">
+          <div className="mt-4 pt-3 border-t border-line dark:border-slate-700">
+            <div className="text-[10px] font-mono uppercase tracking-widest text-muted mb-1">
               notes
             </div>
-            <p className="text-sm text-slate-600 dark:text-mortar-200 whitespace-pre-wrap">
+            <p className="text-sm text-content dark:text-mortar-200 whitespace-pre-wrap">
               {l.notes}
             </p>
           </div>
@@ -201,7 +201,7 @@ export function LocationDetailPage() {
 
       {children.length > 0 && (
         <section>
-          <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500 mb-2">
+          <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
             // sub-locations ({children.length})
           </div>
           <ul className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
@@ -209,15 +209,15 @@ export function LocationDetailPage() {
               <li key={c.id}>
                 <Link
                   to={`/configuration/locations/${c.id}`}
-                  className="block rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 hover:border-cobble-300 dark:hover:border-cobble-700 transition"
+                  className="block rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 hover:border-cobble-300 dark:hover:border-cobble-700 transition"
                 >
                   <div className="flex items-center gap-2">
-                    <MapPin size={14} className="text-cobble-500" />
-                    <span className="text-sm font-medium text-slate-700 dark:text-mortar-100">
+                    <MapPin size={14} className="text-accent" />
+                    <span className="text-sm font-medium text-content dark:text-mortar-100">
                       {c.name}
                     </span>
                   </div>
-                  <div className="text-[10px] font-mono uppercase tracking-widest text-slate-400 mt-1">
+                  <div className="text-[10px] font-mono uppercase tracking-widest text-faint mt-1">
                     {c.kind}
                   </div>
                 </Link>
@@ -228,14 +228,14 @@ export function LocationDetailPage() {
       )}
 
       <section>
-        <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500 mb-2">
+        <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
           // what's here ({contents.data?.length ?? 0})
         </div>
         {contents.isLoading && (
-          <div className="text-xs text-slate-400">loading…</div>
+          <div className="text-xs text-faint">loading…</div>
         )}
         {contents.data && contents.data.length === 0 && (
-          <div className="border border-dashed border-slate-200 dark:border-slate-700 rounded-md p-6 text-center text-sm text-slate-400 italic">
+          <div className="border border-dashed border-line dark:border-slate-700 rounded-md p-6 text-center text-sm text-faint italic">
             Nothing's stored here yet. Set a part / machine / asset's
             location to "{l.name}" to see it appear.
           </div>
@@ -249,7 +249,7 @@ export function LocationDetailPage() {
                 <li key={`${item.module}:${item.id}`}>
                   <Link
                     to={href}
-                    className="block rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 hover:border-cobble-300 dark:hover:border-cobble-700 transition"
+                    className="block rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 hover:border-cobble-300 dark:hover:border-cobble-700 transition"
                   >
                     <div className="flex items-center gap-3 min-w-0">
                       <EntityThumb
@@ -258,10 +258,10 @@ export function LocationDetailPage() {
                         size={40}
                       />
                       <div className="min-w-0 flex-1">
-                        <div className="text-sm font-medium text-slate-700 dark:text-mortar-100 truncate">
+                        <div className="text-sm font-medium text-content dark:text-mortar-100 truncate">
                           {item.title}
                         </div>
-                        <div className="text-[10px] font-mono uppercase tracking-widest text-slate-400">
+                        <div className="text-[10px] font-mono uppercase tracking-widest text-faint">
                           {item.kind}
                           {item.manufacturer ? ` · ${item.manufacturer}` : ""}
                         </div>
@@ -291,7 +291,7 @@ export function LocationDetailPage() {
             });
             if (ok) remove.mutate();
           }}
-          className="text-xs text-slate-400 hover:text-ember-500 inline-flex items-center gap-1.5"
+          className="text-xs text-faint hover:text-ember-500 inline-flex items-center gap-1.5"
         >
           <Trash2 size={12} /> Delete this location
         </button>
@@ -397,7 +397,7 @@ function EditLocationModal({
           <button
             type="button"
             onClick={onClose}
-            className="flex-1 rounded-md border border-slate-200 dark:border-slate-700 text-sm text-slate-600 py-2"
+            className="flex-1 rounded-md border border-line dark:border-slate-700 text-sm text-content py-2"
           >
             Cancel
           </button>
@@ -417,7 +417,7 @@ function EditLocationModal({
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
         {label}
       </span>
       {children}

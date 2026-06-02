@@ -52,8 +52,8 @@ export function MobileNav() {
   }
 
   const linkClass =
-    "block px-4 py-3 text-sm border-b border-slate-100 dark:border-slate-800 " +
-    "text-slate-700 dark:text-mortar-100 active:bg-mortar-50 dark:active:bg-slate-800 transition";
+    "block px-4 py-3 text-sm border-b border-line dark:border-slate-800 " +
+    "text-content dark:text-mortar-100 active:bg-subtle dark:active:bg-slate-800 transition";
 
   return (
     <>
@@ -62,7 +62,7 @@ export function MobileNav() {
         onClick={() => setOpen((o) => !o)}
         aria-label={open ? "Close menu" : "Open menu"}
         aria-expanded={open}
-        className="md:hidden text-slate-500 dark:text-slate-400 hover:text-cobble-500 transition p-1.5"
+        className="md:hidden text-muted dark:text-slate-400 hover:text-accent transition p-1.5"
       >
         {open ? <X size={20} /> : <Menu size={20} />}
       </button>
@@ -77,18 +77,18 @@ export function MobileNav() {
             />
             {/* panel */}
             <nav
-              className="absolute top-0 left-0 right-0 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700 shadow-lg max-h-[88vh] overflow-y-auto"
+              className="absolute top-0 left-0 right-0 bg-surface dark:bg-slate-900 border-b border-line dark:border-slate-700 shadow-lg max-h-[88vh] overflow-y-auto"
               aria-label="Main navigation"
             >
-              <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 dark:border-slate-800">
-                <span className="font-display font-extrabold text-slate-700 dark:text-mortar-100 lowercase">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-line dark:border-slate-800">
+                <span className="font-display font-extrabold text-content dark:text-mortar-100 lowercase">
                   cobblr
                 </span>
                 <button
                   type="button"
                   onClick={() => setOpen(false)}
                   aria-label="Close menu"
-                  className="text-slate-400 hover:text-cobble-500 transition p-1"
+                  className="text-faint hover:text-accent transition p-1"
                 >
                   <X size={18} />
                 </button>
@@ -106,7 +106,7 @@ export function MobileNav() {
                     {isHeading ? (
                       // A heading has no page — just a section label above
                       // its members.
-                      <div className={linkClass + " text-slate-400 dark:text-slate-500 uppercase text-[10px] font-mono tracking-widest"}>
+                      <div className={linkClass + " text-faint dark:text-slate-500 uppercase text-[10px] font-mono tracking-widest"}>
                         {m.displayName.toLowerCase()}
                       </div>
                     ) : (
@@ -137,12 +137,12 @@ export function MobileNav() {
                           onClick={() => go(to)}
                           className={
                             linkClass +
-                            " w-full text-left pl-8 text-slate-500 dark:text-slate-400"
+                            " w-full text-left pl-8 text-muted dark:text-slate-400"
                           }
                         >
                           {k.displayName}
                           {badge && (
-                            <span className="ml-2 text-[10px] font-mono text-slate-400">
+                            <span className="ml-2 text-[10px] font-mono text-faint">
                               {badge}
                             </span>
                           )}

@@ -26,7 +26,7 @@ interface Props {
   alt: string;
   /** Square pixel size. */
   size: number;
-  /** Extra classes (e.g. ring-1 ring-slate-200 on detail headers). */
+  /** Extra classes (e.g. ring-1 ring-line on detail headers). */
   className?: string;
 }
 
@@ -40,7 +40,7 @@ export function EntityThumb({ src, alt, size, className }: Props) {
       <div
         style={s}
         className={
-          `${base} bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 flex items-center justify-center font-mono ` +
+          `${base} bg-subtle dark:bg-slate-800 text-faint dark:text-slate-500 flex items-center justify-center font-mono ` +
           (size >= 64 ? "text-lg" : size >= 40 ? "text-sm" : "text-[10px]") +
           (className ? ` ${className}` : "")
         }

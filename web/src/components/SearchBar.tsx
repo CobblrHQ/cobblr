@@ -68,8 +68,8 @@ export function SearchBar() {
 
   return (
     <div ref={ref} className="relative shrink-0 hidden md:block">
-      <div className="flex items-center gap-1 px-2 py-1 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus-within:border-cobble-500">
-        <Search size={12} className="text-slate-400" />
+      <div className="flex items-center gap-1 px-2 py-1 rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 focus-within:border-cobble-500">
+        <Search size={12} className="text-faint" />
         <input
           type="text"
           value={q}
@@ -90,7 +90,7 @@ export function SearchBar() {
         />
       </div>
       {open && items.length > 0 && (
-        <div className="absolute right-0 mt-1 w-80 max-h-96 overflow-y-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded shadow-lg z-50 divide-y divide-slate-100 dark:divide-slate-800">
+        <div className="absolute right-0 mt-1 w-80 max-h-96 overflow-y-auto bg-surface dark:bg-slate-900 border border-line dark:border-slate-700 rounded shadow-lg z-50 divide-y divide-line dark:divide-slate-800">
           {items.slice(0, 20).map((h) => (
             <button
               key={`${h.kind}:${h.id}`}
@@ -98,10 +98,10 @@ export function SearchBar() {
                 navigate(detailRoute(h.kind, h.id));
                 setOpen(false);
               }}
-              className="w-full text-left px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-800/60 text-sm"
+              className="w-full text-left px-3 py-2 hover:bg-subtle dark:hover:bg-slate-800/60 text-sm"
             >
               <div className="font-medium truncate">{h.title}</div>
-              <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
+              <div className="text-xs text-muted dark:text-slate-400 truncate">
                 {h.kind}
                 {h.subtitle ? ` · ${h.subtitle}` : ""}
               </div>
@@ -113,7 +113,7 @@ export function SearchBar() {
                 navigate(`/search?q=${encodeURIComponent(q.trim())}`);
                 setOpen(false);
               }}
-              className="w-full px-3 py-2 text-xs text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800/60 text-center"
+              className="w-full px-3 py-2 text-xs text-muted hover:bg-subtle dark:hover:bg-slate-800/60 text-center"
             >
               See all results for "{q.trim()}" →
             </button>

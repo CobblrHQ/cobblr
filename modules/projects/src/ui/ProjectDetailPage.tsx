@@ -38,16 +38,16 @@ export function ProjectDetailPage() {
     },
   });
 
-  if (project.isLoading) return <div className="text-sm text-slate-400 dark:text-slate-500">loading…</div>;
+  if (project.isLoading) return <div className="text-sm text-faint dark:text-slate-500">loading…</div>;
   if (!project.data) return <div className="text-sm text-ember-500">Project not found.</div>;
 
   return (
     <div className="space-y-5 max-w-3xl">
-      <Link to="/projects" className="inline-flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 hover:text-cobble-600">
+      <Link to="/projects" className="inline-flex items-center gap-1.5 text-xs text-muted dark:text-slate-400 hover:text-accent">
         <ArrowLeft size={12} /> back to projects
       </Link>
 
-      <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 space-y-3">
+      <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
         <div className="flex items-start gap-3">
           <input
             defaultValue={project.data.name}
@@ -56,7 +56,7 @@ export function ProjectDetailPage() {
                 updateProject.mutate({ name: e.target.value.trim() });
               }
             }}
-            className="font-display text-2xl font-bold text-slate-700 dark:text-mortar-100 bg-transparent flex-1 focus:outline-none focus:bg-mortar-50 dark:focus:bg-slate-800/70 rounded px-1"
+            className="font-display text-2xl font-bold text-content dark:text-mortar-100 bg-transparent flex-1 focus:outline-none focus:bg-subtle dark:focus:bg-slate-800/70 rounded px-1"
           />
           <EntityActionsBar entityKind="projects:project" entityId={project.data.id} className="mt-1" />
         </div>
@@ -110,7 +110,7 @@ export function ProjectDetailPage() {
         </div>
 
         <div>
-          <label className="text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 block mb-1">
+          <label className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 block mb-1">
             description
           </label>
           <textarea
@@ -141,14 +141,14 @@ export function ProjectDetailPage() {
         />
       </div>
 
-      <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500 mb-3">
+      <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5">
+        <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-3">
           // tasks
         </div>
         <NewTaskInline projectId={id!} />
-        {tasks.isLoading && <div className="text-xs text-slate-400 dark:text-slate-500 mt-3">loading…</div>}
+        {tasks.isLoading && <div className="text-xs text-faint dark:text-slate-500 mt-3">loading…</div>}
         {(tasks.data?.items ?? []).length === 0 && !tasks.isLoading && (
-          <div className="text-xs text-slate-400 dark:text-slate-500 italic mt-3">No tasks yet.</div>
+          <div className="text-xs text-faint dark:text-slate-500 italic mt-3">No tasks yet.</div>
         )}
         <ul className="space-y-1 mt-3">
           {tasks.data?.items.map((t) => (
@@ -169,7 +169,7 @@ function Labelled({
 }) {
   return (
     <div className="flex gap-2 items-center">
-      <label className="text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500">
+      <label className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
         {label}
       </label>
       {children}
@@ -248,20 +248,20 @@ function TaskRow({ task }: { task: Task }) {
           "w-4 h-4 rounded border flex items-center justify-center shrink-0 transition " +
           (done
             ? "bg-moss-500 border-moss-500"
-            : "border-slate-300 hover:border-cobble-400")
+            : "border-line hover:border-accent")
         }
       >
         {done && <Check size={11} className="text-mortar-50" />}
       </button>
       <span
         className={
-          "text-sm flex-1 " + (done ? "line-through text-slate-400 dark:text-slate-500" : "text-slate-700 dark:text-mortar-100")
+          "text-sm flex-1 " + (done ? "line-through text-faint dark:text-slate-500" : "text-content dark:text-mortar-100")
         }
       >
         {task.title}
       </span>
       {task.energy && (
-        <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500 uppercase">{task.energy}</span>
+        <span className="text-[10px] font-mono text-faint dark:text-slate-500 uppercase">{task.energy}</span>
       )}
       {blocked && (
         <span className="text-[10px] font-mono uppercase text-ember-500 bg-ember-50 px-1.5 py-0.5 rounded">
@@ -275,7 +275,7 @@ function TaskRow({ task }: { task: Task }) {
       />
       <button
         onClick={() => remove.mutate()}
-        className="opacity-0 group-hover:opacity-100 text-slate-300 dark:text-slate-600 hover:text-ember-500 transition"
+        className="opacity-0 group-hover:opacity-100 text-faint dark:text-slate-600 hover:text-ember-500 transition"
       >
         <Trash2 size={13} />
       </button>

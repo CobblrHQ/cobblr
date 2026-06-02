@@ -59,11 +59,11 @@ export function MaintenancePage() {
 
   return (
     <div className="space-y-4 max-w-3xl">
-      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-slate-700 dark:text-mortar-100 lowercase">
+      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">
           maintenance
         </h1>
-        <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
+        <span className="text-[10px] font-mono text-faint dark:text-slate-500">
           workspace-wide service log — scheduled upkeep + history
         </span>
       </div>
@@ -84,7 +84,7 @@ export function MaintenancePage() {
               className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded transition ${
                 kind === k
                   ? "bg-cobble-600 text-white"
-                  : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
+                  : "bg-subtle dark:bg-slate-800 text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-700"
               }`}
               data-testid={`maint-tab-${k}`}
             >
@@ -100,7 +100,7 @@ export function MaintenancePage() {
                 e.target.value === "any" ? "any" : Number(e.target.value),
               )
             }
-            className="text-xs rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-2 py-1.5 text-slate-700 dark:text-mortar-100"
+            className="text-xs rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5 text-content dark:text-mortar-100"
           >
             <option value="any">any time</option>
             <option value="30">due within 30 days</option>
@@ -111,10 +111,10 @@ export function MaintenancePage() {
       </div>
 
       {list.isLoading && (
-        <div className="text-sm text-slate-500">Loading…</div>
+        <div className="text-sm text-muted">Loading…</div>
       )}
       {!list.isLoading && items.length === 0 && (
-        <div className="text-sm text-slate-500 dark:text-slate-400 italic">
+        <div className="text-sm text-muted dark:text-slate-400 italic">
           {kind === "scheduled"
             ? "Nothing scheduled. Maintenance is added from an item's detail page."
             : kind === "history"
@@ -173,18 +173,18 @@ function MaintenanceCard({
   const due = entry.scheduled_at ? dueState(entry.scheduled_at, done) : null;
   return (
     <div
-      className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3"
+      className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3"
       data-testid="maint-card"
       data-entry-id={entry.id}
     >
       <div className="flex items-start gap-2">
-        <Wrench size={15} className="text-cobble-500 mt-0.5 shrink-0" />
+        <Wrench size={15} className="text-accent mt-0.5 shrink-0" />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-medium text-slate-700 dark:text-mortar-100">
+            <span className="font-medium text-content dark:text-mortar-100">
               {entry.name}
             </span>
-            <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
+            <span className="text-[10px] font-mono text-faint dark:text-slate-500">
               {entry.entity_module}·{entry.entity_type}
             </span>
             {due && (
@@ -196,11 +196,11 @@ function MaintenanceCard({
             )}
           </div>
           {entry.description && (
-            <div className="text-xs text-slate-600 dark:text-mortar-200 mt-0.5">
+            <div className="text-xs text-content dark:text-mortar-200 mt-0.5">
               {entry.description}
             </div>
           )}
-          <div className="text-[11px] font-mono text-slate-400 dark:text-slate-500 mt-1 flex flex-wrap gap-x-3">
+          <div className="text-[11px] font-mono text-faint dark:text-slate-500 mt-1 flex flex-wrap gap-x-3">
             {entry.scheduled_at && (
               <span>
                 due {new Date(entry.scheduled_at).toLocaleDateString()}
@@ -217,7 +217,7 @@ function MaintenanceCard({
             {entry.recurrence_rule && <span>↻ {entry.recurrence_rule}</span>}
           </div>
           {entry.notes && (
-            <div className="text-xs text-slate-500 dark:text-slate-400 mt-1 italic">
+            <div className="text-xs text-muted dark:text-slate-400 mt-1 italic">
               {entry.notes}
             </div>
           )}
@@ -235,7 +235,7 @@ function MaintenanceCard({
           )}
           <button
             onClick={onEdit}
-            className="text-slate-400 hover:text-cobble-600 transition p-1"
+            className="text-faint hover:text-accent transition p-1"
             title="Edit"
             data-testid="maint-edit"
           >
@@ -243,7 +243,7 @@ function MaintenanceCard({
           </button>
           <button
             onClick={onDelete}
-            className="text-slate-400 hover:text-ember-500 transition p-1"
+            className="text-faint hover:text-ember-500 transition p-1"
             title="Delete"
           >
             <Trash2 size={14} />
@@ -348,42 +348,42 @@ function EditEntryModal({
         className="space-y-3"
       >
         <label className="block">
-          <div className="text-xs text-slate-500 mb-1">Name</div>
+          <div className="text-xs text-muted mb-1">Name</div>
           <input
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             autoFocus
           />
         </label>
         <div className="grid grid-cols-2 gap-3">
           <label className="block">
-            <div className="text-xs text-slate-500 mb-1">Scheduled</div>
+            <div className="text-xs text-muted mb-1">Scheduled</div>
             <input
               type="datetime-local"
               value={scheduledAt}
               onChange={(e) => setScheduledAt(e.target.value)}
-              className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+              className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             />
           </label>
           <label className="block">
-            <div className="text-xs text-slate-500 mb-1">Performed</div>
+            <div className="text-xs text-muted mb-1">Performed</div>
             <input
               type="datetime-local"
               value={performedAt}
               onChange={(e) => setPerformedAt(e.target.value)}
-              className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+              className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             />
           </label>
         </div>
-        <p className="text-[11px] text-slate-400 -mt-1">
+        <p className="text-[11px] text-faint -mt-1">
           One of scheduled / performed is required. Set performed to log it as
           done.
         </p>
         <div className="grid grid-cols-2 gap-3">
           <label className="block">
-            <div className="text-xs text-slate-500 mb-1">Cost (USD)</div>
+            <div className="text-xs text-muted mb-1">Cost (USD)</div>
             <input
               type="number"
               step="0.01"
@@ -391,11 +391,11 @@ function EditEntryModal({
               value={costDollars}
               onChange={(e) => setCostDollars(e.target.value)}
               placeholder="0.00"
-              className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+              className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             />
           </label>
           <label className="block">
-            <div className="text-xs text-slate-500 mb-1">
+            <div className="text-xs text-muted mb-1">
               Recurrence (RRULE)
             </div>
             <input
@@ -403,24 +403,24 @@ function EditEntryModal({
               value={rule}
               onChange={(e) => setRule(e.target.value)}
               placeholder="FREQ=MONTHLY"
-              className="w-full px-2 py-1 text-sm font-mono border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+              className="w-full px-2 py-1 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             />
           </label>
         </div>
         <label className="block">
-          <div className="text-xs text-slate-500 mb-1">Notes</div>
+          <div className="text-xs text-muted mb-1">Notes</div>
           <textarea
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             rows={2}
-            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           />
         </label>
         <div className="flex justify-end gap-2 pt-2">
           <button
             type="button"
             onClick={onClose}
-            className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
           >
             Cancel
           </button>

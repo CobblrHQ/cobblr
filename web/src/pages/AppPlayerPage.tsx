@@ -79,17 +79,17 @@ export function AppPlayerPage() {
 
   if (!slug || !appSlug) return null;
   if (app.isLoading)
-    return <div className="text-xs text-slate-400 italic p-6">Loading…</div>;
+    return <div className="text-xs text-faint italic p-6">Loading…</div>;
   if (app.error || !app.data) {
     return (
       <div className="space-y-4">
         <Link
           to={`/portal/${slug}`}
-          className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-cobble-600"
+          className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-accent"
         >
           <ArrowLeft size={12} /> back
         </Link>
-        <div className="text-sm text-slate-500 italic py-8 text-center">
+        <div className="text-sm text-muted italic py-8 text-center">
           This app isn't available to you.
         </div>
       </div>
@@ -113,7 +113,7 @@ export function AppPlayerPage() {
             "px-3 py-1 rounded-md text-sm transition " +
             (i === pageIdx
               ? "bg-cobble-600 text-white"
-              : "text-slate-500 dark:text-slate-400 hover:bg-mortar-50 dark:hover:bg-slate-800")
+              : "text-muted dark:text-slate-400 hover:bg-subtle dark:hover:bg-slate-800")
           }
           style={i === pageIdx ? btnStyle(theme) : mutedStyle(theme)}
         >
@@ -124,7 +124,7 @@ export function AppPlayerPage() {
   );
   const blocksEl =
     !page || page.blocks.length === 0 ? (
-      <div className="text-xs text-slate-400 italic py-8 text-center" style={mutedStyle(theme)}>
+      <div className="text-xs text-faint italic py-8 text-center" style={mutedStyle(theme)}>
         This page has no blocks yet.
       </div>
     ) : (
@@ -191,19 +191,19 @@ export function AppPlayerPage() {
     <div className="space-y-5">
       <Link
         to={`/portal/${slug}`}
-        className="inline-flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 hover:text-cobble-600"
+        className="inline-flex items-center gap-1.5 text-xs text-muted dark:text-slate-400 hover:text-accent"
       >
         <ArrowLeft size={12} /> back
       </Link>
 
-      <div className="border-b border-slate-200 dark:border-slate-700 pb-3 flex items-start justify-between gap-3">
+      <div className="border-b border-line dark:border-slate-700 pb-3 flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-xl font-semibold text-slate-700 dark:text-mortar-100">
+          <h1 className="text-xl font-semibold text-content dark:text-mortar-100">
             {app.data.name}
           </h1>
           {tabsEl}
         </div>
-        <div className="text-xs text-slate-500 dark:text-slate-400 shrink-0 pt-1">
+        <div className="text-xs text-muted dark:text-slate-400 shrink-0 pt-1">
           <AppSwitcher slug={slug} currentSlug={appSlug} theme={null} />
         </div>
       </div>
@@ -228,7 +228,7 @@ function AppSwitcher({ slug, currentSlug, theme }: { slug: string; currentSlug: 
     : undefined;
   const menuClass = theme
     ? "absolute right-0 mt-1 z-10 min-w-[11rem] border py-1 text-sm shadow-lg"
-    : "absolute right-0 mt-1 z-10 min-w-[11rem] rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-1 text-sm shadow-lg";
+    : "absolute right-0 mt-1 z-10 min-w-[11rem] rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 py-1 text-sm shadow-lg";
   return (
     <div className="relative">
       <button
@@ -307,11 +307,11 @@ function BlockRenderer({
     case "markdown":
       return (
         <div
-          className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5"
+          className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5"
           style={cardStyle(theme)}
         >
           <div
-            className="prose prose-sm dark:prose-invert max-w-none text-slate-700 dark:text-mortar-100"
+            className="prose prose-sm dark:prose-invert max-w-none text-content dark:text-mortar-100"
             style={proseStyle(theme)}
           >
             <ReactMarkdown>{block.body}</ReactMarkdown>
@@ -363,11 +363,11 @@ function ViewBlock({
   return (
     <div className="space-y-2">
       {title && (
-        <h2 className="text-sm font-medium text-slate-600 dark:text-mortar-200" style={textStyle(theme)}>{title}</h2>
+        <h2 className="text-sm font-medium text-content dark:text-mortar-200" style={textStyle(theme)}>{title}</h2>
       )}
-      {data.isLoading && <div className="text-xs text-slate-400 italic">Loading…</div>}
+      {data.isLoading && <div className="text-xs text-faint italic">Loading…</div>}
       {data.data && data.data.items.length === 0 && (
-        <div className="text-xs text-slate-400 italic py-4">No items.</div>
+        <div className="text-xs text-faint italic py-4">No items.</div>
       )}
       {data.data && data.data.items.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -375,16 +375,16 @@ function ViewBlock({
             <Link
               key={`${item.kind}:${item.id}`}
               to={`/portal/${slug}/app/${appSlug}/r/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.id)}`}
-              className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 flex items-center gap-3 hover:border-cobble-400 dark:hover:border-cobble-600 transition"
+              className="rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 flex items-center gap-3 hover:border-accent dark:hover:border-cobble-600 transition"
               style={cardStyle(theme)}
             >
               <EntityThumb src={item.image_path ?? null} alt={item.title} size={48} />
               <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium text-slate-700 dark:text-mortar-100 truncate" style={textStyle(theme)}>
+                <div className="text-sm font-medium text-content dark:text-mortar-100 truncate" style={textStyle(theme)}>
                   {item.title}
                 </div>
                 {item.subtitle && (
-                  <div className="text-[10px] font-mono uppercase tracking-widest text-slate-400 truncate" style={mutedStyle(theme)}>
+                  <div className="text-[10px] font-mono uppercase tracking-widest text-faint truncate" style={mutedStyle(theme)}>
                     {item.subtitle}
                   </div>
                 )}
@@ -431,11 +431,11 @@ function StatBlock({
       }, 0);
   }
   return (
-    <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 inline-flex flex-col min-w-[8rem]" style={cardStyle(theme)}>
-      <span className="text-2xl font-bold text-slate-700 dark:text-mortar-100 tabular-nums" style={accentStyle(theme)}>
+    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 inline-flex flex-col min-w-[8rem]" style={cardStyle(theme)}>
+      <span className="text-2xl font-bold text-content dark:text-mortar-100 tabular-nums" style={accentStyle(theme)}>
         {value === null ? "…" : value.toLocaleString()}
       </span>
-      <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400 mt-0.5" style={mutedStyle(theme)}>
+      <span className="text-[10px] font-mono uppercase tracking-widest text-faint mt-0.5" style={mutedStyle(theme)}>
         {label ?? (agg === "count" ? "count" : `sum ${field ?? ""}`)}
       </span>
     </div>
@@ -528,7 +528,7 @@ function ActionBlock({
           setBusy(false);
         }
       }}
-      className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-mortar-100 hover:bg-mortar-50 dark:hover:bg-slate-800 text-sm font-medium px-3 py-1.5 transition disabled:opacity-50"
+      className="inline-flex items-center gap-1.5 rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 text-sm font-medium px-3 py-1.5 transition disabled:opacity-50"
       style={theme ? { borderColor: "var(--app-border)", color: "var(--app-text)", borderRadius: "var(--app-radius)" } : undefined}
     >
       {label ?? actionId}
@@ -593,22 +593,22 @@ function RecordView({
         .map((g) => g.action_id)
         .filter((aid) => !held.has(aid));
   if (ent.isLoading)
-    return <div className="text-xs text-slate-400 italic">Loading…</div>;
+    return <div className="text-xs text-faint italic">Loading…</div>;
   if (!ent.data)
-    return <div className="text-sm text-slate-500 italic py-4">Record not found.</div>;
+    return <div className="text-sm text-muted italic py-4">Record not found.</div>;
   const fields = Object.entries(ent.data.fields ?? {}).filter(
     ([k]) => !k.startsWith("_") && k !== "metadata",
   );
   return (
-    <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 space-y-4">
+    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-4">
       <div className="flex items-start gap-3">
         <EntityThumb src={ent.data.image_path ?? null} alt={ent.data.title} size={64} />
         <div className="min-w-0">
-          <h2 className="text-lg font-semibold text-slate-700 dark:text-mortar-100">
+          <h2 className="text-lg font-semibold text-content dark:text-mortar-100">
             {ent.data.title}
           </h2>
           {ent.data.subtitle && (
-            <div className="text-[10px] font-mono uppercase tracking-widest text-slate-400">
+            <div className="text-[10px] font-mono uppercase tracking-widest text-faint">
               {ent.data.subtitle}
             </div>
           )}
@@ -619,10 +619,10 @@ function RecordView({
         <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
           {fields.map(([k, v]) => (
             <div key={k} className="min-w-0">
-              <dt className="text-[10px] font-mono uppercase tracking-widest text-slate-400">
+              <dt className="text-[10px] font-mono uppercase tracking-widest text-faint">
                 {k}
               </dt>
-              <dd className="text-slate-700 dark:text-mortar-100 truncate">
+              <dd className="text-content dark:text-mortar-100 truncate">
                 {v === null || v === undefined || v === "" ? "—" : String(v)}
               </dd>
             </div>
@@ -792,13 +792,13 @@ function CustomBlock({
       : "system-ui,-apple-system,sans-serif";
   const fontFace = fontFaceCss(theme) ?? "";
   const srcDoc = `<!doctype html><html><head><meta charset="utf-8"><style>${fontFace}body{font-family:${bodyFont};margin:0;padding:14px;color:${bodyText};background:${bodyBg};font-size:14px}</style>${SDK_SCRIPT}</head><body>${html}</body></html>`;
-  const frameClass = theme ? "w-full border" : "w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white";
+  const frameClass = theme ? "w-full border" : "w-full rounded-xl border border-line dark:border-slate-700 bg-surface";
   const frameStyle: React.CSSProperties = theme
     ? { height: `${height ?? 360}px`, background: "var(--app-bg)", borderColor: "var(--app-border)", borderRadius: "var(--app-radius)" }
     : { height: `${height ?? 360}px` };
   if (!ready)
     return (
-      <div className={frameClass + " flex items-center justify-center text-xs text-slate-400 italic"} style={frameStyle}>
+      <div className={frameClass + " flex items-center justify-center text-xs text-faint italic"} style={frameStyle}>
         Loading…
       </div>
     );
@@ -829,7 +829,7 @@ export function AppRecordPage() {
     <div className="space-y-5">
       <Link
         to={`/portal/${slug}/app/${appSlug}`}
-        className="inline-flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 hover:text-cobble-600"
+        className="inline-flex items-center gap-1.5 text-xs text-muted dark:text-slate-400 hover:text-accent"
       >
         <ArrowLeft size={12} /> back
       </Link>

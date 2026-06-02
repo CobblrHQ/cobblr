@@ -45,19 +45,19 @@ export function MeActivityPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
-        <History size={20} className="text-cobble-600" />
-        <h1 className="text-2xl font-semibold text-slate-700 dark:text-mortar-100">
+      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
+        <History size={20} className="text-accent" />
+        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">
           Your activity
         </h1>
-        <span className="text-sm text-slate-500 dark:text-slate-400">
+        <span className="text-sm text-muted dark:text-slate-400">
           {items.length} actions
         </span>
         <div className="flex-1" />
         <select
           value={orgFilter ?? ""}
           onChange={(e) => setOrgFilter(e.target.value || null)}
-          className="px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+          className="px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
         >
           <option value="">all workspaces</option>
           {orgs.map((o) => (
@@ -68,17 +68,17 @@ export function MeActivityPage() {
         </select>
       </div>
 
-      <p className="text-sm text-slate-500 dark:text-slate-400">
+      <p className="text-sm text-muted dark:text-slate-400">
         Every action attributed to you across every workspace you belong
         to. Filter to a single workspace via the picker, or open the
         per-workspace activity log under <code className="font-mono text-xs">/configuration → Activity log</code>.
       </p>
 
       {q.isLoading && (
-        <div className="text-sm text-slate-500">Loading…</div>
+        <div className="text-sm text-muted">Loading…</div>
       )}
       {!q.isLoading && items.length === 0 && (
-        <div className="text-sm text-slate-500 italic">
+        <div className="text-sm text-muted italic">
           {orgFilter
             ? "No activity in this workspace yet."
             : "No activity yet."}
@@ -87,10 +87,10 @@ export function MeActivityPage() {
 
       {byDay.map(([day, entries]) => (
         <section key={day}>
-          <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500 mb-2">
-            {day} <span className="text-slate-400 dark:text-slate-500">({entries.length})</span>
+          <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
+            {day} <span className="text-faint dark:text-slate-500">({entries.length})</span>
           </div>
-          <ul className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 divide-y divide-slate-100 dark:divide-slate-800">
+          <ul className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 divide-y divide-line dark:divide-slate-800">
             {entries.map((e) => (
               <ActivityRow key={e.id} entry={e} />
             ))}
@@ -114,20 +114,20 @@ function ActivityRow({ entry: e }: { entry: CrossOrgActivityEntry }) {
     <li className="px-4 py-2 flex items-baseline gap-3 text-sm">
       <Link
         to={`/me/activity?org=${e.org_slug}`}
-        className="text-[10px] font-mono uppercase tracking-wider text-cobble-700 bg-cobble-50 dark:text-cobble-300 dark:bg-cobble-900/30 px-1.5 py-0.5 rounded hover:bg-cobble-100"
+        className="text-[10px] font-mono uppercase tracking-wider text-accent bg-cobble-50 dark:text-cobble-300 dark:bg-cobble-900/30 px-1.5 py-0.5 rounded hover:bg-cobble-100"
       >
         {e.org_name}
       </Link>
-      <span className="text-slate-600 dark:text-mortar-200">{action}</span>
-      <span className="text-slate-700 dark:text-mortar-100 truncate">
+      <span className="text-content dark:text-mortar-200">{action}</span>
+      <span className="text-content dark:text-mortar-100 truncate">
         {title ?? (
-          <span className="font-mono text-xs text-slate-400">
+          <span className="font-mono text-xs text-faint">
             {e.entity_type ?? e.action}
           </span>
         )}
       </span>
       <span className="flex-1" />
-      <span className="font-mono text-[10px] text-slate-400 shrink-0">
+      <span className="font-mono text-[10px] text-faint shrink-0">
         {new Date(e.occurred_at).toLocaleTimeString()}
       </span>
     </li>

@@ -62,12 +62,12 @@ export function RolesPage() {
 
   return (
     <div className="space-y-5 max-w-5xl">
-      <div className="flex items-baseline justify-between border-b border-slate-200 dark:border-slate-700 pb-3">
+      <div className="flex items-baseline justify-between border-b border-line dark:border-slate-700 pb-3">
         <div>
-          <h1 className="font-display text-2xl font-extrabold text-slate-700 dark:text-mortar-100 lowercase">
+          <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">
             custom roles
           </h1>
-          <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
+          <span className="text-[10px] font-mono text-faint dark:text-slate-500">
             workspace-defined capability bundles. members get stock role +
             any custom roles you assign.
           </span>
@@ -82,7 +82,7 @@ export function RolesPage() {
       </div>
 
       {roles.length === 0 && (
-        <div className="text-xs text-slate-400 italic">
+        <div className="text-xs text-faint italic">
           No custom roles yet. Create one to bundle multiple capabilities under a name (e.g. "Sorter" = create-part + assign-location).
         </div>
       )}
@@ -91,19 +91,19 @@ export function RolesPage() {
         {roles.map((r) => (
           <div
             key={r.id}
-            className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 space-y-2"
+            className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-2"
           >
             <div className="flex items-start justify-between gap-2">
               <div>
-                <div className="font-display font-bold text-slate-700 dark:text-mortar-100">
+                <div className="font-display font-bold text-content dark:text-mortar-100">
                   {r.name}
                 </div>
                 {r.description && (
-                  <div className="text-xs text-slate-500 dark:text-slate-400">
+                  <div className="text-xs text-muted dark:text-slate-400">
                     {r.description}
                   </div>
                 )}
-                <div className="text-[10px] font-mono uppercase tracking-widest text-slate-400 mt-1">
+                <div className="text-[10px] font-mono uppercase tracking-widest text-faint mt-1">
                   {r.member_count} member{r.member_count === 1 ? "" : "s"} ·{" "}
                   {r.capabilities.length} capabilit{r.capabilities.length === 1 ? "y" : "ies"}
                 </div>
@@ -112,7 +112,7 @@ export function RolesPage() {
                 <button
                   type="button"
                   onClick={() => setEditing(r)}
-                  className="text-slate-400 hover:text-cobble-600 transition p-1"
+                  className="text-faint hover:text-accent transition p-1"
                   title="Edit"
                 >
                   <Pencil size={12} />
@@ -128,7 +128,7 @@ export function RolesPage() {
                     });
                     if (ok) remove.mutate(r.id);
                   }}
-                  className="text-slate-400 hover:text-ember-500 transition p-1"
+                  className="text-faint hover:text-ember-500 transition p-1"
                   title="Delete"
                 >
                   <Trash2 size={12} />
@@ -139,7 +139,7 @@ export function RolesPage() {
               {r.capabilities.map((c) => (
                 <span
                   key={c}
-                  className="text-[10px] font-mono rounded border border-cobble-200 dark:border-cobble-700 bg-cobble-50/50 dark:bg-cobble-900/30 px-1.5 py-0.5 text-cobble-700 dark:text-cobble-300"
+                  className="text-[10px] font-mono rounded border border-cobble-200 dark:border-cobble-700 bg-cobble-50/50 dark:bg-cobble-900/30 px-1.5 py-0.5 text-accent dark:text-cobble-300"
                 >
                   {c}
                 </span>
@@ -150,27 +150,27 @@ export function RolesPage() {
       </div>
 
       {roles.length > 0 && members.length > 0 && (
-        <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
-          <div className="text-[10px] font-mono uppercase tracking-widest text-slate-400 px-3 pt-2 pb-1">
+        <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-x-auto">
+          <div className="text-[10px] font-mono uppercase tracking-widest text-faint px-3 pt-2 pb-1">
             Assignments
           </div>
           <table className="w-full text-sm">
-            <thead className="bg-mortar-50/50 dark:bg-slate-800/40">
+            <thead className="bg-subtle/50 dark:bg-slate-800/40">
               <tr>
-                <th className="text-left text-[10px] font-mono uppercase tracking-widest text-slate-400 px-3 py-2">
+                <th className="text-left text-[10px] font-mono uppercase tracking-widest text-faint px-3 py-2">
                   Member
                 </th>
                 {roles.map((r) => (
                   <th
                     key={r.id}
-                    className="text-center text-[10px] font-mono text-cobble-600 px-3 py-2"
+                    className="text-center text-[10px] font-mono text-accent px-3 py-2"
                   >
                     {r.name}
                   </th>
                 ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+            <tbody className="divide-y divide-line dark:divide-slate-800">
               {members.map((m) => {
                 const isAdmin = m.role === "owner" || m.role === "admin";
                 // Need to know which roles a member has — fetch
@@ -181,13 +181,13 @@ export function RolesPage() {
                   return (
                     <tr key={m.id}>
                       <td className="px-3 py-2">
-                        <div className="text-sm text-slate-700 dark:text-mortar-100">{m.display_name}</div>
-                        <div className="text-[10px] font-mono text-slate-400">{m.email}</div>
+                        <div className="text-sm text-content dark:text-mortar-100">{m.display_name}</div>
+                        <div className="text-[10px] font-mono text-faint">{m.email}</div>
                       </td>
                       {roles.map((r) => (
                         <td
                           key={r.id}
-                          className="text-center px-3 py-2 text-[10px] text-slate-400"
+                          className="text-center px-3 py-2 text-[10px] text-faint"
                           title="Admins have every capability implicitly"
                         >
                           —
@@ -199,8 +199,8 @@ export function RolesPage() {
                 return (
                   <tr key={m.id}>
                     <td className="px-3 py-2">
-                      <div className="text-sm text-slate-700 dark:text-mortar-100">{m.display_name}</div>
-                      <div className="text-[10px] font-mono text-slate-400">{m.email}</div>
+                      <div className="text-sm text-content dark:text-mortar-100">{m.display_name}</div>
+                      <div className="text-[10px] font-mono text-faint">{m.email}</div>
                     </td>
                     {roles.map((r) => (
                       <td key={r.id} className="text-center px-3 py-2">
@@ -268,7 +268,7 @@ function AssignToggle({
         "w-6 h-6 rounded inline-flex items-center justify-center transition " +
         (assigned
           ? "bg-cobble-600 text-white hover:bg-cobble-700"
-          : "border border-slate-300 dark:border-slate-600 text-slate-300 dark:text-slate-600 hover:border-cobble-400")
+          : "border border-line dark:border-slate-600 text-faint dark:text-slate-600 hover:border-accent")
       }
       title={assigned ? "Unassign" : "Assign"}
       data-role-id={roleId}
@@ -343,7 +343,7 @@ function RoleEditorModal({
     <Modal open={open} onClose={onClose} title={role ? "Edit role" : "New role"} size="md">
       <form onSubmit={submit} className="space-y-3">
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 mb-1">
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
             Name
           </span>
           <input
@@ -357,7 +357,7 @@ function RoleEditorModal({
           />
         </label>
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 mb-1">
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
             Description (optional)
           </span>
           <input
@@ -369,15 +369,15 @@ function RoleEditorModal({
           />
         </label>
         <div>
-          <div className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 mb-1">
+          <div className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
             Capabilities
           </div>
           {actions.length === 0 && (
-            <div className="text-xs text-slate-400 italic">No grantable actions in this workspace yet.</div>
+            <div className="text-xs text-faint italic">No grantable actions in this workspace yet.</div>
           )}
-          <div className="space-y-1 max-h-64 overflow-y-auto rounded-md border border-slate-200 dark:border-slate-700 p-2">
+          <div className="space-y-1 max-h-64 overflow-y-auto rounded-md border border-line dark:border-slate-700 p-2">
             {actions.map((a) => (
-              <label key={a.action_id} className="flex items-start gap-2 px-1 py-1 cursor-pointer hover:bg-mortar-50/50 dark:hover:bg-slate-800/40 rounded">
+              <label key={a.action_id} className="flex items-start gap-2 px-1 py-1 cursor-pointer hover:bg-subtle/50 dark:hover:bg-slate-800/40 rounded">
                 <input
                   type="checkbox"
                   checked={picked.has(a.action_id)}
@@ -385,8 +385,8 @@ function RoleEditorModal({
                   className="accent-cobble-500 mt-0.5"
                 />
                 <div className="min-w-0 flex-1">
-                  <div className="text-sm text-slate-700 dark:text-mortar-100">{a.label}</div>
-                  <div className="text-[10px] font-mono text-slate-400">{a.action_id}</div>
+                  <div className="text-sm text-content dark:text-mortar-100">{a.label}</div>
+                  <div className="text-[10px] font-mono text-faint">{a.action_id}</div>
                 </div>
               </label>
             ))}
@@ -396,7 +396,7 @@ function RoleEditorModal({
           <button
             type="button"
             onClick={onClose}
-            className="flex-1 rounded-md border border-slate-200 dark:border-slate-700 text-sm text-slate-600 dark:text-mortar-200 hover:bg-mortar-50 dark:hover:bg-slate-800 transition py-2"
+            className="flex-1 rounded-md border border-line dark:border-slate-700 text-sm text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 transition py-2"
           >
             Cancel
           </button>

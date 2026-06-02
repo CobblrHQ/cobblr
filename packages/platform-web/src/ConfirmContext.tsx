@@ -91,21 +91,21 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
           aria-modal="true"
         >
           <div
-            className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 max-w-sm w-full p-5"
+            className="bg-surface dark:bg-slate-900 rounded-xl shadow-2xl border border-line dark:border-slate-700 max-w-sm w-full p-5"
             onClick={(e) => e.stopPropagation()}
           >
             {pending.title && (
-              <h2 className="font-display text-base font-bold text-slate-700 dark:text-mortar-100 mb-2 lowercase">
+              <h2 className="font-display text-base font-bold text-content dark:text-mortar-100 mb-2 lowercase">
                 {pending.title}
               </h2>
             )}
-            <p className="text-sm text-slate-600 dark:text-mortar-200 whitespace-pre-wrap">
+            <p className="text-sm text-content dark:text-mortar-200 whitespace-pre-wrap">
               {pending.message}
             </p>
             <div className="flex items-center justify-end gap-2 mt-5">
               <button
                 onClick={() => close(false)}
-                className="px-3 py-1.5 rounded-md text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-mortar-50 dark:hover:bg-slate-800 transition"
+                className="px-3 py-1.5 rounded-md text-sm font-medium text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800 transition"
               >
                 {pending.cancelLabel ?? "Cancel"}
               </button>

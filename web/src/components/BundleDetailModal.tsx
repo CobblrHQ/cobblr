@@ -188,12 +188,12 @@ export function BundleDetailModal(props: Props) {
     <Modal open={open} onClose={onClose} title={`${titlePrefix}${name}`} subtitle={subtitle} size="lg">
       <div className="space-y-5">
         {props.mode === "featured" && props.blurb && (
-          <p className="text-sm text-slate-600 dark:text-mortar-200 italic">
+          <p className="text-sm text-content dark:text-mortar-200 italic">
             {props.blurb}
           </p>
         )}
         {description && (
-          <p className="text-sm text-slate-600 dark:text-mortar-200">{description}</p>
+          <p className="text-sm text-content dark:text-mortar-200">{description}</p>
         )}
 
         {screenshots.length > 0 && (
@@ -203,7 +203,7 @@ export function BundleDetailModal(props: Props) {
                 key={i}
                 src={src}
                 alt={`${name} screenshot ${i + 1}`}
-                className="h-32 rounded-md border border-slate-200 dark:border-slate-700 object-cover shrink-0"
+                className="h-32 rounded-md border border-line dark:border-slate-700 object-cover shrink-0"
                 loading="lazy"
               />
             ))}
@@ -212,7 +212,7 @@ export function BundleDetailModal(props: Props) {
 
         {readme && (
           <Section title="walkthrough">
-            <div className="prose prose-sm dark:prose-invert max-w-none text-slate-700 dark:text-mortar-100">
+            <div className="prose prose-sm dark:prose-invert max-w-none text-content dark:text-mortar-100">
               <ReactMarkdown>{readme}</ReactMarkdown>
             </div>
           </Section>
@@ -228,7 +228,7 @@ export function BundleDetailModal(props: Props) {
               {props.alreadyInstalled ? (
                 <span className="text-moss-600">installed</span>
               ) : (
-                <span className="text-slate-400">preview</span>
+                <span className="text-faint">preview</span>
               )}
             </Row>
           )}
@@ -246,7 +246,7 @@ export function BundleDetailModal(props: Props) {
               {requires.map((r) => (
                 <span
                   key={r.module}
-                  className="font-mono text-[11px] px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-mortar-200"
+                  className="font-mono text-[11px] px-2 py-0.5 rounded border border-line dark:border-slate-700 text-content dark:text-mortar-200"
                 >
                   {r.module}
                   {r.version ? `@${r.version}` : ""}
@@ -258,7 +258,7 @@ export function BundleDetailModal(props: Props) {
 
         {providesLens && (
           <Section title="provides a lens">
-            <div className="text-xs text-slate-600 dark:text-mortar-200">
+            <div className="text-xs text-content dark:text-mortar-200">
               Adds a{" "}
               <strong>{providesLens.display_name ?? providesLens.name}</strong> view
               under <code className="font-mono">{providesLens.entity_kind}</code>.
@@ -275,23 +275,23 @@ export function BundleDetailModal(props: Props) {
               {wires.map((w) => (
                 <li
                   key={w.id}
-                  className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-2 text-xs"
+                  className="rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-2 text-xs"
                 >
                   <div className="flex items-baseline gap-2 flex-wrap">
-                    <code className="font-mono text-cobble-600 dark:text-cobble-300">
+                    <code className="font-mono text-accent dark:text-cobble-300">
                       {w.source_kind}
                     </code>
-                    <span className="text-slate-400">→</span>
-                    <code className="font-mono text-cobble-600 dark:text-cobble-300">
+                    <span className="text-faint">→</span>
+                    <code className="font-mono text-accent dark:text-cobble-300">
                       {w.action_id}
                     </code>
-                    <span className="text-[10px] font-mono text-slate-400">
+                    <span className="text-[10px] font-mono text-faint">
                       ({w.trigger_type}
                       {w.trigger_event ? ` on ${w.trigger_event}` : ""})
                     </span>
                   </div>
                   {w.template && (
-                    <div className="mt-1.5 font-mono text-[11px] text-slate-600 dark:text-mortar-200 bg-mortar-50 dark:bg-slate-800/70 rounded px-2 py-1 break-all">
+                    <div className="mt-1.5 font-mono text-[11px] text-content dark:text-mortar-200 bg-subtle dark:bg-slate-800/70 rounded px-2 py-1 break-all">
                       {w.template}
                     </div>
                   )}
@@ -310,16 +310,16 @@ export function BundleDetailModal(props: Props) {
               {fieldDefs.map((f) => (
                 <li
                   key={f.id}
-                  className="flex items-baseline gap-3 text-sm text-slate-700 dark:text-mortar-100 py-1 border-b border-slate-100 dark:border-slate-700 last:border-0"
+                  className="flex items-baseline gap-3 text-sm text-content dark:text-mortar-100 py-1 border-b border-line dark:border-slate-700 last:border-0"
                 >
-                  <code className="font-mono text-xs text-cobble-600 dark:text-cobble-300 w-32 truncate">
+                  <code className="font-mono text-xs text-accent dark:text-cobble-300 w-32 truncate">
                     {f.entity_kind}
                   </code>
-                  <code className="font-mono text-xs text-slate-400 w-32 truncate">
+                  <code className="font-mono text-xs text-faint w-32 truncate">
                     {f.name}
                   </code>
                   <span className="flex-1">{f.display_label}</span>
-                  <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400">
+                  <span className="text-[10px] font-mono uppercase tracking-widest text-faint">
                     {f.type}
                   </span>
                 </li>
@@ -331,22 +331,22 @@ export function BundleDetailModal(props: Props) {
         {/* Raw manifest collapsible */}
         {manifest && (
           <details className="text-xs">
-            <summary className="font-mono uppercase tracking-widest text-[10px] text-slate-400 cursor-pointer">
+            <summary className="font-mono uppercase tracking-widest text-[10px] text-faint cursor-pointer">
               View raw manifest JSON
             </summary>
-            <pre className="mt-2 p-2 rounded bg-mortar-50 dark:bg-slate-800 font-mono text-[11px] overflow-x-auto text-slate-600 dark:text-mortar-200 max-h-64">
+            <pre className="mt-2 p-2 rounded bg-subtle dark:bg-slate-800 font-mono text-[11px] overflow-x-auto text-content dark:text-mortar-200 max-h-64">
               {JSON.stringify(manifest, null, 2)}
             </pre>
           </details>
         )}
 
         {/* Footer actions */}
-        <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-700">
+        <div className="flex items-center justify-between pt-3 border-t border-line dark:border-slate-700">
           {props.mode === "installed" ? (
             <button
               onClick={handleUninstall}
               disabled={uninstall.isPending}
-              className="text-[10px] font-mono uppercase tracking-widest text-slate-400 hover:text-ember-500 transition flex items-center gap-1"
+              className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-ember-500 transition flex items-center gap-1"
             >
               <Trash2 size={11} /> uninstall bundle
             </button>
@@ -370,14 +370,14 @@ export function BundleDetailModal(props: Props) {
             <button
               onClick={downloadManifest}
               disabled={!manifest}
-              className="text-[10px] font-mono uppercase tracking-widest text-slate-500 hover:text-cobble-600 transition flex items-center gap-1"
+              className="text-[10px] font-mono uppercase tracking-widest text-muted hover:text-accent transition flex items-center gap-1"
               title="Download the manifest JSON"
             >
               <Download size={11} /> download
             </button>
             <button
               onClick={onClose}
-              className="px-3 py-1.5 rounded-md text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-mortar-50 dark:hover:bg-slate-800 transition"
+              className="px-3 py-1.5 rounded-md text-sm font-medium text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800 transition"
             >
               Close
             </button>
@@ -391,10 +391,10 @@ export function BundleDetailModal(props: Props) {
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <dt className="text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-0.5">
+      <dt className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-0.5">
         {label}
       </dt>
-      <dd className="text-slate-700 dark:text-mortar-100">{children}</dd>
+      <dd className="text-content dark:text-mortar-100">{children}</dd>
     </div>
   );
 }
@@ -402,7 +402,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500 mb-2">
+      <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
         // {title}
       </div>
       {children}
@@ -411,5 +411,5 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 function EmptyHint({ children }: { children: React.ReactNode }) {
-  return <div className="text-xs text-slate-400 italic">{children}</div>;
+  return <div className="text-xs text-faint italic">{children}</div>;
 }

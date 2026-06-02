@@ -69,11 +69,11 @@ export function PurchasesPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3 flex-wrap">
-        <h1 className="font-display text-2xl font-extrabold text-slate-700 dark:text-mortar-100 lowercase">
+      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3 flex-wrap">
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">
           purchases
         </h1>
-        <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
+        <span className="text-[10px] font-mono text-faint dark:text-slate-500">
           {filtered.length} of {allRows.length}
         </span>
         <div className="flex-1" />
@@ -88,7 +88,7 @@ export function PurchasesPage() {
           ))}
         </select>
         <div className="relative">
-          <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
+          <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-faint" />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -104,9 +104,9 @@ export function PurchasesPage() {
         </button>
       </div>
 
-      <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
+      <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-x-auto">
         <table className="w-full text-sm">
-          <thead className="bg-mortar-50/60 dark:bg-slate-800/40 text-[10px] font-mono uppercase tracking-widest text-slate-500 dark:text-slate-400">
+          <thead className="bg-subtle/60 dark:bg-slate-800/40 text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
             <tr>
               <th className="w-8 px-3 py-2">
                 <input
@@ -128,12 +128,12 @@ export function PurchasesPage() {
               <th className="w-6"></th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+          <tbody className="divide-y divide-line dark:divide-slate-700">
             {filtered.map((o) => (
               <tr
                 key={o.id}
                 onClick={() => navigate(`/purchases/${o.id}`)}
-                className="hover:bg-mortar-50 dark:hover:bg-slate-800/40 transition cursor-pointer"
+                className="hover:bg-subtle dark:hover:bg-slate-800/40 transition cursor-pointer"
               >
                 <td
                   className="px-3 py-2 w-8"
@@ -147,32 +147,32 @@ export function PurchasesPage() {
                     aria-label={`Select ${o.vendor || o.order_number}`}
                   />
                 </td>
-                <td className="px-3 py-2 text-slate-700 dark:text-mortar-100 font-medium">
+                <td className="px-3 py-2 text-content dark:text-mortar-100 font-medium">
                   {o.vendor || "—"}
                 </td>
-                <td className="px-3 py-2 text-slate-500 dark:text-slate-400 font-mono text-xs">
+                <td className="px-3 py-2 text-muted dark:text-slate-400 font-mono text-xs">
                   {o.order_number || "—"}
                 </td>
                 <td className="px-3 py-2">
                   <StatusPill status={o.status} />
                 </td>
-                <td className="px-3 py-2 text-slate-500 dark:text-slate-400 text-xs">
+                <td className="px-3 py-2 text-muted dark:text-slate-400 text-xs">
                   {o.ordered_at ? new Date(o.ordered_at).toLocaleDateString() : "—"}
                 </td>
-                <td className="px-3 py-2 text-slate-500 dark:text-slate-400 text-xs">
+                <td className="px-3 py-2 text-muted dark:text-slate-400 text-xs">
                   {o.arrived_at ? new Date(o.arrived_at).toLocaleDateString() : "—"}
                 </td>
-                <td className="px-3 py-2 text-right font-mono text-xs text-slate-600 dark:text-mortar-200">
+                <td className="px-3 py-2 text-right font-mono text-xs text-content dark:text-mortar-200">
                   {o.total_cost ? `$${Number(o.total_cost).toFixed(2)}` : "—"}
                 </td>
-                <td className="px-2 py-2 text-slate-300 dark:text-slate-600">
+                <td className="px-2 py-2 text-faint dark:text-slate-600">
                   <ChevronRight size={14} />
                 </td>
               </tr>
             ))}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-3 py-10 text-center text-xs text-slate-400 italic">
+                <td colSpan={8} className="px-3 py-10 text-center text-xs text-faint italic">
                   {allRows.length === 0
                     ? "No orders yet. Click + new to log one."
                     : "No matches with the current filters."}
@@ -213,8 +213,8 @@ export function PurchasesPage() {
 
 function StatusPill({ status }: { status: Order["status"] }) {
   const palette: Record<Order["status"], string> = {
-    planned: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300",
-    ordered: "bg-cobble-100 text-cobble-700 dark:bg-cobble-700/40 dark:text-cobble-200",
+    planned: "bg-subtle text-content dark:bg-slate-800 dark:text-slate-300",
+    ordered: "bg-cobble-100 text-accent dark:bg-cobble-700/40 dark:text-cobble-200",
     "in-transit": "bg-moss-100 text-moss-700 dark:bg-moss-700/40 dark:text-moss-200",
     arrived: "bg-moss-200 text-moss-800 dark:bg-moss-700 dark:text-moss-100",
     cancelled: "bg-ember-100 text-ember-700 dark:bg-ember-700/40 dark:text-ember-200",
@@ -291,28 +291,28 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
           <EditField label="Notes" value={o.notes ?? ""} multiline onCommit={(v) => update.mutate({ notes: v || null })} />
 
           <div>
-            <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500 mb-2">
+            <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
               // line items ({o.items?.length ?? 0})
             </div>
             {!o.items || o.items.length === 0 ? (
-              <div className="text-xs text-slate-400 italic">No items on this order.</div>
+              <div className="text-xs text-faint italic">No items on this order.</div>
             ) : (
               <ul className="space-y-1 text-sm">
                 {o.items.map((it) => (
                   <li
                     key={it.id}
-                    className="flex items-baseline gap-3 px-2 py-1.5 rounded border border-slate-100 dark:border-slate-700"
+                    className="flex items-baseline gap-3 px-2 py-1.5 rounded border border-line dark:border-slate-700"
                   >
-                    <span className="flex-1 text-slate-700 dark:text-mortar-100">
+                    <span className="flex-1 text-content dark:text-mortar-100">
                       {it.description ?? "—"}
                     </span>
-                    <span className="font-mono text-xs text-slate-500">
+                    <span className="font-mono text-xs text-muted">
                       {Number(it.qty).toFixed(0)} ×
                     </span>
-                    <span className="font-mono text-xs text-slate-500">
+                    <span className="font-mono text-xs text-muted">
                       {it.unit_cost ? `$${Number(it.unit_cost).toFixed(2)}` : "—"}
                     </span>
-                    <span className="font-mono text-xs text-slate-700 dark:text-mortar-100">
+                    <span className="font-mono text-xs text-content dark:text-mortar-100">
                       {it.unit_cost ? `$${(Number(it.qty) * Number(it.unit_cost)).toFixed(2)}` : ""}
                     </span>
                   </li>
@@ -321,23 +321,23 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
             )}
           </div>
 
-          <div className="pt-3 border-t border-slate-100 dark:border-slate-700 flex items-center justify-between">
+          <div className="pt-3 border-t border-line dark:border-slate-700 flex items-center justify-between">
             <button
               onClick={handleDelete}
-              className="text-[10px] font-mono uppercase tracking-widest text-slate-400 hover:text-ember-500 transition flex items-center gap-1"
+              className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-ember-500 transition flex items-center gap-1"
             >
               <Trash2 size={11} /> delete order
             </button>
             <button
               onClick={onClose}
-              className="px-3 py-1.5 rounded-md text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-mortar-50 dark:hover:bg-slate-800 transition"
+              className="px-3 py-1.5 rounded-md text-sm font-medium text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800 transition"
             >
               Close
             </button>
           </div>
         </div>
       ) : (
-        <div className="text-xs text-slate-400">loading…</div>
+        <div className="text-xs text-faint">loading…</div>
       )}
     </Modal>
   );
@@ -384,23 +384,23 @@ function NewOrderModal({ open, onClose }: { open: boolean; onClose: () => void }
     <Modal open={open} onClose={onClose} title="new order" size="sm">
       <form onSubmit={submit} className="space-y-3">
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">Vendor</span>
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Vendor</span>
           <input value={vendor} onChange={(e) => setVendor(e.target.value)} autoFocus className="input" />
         </label>
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">Order #</span>
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Order #</span>
           <input value={orderNumber} onChange={(e) => setOrderNumber(e.target.value)} className="input" />
         </label>
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">Status</span>
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Status</span>
           <select value={status} onChange={(e) => setStatus(e.target.value as Order["status"])} className="input">
             {STATUSES.map((s) => (
               <option key={s} value={s}>{s}</option>
             ))}
           </select>
         </label>
-        <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-700">
-          <button type="button" onClick={onClose} className="px-3 py-1.5 rounded-md text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-mortar-50 dark:hover:bg-slate-800 transition">
+        <div className="flex items-center justify-end gap-2 pt-2 border-t border-line dark:border-slate-700">
+          <button type="button" onClick={onClose} className="px-3 py-1.5 rounded-md text-sm font-medium text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800 transition">
             Cancel
           </button>
           <button type="submit" disabled={create.isPending} className="px-3 py-1.5 rounded-md text-sm font-medium bg-slate-700 hover:bg-slate-600 text-mortar-50 transition disabled:opacity-50">
@@ -430,7 +430,7 @@ function EditField({
   const Cmp = multiline ? "textarea" : "input";
   return (
     <label className={"block " + (multiline ? "col-span-2" : "")}>
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
         {label}
       </span>
       <Cmp
@@ -458,7 +458,7 @@ function EditSelect({
 }) {
   return (
     <label className="block">
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
         {label}
       </span>
       <select defaultValue={value} onChange={(e) => onCommit(e.target.value)} className="input">

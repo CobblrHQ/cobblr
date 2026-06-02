@@ -37,7 +37,7 @@ export function StockAdjustButton({ partId }: { partId: string }) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="text-xs rounded-md border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-mortar-200 hover:bg-mortar-100 dark:bg-slate-800 px-2 py-1 transition"
+        className="text-xs rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-mortar-100 dark:bg-slate-800 px-2 py-1 transition"
       >
         Adjust
       </button>
@@ -49,13 +49,13 @@ export function StockAdjustButton({ partId }: { partId: string }) {
           <form
             onSubmit={submit}
             onClick={(e) => e.stopPropagation()}
-            className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 max-w-sm w-full p-5 shadow-2xl space-y-3"
+            className="bg-surface dark:bg-slate-900 rounded-xl border border-line dark:border-slate-700 max-w-sm w-full p-5 shadow-2xl space-y-3"
           >
-            <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500">
+            <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
               // stock adjust
             </div>
             <label className="block">
-              <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+              <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                 Delta (signed)
               </span>
               <input
@@ -68,7 +68,7 @@ export function StockAdjustButton({ partId }: { partId: string }) {
               />
             </label>
             <label className="block">
-              <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+              <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                 Reason (optional)
               </span>
               <input
@@ -82,7 +82,7 @@ export function StockAdjustButton({ partId }: { partId: string }) {
               <button
                 type="button"
                 onClick={() => setOpen(false)}
-                className="flex-1 rounded-md border border-slate-200 dark:border-slate-700 text-sm text-slate-600 dark:text-mortar-200 hover:bg-mortar-50 dark:bg-slate-800/70 transition py-2"
+                className="flex-1 rounded-md border border-line dark:border-slate-700 text-sm text-content dark:text-mortar-200 hover:bg-subtle dark:bg-slate-800/70 transition py-2"
               >
                 Cancel
               </button>

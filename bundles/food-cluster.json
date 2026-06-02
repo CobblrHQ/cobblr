@@ -29,6 +29,13 @@
         "trigger_type": "event",
         "trigger_event": "core-lists.item.expiring",
         "args": { "listTitle": "Shopping list" }
+      },
+      {
+        "source_kind": "inventory:part",
+        "action_id": "inventory:adjust-stock",
+        "trigger_type": "event",
+        "trigger_event": "core-lists.item.checked",
+        "args": { "delta": 1, "reason": "Restocked — checked off the shopping list" }
       }
     ]
   },

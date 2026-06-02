@@ -48,13 +48,13 @@ export function OpenApiPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
-        <FileText size={20} className="text-cobble-600" />
-        <h1 className="text-2xl font-semibold text-slate-700 dark:text-mortar-100">
+      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
+        <FileText size={20} className="text-accent" />
+        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">
           OpenAPI
         </h1>
         {spec && (
-          <span className="text-sm text-slate-500 dark:text-slate-400">
+          <span className="text-sm text-muted dark:text-slate-400">
             v{spec.info.version} · {schemas.length} schemas · {paths.length} paths
           </span>
         )}
@@ -66,7 +66,7 @@ export function OpenApiPage() {
                 void navigator.clipboard.writeText(JSON.stringify(spec, null, 2));
                 toast.success("Spec copied to clipboard");
               }}
-              className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+              className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800"
             >
               <Copy size={14} />
               Copy
@@ -96,32 +96,32 @@ export function OpenApiPage() {
         )}
       </div>
 
-      <p className="text-sm text-slate-500 dark:text-slate-400">
+      <p className="text-sm text-muted dark:text-slate-400">
         Auto-generated from the live module registry. Point Swagger UI /
         Insomnia / curl at the endpoint, or download the JSON file. Each
         entity kind appears as a <code className="font-mono">Module.Type</code>{" "}
         component schema; well-known platform routes are documented per-path.
       </p>
 
-      {specQ.isLoading && <div className="text-sm text-slate-500">Loading…</div>}
+      {specQ.isLoading && <div className="text-sm text-muted">Loading…</div>}
 
       {spec && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <section>
-            <h2 className="text-sm font-medium text-slate-600 dark:text-slate-300 mb-2">
+            <h2 className="text-sm font-medium text-content dark:text-slate-300 mb-2">
               Component schemas
             </h2>
-            <ul className="border border-slate-200 dark:border-slate-700 rounded divide-y divide-slate-100 dark:divide-slate-800 max-h-96 overflow-y-auto overflow-x-auto">
+            <ul className="border border-line dark:border-slate-700 rounded divide-y divide-line dark:divide-slate-800 max-h-96 overflow-y-auto overflow-x-auto">
               {schemas.map(([name, s]) => (
                 <li key={name} className="px-3 py-2 text-sm">
                   <div className="font-mono text-xs">{name}</div>
                   {s.description && (
-                    <div className="text-xs text-slate-500 mt-0.5">
+                    <div className="text-xs text-muted mt-0.5">
                       {s.description}
                     </div>
                   )}
                   {s.properties && (
-                    <div className="text-xs text-slate-500 mt-1">
+                    <div className="text-xs text-muted mt-1">
                       {Object.keys(s.properties).slice(0, 8).join(", ")}
                       {Object.keys(s.properties).length > 8 && "…"}
                     </div>
@@ -132,10 +132,10 @@ export function OpenApiPage() {
           </section>
 
           <section>
-            <h2 className="text-sm font-medium text-slate-600 dark:text-slate-300 mb-2">
+            <h2 className="text-sm font-medium text-content dark:text-slate-300 mb-2">
               Paths
             </h2>
-            <ul className="border border-slate-200 dark:border-slate-700 rounded divide-y divide-slate-100 dark:divide-slate-800 max-h-96 overflow-y-auto overflow-x-auto font-mono text-xs">
+            <ul className="border border-line dark:border-slate-700 rounded divide-y divide-line dark:divide-slate-800 max-h-96 overflow-y-auto overflow-x-auto font-mono text-xs">
               {paths.map((p) => (
                 <li key={p} className="px-3 py-1.5 whitespace-nowrap">
                   {p}

@@ -39,25 +39,25 @@ export function QrTokensPage() {
 
   return (
     <div className="space-y-4 max-w-3xl">
-      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-slate-700 dark:text-mortar-100 lowercase">
+      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">
           qr codes
         </h1>
-        <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
+        <span className="text-[10px] font-mono text-faint dark:text-slate-500">
           {active} active · {items.length} total
         </span>
       </div>
 
-      <p className="text-sm text-slate-600 dark:text-mortar-200">
+      <p className="text-sm text-content dark:text-mortar-200">
         Tokens minted by scanning / printing labels. Each resolves at{" "}
         <code className="font-mono text-xs">/qr/&lt;token&gt;</code> — either
         navigating to the item or firing an action. Revoke one and its printed
         label stops working immediately.
       </p>
 
-      {list.isLoading && <div className="text-sm text-slate-500">Loading…</div>}
+      {list.isLoading && <div className="text-sm text-muted">Loading…</div>}
       {!list.isLoading && items.length === 0 && (
-        <div className="text-sm text-slate-500 dark:text-slate-400 italic">
+        <div className="text-sm text-muted dark:text-slate-400 italic">
           No QR tokens minted yet. Print a label or hit "QR" on any item's
           detail page.
         </div>
@@ -70,19 +70,19 @@ export function QrTokensPage() {
           return (
             <div
               key={t.id}
-              className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3"
+              className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3"
               data-testid="qr-card"
               data-token-id={t.id}
               data-status={st}
             >
               <div className="flex items-start gap-2">
-                <QrCode size={15} className="text-cobble-500 mt-0.5 shrink-0" />
+                <QrCode size={15} className="text-accent mt-0.5 shrink-0" />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-mono text-sm text-slate-700 dark:text-mortar-100">
+                    <span className="font-mono text-sm text-content dark:text-mortar-100">
                       {t.entity_kind}
                     </span>
-                    <span className="font-mono text-[10px] text-slate-400">
+                    <span className="font-mono text-[10px] text-faint">
                       {t.entity_id.slice(0, 8)}
                     </span>
                     <Pill
@@ -97,7 +97,7 @@ export function QrTokensPage() {
                       <Pill text={st} tone={st === "revoked" ? "ember" : "slate"} />
                     )}
                   </div>
-                  <div className="text-[11px] font-mono text-slate-400 dark:text-slate-500 mt-1 flex flex-wrap gap-x-3">
+                  <div className="text-[11px] font-mono text-faint dark:text-slate-500 mt-1 flex flex-wrap gap-x-3">
                     <span>minted {new Date(t.created_at).toLocaleDateString()}</span>
                     {t.expires_at && (
                       <span>expires {new Date(t.expires_at).toLocaleDateString()}</span>
@@ -110,7 +110,7 @@ export function QrTokensPage() {
                       void navigator.clipboard.writeText(scanUrl);
                       toast.success("Scan URL copied");
                     }}
-                    className="text-slate-400 hover:text-cobble-600 transition p-1"
+                    className="text-faint hover:text-accent transition p-1"
                     title="Copy scan URL"
                   >
                     <Copy size={14} />
@@ -119,7 +119,7 @@ export function QrTokensPage() {
                     href={`/qr/${t.token}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-slate-400 hover:text-cobble-600 transition p-1"
+                    className="text-faint hover:text-accent transition p-1"
                     title="Open scan target"
                   >
                     <ExternalLink size={14} />
@@ -135,7 +135,7 @@ export function QrTokensPage() {
                         });
                         if (ok) revoke.mutate(t.id);
                       }}
-                      className="text-slate-400 hover:text-ember-500 transition p-1"
+                      className="text-faint hover:text-ember-500 transition p-1"
                       title="Revoke"
                       data-testid="qr-revoke"
                     >
@@ -167,9 +167,9 @@ function Pill({
   tone: "cobble" | "amber" | "slate" | "ember";
 }) {
   const cls = {
-    cobble: "bg-cobble-50 dark:bg-cobble-900/30 text-cobble-700 dark:text-cobble-300",
+    cobble: "bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300",
     amber: "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300",
-    slate: "bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400",
+    slate: "bg-subtle dark:bg-slate-800 text-muted dark:text-slate-400",
     ember: "bg-ember-100 dark:bg-ember-900/40 text-ember-700 dark:text-ember-300",
   }[tone];
   return (

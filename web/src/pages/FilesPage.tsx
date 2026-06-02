@@ -64,9 +64,9 @@ export function FilesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
-        <h1 className="text-2xl font-semibold text-slate-700 dark:text-mortar-100">Files</h1>
-        <span className="text-sm text-slate-500 dark:text-slate-400">
+      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
+        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">Files</h1>
+        <span className="text-sm text-muted dark:text-slate-400">
           {items.length} {items.length === 1 ? "file" : "files"}
         </span>
         <div className="flex-1" />
@@ -88,17 +88,17 @@ export function FilesPage() {
       </div>
 
       {list.isLoading && (
-        <div className="text-sm text-slate-500 dark:text-slate-400">Loading…</div>
+        <div className="text-sm text-muted dark:text-slate-400">Loading…</div>
       )}
       {items.length === 0 && !list.isLoading && (
-        <div className="text-sm text-slate-500 dark:text-slate-400 italic">
+        <div className="text-sm text-muted dark:text-slate-400 italic">
           No files yet. Drop one in to get started.
         </div>
       )}
 
       {images.length > 0 && (
         <section>
-          <h2 className="text-sm font-medium text-slate-600 dark:text-slate-300 mb-3">
+          <h2 className="text-sm font-medium text-content dark:text-slate-300 mb-3">
             Images
           </h2>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
@@ -124,25 +124,25 @@ export function FilesPage() {
 
       {others.length > 0 && (
         <section>
-          <h2 className="text-sm font-medium text-slate-600 dark:text-slate-300 mb-3">
+          <h2 className="text-sm font-medium text-content dark:text-slate-300 mb-3">
             Other files
           </h2>
-          <div className="border border-slate-200 dark:border-slate-700 rounded divide-y divide-slate-100 dark:divide-slate-800">
+          <div className="border border-line dark:border-slate-700 rounded divide-y divide-line dark:divide-slate-800">
             {others.map((f) => (
               <div
                 key={f.id}
                 className="flex items-center gap-3 px-3 py-2 text-sm"
               >
-                <FileIcon size={16} className="text-slate-400" />
+                <FileIcon size={16} className="text-faint" />
                 <a
                   href={api.fileRawUrl(activeSlug, f.id, "original")}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex-1 truncate hover:text-cobble-600"
+                  className="flex-1 truncate hover:text-accent"
                 >
                   {f.filename}
                 </a>
-                <span className="text-xs text-slate-500 dark:text-slate-400 tabular-nums">
+                <span className="text-xs text-muted dark:text-slate-400 tabular-nums">
                   {formatBytes(f.size_bytes)}
                 </span>
                 <button
@@ -155,7 +155,7 @@ export function FilesPage() {
                     });
                     if (ok) deleteFile.mutate(f.id);
                   }}
-                  className="text-slate-400 hover:text-ember-500 transition"
+                  className="text-faint hover:text-ember-500 transition"
                   title="Delete"
                 >
                   <Trash2 size={14} />
@@ -179,7 +179,7 @@ function ImageTile({
   onDelete: () => void;
 }) {
   return (
-    <div className="group relative aspect-square rounded overflow-hidden border border-slate-200 dark:border-slate-700">
+    <div className="group relative aspect-square rounded overflow-hidden border border-line dark:border-slate-700">
       <img
         src={api.fileRawUrl(slug, file.id, "thumb")}
         alt={file.filename}

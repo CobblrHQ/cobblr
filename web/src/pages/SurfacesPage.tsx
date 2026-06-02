@@ -45,11 +45,11 @@ export function SurfacesPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
-        <h1 className="text-2xl font-semibold text-slate-700 dark:text-mortar-100">
+      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
+        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">
           Public surfaces
         </h1>
-        <span className="text-sm text-slate-500 dark:text-slate-400">
+        <span className="text-sm text-muted dark:text-slate-400">
           {items.length} active
         </span>
         <div className="flex-1" />
@@ -61,27 +61,27 @@ export function SurfacesPage() {
         </button>
       </div>
 
-      <p className="text-sm text-slate-500 dark:text-slate-400">
+      <p className="text-sm text-muted dark:text-slate-400">
         Share a saved view's data over a long-random URL — no account
         required to view. Cross-module readers go through{" "}
         <code className="font-mono">exposableFields</code> projection
         so private fields stay private.
       </p>
 
-      {list.isLoading && <div className="text-sm text-slate-500">Loading…</div>}
+      {list.isLoading && <div className="text-sm text-muted">Loading…</div>}
       {items.length === 0 && !list.isLoading && (
-        <div className="text-sm text-slate-500 dark:text-slate-400 italic">
+        <div className="text-sm text-muted dark:text-slate-400 italic">
           No public surfaces. Hit Publish to share a view.
         </div>
       )}
 
-      <ul className="border border-slate-200 dark:border-slate-700 rounded divide-y divide-slate-100 dark:divide-slate-800">
+      <ul className="border border-line dark:border-slate-700 rounded divide-y divide-line dark:divide-slate-800">
         {items.map((s) => (
           <li key={s.id} className="px-3 py-2 text-sm space-y-1">
             <div className="flex items-baseline gap-2">
-              <Globe size={14} className="text-slate-400" />
+              <Globe size={14} className="text-faint" />
               <span className="font-medium">{s.name}</span>
-              <span className="text-xs text-slate-500 dark:text-slate-400">
+              <span className="text-xs text-muted dark:text-slate-400">
                 {s.scope_type}
               </span>
               {!s.enabled && (
@@ -91,7 +91,7 @@ export function SurfacesPage() {
               )}
               {s.expires_at && (
                 <span
-                  className="text-[10px] font-mono text-slate-400"
+                  className="text-[10px] font-mono text-faint"
                   title={new Date(s.expires_at).toLocaleString()}
                 >
                   expires {new Date(s.expires_at).toLocaleDateString()}
@@ -100,7 +100,7 @@ export function SurfacesPage() {
               <div className="flex-1" />
               <button
                 onClick={() => setEditFor(s)}
-                className="text-slate-400 hover:text-cobble-600 transition"
+                className="text-faint hover:text-accent transition"
                 title="Edit"
               >
                 <Pencil size={14} />
@@ -109,7 +109,7 @@ export function SurfacesPage() {
                 href={`/p/${s.token}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-slate-400 hover:text-cobble-600 transition"
+                className="text-faint hover:text-accent transition"
                 title="Open public page"
               >
                 <ExternalLink size={14} />
@@ -121,14 +121,14 @@ export function SurfacesPage() {
                   );
                   toast.success("Public URL copied");
                 }}
-                className="text-slate-400 hover:text-cobble-600 transition"
+                className="text-faint hover:text-accent transition"
                 title="Copy public URL"
               >
                 <Copy size={14} />
               </button>
               <button
                 onClick={() => setStatsFor(s)}
-                className="text-slate-400 hover:text-cobble-600 transition"
+                className="text-faint hover:text-accent transition"
                 title="View stats"
               >
                 <BarChart3 size={14} />
@@ -143,13 +143,13 @@ export function SurfacesPage() {
                   });
                   if (ok) revoke.mutate(s.id);
                 }}
-                className="text-slate-400 hover:text-ember-500 transition"
+                className="text-faint hover:text-ember-500 transition"
                 title="Revoke"
               >
                 <Trash2 size={14} />
               </button>
             </div>
-            <div className="font-mono text-xs text-slate-500 dark:text-slate-400 truncate">
+            <div className="font-mono text-xs text-muted dark:text-slate-400 truncate">
               /p/{s.token}
             </div>
           </li>
@@ -265,12 +265,12 @@ function EditSurfaceModal({
         className="space-y-3"
       >
         <label className="block">
-          <div className="text-xs text-slate-500 mb-1">Name (internal)</div>
+          <div className="text-xs text-muted mb-1">Name (internal)</div>
           <input
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             autoFocus
           />
         </label>
@@ -282,16 +282,16 @@ function EditSurfaceModal({
             onChange={(e) => setEnabled(e.target.checked)}
             data-testid="surface-enabled"
           />
-          <span className="text-sm text-slate-700 dark:text-mortar-100">
+          <span className="text-sm text-content dark:text-mortar-100">
             Enabled
           </span>
-          <span className="text-xs text-slate-400">
+          <span className="text-xs text-faint">
             — uncheck to pause (URL stays valid, 404s while paused)
           </span>
         </label>
 
         <label className="block">
-          <div className="text-xs text-slate-500 mb-1">
+          <div className="text-xs text-muted mb-1">
             Expires (optional — blank = never)
           </div>
           <div className="flex items-center gap-2">
@@ -299,14 +299,14 @@ function EditSurfaceModal({
               type="datetime-local"
               value={expiresInput}
               onChange={(e) => setExpiresInput(e.target.value)}
-              className="px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+              className="px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
               data-testid="surface-expires"
             />
             {expiresInput && (
               <button
                 type="button"
                 onClick={() => setExpiresInput("")}
-                className="text-xs text-slate-500 hover:text-ember-500"
+                className="text-xs text-muted hover:text-ember-500"
               >
                 clear
               </button>
@@ -314,12 +314,12 @@ function EditSurfaceModal({
           </div>
         </label>
 
-        <div className="border-t border-slate-200 dark:border-slate-700 pt-3 space-y-3">
-          <div className="text-[10px] font-mono uppercase tracking-widest text-slate-500">
+        <div className="border-t border-line dark:border-slate-700 pt-3 space-y-3">
+          <div className="text-[10px] font-mono uppercase tracking-widest text-muted">
             theming
           </div>
           <label className="block">
-            <div className="text-xs text-slate-500 mb-1">Theme</div>
+            <div className="text-xs text-muted mb-1">Theme</div>
             <div className="flex gap-1">
               {(["auto", "light", "dark"] as const).map((t) => (
                 <button
@@ -329,7 +329,7 @@ function EditSurfaceModal({
                   className={`flex-1 px-3 py-1 text-xs rounded transition ${
                     theme === t
                       ? "bg-cobble-600 text-white"
-                      : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
+                      : "bg-subtle dark:bg-slate-800 text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-700"
                   }`}
                 >
                   {t}
@@ -338,7 +338,7 @@ function EditSurfaceModal({
             </div>
           </label>
           <label className="block">
-            <div className="text-xs text-slate-500 mb-1">Default layout</div>
+            <div className="text-xs text-muted mb-1">Default layout</div>
             <div className="flex gap-1">
               {(["tiles", "list"] as const).map((t) => (
                 <button
@@ -348,7 +348,7 @@ function EditSurfaceModal({
                   className={`flex-1 px-3 py-1 text-xs rounded transition ${
                     layout === t
                       ? "bg-cobble-600 text-white"
-                      : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
+                      : "bg-subtle dark:bg-slate-800 text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-700"
                   }`}
                 >
                   {t}
@@ -357,12 +357,12 @@ function EditSurfaceModal({
             </div>
           </label>
           <label className="block">
-            <div className="text-xs text-slate-500 mb-1">Footer text</div>
+            <div className="text-xs text-muted mb-1">Footer text</div>
             <input
               type="text"
               value={footer}
               onChange={(e) => setFooter(e.target.value)}
-              className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+              className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             />
           </label>
         </div>
@@ -371,7 +371,7 @@ function EditSurfaceModal({
           <button
             type="button"
             onClick={onClose}
-            className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
           >
             Cancel
           </button>
@@ -406,7 +406,7 @@ function SurfaceStatsModal({
   return (
     <Modal open onClose={onClose} title={`Stats — ${surface.name}`} size="lg">
       {stats.isLoading && (
-        <div className="text-sm text-slate-500">Loading…</div>
+        <div className="text-sm text-muted">Loading…</div>
       )}
       {s && (
         <div className="space-y-4">
@@ -416,7 +416,7 @@ function SurfaceStatsModal({
             <StatCard label="Last 7d" value={s.views_7d} />
             <StatCard label="Last 30d" value={s.views_30d} />
           </div>
-          <div className="text-xs text-slate-500">
+          <div className="text-xs text-muted">
             {s.first_viewed ? (
               <>
                 First view{" "}
@@ -434,22 +434,22 @@ function SurfaceStatsModal({
           </div>
           {s.recent.length > 0 && (
             <div>
-              <h3 className="text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">
+              <h3 className="text-xs font-medium text-content dark:text-slate-300 mb-1">
                 Recent hits ({s.recent.length})
               </h3>
-              <ul className="border border-slate-200 dark:border-slate-700 rounded divide-y divide-slate-100 dark:divide-slate-800 max-h-72 overflow-y-auto">
+              <ul className="border border-line dark:border-slate-700 rounded divide-y divide-line dark:divide-slate-800 max-h-72 overflow-y-auto">
                 {s.recent.map((r, i) => (
                   <li key={i} className="px-3 py-1.5 text-xs flex items-baseline gap-3">
-                    <span className="font-mono text-slate-500 shrink-0">
+                    <span className="font-mono text-muted shrink-0">
                       {new Date(r.viewed_at).toLocaleString()}
                     </span>
                     {r.referer && (
-                      <span className="truncate text-slate-600 dark:text-slate-300">
+                      <span className="truncate text-content dark:text-slate-300">
                         ← {hostname(r.referer)}
                       </span>
                     )}
                     {!r.referer && r.ua_hint && (
-                      <span className="truncate text-slate-400 italic">
+                      <span className="truncate text-faint italic">
                         {browserName(r.ua_hint)}
                       </span>
                     )}
@@ -466,11 +466,11 @@ function SurfaceStatsModal({
 
 function StatCard({ label, value }: { label: string; value: number }) {
   return (
-    <div className="border border-slate-200 dark:border-slate-700 rounded p-3">
-      <div className="text-[10px] uppercase font-mono text-slate-500 tracking-wider">
+    <div className="border border-line dark:border-slate-700 rounded p-3">
+      <div className="text-[10px] uppercase font-mono text-muted tracking-wider">
         {label}
       </div>
-      <div className="text-2xl font-semibold text-slate-700 dark:text-mortar-100 mt-0.5">
+      <div className="text-2xl font-semibold text-content dark:text-mortar-100 mt-0.5">
         {value.toLocaleString()}
       </div>
     </div>
@@ -588,18 +588,18 @@ function CreateSurfaceModal({
         className="space-y-3"
       >
         <label className="block">
-          <div className="text-xs text-slate-500 mb-1">Name (internal)</div>
+          <div className="text-xs text-muted mb-1">Name (internal)</div>
           <input
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. Sarah's collection (public)"
-            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             autoFocus
           />
         </label>
         <label className="block">
-          <div className="text-xs text-slate-500 mb-1">Source</div>
+          <div className="text-xs text-muted mb-1">Source</div>
           <div className="flex gap-1">
             {(["view", "collection", "app"] as const).map((t) => (
               <button
@@ -609,7 +609,7 @@ function CreateSurfaceModal({
                 className={`flex-1 px-3 py-1.5 text-xs rounded transition ${
                   scopeType === t
                     ? "bg-cobble-600 text-white"
-                    : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
+                    : "bg-subtle dark:bg-slate-800 text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-700"
                 }`}
               >
                 {t === "view" ? "Saved view" : t === "collection" ? "Ad-hoc collection" : "App"}
@@ -620,11 +620,11 @@ function CreateSurfaceModal({
         {scopeType === "view" && (
           <>
             <label className="block">
-              <div className="text-xs text-slate-500 mb-1">View to publish</div>
+              <div className="text-xs text-muted mb-1">View to publish</div>
               <select
                 value={viewId}
                 onChange={(e) => setViewId(e.target.value)}
-                className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+                className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
               >
                 <option value="">— pick a saved view —</option>
                 {items.map((v) => (
@@ -635,7 +635,7 @@ function CreateSurfaceModal({
               </select>
             </label>
             {items.length === 0 && (
-              <p className="text-xs text-slate-500 italic">
+              <p className="text-xs text-muted italic">
                 No saved views yet — create one from the Views page or
                 switch to "Ad-hoc collection" above.
               </p>
@@ -645,11 +645,11 @@ function CreateSurfaceModal({
         {scopeType === "collection" && (
           <>
             <label className="block">
-              <div className="text-xs text-slate-500 mb-1">Entity kind</div>
+              <div className="text-xs text-muted mb-1">Entity kind</div>
               <select
                 value={collectionKind}
                 onChange={(e) => setCollectionKind(e.target.value)}
-                className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+                className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
               >
                 {kindList.map((k) => (
                   <option key={k.id} value={k.id}>
@@ -659,7 +659,7 @@ function CreateSurfaceModal({
               </select>
             </label>
             <label className="block">
-              <div className="text-xs text-slate-500 mb-1">
+              <div className="text-xs text-muted mb-1">
                 Filter (comma-separated <code>field=value</code>, optional)
               </div>
               <input
@@ -667,9 +667,9 @@ function CreateSurfaceModal({
                 value={collectionFilterRaw}
                 onChange={(e) => setCollectionFilterRaw(e.target.value)}
                 placeholder="state=active, location_id=…, _tag=urgent"
-                className="w-full px-2 py-1 text-sm font-mono border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+                className="w-full px-2 py-1 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
               />
-              <div className="text-[11px] text-slate-400 mt-1">
+              <div className="text-[11px] text-faint mt-1">
                 Native columns + metadata fields + <code>_tag</code> are
                 supported (resolver-dependent). Blank = list every entity
                 of this kind.
@@ -680,11 +680,11 @@ function CreateSurfaceModal({
         {scopeType === "app" && (
           <>
             <label className="block">
-              <div className="text-xs text-slate-500 mb-1">App to publish</div>
+              <div className="text-xs text-muted mb-1">App to publish</div>
               <select
                 value={appSlug}
                 onChange={(e) => setAppSlug(e.target.value)}
-                className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+                className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
               >
                 <option value="">— pick an app —</option>
                 {appList.map((a) => (
@@ -694,19 +694,19 @@ function CreateSurfaceModal({
                 ))}
               </select>
             </label>
-            <p className="text-[11px] text-slate-400">
+            <p className="text-[11px] text-faint">
               Renders the whole app read-only, no login: markdown, stat tiles,
               views, and custom blocks. Write blocks (forms, action buttons,
               scan) are dropped, and the app's own theme is used.
             </p>
           </>
         )}
-        <div className="border-t border-slate-200 dark:border-slate-700 pt-3 space-y-3">
-          <div className="text-[10px] font-mono uppercase tracking-widest text-slate-500">
+        <div className="border-t border-line dark:border-slate-700 pt-3 space-y-3">
+          <div className="text-[10px] font-mono uppercase tracking-widest text-muted">
             theming (optional)
           </div>
           <label className="block">
-            <div className="text-xs text-slate-500 mb-1">Theme</div>
+            <div className="text-xs text-muted mb-1">Theme</div>
             <div className="flex gap-1">
               {(["auto", "light", "dark"] as const).map((t) => (
                 <button
@@ -716,7 +716,7 @@ function CreateSurfaceModal({
                   className={`flex-1 px-3 py-1 text-xs rounded transition ${
                     theme === t
                       ? "bg-cobble-600 text-white"
-                      : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
+                      : "bg-subtle dark:bg-slate-800 text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-700"
                   }`}
                 >
                   {t}
@@ -725,7 +725,7 @@ function CreateSurfaceModal({
             </div>
           </label>
           <label className="block">
-            <div className="text-xs text-slate-500 mb-1">Default layout</div>
+            <div className="text-xs text-muted mb-1">Default layout</div>
             <div className="flex gap-1">
               {(["tiles", "list"] as const).map((t) => (
                 <button
@@ -735,7 +735,7 @@ function CreateSurfaceModal({
                   className={`flex-1 px-3 py-1 text-xs rounded transition ${
                     layout === t
                       ? "bg-cobble-600 text-white"
-                      : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
+                      : "bg-subtle dark:bg-slate-800 text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-700"
                   }`}
                 >
                   {t}
@@ -744,13 +744,13 @@ function CreateSurfaceModal({
             </div>
           </label>
           <label className="block">
-            <div className="text-xs text-slate-500 mb-1">Footer text (optional)</div>
+            <div className="text-xs text-muted mb-1">Footer text (optional)</div>
             <input
               type="text"
               value={footer}
               onChange={(e) => setFooter(e.target.value)}
               placeholder="© 2026 your name · contact: hi@you.com"
-              className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+              className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             />
           </label>
         </div>
@@ -758,7 +758,7 @@ function CreateSurfaceModal({
           <button
             type="button"
             onClick={onClose}
-            className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
           >
             Cancel
           </button>

@@ -72,18 +72,18 @@ export function ScanPage() {
 
   return (
     <div className="space-y-5 max-w-4xl">
-      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
-        <h1 className="text-2xl font-semibold text-slate-700 dark:text-mortar-100 flex items-center gap-2">
-          <ScanLine size={20} className="text-cobble-500" />
+      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
+        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100 flex items-center gap-2">
+          <ScanLine size={20} className="text-accent" />
           Scan
         </h1>
-        <span className="text-sm text-slate-500 dark:text-slate-400">
+        <span className="text-sm text-muted dark:text-slate-400">
           {items.length} pending
         </span>
         <div className="flex-1" />
         <Link
           to="/scan/camera"
-          className="inline-flex items-center gap-2 rounded border border-slate-200 dark:border-slate-700 text-sm text-slate-600 hover:bg-mortar-50 dark:hover:bg-slate-800/70 px-3 py-1.5 transition"
+          className="inline-flex items-center gap-2 rounded border border-line dark:border-slate-700 text-sm text-content hover:bg-subtle dark:hover:bg-slate-800/70 px-3 py-1.5 transition"
         >
           <Camera size={14} /> Use camera
         </Link>
@@ -95,16 +95,16 @@ export function ScanPage() {
           if (!barcode.trim()) return;
           scan.mutate(barcode.trim());
         }}
-        className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 flex gap-2 items-center"
+        className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 flex gap-2 items-center"
       >
-        <ScanLine size={18} className="text-slate-400" />
+        <ScanLine size={18} className="text-faint" />
         <input
           ref={inputRef}
           type="text"
           value={barcode}
           onChange={(e) => setBarcode(e.target.value)}
           placeholder="Type or scan a UPC / EAN / GTIN, then Enter"
-          className="flex-1 px-2 py-1.5 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900 font-mono"
+          className="flex-1 px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900 font-mono"
           inputMode="numeric"
           autoComplete="off"
         />
@@ -117,18 +117,18 @@ export function ScanPage() {
         </button>
       </form>
 
-      <p className="text-xs text-slate-500 dark:text-slate-400">
+      <p className="text-xs text-muted dark:text-slate-400">
         Lookups hit Open Products Facts + upcitemdb in parallel (both
         keyless free tiers). Hits land here with a suggested name + brand +
         catalog photo; misses become bare barcode rows you can fill in
         manually. The web-search fallback + photo-only path are v0.2.
       </p>
 
-      {list.isLoading && <div className="text-sm text-slate-400">loading…</div>}
+      {list.isLoading && <div className="text-sm text-faint">loading…</div>}
       {!list.isLoading && items.length === 0 && (
-        <div className="rounded-md border border-dashed border-slate-200 dark:border-slate-700 p-8 text-center">
-          <ScanLine size={28} className="mx-auto text-slate-300 dark:text-slate-600 mb-2" />
-          <div className="text-sm text-slate-500 dark:text-slate-400">
+        <div className="rounded-md border border-dashed border-line dark:border-slate-700 p-8 text-center">
+          <ScanLine size={28} className="mx-auto text-faint dark:text-slate-600 mb-2" />
+          <div className="text-sm text-muted dark:text-slate-400">
             Nothing pending. Scan a barcode above to start.
           </div>
         </div>
@@ -190,8 +190,8 @@ function InboxRow({
           : null;
 
   return (
-    <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 flex items-start gap-3">
-      <div className="w-16 h-16 shrink-0 rounded-md overflow-hidden border border-slate-200 dark:border-slate-700 bg-mortar-50 dark:bg-slate-800 flex items-center justify-center">
+    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 flex items-start gap-3">
+      <div className="w-16 h-16 shrink-0 rounded-md overflow-hidden border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 flex items-center justify-center">
         {catalogImg ? (
           /* Catalog image; remote URL during enrichment, local file once downloaded */
           <img
@@ -201,22 +201,22 @@ function InboxRow({
             loading="lazy"
           />
         ) : (
-          <ScanLine size={24} className="text-slate-300 dark:text-slate-600" />
+          <ScanLine size={24} className="text-faint dark:text-slate-600" />
         )}
       </div>
       <div className="flex-1 min-w-0">
-        <div className="font-medium text-slate-700 dark:text-mortar-100 truncate">
+        <div className="font-medium text-content dark:text-mortar-100 truncate">
           {item.suggested_name ?? (
-            <span className="text-slate-400 italic">Awaiting lookup…</span>
+            <span className="text-faint italic">Awaiting lookup…</span>
           )}
         </div>
-        <div className="text-[11px] font-mono text-slate-400 dark:text-slate-500 truncate">
+        <div className="text-[11px] font-mono text-faint dark:text-slate-500 truncate">
           {item.barcode_text}
           {item.suggested_manufacturer && ` · ${item.suggested_manufacturer}`}
           {item.suggested_sku && ` · ${item.suggested_sku}`}
         </div>
         {item.ai_notes && (
-          <div className="text-[11px] text-slate-500 mt-0.5">{item.ai_notes}</div>
+          <div className="text-[11px] text-muted mt-0.5">{item.ai_notes}</div>
         )}
       </div>
       <div className="flex items-center gap-1 shrink-0">
@@ -224,7 +224,7 @@ function InboxRow({
           type="button"
           onClick={() => rerun.mutate()}
           disabled={rerun.isPending || !item.barcode_text}
-          className="text-slate-400 hover:text-cobble-600 p-1.5 disabled:opacity-30"
+          className="text-faint hover:text-accent p-1.5 disabled:opacity-30"
           title="Rerun lookup"
         >
           <RotateCcw size={14} />
@@ -240,7 +240,7 @@ function InboxRow({
             });
             if (ok) discard.mutate();
           }}
-          className="text-slate-400 hover:text-ember-500 p-1.5"
+          className="text-faint hover:text-ember-500 p-1.5"
           title="Discard"
         >
           <X size={14} />
@@ -332,26 +332,26 @@ function ConfirmModal({
             <img
               src={item.catalog_image_url}
               alt={item.suggested_name ?? ""}
-              className="max-h-32 rounded border border-slate-200 dark:border-slate-700"
+              className="max-h-32 rounded border border-line dark:border-slate-700"
             />
           </div>
         )}
         <div>
-          <div className="text-[10px] font-mono uppercase tracking-widest text-slate-500 dark:text-slate-400 mb-1">
+          <div className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-1">
             barcode
           </div>
-          <div className="font-mono text-sm text-slate-700 dark:text-mortar-100">
+          <div className="font-mono text-sm text-content dark:text-mortar-100">
             {item.barcode_text ?? "—"}
           </div>
         </div>
         <label className="block">
-          <div className="text-[10px] font-mono uppercase tracking-widest text-slate-500 dark:text-slate-400 mb-1">
+          <div className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-1">
             Target kind
           </div>
           <select
             value={targetKey}
             onChange={(e) => setTargetKey(e.target.value)}
-            className="w-full px-2 py-1.5 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           >
             {TARGET_KINDS.map((k) => (
               <option key={`${k.module}:${k.kind}`} value={`${k.module}:${k.kind}`}>
@@ -361,7 +361,7 @@ function ConfirmModal({
           </select>
         </label>
         <label className="block">
-          <div className="text-[10px] font-mono uppercase tracking-widest text-slate-500 dark:text-slate-400 mb-1">
+          <div className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-1">
             Name
           </div>
           <input
@@ -369,13 +369,13 @@ function ConfirmModal({
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder={item.suggested_name ?? "(name required)"}
-            className="w-full px-2 py-1.5 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             required
             autoFocus
           />
         </label>
         <label className="block">
-          <div className="text-[10px] font-mono uppercase tracking-widest text-slate-500 dark:text-slate-400 mb-1">
+          <div className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-1">
             Quantity
           </div>
           <input
@@ -383,17 +383,17 @@ function ConfirmModal({
             min={1}
             value={quantity}
             onChange={(e) => setQuantity(Number(e.target.value))}
-            className="w-full px-2 py-1.5 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           />
         </label>
         <label className="block">
-          <div className="text-[10px] font-mono uppercase tracking-widest text-slate-500 dark:text-slate-400 mb-1">
+          <div className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-1">
             Location (optional)
           </div>
           <select
             value={locationId}
             onChange={(e) => setLocationId(e.target.value)}
-            className="w-full px-2 py-1.5 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           >
             <option value="">— none —</option>
             {(locs.data?.items ?? []).map((l: Location) => (
@@ -408,7 +408,7 @@ function ConfirmModal({
           <button
             type="button"
             onClick={onClose}
-            className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
           >
             Cancel
           </button>

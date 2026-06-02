@@ -13,6 +13,9 @@ import { PlatformWebProvider } from "@cobblr/platform-web";
 import { InventoryUI } from "@cobblr/inventory/ui";
 import { LabelsBasket, LabelsUI } from "@cobblr/labels/ui";
 import { ProjectsUI } from "@cobblr/projects/ui";
+import { ListsUI } from "@cobblr/core-lists/ui";
+import { FitnessUI } from "@cobblr/core-fitness/ui";
+import { PairsWellWith } from "./components/PairsWellWith";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { ActiveOrgProvider, useActiveOrg } from "./auth/ActiveOrgContext";
 import { AuthPage } from "./pages/AuthPage";
@@ -83,7 +86,7 @@ import { InstancePage } from "./pages/InstancePage";
 
 function RouteFallback() {
   return (
-    <div className="text-xs font-mono text-slate-400 dark:text-slate-500 p-6">
+    <div className="text-xs font-mono text-faint dark:text-slate-500 p-6">
       loading…
     </div>
   );
@@ -194,6 +197,24 @@ function ActiveOrgScopedRoutes() {
             path="/projects/*"
             element={<ProjectsUI orgSlug={activeSlug} getToken={getToken} />}
           />
+          <Route
+            path="/core-lists/*"
+            element={
+              <>
+                <ListsUI orgSlug={activeSlug} getToken={getToken} />
+                <div className="max-w-4xl"><PairsWellWith module="core-lists" orgSlug={activeSlug} /></div>
+              </>
+            }
+          />
+          <Route
+            path="/core-fitness/*"
+            element={
+              <>
+                <FitnessUI orgSlug={activeSlug} getToken={getToken} />
+                <div className="max-w-4xl"><PairsWellWith module="core-fitness" orgSlug={activeSlug} /></div>
+              </>
+            }
+          />
           {/* Per-instance pages (user-created module instances). The
               /* suffix lets a packaged module UI mount its own nested
               routes (e.g. inventory's parts/:id) under the instance. */}
@@ -276,7 +297,7 @@ function ActiveOrgScopedRoutes() {
 
 function BootScrim() {
   return (
-    <div className="min-h-full flex items-center justify-center text-slate-400 font-mono text-xs">
+    <div className="min-h-full flex items-center justify-center text-faint font-mono text-xs">
       …
     </div>
   );

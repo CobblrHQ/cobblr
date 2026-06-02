@@ -35,7 +35,7 @@ export function FieldRenderer({
   size = "inline",
 }: Props) {
   if (value === null || value === undefined || value === "") {
-    return <span className="text-slate-300 dark:text-slate-600">—</span>;
+    return <span className="text-faint dark:text-slate-600">—</span>;
   }
   const r = renderer ?? "text";
 
@@ -79,11 +79,11 @@ function ColorSwatch({ value, size }: { value: unknown; size: "inline" | "block"
     return (
       <div className="flex flex-col items-center gap-1">
         <span
-          className="block w-28 h-24 rounded-md border border-slate-200 dark:border-slate-700"
+          className="block w-28 h-24 rounded-md border border-line dark:border-slate-700"
           style={{ background: css }}
           aria-label={`Color ${css}`}
         />
-        <code className="font-mono text-[10px] text-slate-500 dark:text-slate-400">
+        <code className="font-mono text-[10px] text-muted dark:text-slate-400">
           {css.toUpperCase()}
         </code>
       </div>
@@ -92,7 +92,7 @@ function ColorSwatch({ value, size }: { value: unknown; size: "inline" | "block"
   return (
     <span className="inline-flex items-center gap-1.5">
       <span
-        className="inline-block w-4 h-4 rounded-sm border border-slate-200 dark:border-slate-700"
+        className="inline-block w-4 h-4 rounded-sm border border-line dark:border-slate-700"
         style={{ background: css }}
         aria-label={`Color ${css}`}
       />
@@ -122,7 +122,7 @@ function ImageThumb({
     <img
       src={value}
       alt={alt}
-      className={`${dim} rounded object-cover border border-slate-200 dark:border-slate-700 inline-block bg-mortar-50 dark:bg-slate-800`}
+      className={`${dim} rounded object-cover border border-line dark:border-slate-700 inline-block bg-subtle dark:bg-slate-800`}
       loading="lazy"
       onError={() => setFailed(true)}
     />
@@ -143,7 +143,7 @@ export function NoImage({
   const dim = size === "block" ? "w-32 h-32" : "w-8 h-8";
   return (
     <div
-      className={`${dim} rounded border border-dashed border-slate-200 dark:border-slate-700 bg-mortar-50 dark:bg-slate-800 flex items-center justify-center text-slate-300 dark:text-slate-600 shrink-0`}
+      className={`${dim} rounded border border-dashed border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 flex items-center justify-center text-faint dark:text-slate-600 shrink-0`}
       title={title ?? "No image"}
       aria-label={title ?? "No image"}
     >
@@ -160,7 +160,7 @@ function UrlLink({ value }: { value: unknown }) {
       href={raw}
       target="_blank"
       rel="noopener noreferrer"
-      className="text-cobble-600 hover:text-cobble-700 inline-flex items-center gap-1 text-xs"
+      className="text-accent hover:text-accent inline-flex items-center gap-1 text-xs"
     >
       {raw.length > 40 ? raw.slice(0, 38) + "…" : raw}
       <ExternalLink size={11} />
@@ -178,7 +178,7 @@ function BooleanTick({ value }: { value: unknown }) {
       <Check size={13} /> yes
     </span>
   ) : (
-    <span className="inline-flex items-center gap-1 text-slate-400">
+    <span className="inline-flex items-center gap-1 text-faint">
       <X size={13} /> no
     </span>
   );

@@ -65,17 +65,17 @@ export function SuperAdminPage() {
 
   return (
     <div className="space-y-5 max-w-6xl">
-      <div className="border-b border-slate-200 dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-slate-700 dark:text-mortar-100 lowercase">
+      <div className="border-b border-line dark:border-slate-700 pb-3">
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">
           super-admin
         </h1>
-        <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
+        <span className="text-[10px] font-mono text-faint dark:text-slate-500">
           cross-workspace dashboards for the platform operator. workspace
           owners + admins can't reach this — separate tier.
         </span>
       </div>
 
-      <div className="flex flex-wrap gap-1 border-b border-slate-200 dark:border-slate-700">
+      <div className="flex flex-wrap gap-1 border-b border-line dark:border-slate-700">
         {TABS.map((t) => {
           const Icon = t.icon;
           const active = tab === t.id;
@@ -87,8 +87,8 @@ export function SuperAdminPage() {
               className={
                 "inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition border-b-2 " +
                 (active
-                  ? "border-cobble-500 text-cobble-700 dark:text-cobble-300"
-                  : "border-transparent text-slate-500 hover:text-cobble-600")
+                  ? "border-cobble-500 text-accent dark:text-cobble-300"
+                  : "border-transparent text-muted hover:text-accent")
               }
             >
               <Icon size={12} />
@@ -115,7 +115,7 @@ function OverviewTab() {
     queryFn: () => api.superAdminOverview(),
     refetchInterval: 30_000,
   });
-  if (q.isLoading) return <div className="text-xs text-slate-400">Loading…</div>;
+  if (q.isLoading) return <div className="text-xs text-faint">Loading…</div>;
   if (!q.data) return null;
   return (
     <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -131,11 +131,11 @@ function OverviewTab() {
 
 function Stat({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
-      <div className="text-[10px] font-mono uppercase tracking-widest text-slate-400">
+    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
+      <div className="text-[10px] font-mono uppercase tracking-widest text-faint">
         {label}
       </div>
-      <div className="font-display text-3xl font-bold text-slate-700 dark:text-mortar-100 mt-1">
+      <div className="font-display text-3xl font-bold text-content dark:text-mortar-100 mt-1">
         {value.toLocaleString()}
       </div>
     </div>
@@ -148,9 +148,9 @@ function WorkspacesTab() {
     queryFn: () => api.superAdminWorkspaces(),
   });
   return (
-    <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
+    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden">
       <table className="w-full text-sm">
-        <thead className="bg-mortar-50/50 dark:bg-slate-800/40">
+        <thead className="bg-subtle/50 dark:bg-slate-800/40">
           <tr>
             <Th>Workspace</Th>
             <Th>Owner</Th>
@@ -159,28 +159,28 @@ function WorkspacesTab() {
             <Th>Plan</Th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+        <tbody className="divide-y divide-line dark:divide-slate-800">
           {(q.data?.items ?? []).map((w) => (
             <tr key={w.id}>
               <td className="px-3 py-2">
-                <div className="text-sm text-slate-700 dark:text-mortar-100">{w.name}</div>
-                <div className="text-[10px] font-mono text-slate-400">{w.slug}</div>
+                <div className="text-sm text-content dark:text-mortar-100">{w.name}</div>
+                <div className="text-[10px] font-mono text-faint">{w.slug}</div>
               </td>
               <td className="px-3 py-2 text-xs">
                 {w.owner ? (
                   <>
-                    <div className="text-slate-700 dark:text-mortar-100">{w.owner.display_name}</div>
-                    <div className="text-[10px] font-mono text-slate-400">{w.owner.email}</div>
+                    <div className="text-content dark:text-mortar-100">{w.owner.display_name}</div>
+                    <div className="text-[10px] font-mono text-faint">{w.owner.email}</div>
                   </>
                 ) : (
-                  <span className="text-slate-400 italic">—</span>
+                  <span className="text-faint italic">—</span>
                 )}
               </td>
               <td className="px-3 py-2 text-right font-mono text-xs">{w.member_count}</td>
-              <td className="px-3 py-2 text-xs text-slate-500">
+              <td className="px-3 py-2 text-xs text-muted">
                 {w.last_activity_at ? new Date(w.last_activity_at).toLocaleString() : "—"}
               </td>
-              <td className="px-3 py-2 text-[10px] font-mono uppercase tracking-widest text-cobble-600">
+              <td className="px-3 py-2 text-[10px] font-mono uppercase tracking-widest text-accent">
                 {w.plan}
               </td>
             </tr>
@@ -197,9 +197,9 @@ function UsersTab() {
     queryFn: () => api.superAdminUsers(),
   });
   return (
-    <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
+    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden">
       <table className="w-full text-sm">
-        <thead className="bg-mortar-50/50 dark:bg-slate-800/40">
+        <thead className="bg-subtle/50 dark:bg-slate-800/40">
           <tr>
             <Th>User</Th>
             <Th>Workspaces</Th>
@@ -207,30 +207,30 @@ function UsersTab() {
             <Th>Status</Th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+        <tbody className="divide-y divide-line dark:divide-slate-800">
           {(q.data?.items ?? []).map((u) => (
             <tr key={u.id}>
               <td className="px-3 py-2">
-                <div className="text-sm text-slate-700 dark:text-mortar-100">{u.display_name}</div>
-                <div className="text-[10px] font-mono text-slate-400">{u.email}</div>
+                <div className="text-sm text-content dark:text-mortar-100">{u.display_name}</div>
+                <div className="text-[10px] font-mono text-faint">{u.email}</div>
               </td>
               <td className="px-3 py-2 text-xs">
                 {u.orgs.length === 0 && (
-                  <span className="text-slate-400 italic">none</span>
+                  <span className="text-faint italic">none</span>
                 )}
                 <div className="flex flex-wrap gap-1">
                   {u.orgs.map((o) => (
                     <Link
                       key={o.org_id}
                       to={`/orgs/${o.org_slug}`}
-                      className="inline-flex items-center gap-1 rounded border border-slate-200 dark:border-slate-700 px-1.5 py-0.5 text-[10px] font-mono hover:bg-mortar-50 dark:hover:bg-slate-800"
+                      className="inline-flex items-center gap-1 rounded border border-line dark:border-slate-700 px-1.5 py-0.5 text-[10px] font-mono hover:bg-subtle dark:hover:bg-slate-800"
                     >
-                      {o.org_name} <span className="text-cobble-500">{o.role}</span>
+                      {o.org_name} <span className="text-accent">{o.role}</span>
                     </Link>
                   ))}
                 </div>
               </td>
-              <td className="px-3 py-2 text-xs text-slate-500">
+              <td className="px-3 py-2 text-xs text-muted">
                 {u.last_login_at ? new Date(u.last_login_at).toLocaleString() : "—"}
               </td>
               <td className="px-3 py-2 text-[10px] font-mono uppercase tracking-widest">
@@ -260,13 +260,13 @@ function ModulesTab() {
       {(q.data?.items ?? []).map((m) => (
         <div
           key={m.module_name}
-          className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4"
+          className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4"
         >
           <div className="flex items-center justify-between">
-            <div className="font-mono text-sm text-cobble-700 dark:text-cobble-300">
+            <div className="font-mono text-sm text-accent dark:text-cobble-300">
               {m.module_name}
             </div>
-            <div className="text-[10px] font-mono uppercase tracking-widest text-slate-400">
+            <div className="text-[10px] font-mono uppercase tracking-widest text-faint">
               {m.workspace_count} workspace{m.workspace_count === 1 ? "" : "s"}
             </div>
           </div>
@@ -274,10 +274,10 @@ function ModulesTab() {
             {m.workspaces.map((w) => (
               <span
                 key={w.org_id}
-                className="inline-flex items-center gap-1 rounded border border-slate-200 dark:border-slate-700 px-1.5 py-0.5 text-[10px] font-mono"
+                className="inline-flex items-center gap-1 rounded border border-line dark:border-slate-700 px-1.5 py-0.5 text-[10px] font-mono"
                 title={`Last migration: ${w.last_migration ?? "(none)"}`}
               >
-                {w.org_name} <span className="text-cobble-500">v{w.version}</span>
+                {w.org_name} <span className="text-accent">v{w.version}</span>
               </span>
             ))}
           </div>
@@ -294,9 +294,9 @@ function ActivityTab() {
     refetchInterval: 15_000,
   });
   return (
-    <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
+    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden">
       <table className="w-full text-sm">
-        <thead className="bg-mortar-50/50 dark:bg-slate-800/40">
+        <thead className="bg-subtle/50 dark:bg-slate-800/40">
           <tr>
             <Th>When</Th>
             <Th>Workspace</Th>
@@ -305,16 +305,16 @@ function ActivityTab() {
             <Th>Entity</Th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+        <tbody className="divide-y divide-line dark:divide-slate-800">
           {(q.data?.items ?? []).map((a) => (
             <tr key={a.id}>
-              <td className="px-3 py-1.5 text-[11px] text-slate-500 whitespace-nowrap">
+              <td className="px-3 py-1.5 text-[11px] text-muted whitespace-nowrap">
                 {new Date(a.occurred_at).toLocaleString()}
               </td>
               <td className="px-3 py-1.5 text-xs">{a.org_name ?? "—"}</td>
               <td className="px-3 py-1.5 text-xs">{a.user_display_name ?? a.user_email ?? "system"}</td>
-              <td className="px-3 py-1.5 text-[11px] font-mono text-cobble-600">{a.action}</td>
-              <td className="px-3 py-1.5 text-[11px] font-mono text-slate-400">
+              <td className="px-3 py-1.5 text-[11px] font-mono text-accent">{a.action}</td>
+              <td className="px-3 py-1.5 text-[11px] font-mono text-faint">
                 {a.entity_type && a.entity_id ? `${a.entity_type}/${a.entity_id.slice(0, 8)}` : "—"}
               </td>
             </tr>
@@ -341,7 +341,7 @@ function HealthTab() {
     queryFn: () => api.superAdminSandboxTelemetry(),
     refetchInterval: 10_000,
   });
-  if (q.isLoading) return <div className="text-xs text-slate-400">Loading…</div>;
+  if (q.isLoading) return <div className="text-xs text-faint">Loading…</div>;
   if (!q.data) return null;
   return (
     <div className="space-y-5">
@@ -365,25 +365,25 @@ function HealthTab() {
       </div>
 
       <div>
-        <h2 className="text-[10px] font-mono uppercase tracking-widest text-slate-500 dark:text-slate-400 mb-2">
+        <h2 className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-2">
           Sandbox CPU usage
         </h2>
         {cpu.data && cpu.data.workspaces.length === 0 && (
-          <div className="text-xs text-slate-400 italic">
+          <div className="text-xs text-faint italic">
             No sandboxed-module activity in the current window
             ({Math.round(cpu.data.window_ms / 1000)}s).
           </div>
         )}
         {cpu.data && cpu.data.workspaces.length > 0 && (
-          <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
-            <div className="px-4 py-2 bg-mortar-50/50 dark:bg-slate-800/40 text-[10px] font-mono uppercase tracking-widest text-slate-400 flex items-center gap-3">
+          <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden">
+            <div className="px-4 py-2 bg-subtle/50 dark:bg-slate-800/40 text-[10px] font-mono uppercase tracking-widest text-faint flex items-center gap-3">
               <span>
                 quota {Math.round(cpu.data.quota_ms_per_window / 1000)}s /{" "}
                 {Math.round(cpu.data.window_ms / 1000)}s window
               </span>
             </div>
             <table className="w-full text-sm">
-              <thead className="bg-mortar-50/30 dark:bg-slate-800/20">
+              <thead className="bg-subtle/30 dark:bg-slate-800/20">
                 <tr>
                   <Th>Workspace</Th>
                   <Th right>Used ms</Th>
@@ -391,14 +391,14 @@ function HealthTab() {
                   <Th>By module</Th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+              <tbody className="divide-y divide-line dark:divide-slate-800">
                 {cpu.data.workspaces.map((w) => {
                   const pct = Math.round(w.pct * 100);
                   return (
                     <tr key={w.org_id}>
                       <td className="px-3 py-1.5 text-xs">
-                        <div className="text-slate-700 dark:text-mortar-100">{w.name}</div>
-                        <div className="text-[10px] font-mono text-slate-400">{w.slug}</div>
+                        <div className="text-content dark:text-mortar-100">{w.name}</div>
+                        <div className="text-[10px] font-mono text-faint">{w.slug}</div>
                       </td>
                       <td className="px-3 py-1.5 text-right font-mono text-xs">
                         {w.used_ms.toLocaleString()}
@@ -410,12 +410,12 @@ function HealthTab() {
                             ? "text-ember-700 dark:text-ember-300 font-bold"
                             : pct >= 75
                               ? "text-orange-600 dark:text-orange-400"
-                              : "text-slate-500")
+                              : "text-muted")
                         }
                       >
                         {pct}%
                       </td>
-                      <td className="px-3 py-1.5 text-xs text-slate-500 font-mono">
+                      <td className="px-3 py-1.5 text-xs text-muted font-mono">
                         {Object.entries(w.by_module)
                           .map(([m, ms]) => `${m}:${ms}ms`)
                           .join(" · ")}
@@ -430,18 +430,18 @@ function HealthTab() {
       </div>
 
       <div>
-        <h2 className="text-[10px] font-mono uppercase tracking-widest text-slate-500 dark:text-slate-400 mb-2">
+        <h2 className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-2">
           Sandbox invocation telemetry
         </h2>
         {tel.data && tel.data.rows.length === 0 && (
-          <div className="text-xs text-slate-400 italic">
+          <div className="text-xs text-faint italic">
             No sandboxed-module invocations recorded yet.
           </div>
         )}
         {tel.data && tel.data.rows.length > 0 && (
-          <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
+          <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden">
             <table className="w-full text-sm">
-              <thead className="bg-mortar-50/30 dark:bg-slate-800/20">
+              <thead className="bg-subtle/30 dark:bg-slate-800/20">
                 <tr>
                   <Th>Workspace</Th>
                   <Th>Module</Th>
@@ -451,16 +451,16 @@ function HealthTab() {
                   <Th right>p95</Th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+              <tbody className="divide-y divide-line dark:divide-slate-800">
                 {tel.data.rows.map((r) => {
                   const errPct = Math.round(r.error_rate * 100);
                   return (
                     <tr key={`${r.org_id}::${r.module_name}`}>
                       <td className="px-3 py-1.5 text-xs">
-                        <div className="text-slate-700 dark:text-mortar-100">{r.name}</div>
-                        <div className="text-[10px] font-mono text-slate-400">{r.slug}</div>
+                        <div className="text-content dark:text-mortar-100">{r.name}</div>
+                        <div className="text-[10px] font-mono text-faint">{r.slug}</div>
                       </td>
-                      <td className="px-3 py-1.5 text-xs font-mono text-slate-600 dark:text-mortar-200">
+                      <td className="px-3 py-1.5 text-xs font-mono text-content dark:text-mortar-200">
                         {r.module_name}
                       </td>
                       <td className="px-3 py-1.5 text-right font-mono text-xs">
@@ -473,7 +473,7 @@ function HealthTab() {
                             ? "text-ember-600"
                             : errPct >= 1
                               ? "text-orange-600"
-                              : "text-slate-500")
+                              : "text-muted")
                         }
                       >
                         {r.errors}
@@ -525,7 +525,7 @@ function MarketplaceTab() {
       toast.error(e instanceof ApiError ? e.message : "uninstall failed"),
   });
 
-  if (q.isLoading) return <div className="text-xs text-slate-400">Loading registry…</div>;
+  if (q.isLoading) return <div className="text-xs text-faint">Loading registry…</div>;
   if (q.isError || !q.data) {
     return (
       <div className="rounded-xl border border-ember-200 dark:border-ember-700 bg-ember-50 dark:bg-ember-900/20 p-5 text-sm text-ember-700 dark:text-ember-300">
@@ -538,14 +538,14 @@ function MarketplaceTab() {
 
   return (
     <div className="space-y-3">
-      <div className="text-xs text-slate-500 dark:text-slate-400 px-1">
+      <div className="text-xs text-muted dark:text-slate-400 px-1">
         Browse signed marketplace modules from the cobblr registry. Installing
         downloads, verifies sha256 + ed25519 signature, extracts to
         <code className="font-mono text-[11px] mx-1">/var/cobblr/sandboxed-modules/</code>,
         and registers without restarting the api.
       </div>
       {q.data.items.length === 0 && (
-        <div className="text-xs text-slate-400 italic px-1">No modules listed.</div>
+        <div className="text-xs text-faint italic px-1">No modules listed.</div>
       )}
       {q.data.items.map((m) => {
         const latest = m.versions[0];
@@ -558,15 +558,15 @@ function MarketplaceTab() {
         return (
           <div
             key={m.name}
-            className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 space-y-2"
+            className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-2"
           >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <div className="font-display font-bold text-slate-700 dark:text-mortar-100">
+                  <div className="font-display font-bold text-content dark:text-mortar-100">
                     {m.display_name ?? m.name}
                   </div>
-                  <span className="text-[10px] font-mono text-slate-400">{m.name}</span>
+                  <span className="text-[10px] font-mono text-faint">{m.name}</span>
                   {m.public_key_ed25519 && (
                     <span
                       title="ed25519 signed"
@@ -577,12 +577,12 @@ function MarketplaceTab() {
                   )}
                 </div>
                 {m.description && (
-                  <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  <div className="text-xs text-muted dark:text-slate-400 mt-1">
                     {m.description}
                   </div>
                 )}
                 {m.author && (
-                  <div className="text-[10px] font-mono text-slate-400 mt-1">
+                  <div className="text-[10px] font-mono text-faint mt-1">
                     {m.author}
                     {m.homepage && (
                       <>
@@ -591,7 +591,7 @@ function MarketplaceTab() {
                           href={m.homepage}
                           target="_blank"
                           rel="noreferrer"
-                          className="text-cobble-600 hover:underline"
+                          className="text-accent hover:underline"
                         >
                           homepage
                         </a>
@@ -607,7 +607,7 @@ function MarketplaceTab() {
                     onChange={(e) =>
                       setSelectedVersion((s) => ({ ...s, [m.name]: e.target.value }))
                     }
-                    className="text-[11px] font-mono rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1"
+                    className="text-[11px] font-mono rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2 py-1"
                   >
                     {m.versions.map((v) => (
                       <option key={v.version} value={v.version}>
@@ -652,7 +652,7 @@ function MarketplaceTab() {
                   </button>
                 )}
                 {installed && (
-                  <div className="text-[10px] font-mono text-slate-400">
+                  <div className="text-[10px] font-mono text-faint">
                     v{installed.version} · {installed.source}
                   </div>
                 )}
@@ -677,7 +677,7 @@ function MarketplaceTab() {
                 )}
                 {installed && installed.source === "image" && (
                   <div
-                    className="text-[10px] font-mono text-slate-400"
+                    className="text-[10px] font-mono text-faint"
                     title="Image-baked modules can't be uninstalled at runtime — they ship with the cobblr-core image."
                   >
                     image-baked
@@ -703,16 +703,16 @@ function HealthCard({
 }) {
   const color = ok === true ? "moss" : ok === false ? "ember" : "slate";
   return (
-    <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
       <div className="flex items-center justify-between">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-slate-400">
+        <div className="text-[10px] font-mono uppercase tracking-widest text-faint">
           {label}
         </div>
         <span className={`text-xs font-mono text-${color}-600`}>
           {ok === true ? "OK" : ok === false ? "FAIL" : "—"}
         </span>
       </div>
-      <div className="text-xs text-slate-600 dark:text-mortar-200 mt-1">{detail}</div>
+      <div className="text-xs text-content dark:text-mortar-200 mt-1">{detail}</div>
     </div>
   );
 }
@@ -721,7 +721,7 @@ function Th({ children, right }: { children: React.ReactNode; right?: boolean })
   return (
     <th
       className={
-        "text-[10px] font-mono uppercase tracking-widest text-slate-400 px-3 py-2 " +
+        "text-[10px] font-mono uppercase tracking-widest text-faint px-3 py-2 " +
         (right ? "text-right" : "text-left")
       }
     >

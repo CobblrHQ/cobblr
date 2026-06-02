@@ -18,6 +18,54 @@ export interface FeaturedBundle {
 
 export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
+    glyph: "🥬",
+    blurb:
+      "Track the fridge/pantry with expiry + storage, and auto-build a shopping list when something runs low or is about to expire. Check an item off → it restocks.",
+    manifest: {
+      id: "cobblr.flagship.food-cluster",
+      version: "0.1.0",
+      name: "Kitchen & Groceries",
+      description:
+        "Turn inventory + lists into a kitchen system: expiry + storage fields, auto shopping list on low-stock/expiry, restock on check-off.",
+      author: "Cobblr",
+      requires: [{ module: "inventory" }, { module: "core-lists" }],
+      wires: [
+        { source_kind: "inventory:part", action_id: "core-lists:add-item", trigger_type: "event", trigger_event: "inventory.stock.low", args: { listTitle: "Shopping list" } },
+        { source_kind: "inventory:part", action_id: "core-lists:add-item", trigger_type: "event", trigger_event: "core-lists.item.expiring", args: { listTitle: "Shopping list" } },
+        { source_kind: "inventory:part", action_id: "inventory:adjust-stock", trigger_type: "event", trigger_event: "core-lists.item.checked", args: { delta: 1, reason: "Restocked — checked off the shopping list" } },
+      ],
+      field_defs: [
+        { entity_kind: "inventory:part", name: "expires_on", display_label: "Expires", type: "date", position: 1 },
+        { entity_kind: "inventory:part", name: "opened_on", display_label: "Opened", type: "date", position: 2 },
+        { entity_kind: "inventory:part", name: "storage", display_label: "Storage", type: "text", position: 3, choices: ["Fridge", "Freezer", "Pantry", "Counter", "Spice rack"] },
+        { entity_kind: "inventory:part", name: "food_category", display_label: "Category", type: "text", position: 4, choices: ["Produce", "Dairy", "Meat", "Bakery", "Frozen", "Canned", "Dry goods", "Condiments", "Beverages", "Snacks"] },
+      ],
+    },
+  },
+  {
+    glyph: "🥬➜📈",
+    blurb:
+      "Bridge: every grocery order you receive logs its cost as a 'Grocery spend' measurement — your spending trends like any metric. Set a monthly budget as the goal.",
+    manifest: {
+      id: "cobblr.flagship.kitchen-fitness",
+      version: "0.1.0",
+      name: "Kitchen × Fitness — grocery spend",
+      description:
+        "Connects the grocery flow to the Tracking module: order received → log spend into a metric. Neither module knows about the other.",
+      author: "Cobblr",
+      requires: [{ module: "purchases" }, { module: "core-fitness" }],
+      wires: [
+        {
+          source_kind: "purchases:order_item",
+          action_id: "core-fitness:log-measurement",
+          trigger_type: "event",
+          trigger_event: "purchases.order_item.received",
+          args: { metricName: "Grocery spend", unit: "$", goalDirection: "down", valueKey: "lineCost", note: "auto-logged on order arrival" },
+        },
+      ],
+    },
+  },
+  {
     glyph: "🧱",
     blurb:
       "Lego set inventory with set ID, year, theme, color, condition, and a label template that prints LEGO-flavored.",

@@ -92,20 +92,20 @@ export function NewThingFunnelModal({
     >
       {step === "choose-shape" && (
         <div className="space-y-3">
-          <p className="text-sm text-slate-600 dark:text-mortar-200">
+          <p className="text-sm text-content dark:text-mortar-200">
             What kind of thing do you want to add to your workspace?
           </p>
           <button
             type="button"
             onClick={() => setStep("instance-pick-module")}
-            className="w-full text-left rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 hover:border-cobble-400 dark:hover:border-cobble-700 transition flex items-start gap-3"
+            className="w-full text-left rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 hover:border-accent dark:hover:border-cobble-700 transition flex items-start gap-3"
           >
-            <Boxes size={20} className="text-cobble-500 mt-0.5 shrink-0" />
+            <Boxes size={20} className="text-accent mt-0.5 shrink-0" />
             <div className="flex-1">
-              <div className="font-medium text-slate-700 dark:text-mortar-100">
+              <div className="font-medium text-content dark:text-mortar-100">
                 Its own thing
               </div>
-              <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              <div className="text-xs text-muted dark:text-slate-400 mt-1">
                 Separate from everything else — its own list, its own custom fields, possibly thousands of rows. (e.g., a "Cars" inventory separate from your "Tools" inventory)
               </div>
             </div>
@@ -113,14 +113,14 @@ export function NewThingFunnelModal({
           <button
             type="button"
             onClick={() => setStep("lens-coming-soon")}
-            className="w-full text-left rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 hover:border-cobble-400 dark:hover:border-cobble-700 transition flex items-start gap-3"
+            className="w-full text-left rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 hover:border-accent dark:hover:border-cobble-700 transition flex items-start gap-3"
           >
-            <FolderPlus size={20} className="text-cobble-500 mt-0.5 shrink-0" />
+            <FolderPlus size={20} className="text-accent mt-0.5 shrink-0" />
             <div className="flex-1">
-              <div className="font-medium text-slate-700 dark:text-mortar-100">
+              <div className="font-medium text-content dark:text-mortar-100">
                 Sub-category of an existing thing
               </div>
-              <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              <div className="text-xs text-muted dark:text-slate-400 mt-1">
                 Shares custom fields and list views with a parent. Small (1–100 rows). Browsed together with siblings. (e.g., "Castle sets" within your Lego inventory)
               </div>
             </div>
@@ -130,14 +130,14 @@ export function NewThingFunnelModal({
 
       {step === "instance-pick-module" && (
         <div className="space-y-3">
-          <p className="text-sm text-slate-600 dark:text-mortar-200">
+          <p className="text-sm text-content dark:text-mortar-200">
             What kind of thing is it like?
           </p>
           {modules.isLoading && (
-            <div className="text-sm text-slate-500">Loading…</div>
+            <div className="text-sm text-muted">Loading…</div>
           )}
           {candidates.length === 0 && !modules.isLoading && (
-            <div className="text-sm italic text-slate-500 dark:text-slate-400">
+            <div className="text-sm italic text-muted dark:text-slate-400">
               No multi-instance modules enabled. Enable one of: Assets,
               Inventory, Machines, Projects, Purchases.
             </div>
@@ -150,12 +150,12 @@ export function NewThingFunnelModal({
                 setPickedModule(m.name);
                 setStep("instance-name");
               }}
-              className="w-full text-left rounded border border-slate-200 dark:border-slate-700 p-3 hover:border-cobble-400 dark:hover:border-cobble-700 transition"
+              className="w-full text-left rounded border border-line dark:border-slate-700 p-3 hover:border-accent dark:hover:border-cobble-700 transition"
             >
-              <div className="text-sm font-medium text-slate-700 dark:text-mortar-100">
+              <div className="text-sm font-medium text-content dark:text-mortar-100">
                 Like {m.displayName ?? m.name}
               </div>
-              <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              <div className="text-xs text-muted dark:text-slate-400 mt-0.5">
                 {m.description}
               </div>
             </button>
@@ -164,7 +164,7 @@ export function NewThingFunnelModal({
             <button
               type="button"
               onClick={() => setStep("choose-shape")}
-              className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+              className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
             >
               Back
             </button>
@@ -174,11 +174,11 @@ export function NewThingFunnelModal({
 
       {step === "instance-name" && (
         <form onSubmit={submit} className="space-y-3">
-          <p className="text-sm text-slate-600 dark:text-mortar-200">
+          <p className="text-sm text-content dark:text-mortar-200">
             What's this new thing called?
           </p>
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Name
             </span>
             <input
@@ -186,11 +186,11 @@ export function NewThingFunnelModal({
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
               placeholder="e.g. Cars, Tools, Screws"
-              className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+              className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
               autoFocus
             />
             {displayName && (
-              <div className="text-[10px] text-slate-500 mt-1 font-mono">
+              <div className="text-[10px] text-muted mt-1 font-mono">
                 URL slug: <code>{slugify(displayName)}</code>
               </div>
             )}
@@ -199,7 +199,7 @@ export function NewThingFunnelModal({
             <button
               type="button"
               onClick={() => setStep("instance-pick-module")}
-              className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+              className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
             >
               Back
             </button>
@@ -216,16 +216,16 @@ export function NewThingFunnelModal({
 
       {step === "lens-coming-soon" && (
         <div className="space-y-3">
-          <p className="text-sm text-slate-600 dark:text-mortar-200">
+          <p className="text-sm text-content dark:text-mortar-200">
             Sub-category creation lands as a separate primitive (lens
             bundles) — it lets one parent thing host multiple shared-shape
             categories like "Castle sets" / "Star Wars sets" under your
             Lego inventory. The architecture is spec'd; the UI ships next.
           </p>
-          <p className="text-sm text-slate-600 dark:text-mortar-200">
+          <p className="text-sm text-content dark:text-mortar-200">
             For now, you can:
           </p>
-          <ul className="list-disc list-inside text-sm text-slate-600 dark:text-mortar-200 space-y-1">
+          <ul className="list-disc list-inside text-sm text-content dark:text-mortar-200 space-y-1">
             <li>Install a featured lens bundle from the Bundles page</li>
             <li>Author your own JSON bundle with <code>provides_lens</code></li>
             <li>Use tags to group sub-categories within an existing thing</li>
@@ -234,7 +234,7 @@ export function NewThingFunnelModal({
             <button
               type="button"
               onClick={() => setStep("choose-shape")}
-              className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+              className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
             >
               Back
             </button>

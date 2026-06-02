@@ -54,10 +54,10 @@ export function InventoryUI({ orgSlug, getToken, instance, displayName }: Invent
 
 function Header({ title, scoped }: { title: string; scoped: boolean }) {
   const cls = ({ isActive }: { isActive: boolean }) =>
-    isActive ? "text-cobble-600 font-semibold" : "text-slate-400 dark:text-slate-500 hover:text-cobble-500";
+    isActive ? "text-accent font-semibold" : "text-faint dark:text-slate-500 hover:text-accent";
   return (
-    <div className="flex items-baseline gap-4 border-b border-slate-200 dark:border-slate-700 pb-3">
-      <h1 className="font-display text-2xl font-extrabold text-slate-700 dark:text-mortar-100 lowercase">
+    <div className="flex items-baseline gap-4 border-b border-line dark:border-slate-700 pb-3">
+      <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">
         {title}
       </h1>
       <nav className="flex gap-3 text-xs font-mono">

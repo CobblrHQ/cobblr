@@ -28,27 +28,27 @@ export function AllocationsPanel({ partId }: { partId: string }) {
   const items = list.data?.items ?? [];
 
   return (
-    <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 space-y-3">
-      <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500">
+    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
+      <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
         // allocations
       </div>
-      {list.isLoading && <div className="text-xs text-slate-400 dark:text-slate-500">loading…</div>}
+      {list.isLoading && <div className="text-xs text-faint dark:text-slate-500">loading…</div>}
       {items.length === 0 && !list.isLoading && (
-        <div className="text-xs text-slate-400 dark:text-slate-500 italic">
+        <div className="text-xs text-faint dark:text-slate-500 italic">
           No allocations yet. Reserve some below.
         </div>
       )}
       {items.length > 0 && (
-        <ul className="divide-y divide-slate-100 dark:divide-slate-700 -mx-1">
+        <ul className="divide-y divide-line dark:divide-slate-700 -mx-1">
           {items.map((a) => (
             <li key={a.id} className="px-1 py-2 flex items-baseline gap-3 text-sm">
-              <span className="font-mono w-16 shrink-0 text-slate-700 dark:text-mortar-100">{fmt(a.qty)}</span>
+              <span className="font-mono w-16 shrink-0 text-content dark:text-mortar-100">{fmt(a.qty)}</span>
               <StatusBadge status={a.status} />
-              <span className="flex-1 truncate text-slate-500 dark:text-slate-400 font-mono text-xs">
+              <span className="flex-1 truncate text-muted dark:text-slate-400 font-mono text-xs">
                 {a.target_module}/{a.target_entity_type}/{a.target_entity_id}
               </span>
               {a.reason && (
-                <span className="text-xs text-slate-400 dark:text-slate-500 italic truncate max-w-[160px]">
+                <span className="text-xs text-faint dark:text-slate-500 italic truncate max-w-[160px]">
                   {a.reason}
                 </span>
               )}
@@ -56,14 +56,14 @@ export function AllocationsPanel({ partId }: { partId: string }) {
                 <span className="flex gap-1">
                   <button
                     onClick={() => setStatus.mutate({ id: a.id, status: "consumed" })}
-                    className="text-[10px] uppercase tracking-widest text-cobble-600 hover:text-cobble-800"
+                    className="text-[10px] uppercase tracking-widest text-accent hover:text-cobble-800"
                   >
                     consume
                   </button>
-                  <span className="text-slate-300 dark:text-slate-600">·</span>
+                  <span className="text-faint dark:text-slate-600">·</span>
                   <button
                     onClick={() => setStatus.mutate({ id: a.id, status: "released" })}
-                    className="text-[10px] uppercase tracking-widest text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:text-mortar-200"
+                    className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 hover:text-content dark:text-mortar-200"
                   >
                     release
                   </button>
@@ -117,8 +117,8 @@ function ReserveForm({ partId }: { partId: string }) {
   }
 
   return (
-    <form onSubmit={submit} className="border-t border-slate-100 dark:border-slate-700 pt-3 mt-3 space-y-2">
-      <div className="text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500">
+    <form onSubmit={submit} className="border-t border-line dark:border-slate-700 pt-3 mt-3 space-y-2">
+      <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
         Reserve for…
       </div>
       <div className="flex gap-2">
@@ -183,11 +183,11 @@ function EntityPicker({
   if (selected) {
     return (
       <div className="input flex items-center gap-2">
-        <span className="flex-1 truncate text-sm text-slate-700 dark:text-mortar-100">{selected.label}</span>
+        <span className="flex-1 truncate text-sm text-content dark:text-mortar-100">{selected.label}</span>
         <button
           type="button"
           onClick={onClear}
-          className="text-xs text-slate-400 hover:text-ember-500 shrink-0"
+          className="text-xs text-faint hover:text-ember-500 shrink-0"
           title="Change target"
         >
           ✕
@@ -210,10 +210,10 @@ function EntityPicker({
         className="input text-sm"
       />
       {open && debounced.trim().length >= 2 && (
-        <ul className="absolute z-20 mt-1 w-full max-h-56 overflow-auto rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg">
-          {results.isLoading && <li className="px-3 py-2 text-xs text-slate-400">searching…</li>}
+        <ul className="absolute z-20 mt-1 w-full max-h-56 overflow-auto rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg">
+          {results.isLoading && <li className="px-3 py-2 text-xs text-faint">searching…</li>}
           {!results.isLoading && items.length === 0 && (
-            <li className="px-3 py-2 text-xs text-slate-400 italic">no matches</li>
+            <li className="px-3 py-2 text-xs text-faint italic">no matches</li>
           )}
           {items.map((it) => {
             const [module = "", type = ""] = it.kind.split(":");
@@ -227,10 +227,10 @@ function EntityPicker({
                     setOpen(false);
                     setQ("");
                   }}
-                  className="w-full text-left px-3 py-2 text-sm hover:bg-mortar-50 dark:hover:bg-slate-800 flex items-center gap-2"
+                  className="w-full text-left px-3 py-2 text-sm hover:bg-subtle dark:hover:bg-slate-800 flex items-center gap-2"
                 >
-                  <span className="flex-1 truncate text-slate-700 dark:text-mortar-100">{label}</span>
-                  <span className="text-[10px] font-mono text-slate-400 shrink-0">{it.kind}</span>
+                  <span className="flex-1 truncate text-content dark:text-mortar-100">{label}</span>
+                  <span className="text-[10px] font-mono text-faint shrink-0">{it.kind}</span>
                 </button>
               </li>
             );
@@ -243,9 +243,9 @@ function EntityPicker({
 
 function StatusBadge({ status }: { status: AllocationStatus }) {
   const map: Record<AllocationStatus, { label: string; cls: string }> = {
-    reserved: { label: "reserved", cls: "bg-cobble-50 text-cobble-600" },
+    reserved: { label: "reserved", cls: "bg-cobble-50 text-accent" },
     consumed: { label: "consumed", cls: "bg-moss-50 text-moss-600" },
-    released: { label: "released", cls: "bg-slate-100 text-slate-500 dark:text-slate-400" },
+    released: { label: "released", cls: "bg-subtle text-muted dark:text-slate-400" },
   };
   const v = map[status];
   return (

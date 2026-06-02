@@ -132,8 +132,8 @@ export function AppsConfigPage() {
     <div className="space-y-5 max-w-5xl">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-slate-700 dark:text-mortar-100">Apps</h1>
-          <p className="text-xs text-slate-400">
+          <h1 className="text-xl font-semibold text-content dark:text-mortar-100">Apps</h1>
+          <p className="text-xs text-faint">
             Structured worker apps for the member portal. Members see only the apps + fields their
             capabilities allow.
           </p>
@@ -151,7 +151,7 @@ export function AppsConfigPage() {
         {/* App list */}
         <div className="space-y-2">
           {apps.isLoading && (
-            <div className="text-xs text-slate-400 italic p-3">Loading…</div>
+            <div className="text-xs text-faint italic p-3">Loading…</div>
           )}
           {apps.isError && !apps.isLoading && (
             <div className="text-xs text-ember-500 italic p-3">
@@ -164,14 +164,14 @@ export function AppsConfigPage() {
               className={
                 "rounded-lg border p-3 flex items-center gap-2 cursor-pointer transition " +
                 (editing?.slug === a.slug
-                  ? "border-cobble-400 bg-cobble-50/40 dark:bg-cobble-900/20"
-                  : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-cobble-300")
+                  ? "border-accent bg-cobble-50/40 dark:bg-cobble-900/20"
+                  : "border-line dark:border-slate-700 bg-surface dark:bg-slate-900 hover:border-cobble-300")
               }
               onClick={() => void openApp(a)}
             >
               <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium text-slate-700 dark:text-mortar-100 truncate">{a.name}</div>
-                <div className="text-[10px] font-mono text-slate-400 truncate">
+                <div className="text-sm font-medium text-content dark:text-mortar-100 truncate">{a.name}</div>
+                <div className="text-[10px] font-mono text-faint truncate">
                   {a.visible_capability ?? "any member"}
                 </div>
               </div>
@@ -180,7 +180,7 @@ export function AppsConfigPage() {
                 target="_blank"
                 rel="noreferrer"
                 onClick={(e) => e.stopPropagation()}
-                className="text-slate-300 hover:text-cobble-600 p-1"
+                className="text-faint hover:text-accent p-1"
                 title="Open app in the portal"
               >
                 <ExternalLink size={13} />
@@ -188,7 +188,7 @@ export function AppsConfigPage() {
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); void remove(a); }}
-                className="text-slate-300 hover:text-ember-500 p-1"
+                className="text-faint hover:text-ember-500 p-1"
                 title="Delete app"
               >
                 <Trash2 size={13} />
@@ -196,14 +196,14 @@ export function AppsConfigPage() {
             </div>
           ))}
           {!apps.isLoading && (apps.data?.items ?? []).length === 0 && (
-            <div className="text-xs text-slate-400 italic p-3">No apps yet. Create one.</div>
+            <div className="text-xs text-faint italic p-3">No apps yet. Create one.</div>
           )}
         </div>
 
         {/* Editor */}
         <div className="col-span-2">
           {!editing ? (
-            <div className="text-sm text-slate-400 italic p-6 text-center border border-dashed border-slate-200 dark:border-slate-700 rounded-lg">
+            <div className="text-sm text-faint italic p-6 text-center border border-dashed border-line dark:border-slate-700 rounded-lg">
               Select an app to edit, or create one.
             </div>
           ) : (
@@ -212,13 +212,13 @@ export function AppsConfigPage() {
                 <input
                   value={editing.name}
                   onChange={(e) => setEditing({ ...editing, name: e.target.value })}
-                  className="text-lg font-semibold bg-transparent border-b border-slate-200 dark:border-slate-700 focus:outline-none focus:border-cobble-400 text-slate-700 dark:text-mortar-100 flex-1"
+                  className="text-lg font-semibold bg-transparent border-b border-line dark:border-slate-700 focus:outline-none focus:border-accent text-content dark:text-mortar-100 flex-1"
                 />
                 <a
                   href={`/portal/${slug}/app/${editing.slug}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 rounded-md border border-cobble-300 text-cobble-600 hover:bg-cobble-50 dark:hover:bg-cobble-900/20 text-sm font-medium px-3 py-1.5 whitespace-nowrap"
+                  className="inline-flex items-center gap-1.5 rounded-md border border-cobble-300 text-accent hover:bg-cobble-50 dark:hover:bg-cobble-900/20 text-sm font-medium px-3 py-1.5 whitespace-nowrap"
                   title="Open this app in the portal (new tab)"
                 >
                   <ExternalLink size={14} /> Open app
@@ -226,13 +226,13 @@ export function AppsConfigPage() {
               </div>
 
               <label className="block">
-                <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 mb-1">
+                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
                   Visible to
                 </span>
                 <select
                   value={editing.visible_capability ?? ""}
                   onChange={(e) => setEditing({ ...editing, visible_capability: e.target.value || null })}
-                  className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+                  className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
                 >
                   <option value="">Any member</option>
                   {(grantable.data?.items ?? []).map((g) => (
@@ -253,22 +253,22 @@ export function AppsConfigPage() {
               />
 
               {editing.pages.map((page, pi) => (
-                <div key={pi} className="rounded-lg border border-slate-200 dark:border-slate-700 p-3 space-y-3">
+                <div key={pi} className="rounded-lg border border-line dark:border-slate-700 p-3 space-y-3">
                   <div className="flex items-center gap-2">
                     <input
                       value={page.title}
                       onChange={(e) => updatePage(pi, { title: e.target.value })}
-                      className="text-sm font-medium bg-transparent border-b border-slate-200 dark:border-slate-700 focus:outline-none flex-1"
+                      className="text-sm font-medium bg-transparent border-b border-line dark:border-slate-700 focus:outline-none flex-1"
                     />
-                    <button type="button" onClick={() => removePage(pi)} className="text-slate-300 hover:text-ember-500 p-1">
+                    <button type="button" onClick={() => removePage(pi)} className="text-faint hover:text-ember-500 p-1">
                       <Trash2 size={12} />
                     </button>
                   </div>
                   {page.blocks.map((block, bi) => (
-                    <div key={bi} className="rounded border border-slate-100 dark:border-slate-800 bg-mortar-50/40 dark:bg-slate-800/40 p-2 flex items-start gap-2">
+                    <div key={bi} className="rounded border border-line dark:border-slate-800 bg-subtle/40 dark:bg-slate-800/40 p-2 flex items-start gap-2">
                       <div className="flex flex-col gap-0.5 pt-0.5">
-                        <button type="button" onClick={() => moveBlock(pi, bi, -1)} className="text-slate-300 hover:text-cobble-500"><ArrowUp size={11} /></button>
-                        <button type="button" onClick={() => moveBlock(pi, bi, 1)} className="text-slate-300 hover:text-cobble-500"><ArrowDown size={11} /></button>
+                        <button type="button" onClick={() => moveBlock(pi, bi, -1)} className="text-faint hover:text-accent"><ArrowUp size={11} /></button>
+                        <button type="button" onClick={() => moveBlock(pi, bi, 1)} className="text-faint hover:text-accent"><ArrowDown size={11} /></button>
                       </div>
                       <div className="flex-1 min-w-0">
                         <BlockEditor
@@ -278,19 +278,19 @@ export function AppsConfigPage() {
                           onChange={(b) => updateBlock(pi, bi, b)}
                         />
                       </div>
-                      <button type="button" onClick={() => removeBlock(pi, bi)} className="text-slate-300 hover:text-ember-500 p-1">
+                      <button type="button" onClick={() => removeBlock(pi, bi)} className="text-faint hover:text-ember-500 p-1">
                         <Trash2 size={12} />
                       </button>
                     </div>
                   ))}
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-[10px] font-mono uppercase text-slate-400">add block:</span>
+                    <span className="text-[10px] font-mono uppercase text-faint">add block:</span>
                     {BLOCK_TYPES.map((t) => (
                       <button
                         key={t}
                         type="button"
                         onClick={() => addBlock(pi, t)}
-                        className="text-[11px] px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700 text-cobble-600 hover:bg-mortar-50 dark:hover:bg-slate-800"
+                        className="text-[11px] px-2 py-0.5 rounded border border-line dark:border-slate-700 text-accent hover:bg-subtle dark:hover:bg-slate-800"
                       >
                         + {t}
                       </button>
@@ -300,7 +300,7 @@ export function AppsConfigPage() {
               ))}
 
               <div className="flex items-center gap-2">
-                <button type="button" onClick={addPage} className="text-xs text-cobble-600 hover:underline inline-flex items-center gap-1">
+                <button type="button" onClick={addPage} className="text-xs text-accent hover:underline inline-flex items-center gap-1">
                   <Plus size={12} /> add page
                 </button>
                 <div className="flex-1" />
@@ -344,8 +344,8 @@ function BlockEditor({
   kinds: string[];
   onChange: (b: AppBlock) => void;
 }) {
-  const labelCls = "text-[10px] font-mono uppercase tracking-widest text-slate-400";
-  const inputCls = "w-full px-2 py-1 text-xs border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900";
+  const labelCls = "text-[10px] font-mono uppercase tracking-widest text-faint";
+  const inputCls = "w-full px-2 py-1 text-xs border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900";
   const ViewSelect = ({ value, onPick }: { value: string; onPick: (v: string) => void }) => (
     <select value={value} onChange={(e) => onPick(e.target.value)} className={inputCls}>
       <option value="">— pick a view —</option>
@@ -388,10 +388,10 @@ function BlockEditor({
       {block.type === "record" && (
         <KindSelect value={block.kind} onPick={(v) => onChange({ ...block, kind: v })} />
       )}
-      {block.type === "scan" && <div className="text-[11px] text-slate-400 italic">scanner link — no config</div>}
+      {block.type === "scan" && <div className="text-[11px] text-faint italic">scanner link — no config</div>}
       {block.type === "custom" && (
         <div className="space-y-1">
-          <div className="text-[10px] text-slate-400">
+          <div className="text-[10px] text-faint">
             Custom HTML/JS — runs sandboxed. Read data with{" "}
             <code className="font-mono">cobblr.get('/modules/…')</code> (org-relative, GET-only,
             capability + H2 scoped).

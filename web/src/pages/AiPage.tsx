@@ -81,7 +81,7 @@ export function AiPage() {
         <div className="flex items-center gap-3">
           <Link
             to="/configuration"
-            className="text-sm text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 inline-flex items-center gap-1"
+            className="text-sm text-muted hover:text-content dark:hover:text-slate-300 inline-flex items-center gap-1"
           >
             <ArrowLeft className="h-4 w-4" /> Configuration
           </Link>
@@ -104,7 +104,7 @@ export function AiPage() {
         </div>
         <div className="space-y-2">
           {providersQ.data?.items.length === 0 && (
-            <div className="text-sm text-slate-500 border border-dashed rounded p-4">
+            <div className="text-sm text-muted border border-dashed rounded p-4">
               No AI providers configured. Add one to start using
               capabilities like classify-image and match-to-catalog.
             </div>
@@ -122,7 +122,7 @@ export function AiPage() {
 
       <section>
         <h2 className="text-lg font-semibold mb-2">Capability defaults</h2>
-        <div className="text-xs text-slate-500 mb-2">
+        <div className="text-xs text-muted mb-2">
           For each capability, which provider + model the workspace
           uses by default. Wires fire capabilities through these.
         </div>
@@ -138,17 +138,17 @@ export function AiPage() {
                 <div className="flex items-center gap-2 text-sm">
                   {row ? (
                     <span>
-                      <span className="text-slate-500">{row.provider_id}</span>
-                      <span className="mx-1 text-slate-400">·</span>
+                      <span className="text-muted">{row.provider_id}</span>
+                      <span className="mx-1 text-faint">·</span>
                       <span className="font-mono">{row.model}</span>
                     </span>
                   ) : (
-                    <span className="text-slate-400 italic">unset</span>
+                    <span className="text-faint italic">unset</span>
                   )}
                   <button
                     type="button"
                     onClick={() => setEditingCapability(cap)}
-                    className="p-1.5 text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 rounded hover:bg-slate-100 dark:hover:bg-slate-800"
+                    className="p-1.5 text-muted hover:text-content dark:hover:text-slate-200 rounded hover:bg-subtle dark:hover:bg-slate-800"
                   >
                     <Pencil className="h-4 w-4" />
                   </button>
@@ -162,7 +162,7 @@ export function AiPage() {
       <section>
         <h2 className="text-lg font-semibold mb-2">This month</h2>
         {summaryQ.data?.items.length === 0 && (
-          <div className="text-sm text-slate-500">No AI calls yet this month.</div>
+          <div className="text-sm text-muted">No AI calls yet this month.</div>
         )}
         <div className="space-y-1">
           {summaryQ.data?.items.map((s) => (
@@ -172,10 +172,10 @@ export function AiPage() {
             >
               <div>
                 <span className="font-mono">{s.capability}</span>
-                <span className="mx-1 text-slate-400">·</span>
-                <span className="text-slate-500">{s.provider_id}</span>
+                <span className="mx-1 text-faint">·</span>
+                <span className="text-muted">{s.provider_id}</span>
               </div>
-              <div className="text-slate-500 text-xs">
+              <div className="text-muted text-xs">
                 {s.calls} calls
                 {Number(s.cached_calls) > 0 && (
                   <span> ({s.cached_calls} cached)</span>
@@ -185,7 +185,7 @@ export function AiPage() {
                 )}
                 {" · "}
                 {((Number(s.total_cost_cents ?? 0)) / 100).toFixed(2)}{" "}
-                <span className="text-slate-400">USD</span>
+                <span className="text-faint">USD</span>
               </div>
             </div>
           ))}
@@ -196,7 +196,7 @@ export function AiPage() {
         <h2 className="text-lg font-semibold mb-2">Recent calls</h2>
         <div className="text-xs font-mono space-y-1">
           {callsQ.data?.items.length === 0 && (
-            <div className="text-sm text-slate-500">No calls yet.</div>
+            <div className="text-sm text-muted">No calls yet.</div>
           )}
           {callsQ.data?.items.map((c) => (
             <div key={c.id} className="flex gap-3 items-center">
@@ -205,13 +205,13 @@ export function AiPage() {
               </span>
               {c.cached && <span className="text-blue-500">cached</span>}
               <span className="font-medium">{c.capability}</span>
-              <span className="text-slate-500">{c.provider_id}</span>
-              <span className="text-slate-500">{c.model ?? "—"}</span>
-              <span className="text-slate-400">
+              <span className="text-muted">{c.provider_id}</span>
+              <span className="text-muted">{c.model ?? "—"}</span>
+              <span className="text-faint">
                 {c.cost_cents !== null ? `${(c.cost_cents / 100).toFixed(2)}¢` : "—"} ·{" "}
                 {c.duration_ms ?? "—"}ms
               </span>
-              <span className="text-slate-400">
+              <span className="text-faint">
                 {new Date(c.invoked_at).toLocaleString()}
               </span>
               {c.error && <span className="text-red-500 truncate">{c.error}</span>}
@@ -290,7 +290,7 @@ function ProviderRow({
       <div className="flex items-center justify-between">
         <div className="min-w-0">
           <div className="font-medium truncate">{provider.label}</div>
-          <div className="text-xs text-slate-500">
+          <div className="text-xs text-muted">
             {def?.label ?? provider.provider_id}
             {!provider.enabled && (
               <span className="ml-2 text-amber-600">disabled</span>
@@ -307,7 +307,7 @@ function ProviderRow({
             type="button"
             onClick={() => testM.mutate()}
             disabled={testM.isPending}
-            className="p-1.5 text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 rounded hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="p-1.5 text-muted hover:text-content dark:hover:text-slate-200 rounded hover:bg-subtle dark:hover:bg-slate-800"
             title="Test connection"
           >
             <Play className="h-4 w-4" />
@@ -315,7 +315,7 @@ function ProviderRow({
           <button
             type="button"
             onClick={onEdit}
-            className="p-1.5 text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 rounded hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="p-1.5 text-muted hover:text-content dark:hover:text-slate-200 rounded hover:bg-subtle dark:hover:bg-slate-800"
             title="Edit"
           >
             <Pencil className="h-4 w-4" />
@@ -324,7 +324,7 @@ function ProviderRow({
             type="button"
             onClick={() => toggleM.mutate()}
             disabled={toggleM.isPending}
-            className="px-2 py-1 text-xs rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="px-2 py-1 text-xs rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
           >
             {provider.enabled ? "Disable" : "Enable"}
           </button>
@@ -399,7 +399,7 @@ function ProviderAddModal({
               setPickedId(e.target.value);
               setCreds({});
             }}
-            className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900"
           >
             {catalogue.map((c) => (
               <option key={c.id} value={c.id}>
@@ -408,7 +408,7 @@ function ProviderAddModal({
             ))}
           </select>
           {picked && (
-            <div className="text-xs text-slate-500 mt-1">
+            <div className="text-xs text-muted mt-1">
               Supports: {Object.keys(picked.capabilities).join(", ")}
             </div>
           )}
@@ -419,7 +419,7 @@ function ProviderAddModal({
             value={label}
             onChange={(e) => setLabel(e.target.value)}
             placeholder={picked?.label ?? ""}
-            className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900"
           />
         </div>
         {picked &&
@@ -430,7 +430,7 @@ function ProviderAddModal({
                 type={d.secret ? "password" : "text"}
                 value={creds[key] ?? ""}
                 onChange={(e) => setCreds({ ...creds, [key]: e.target.value })}
-                className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-white dark:bg-slate-900 font-mono"
+                className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900 font-mono"
               />
             </div>
           ))}
@@ -444,14 +444,14 @@ function ProviderAddModal({
             value={budget}
             onChange={(e) => setBudget(e.target.value)}
             placeholder="e.g. 10.00"
-            className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900"
           />
         </div>
         <div className="flex justify-end gap-2 pt-2">
           <button
             type="button"
             onClick={onClose}
-            className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
           >
             Cancel
           </button>
@@ -519,7 +519,7 @@ function ProviderEditModal({
           <input
             value={label}
             onChange={(e) => setLabel(e.target.value)}
-            className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900"
           />
         </div>
         <div>
@@ -531,7 +531,7 @@ function ProviderEditModal({
             step="0.01"
             value={budget}
             onChange={(e) => setBudget(e.target.value)}
-            className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900"
           />
         </div>
         <label className="flex items-center gap-2 text-sm">
@@ -550,7 +550,7 @@ function ProviderEditModal({
                 type={d.secret ? "password" : "text"}
                 value={creds[key] ?? ""}
                 onChange={(e) => setCreds({ ...creds, [key]: e.target.value })}
-                className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-white dark:bg-slate-900 font-mono"
+                className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900 font-mono"
               />
             </div>
           ))}
@@ -558,7 +558,7 @@ function ProviderEditModal({
           <button
             type="button"
             onClick={onClose}
-            className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
           >
             Cancel
           </button>
@@ -629,14 +629,14 @@ function CapabilityDefaultModal({
     <Modal open onClose={onClose} title={`Default for ${capability}`} size="md">
       {eligible.length === 0 ? (
         <div className="space-y-2">
-          <div className="text-sm text-slate-500">
+          <div className="text-sm text-muted">
             No enabled provider currently supports this capability.
             Add one first.
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
           >
             Close
           </button>
@@ -659,7 +659,7 @@ function CapabilityDefaultModal({
                 const next = (nextDef?.capabilities[capability as never] as { models: string[] } | undefined)?.models ?? [];
                 setModel(next[0] ?? "");
               }}
-              className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-white dark:bg-slate-900"
+              className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900"
             >
               {eligible.map((p) => (
                 <option key={p.id} value={p.provider_id}>
@@ -673,7 +673,7 @@ function CapabilityDefaultModal({
             <select
               value={model}
               onChange={(e) => setModel(e.target.value)}
-              className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-white dark:bg-slate-900 font-mono"
+              className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900 font-mono"
             >
               {supportedModels.map((m) => (
                 <option key={m} value={m}>
@@ -696,7 +696,7 @@ function CapabilityDefaultModal({
             <button
               type="button"
               onClick={onClose}
-              className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+              className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
             >
               Cancel
             </button>

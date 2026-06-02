@@ -105,14 +105,14 @@ export function PublicSurfacePage() {
     return (
       <PublicShell theme={theme}>
         <div className="text-center py-12">
-          <h1 className="font-display text-3xl font-extrabold text-slate-700 dark:text-mortar-100 lowercase mb-2">
+          <h1 className="font-display text-3xl font-extrabold text-content dark:text-mortar-100 lowercase mb-2">
             {e === "not_found"
               ? "not found"
               : e === "expired"
                 ? "expired"
                 : "error"}
           </h1>
-          <p className="text-sm text-slate-500 dark:text-slate-400">
+          <p className="text-sm text-muted dark:text-slate-400">
             {e === "not_found"
               ? "this surface doesn't exist or has been revoked."
               : e === "expired"
@@ -135,7 +135,7 @@ export function PublicSurfacePage() {
   return (
     <PublicShell title={data.surface.name} theme={theme}>
       {theme.banner_image && (
-        <div className="aspect-[3/1] rounded-xl overflow-hidden mb-6 bg-slate-100 dark:bg-slate-800">
+        <div className="aspect-[3/1] rounded-xl overflow-hidden mb-6 bg-subtle dark:bg-slate-800">
           <img
             src={theme.banner_image}
             alt={data.surface.name}
@@ -150,17 +150,17 @@ export function PublicSurfacePage() {
         <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {(data.sections ?? []).map((section, i) => (
             <div key={`${section.title}-${i}`}>
-              <header className="mb-3 flex items-baseline gap-2 border-b border-slate-200 dark:border-slate-700 pb-2">
-                <h2 className="font-display text-lg font-extrabold text-slate-700 dark:text-mortar-100 lowercase">
+              <header className="mb-3 flex items-baseline gap-2 border-b border-line dark:border-slate-700 pb-2">
+                <h2 className="font-display text-lg font-extrabold text-content dark:text-mortar-100 lowercase">
                   {section.title}
                 </h2>
-                <span className="text-xs text-slate-400">{section.items.length}</span>
+                <span className="text-xs text-faint">{section.items.length}</span>
               </header>
               <ListGrid items={section.items} />
             </div>
           ))}
           {(data.sections ?? []).length === 0 && (
-            <div className="text-sm text-slate-500 italic py-12 text-center sm:col-span-2 lg:col-span-3">
+            <div className="text-sm text-muted italic py-12 text-center sm:col-span-2 lg:col-span-3">
               nothing here yet.
             </div>
           )}
@@ -170,10 +170,10 @@ export function PublicSurfacePage() {
         data.surface.scope_type === "collection") && (
         <>
           <header className="mb-4 flex items-baseline gap-3">
-            <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400">
+            <span className="text-[10px] font-mono uppercase tracking-widest text-faint">
               {data.view?.entity_kind ?? data.collection?.kind ?? "items"}
             </span>
-            <span className="text-xs text-slate-400">
+            <span className="text-xs text-faint">
               {(data.items ?? []).length} items
             </span>
           </header>
@@ -185,7 +185,7 @@ export function PublicSurfacePage() {
         </>
       )}
       {theme.footer && (
-        <footer className="mt-12 pt-6 border-t border-slate-200 dark:border-slate-700 text-center text-xs text-slate-400">
+        <footer className="mt-12 pt-6 border-t border-line dark:border-slate-700 text-center text-xs text-faint">
           {theme.footer}
         </footer>
       )}
@@ -211,23 +211,23 @@ function PublicShell({
         ? "light"
         : "";
   return (
-    <div className={`min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-700 dark:text-mortar-100 ${themeClass}`}>
-      <header className="border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-6 py-4">
+    <div className={`min-h-screen bg-subtle dark:bg-slate-950 text-content dark:text-mortar-100 ${themeClass}`}>
+      <header className="border-b border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-6 py-4">
         <div className="max-w-6xl mx-auto flex items-center gap-3">
           <CobblestoneMark size={26} />
-          <span className="font-display font-extrabold text-slate-700 dark:text-mortar-100 lowercase">
+          <span className="font-display font-extrabold text-content dark:text-mortar-100 lowercase">
             cobblr
           </span>
           {title && (
             <>
-              <span className="text-slate-300 dark:text-slate-600">/</span>
-              <span className="text-slate-700 dark:text-mortar-100 truncate">
+              <span className="text-faint dark:text-slate-600">/</span>
+              <span className="text-content dark:text-mortar-100 truncate">
                 {title}
               </span>
             </>
           )}
           <div className="flex-1" />
-          <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400">
+          <span className="text-[10px] font-mono uppercase tracking-widest text-faint">
             public · read-only
           </span>
         </div>
@@ -240,7 +240,7 @@ function PublicShell({
 function TileGrid({ items }: { items: SurfaceItem[] }) {
   if (items.length === 0) {
     return (
-      <div className="text-sm text-slate-500 italic py-12 text-center">
+      <div className="text-sm text-muted italic py-12 text-center">
         nothing here yet.
       </div>
     );
@@ -262,13 +262,13 @@ function TileGrid({ items }: { items: SurfaceItem[] }) {
 function ListGrid({ items }: { items: SurfaceItem[] }) {
   if (items.length === 0) {
     return (
-      <div className="text-sm text-slate-500 italic py-12 text-center">
+      <div className="text-sm text-muted italic py-12 text-center">
         nothing here yet.
       </div>
     );
   }
   return (
-    <ul className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 divide-y divide-slate-100 dark:divide-slate-800">
+    <ul className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 divide-y divide-line dark:divide-slate-800">
       {items.map((i) => (
         <li
           key={`${i.kind}:${i.id}`}
@@ -276,11 +276,11 @@ function ListGrid({ items }: { items: SurfaceItem[] }) {
         >
           <EntityThumb src={i.image_path} alt={i.title} size={48} />
           <div className="min-w-0">
-            <div className="font-medium text-slate-700 dark:text-mortar-100 truncate">
+            <div className="font-medium text-content dark:text-mortar-100 truncate">
               {i.title}
             </div>
             {i.subtitle && (
-              <div className="text-xs text-slate-500 truncate">{i.subtitle}</div>
+              <div className="text-xs text-muted truncate">{i.subtitle}</div>
             )}
           </div>
         </li>
@@ -291,22 +291,22 @@ function ListGrid({ items }: { items: SurfaceItem[] }) {
 
 function EntityCard({ item }: { item: SurfaceItem }) {
   return (
-    <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden max-w-3xl mx-auto">
-      <div className="aspect-video bg-slate-50 dark:bg-slate-800 flex items-center justify-center">
+    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden max-w-3xl mx-auto">
+      <div className="aspect-video bg-subtle dark:bg-slate-800 flex items-center justify-center">
         {item.image_path ? (
           <EntityThumb src={item.image_path} alt={item.title} size={512} className="!w-full !h-full" />
         ) : (
-          <span className="text-6xl font-mono text-slate-300">
+          <span className="text-6xl font-mono text-faint">
             {item.title.slice(0, 1).toUpperCase()}
           </span>
         )}
       </div>
       <div className="p-6">
-        <h2 className="text-2xl font-display font-extrabold text-slate-700 dark:text-mortar-100 lowercase">
+        <h2 className="text-2xl font-display font-extrabold text-content dark:text-mortar-100 lowercase">
           {item.title}
         </h2>
         {item.subtitle && (
-          <div className="text-sm text-slate-500 mt-1">{item.subtitle}</div>
+          <div className="text-sm text-muted mt-1">{item.subtitle}</div>
         )}
       </div>
     </div>

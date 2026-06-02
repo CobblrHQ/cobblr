@@ -87,8 +87,8 @@ export function NavCustomizeMenu() {
         className={
           "transition p-1.5 " +
           (open
-            ? "text-cobble-600"
-            : "text-slate-400 dark:text-slate-500 hover:text-cobble-600")
+            ? "text-accent"
+            : "text-faint dark:text-slate-500 hover:text-accent")
         }
         data-testid="nav-customize"
       >
@@ -100,16 +100,16 @@ export function NavCustomizeMenu() {
           <div
             data-nav-customize-pop
             style={{ position: "fixed", top: pos.top, right: pos.right }}
-            className="z-50 w-64 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl p-2"
+            className="z-50 w-64 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-2xl p-2"
           >
             <div className="flex items-baseline justify-between px-2 py-1">
-              <span className="text-[10px] font-mono uppercase tracking-widest text-cobble-500">
+              <span className="text-[10px] font-mono uppercase tracking-widest text-accent">
                 customize nav
               </span>
-              <span className="text-[10px] text-slate-400">this device</span>
+              <span className="text-[10px] text-faint">this device</span>
             </div>
             {allTops.length === 0 && (
-              <div className="px-2 py-2 text-xs text-slate-400 italic">
+              <div className="px-2 py-2 text-xs text-faint italic">
                 Nothing enabled yet.
               </div>
             )}
@@ -119,7 +119,7 @@ export function NavCustomizeMenu() {
                 return (
                   <li
                     key={t.name}
-                    className="flex items-center gap-1 px-2 py-1 rounded hover:bg-mortar-50 dark:hover:bg-slate-800/60"
+                    className="flex items-center gap-1 px-2 py-1 rounded hover:bg-subtle dark:hover:bg-slate-800/60"
                     data-entry={t.name}
                   >
                     <button
@@ -130,17 +130,17 @@ export function NavCustomizeMenu() {
                       data-testid={`nav-toggle-${t.name}`}
                     >
                       {hidden ? (
-                        <EyeOff size={13} className="text-slate-400" />
+                        <EyeOff size={13} className="text-faint" />
                       ) : (
-                        <Eye size={13} className="text-cobble-500" />
+                        <Eye size={13} className="text-accent" />
                       )}
                     </button>
                     <span
                       className={
                         "flex-1 text-sm truncate " +
                         (hidden
-                          ? "text-slate-400 line-through"
-                          : "text-slate-700 dark:text-mortar-100")
+                          ? "text-faint line-through"
+                          : "text-content dark:text-mortar-100")
                       }
                     >
                       {t.displayName.toLowerCase()}
@@ -152,7 +152,7 @@ export function NavCustomizeMenu() {
                         writeNavOrder(activeSlug, moveInOrder(names, t.name, -1))
                       }
                       title="Move up"
-                      className="shrink-0 p-0.5 text-slate-400 hover:text-cobble-600 disabled:opacity-25 disabled:hover:text-slate-400"
+                      className="shrink-0 p-0.5 text-faint hover:text-accent disabled:opacity-25 disabled:hover:text-faint"
                     >
                       <ChevronUp size={13} />
                     </button>
@@ -163,7 +163,7 @@ export function NavCustomizeMenu() {
                         writeNavOrder(activeSlug, moveInOrder(names, t.name, 1))
                       }
                       title="Move down"
-                      className="shrink-0 p-0.5 text-slate-400 hover:text-cobble-600 disabled:opacity-25 disabled:hover:text-slate-400"
+                      className="shrink-0 p-0.5 text-faint hover:text-accent disabled:opacity-25 disabled:hover:text-faint"
                     >
                       <ChevronDown size={13} />
                     </button>
@@ -176,7 +176,7 @@ export function NavCustomizeMenu() {
                 module OFFERS the icon; the user opts in/out here. */}
             {quickActions.length > 0 && (
               <>
-                <div className="px-2 pt-2 pb-1 text-[10px] font-mono uppercase tracking-widest text-cobble-500 border-t border-slate-100 dark:border-slate-800 mt-1">
+                <div className="px-2 pt-2 pb-1 text-[10px] font-mono uppercase tracking-widest text-accent border-t border-line dark:border-slate-800 mt-1">
                   quick actions (right)
                 </div>
                 <ul>
@@ -187,7 +187,7 @@ export function NavCustomizeMenu() {
                     return (
                       <li
                         key={m.name}
-                        className="flex items-center gap-2 px-2 py-1 rounded hover:bg-mortar-50 dark:hover:bg-slate-800/60"
+                        className="flex items-center gap-2 px-2 py-1 rounded hover:bg-subtle dark:hover:bg-slate-800/60"
                         data-action-entry={m.name}
                       >
                         <button
@@ -198,23 +198,23 @@ export function NavCustomizeMenu() {
                           data-testid={`nav-action-toggle-${m.name}`}
                         >
                           {hidden ? (
-                            <EyeOff size={13} className="text-slate-400" />
+                            <EyeOff size={13} className="text-faint" />
                           ) : (
-                            <Eye size={13} className="text-cobble-500" />
+                            <Eye size={13} className="text-accent" />
                           )}
                         </button>
                         <Icon
                           size={13}
                           className={
-                            hidden ? "text-slate-300" : "text-slate-500 dark:text-slate-400"
+                            hidden ? "text-faint" : "text-muted dark:text-slate-400"
                           }
                         />
                         <span
                           className={
                             "flex-1 text-sm truncate " +
                             (hidden
-                              ? "text-slate-400 line-through"
-                              : "text-slate-700 dark:text-mortar-100")
+                              ? "text-faint line-through"
+                              : "text-content dark:text-mortar-100")
                           }
                         >
                           {ha.label.toLowerCase()}

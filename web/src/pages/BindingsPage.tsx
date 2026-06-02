@@ -92,11 +92,11 @@ export function BindingsPage() {
 
   return (
     <div className="space-y-5 max-w-4xl">
-      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-slate-700 dark:text-mortar-100 lowercase">
+      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">
           wires
         </h1>
-        <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
+        <span className="text-[10px] font-mono text-faint dark:text-slate-500">
           when X happens, do Y. Modules don't know about each other —
           you wire them here.
         </span>
@@ -104,14 +104,14 @@ export function BindingsPage() {
 
       <form
         onSubmit={submit}
-        className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 space-y-3"
+        className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3"
       >
-        <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500">
+        <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
           // new wire
         </div>
         <div className="grid grid-cols-2 gap-3">
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Source entity kind
             </span>
             <select
@@ -131,7 +131,7 @@ export function BindingsPage() {
             </select>
           </label>
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Action
             </span>
             <select
@@ -151,7 +151,7 @@ export function BindingsPage() {
         </div>
         <div className="grid grid-cols-2 gap-3">
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Trigger type
             </span>
             <select
@@ -164,7 +164,7 @@ export function BindingsPage() {
             </select>
           </label>
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Trigger event (if type=event)
             </span>
             {/* Datalist gives a typeahead of every enabled module's
@@ -188,7 +188,7 @@ export function BindingsPage() {
           </label>
         </div>
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
             Template — {`{{name}} · {{qty}} {{unit}}`} or
             {` {{set_id | default: "??"}}`}
           </span>
@@ -212,12 +212,12 @@ export function BindingsPage() {
       </form>
 
       <div>
-        <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500 mb-2">
+        <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
           // existing wires
         </div>
-        {bindings.isLoading && <div className="text-xs text-slate-400">loading…</div>}
+        {bindings.isLoading && <div className="text-xs text-faint">loading…</div>}
         {bindings.data?.items.length === 0 && (
-          <div className="text-xs text-slate-400 dark:text-slate-500 italic">
+          <div className="text-xs text-faint dark:text-slate-500 italic">
             No wires yet.
           </div>
         )}
@@ -227,17 +227,17 @@ export function BindingsPage() {
               <button
                 type="button"
                 onClick={() => setSelected(b)}
-                className="w-full text-left rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 text-sm hover:border-cobble-300 dark:hover:border-cobble-700 transition group"
+                className="w-full text-left rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 text-sm hover:border-cobble-300 dark:hover:border-cobble-700 transition group"
               >
                 <div className="flex items-baseline gap-2 flex-wrap">
-                  <span className="font-mono text-xs text-cobble-600 dark:text-cobble-300">
+                  <span className="font-mono text-xs text-accent dark:text-cobble-300">
                     {b.source_kind}
                   </span>
-                  <span className="text-slate-400">→</span>
-                  <span className="font-mono text-xs text-cobble-600 dark:text-cobble-300">
+                  <span className="text-faint">→</span>
+                  <span className="font-mono text-xs text-accent dark:text-cobble-300">
                     {b.action_id}
                   </span>
-                  <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
+                  <span className="text-[10px] font-mono text-faint dark:text-slate-500">
                     ({b.trigger_type}
                     {b.trigger_event ? ` on ${b.trigger_event}` : ""})
                   </span>
@@ -245,7 +245,7 @@ export function BindingsPage() {
                   {/* Inline enable toggle — stop propagation so it doesn't open the modal */}
                   <label
                     onClick={(e) => e.stopPropagation()}
-                    className="flex items-center gap-1 text-[10px] font-mono uppercase tracking-widest text-slate-500 dark:text-slate-400 cursor-pointer"
+                    className="flex items-center gap-1 text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 cursor-pointer"
                   >
                     <input
                       type="checkbox"
@@ -257,16 +257,16 @@ export function BindingsPage() {
                   </label>
                   <ChevronRight
                     size={14}
-                    className="text-slate-300 dark:text-slate-600 group-hover:text-cobble-500 transition"
+                    className="text-faint dark:text-slate-600 group-hover:text-accent transition"
                   />
                 </div>
                 {b.template && (
-                  <div className="mt-2 font-mono text-xs text-slate-600 dark:text-mortar-200 bg-mortar-50 dark:bg-slate-800/70 rounded px-2 py-1 break-all">
+                  <div className="mt-2 font-mono text-xs text-content dark:text-mortar-200 bg-subtle dark:bg-slate-800/70 rounded px-2 py-1 break-all">
                     {b.template}
                   </div>
                 )}
                 {b.bundle_id && (
-                  <div className="mt-1 text-[10px] font-mono text-slate-400 dark:text-slate-500">
+                  <div className="mt-1 text-[10px] font-mono text-faint dark:text-slate-500">
                     installed via bundle
                   </div>
                 )}
@@ -301,7 +301,7 @@ function WireFiringsPanel({ slug }: { slug: string }) {
   return (
     <div>
       <div className="flex items-center gap-3 mb-2">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500">
+        <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
           // recent wire activity
         </div>
         <div className="flex items-center gap-1 text-[10px] font-mono">
@@ -313,8 +313,8 @@ function WireFiringsPanel({ slug }: { slug: string }) {
               className={
                 "px-1.5 py-0.5 rounded transition " +
                 (filter === f
-                  ? "bg-cobble-100 text-cobble-700 dark:bg-cobble-700 dark:text-mortar-100"
-                  : "text-slate-400 hover:text-cobble-600")
+                  ? "bg-cobble-100 text-accent dark:bg-cobble-700 dark:text-mortar-100"
+                  : "text-faint hover:text-accent")
               }
             >
               {f}
@@ -323,7 +323,7 @@ function WireFiringsPanel({ slug }: { slug: string }) {
         </div>
       </div>
       {items.length === 0 && (
-        <div className="text-xs text-slate-400 dark:text-slate-500 italic">
+        <div className="text-xs text-faint dark:text-slate-500 italic">
           {filter === "failed"
             ? "No failures recorded."
             : "No wire firings yet."}
@@ -346,7 +346,7 @@ function WireFiringsPanel({ slug }: { slug: string }) {
                 "rounded-md border p-2 text-xs " +
                 (failed
                   ? "border-ember-200/60 bg-ember-50/60 dark:bg-slate-900 dark:border-ember-700/40"
-                  : "border-slate-200 bg-white dark:bg-slate-900 dark:border-slate-700")
+                  : "border-line bg-surface dark:bg-slate-900 dark:border-slate-700")
               }
             >
               <div className="flex items-center gap-2 flex-wrap">
@@ -358,14 +358,14 @@ function WireFiringsPanel({ slug }: { slug: string }) {
                 >
                   {failed ? "failed" : "fired"}
                 </span>
-                <span className="font-mono text-[10px] text-slate-400">
+                <span className="font-mono text-[10px] text-faint">
                   {new Date(it.occurred_at).toLocaleString()}
                 </span>
-                <span className="font-mono text-[10px] text-cobble-600">
+                <span className="font-mono text-[10px] text-accent">
                   {d.event ?? "?"}
                 </span>
-                <span className="text-slate-400">→</span>
-                <span className="font-mono text-[10px] text-cobble-600">
+                <span className="text-faint">→</span>
+                <span className="font-mono text-[10px] text-accent">
                   {d.action ?? "?"}
                 </span>
               </div>

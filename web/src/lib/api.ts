@@ -474,6 +474,16 @@ export const api = {
   uninstallBundle: (slug: string, id: string) =>
     request<void>("DELETE", `/orgs/${slug}/bundles/${id}`),
 
+  // ─── extension registry (the marketplace index — HACS-style) ───────
+  // The curated cobblr-extensions index over all three lanes, merged with
+  // any third-party source index URLs. Server-side fetch (token + SSRF
+  // guard). Install still goes through the per-lane endpoints above.
+  getRegistryIndex: (sources?: string[]) =>
+    request<RegistryIndex>(
+      "GET",
+      `/registry/index${sources && sources.length ? `?sources=${encodeURIComponent(sources.join(","))}` : ""}`,
+    ),
+
   // ─── core-authoring (AI bundle builder, Phase 1: copy-paste) ───────
   authoringContext: (slug: string, selected_kinds?: string[]) =>
     request<AuthoringContext>("POST", `/orgs/${slug}/modules/core-authoring/context`, { selected_kinds }),
@@ -2678,4 +2688,57 @@ export interface PlatformBundleManifest {
     name: string;
     display_name: string;
   };
+}
+
+/** A bundle entry in the extension registry index — the manifest plus the
+ *  card metadata. `source` = "official" or the third-party source URL. */
+export interface RegistryBundleEntry {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  author?: string;
+  glyph?: string;
+  blurb?: string;
+  requires?: string[];
+  manifest: PlatformBundleManifest;
+  source: string;
+}
+/** A declarative-HTTP driver entry (digifab). `manifest` is the full
+ *  DriverManifest posted to the driver install endpoint. */
+export interface RegistryDriverEntry {
+  id: string;
+  name: string;
+  version?: string;
+  glyph?: string;
+  blurb?: string;
+  /** "Authored from the API; verify against your hardware" style note. */
+  caveat?: string;
+  manifest: Record<string, unknown>;
+  source: string;
+}
+/** A signed WASM module entry — installed via the super-admin sandbox path. */
+export interface RegistryModuleEntry {
+  name: string;
+  version: string;
+  description?: string;
+  glyph?: string;
+  blurb?: string;
+  release_url?: string;
+  pubkey?: string;
+  source: string;
+  /** Trust tier (Phase D): "official" = signed by a Cobblr-vouched key on
+   *  a root-verified index; "unverified" = install behind a consent gate. */
+  trust?: "official" | "unverified";
+}
+/** The merged extension catalog returned by GET /registry/index. */
+export interface RegistryIndex {
+  schema: number;
+  bundles: RegistryBundleEntry[];
+  drivers: RegistryDriverEntry[];
+  modules: RegistryModuleEntry[];
+  sources: Array<{ url: string; label: string; ok: boolean; error?: string }>;
+  /** Whether the official index's detached sig verified against the baked
+   *  root key. null = no root anchor configured (status-quo trust). */
+  official_root_verified: boolean | null;
 }

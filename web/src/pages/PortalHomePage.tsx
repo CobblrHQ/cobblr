@@ -67,7 +67,7 @@ export function PortalHomePage() {
   const [searchParams] = useSearchParams();
   const showLauncher = searchParams.get("all") === "1";
   if (!showLauncher && apps.isLoading) {
-    return <div className="text-xs text-slate-400 italic p-6">Loading…</div>;
+    return <div className="text-xs text-faint italic p-6">Loading…</div>;
   }
   if (!showLauncher && apps.isSuccess) {
     const openable = new Set(appItems.map((a) => a.slug));
@@ -84,7 +84,7 @@ export function PortalHomePage() {
     <div className="space-y-6">
       {portalConfig.welcome_markdown && (
         <div
-          className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 text-slate-700 dark:text-mortar-100 text-sm whitespace-pre-wrap"
+          className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 text-content dark:text-mortar-100 text-sm whitespace-pre-wrap"
           style={cardStyle(skin)}
         >
           {portalConfig.welcome_markdown}
@@ -94,7 +94,7 @@ export function PortalHomePage() {
       {appItems.length > 0 && (
         <div className="space-y-2">
           <div
-            className="text-[11px] font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500"
+            className="text-[11px] font-semibold uppercase tracking-widest text-faint dark:text-slate-500"
             style={mutedStyle(skin)}
           >
             Apps
@@ -104,23 +104,23 @@ export function PortalHomePage() {
               <Link
                 key={a.id}
                 to={`/portal/${activeSlug}/app/${a.slug}`}
-                className="group rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 hover:border-cobble-400 dark:hover:border-cobble-600 transition flex items-center gap-3"
+                className="group rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 hover:border-accent dark:hover:border-cobble-600 transition flex items-center gap-3"
                 style={cardStyle(skin)}
               >
                 <LayoutDashboard
                   size={18}
-                  className="text-cobble-500 dark:text-cobble-400 shrink-0"
+                  className="text-accent dark:text-cobble-400 shrink-0"
                   style={accentStyle(skin)}
                 />
                 <div className="flex-1 min-w-0">
                   <div
-                    className="text-sm font-medium text-slate-700 dark:text-mortar-100 truncate"
+                    className="text-sm font-medium text-content dark:text-mortar-100 truncate"
                     style={textStyle(skin)}
                   >
                     {a.name}
                   </div>
                   <div
-                    className="text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 truncate"
+                    className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 truncate"
                     style={mutedStyle(skin)}
                   >
                     app
@@ -128,7 +128,7 @@ export function PortalHomePage() {
                 </div>
                 <ChevronRight
                   size={14}
-                  className="text-slate-300 dark:text-slate-600 group-hover:text-cobble-500 transition shrink-0"
+                  className="text-faint dark:text-slate-600 group-hover:text-accent transition shrink-0"
                   style={mutedStyle(skin)}
                 />
               </Link>
@@ -138,20 +138,20 @@ export function PortalHomePage() {
       )}
 
       {pinnedViews.length === 0 && appItems.length === 0 && (
-        <div className="rounded-xl border border-dashed border-slate-200 dark:border-slate-700 bg-mortar-50/30 dark:bg-slate-800/30 p-8 text-center">
-          <LayoutGrid size={24} className="mx-auto text-slate-300 dark:text-slate-600 mb-2" />
-          <p className="text-sm text-slate-500 dark:text-slate-400">
+        <div className="rounded-xl border border-dashed border-line dark:border-slate-700 bg-subtle/30 dark:bg-slate-800/30 p-8 text-center">
+          <LayoutGrid size={24} className="mx-auto text-faint dark:text-slate-600 mb-2" />
+          <p className="text-sm text-muted dark:text-slate-400">
             No pinned views yet.
           </p>
           {isAdmin ? (
             <Link
               to="/configuration/portal"
-              className="text-xs text-cobble-600 hover:text-cobble-700 mt-2 inline-flex items-center gap-1"
+              className="text-xs text-accent hover:text-accent mt-2 inline-flex items-center gap-1"
             >
               <Settings size={11} /> configure portal
             </Link>
           ) : (
-            <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">
+            <p className="text-xs text-faint dark:text-slate-500 mt-1">
               Ask an admin to pin some views here.
             </p>
           )}
@@ -164,23 +164,23 @@ export function PortalHomePage() {
             <Link
               key={v.id}
               to={`/portal/${activeSlug}/views/${v.id}`}
-              className="group rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 hover:border-cobble-400 dark:hover:border-cobble-600 transition flex items-center gap-3"
+              className="group rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 hover:border-accent dark:hover:border-cobble-600 transition flex items-center gap-3"
               style={cardStyle(skin)}
             >
               <LayoutGrid
                 size={18}
-                className="text-cobble-500 dark:text-cobble-400 shrink-0"
+                className="text-accent dark:text-cobble-400 shrink-0"
                 style={accentStyle(skin)}
               />
               <div className="flex-1 min-w-0">
                 <div
-                  className="text-sm font-medium text-slate-700 dark:text-mortar-100 truncate"
+                  className="text-sm font-medium text-content dark:text-mortar-100 truncate"
                   style={textStyle(skin)}
                 >
                   {v.name}
                 </div>
                 <div
-                  className="text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 truncate"
+                  className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 truncate"
                   style={mutedStyle(skin)}
                 >
                   {v.entity_kind} · {v.view_type}
@@ -188,7 +188,7 @@ export function PortalHomePage() {
               </div>
               <ChevronRight
                 size={14}
-                className="text-slate-300 dark:text-slate-600 group-hover:text-cobble-500 transition shrink-0"
+                className="text-faint dark:text-slate-600 group-hover:text-accent transition shrink-0"
                 style={mutedStyle(skin)}
               />
             </Link>

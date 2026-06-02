@@ -102,12 +102,12 @@ export function WireDetailModal({ open, onClose, slug, binding }: Props) {
         {/* Origin / trigger / timestamps in a definition list */}
         <dl className="grid grid-cols-3 gap-2 text-xs">
           <Row label="Source kind">
-            <code className="font-mono text-cobble-600 dark:text-cobble-300">
+            <code className="font-mono text-accent dark:text-cobble-300">
               {binding.source_kind}
             </code>
           </Row>
           <Row label="Action">
-            <code className="font-mono text-cobble-600 dark:text-cobble-300">
+            <code className="font-mono text-accent dark:text-cobble-300">
               {binding.action_id}
             </code>
           </Row>
@@ -128,12 +128,12 @@ export function WireDetailModal({ open, onClose, slug, binding }: Props) {
               <Link
                 to="/bundles"
                 onClick={onClose}
-                className="text-cobble-600 hover:text-cobble-500 inline-flex items-center gap-1"
+                className="text-accent hover:text-accent inline-flex items-center gap-1"
               >
                 bundle <ExternalLink size={11} />
               </Link>
             ) : (
-              <span className="text-slate-500">user-authored</span>
+              <span className="text-muted">user-authored</span>
             )}
           </Row>
         </dl>
@@ -141,7 +141,7 @@ export function WireDetailModal({ open, onClose, slug, binding }: Props) {
         {/* Editable fields */}
         <div className="space-y-3">
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Template
             </span>
             <input
@@ -158,16 +158,16 @@ export function WireDetailModal({ open, onClose, slug, binding }: Props) {
               onChange={(e) => setEnabled(e.target.checked)}
               className="accent-cobble-500"
             />
-            <span className="font-mono uppercase tracking-widest text-slate-500 dark:text-slate-400">
+            <span className="font-mono uppercase tracking-widest text-muted dark:text-slate-400">
               Enabled
             </span>
           </label>
           {(!!binding.filter || !!binding.args) && (
             <details className="text-xs">
-              <summary className="font-mono uppercase tracking-widest text-[10px] text-slate-400 dark:text-slate-500 cursor-pointer">
+              <summary className="font-mono uppercase tracking-widest text-[10px] text-faint dark:text-slate-500 cursor-pointer">
                 Advanced (filter / args)
               </summary>
-              <pre className="mt-2 p-2 rounded bg-mortar-50 dark:bg-slate-800 font-mono text-[11px] overflow-x-auto text-slate-600 dark:text-mortar-200">
+              <pre className="mt-2 p-2 rounded bg-subtle dark:bg-slate-800 font-mono text-[11px] overflow-x-auto text-content dark:text-mortar-200">
                 {JSON.stringify({ filter: binding.filter, args: binding.args }, null, 2)}
               </pre>
             </details>
@@ -176,11 +176,11 @@ export function WireDetailModal({ open, onClose, slug, binding }: Props) {
 
         {/* Recent firings for this wire */}
         <div>
-          <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500 mb-2">
+          <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
             // recent firings for this wire ({matching.length})
           </div>
           {matching.length === 0 ? (
-            <div className="text-xs text-slate-400 italic">
+            <div className="text-xs text-faint italic">
               No firings recorded yet for this binding.
             </div>
           ) : (
@@ -195,7 +195,7 @@ export function WireDetailModal({ open, onClose, slug, binding }: Props) {
                       "rounded-md border p-2 text-[11px] " +
                       (failed
                         ? "border-ember-200 bg-ember-50/60 dark:bg-slate-900 dark:border-ember-700/40"
-                        : "border-slate-200 bg-white dark:bg-slate-900 dark:border-slate-700")
+                        : "border-line bg-surface dark:bg-slate-900 dark:border-slate-700")
                     }
                   >
                     <div className="flex items-center gap-2">
@@ -207,11 +207,11 @@ export function WireDetailModal({ open, onClose, slug, binding }: Props) {
                       >
                         {failed ? "failed" : "fired"}
                       </span>
-                      <span className="font-mono text-[10px] text-slate-400">
+                      <span className="font-mono text-[10px] text-faint">
                         {new Date(r.occurred_at).toLocaleString()}
                       </span>
                       {d.event && (
-                        <span className="font-mono text-[10px] text-cobble-600">
+                        <span className="font-mono text-[10px] text-accent">
                           {d.event}
                         </span>
                       )}
@@ -229,18 +229,18 @@ export function WireDetailModal({ open, onClose, slug, binding }: Props) {
         </div>
 
         {/* Footer actions */}
-        <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-700">
+        <div className="flex items-center justify-between pt-3 border-t border-line dark:border-slate-700">
           <button
             onClick={handleDelete}
             disabled={remove.isPending}
-            className="text-[10px] font-mono uppercase tracking-widest text-slate-400 hover:text-ember-500 transition flex items-center gap-1"
+            className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-ember-500 transition flex items-center gap-1"
           >
             <Trash2 size={11} /> delete wire
           </button>
           <div className="flex items-center gap-2">
             <button
               onClick={onClose}
-              className="px-3 py-1.5 rounded-md text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-mortar-50 dark:hover:bg-slate-800 transition"
+              className="px-3 py-1.5 rounded-md text-sm font-medium text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800 transition"
             >
               Close
             </button>
@@ -261,10 +261,10 @@ export function WireDetailModal({ open, onClose, slug, binding }: Props) {
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <dt className="text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-0.5">
+      <dt className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-0.5">
         {label}
       </dt>
-      <dd className="text-slate-700 dark:text-mortar-100">{children}</dd>
+      <dd className="text-content dark:text-mortar-100">{children}</dd>
     </div>
   );
 }

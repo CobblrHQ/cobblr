@@ -86,12 +86,12 @@ export function UsersPage() {
 
   return (
     <div className="space-y-5 max-w-4xl">
-      <div className="flex items-baseline justify-between border-b border-slate-200 dark:border-slate-700 pb-3">
+      <div className="flex items-baseline justify-between border-b border-line dark:border-slate-700 pb-3">
         <div>
-          <h1 className="font-display text-2xl font-extrabold text-slate-700 dark:text-mortar-100 lowercase">
+          <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">
             users
           </h1>
-          <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
+          <span className="text-[10px] font-mono text-faint dark:text-slate-500">
             mint workspace accounts with a temp password. user resets on first login. no email required.
           </span>
         </div>
@@ -104,39 +104,39 @@ export function UsersPage() {
         </button>
       </div>
 
-      <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
+      <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden">
         <table className="w-full text-sm">
-          <thead className="bg-mortar-50/50 dark:bg-slate-800/40">
+          <thead className="bg-subtle/50 dark:bg-slate-800/40">
             <tr>
-              <th className="text-left text-[10px] font-mono uppercase tracking-widest text-slate-400 px-3 py-2">
+              <th className="text-left text-[10px] font-mono uppercase tracking-widest text-faint px-3 py-2">
                 Member
               </th>
-              <th className="text-left text-[10px] font-mono uppercase tracking-widest text-slate-400 px-3 py-2">
+              <th className="text-left text-[10px] font-mono uppercase tracking-widest text-faint px-3 py-2">
                 Role
               </th>
-              <th className="text-left text-[10px] font-mono uppercase tracking-widest text-slate-400 px-3 py-2">
+              <th className="text-left text-[10px] font-mono uppercase tracking-widest text-faint px-3 py-2">
                 Grants
               </th>
-              <th className="text-right text-[10px] font-mono uppercase tracking-widest text-slate-400 px-3 py-2">
+              <th className="text-right text-[10px] font-mono uppercase tracking-widest text-faint px-3 py-2">
                 Actions
               </th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+          <tbody className="divide-y divide-line dark:divide-slate-800">
             {(members.data?.members ?? []).map((m) => (
               <tr key={m.id}>
                 <td className="px-3 py-2">
-                  <div className="text-sm text-slate-700 dark:text-mortar-100">
+                  <div className="text-sm text-content dark:text-mortar-100">
                     {m.display_name}
                   </div>
-                  <div className="text-[10px] font-mono text-slate-400">{m.email}</div>
+                  <div className="text-[10px] font-mono text-faint">{m.email}</div>
                 </td>
                 <td className="px-3 py-2">
-                  <span className="text-[10px] font-mono uppercase tracking-widest text-cobble-600">
+                  <span className="text-[10px] font-mono uppercase tracking-widest text-accent">
                     {m.role}
                   </span>
                 </td>
-                <td className="px-3 py-2 text-xs text-slate-500">
+                <td className="px-3 py-2 text-xs text-muted">
                   {m.grants.length === 0 ? "—" : `${m.grants.length} grant${m.grants.length === 1 ? "" : "s"}`}
                 </td>
                 <td className="px-3 py-2 text-right">
@@ -144,7 +144,7 @@ export function UsersPage() {
                     type="button"
                     disabled={regen.isPending}
                     onClick={() => regen.mutate(m.id)}
-                    className="text-[10px] font-mono uppercase tracking-widest text-slate-400 hover:text-cobble-600 transition inline-flex items-center gap-1"
+                    className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-accent transition inline-flex items-center gap-1"
                     title="Generate a new temp password for this user"
                   >
                     <RefreshCw size={11} /> reset pwd
@@ -159,7 +159,7 @@ export function UsersPage() {
       <Modal open={open} onClose={() => setOpen(false)} title="New user" size="sm">
         <form onSubmit={submit} className="space-y-3">
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 mb-1">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
               Email
             </span>
             <input
@@ -172,7 +172,7 @@ export function UsersPage() {
             />
           </label>
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 mb-1">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
               Display name
             </span>
             <input
@@ -184,7 +184,7 @@ export function UsersPage() {
             />
           </label>
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 mb-1">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
               Role
             </span>
             <select
@@ -202,7 +202,7 @@ export function UsersPage() {
             <button
               type="button"
               onClick={() => setOpen(false)}
-              className="flex-1 rounded-md border border-slate-200 dark:border-slate-700 text-sm text-slate-600 dark:text-mortar-200 hover:bg-mortar-50 dark:hover:bg-slate-800 transition py-2"
+              className="flex-1 rounded-md border border-line dark:border-slate-700 text-sm text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 transition py-2"
             >
               Cancel
             </button>
@@ -225,17 +225,17 @@ export function UsersPage() {
       >
         {tempPassword && (
           <div className="space-y-3">
-            <div className="text-xs text-slate-500 dark:text-mortar-200">
+            <div className="text-xs text-muted dark:text-mortar-200">
               The user will be forced to reset this on first login. We don't
               store the plaintext — close this dialog and it's gone.
             </div>
             {(tempPassword.display_name || tempPassword.email) && (
-              <div className="text-[11px] font-mono text-slate-400">
+              <div className="text-[11px] font-mono text-faint">
                 {tempPassword.display_name} · {tempPassword.email}
               </div>
             )}
             <div className="flex items-center gap-2 rounded-lg border border-cobble-300 dark:border-cobble-700 bg-cobble-50/50 dark:bg-cobble-900/20 p-3">
-              <code className="font-mono text-lg flex-1 text-slate-700 dark:text-mortar-100 select-all">
+              <code className="font-mono text-lg flex-1 text-content dark:text-mortar-100 select-all">
                 {tempPassword.temp_password}
               </code>
               <button
@@ -244,7 +244,7 @@ export function UsersPage() {
                   void navigator.clipboard.writeText(tempPassword.temp_password);
                   toast.success("Copied.");
                 }}
-                className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-cobble-600 hover:text-cobble-700"
+                className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-accent hover:text-accent"
               >
                 <ClipboardCopy size={12} /> Copy
               </button>

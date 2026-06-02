@@ -43,22 +43,22 @@ function CategoriesCard() {
   }
 
   return (
-    <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5">
-      <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500 mb-3">
+    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5">
+      <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-3">
         // categories
       </div>
       <ul className="space-y-1 mb-3">
         {list.data?.items.map((c) => (
           <li key={c.id} className="flex items-baseline gap-2 text-sm">
-            <span className="text-slate-700 dark:text-mortar-100">{c.name}</span>
-            <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">{c.slug}</span>
+            <span className="text-content dark:text-mortar-100">{c.name}</span>
+            <span className="text-[10px] font-mono text-faint dark:text-slate-500">{c.slug}</span>
           </li>
         ))}
         {list.data && list.data.items.length === 0 && (
-          <li className="text-xs text-slate-400 dark:text-slate-500 italic">No categories yet.</li>
+          <li className="text-xs text-faint dark:text-slate-500 italic">No categories yet.</li>
         )}
       </ul>
-      <form onSubmit={submit} className="flex gap-2 border-t border-slate-100 dark:border-slate-700 pt-3">
+      <form onSubmit={submit} className="flex gap-2 border-t border-line dark:border-slate-700 pt-3">
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}

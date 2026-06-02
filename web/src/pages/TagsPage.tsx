@@ -64,9 +64,9 @@ export function TagsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
-        <h1 className="text-2xl font-semibold text-slate-700 dark:text-mortar-100">Tags</h1>
-        <span className="text-sm text-slate-500 dark:text-slate-400">
+      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
+        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">Tags</h1>
+        <span className="text-sm text-muted dark:text-slate-400">
           {items.length} {items.length === 1 ? "tag" : "tags"}
         </span>
         <div className="flex-1" />
@@ -78,9 +78,9 @@ export function TagsPage() {
         </button>
       </div>
 
-      {list.isLoading && <div className="text-sm text-slate-500">Loading…</div>}
+      {list.isLoading && <div className="text-sm text-muted">Loading…</div>}
       {items.length === 0 && !list.isLoading && (
-        <div className="text-sm text-slate-500 dark:text-slate-400 italic">
+        <div className="text-sm text-muted dark:text-slate-400 italic">
           No tags yet. Tags get created on demand when you attach one to an
           entity, or you can pre-define them here.
         </div>
@@ -107,7 +107,7 @@ export function TagsPage() {
             </button>
             <button
               onClick={() => setEditing(t)}
-              className="text-slate-400 hover:text-cobble-600 transition"
+              className="text-faint hover:text-accent transition"
               title="Rename / recolor"
             >
               <Pencil size={12} />
@@ -122,7 +122,7 @@ export function TagsPage() {
                 });
                 if (ok) del.mutate(t.id);
               }}
-              className="text-slate-400 hover:text-ember-500 transition"
+              className="text-faint hover:text-ember-500 transition"
               title="Delete"
             >
               <Trash2 size={12} />
@@ -199,26 +199,26 @@ function EditTagModal({
         className="space-y-3"
       >
         <label className="block">
-          <div className="text-xs text-slate-500 mb-1">Name</div>
+          <div className="text-xs text-muted mb-1">Name</div>
           <input
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             autoFocus
           />
         </label>
         <label className="flex items-center gap-3 text-sm">
-          <span className="text-xs text-slate-500">Color</span>
+          <span className="text-xs text-muted">Color</span>
           <input
             type="color"
             value={color}
             onChange={(e) => setColor(e.target.value)}
-            className="h-8 w-12 border border-slate-300 dark:border-slate-600 rounded"
+            className="h-8 w-12 border border-line dark:border-slate-600 rounded"
           />
           <span className="font-mono text-xs">{color}</span>
         </label>
-        <p className="text-[11px] text-slate-400">
+        <p className="text-[11px] text-faint">
           Renaming updates the tag everywhere it's attached — it's the same tag,
           not a copy.
         </p>
@@ -226,7 +226,7 @@ function EditTagModal({
           <button
             type="button"
             onClick={onClose}
-            className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
           >
             Cancel
           </button>
@@ -270,10 +270,10 @@ function TagAttachmentsModal({
   return (
     <Modal open onClose={onClose} title={`Tagged "${tag.name}"`} size="md">
       {list.isLoading && (
-        <div className="text-sm text-slate-500">Loading…</div>
+        <div className="text-sm text-muted">Loading…</div>
       )}
       {!list.isLoading && items.length === 0 && (
-        <div className="text-sm text-slate-500 italic py-4 text-center">
+        <div className="text-sm text-muted italic py-4 text-center">
           Nothing's tagged with this yet. Attach the tag from any
           entity's detail page.
         </div>
@@ -286,13 +286,13 @@ function TagAttachmentsModal({
             return (
               <li
                 key={a.id}
-                className="flex items-center justify-between gap-2 border border-slate-200 dark:border-slate-700 rounded-md px-3 py-2 text-sm"
+                className="flex items-center justify-between gap-2 border border-line dark:border-slate-700 rounded-md px-3 py-2 text-sm"
               >
                 <div className="min-w-0">
-                  <div className="font-mono text-[11px] text-slate-400 dark:text-slate-500">
+                  <div className="font-mono text-[11px] text-faint dark:text-slate-500">
                     {label}
                   </div>
-                  <div className="text-[10px] font-mono text-slate-400 dark:text-slate-500 truncate">
+                  <div className="text-[10px] font-mono text-faint dark:text-slate-500 truncate">
                     {a.source_id}
                   </div>
                 </div>
@@ -300,12 +300,12 @@ function TagAttachmentsModal({
                   <Link
                     to={route}
                     onClick={onClose}
-                    className="text-cobble-600 hover:text-cobble-700 inline-flex items-center gap-1 text-xs"
+                    className="text-accent hover:text-accent inline-flex items-center gap-1 text-xs"
                   >
                     open <ExternalLink size={11} />
                   </Link>
                 ) : (
-                  <span className="text-[10px] text-slate-400 italic">
+                  <span className="text-[10px] text-faint italic">
                     no detail route
                   </span>
                 )}
@@ -318,7 +318,7 @@ function TagAttachmentsModal({
         <button
           type="button"
           onClick={onClose}
-          className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+          className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
         >
           Close
         </button>
@@ -358,23 +358,23 @@ function CreateTagModal({
         className="space-y-3"
       >
         <label className="block">
-          <div className="text-xs text-slate-500 mb-1">Name</div>
+          <div className="text-xs text-muted mb-1">Name</div>
           <input
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. urgent"
-            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             autoFocus
           />
         </label>
         <label className="flex items-center gap-3 text-sm">
-          <span className="text-xs text-slate-500">Color</span>
+          <span className="text-xs text-muted">Color</span>
           <input
             type="color"
             value={color}
             onChange={(e) => setColor(e.target.value)}
-            className="h-8 w-12 border border-slate-300 dark:border-slate-600 rounded"
+            className="h-8 w-12 border border-line dark:border-slate-600 rounded"
           />
           <span className="font-mono text-xs">{color}</span>
         </label>
@@ -382,7 +382,7 @@ function CreateTagModal({
           <button
             type="button"
             onClick={onClose}
-            className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
           >
             Cancel
           </button>

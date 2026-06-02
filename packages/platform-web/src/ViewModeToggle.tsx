@@ -39,7 +39,7 @@ export function ViewModeToggle({
 }) {
   return (
     <div
-      className="inline-flex items-center rounded border border-slate-200 dark:border-slate-700 overflow-hidden shrink-0"
+      className="inline-flex items-center rounded border border-line dark:border-slate-700 overflow-hidden shrink-0"
       role="group"
       aria-label="View mode"
     >
@@ -52,7 +52,7 @@ export function ViewModeToggle({
           "p-1.5 transition " +
           (mode === "list"
             ? "bg-cobble-600 text-white"
-            : "text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800")
+            : "text-muted dark:text-slate-400 hover:bg-subtle dark:hover:bg-slate-800")
         }
       >
         <LayoutList size={14} />
@@ -66,7 +66,7 @@ export function ViewModeToggle({
           "p-1.5 transition " +
           (mode === "tiles"
             ? "bg-cobble-600 text-white"
-            : "text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800")
+            : "text-muted dark:text-slate-400 hover:bg-subtle dark:hover:bg-slate-800")
         }
       >
         <LayoutGrid size={14} />

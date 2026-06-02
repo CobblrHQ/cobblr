@@ -63,9 +63,16 @@ export function registerListActionHandlers(): void {
       .executeTakeFirst();
     if (dup) return { ok: true, skipped: "already on the list", itemId: dup.id };
 
+    // Carry a back-pointer to the entity that spawned this line (the
+    // inventory part that ran low / is expiring). Generic — `source_ref` can
+    // point at any kind — so core-lists never learns what inventory is. It's
+    // what lets checking the item off close the loop back to stock (see the
+    // food-cluster `item.checked → inventory:adjust-stock` wire).
+    const metadata =
+      ctx.entityKind && ctx.entityId ? { source_ref: { kind: ctx.entityKind, id: ctx.entityId } } : {};
     const row = await db
       .insertInto("core_lists_items")
-      .values({ list_id: listId, title, qty: args.qty ?? null, note: args.note ?? null })
+      .values({ list_id: listId, title, qty: args.qty ?? null, note: args.note ?? null, metadata: sql`${JSON.stringify(metadata)}::jsonb` as never })
       .returning(["id", "list_id"])
       .executeTakeFirstOrThrow();
     void platform().events.emit("core-lists.item.added", { orgId: ctx.orgId, listId: row.list_id, itemId: row.id, viaWire: true });

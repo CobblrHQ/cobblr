@@ -104,25 +104,25 @@ export function FieldsPage() {
 
   return (
     <div className="space-y-5 max-w-4xl">
-      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-slate-700 dark:text-mortar-100 lowercase">
+      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">
           fields
         </h1>
-        <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
+        <span className="text-[10px] font-mono text-faint dark:text-slate-500">
           custom fields on platform entities. show up on the detail page.
         </span>
       </div>
 
       <form
         onSubmit={submit}
-        className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 space-y-3"
+        className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3"
       >
-        <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500">
+        <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
           // new field
         </div>
         <div className="grid grid-cols-2 gap-3">
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Entity kind
             </span>
             <select
@@ -139,7 +139,7 @@ export function FieldsPage() {
             </select>
           </label>
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Type
             </span>
             <select
@@ -165,7 +165,7 @@ export function FieldsPage() {
             </select>
           </label>
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Name (a-z 0-9 _)
             </span>
             <input
@@ -176,7 +176,7 @@ export function FieldsPage() {
             />
           </label>
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Display label
             </span>
             <input
@@ -188,9 +188,9 @@ export function FieldsPage() {
           </label>
           {rendererChoices.length > 1 && (
             <label className="block col-span-2">
-              <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+              <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                 Renderer
-                <span className="ml-2 normal-case tracking-normal text-slate-300 dark:text-slate-600">
+                <span className="ml-2 normal-case tracking-normal text-faint dark:text-slate-600">
                   how this value draws on cards + detail pages
                 </span>
               </span>
@@ -230,16 +230,16 @@ export function FieldsPage() {
 
       <div className="space-y-3">
         {Object.keys(grouped).length === 0 && (
-          <div className="text-xs text-slate-400 dark:text-slate-500 italic">
+          <div className="text-xs text-faint dark:text-slate-500 italic">
             No custom fields yet. Install a bundle or add one above.
           </div>
         )}
         {Object.entries(grouped).map(([kind, list]) => (
           <div
             key={kind}
-            className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4"
+            className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4"
           >
-            <div className="font-mono text-xs text-cobble-600 dark:text-cobble-300 mb-2">
+            <div className="font-mono text-xs text-accent dark:text-cobble-300 mb-2">
               {kind}
             </div>
             <ul className="space-y-0.5">
@@ -250,23 +250,23 @@ export function FieldsPage() {
                     <button
                       type="button"
                       onClick={() => setSelected(f)}
-                      className="w-full text-left flex items-center gap-3 text-sm text-slate-700 dark:text-mortar-100 px-1 py-1.5 rounded hover:bg-mortar-50 dark:hover:bg-slate-800/60 transition group"
+                      className="w-full text-left flex items-center gap-3 text-sm text-content dark:text-mortar-100 px-1 py-1.5 rounded hover:bg-subtle dark:hover:bg-slate-800/60 transition group"
                     >
-                      <span className="font-mono text-xs text-slate-400 dark:text-slate-500 w-32 truncate">
+                      <span className="font-mono text-xs text-faint dark:text-slate-500 w-32 truncate">
                         {f.name}
                       </span>
                       <span className="flex-1">{f.display_label}</span>
-                      <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500">
+                      <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
                         {f.type}
                       </span>
                       {f.bundle_id && (
-                        <span className="text-[10px] font-mono uppercase tracking-widest text-cobble-500">
+                        <span className="text-[10px] font-mono uppercase tracking-widest text-accent">
                           bundled
                         </span>
                       )}
                       <ChevronRight
                         size={13}
-                        className="text-slate-300 dark:text-slate-600 group-hover:text-cobble-500 transition"
+                        className="text-faint dark:text-slate-600 group-hover:text-accent transition"
                       />
                     </button>
                   </li>

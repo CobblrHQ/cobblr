@@ -164,12 +164,12 @@ function GettingStartedPanel({
   return (
     <section className="rounded-xl border-2 border-dashed border-cobble-300 dark:border-cobble-700 bg-cobble-50/30 dark:bg-cobble-900/10 p-5 space-y-3">
       <div className="flex items-center gap-2">
-        <Sparkles size={16} className="text-cobble-600" />
-        <h2 className="font-semibold text-slate-700 dark:text-mortar-100">
+        <Sparkles size={16} className="text-accent" />
+        <h2 className="font-semibold text-content dark:text-mortar-100">
           Welcome — this workspace is empty.
         </h2>
       </div>
-      <p className="text-sm text-slate-600 dark:text-mortar-200">
+      <p className="text-sm text-content dark:text-mortar-200">
         {firstActions.length > 0
           ? "Pick a first thing to add, or install a starter bundle from the marketplace."
           : "Nothing's installed yet — that's by design. Install a starter bundle from the marketplace, or switch on just the modules you want from Configuration. Cobblr only shows what you turn on."}
@@ -179,36 +179,36 @@ function GettingStartedPanel({
           <Link
             key={a.to}
             to={a.to}
-            className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 hover:border-cobble-400 transition"
+            className="rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 hover:border-accent transition"
           >
-            <div className="text-sm font-medium text-slate-700 dark:text-mortar-100">
+            <div className="text-sm font-medium text-content dark:text-mortar-100">
               {a.label}
             </div>
-            <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+            <div className="text-xs text-muted dark:text-slate-400 mt-0.5">
               {a.description}
             </div>
           </Link>
         ))}
         <Link
           to="/bundles"
-          className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 hover:border-cobble-400 transition"
+          className="rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 hover:border-accent transition"
         >
-          <div className="text-sm font-medium text-slate-700 dark:text-mortar-100">
+          <div className="text-sm font-medium text-content dark:text-mortar-100">
             Browse the marketplace
           </div>
-          <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+          <div className="text-xs text-muted dark:text-slate-400 mt-0.5">
             One-click install of a starter pack — Lego, Garden, Tool
             Library, Bookshelf, more. Pre-built field defs + wires.
           </div>
         </Link>
         <Link
           to="/configuration"
-          className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 hover:border-cobble-400 transition"
+          className="rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 hover:border-accent transition"
         >
-          <div className="text-sm font-medium text-slate-700 dark:text-mortar-100">
+          <div className="text-sm font-medium text-content dark:text-mortar-100">
             Tune what's installed
           </div>
-          <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+          <div className="text-xs text-muted dark:text-slate-400 mt-0.5">
             Enable / disable modules, tweak custom fields, wire
             up integrations.
           </div>
@@ -244,11 +244,11 @@ function CrossWorkspaceStrip() {
 
   return (
     <section className="flex items-center gap-3 flex-wrap text-sm">
-      <span className="text-[10px] font-mono uppercase tracking-widest text-cobble-500">
+      <span className="text-[10px] font-mono uppercase tracking-widest text-accent">
         // across all workspaces
       </span>
       {orgs.length > 1 && (
-        <span className="text-slate-600 dark:text-mortar-200">
+        <span className="text-content dark:text-mortar-200">
           {orgs.length} workspaces
         </span>
       )}
@@ -263,7 +263,7 @@ function CrossWorkspaceStrip() {
       {pending.length > 0 && (
         <Link
           to="/configuration/links"
-          className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded border border-cobble-200 dark:border-cobble-700 text-cobble-700 dark:text-cobble-300 hover:bg-cobble-50 dark:hover:bg-cobble-900/20 text-xs transition"
+          className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded border border-cobble-200 dark:border-cobble-700 text-accent dark:text-cobble-300 hover:bg-cobble-50 dark:hover:bg-cobble-900/20 text-xs transition"
         >
           {pending.length} pending link{pending.length === 1 ? "" : "s"}
         </Link>
@@ -286,19 +286,19 @@ function WorkspaceHeader({
   userName: string;
 }) {
   return (
-    <header className="rounded-xl border border-slate-200 dark:border-slate-700 bg-gradient-to-br from-cobble-50/40 to-white dark:from-slate-900 dark:to-slate-900/40 p-5">
+    <header className="rounded-xl border border-line dark:border-slate-700 bg-gradient-to-br from-cobble-50/40 to-white dark:from-slate-900 dark:to-slate-900/40 p-5">
       <div className="flex items-baseline gap-3 flex-wrap">
-        <h1 className="font-display text-2xl font-extrabold text-slate-700 dark:text-mortar-100 lowercase tracking-tight">
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase tracking-tight">
           {orgName}
         </h1>
-        <span className="text-xs font-mono text-slate-400 dark:text-slate-500">
+        <span className="text-xs font-mono text-faint dark:text-slate-500">
           {slug}
         </span>
-        <span className="px-1.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider bg-cobble-100 dark:bg-cobble-900/30 text-cobble-700 dark:text-cobble-300">
+        <span className="px-1.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider bg-cobble-100 dark:bg-cobble-900/30 text-accent dark:text-cobble-300">
           {role}
         </span>
         <div className="flex-1" />
-        <span className="text-xs text-slate-500 dark:text-slate-400">
+        <span className="text-xs text-muted dark:text-slate-400">
           welcome back, {userName.split(" ")[0]}
         </span>
       </div>
@@ -336,9 +336,9 @@ function ModuleTiles({
   }
   if (tiles.length === 0) {
     return (
-      <section className="rounded-xl border border-dashed border-slate-200 dark:border-slate-700 p-6 text-center text-sm text-slate-500 dark:text-slate-400">
+      <section className="rounded-xl border border-dashed border-line dark:border-slate-700 p-6 text-center text-sm text-muted dark:text-slate-400">
         No user-facing modules enabled yet. Visit{" "}
-        <Link to="/configuration" className="text-cobble-600 hover:underline">
+        <Link to="/configuration" className="text-accent hover:underline">
           /configuration
         </Link>{" "}
         to add some.
@@ -378,26 +378,26 @@ function Tile({
     <Link
       to={to}
       className={
-        "rounded-xl border bg-white dark:bg-slate-900 p-4 hover:border-cobble-300 dark:hover:border-cobble-700 transition flex flex-col gap-2 " +
+        "rounded-xl border bg-surface dark:bg-slate-900 p-4 hover:border-cobble-300 dark:hover:border-cobble-700 transition flex flex-col gap-2 " +
         (attention
           ? "border-ember-300 dark:border-ember-700"
-          : "border-slate-200 dark:border-slate-700")
+          : "border-line dark:border-slate-700")
       }
     >
       <div className="flex items-center gap-2">
         <Icon
           size={14}
-          className={attention ? "text-ember-500" : "text-cobble-500"}
+          className={attention ? "text-ember-500" : "text-accent"}
         />
-        <span className="text-[10px] font-mono uppercase tracking-widest text-slate-500 dark:text-slate-400">
+        <span className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
           {label}
         </span>
       </div>
-      <div className="text-3xl font-semibold text-slate-700 dark:text-mortar-100 leading-none">
+      <div className="text-3xl font-semibold text-content dark:text-mortar-100 leading-none">
         {primary}
       </div>
       {secondary && (
-        <div className="text-[11px] text-slate-500 dark:text-slate-400">
+        <div className="text-[11px] text-muted dark:text-slate-400">
           {secondary}
         </div>
       )}
@@ -644,28 +644,28 @@ function PinnedView({
   });
   const items = (data.data?.items ?? []).slice(0, 5);
   return (
-    <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
       <div className="flex items-baseline gap-2 mb-2">
-        <LayoutList size={13} className="text-cobble-500" />
+        <LayoutList size={13} className="text-accent" />
         <Link
           to="/views"
-          className="font-medium text-slate-700 dark:text-mortar-100 hover:text-cobble-600"
+          className="font-medium text-content dark:text-mortar-100 hover:text-accent"
         >
           {view.name}
         </Link>
-        <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400">
+        <span className="text-[10px] font-mono uppercase tracking-wider text-faint">
           {view.view_type}
         </span>
         <div className="flex-1" />
-        <span className="text-[10px] font-mono text-slate-400">
+        <span className="text-[10px] font-mono text-faint">
           {data.data?.items.length ?? 0} rows
         </span>
       </div>
       {data.isLoading && (
-        <div className="text-xs text-slate-400">loading…</div>
+        <div className="text-xs text-faint">loading…</div>
       )}
       {!data.isLoading && items.length === 0 && (
-        <div className="text-xs text-slate-400 italic">no matching rows</div>
+        <div className="text-xs text-faint italic">no matching rows</div>
       )}
       {mode === "list" && (
         <ul className="space-y-1.5">
@@ -676,11 +676,11 @@ function PinnedView({
             >
               <EntityThumb src={r.image_path} alt={r.title} size={40} />
               <div className="min-w-0">
-                <div className="truncate text-slate-700 dark:text-mortar-100">
+                <div className="truncate text-content dark:text-mortar-100">
                   {r.title}
                 </div>
                 {r.subtitle && (
-                  <div className="text-xs text-slate-500 truncate">
+                  <div className="text-xs text-muted truncate">
                     {r.subtitle}
                   </div>
                 )}
@@ -718,12 +718,12 @@ function RecentActivity({ slug }: { slug: string }) {
   return (
     <section>
       <SectionTitle>recent activity</SectionTitle>
-      {q.isLoading && <div className="text-xs text-slate-400">loading…</div>}
+      {q.isLoading && <div className="text-xs text-faint">loading…</div>}
       {!q.isLoading && items.length === 0 && (
-        <div className="text-xs text-slate-400 italic">no activity yet</div>
+        <div className="text-xs text-faint italic">no activity yet</div>
       )}
       {groups.length > 0 && (
-        <ul className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 divide-y divide-slate-100 dark:divide-slate-800">
+        <ul className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 divide-y divide-line dark:divide-slate-800">
           {groups.map((g) => {
             const first = g.items[0];
             if (!first) return null;
@@ -773,17 +773,17 @@ function ActivityRow({ entry: e }: { entry: ActivityEntry }) {
   const actor = e.actor?.display_name ?? "someone";
   return (
     <li className="px-4 py-2 flex items-baseline gap-3 text-sm">
-      <span className="text-slate-500 dark:text-slate-400 shrink-0">
+      <span className="text-muted dark:text-slate-400 shrink-0">
         {actor}
       </span>
-      <span className="text-slate-600 dark:text-mortar-200 shrink-0">
+      <span className="text-content dark:text-mortar-200 shrink-0">
         {action}
       </span>
-      <span className="text-slate-700 dark:text-mortar-100 truncate">
-        {title ?? <span className="font-mono text-xs text-slate-400">{e.entity_type}</span>}
+      <span className="text-content dark:text-mortar-100 truncate">
+        {title ?? <span className="font-mono text-xs text-faint">{e.entity_type}</span>}
       </span>
       <span className="flex-1" />
-      <span className="font-mono text-[10px] text-slate-400 shrink-0">
+      <span className="font-mono text-[10px] text-faint shrink-0">
         {relativeTime(e.occurred_at)}
       </span>
     </li>
@@ -810,22 +810,22 @@ function ActivityGroupRow({ group }: { group: ActivityGroup }) {
   const hasUniqueDetail = titles.length > 0;
   const rowContent = (
     <div className="flex items-baseline gap-3 text-sm w-full">
-      <span className="text-slate-500 dark:text-slate-400 shrink-0">
+      <span className="text-muted dark:text-slate-400 shrink-0">
         {actor}
       </span>
-      <span className="text-slate-600 dark:text-mortar-200 shrink-0">
+      <span className="text-content dark:text-mortar-200 shrink-0">
         {action}
       </span>
-      <span className="text-slate-700 dark:text-mortar-100 truncate">
-        <span className="font-mono text-xs text-slate-400">{first.entity_type}</span>
-        <span className="ml-1.5 inline-flex items-center text-[10px] font-mono uppercase tracking-widest text-cobble-600 dark:text-cobble-400 bg-cobble-50 dark:bg-cobble-900/40 rounded px-1.5 py-0.5">
+      <span className="text-content dark:text-mortar-100 truncate">
+        <span className="font-mono text-xs text-faint">{first.entity_type}</span>
+        <span className="ml-1.5 inline-flex items-center text-[10px] font-mono uppercase tracking-widest text-accent dark:text-cobble-400 bg-cobble-50 dark:bg-cobble-900/40 rounded px-1.5 py-0.5">
           ×{group.items.length}
         </span>
       </span>
       <span className="flex-1" />
-      <span className="font-mono text-[10px] text-slate-400 shrink-0">
+      <span className="font-mono text-[10px] text-faint shrink-0">
         {relativeTime(last.occurred_at)}
-        <span className="text-slate-300 dark:text-slate-600"> → </span>
+        <span className="text-faint dark:text-slate-600"> → </span>
         {relativeTime(first.occurred_at)}
       </span>
     </div>
@@ -836,11 +836,11 @@ function ActivityGroupRow({ group }: { group: ActivityGroup }) {
   return (
     <li>
       <details className="group">
-        <summary className="list-none cursor-pointer px-4 py-2 hover:bg-mortar-50 dark:hover:bg-slate-800/40 transition flex items-baseline gap-2">
-          <span className="text-slate-300 dark:text-slate-600 text-[10px] shrink-0 group-open:rotate-90 transition-transform">▸</span>
+        <summary className="list-none cursor-pointer px-4 py-2 hover:bg-subtle dark:hover:bg-slate-800/40 transition flex items-baseline gap-2">
+          <span className="text-faint dark:text-slate-600 text-[10px] shrink-0 group-open:rotate-90 transition-transform">▸</span>
           {rowContent}
         </summary>
-        <ul className="border-t border-slate-100 dark:border-slate-800 bg-mortar-25 dark:bg-slate-800/20 divide-y divide-slate-100 dark:divide-slate-800/40">
+        <ul className="border-t border-line dark:border-slate-800 bg-mortar-25 dark:bg-slate-800/20 divide-y divide-line dark:divide-slate-800/40">
           {group.items.map((e) => (
             <ActivityRow key={e.id} entry={e} />
           ))}
@@ -854,7 +854,7 @@ function ActivityGroupRow({ group }: { group: ActivityGroup }) {
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
-    <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500 mb-2">
+    <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
       // {children}
     </div>
   );

@@ -150,19 +150,19 @@ export function BuildPage() {
   return (
     <div className="max-w-3xl mx-auto space-y-6">
       <div>
-        <h1 className="text-xl font-semibold text-slate-700 dark:text-mortar-100 flex items-center gap-2">
-          <Wand2 size={20} className="text-cobble-500" /> Build
+        <h1 className="text-xl font-semibold text-content dark:text-mortar-100 flex items-center gap-2">
+          <Wand2 size={20} className="text-accent" /> Build
         </h1>
-        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+        <p className="text-sm text-muted dark:text-slate-400 mt-1">
           Describe what you want to add. We'll write a prompt you run in any AI — paste the result back and we'll
           check it works before anything changes.
         </p>
       </div>
 
       {/* Step 1 — pick kinds + intent */}
-      <section className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 space-y-3">
+      <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-3">
         <div>
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 mb-2">
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-2">
             What does this touch? (pick 1–3)
           </span>
           <div className="flex flex-wrap gap-2">
@@ -175,7 +175,7 @@ export function BuildPage() {
                   "px-3 py-1 rounded-full text-sm border transition " +
                   (selected.has(k.id)
                     ? "bg-cobble-600 border-cobble-600 text-white"
-                    : "border-slate-300 dark:border-slate-600 text-slate-600 dark:text-mortar-200 hover:border-cobble-400")
+                    : "border-line dark:border-slate-600 text-content dark:text-mortar-200 hover:border-accent")
                 }
                 title={k.id}
               >
@@ -183,12 +183,12 @@ export function BuildPage() {
               </button>
             ))}
             {kindItems.length === 0 && (
-              <span className="text-xs text-slate-400 italic">No entity kinds yet — enable a domain module first.</span>
+              <span className="text-xs text-faint italic">No entity kinds yet — enable a domain module first.</span>
             )}
           </div>
         </div>
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 mb-1">
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
             What do you want to add?
           </span>
           <textarea
@@ -196,7 +196,7 @@ export function BuildPage() {
             onChange={(e) => setIntent(e.target.value)}
             rows={3}
             placeholder="e.g. add a 'warranty expires' date to parts, and when one is low on stock, print a reorder label"
-            className="w-full px-3 py-2 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-3 py-2 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           />
         </label>
         <button
@@ -211,14 +211,14 @@ export function BuildPage() {
 
       {/* Step 2 — the compiled prompt + paste-back */}
       {prompt && (
-        <section className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 space-y-3">
+        <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-3">
           <div className="flex items-center justify-between">
-            <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400">
+            <span className="text-[10px] font-mono uppercase tracking-widest text-faint">
               1. Copy this prompt → run it in your AI
             </span>
             <CopyButton text={prompt} label="Copy prompt" />
           </div>
-          <pre className="text-xs whitespace-pre-wrap bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded p-3 max-h-64 overflow-auto text-slate-700 dark:text-mortar-200">
+          <pre className="text-xs whitespace-pre-wrap bg-subtle dark:bg-slate-800 border border-line dark:border-slate-700 rounded p-3 max-h-64 overflow-auto text-content dark:text-mortar-200">
             {prompt}
           </pre>
           {warnings.length > 0 && (
@@ -229,7 +229,7 @@ export function BuildPage() {
             </ul>
           )}
           <div>
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 mb-1">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
               2. Paste the result here
             </span>
             <textarea
@@ -237,7 +237,7 @@ export function BuildPage() {
               onChange={(e) => setPasteText(e.target.value)}
               rows={6}
               placeholder='{ "id": "cobblr.user.…", "field_defs": [ … ], "wires": [ … ] }'
-              className="w-full px-3 py-2 text-xs font-mono border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+              className="w-full px-3 py-2 text-xs font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             />
           </div>
           <button
@@ -268,12 +268,12 @@ export function BuildPage() {
               </div>
               {preview.fields_added.length > 0 && (
                 <div>
-                  <div className="text-[10px] font-mono uppercase tracking-widest text-slate-400 mb-1">Fields added</div>
-                  <ul className="text-sm text-slate-700 dark:text-mortar-100 space-y-0.5">
+                  <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Fields added</div>
+                  <ul className="text-sm text-content dark:text-mortar-100 space-y-0.5">
                     {preview.fields_added.map((f, i) => (
                       <li key={i}>
                         <span className="font-medium">{f.display_label}</span>{" "}
-                        <span className="text-slate-400 font-mono text-xs">({label(f.entity_kind)} · {f.type})</span>
+                        <span className="text-faint font-mono text-xs">({label(f.entity_kind)} · {f.type})</span>
                       </li>
                     ))}
                   </ul>
@@ -281,12 +281,12 @@ export function BuildPage() {
               )}
               {preview.wires_added.length > 0 && (
                 <div>
-                  <div className="text-[10px] font-mono uppercase tracking-widest text-slate-400 mb-1">Automations</div>
-                  <ul className="text-sm text-slate-700 dark:text-mortar-100 space-y-0.5">
+                  <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Automations</div>
+                  <ul className="text-sm text-content dark:text-mortar-100 space-y-0.5">
                     {preview.wires_added.map((w, i) => (
                       <li key={i}>
                         <span className="font-mono text-xs">{label(w.source_kind)}</span> → <span className="font-medium">{w.action_id}</span>{" "}
-                        <span className="text-slate-400 text-xs">({w.trigger_type})</span>
+                        <span className="text-faint text-xs">({w.trigger_type})</span>
                       </li>
                     ))}
                   </ul>
@@ -311,7 +311,7 @@ export function BuildPage() {
               <div className="flex items-center gap-2 text-sm font-medium text-ember-700 dark:text-ember-300">
                 <AlertTriangle size={16} /> Not quite — a few things to fix:
               </div>
-              <ul className="text-sm text-slate-700 dark:text-mortar-100 space-y-1">
+              <ul className="text-sm text-content dark:text-mortar-100 space-y-1">
                 {validation.errors.map((e, i) => (
                   <li key={i}>
                     <span className="font-mono text-[10px] uppercase tracking-wider text-ember-500">{e.code}</span>{" "}

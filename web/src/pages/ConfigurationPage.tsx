@@ -334,37 +334,37 @@ export function ConfigurationPage() {
 
   return (
     <div className="space-y-5 max-w-4xl">
-      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-slate-700 dark:text-mortar-100 lowercase">
+      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">
           workspace configuration
         </h1>
         {activeOrg && (
-          <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
+          <span className="text-[10px] font-mono text-faint dark:text-slate-500">
             {activeOrg.name} · {activeSlug} · {activeOrg.role}
           </span>
         )}
       </div>
 
-      <p className="text-sm text-slate-600 dark:text-mortar-200">
+      <p className="text-sm text-content dark:text-mortar-200">
         Everything you can configure for this workspace lives here.
       </p>
 
       {grouped.map(({ group, label, items }) => (
         <section key={group} className="space-y-2">
-          <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500">
+          <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
             // {label}
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {items.map((t) => {
               const Icon = t.icon;
               const inner = (
-                <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 hover:border-cobble-300 dark:hover:border-cobble-700 transition flex items-start gap-3 h-full">
-                  <Icon size={20} className="text-cobble-500 mt-0.5 shrink-0" />
+                <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 hover:border-cobble-300 dark:hover:border-cobble-700 transition flex items-start gap-3 h-full">
+                  <Icon size={20} className="text-accent mt-0.5 shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <div className="font-medium text-slate-700 dark:text-mortar-100">
+                    <div className="font-medium text-content dark:text-mortar-100">
                       {t.label}
                     </div>
-                    <div className="text-xs text-slate-600 dark:text-mortar-200 mt-1">
+                    <div className="text-xs text-content dark:text-mortar-200 mt-1">
                       {t.description}
                     </div>
                   </div>

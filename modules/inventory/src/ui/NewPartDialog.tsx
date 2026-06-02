@@ -200,7 +200,7 @@ export function NewPartDialog({ onClose, onCreated }: NewPartDialogProps) {
             ))}
           </select>
         </Field>
-        <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-mortar-200 cursor-pointer pt-1">
+        <label className="flex items-center gap-2 text-xs text-content dark:text-mortar-200 cursor-pointer pt-1">
           <input
             type="checkbox"
             checked={printLabel}
@@ -216,7 +216,7 @@ export function NewPartDialog({ onClose, onCreated }: NewPartDialogProps) {
           <button
             type="button"
             onClick={() => onClose(false)}
-            className="flex-1 rounded-md border border-slate-200 dark:border-slate-700 text-sm text-slate-600 dark:text-mortar-200 hover:bg-mortar-50 dark:bg-slate-800/70 transition py-2"
+            className="flex-1 rounded-md border border-line dark:border-slate-700 text-sm text-content dark:text-mortar-200 hover:bg-subtle dark:bg-slate-800/70 transition py-2"
           >
             Cancel
           </button>
@@ -236,7 +236,7 @@ export function NewPartDialog({ onClose, onCreated }: NewPartDialogProps) {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
         {label}
       </span>
       {children}

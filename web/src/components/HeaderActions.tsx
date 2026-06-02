@@ -58,8 +58,8 @@ export function HeaderActions() {
             className={({ isActive }) =>
               "transition p-1.5 " +
               (isActive
-                ? "text-cobble-600"
-                : "text-slate-400 dark:text-slate-500 hover:text-cobble-600")
+                ? "text-accent"
+                : "text-faint dark:text-slate-500 hover:text-accent")
             }
           >
             <Icon size={16} />

@@ -63,7 +63,7 @@ export function LocationPicker({
         onChange(e.target.value || null);
       }}
       className={
-        "w-full border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900 " +
+        "w-full border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900 " +
         sizeClass +
         (className ? " " + className : "")
       }
@@ -82,7 +82,7 @@ export function LocationPicker({
 
   const body = label ? (
     <label className="block">
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
         {label}
       </span>
       {select}
@@ -159,7 +159,7 @@ function QuickCreateLocationModal({
     <Modal open onClose={onClose} title="New location">
       <form onSubmit={submit} className="space-y-3">
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
             Name
           </span>
           <input
@@ -168,28 +168,28 @@ function QuickCreateLocationModal({
             onChange={(e) => setName(e.target.value)}
             autoFocus
             placeholder="e.g. Bin 17"
-            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           />
         </label>
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
             Short name (optional)
           </span>
           <input
             type="text"
             value={shortName}
             onChange={(e) => setShortName(e.target.value)}
-            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           />
         </label>
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
             Parent
           </span>
           <select
             value={parentId}
             onChange={(e) => setParentId(e.target.value)}
-            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           >
             <option value="">(top-level)</option>
             {parents.map((p) => (
@@ -201,13 +201,13 @@ function QuickCreateLocationModal({
           </select>
         </label>
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
             Kind
           </span>
           <select
             value={kind}
             onChange={(e) => setKind(e.target.value as "area" | "container")}
-            className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           >
             <option value="container">container (bin, drawer, shelf)</option>
             <option value="area">area (room, corner, workshop)</option>
@@ -217,7 +217,7 @@ function QuickCreateLocationModal({
           <button
             type="button"
             onClick={onClose}
-            className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
           >
             Cancel
           </button>

@@ -198,7 +198,21 @@ listsRouter.patch(
     const row = await db.updateTable("core_lists_items").set(patch).where("id", "=", req.params.id!).returningAll().executeTakeFirst();
     if (!row) return void res.status(404).json({ error: { code: "not_found", message: "Item not found." } });
     if (parsed.data.checked !== undefined) {
-      void platform().events.emit("core-lists.item.checked", { orgId: ctx.org.id, listId: row.list_id, itemId: row.id, checked: parsed.data.checked });
+      // If this line came from an inventory part (carries a source_ref) and is
+      // being CHECKED (bought), surface the part id under the wire engine's
+      // `partId` convention so a food-cluster wire can restock it. On uncheck —
+      // or for a line with no source_ref — partId is absent, and the wire
+      // engine resolves no source entity and fires nothing (a clean no-op).
+      const meta = (row.metadata as { source_ref?: { kind?: string; id?: string } } | null) ?? {};
+      const ref = meta.source_ref;
+      const partId = parsed.data.checked && ref?.kind === "inventory:part" ? ref.id : undefined;
+      void platform().events.emit("core-lists.item.checked", {
+        orgId: ctx.org.id,
+        listId: row.list_id,
+        itemId: row.id,
+        checked: parsed.data.checked,
+        ...(partId ? { partId, sourceRef: ref } : {}),
+      });
     }
     res.json(row);
   }),

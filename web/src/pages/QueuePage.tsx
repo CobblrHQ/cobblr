@@ -41,19 +41,19 @@ export function QueuePage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3 flex-wrap">
-        <ListTodo size={20} className="text-cobble-600" />
-        <h1 className="text-2xl font-semibold text-slate-700 dark:text-mortar-100">
+      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3 flex-wrap">
+        <ListTodo size={20} className="text-accent" />
+        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">
           Background queue
         </h1>
-        <span className="text-sm text-slate-500 dark:text-slate-400">
+        <span className="text-sm text-muted dark:text-slate-400">
           {items.length} jobs
         </span>
         <div className="flex-1" />
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as "" | Status)}
-          className="px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+          className="px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
         >
           <option value="">all statuses</option>
           {STATUSES.map((s) => (
@@ -64,7 +64,7 @@ export function QueuePage() {
         </select>
       </div>
 
-      <p className="text-sm text-slate-500 dark:text-slate-400">
+      <p className="text-sm text-muted dark:text-slate-400">
         Background jobs for this workspace. The worker process polls
         every 5 seconds and reclaims stale locks after 15 minutes.
         Failed jobs retry with exponential backoff up to{" "}
@@ -73,17 +73,17 @@ export function QueuePage() {
         for inspection.
       </p>
 
-      {jobs.isLoading && <div className="text-sm text-slate-500">Loading…</div>}
+      {jobs.isLoading && <div className="text-sm text-muted">Loading…</div>}
       {!jobs.isLoading && items.length === 0 && (
-        <div className="text-sm text-slate-500 italic">
+        <div className="text-sm text-muted italic">
           No jobs {statusFilter ? `with status "${statusFilter}"` : "yet"}.
         </div>
       )}
 
       {items.length > 0 && (
-        <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
+        <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-mortar-50/60 dark:bg-slate-800/40 text-[10px] font-mono uppercase tracking-widest text-slate-500 dark:text-slate-400">
+            <thead className="bg-subtle/60 dark:bg-slate-800/40 text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
               <tr>
                 <th className="text-left px-3 py-2">Queue</th>
                 <th className="text-left px-3 py-2">Status</th>
@@ -93,7 +93,7 @@ export function QueuePage() {
                 <th className="text-left px-3 py-2">Error</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+            <tbody className="divide-y divide-line dark:divide-slate-700">
               {items.map((j) => (
                 <Row key={j.id} job={j} />
               ))}
@@ -108,22 +108,22 @@ export function QueuePage() {
 function Row({ job }: { job: QueueJob }) {
   return (
     <tr className="text-xs">
-      <td className="px-3 py-2 font-mono text-slate-600 dark:text-mortar-200">
+      <td className="px-3 py-2 font-mono text-content dark:text-mortar-200">
         {job.queue}
       </td>
       <td className="px-3 py-2">
         <StatusChip status={job.status} />
       </td>
-      <td className="px-3 py-2 text-right font-mono text-slate-500">
+      <td className="px-3 py-2 text-right font-mono text-muted">
         {job.attempts}/{job.max_attempts}
       </td>
-      <td className="px-3 py-2 font-mono text-slate-500 dark:text-slate-400">
+      <td className="px-3 py-2 font-mono text-muted dark:text-slate-400">
         {new Date(job.run_at).toLocaleString()}
       </td>
-      <td className="px-3 py-2 font-mono text-slate-500 dark:text-slate-400">
+      <td className="px-3 py-2 font-mono text-muted dark:text-slate-400">
         {new Date(job.created_at).toLocaleString()}
       </td>
-      <td className="px-3 py-2 text-slate-500 dark:text-slate-400 truncate max-w-[300px]" title={job.error ?? ""}>
+      <td className="px-3 py-2 text-muted dark:text-slate-400 truncate max-w-[300px]" title={job.error ?? ""}>
         {job.error ?? ""}
       </td>
     </tr>
@@ -132,8 +132,8 @@ function Row({ job }: { job: QueueJob }) {
 
 function StatusChip({ status }: { status: QueueJob["status"] }) {
   const palette: Record<QueueJob["status"], string> = {
-    queued: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300",
-    running: "bg-cobble-100 text-cobble-700 dark:bg-cobble-900/40 dark:text-cobble-200",
+    queued: "bg-subtle text-content dark:bg-slate-800 dark:text-slate-300",
+    running: "bg-cobble-100 text-accent dark:bg-cobble-900/40 dark:text-cobble-200",
     done: "bg-moss-100 text-moss-700 dark:bg-moss-900/40 dark:text-moss-200",
     failed: "bg-ember-100 text-ember-700 dark:bg-ember-900/30 dark:text-ember-200",
   };

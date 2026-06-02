@@ -21,12 +21,12 @@ export function EntityChip({ kind, id }: Props) {
   });
 
   const base =
-    "inline-flex items-center gap-1.5 rounded border border-slate-200 dark:border-slate-700 bg-mortar-50 dark:bg-slate-800/70 px-2 py-0.5 text-[11px] font-mono";
+    "inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800/70 px-2 py-0.5 text-[11px] font-mono";
 
   if (isLoading) return <span className={base}>…</span>;
   if (error || !data) {
     return (
-      <span className={`${base} text-slate-400 dark:text-slate-500 italic`} title={`${kind}:${id}`}>
+      <span className={`${base} text-faint dark:text-slate-500 italic`} title={`${kind}:${id}`}>
         {kind} · unknown
       </span>
     );
@@ -34,8 +34,8 @@ export function EntityChip({ kind, id }: Props) {
 
   const inner = (
     <>
-      <span className="text-slate-400 dark:text-slate-500">{kind}</span>
-      <span className="text-slate-700 dark:text-mortar-100 truncate max-w-[200px]">
+      <span className="text-faint dark:text-slate-500">{kind}</span>
+      <span className="text-content dark:text-mortar-100 truncate max-w-[200px]">
         {data.title}
       </span>
     </>

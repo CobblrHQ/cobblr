@@ -96,23 +96,23 @@ export function MaintenancePanel({ entityModule, entityType, entityId }: Props) 
   });
 
   return (
-    <section className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 space-y-3">
+    <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-3">
       <div className="flex items-center justify-between">
-        <h3 className="text-[10px] font-mono uppercase tracking-widest text-slate-500 dark:text-slate-400">
+        <h3 className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
           maintenance
         </h3>
         <button
           type="button"
           onClick={() => setAdding(true)}
-          className="text-[11px] font-mono uppercase tracking-widest text-cobble-600 hover:text-cobble-700 inline-flex items-center gap-1"
+          className="text-[11px] font-mono uppercase tracking-widest text-accent hover:text-accent inline-flex items-center gap-1"
         >
           <Plus size={11} /> add
         </button>
       </div>
 
-      {list.isLoading && <div className="text-xs text-slate-400">loading…</div>}
+      {list.isLoading && <div className="text-xs text-faint">loading…</div>}
       {items.length === 0 && !list.isLoading && (
-        <div className="text-xs text-slate-400 italic">
+        <div className="text-xs text-faint italic">
           No maintenance log yet. Track service history, scheduled
           tasks, warranty renewals.
         </div>
@@ -146,7 +146,7 @@ export function MaintenancePanel({ entityModule, entityType, entityId }: Props) 
 
       {history.length > 0 && (
         <div>
-          <div className="text-[10px] font-mono uppercase tracking-widest text-slate-500 mb-1.5 flex items-center gap-1">
+          <div className="text-[10px] font-mono uppercase tracking-widest text-muted mb-1.5 flex items-center gap-1">
             <History size={10} /> history
           </div>
           <ul className="space-y-1.5">
@@ -198,13 +198,13 @@ function EntryRow({
   const overdue = days != null && days < 0;
 
   return (
-    <li className="rounded-md border border-slate-200 dark:border-slate-700 bg-mortar-50/50 dark:bg-slate-800/40 p-2 text-xs">
+    <li className="rounded-md border border-line dark:border-slate-700 bg-subtle/50 dark:bg-slate-800/40 p-2 text-xs">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="font-medium text-slate-700 dark:text-mortar-100 truncate">
+          <div className="font-medium text-content dark:text-mortar-100 truncate">
             {entry.name}
           </div>
-          <div className="text-[10px] font-mono text-slate-400 dark:text-slate-500 mt-0.5">
+          <div className="text-[10px] font-mono text-faint dark:text-slate-500 mt-0.5">
             {entry.performed_at && (
               <span>
                 done {new Date(entry.performed_at).toLocaleDateString()}
@@ -223,7 +223,7 @@ function EntryRow({
             )}
           </div>
           {entry.description && (
-            <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+            <div className="text-[11px] text-muted dark:text-slate-400 mt-1">
               {entry.description}
             </div>
           )}
@@ -242,7 +242,7 @@ function EntryRow({
           <button
             type="button"
             onClick={onDelete}
-            className="text-slate-400 hover:text-ember-500"
+            className="text-faint hover:text-ember-500"
             title="Delete"
           >
             <Trash2 size={13} />
@@ -351,8 +351,8 @@ function AddEntryModal({
                 className={
                   "px-2 py-1 rounded-md border cursor-pointer " +
                   (kind === k
-                    ? "border-cobble-400 bg-cobble-50 dark:bg-cobble-950/30 text-cobble-700 dark:text-cobble-300"
-                    : "border-slate-200 dark:border-slate-700 text-slate-500")
+                    ? "border-accent bg-cobble-50 dark:bg-cobble-950/30 text-accent dark:text-cobble-300"
+                    : "border-line dark:border-slate-700 text-muted")
                 }
               >
                 <input
@@ -405,7 +405,7 @@ function AddEntryModal({
           <button
             type="button"
             onClick={onClose}
-            className="flex-1 rounded-md border border-slate-200 dark:border-slate-700 text-sm text-slate-600 py-2"
+            className="flex-1 rounded-md border border-line dark:border-slate-700 text-sm text-content py-2"
           >
             Cancel
           </button>
@@ -425,7 +425,7 @@ function AddEntryModal({
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
         {label}
       </span>
       {children}

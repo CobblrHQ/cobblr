@@ -116,8 +116,8 @@ export function ModuleNav() {
           className={({ isActive }) =>
             "px-2 py-1 rounded transition text-sm whitespace-nowrap shrink-0 " +
             (isActive
-              ? "text-cobble-600 font-semibold"
-              : "text-slate-500 dark:text-slate-400 hover:text-cobble-500")
+              ? "text-accent font-semibold"
+              : "text-muted dark:text-slate-400 hover:text-accent")
           }
         >
           dashboard
@@ -160,8 +160,8 @@ function ModuleTopLink({ name, label }: { name: string; label: string }) {
       className={({ isActive }) =>
         "px-2 py-1 rounded transition text-sm whitespace-nowrap shrink-0 " +
         (isActive
-          ? "text-cobble-600 font-semibold"
-          : "text-slate-500 dark:text-slate-400 hover:text-cobble-500")
+          ? "text-accent font-semibold"
+          : "text-muted dark:text-slate-400 hover:text-accent")
       }
     >
       {label.toLowerCase()}
@@ -260,7 +260,7 @@ function MoreMenu({
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-label="More navigation links"
-        className="px-1.5 py-1 rounded text-sm whitespace-nowrap text-slate-500 dark:text-slate-400 hover:text-cobble-500 transition flex items-center gap-0.5"
+        className="px-1.5 py-1 rounded text-sm whitespace-nowrap text-muted dark:text-slate-400 hover:text-accent transition flex items-center gap-0.5"
       >
         more
         <ChevronDown
@@ -274,7 +274,7 @@ function MoreMenu({
           onMouseEnter={openNow}
           onMouseLeave={scheduleClose}
           style={{ position: "fixed", left: Math.max(8, pos.left), top: pos.top }}
-          className="w-64 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg z-[60] max-h-[70vh] overflow-y-auto"
+          className="w-64 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg z-[60] max-h-[70vh] overflow-y-auto"
         >
           <ul className="py-1">
             {items.map(({ top, kids }) => {
@@ -285,12 +285,12 @@ function MoreMenu({
                     <NavLink
                       to={to}
                       onClick={() => setOpen(false)}
-                      className="block px-3 py-2 text-sm text-slate-700 dark:text-mortar-100 hover:bg-mortar-50 dark:hover:bg-slate-800 transition"
+                      className="block px-3 py-2 text-sm text-content dark:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 transition"
                     >
                       {top.displayName.toLowerCase()}
                     </NavLink>
                   ) : (
-                    <div className="px-3 py-2 text-[10px] font-mono uppercase tracking-widest text-slate-500 dark:text-slate-400">
+                    <div className="px-3 py-2 text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
                       {top.displayName.toLowerCase()}
                     </div>
                   )}
@@ -301,7 +301,7 @@ function MoreMenu({
                           <NavLink
                             to={childTo(top.name, k)}
                             onClick={() => setOpen(false)}
-                            className="flex items-center gap-2 pl-7 pr-3 py-1.5 text-sm text-slate-600 dark:text-mortar-200 hover:bg-mortar-50 dark:hover:bg-slate-800 transition"
+                            className="flex items-center gap-2 pl-7 pr-3 py-1.5 text-sm text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 transition"
                           >
                             <span className="w-1.5 h-1.5 rounded-full bg-moss-500 shrink-0" />
                             {k.displayName}
@@ -427,7 +427,7 @@ function ModuleGroupChip({
         <button
           type="button"
           onClick={() => setOpen((o) => !o)}
-          className="pl-2 pr-1 py-1 rounded-l transition text-sm whitespace-nowrap text-slate-500 dark:text-slate-400 hover:text-cobble-500"
+          className="pl-2 pr-1 py-1 rounded-l transition text-sm whitespace-nowrap text-muted dark:text-slate-400 hover:text-accent"
         >
           {parent.displayName.toLowerCase()}
         </button>
@@ -437,8 +437,8 @@ function ModuleGroupChip({
           className={({ isActive }) =>
             "pl-2 pr-1 py-1 rounded-l transition text-sm whitespace-nowrap " +
             (isActive
-              ? "text-cobble-600 font-semibold"
-              : "text-slate-500 dark:text-slate-400 hover:text-cobble-500")
+              ? "text-accent font-semibold"
+              : "text-muted dark:text-slate-400 hover:text-accent")
           }
         >
           {parent.displayName.toLowerCase()}
@@ -452,7 +452,7 @@ function ModuleGroupChip({
           setOpen((o) => !o);
         }}
         aria-label={parent.groupLabel || `${parent.displayName} specialisations`}
-        className="pl-0.5 pr-1.5 py-1 rounded-r text-slate-400 dark:text-slate-500 hover:text-cobble-500 transition"
+        className="pl-0.5 pr-1.5 py-1 rounded-r text-faint dark:text-slate-500 hover:text-accent transition"
       >
         <ChevronDown
           size={12}
@@ -467,9 +467,9 @@ function ModuleGroupChip({
           onMouseEnter={openNow}
           onMouseLeave={scheduleClose}
           style={{ position: "fixed", left: pos.left, top: pos.top }}
-          className="w-64 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg z-[60] overflow-hidden"
+          className="w-64 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg z-[60] overflow-hidden"
         >
-          <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-700 text-[10px] font-mono uppercase tracking-widest text-slate-500 dark:text-slate-400">
+          <div className="px-3 py-2 border-b border-line dark:border-slate-700 text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
             {parent.name.startsWith(HEADING_PREFIX)
               ? parent.displayName.toLowerCase()
               : (parent.groupLabel?.toLowerCase()
@@ -494,7 +494,7 @@ function ModuleGroupChip({
                   <NavLink
                     to={to}
                     onClick={() => setOpen(false)}
-                    className="px-3 py-2 text-sm text-slate-700 dark:text-mortar-100 hover:bg-mortar-50 dark:hover:bg-slate-800 transition flex items-center gap-2"
+                    className="px-3 py-2 text-sm text-content dark:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 transition flex items-center gap-2"
                   >
                     <span
                       className={
@@ -504,7 +504,7 @@ function ModuleGroupChip({
                     />
                     <span className="flex-1">{k.displayName}</span>
                     {badge && (
-                      <span className="text-[10px] font-mono text-slate-400">
+                      <span className="text-[10px] font-mono text-faint">
                         {badge}
                       </span>
                     )}
@@ -513,7 +513,7 @@ function ModuleGroupChip({
               );
             })}
             {kids.length === 0 && (
-              <li className="px-3 py-2 text-xs text-slate-400 italic">
+              <li className="px-3 py-2 text-xs text-faint italic">
                 No specialisations enabled yet.
               </li>
             )}
@@ -526,7 +526,7 @@ function ModuleGroupChip({
               setOpen(false);
               onInstallMore();
             }}
-            className="w-full text-left px-3 py-2 border-t border-slate-100 dark:border-slate-700 hover:bg-mortar-50 dark:hover:bg-slate-800 transition flex items-center gap-2 text-sm text-cobble-600 dark:text-cobble-300"
+            className="w-full text-left px-3 py-2 border-t border-line dark:border-slate-700 hover:bg-subtle dark:hover:bg-slate-800 transition flex items-center gap-2 text-sm text-accent dark:text-cobble-300"
           >
             <Settings2 size={13} />
             Manage specialisations…
@@ -555,8 +555,8 @@ export function ConfigurationLink() {
       className={({ isActive }) =>
         "rounded transition p-1.5 shrink-0 " +
         (isActive
-          ? "text-cobble-600"
-          : "text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-mortar-100")
+          ? "text-accent"
+          : "text-faint dark:text-slate-500 hover:text-content dark:hover:text-mortar-100")
       }
       title="Workspace configuration"
     >

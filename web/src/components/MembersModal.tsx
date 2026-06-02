@@ -127,27 +127,27 @@ export function MembersModal({ open, onClose, slug }: Props) {
       <div className="space-y-5">
         {/* Members list */}
         <div>
-          <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500 mb-2">
+          <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
             // members ({members.data?.items.length ?? 0})
           </div>
           {members.isLoading && (
-            <div className="text-xs text-slate-400">loading…</div>
+            <div className="text-xs text-faint">loading…</div>
           )}
-          <ul className="divide-y divide-slate-100 dark:divide-slate-700">
+          <ul className="divide-y divide-line dark:divide-slate-700">
             {members.data?.items.map((m) => {
               const isSelf = m.user_id === members.data?.self.user_id;
               return (
                 <li key={m.user_id} className="py-2 flex items-center gap-3">
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm text-slate-700 dark:text-mortar-100 truncate">
+                    <div className="text-sm text-content dark:text-mortar-100 truncate">
                       {m.display_name}
                       {isSelf && (
-                        <span className="ml-2 text-[10px] font-mono uppercase tracking-widest text-slate-400">
+                        <span className="ml-2 text-[10px] font-mono uppercase tracking-widest text-faint">
                           you
                         </span>
                       )}
                     </div>
-                    <div className="text-[11px] font-mono text-slate-400 dark:text-slate-500 truncate">
+                    <div className="text-[11px] font-mono text-faint dark:text-slate-500 truncate">
                       {m.email}
                     </div>
                   </div>
@@ -169,14 +169,14 @@ export function MembersModal({ open, onClose, slug }: Props) {
                       ))}
                     </select>
                   ) : (
-                    <span className="text-[10px] font-mono uppercase tracking-widest text-slate-500 dark:text-slate-400">
+                    <span className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
                       {m.role}
                     </span>
                   )}
                   {isAdminish && !isSelf && (
                     <button
                       onClick={() => handleRemoveMember(m)}
-                      className="text-slate-300 hover:text-ember-500 transition"
+                      className="text-faint hover:text-ember-500 transition"
                       title="Remove member"
                     >
                       <Trash2 size={13} />
@@ -191,11 +191,11 @@ export function MembersModal({ open, onClose, slug }: Props) {
         {/* Open invites */}
         {isAdminish && (
           <div>
-            <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500 mb-2">
+            <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
               // open invites ({invites.data?.items.length ?? 0})
             </div>
             {invites.data?.items.length === 0 && (
-              <div className="text-xs text-slate-400 italic">
+              <div className="text-xs text-faint italic">
                 No open invites.
               </div>
             )}
@@ -206,15 +206,15 @@ export function MembersModal({ open, onClose, slug }: Props) {
                 return (
                   <li
                     key={inv.id}
-                    className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-2 text-xs flex items-center gap-2"
+                    className="rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-2 text-xs flex items-center gap-2"
                   >
                     <div className="flex-1 min-w-0">
                       <div className="flex items-baseline gap-2">
-                        <span className="font-mono uppercase tracking-widest text-[10px] text-slate-500">
+                        <span className="font-mono uppercase tracking-widest text-[10px] text-muted">
                           {inv.role}
                         </span>
                         {inv.invited_email && (
-                          <span className="text-slate-600 dark:text-mortar-200 truncate">
+                          <span className="text-content dark:text-mortar-200 truncate">
                             {inv.invited_email}
                           </span>
                         )}
@@ -224,7 +224,7 @@ export function MembersModal({ open, onClose, slug }: Props) {
                           </span>
                         )}
                       </div>
-                      <div className="text-[10px] font-mono text-slate-400 dark:text-slate-500 mt-0.5">
+                      <div className="text-[10px] font-mono text-faint dark:text-slate-500 mt-0.5">
                         token: …{inv.token.slice(-8)}{" "}
                         {inv.expires_at && (
                           <>
@@ -235,14 +235,14 @@ export function MembersModal({ open, onClose, slug }: Props) {
                     </div>
                     <button
                       onClick={() => copyInviteLink(inv)}
-                      className="text-slate-400 hover:text-cobble-500 transition"
+                      className="text-faint hover:text-accent transition"
                       title="Copy invite link"
                     >
                       <Copy size={12} />
                     </button>
                     <button
                       onClick={() => revokeInvite.mutate(inv.id)}
-                      className="text-slate-300 hover:text-ember-500 transition"
+                      className="text-faint hover:text-ember-500 transition"
                       title="Revoke"
                     >
                       <X size={13} />
@@ -258,14 +258,14 @@ export function MembersModal({ open, onClose, slug }: Props) {
         {isAdminish && (
           <form
             onSubmit={submitInvite}
-            className="rounded-xl border border-slate-200 dark:border-slate-700 bg-mortar-50/40 dark:bg-slate-900 p-4 space-y-3"
+            className="rounded-xl border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-900 p-4 space-y-3"
           >
-            <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500">
+            <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
               // invite someone
             </div>
             <div className="flex items-end gap-2">
               <label className="flex-1 block">
-                <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                   Email hint (optional)
                 </span>
                 <input
@@ -277,7 +277,7 @@ export function MembersModal({ open, onClose, slug }: Props) {
                 />
               </label>
               <label className="block">
-                <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                   Role
                 </span>
                 <select
@@ -300,7 +300,7 @@ export function MembersModal({ open, onClose, slug }: Props) {
                 <Plus size={13} /> Mint invite
               </button>
             </div>
-            <p className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
+            <p className="text-[10px] font-mono text-faint dark:text-slate-500">
               No email is sent — we don't have SMTP wired yet. Cobblr
               copies the link to your clipboard so you can send it
               however you want.
@@ -309,15 +309,15 @@ export function MembersModal({ open, onClose, slug }: Props) {
         )}
 
         {!isAdminish && (
-          <p className="text-xs text-slate-500 dark:text-slate-400">
+          <p className="text-xs text-muted dark:text-slate-400">
             Only owners and admins can invite or change roles.
           </p>
         )}
 
-        <div className="flex items-center justify-end pt-3 border-t border-slate-100 dark:border-slate-700">
+        <div className="flex items-center justify-end pt-3 border-t border-line dark:border-slate-700">
           <button
             onClick={onClose}
-            className="px-3 py-1.5 rounded-md text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-mortar-50 dark:hover:bg-slate-800 transition"
+            className="px-3 py-1.5 rounded-md text-sm font-medium text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800 transition"
           >
             Close
           </button>

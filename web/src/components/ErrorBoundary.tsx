@@ -34,10 +34,10 @@ export class ErrorBoundary extends Component<Props, State> {
         <h2 className="text-lg font-semibold text-ember-700 dark:text-ember-300">
           Something broke on this {scope}.
         </h2>
-        <p className="mt-1 text-sm text-slate-600 dark:text-mortar-200">
+        <p className="mt-1 text-sm text-content dark:text-mortar-200">
           The rest of the app is still running. Try again, or head back to the dashboard.
         </p>
-        <pre className="mt-3 max-h-40 overflow-auto rounded bg-white/70 dark:bg-slate-800 p-2 text-[11px] font-mono text-slate-500">
+        <pre className="mt-3 max-h-40 overflow-auto rounded bg-surface/70 dark:bg-slate-800 p-2 text-[11px] font-mono text-muted">
           {this.state.error.message}
         </pre>
         <div className="mt-3 flex gap-2">
@@ -50,7 +50,7 @@ export class ErrorBoundary extends Component<Props, State> {
           </button>
           <a
             href="/"
-            className="rounded border border-slate-300 px-3 py-1.5 text-sm text-slate-600 dark:border-slate-600 dark:text-slate-300"
+            className="rounded border border-line px-3 py-1.5 text-sm text-content dark:border-slate-600 dark:text-slate-300"
           >
             Dashboard
           </a>

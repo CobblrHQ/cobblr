@@ -52,7 +52,7 @@ function metricToResolved(row: { id: string; name: string; unit: string | null; 
     id: row.id,
     title: row.name,
     subtitle: row.unit ?? undefined,
-    detailUrl: `/tracking/${row.id}`,
+    detailUrl: `/core-fitness/${row.id}`,
     fields: { name: row.name, unit: row.unit, goal_value: row.goal_value == null ? null : Number(row.goal_value), goal_direction: row.goal_direction },
   };
 }

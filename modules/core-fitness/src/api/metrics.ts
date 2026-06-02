@@ -13,6 +13,7 @@ import { platform } from "@cobblr/platform-contract";
 import { z } from "zod";
 import { tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { logMeasurement } from "./record.js";
 
 export const metricsRouter = Router({ mergeParams: true });
 
@@ -175,24 +176,15 @@ metricsRouter.post(
     const ctx = tenantContext(req);
     const metric = await db.selectFrom("core_fitness_metrics").selectAll().where("id", "=", req.params.id!).executeTakeFirst();
     if (!metric) return void res.status(404).json({ error: { code: "not_found", message: "Metric not found." } });
-    const row = await db
-      .insertInto("core_fitness_measurements")
-      .values({
-        metric_id: req.params.id!,
-        value: String(parsed.data.value),
-        measured_at: parsed.data.measured_at ? new Date(parsed.data.measured_at) : new Date(),
-        note: parsed.data.note ?? null,
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    void platform().events.emit("core-fitness.measurement.logged", { orgId: ctx.org.id, metricId: req.params.id, value: parsed.data.value });
-    // goal-reached check (direction-aware)
-    const goal = num(metric.goal_value);
-    if (goal != null) {
-      const v = parsed.data.value;
-      const hit = metric.goal_direction === "down" ? v <= goal : metric.goal_direction === "up" ? v >= goal : Math.abs(v - goal) <= Math.abs(goal) * 0.02;
-      if (hit) void platform().events.emit("core-fitness.goal.reached", { orgId: ctx.org.id, metricId: req.params.id, value: v, goal });
-    }
+    // Shared path: insert + measurement.logged + goal.reached + notify.
+    const row = await logMeasurement({
+      db,
+      orgId: ctx.org.id,
+      metric,
+      value: parsed.data.value,
+      note: parsed.data.note ?? null,
+      measuredAt: parsed.data.measured_at ? new Date(parsed.data.measured_at) : undefined,
+    });
     res.status(201).json({ ...row, value: Number(row.value) });
   }),
 );

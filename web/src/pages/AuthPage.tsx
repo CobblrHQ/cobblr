@@ -80,10 +80,10 @@ export function AuthPage() {
         <div className="flex flex-col items-center gap-4 mb-6 text-center">
           <CobblestoneMark size={64} />
           <div>
-            <h1 className="font-display text-3xl font-extrabold text-slate-700 dark:text-mortar-100 lowercase tracking-tight">
+            <h1 className="font-display text-3xl font-extrabold text-content dark:text-mortar-100 lowercase tracking-tight">
               cobblr
             </h1>
-            <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">Cobble together what works.</p>
+            <p className="mt-1 text-xs text-faint dark:text-slate-500">Cobble together what works.</p>
           </div>
         </div>
 
@@ -91,21 +91,21 @@ export function AuthPage() {
           <div
             role="status"
             aria-live="polite"
-            className="bg-white dark:bg-slate-900/70 backdrop-blur border border-slate-200 dark:border-slate-700 rounded-xl p-6 shadow-sm text-center space-y-4"
+            className="bg-surface dark:bg-slate-900/70 backdrop-blur border border-line dark:border-slate-700 rounded-xl p-6 shadow-sm text-center space-y-4"
           >
-            <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500">
+            <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
               // account created
             </div>
             <div
               className="mx-auto h-8 w-8 rounded-full border-2 border-cobble-200 border-t-cobble-600 animate-spin"
               aria-hidden
             />
-            <div className="font-display text-lg font-bold text-slate-700 dark:text-mortar-100">
+            <div className="font-display text-lg font-bold text-content dark:text-mortar-100">
               Setting up your workspace…
             </div>
-            <p className="text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+            <p className="text-xs leading-relaxed text-muted dark:text-slate-400">
               Spinning up a private database for{" "}
-              <strong className="text-slate-700 dark:text-mortar-200">
+              <strong className="text-content dark:text-mortar-200">
                 {orgName.trim() || "your workspace"}
               </strong>{" "}
               and signing you in. This takes a few seconds — hang tight.
@@ -114,9 +114,9 @@ export function AuthPage() {
         ) : (
         <form
           onSubmit={submit}
-          className="bg-white dark:bg-slate-900/70 backdrop-blur border border-slate-200 dark:border-slate-700 rounded-xl p-5 shadow-sm space-y-3"
+          className="bg-surface dark:bg-slate-900/70 backdrop-blur border border-line dark:border-slate-700 rounded-xl p-5 shadow-sm space-y-3"
         >
-          <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500 mb-1">
+          <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-1">
             // {mode === "login" ? "sign in" : "create account"}
           </div>
 
@@ -205,7 +205,7 @@ export function AuthPage() {
                 setMode(mode === "login" ? "signup" : "login");
                 setError(null);
               }}
-              className="w-full text-xs text-slate-500 dark:text-slate-400 hover:text-cobble-500 transition"
+              className="w-full text-xs text-muted dark:text-slate-400 hover:text-accent transition"
             >
               {mode === "login"
                 ? "no account yet? create one"
@@ -219,7 +219,7 @@ export function AuthPage() {
           <MagicLinkPanel email={email} />
         )}
 
-        <p className="mt-6 text-center text-[11px] font-mono text-slate-400 dark:text-slate-500">
+        <p className="mt-6 text-center text-[11px] font-mono text-faint dark:text-slate-500">
           cobble together what works
         </p>
       </div>
@@ -230,7 +230,7 @@ export function AuthPage() {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">
+      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
         {label}
       </span>
       {children}
@@ -288,15 +288,15 @@ function MagicLinkPanel({ email }: { email: string }) {
   }
 
   return (
-    <div className="mt-4 bg-white/60 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700 rounded-xl p-4 space-y-3">
-      <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500">
+    <div className="mt-4 bg-surface/60 dark:bg-slate-900/40 border border-line dark:border-slate-700 rounded-xl p-4 space-y-3">
+      <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
         // or passwordless
       </div>
       <button
         type="button"
         onClick={() => void request()}
         disabled={busy}
-        className="w-full rounded-md border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-mortar-200 hover:bg-mortar-50 dark:hover:bg-slate-800 text-sm font-medium px-3 py-2 transition disabled:opacity-50"
+        className="w-full rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 text-sm font-medium px-3 py-2 transition disabled:opacity-50"
       >
         {busy ? "…" : sent && !devLink ? "Magic link sent — check your email." : "Send a magic link"}
       </button>
@@ -306,7 +306,7 @@ function MagicLinkPanel({ email }: { email: string }) {
         </div>
       )}
       {devLink && (
-        <div className="text-xs text-slate-600 dark:text-mortar-200 bg-cobble-50 dark:bg-cobble-900/20 rounded-md px-3 py-2 space-y-2">
+        <div className="text-xs text-content dark:text-mortar-200 bg-cobble-50 dark:bg-cobble-900/20 rounded-md px-3 py-2 space-y-2">
           <div>
             <strong>Dev mode</strong> — no SMTP configured. The link
             below is what would be emailed in production. Click to

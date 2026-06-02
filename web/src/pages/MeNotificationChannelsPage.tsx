@@ -128,14 +128,14 @@ export function MeNotificationChannelsPage() {
 
   return (
     <div className="space-y-5 max-w-3xl">
-      <div className="flex items-baseline gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
-        <Bell size={20} className="text-cobble-500" />
-        <h1 className="font-display text-2xl font-extrabold text-slate-700 dark:text-mortar-100 lowercase">
+      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
+        <Bell size={20} className="text-accent" />
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">
           notification channels
         </h1>
       </div>
 
-      <p className="text-sm text-slate-600 dark:text-mortar-200">
+      <p className="text-sm text-content dark:text-mortar-200">
         Send Cobblr events to Discord, Slack, your email, SMS, or any
         webhook. Each binding picks a channel, an event type (or{" "}
         <code className="font-mono text-xs">*</code> for all events),
@@ -147,12 +147,12 @@ export function MeNotificationChannelsPage() {
       </p>
 
       {orgs.length === 0 ? (
-        <div className="text-sm text-slate-400">No workspaces.</div>
+        <div className="text-sm text-faint">No workspaces.</div>
       ) : (
         <>
           {orgs.length > 1 && (
             <div className="flex items-center gap-2 text-xs">
-              <span className="font-mono uppercase tracking-widest text-cobble-500">
+              <span className="font-mono uppercase tracking-widest text-accent">
                 workspace:
               </span>
               <select
@@ -255,7 +255,7 @@ function WorkspaceBindings({ orgId }: { orgId: string }) {
         </button>
         <div className="ml-auto flex items-center gap-1">
           <span
-            className="text-[10px] font-mono uppercase tracking-widest text-slate-400"
+            className="text-[10px] font-mono uppercase tracking-widest text-faint"
             title="Fires a test.notification through EVERY binding in this workspace at the chosen priority. Use the per-row test button to fire one binding in isolation."
           >
             test all:
@@ -265,7 +265,7 @@ function WorkspaceBindings({ orgId }: { orgId: string }) {
               key={p}
               onClick={() => test.mutate(p)}
               disabled={test.isPending}
-              className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700 text-slate-500 hover:bg-mortar-50 dark:hover:bg-slate-800 transition disabled:opacity-50"
+              className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-line dark:border-slate-700 text-muted hover:bg-subtle dark:hover:bg-slate-800 transition disabled:opacity-50"
               title={`Fire a test.notification through every binding at priority=${p}`}
             >
               {p === "urgent" && <Zap size={9} className="inline -mt-0.5" />} {p}
@@ -274,7 +274,7 @@ function WorkspaceBindings({ orgId }: { orgId: string }) {
         </div>
       </div>
 
-      {q.isLoading && <div className="text-sm text-slate-400">Loading…</div>}
+      {q.isLoading && <div className="text-sm text-faint">Loading…</div>}
       {q.isError && (
         <div className="text-sm text-ember-500">
           {q.error instanceof ApiError
@@ -284,7 +284,7 @@ function WorkspaceBindings({ orgId }: { orgId: string }) {
       )}
 
       {q.data && q.data.items.length === 0 && (
-        <div className="text-xs text-slate-400 italic px-1 py-3">
+        <div className="text-xs text-faint italic px-1 py-3">
           No channel bindings yet. By default, every notification lands
           in your in-app inbox; add a binding above to also send to
           Discord, Slack, email, SMS, or a webhook.
@@ -292,9 +292,9 @@ function WorkspaceBindings({ orgId }: { orgId: string }) {
       )}
 
       {q.data && q.data.items.length > 0 && (
-        <div className="border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden">
+        <div className="border border-line dark:border-slate-700 rounded-xl overflow-hidden">
           <table className="w-full text-xs">
-            <thead className="bg-mortar-50 dark:bg-slate-800/50 text-[10px] font-mono uppercase tracking-widest text-slate-400">
+            <thead className="bg-subtle dark:bg-slate-800/50 text-[10px] font-mono uppercase tracking-widest text-faint">
               <tr>
                 <th className="text-left px-3 py-2">Channel</th>
                 <th className="text-left px-3 py-2">Event</th>
@@ -304,13 +304,13 @@ function WorkspaceBindings({ orgId }: { orgId: string }) {
                 <th />
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+            <tbody className="divide-y divide-line dark:divide-slate-800">
               {q.data.items.map((b) => (
                 <tr key={b.id}>
                   <td className="px-3 py-2 font-mono">{b.channel}</td>
                   <td className="px-3 py-2 font-mono">
                     {b.event_type === "*" ? (
-                      <span className="text-cobble-500">(all events)</span>
+                      <span className="text-accent">(all events)</span>
                     ) : (
                       b.event_type
                     )}
@@ -322,10 +322,10 @@ function WorkspaceBindings({ orgId }: { orgId: string }) {
                     {b.enabled ? (
                       <span className="text-moss-600">on</span>
                     ) : (
-                      <span className="text-slate-400">off</span>
+                      <span className="text-faint">off</span>
                     )}
                   </td>
-                  <td className="px-3 py-2 font-mono text-[10px] text-slate-500 truncate max-w-xs">
+                  <td className="px-3 py-2 font-mono text-[10px] text-muted truncate max-w-xs">
                     {summarizeConfig(b.config)}
                   </td>
                   <td className="px-3 py-2 text-right">
@@ -335,7 +335,7 @@ function WorkspaceBindings({ orgId }: { orgId: string }) {
                           testOne.mutate({ id: b.id, priority: b.min_priority })
                         }
                         disabled={testOne.isPending}
-                        className="text-cobble-500 hover:text-cobble-600 transition disabled:opacity-50"
+                        className="text-accent hover:text-accent transition disabled:opacity-50"
                         title={`Send a test notification through THIS binding at priority=${b.min_priority} (its threshold)`}
                       >
                         <Send size={12} />
@@ -374,8 +374,8 @@ function WorkspaceBindings({ orgId }: { orgId: string }) {
 
 function PriorityBadge({ priority }: { priority: NotificationPriority }) {
   const styles: Record<NotificationPriority, string> = {
-    low: "bg-slate-100 dark:bg-slate-800 text-slate-500",
-    normal: "bg-cobble-50 dark:bg-cobble-900/30 text-cobble-600 dark:text-cobble-300",
+    low: "bg-subtle dark:bg-slate-800 text-muted",
+    normal: "bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300",
     high: "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300",
     urgent: "bg-ember-100 dark:bg-ember-900/30 text-ember-700 dark:text-ember-300",
   };
@@ -506,13 +506,13 @@ function AddBindingModal({
           </Field>
         </div>
 
-        <div className="text-[11px] text-slate-500 dark:text-slate-400 italic">
+        <div className="text-[11px] text-muted dark:text-slate-400 italic">
           {channelDef.hint}
         </div>
 
         {channelDef.fields.length > 0 && (
-          <div className="space-y-2 border-t border-slate-200 dark:border-slate-700 pt-3">
-            <div className="text-[10px] font-mono uppercase tracking-widest text-cobble-500">
+          <div className="space-y-2 border-t border-line dark:border-slate-700 pt-3">
+            <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
               // {channelDef.label.toLowerCase()} config
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -528,7 +528,7 @@ function AddBindingModal({
                     placeholder={f.placeholder}
                   />
                   {f.helpText && (
-                    <div className="text-[10px] text-slate-400 mt-0.5">
+                    <div className="text-[10px] text-faint mt-0.5">
                       {f.helpText}
                     </div>
                   )}
@@ -538,7 +538,7 @@ function AddBindingModal({
           </div>
         )}
 
-        <div className="flex items-center gap-2 pt-2 border-t border-slate-200 dark:border-slate-700">
+        <div className="flex items-center gap-2 pt-2 border-t border-line dark:border-slate-700">
           <button
             onClick={() => save.mutate()}
             disabled={save.isPending}
@@ -548,7 +548,7 @@ function AddBindingModal({
           </button>
           <button
             onClick={onClose}
-            className="text-xs text-slate-500 hover:text-slate-700 px-3"
+            className="text-xs text-muted hover:text-content px-3"
           >
             Cancel
           </button>
@@ -567,7 +567,7 @@ function Field({
 }) {
   return (
     <label className="block">
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-cobble-500 mb-1">
+      <span className="block text-[10px] font-mono uppercase tracking-widest text-accent mb-1">
         {label}
       </span>
       {children}

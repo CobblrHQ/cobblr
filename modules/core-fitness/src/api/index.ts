@@ -4,8 +4,10 @@
 import { Router } from "express";
 import { metricsRouter } from "./metrics.js";
 import { registerFitnessResolvers } from "./resolvers.js";
+import { registerFitnessActionHandlers } from "./action-handlers.js";
 
 registerFitnessResolvers();
+registerFitnessActionHandlers();
 
 const router = Router({ mergeParams: true });
 router.use("/", metricsRouter);

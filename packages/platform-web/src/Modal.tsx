@@ -65,12 +65,12 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
     >
       <div
         className={
-          "bg-white dark:bg-slate-900 rounded-xl shadow-2xl border w-full my-12 " +
+          "bg-surface dark:bg-slate-900 rounded-xl shadow-2xl border w-full my-12 " +
           SIZE[size] +
           " " +
           (destructive
             ? "border-ember-300 dark:border-ember-700"
-            : "border-slate-200 dark:border-slate-700")
+            : "border-line dark:border-slate-700")
         }
         onClick={(e) => e.stopPropagation()}
       >
@@ -80,7 +80,7 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
               "flex items-start gap-3 px-5 py-3 border-b " +
               (destructive
                 ? "border-ember-200 dark:border-ember-700/40"
-                : "border-slate-100 dark:border-slate-700")
+                : "border-line dark:border-slate-700")
             }
           >
             <div className="flex-1 min-w-0">
@@ -90,21 +90,21 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
                     "font-display text-lg font-bold lowercase " +
                     (destructive
                       ? "text-ember-700 dark:text-ember-300"
-                      : "text-slate-700 dark:text-mortar-100")
+                      : "text-content dark:text-mortar-100")
                   }
                 >
                   {title}
                 </div>
               )}
               {subtitle && (
-                <div className="text-[10px] font-mono uppercase tracking-widest text-slate-400 dark:text-slate-500 mt-0.5">
+                <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mt-0.5">
                   {subtitle}
                 </div>
               )}
             </div>
             <button
               onClick={onClose}
-              className="text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-mortar-100 transition shrink-0"
+              className="text-faint dark:text-slate-500 hover:text-content dark:hover:text-mortar-100 transition shrink-0"
               title="Close"
             >
               <X size={16} />

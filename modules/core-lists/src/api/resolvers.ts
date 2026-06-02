@@ -51,7 +51,7 @@ function listToResolved(row: { id: string; title: string; description: string | 
     id: row.id,
     title: row.title,
     subtitle: row.description ?? undefined,
-    detailUrl: `/lists/${row.id}`,
+    detailUrl: `/core-lists/${row.id}`,
     fields: { title: row.title, description: row.description },
   };
 }

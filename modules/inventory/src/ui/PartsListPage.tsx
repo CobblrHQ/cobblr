@@ -230,7 +230,7 @@ export function PartsListPage() {
     <div className="space-y-4">
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative flex-1 min-w-[200px]">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint dark:text-slate-500" />
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -272,7 +272,7 @@ export function PartsListPage() {
           <option value="kit">Kits only</option>
           <option value="parted-out">Parted-out</option>
         </select>
-        <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-mortar-200 cursor-pointer">
+        <label className="flex items-center gap-1.5 text-xs text-content dark:text-mortar-200 cursor-pointer">
           <input
             type="checkbox"
             checked={lowOnly}
@@ -301,7 +301,7 @@ export function PartsListPage() {
           <option value="expiring30">Warranty in 30d</option>
           <option value="expiring90">Warranty in 90d</option>
         </select>
-        <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-mortar-200 cursor-pointer">
+        <label className="flex items-center gap-1.5 text-xs text-content dark:text-mortar-200 cursor-pointer">
           <input
             type="checkbox"
             checked={insuredOnly}
@@ -315,13 +315,13 @@ export function PartsListPage() {
         <button
           onClick={() => void exportCsv()}
           disabled={exporting}
-          className="rounded-md border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-mortar-200 hover:bg-mortar-50 dark:hover:bg-slate-800/70 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5 disabled:opacity-50"
+          className="rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800/70 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5 disabled:opacity-50"
         >
           <FileDown size={14} /> {exporting ? "exporting…" : "Export CSV"}
         </button>
         <button
           onClick={() => setImporting(true)}
-          className="rounded-md border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-mortar-200 hover:bg-mortar-50 dark:hover:bg-slate-800/70 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
+          className="rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800/70 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
         >
           <FileUp size={14} /> Import CSV
         </button>
@@ -333,12 +333,12 @@ export function PartsListPage() {
         </button>
       </div>
 
-      {parts.isLoading && <div className="text-sm text-slate-400 dark:text-slate-500">loading…</div>}
+      {parts.isLoading && <div className="text-sm text-faint dark:text-slate-500">loading…</div>}
       {parts.error && (
         <div className="text-sm text-ember-500">{(parts.error as Error).message}</div>
       )}
       {parts.data && partItems.length === 0 && (
-        <div className="border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl p-12 text-center text-slate-400 dark:text-slate-500">
+        <div className="border-2 border-dashed border-line dark:border-slate-700 rounded-xl p-12 text-center text-faint dark:text-slate-500">
           No parts match. Try widening the filter or add the first one.
         </div>
       )}
@@ -357,7 +357,7 @@ export function PartsListPage() {
           <button
             onClick={() => void parts.fetchNextPage()}
             disabled={parts.isFetchingNextPage}
-            className="text-xs font-mono uppercase tracking-widest px-4 py-2 rounded-md border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-mortar-200 hover:bg-mortar-50 dark:hover:bg-slate-800 transition disabled:opacity-40"
+            className="text-xs font-mono uppercase tracking-widest px-4 py-2 rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 transition disabled:opacity-40"
           >
             {parts.isFetchingNextPage
               ? "loading…"
@@ -397,14 +397,14 @@ export function PartsListPage() {
               type="button"
               disabled={bulkLabelBusy}
               onClick={() => void bulkPrintLabels()}
-              className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-cobble-600 hover:text-cobble-700 disabled:opacity-50"
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-accent hover:text-accent disabled:opacity-50"
             >
               <Printer size={12} /> {bulkLabelBusy ? "Queuing…" : "Print labels"}
             </button>
             <button
               type="button"
               onClick={() => setBulkTagOpen(true)}
-              className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-cobble-600 hover:text-cobble-700"
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-accent hover:text-accent"
             >
               <TagIcon size={12} /> Tag
             </button>
@@ -462,17 +462,17 @@ function PartsBulkTagModal({
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="e.g. urgent, archive, low-stock"
-          className="w-full px-2 py-1 text-sm border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900"
+          className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           autoFocus
         />
-        <div className="text-[11px] text-slate-400">
+        <div className="text-[11px] text-faint">
           Existing tag? Reused. New name? Created on the fly.
         </div>
         <div className="flex justify-end gap-2 pt-2">
           <button
             type="button"
             onClick={onClose}
-            className="px-3 py-1.5 text-sm rounded text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
           >
             Cancel
           </button>
@@ -507,10 +507,10 @@ function PartsTable({
       {/* Desktop: the full table. Mobile: a stacked-card list (D7) —
           a 9-column table side-scrolling on a phone reads poorly, so
           below md we render one card per row with label:value pairs. */}
-      <div className="hidden md:block rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
+      <div className="hidden md:block rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-x-auto">
       <table className="w-full min-w-[640px] text-sm">
         <thead>
-          <tr className="bg-mortar-100 dark:bg-slate-800 text-[10px] font-mono uppercase tracking-widest text-slate-500 dark:text-slate-400">
+          <tr className="bg-mortar-100 dark:bg-slate-800 text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
             <th className="w-8 px-3 py-2">
               <input
                 type="checkbox"
@@ -532,7 +532,7 @@ function PartsTable({
         </thead>
         <tbody>
           {items.map((p) => (
-            <tr key={p.id} className="border-t border-slate-100 dark:border-slate-700 hover:bg-mortar-50 dark:hover:bg-slate-800/70 transition">
+            <tr key={p.id} className="border-t border-line dark:border-slate-700 hover:bg-subtle dark:hover:bg-slate-800/70 transition">
               <td className="px-3 py-2 w-8">
                 <input
                   type="checkbox"
@@ -542,21 +542,21 @@ function PartsTable({
                   aria-label={`Select ${p.name}`}
                 />
               </td>
-              <td className="px-3 py-2 font-mono text-[11px] text-slate-400 dark:text-slate-500 whitespace-nowrap">
+              <td className="px-3 py-2 font-mono text-[11px] text-faint dark:text-slate-500 whitespace-nowrap">
                 {p.asset_id != null ? `#${assetIdFmt(p.asset_id)}` : "—"}
               </td>
               <td className="px-3 py-2">
                 <div className="flex items-center gap-3">
                   <EntityThumb src={p.image_path} alt={p.name} size={56} />
                   <div className="min-w-0">
-                    <Link to={`/inventory/parts/${p.id}`} className="font-medium text-slate-700 dark:text-mortar-100 hover:text-cobble-600">
+                    <Link to={`/inventory/parts/${p.id}`} className="font-medium text-content dark:text-mortar-100 hover:text-accent">
                       {p.name}
                     </Link>
                     {p.manufacturer && (
-                      <span className="ml-2 text-[11px] text-slate-400 dark:text-slate-500">{p.manufacturer}</span>
+                      <span className="ml-2 text-[11px] text-faint dark:text-slate-500">{p.manufacturer}</span>
                     )}
                     {(p.serial_number || p.model_number) && (
-                      <div className="text-[10px] font-mono text-slate-400 dark:text-slate-500 mt-0.5">
+                      <div className="text-[10px] font-mono text-faint dark:text-slate-500 mt-0.5">
                         {p.model_number && <span>m/n {p.model_number}</span>}
                         {p.model_number && p.serial_number && <span> · </span>}
                         {p.serial_number && <span>s/n {p.serial_number}</span>}
@@ -565,11 +565,11 @@ function PartsTable({
                   </div>
                 </div>
               </td>
-              <td className="px-3 py-2 text-slate-500 dark:text-slate-400">{p.category_name ?? "—"}</td>
-              <td className="px-3 py-2 text-slate-500 dark:text-slate-400">{p.location_name ?? "—"}</td>
+              <td className="px-3 py-2 text-muted dark:text-slate-400">{p.category_name ?? "—"}</td>
+              <td className="px-3 py-2 text-muted dark:text-slate-400">{p.location_name ?? "—"}</td>
               <td className="px-3 py-2 text-right font-mono">{fmt(p.qty)} {p.unit}</td>
               <td className="px-3 py-2 text-right font-mono">{fmt(p.available_qty)}</td>
-              <td className="px-3 py-2 text-right font-mono text-slate-400 dark:text-slate-500">
+              <td className="px-3 py-2 text-right font-mono text-faint dark:text-slate-500">
                 {p.min_qty == null ? "—" : fmt(p.min_qty)}
               </td>
               <td className="px-3 py-2">
@@ -581,12 +581,12 @@ function PartsTable({
                   )}
                   {warrantyChip(p.warranty_days_until, p.lifetime_warranty)}
                   {p.insured && (
-                    <span className="inline-flex items-center gap-1 text-[10px] text-cobble-600 border border-cobble-200 dark:border-cobble-800 rounded px-1.5 py-0.5">
+                    <span className="inline-flex items-center gap-1 text-[10px] text-accent border border-cobble-200 dark:border-cobble-800 rounded px-1.5 py-0.5">
                       <ShieldCheck size={10} /> ins
                     </span>
                   )}
                   {p.archived && (
-                    <span className="inline-flex items-center gap-1 text-[10px] text-slate-500 border border-slate-300 dark:border-slate-600 rounded px-1.5 py-0.5">
+                    <span className="inline-flex items-center gap-1 text-[10px] text-muted border border-line dark:border-slate-600 rounded px-1.5 py-0.5">
                       <Archive size={10} /> arch
                     </span>
                   )}
@@ -603,7 +603,7 @@ function PartsTable({
         {items.map((p) => (
           <div
             key={p.id}
-            className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3"
+            className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3"
           >
             <div className="flex items-start gap-3">
               <input
@@ -617,16 +617,16 @@ function PartsTable({
               <div className="flex-1 min-w-0">
                 <Link
                   to={`/inventory/parts/${p.id}`}
-                  className="font-medium text-slate-700 dark:text-mortar-100 hover:text-cobble-600"
+                  className="font-medium text-content dark:text-mortar-100 hover:text-accent"
                 >
                   {p.name}
                 </Link>
                 {p.manufacturer && (
-                  <span className="ml-2 text-[11px] text-slate-400 dark:text-slate-500">
+                  <span className="ml-2 text-[11px] text-faint dark:text-slate-500">
                     {p.manufacturer}
                   </span>
                 )}
-                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] font-mono text-slate-500 dark:text-slate-400">
+                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] font-mono text-muted dark:text-slate-400">
                   <span>
                     qty {fmt(p.qty)} {p.unit}
                   </span>
@@ -643,12 +643,12 @@ function PartsTable({
                   )}
                   {warrantyChip(p.warranty_days_until, p.lifetime_warranty)}
                   {p.insured && (
-                    <span className="inline-flex items-center gap-1 text-[10px] text-cobble-600 border border-cobble-200 dark:border-cobble-800 rounded px-1.5 py-0.5">
+                    <span className="inline-flex items-center gap-1 text-[10px] text-accent border border-cobble-200 dark:border-cobble-800 rounded px-1.5 py-0.5">
                       <ShieldCheck size={10} /> ins
                     </span>
                   )}
                   {p.archived && (
-                    <span className="inline-flex items-center gap-1 text-[10px] text-slate-500 border border-slate-300 dark:border-slate-600 rounded px-1.5 py-0.5">
+                    <span className="inline-flex items-center gap-1 text-[10px] text-muted border border-line dark:border-slate-600 rounded px-1.5 py-0.5">
                       <Archive size={10} /> arch
                     </span>
                   )}
@@ -713,7 +713,7 @@ function warrantyChip(daysUntil: number | null, lifetime: boolean) {
   if (daysUntil == null) return null;
   if (daysUntil < 0) {
     return (
-      <span className="inline-flex items-center gap-1 text-[10px] text-slate-500 border border-slate-300 dark:border-slate-600 rounded px-1.5 py-0.5">
+      <span className="inline-flex items-center gap-1 text-[10px] text-muted border border-line dark:border-slate-600 rounded px-1.5 py-0.5">
         warranty expired
       </span>
     );
