@@ -10,7 +10,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { FieldDefDetailModal } from "../components/FieldDefDetailModal";
 import { FieldRenderer, useToast, usePageTitle } from "@cobblr/platform-web";
 
-const TYPES: PlatformFieldDef["type"][] = ["text", "number", "boolean", "date", "url"];
+const TYPES: PlatformFieldDef["type"][] = ["text", "number", "boolean", "date", "url", "computed"];
 
 // Default renderer per field type — keeps the dropdown small and
 // surfaces what the user almost always wants.
@@ -20,6 +20,8 @@ const RENDERERS_BY_TYPE: Record<PlatformFieldDef["type"], CatalogFieldRenderer[]
   boolean: ["boolean"],
   date: ["text"],
   url: ["url-link", "image-url"],
+  // computed renders its rendered string as plain text — no renderer picker.
+  computed: ["text"],
 };
 
 // Tiny inline sample so the user can see what a renderer looks like.
@@ -56,6 +58,7 @@ export function FieldsPage() {
   const [label, setLabel] = useState("");
   const [type, setType] = useState<PlatformFieldDef["type"]>("text");
   const [renderer, setRenderer] = useState<CatalogFieldRenderer>("text");
+  const [template, setTemplate] = useState("");
   const [err, setErr] = useState<string | null>(null);
 
   const rendererChoices = RENDERERS_BY_TYPE[type];
@@ -67,7 +70,8 @@ export function FieldsPage() {
         name,
         display_label: label,
         type,
-        renderer: renderer === "text" ? null : renderer,
+        renderer: type === "computed" || renderer === "text" ? null : renderer,
+        template: type === "computed" ? template : undefined,
       }),
     onSuccess: () => {
       toast.success(`Added "${label}" to ${entityKind}.`);
@@ -77,6 +81,7 @@ export function FieldsPage() {
       setLabel("");
       setType("text");
       setRenderer("text");
+      setTemplate("");
       setErr(null);
     },
     onError: (e: unknown) => {
@@ -91,6 +96,10 @@ export function FieldsPage() {
     if (!entityKind || !name || !label) return;
     if (!/^[a-z][a-z0-9_]*$/.test(name)) {
       setErr("name must be lowercase, start with a letter, only a-z 0-9 _");
+      return;
+    }
+    if (type === "computed" && !template.trim()) {
+      setErr("a computed field needs a template, e.g. {{year}} {{manufacturer}}");
       return;
     }
     create.mutate();
@@ -186,7 +195,29 @@ export function FieldsPage() {
               className="input"
             />
           </label>
-          {rendererChoices.length > 1 && (
+          {type === "computed" && (
+            <label className="block col-span-2">
+              <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+                Template
+                <span className="ml-2 normal-case tracking-normal text-faint dark:text-slate-600">
+                  read-only — rendered from the entity's fields
+                </span>
+              </span>
+              <textarea
+                value={template}
+                onChange={(e) => setTemplate(e.target.value)}
+                rows={2}
+                placeholder="{{year}} {{manufacturer}} {{model}}"
+                className="input font-mono text-xs w-full"
+              />
+              <span className="mt-1 block text-[10px] text-faint dark:text-slate-600 leading-relaxed">
+                {`Use {{field_name}} for this entity's own fields. Add | default: "—" for a fallback,
+                or | relative on a date (e.g. {{maintenance.next_scheduled_at | relative}} → "in 6 days").
+                Related data comes from providers like {{maintenance.last_performed}}.`}
+              </span>
+            </label>
+          )}
+          {type !== "computed" && rendererChoices.length > 1 && (
             <label className="block col-span-2">
               <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                 Renderer

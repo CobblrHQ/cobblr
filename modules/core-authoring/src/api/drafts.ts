@@ -59,7 +59,7 @@ const jsonb = (v: unknown) => sql`${JSON.stringify(v ?? null)}::jsonb`;
 // ── GET /templates — the flagship template catalog (match-template, Phase 1) ──
 // The driving model / user reads this list and picks the nearest template;
 // no kernel inference (hosted LLM match is Phase 2). See
-// docs/design-decisions/templates-first-authoring.md.
+// docs/architecture/templates-first-authoring.md.
 draftsRouter.get(
   "/templates",
   asyncHandler(async (req, res) => {
@@ -86,7 +86,7 @@ draftsRouter.get(
 // One cheap core-ai call maps the intent → nearest template + confidence.
 // Degrades to { template_id: null, ai: false } when no AI provider is
 // configured (the caller then shows the full catalog). See
-// docs/design-decisions/templates-first-authoring.md.
+// docs/architecture/templates-first-authoring.md.
 const MatchBody = z.object({ intent: z.string().min(1).max(4000) });
 draftsRouter.post(
   "/match-template",

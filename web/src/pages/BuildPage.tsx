@@ -5,7 +5,7 @@
 // (the SAME gate as /bundles/install, so a valid candidate is guaranteed
 // installable) → preview → apply. Zero inference cost to us; the value
 // loop proven on someone else's compute. See
-// docs/design-decisions/ai-bundle-builder.md.
+// docs/modules/ai-bundle-builder.md.
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";

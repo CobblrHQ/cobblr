@@ -3,7 +3,7 @@
 // service that creates / lists / deletes those rows and exposes
 // helpers other code paths (route resolution, registry sync) use.
 //
-// See docs/design-decisions/instances.md for the full design.
+// See docs/architecture/instances.md for the full design.
 
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
@@ -159,4 +159,41 @@ export function defaultDisplayName(slug: string): string {
   return slug
     .replace(/-/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+// ── Per-instance item counters (multi-instance nav cleanup) ──────────
+// A multi-instance module registers a counter so the kernel can ask "how many
+// primary items live in (org, instance)?" without knowing the module's tables.
+// Used to hide an auto-created default instance that's empty once the workspace
+// has named instances. See web/src/components/useNavModules.ts.
+const itemCounters = new Map<
+  string,
+  (orgId: string, instanceName: string) => Promise<number>
+>();
+
+export function registerItemCounter(
+  moduleName: string,
+  counter: (orgId: string, instanceName: string) => Promise<number>,
+): void {
+  itemCounters.set(moduleName, counter);
+}
+
+/** Count primary items in (org, module, instance). null = the module
+ *  registered no counter, or the count failed — never breaks the list. */
+export async function countInstanceItems(
+  orgId: string,
+  moduleName: string,
+  instanceName: string,
+): Promise<number | null> {
+  const fn = itemCounters.get(moduleName);
+  if (!fn) return null;
+  try {
+    return await fn(orgId, instanceName);
+  } catch (err) {
+    console.error(
+      `[instances] item count failed for ${moduleName}/${instanceName}:`,
+      (err as Error).message,
+    );
+    return null;
+  }
 }

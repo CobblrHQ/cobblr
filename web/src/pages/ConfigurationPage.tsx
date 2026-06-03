@@ -31,6 +31,7 @@ import {
   Plug,
   Printer,
   QrCode,
+  Ruler,
   Sliders,
   Sparkles,
   Tag,
@@ -41,6 +42,7 @@ import {
 import { ModulePickerModal } from "../components/ModulePickerModal";
 import { MembersModal } from "../components/MembersModal";
 import { NewThingFunnelModal } from "../components/NewThingFunnelModal";
+import { NavCustomizeMenu } from "../components/NavCustomizeMenu";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { usePageTitle } from "@cobblr/platform-web";
 
@@ -150,8 +152,16 @@ export function ConfigurationPage() {
       icon: Sliders,
       label: "Custom fields",
       description:
-        "Per-entity-kind custom field defs — text, number, date, url, with optional dropdown choices.",
+        "Per-entity-kind custom field defs — text, number, date, url, dropdown choices, or computed (a read-only {{ }} template over the entity's fields + related data).",
       to: "/fields",
+    },
+    {
+      group: "data",
+      icon: Ruler,
+      label: "Units",
+      description:
+        "The workspace unit vocabulary — built-in units (gram/g, meter/m, each/ea) plus your own. Pick whether quantities show the shorthand symbol, the full word, or both.",
+      to: "/configuration/units",
     },
     {
       group: "data",
@@ -335,8 +345,8 @@ export function ConfigurationPage() {
   return (
     <div className="space-y-5 max-w-4xl">
       <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">
-          workspace configuration
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100">
+          Workspace configuration
         </h1>
         {activeOrg && (
           <span className="text-[10px] font-mono text-faint dark:text-slate-500">
@@ -348,6 +358,16 @@ export function ConfigurationPage() {
       <p className="text-sm text-content dark:text-mortar-200">
         Everything you can configure for this workspace lives here.
       </p>
+
+      {/* Nav-customize control — relocated out of the navbar (it's a
+          per-device preference, not a nav heading). */}
+      <div className="flex items-center gap-3 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-4 py-3">
+        <NavCustomizeMenu />
+        <span className="text-sm text-content dark:text-mortar-200">
+          Customize navigation — show, hide &amp; reorder your navbar items
+          (saved on this device).
+        </span>
+      </div>
 
       {grouped.map(({ group, label, items }) => (
         <section key={group} className="space-y-2">

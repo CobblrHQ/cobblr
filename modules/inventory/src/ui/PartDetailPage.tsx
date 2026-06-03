@@ -5,13 +5,14 @@
 import { useState, type FocusEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, Library, Printer, ShieldCheck, Trash2 } from "lucide-react";
-import { CustomFieldsPanel, EntityActionsBar, EntityThumb, Modal, useConfirm, usePageTitle, useToast } from "@cobblr/platform-web";
+import { CustomFieldsPanel, EntityActionsBar, EntityThumb, Modal, UnitInput, useConfirm, usePageTitle, useToast, useUnits } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { useMatchedCatalogEntry } from "./useMatchedCatalogEntry";
 import { AllocationsPanel } from "./AllocationsPanel";
 import { StockAdjustButton } from "./StockAdjustButton";
 import { PartGallery } from "./PartGallery";
 import { MaintenancePanel } from "./MaintenancePanel";
+import { useFieldPresentation } from "./useFieldPresentation";
 
 // The part-detail body. Rendered inside PartDetailModal (below) — the
 // detail view is a modal over the list now (consistent with machines),
@@ -19,6 +20,8 @@ import { MaintenancePanel } from "./MaintenancePanel";
 // list route, instead of reading the route param itself.
 export function PartDetailPage({ id, onClose }: { id: string; onClose: () => void }) {
   const { api, orgSlug, getToken } = useInventory();
+  const fp = useFieldPresentation("inventory:part");
+  const units = useUnits();
   const qc = useQueryClient();
 
   const part = useQuery({
@@ -141,15 +144,18 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
           <Field label="Qty">
             <div className="flex items-center gap-2">
               <span className="font-mono text-lg text-content dark:text-mortar-100">
-                {fmt(p.qty)} {p.unit}
+                {units.format(typeof p.qty === "number" ? p.qty : Number(p.qty), p.unit)}
               </span>
               <StockAdjustButton partId={p.id} />
             </div>
           </Field>
-          <Field label="Unit">
-            <InlineText value={p.unit} onCommit={(v) => update.mutate({ unit: v })} />
+          {!fp.hidden("unit") && (
+          <Field label={fp.label("unit", "Unit")}>
+            <UnitInput value={p.unit} onCommit={(v) => update.mutate({ unit: v })} />
           </Field>
-          <Field label="Min qty">
+          )}
+          {!fp.hidden("min_qty") && (
+          <Field label={fp.label("min_qty", "Min qty")}>
             <InlineText
               value={p.min_qty ?? ""}
               placeholder="—"
@@ -157,7 +163,9 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
               numeric
             />
           </Field>
-          <Field label="Cost">
+          )}
+          {!fp.hidden("cost") && (
+          <Field label={fp.label("cost", "Cost")}>
             <InlineText
               value={p.cost ?? ""}
               placeholder="—"
@@ -165,6 +173,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
               numeric
             />
           </Field>
+          )}
           <Field label="Category">
             <select
               value={p.category_id ?? ""}
@@ -194,34 +203,42 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
               ))}
             </select>
           </Field>
-          <Field label="Manufacturer">
+          {!fp.hidden("manufacturer") && (
+          <Field label={fp.label("manufacturer", "Manufacturer")}>
             <InlineText
               value={p.manufacturer ?? ""}
               placeholder="—"
               onCommit={(v) => update.mutate({ manufacturer: v || null })}
             />
           </Field>
-          <Field label="Supplier URL">
+          )}
+          {!fp.hidden("supplier_url") && (
+          <Field label={fp.label("supplier_url", "Supplier URL")}>
             <InlineText
               value={p.supplier_url ?? ""}
               placeholder="—"
               onCommit={(v) => update.mutate({ supplier_url: v || null })}
             />
           </Field>
-          <Field label="Serial number">
+          )}
+          {!fp.hidden("serial_number") && (
+          <Field label={fp.label("serial_number", "Serial number")}>
             <InlineText
               value={p.serial_number ?? ""}
               placeholder="—"
               onCommit={(v) => update.mutate({ serial_number: v || null })}
             />
           </Field>
-          <Field label="Model number">
+          )}
+          {!fp.hidden("model_number") && (
+          <Field label={fp.label("model_number", "Model number")}>
             <InlineText
               value={p.model_number ?? ""}
               placeholder="—"
               onCommit={(v) => update.mutate({ model_number: v || null })}
             />
           </Field>
+          )}
         </div>
         <Field label="Notes">
           <InlineTextarea
@@ -304,6 +321,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
 
       <CustomFieldsPanel
         entityKind="inventory:part"
+        entityId={p.id}
         values={(p.metadata as Record<string, unknown> | null) ?? {}}
         fallbackValues={matched.data?.fields}
         fallbackLabel={matched.data ? `catalog (${matched.data.title})` : undefined}
@@ -515,12 +533,6 @@ function InlineTextarea({
       className="input"
     />
   );
-}
-
-function fmt(n: number | string): string {
-  const v = typeof n === "string" ? Number(n) : n;
-  if (Number.isNaN(v)) return String(n);
-  return Number.isInteger(v) ? String(v) : String(parseFloat(v.toFixed(3)));
 }
 
 // Part detail rendered as a MODAL over the list (D4 — consistent with

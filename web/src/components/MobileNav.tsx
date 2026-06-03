@@ -98,6 +98,10 @@ export function MobileNav() {
                 dashboard
               </NavLink>
 
+              <NavLink to="/calendar" className={linkClass} onClick={() => setOpen(false)}>
+                calendar
+              </NavLink>
+
               {tops.map((m) => {
                 const kids = childrenByParent.get(m.name) ?? [];
                 const isHeading = m.name.startsWith("__heading__");

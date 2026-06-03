@@ -8,7 +8,7 @@
 //     handler, and emitted as platform events that the rest of the
 //     module surface can subscribe to.
 //
-// See docs/design-decisions/core-integrations.md.
+// See docs/modules/core-integrations.md.
 //
 // Stock band. Built-in connectors register at module load — the
 // registry lives in the platform layer, so additional connectors can

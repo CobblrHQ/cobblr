@@ -15,6 +15,7 @@ import {
   deleteInstance,
   getInstance,
   listInstances,
+  countInstanceItems,
 } from "../platform/instances.js";
 import {
   deleteOverride,
@@ -58,8 +59,17 @@ instancesRouter.get(
     try {
       const moduleName =
         typeof req.query.module === "string" ? req.query.module : undefined;
-      const items = await listInstances(req.tenant!.org.id, moduleName);
-      res.json({ items });
+      const orgId = req.tenant!.org.id;
+      const items = await listInstances(orgId, moduleName);
+      // Enrich with the primary-item count per instance (null if the module
+      // registered no counter). Lets the nav hide an empty default instance.
+      const enriched = await Promise.all(
+        items.map(async (it) => ({
+          ...it,
+          item_count: await countInstanceItems(orgId, it.module_name, it.instance_name),
+        })),
+      );
+      res.json({ items: enriched });
     } catch (err) {
       next(err);
     }

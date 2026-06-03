@@ -3,7 +3,7 @@
 // Each printed label can carry a QR code that resolves at scan time
 // to (workspace, entity) — and either navigates to the entity's
 // detail page or fires an action with a confirmation card. See
-// docs/design-decisions/core-labels-qr.md.
+// docs/modules/core-labels-qr.md.
 //
 // Stock band. Depends on labels (label templates host the
 // `qr_config` block + the `{{qr}}` placeholder) and rides

@@ -239,6 +239,7 @@ function toResolvedProject(row: {
   description: string | null;
   status: string;
   priority: string | null;
+  start_date: Date | null;
   target_date: Date | null;
 }): ResolvedEntity {
   return {
@@ -252,6 +253,7 @@ function toResolvedProject(row: {
       description: row.description,
       status: row.status,
       priority: row.priority,
+      start_date: row.start_date,
       target_date: row.target_date,
     },
   };

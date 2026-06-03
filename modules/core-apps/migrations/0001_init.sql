@@ -16,7 +16,7 @@
 --
 -- This is the structured tier. The sandboxed-custom-frontend tier
 -- (isolated origin + capability-scoped token) is a separate, later
--- surface — see docs/design-decisions/custom-app-layer.md.
+-- surface — see docs/modules/custom-app-layer.md.
 
 create extension if not exists "pgcrypto";
 

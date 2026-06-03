@@ -13,14 +13,20 @@ import { PlatformWebProvider } from "@cobblr/platform-web";
 import { InventoryUI } from "@cobblr/inventory/ui";
 import { LabelsBasket, LabelsUI } from "@cobblr/labels/ui";
 import { ProjectsUI } from "@cobblr/projects/ui";
-import { ListsUI } from "@cobblr/core-lists/ui";
-import { FitnessUI } from "@cobblr/core-fitness/ui";
+import { ListsUI } from "@cobblr/lists/ui";
+import { TrackingUI } from "@cobblr/tracking/ui";
+// Side-effect import: registers the UNIVERSAL file renderers (svg, …).
+// The FABRICATION renderers (stl/gcode) are gated by FilePreviewGate.
+import "@cobblr/core-file-preview/ui";
+import { FilePreviewGate } from "./components/FilePreviewGate";
+import { InstalledRenderers } from "./components/InstalledRenderers";
 import { PairsWellWith } from "./components/PairsWellWith";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { ActiveOrgProvider, useActiveOrg } from "./auth/ActiveOrgContext";
 import { AuthPage } from "./pages/AuthPage";
 import { Dashboard } from "./pages/Dashboard";
 import { InviteAcceptPage } from "./pages/InviteAcceptPage";
+import { JoinPage } from "./pages/JoinPage";
 import { PublicSurfacePage } from "./pages/PublicSurfacePage";
 // Eager: nav-linked pages users hit from the dashboard frequently.
 import { MachinesPage } from "./pages/MachinesPage";
@@ -48,6 +54,8 @@ const ActivityPage = lazy(() => import("./pages/ActivityPage").then((m) => ({ de
 const SurfacesPage = lazy(() => import("./pages/SurfacesPage").then((m) => ({ default: m.SurfacesPage })));
 const DigifabPage = lazy(() => import("./pages/DigifabPage").then((m) => ({ default: m.DigifabPage })));
 const MaintenancePage = lazy(() => import("./pages/MaintenancePage").then((m) => ({ default: m.MaintenancePage })));
+const UnitsPage = lazy(() => import("./pages/UnitsPage").then((m) => ({ default: m.UnitsPage })));
+const CalendarPage = lazy(() => import("./pages/CalendarPage").then((m) => ({ default: m.CalendarPage })));
 const QrTokensPage = lazy(() => import("./pages/QrTokensPage").then((m) => ({ default: m.QrTokensPage })));
 const HealthPage = lazy(() => import("./pages/HealthPage").then((m) => ({ default: m.HealthPage })));
 const OpenApiPage = lazy(() => import("./pages/OpenApiPage").then((m) => ({ default: m.OpenApiPage })));
@@ -123,6 +131,9 @@ function RootRoutes() {
   return (
     <Routes>
       <Route path="/invite/:token" element={<InviteAcceptPage />} />
+      {/* /join/:token — redeem a single-use signup invite into a NEW
+          account + workspace, even when public signup is disabled. */}
+      <Route path="/join/:token" element={<JoinPage />} />
       {/* /p/:token is the un-auth'd public surface render. Reachable
           signed-in or signed-out — the token is the secret. */}
       <Route path="/p/:token" element={<PublicSurfacePage />} />
@@ -138,7 +149,7 @@ function AuthedOrLogin() {
   // a temp password, the user must pick a new one before anything
   // else. /me/force-password-reset is rendered standalone (no portal,
   // no admin shell, no nav) so the user can't navigate around it.
-  // See docs/PRODUCTION_DEPLOY.md (no-email onboarding).
+  // See docs/operations/PRODUCTION_DEPLOY.md (no-email onboarding).
   if (user.must_reset_password) return <ForcePasswordResetPage />;
   return <AuthedRoutes />;
 }
@@ -158,7 +169,7 @@ function ActiveOrgScopedRoutes() {
   // owners get the admin shell. If a non-admin lands on an admin
   // route via direct link, the redirect below bounces them. They can
   // navigate freely once in the portal.
-  // See docs/design-decisions/member-portal-and-permissions.md.
+  // See docs/modules/member-portal-and-permissions.md.
   const role = activeOrg?.role;
   const onPortal = window.location.pathname.startsWith("/portal/");
   const shouldRedirectToPortal =
@@ -178,9 +189,18 @@ function ActiveOrgScopedRoutes() {
         listFieldDefs: (slug, kind) => api.listFieldDefs(slug, kind),
         appendFieldDefChoice: (slug, id, value) =>
           api.appendFieldDefChoice(slug, id, value),
+        listUnits: (slug) => api.listUnits(slug),
+        addUnit: (slug, unit) => api.addUnit(slug, unit),
+        deleteUnit: (slug, code) => api.deleteUnit(slug, code).then(() => undefined),
+        setUnitDisplayMode: (slug, mode) => api.setUnitDisplayMode(slug, mode),
       }}
     >
       <Suspense fallback={<RouteFallback />}>
+      {/* Host gate: turns the fabrication file renderers on/off with the
+          active workspace's machine domains. core-file-preview stays
+          domain-agnostic; this is the integrator wiring (see the file). */}
+      <FilePreviewGate />
+      <InstalledRenderers />
       {shouldRedirectToPortal && <Navigate to={`/portal/${activeSlug}`} replace />}
       <Routes>
         <Route element={<AppLayout activeSlug={activeSlug} />}>
@@ -198,20 +218,20 @@ function ActiveOrgScopedRoutes() {
             element={<ProjectsUI orgSlug={activeSlug} getToken={getToken} />}
           />
           <Route
-            path="/core-lists/*"
+            path="/lists/*"
             element={
               <>
                 <ListsUI orgSlug={activeSlug} getToken={getToken} />
-                <div className="max-w-4xl"><PairsWellWith module="core-lists" orgSlug={activeSlug} /></div>
+                <div className="max-w-4xl"><PairsWellWith module="lists" orgSlug={activeSlug} /></div>
               </>
             }
           />
           <Route
-            path="/core-fitness/*"
+            path="/tracking/*"
             element={
               <>
-                <FitnessUI orgSlug={activeSlug} getToken={getToken} />
-                <div className="max-w-4xl"><PairsWellWith module="core-fitness" orgSlug={activeSlug} /></div>
+                <TrackingUI orgSlug={activeSlug} getToken={getToken} />
+                <div className="max-w-4xl"><PairsWellWith module="tracking" orgSlug={activeSlug} /></div>
               </>
             }
           />
@@ -236,6 +256,8 @@ function ActiveOrgScopedRoutes() {
           <Route path="/configuration/surfaces" element={<SurfacesPage />} />
           <Route path="/configuration/digifab" element={<DigifabPage />} />
           <Route path="/configuration/maintenance" element={<MaintenancePage />} />
+          <Route path="/configuration/units" element={<UnitsPage />} />
+          <Route path="/calendar" element={<CalendarPage />} />
           <Route path="/configuration/qr-tokens" element={<QrTokensPage />} />
           <Route path="/configuration/health" element={<HealthPage />} />
           <Route path="/configuration/locations" element={<LocationsPage />} />

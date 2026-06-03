@@ -10,7 +10,7 @@
 --    install for the workspace; never rotated automatically (v0.2
 --    feature). The key is stored base64-encoded.
 --
--- See docs/design-decisions/core-integrations.md.
+-- See docs/modules/core-integrations.md.
 
 create table integration_inbound_token_lookup (
   token        text primary key,

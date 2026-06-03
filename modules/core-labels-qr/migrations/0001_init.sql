@@ -6,7 +6,7 @@
 -- same pattern as core-public-surfaces and integrations' inbound
 -- tokens.
 --
--- See docs/design-decisions/core-labels-qr.md.
+-- See docs/modules/core-labels-qr.md.
 
 create extension if not exists "pgcrypto";
 

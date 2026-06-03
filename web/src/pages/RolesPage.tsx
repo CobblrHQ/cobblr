@@ -5,7 +5,7 @@
 // additive. A member can have any number of custom roles in addition
 // to their stock role.
 //
-// See docs/design-decisions/member-portal-and-permissions.md §7
+// See docs/modules/member-portal-and-permissions.md §7
 // + 2026-05-25-audit.md S2.
 
 import { useState, type FormEvent } from "react";

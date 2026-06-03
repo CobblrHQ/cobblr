@@ -15,7 +15,7 @@
 // apply a broken artifact — "kernel owns correctness."
 //
 // No entity kinds (like core-apps). It persists DRAFTS, which double as
-// the eval corpus. See docs/design-decisions/ai-bundle-builder.md and the
+// the eval corpus. See docs/modules/ai-bundle-builder.md and the
 // strategy in CobblrHQ/business-models/docs/{04,06}.
 
 import { defineModule } from "@cobblr/platform-contract";

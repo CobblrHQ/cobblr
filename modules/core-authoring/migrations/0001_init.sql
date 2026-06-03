@@ -5,7 +5,7 @@
 -- eval reproducibility), the compiled prompt, the candidate manifest the
 -- model returned, its validation result, and the status. Every row
 -- doubles as a labelled eval example (the copy-paste corpus) — see
--- docs/design-decisions/ai-bundle-builder.md §6.
+-- docs/modules/ai-bundle-builder.md §6.
 --
 -- manual recovery if this fails partway (per-tenant DB; tracked in the
 -- tenant's `migrations` table as

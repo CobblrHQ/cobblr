@@ -25,7 +25,7 @@ const Schema = z.object({
   //   "https://cobblr.example.com,https://workshop.example.com"
   // Default in dev is "*" (any origin) — the previous behavior. In
   // production this MUST be set to the workspace's public hostname(s)
-  // or CORS rejects every browser request. See docs/PRODUCTION_DEPLOY.md.
+  // or CORS rejects every browser request. See docs/operations/PRODUCTION_DEPLOY.md.
   CORS_ALLOWED_ORIGINS: z.string().optional(),
 
   // Comma-separated list of emails for users with platform-operator

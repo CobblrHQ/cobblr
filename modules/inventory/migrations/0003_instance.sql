@@ -1,4 +1,4 @@
--- Multi-instance support — see docs/design-decisions/instances.md.
+-- Multi-instance support — see docs/architecture/instances.md.
 --
 -- Inventory has four tables; three of them are user-data tables that
 -- need the instance column. inventory_locations was already moved to

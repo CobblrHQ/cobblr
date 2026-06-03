@@ -10,7 +10,7 @@
 // platform.events.on() handlers continue to work in parallel —
 // the two routes coexist; wires are the user-configurable layer.
 //
-// Q1 from docs/design-decisions/wires-and-bundles.md: each binding
+// Q1 from docs/architecture/wires-and-bundles.md: each binding
 // has a `target` field describing what entity the action runs on.
 //   - "self"  → action runs on the source entity (today's behaviour,
 //                the default when target is unspecified).
@@ -183,6 +183,19 @@ export async function fireEvent(
         if (b.template) {
           rendered = render(b.template, templateData);
         }
+        // Render string args against the same data, so a structured arg like
+        // {{event.delta}} (set in the wire composer) resolves. Non-strings pass
+        // through; a token-free string is returned unchanged — so wires with
+        // static args are unaffected (backward-compatible).
+        const renderedArgs =
+          b.args && typeof b.args === "object"
+            ? Object.fromEntries(
+                Object.entries(b.args as Record<string, unknown>).map(([k, v]) => [
+                  k,
+                  typeof v === "string" ? render(v, templateData) : v,
+                ]),
+              )
+            : undefined;
 
         await invoke(b.action_id, {
           orgId,
@@ -196,7 +209,7 @@ export async function fireEvent(
             trigger_type: "event",
           },
           rendered,
-          args: (b.args as Record<string, unknown> | null) ?? undefined,
+          args: renderedArgs,
           // Deprecated compat aliases — see ActionInvokeContext in
           // @cobblr/platform-contract.
           entityKind: t.kind,

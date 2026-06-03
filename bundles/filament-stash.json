@@ -1,0 +1,42 @@
+{
+  "manifest": {
+    "id": "cobblr.flagship.filament-stash",
+    "name": "Filament Stash",
+    "version": "0.1.0",
+    "description": "The 3D-printer sibling of Yarn Stash. Track each spool by material, colour, diameter and brand; how much is left (weigh the spool — set the unit to grams — or track by metres); the empty-spool tare weight so a scale tells you what's left; and the print temps that worked. A 'My filament' view groups the shelf by material so you grab the right PETG fast. Same idea as yarn: a consumable measured by length or weight.",
+    "author": "Cobblr",
+    "requires": [
+      { "module": "inventory" }
+    ],
+    "field_defs": [
+      { "entity_kind": "inventory:part", "name": "material", "display_label": "Material", "type": "text", "position": 1, "choices": ["PLA", "PLA+", "PETG", "ABS", "ASA", "TPU", "Nylon", "PC", "PVA", "Other"] },
+      { "entity_kind": "inventory:part", "name": "color", "display_label": "Colour", "type": "text", "position": 2 },
+      { "entity_kind": "inventory:part", "name": "diameter", "display_label": "Diameter", "type": "text", "position": 3, "choices": ["1.75 mm", "2.85 mm"] },
+      { "entity_kind": "inventory:part", "name": "length_per_spool", "display_label": "Length / spool (m)", "type": "number", "position": 4 },
+      { "entity_kind": "inventory:part", "name": "spool_weight", "display_label": "Empty spool (g)", "type": "number", "position": 5 },
+      { "entity_kind": "inventory:part", "name": "nozzle_temp", "display_label": "Nozzle °C", "type": "number", "position": 6 },
+      { "entity_kind": "inventory:part", "name": "bed_temp", "display_label": "Bed °C", "type": "number", "position": 7 },
+      { "entity_kind": "inventory:part", "name": "needs_drying", "display_label": "Needs drying", "type": "boolean", "position": 8 },
+      { "entity_kind": "inventory:part", "name": "spool_summary", "display_label": "Summary", "type": "computed", "position": 9, "template": "{{material}} {{color}} · {{diameter}} · {{nozzle_temp | default: \"?\"}}/{{bed_temp | default: \"?\"}} °C" }
+    ],
+    "field_overrides": [
+      { "entity_kind": "inventory:part", "name": "manufacturer", "display_label": "Brand" },
+      { "entity_kind": "inventory:part", "name": "cost", "display_label": "Price / spool" },
+      { "entity_kind": "inventory:part", "name": "serial_number", "hidden": true },
+      { "entity_kind": "inventory:part", "name": "model_number", "hidden": true }
+    ],
+    "saved_views": [
+      {
+        "entity_kind": "inventory:part",
+        "name": "My filament",
+        "view_type": "table",
+        "pinned": true,
+        "config": {
+          "group_by": "material",
+          "visible_fields": ["title", "color", "diameter", "qty", "unit", "nozzle_temp"]
+        }
+      }
+    ]
+  },
+  "confirm": true
+}

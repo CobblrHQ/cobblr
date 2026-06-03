@@ -16,6 +16,7 @@ import { ChevronRight, Plus, Printer, Search, Tag as TagIcon, Trash2 } from "luc
 import { queueLabelsBulk } from "../lib/queue-label";
 import { ApiError, api, type Machine, type OrgModuleListItem, type PlatformFieldDef } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { useFieldPresentation } from "../lib/useFieldPresentation";
 import { CustomFieldsPanel,
   EntityActionsBar,
   Modal,
@@ -598,6 +599,10 @@ function MachineDetailModal({
       void qc.invalidateQueries({ queryKey: ["machines", activeSlug] });
     },
   });
+  // Native-field presentation: a bundle/config can relabel + show/hide these
+  // native fields per workspace. No-op (fallback label, not hidden) until an
+  // override exists. Same pattern as AssetsPage.
+  const fp = useFieldPresentation(ENTITY_KIND);
   const remove = useMutation({
     mutationFn: () => api.deleteMachine(activeSlug, machineId!),
     onSuccess: () => {
@@ -671,14 +676,13 @@ function MachineDetailModal({
           )}
 
           <dl className="grid grid-cols-2 gap-3 text-xs">
-            <EditField label="Name" value={m.name} onCommit={(v) => update.mutate({ name: v })} />
-            <EditField label="Short name" value={m.short_name ?? ""} onCommit={(v) => update.mutate({ short_name: v || null })} />
-            <EditField label="Family" value={m.family ?? ""} onCommit={(v) => update.mutate({ family: v || null })} />
-            <EditField label="Type" value={m.type ?? ""} onCommit={(v) => update.mutate({ type: v || null })} />
-            <EditField label="Manufacturer" value={m.manufacturer ?? ""} onCommit={(v) => update.mutate({ manufacturer: v || null })} />
-            <EditField label="State" value={m.state} onCommit={(v) => update.mutate({ state: v })} />
-            <EditField label="Quantity" value={String(m.quantity)} numeric onCommit={(v) => update.mutate({ quantity: Number(v) || 0 })} />
-            <EditField label="Excitement (0-5)" value={String(m.excitement)} numeric onCommit={(v) => update.mutate({ excitement: Math.min(5, Math.max(0, Number(v) || 0)) })} />
+            <EditField label={fp.label("name", "Name")} value={m.name} onCommit={(v) => update.mutate({ name: v })} />
+            {!fp.hidden("short_name") && <EditField label={fp.label("short_name", "Short name")} value={m.short_name ?? ""} onCommit={(v) => update.mutate({ short_name: v || null })} />}
+            {!fp.hidden("family") && <EditField label={fp.label("family", "Family")} value={m.family ?? ""} onCommit={(v) => update.mutate({ family: v || null })} />}
+            {!fp.hidden("type") && <EditField label={fp.label("type", "Type")} value={m.type ?? ""} onCommit={(v) => update.mutate({ type: v || null })} />}
+            {!fp.hidden("manufacturer") && <EditField label={fp.label("manufacturer", "Manufacturer")} value={m.manufacturer ?? ""} onCommit={(v) => update.mutate({ manufacturer: v || null })} />}
+            {!fp.hidden("state") && <EditField label={fp.label("state", "State")} value={m.state} onCommit={(v) => update.mutate({ state: v })} />}
+            {!fp.hidden("quantity") && <EditField label={fp.label("quantity", "Quantity")} value={String(m.quantity)} numeric onCommit={(v) => update.mutate({ quantity: Number(v) || 0 })} />}
             <LocationPicker
               label="Location"
               value={m.location_id}
@@ -691,6 +695,7 @@ function MachineDetailModal({
 
           <CustomFieldsPanel
             entityKind={ENTITY_KIND}
+            entityId={m.id}
             values={m.metadata}
             onCommit={(name, value) =>
               update.mutate({

@@ -1,7 +1,7 @@
 // core-recurrence scheduler — the in-process timer loop that fires
 // schedule-triggered wires.
 //
-// Q4 from docs/design-decisions/wires-and-bundles.md. Wires with
+// Q4 from docs/architecture/wires-and-bundles.md. Wires with
 // `trigger_type: 'schedule'` carry an iCal RRULE in trigger_schedule;
 // every minute we query for due wires across all tenants, evaluate
 // the RRULE against (last_fired_at .. now], fire one occurrence per
@@ -197,6 +197,7 @@ async function tickEntityRecurrence(
 
   let fired = 0;
   for (const org of orgs) {
+    try {
     for (const { kind, scanner } of scanners) {
       let rows;
       try {
@@ -279,6 +280,12 @@ async function tickEntityRecurrence(
           );
         }
       }
+    }
+    } finally {
+      // Scanners open this org's tenant pool; release it (unless a live
+      // request holds it) so a tick across every tenant doesn't exhaust
+      // Postgres connections. Reopens lazily on next access.
+      await platform().tenants.releaseIdleDb(org.id);
     }
   }
   return fired;

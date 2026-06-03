@@ -60,7 +60,7 @@ export const EntityKindIdRegex = /^[a-z][a-z0-9_-]*:[a-z][a-z0-9_-]*$/;
 // Each entity kind can declare where it sits on six orthogonal axes.
 // Axes are independently optional — skipping an axis with `null`
 // means "this axis doesn't meaningfully apply to my entity." See
-// docs/design-decisions/traits.md for the full rationale.
+// docs/architecture/traits.md for the full rationale.
 
 export const Tangibility = z.enum(["physical", "digital"]);
 export const Identity = z.enum(["fungible", "unique"]);
@@ -115,7 +115,7 @@ export type RawTraitsDecl = z.infer<typeof RawTraits>;
 // The 9 platform-blessed presets. Each maps to a 6-tuple of trait
 // values. Modules use `profile: "<name>"` as shorthand and `overrides`
 // to flip individual axes from the preset's defaults.
-// See docs/design-decisions/traits.md §"Presets — preset shorthand".
+// See docs/architecture/traits.md §"Presets — preset shorthand".
 export const TRAIT_PRESETS = {
   "digital-record": {
     tangibility: "digital",
@@ -210,7 +210,7 @@ const EntityKind = z
     displayNamePlural: z.string().optional(),
     icon: z.string().optional(),
     fields: z.array(EntityField).default([]),
-    // Cross-module read whitelist — see docs/design-decisions/entity-resolver.md.
+    // Cross-module read whitelist — see docs/architecture/entity-resolver.md.
     // Field names other modules' renderers can read via platform.entities.lookup()
     // / the resolver. The kernel projects ResolvedEntity.fields to this list
     // before returning to a foreign caller; anything not declared is private
@@ -332,7 +332,7 @@ const EntityKind = z
 //     point AT the source via this relation); `kind` filters target
 //     kinds when one source pairs with multiple kinds via the same
 //     relation.
-// See docs/design-decisions/wires-and-bundles.md (Q1, resolved).
+// See docs/architecture/wires-and-bundles.md (Q1, resolved).
 export const WireTarget = z.union([
   z.literal("self"),
   z.object({
@@ -396,6 +396,19 @@ const EntityAction = z.object({
   // platform.actions.registerHandler() at boot. Optional — actions
   // can be route-only.
   invokeHandler: z.string().optional(),
+  // Optional machine-readable arg shape. Keys are the arg names the
+  // invokeHandler reads from ctx.args; each has a label + a primitive
+  // type. The wire composer renders a labelled field per arg (each value
+  // a literal or a {{token}}); the wire engine renders string args at
+  // fire time. Absent → the composer falls back to a free template.
+  argsSchema: z
+    .record(
+      z.object({
+        label: z.string().min(1),
+        type: z.enum(["text", "number", "boolean"]).default("text"),
+      }),
+    )
+    .optional(),
   version: z.string().optional(),
 });
 
@@ -410,7 +423,7 @@ const ModuleManifest = z.object({
   displayName: z.string().min(1),
   description: z.string().min(1),
   icon: z.string().optional(),
-  // Module band — see docs/design-decisions/module-layers.md.
+  // Module band — see docs/architecture/module-layers.md.
   //   foundational: platform can't work without it (very small set;
   //                  no per-workspace disable toggle)
   //   stock:        ships in the default Cobblr install + default-enabled,
@@ -438,7 +451,7 @@ const ModuleManifest = z.object({
   // digifab, …) adds nav nouns + per-user relevance, so it stays an
   // explicit opt-in (the module picker / "+ New thing" funnel). Foundational
   // modules are always-on regardless; this flag is for the stock band.
-  // See docs/design-decisions/module-layers.md.
+  // See docs/architecture/module-layers.md.
   autoEnable: z.boolean().default(false),
 
   // Whether a workspace can install this module multiple times under
@@ -448,7 +461,7 @@ const ModuleManifest = z.object({
   // modules (default) install once per workspace; their default
   // instance name is implicitly the module name. Foundational
   // modules are always 'single' regardless of declaration.
-  // See docs/design-decisions/instances.md.
+  // See docs/architecture/instances.md.
   instanceability: z.enum(["single", "multi"]).default("single"),
 
   // Optional icon-only quick-action pinned to the navbar's RIGHT
@@ -551,7 +564,7 @@ const ModuleManifest = z.object({
             // point AT the source via this relation). `kind` filters
             // the discovered target kind when one source pairs with
             // multiple kinds via the same relation.
-            // See docs/design-decisions/wires-and-bundles.md (Q1).
+            // See docs/architecture/wires-and-bundles.md (Q1).
             target: WireTarget.optional(),
           }),
         )
@@ -699,6 +712,19 @@ export interface PlatformEvents {
  *  schema. Callers cast to their own schema type. */
 export interface PlatformTenants {
   getDb(orgId: string): Promise<unknown>;
+  /** Release this tenant's connection pool — but ONLY if it currently has
+   *  no checked-out clients (all connections idle, none waiting). The pool
+   *  reopens lazily on the next `getDb`. No-op if the org has no cached pool.
+   *
+   *  For background jobs that sweep EVERY tenant on a tick (due-soon,
+   *  recurrence, expiry): without this, each org's pool stays cached open
+   *  with a live connection, so one tick holds one pool per tenant and a
+   *  box with many tenants exhausts Postgres `max_connections` ("remaining
+   *  connection slots are reserved for SUPERUSER"). Call it after finishing
+   *  each org to keep the sweep's peak at ~one tenant pool. The idle guard
+   *  makes it safe against concurrent request traffic — a pool a live
+   *  request is mid-flight on is left untouched. */
+  releaseIdleDb(orgId: string): Promise<void>;
 }
 
 /** Cross-tenant DB access for the (small set of) modules that need
@@ -811,6 +837,16 @@ export type EntityListResolver = (
   query: EntityListQuery,
 ) => Promise<EntityListResult>;
 
+/** Tier-2 context provider for computed fields. Given an entity, returns
+ *  a namespaced bag of related/aggregated data referenced in a computed
+ *  template as {{<namespace>.<key>}}. Best-effort: a throw renders the
+ *  namespace empty rather than failing the whole resolve. */
+export type ComputedContextProvider = (
+  orgId: string,
+  kind: string,
+  id: string,
+) => Promise<Record<string, unknown>>;
+
 export interface PlatformEntities {
   /** Register a resolver for one kind. Called from a module's
    *  api/index.ts at module-load time. */
@@ -819,6 +855,22 @@ export interface PlatformEntities {
    *  list() returns an empty result. Modules opt in when they want
    *  their kind to appear in core-views, search results, etc. */
   registerListResolver(kind: string, resolver: EntityListResolver): void;
+  /** Register a tier-2 context provider for COMPUTED fields, under a
+   *  namespace. A computed field def (type='computed') references it in
+   *  its template as {{<name>.<key>}}; the kernel invokes the provider at
+   *  entity-resolve time only when some computed template on the kind
+   *  actually uses the namespace. Keeps computed fields modular — the
+   *  field layer never imports any specific module.
+   *
+   *  Example (in modules/core-maintenance):
+   *    platform().entities.registerComputedContext(
+   *      "maintenance",
+   *      async (orgId, kind, id) => {
+   *        // kind "assets:asset" → entity_module "assets", type "asset"
+   *        return { last_performed, last_performed_at, next_scheduled_at };
+   *      },
+   *    ); */
+  registerComputedContext(name: string, provider: ComputedContextProvider): void;
   /** Look up one entity by (kind, id). Returns null if the kind
    *  has no resolver (module not enabled) or the entity doesn't
    *  exist. Projects through the kind's exposableFields whitelist.
@@ -888,7 +940,7 @@ export interface PlatformEntities {
    *  target entities. dir defaults to "in" (incoming — find things that
    *  POINT AT the source via this relation). kind filters discovered
    *  targets. The kernel half of the entity-resolver design — see
-   *  docs/design-decisions/entity-resolver.md. */
+   *  docs/architecture/entity-resolver.md. */
   walkPairings(
     orgId: string,
     source: { kind: string; id: string },
@@ -922,7 +974,7 @@ export interface EntityKindRecord {
    *  may read; the kernel projects ResolvedEntity.fields to this list
    *  before returning to a non-owning module. The implicit cross-cutting
    *  props (id/title/subtitle/image_path/detailUrl) are always exposable
-   *  regardless of this list. See docs/design-decisions/entity-resolver.md. */
+   *  regardless of this list. See docs/architecture/entity-resolver.md. */
   exposable_fields: string[] | null;
 }
 
@@ -954,7 +1006,7 @@ export interface ActionInvokeActor {
  *  pre-rendered template — each in its own block. The top-level
  *  `entityKind` / `entityId` aliases are deprecated compatibility
  *  shims; new handlers should read `ctx.entity.kind` / `ctx.entity.id`.
- *  See docs/design-decisions/wires-and-bundles.md (Q2). */
+ *  See docs/architecture/wires-and-bundles.md (Q2). */
 export interface ActionInvokeContext {
   orgId: string;
   userId: string | null;
@@ -1012,6 +1064,9 @@ export interface EntityActionRecord {
   invoke_handler: string | null;
   /** False = wire-only; don't render as a user button. */
   user_invokable: boolean;
+  /** Machine-readable arg shape for the wire composer / invoke forms; null if
+   *  the action declared none. */
+  args_schema: Record<string, { label: string; type: "text" | "number" | "boolean" }> | null;
   version: string;
 }
 
@@ -1097,6 +1152,54 @@ export type RecurrenceScanner = (
 export interface PlatformRecurrence {
   registerScanner(kind: string, scanner: RecurrenceScanner): void;
   listScanners(): Array<{ kind: string; scanner: RecurrenceScanner }>;
+}
+
+/** One dated thing on the workspace calendar — a scheduled maintenance
+ *  entry, a task due date, a food item's expiry. Contributed by a module's
+ *  CalendarSource; aggregated by core-calendar for the in-app month view
+ *  and the iCal feed. */
+export interface CalendarEvent {
+  /** Stable within a source across reads — used as the iCal UID and the
+   *  React key. Convention: `<source>:<entityId>:<yyyy-mm-dd>`. */
+  id: string;
+  title: string;
+  /** ISO date ("2026-06-10") for all-day, or ISO datetime for timed. */
+  date: string;
+  allDay?: boolean;
+  /** The contributing source's id (e.g. "maintenance", "task", "expiry"). */
+  source: string;
+  /** Coarse category for colour/grouping (often == source). */
+  category?: string;
+  /** Deep-link back to the originating entity, when there is one. */
+  entityModule?: string;
+  entityType?: string;
+  entityId?: string;
+  detailUrl?: string;
+}
+
+/** A module's contribution of dated events for a window. Called with an
+ *  inclusive [fromISO, toISO] date range; returns the events in it.
+ *  Best-effort: a throw is swallowed and that source contributes nothing. */
+export type CalendarSource = (
+  orgId: string,
+  fromISO: string,
+  toISO: string,
+) => Promise<CalendarEvent[]>;
+
+/** D? — workspace calendar. Modules register a source of dated events;
+ *  core-calendar aggregates every registered source for the in-app month
+ *  view + the tokenised iCal feed.
+ *
+ *  Example (in modules/core-maintenance):
+ *    platform().calendar.registerSource("maintenance", async (orgId, from, to) => {
+ *      // query scheduled, not-yet-done entries in [from,to]
+ *      return rows.map((r) => ({ id: ..., title: r.name, date: r.scheduled_at, ... }));
+ *    }); */
+export interface PlatformCalendar {
+  registerSource(id: string, source: CalendarSource): void;
+  /** Run every registered source for the window and return the merged,
+   *  date-sorted events. Sources that throw contribute nothing. */
+  collect(orgId: string, fromISO: string, toISO: string): Promise<CalendarEvent[]>;
 }
 
 /** core-queue v0.1: persistent background work for modules.
@@ -1374,7 +1477,7 @@ export interface PlatformQueue {
  *  part`) ask `platform().auth.userHasCapability(...)`. Admins/owners
  *  pass implicitly; members/guests need an explicit grant in
  *  workspace_capability_grants. See
- *  docs/design-decisions/member-portal-and-permissions.md. */
+ *  docs/modules/member-portal-and-permissions.md. */
 export interface PlatformAuth {
   userHasCapability(args: {
     orgId: string;
@@ -1551,6 +1654,18 @@ export interface PlatformFiles {
   ): Promise<FileBytes | null>;
 }
 
+/** Multi-instance support hooks. A multi-instance module (inventory, assets,
+ *  machines, …) registers a counter so the kernel can ask "how many primary
+ *  items live in this (org, instance)?" without knowing the module's tables —
+ *  used by the nav to hide an auto-created default instance that's empty once
+ *  the workspace has named instances. */
+export interface PlatformInstances {
+  registerItemCounter(
+    moduleName: string,
+    counter: (orgId: string, instanceName: string) => Promise<number>,
+  ): void;
+}
+
 export interface Platform {
   activity: PlatformActivity;
   events: PlatformEvents;
@@ -1562,6 +1677,7 @@ export interface Platform {
   wires: PlatformWires;
   health: PlatformHealth;
   recurrence: PlatformRecurrence;
+  calendar: PlatformCalendar;
   queue: PlatformQueue;
   notifications: PlatformNotifications;
   integrations: PlatformIntegrations;
@@ -1570,6 +1686,7 @@ export interface Platform {
   pairings: PlatformPairings;
   catalogs: PlatformCatalogs;
   files: PlatformFiles;
+  instances: PlatformInstances;
 }
 
 let _platform: Platform | null = null;

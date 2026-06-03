@@ -4,7 +4,7 @@ AssemblyScript SDK for writing v0.3 sandboxed Cobblr modules. Targets
 host **ABI version 2**.
 
 For the full author tutorial (project scaffold, manifest, building,
-deploy, debugging) see [`docs/SANDBOX_MODULE_AUTHORING.md`](../../docs/SANDBOX_MODULE_AUTHORING.md).
+deploy, debugging) see [`docs/operations/SANDBOX_MODULE_AUTHORING.md`](../../docs/operations/SANDBOX_MODULE_AUTHORING.md).
 Scaffold a new module with:
 
 ```bash
@@ -50,7 +50,7 @@ npx asc assembly/index.ts \
   --runtime minimal
 ```
 
-Then publish via the registry — see [`docs/MARKETPLACE_RUNBOOK.md`](../../docs/MARKETPLACE_RUNBOOK.md).
+Then publish via the registry — see [`docs/operations/MARKETPLACE_RUNBOOK.md`](../../docs/operations/MARKETPLACE_RUNBOOK.md).
 
 ## SDK surface (ABI v2)
 

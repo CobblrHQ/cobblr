@@ -14,7 +14,7 @@
 --     workspaces — think generic "100ml bottle" UPCs). Both hits
 --     and definitive misses cached; rate-limit failures are not.
 --
--- See docs/design-decisions/core-scan.md for the v0.1 scope vs v0.2
+-- See docs/modules/core-scan.md for the v0.1 scope vs v0.2
 -- deferrals (web-search fallback, photo-only AI path, receipts,
 -- bulk-confirm at scale).
 

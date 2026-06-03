@@ -25,7 +25,6 @@ import { NavLink } from "react-router-dom";
 import { ChevronDown, Settings2, Sliders } from "lucide-react";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ModulePickerModal } from "./ModulePickerModal";
-import { NavCustomizeMenu } from "./NavCustomizeMenu";
 import { useNavModules, HEADING_PREFIX } from "./useNavModules";
 
 export function ModuleNav() {
@@ -120,7 +119,7 @@ export function ModuleNav() {
               : "text-muted dark:text-slate-400 hover:text-accent")
           }
         >
-          dashboard
+          Dashboard
         </NavLink>
         {visible.map(renderTop)}
         {overflow.length > 0 && (
@@ -128,12 +127,9 @@ export function ModuleNav() {
             items={overflow.map((m) => ({ top: m, kids: children.get(m.name) ?? [] }))}
           />
         )}
-        {/* Customize control trails the links — it acts on the nav, so it
-            lives with the nav (not beside the config gear in the right
-            cluster, where two slider icons read as duplicates). */}
-        <span data-navfixed className="shrink-0 flex items-center">
-          <NavCustomizeMenu />
-        </span>
+        {/* The nav-customize control was moved out of the navbar into
+            Configuration → "Customize navigation" (it's settings, not a
+            nav heading). */}
       </div>
 
       <ModulePickerModal

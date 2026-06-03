@@ -7,7 +7,7 @@
 //      key in cobblr_meta).
 //   3. Outbound invocation + inbound dispatch + audit logging.
 //
-// See docs/design-decisions/core-integrations.md.
+// See docs/modules/core-integrations.md.
 
 import {
   createCipheriv,

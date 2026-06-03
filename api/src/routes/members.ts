@@ -14,6 +14,8 @@ import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import * as activity from "../platform/activity.js";
 import type { OrgRole } from "../db/schema.js";
+import { hashPassword } from "../auth/password.js";
+import { buildAuthResponse } from "./auth.js";
 
 export const membersRouter = Router({ mergeParams: true });
 // /accept-invite/:token doesn't have a tenant slug in the path so it
@@ -402,6 +404,110 @@ invitesRootRouter.post("/invites/:token/accept", requireAuth, async (req, res, n
       org: { ...org, role: existing?.role ?? invite.role },
       already_member: !!existing,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /invites/:token/accept-signup — for a brand-new person (NO account
+// yet, logged out). The valid workspace-invite token authorises creating an
+// account past the public-signup gate, then drops them straight into the
+// inviting workspace with the invite's role. The new user gets NO workspace
+// of their own — they join the existing one (the collaboration path; cf. the
+// signup-invite flow, which instead provisions a fresh workspace).
+const AcceptSignup = z.object({
+  email: z.string().email().max(255),
+  password: z.string().min(8).max(128),
+  display_name: z.string().min(1).max(120),
+});
+invitesRootRouter.post("/invites/:token/accept-signup", async (req, res, next) => {
+  try {
+    const token = req.params.token;
+    if (!token) {
+      res.status(400).json({ error: { code: "missing_token", message: "token required" } });
+      return;
+    }
+    const parsed = AcceptSignup.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues } });
+      return;
+    }
+    const email = parsed.data.email.toLowerCase().trim();
+
+    const invite = await meta
+      .selectFrom("workspace_invites")
+      .selectAll()
+      .where("token", "=", token)
+      .executeTakeFirst();
+    if (!invite) {
+      res.status(404).json({ error: { code: "not_found", message: "Invite not found." } });
+      return;
+    }
+    if (invite.revoked_at) { res.status(410).json({ error: { code: "revoked", message: "Invite was revoked." } }); return; }
+    if (invite.consumed_at) { res.status(410).json({ error: { code: "consumed", message: "Invite already used." } }); return; }
+    if (invite.expires_at && new Date(invite.expires_at) < new Date()) {
+      res.status(410).json({ error: { code: "expired", message: "Invite expired." } });
+      return;
+    }
+    if (invite.invited_email && invite.invited_email.toLowerCase().trim() !== email) {
+      res.status(403).json({ error: { code: "invite_email_mismatch", message: `This invite is for ${invite.invited_email}.` } });
+      return;
+    }
+    // An existing account can't use this path — they should log in and use
+    // the regular /accept (which attaches the membership).
+    const existing = await meta.selectFrom("users").select("id").where("email", "=", email).executeTakeFirst();
+    if (existing) {
+      res.status(409).json({ error: { code: "email_taken", message: "That email already has an account — sign in, then open the invite link to join." } });
+      return;
+    }
+
+    // Atomically claim the invite (single-use, race-safe) before creating
+    // the account, so two redemptions can't both succeed.
+    const claimed = await meta
+      .updateTable("workspace_invites")
+      .set({ consumed_at: new Date() })
+      .where("id", "=", invite.id)
+      .where("consumed_at", "is", null)
+      .where("revoked_at", "is", null)
+      .returning("id")
+      .executeTakeFirst();
+    if (!claimed) {
+      res.status(410).json({ error: { code: "consumed", message: "This invite was just used." } });
+      return;
+    }
+
+    // Create the user (no own-org provisioning) + the membership.
+    const password_hash = await hashPassword(parsed.data.password);
+    const userRow = await meta
+      .insertInto("users")
+      .values({ email, password_hash, display_name: parsed.data.display_name.trim() })
+      .returning("id")
+      .executeTakeFirstOrThrow();
+    const userId = userRow.id;
+    await meta
+      .insertInto("org_memberships")
+      .values({ user_id: userId, org_id: invite.org_id, role: invite.role })
+      .execute();
+    await meta
+      .updateTable("workspace_invites")
+      .set({ consumed_by_user: userId })
+      .where("id", "=", invite.id)
+      .execute();
+
+    try {
+      await activity.log({
+        orgId: invite.org_id,
+        userId,
+        action: "member_joined",
+        ref: { module: null, entityType: "membership", entityId: userId },
+        diff: { via_invite: invite.id, role: invite.role, new_account: true },
+      });
+    } catch (err) {
+      console.error("[invites] activity log failed:", err);
+    }
+
+    const out = await buildAuthResponse(userId);
+    res.status(201).json(out);
   } catch (err) {
     next(err);
   }

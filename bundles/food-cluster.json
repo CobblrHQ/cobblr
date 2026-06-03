@@ -7,7 +7,7 @@
     "author": "Cobblr",
     "requires": [
       { "module": "inventory" },
-      { "module": "core-lists" }
+      { "module": "lists" }
     ],
     "field_defs": [
       { "entity_kind": "inventory:part", "name": "expires_on", "display_label": "Expires", "type": "date", "position": 1 },
@@ -18,23 +18,23 @@
     "wires": [
       {
         "source_kind": "inventory:part",
-        "action_id": "core-lists:add-item",
+        "action_id": "lists:add-item",
         "trigger_type": "event",
         "trigger_event": "inventory.stock.low",
         "args": { "listTitle": "Shopping list" }
       },
       {
         "source_kind": "inventory:part",
-        "action_id": "core-lists:add-item",
+        "action_id": "lists:add-item",
         "trigger_type": "event",
-        "trigger_event": "core-lists.item.expiring",
+        "trigger_event": "lists.item.expiring",
         "args": { "listTitle": "Shopping list" }
       },
       {
         "source_kind": "inventory:part",
         "action_id": "inventory:adjust-stock",
         "trigger_type": "event",
-        "trigger_event": "core-lists.item.checked",
+        "trigger_event": "lists.item.checked",
         "args": { "delta": 1, "reason": "Restocked — checked off the shopping list" }
       }
     ]

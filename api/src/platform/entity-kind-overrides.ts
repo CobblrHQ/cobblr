@@ -3,7 +3,7 @@
 // creation write rows here; the nav renderer + breadcrumb + heading
 // + search-chip read from it.
 //
-// See docs/design-decisions/instances.md §3.2 + lens-promotion.md §1.0.
+// See docs/architecture/instances.md §3.2 + lens-promotion.md §1.0.
 
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";

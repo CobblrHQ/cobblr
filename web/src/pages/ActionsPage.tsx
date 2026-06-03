@@ -5,7 +5,7 @@
 // (e.g. labels:print → traits: ["physical"]). This page lets a
 // workspace owner adjust that predicate per-org without touching
 // the manifest — the "I want labels on tasks too" override from
-// docs/design-decisions/traits.md §Example.
+// docs/architecture/traits.md §Example.
 //
 // Trait-based predicates render as a 6-axis checkbox grid (two
 // poles per axis). Within an axis the checkboxes OR; across axes

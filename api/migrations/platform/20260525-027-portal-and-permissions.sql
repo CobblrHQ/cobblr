@@ -1,5 +1,5 @@
 -- Member portal + per-action capability grants
--- See docs/design-decisions/member-portal-and-permissions.md
+-- See docs/modules/member-portal-and-permissions.md
 --
 -- Two pieces:
 --   1. portal_config jsonb on orgs — branding + pinned views for the

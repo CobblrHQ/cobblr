@@ -13,7 +13,7 @@
 //   5. User PATCHes /me/password with the new one. Server clears
 //      the flag (see me.ts:/me/password).
 //
-// Per [`docs/PRODUCTION_DEPLOY.md`](../../../docs/PRODUCTION_DEPLOY.md)
+// Per [`docs/operations/PRODUCTION_DEPLOY.md`](../../../docs/operations/PRODUCTION_DEPLOY.md)
 // this is the recommended onboarding path for the workshop-server
 // deploy where wiring SMTP is overkill.
 

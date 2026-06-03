@@ -178,7 +178,9 @@ function EditTagModal({
 }) {
   const [name, setName] = useState(tag.name);
   const [color, setColor] = useState(tag.color ?? "#888888");
+  const [mergeInto, setMergeInto] = useState("");
   const toast = useToast();
+  const confirm = useConfirm();
   const save = useMutation({
     mutationFn: () => api.updateTag(slug, tag.id, { name: name.trim(), color }),
     onSuccess: () => {
@@ -187,6 +189,19 @@ function EditTagModal({
     },
     onError: (e: unknown) =>
       toast.error(e instanceof ApiError ? e.message : "Couldn't save"),
+  });
+  // Other tags this one can be merged into.
+  const allTags = useQuery({ queryKey: ["tags", slug], queryFn: () => api.listTags(slug) });
+  const otherTags = (allTags.data?.items ?? []).filter((t) => t.id !== tag.id);
+  const merge = useMutation({
+    mutationFn: (into: string) => api.mergeTag(slug, tag.id, into),
+    onSuccess: (r) => {
+      const n = r.moved_assignments;
+      toast.success(`Merged into "${r.merged_into.name}" — moved ${n} attachment${n === 1 ? "" : "s"}`);
+      onSaved();
+    },
+    onError: (e: unknown) =>
+      toast.error(e instanceof ApiError ? e.message : "Couldn't merge"),
   });
 
   return (
@@ -222,6 +237,40 @@ function EditTagModal({
           Renaming updates the tag everywhere it's attached — it's the same tag,
           not a copy.
         </p>
+        {otherTags.length > 0 && (
+          <div className="border-t border-line dark:border-slate-700 pt-3">
+            <div className="text-xs text-muted mb-1">Merge into another tag</div>
+            <div className="flex items-center gap-2">
+              <select
+                value={mergeInto}
+                onChange={(e) => setMergeInto(e.target.value)}
+                className="flex-1 px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+              >
+                <option value="">— choose a tag —</option>
+                {otherTags.map((t) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={!mergeInto || merge.isPending}
+                onClick={() => {
+                  const target = otherTags.find((t) => t.id === mergeInto);
+                  void confirm({
+                    title: "Merge tag",
+                    message: `Move every attachment from "${tag.name}" to "${target?.name}", then delete "${tag.name}". This can't be undone.`,
+                    confirmLabel: "Merge",
+                  }).then((ok) => {
+                    if (ok) merge.mutate(mergeInto);
+                  });
+                }}
+                className="px-3 py-1.5 text-sm rounded border border-line dark:border-slate-600 text-content hover:bg-subtle dark:hover:bg-slate-800 disabled:opacity-50"
+              >
+                Merge
+              </button>
+            </div>
+          </div>
+        )}
         <div className="flex justify-end gap-2 pt-2">
           <button
             type="button"

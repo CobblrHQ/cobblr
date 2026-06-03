@@ -1,6 +1,6 @@
 -- Rename the bricklink module to bricklink-connector to match the
 -- new cobblrhq/bricklink-connector repo (marketplace v2 split).
--- See docs/design-decisions/bricklink-rename.md §4 step 6.
+-- See docs/history/bricklink-rename.md §4 step 6.
 --
 -- Three references to update:
 --   1. org_modules.module_name — which workspaces have it enabled.

@@ -39,6 +39,7 @@ export async function syncManifestRegistries(): Promise<{
     invoke_route: string | null;
     invoke_handler: string | null;
     user_invokable: boolean;
+    args_schema: unknown;
     version: string;
   }> = [];
 
@@ -91,6 +92,7 @@ export async function syncManifestRegistries(): Promise<{
         invoke_route: a.invokeRoute ?? null,
         invoke_handler: a.invokeHandler ?? null,
         user_invokable: userInvokable,
+        args_schema: a.argsSchema ?? null,
         version: a.version ?? m.version,
       });
     }
@@ -162,6 +164,7 @@ export async function syncManifestRegistries(): Promise<{
           invoke_route: a.invoke_route,
           invoke_handler: a.invoke_handler,
           user_invokable: a.user_invokable,
+          args_schema: a.args_schema ? sql`${JSON.stringify(a.args_schema)}::jsonb` : null,
           version: a.version,
         })
         .onConflict((b) =>
@@ -174,6 +177,7 @@ export async function syncManifestRegistries(): Promise<{
             invoke_route: a.invoke_route,
             invoke_handler: a.invoke_handler,
             user_invokable: a.user_invokable,
+            args_schema: a.args_schema ? sql`${JSON.stringify(a.args_schema)}::jsonb` : null,
             version: a.version,
           }),
         )

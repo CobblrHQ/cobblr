@@ -16,7 +16,11 @@ export function SearchBar() {
   const navigate = useNavigate();
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
+  // Collapsed by default — the bar is a magnifying-glass icon that
+  // expands to the input on click, freeing up navbar width.
+  const [expanded, setExpanded] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   // Debounce so we don't fire on every keystroke.
   const [debounced, setDebounced] = useState("");
@@ -53,43 +57,64 @@ export function SearchBar() {
     return `/search?q=${encodeURIComponent(`${kind}:${id}`)}`;
   }
 
-  // Close dropdown on outside click.
+  // Close dropdown on outside click; collapse the (empty) field back to
+  // an icon so it stops taking navbar space.
   useEffect(() => {
     function onClick(e: MouseEvent) {
       if (ref.current && !ref.current.contains(e.target as Node)) {
         setOpen(false);
+        if (q.trim().length === 0) setExpanded(false);
       }
     }
     document.addEventListener("mousedown", onClick);
     return () => document.removeEventListener("mousedown", onClick);
-  }, []);
+  }, [q]);
+
+  // Focus the field the moment it expands.
+  useEffect(() => {
+    if (expanded) inputRef.current?.focus();
+  }, [expanded]);
 
   const items = hits.data?.items ?? [];
 
   return (
     <div ref={ref} className="relative shrink-0 hidden md:block">
-      <div className="flex items-center gap-1 px-2 py-1 rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 focus-within:border-cobble-500">
-        <Search size={12} className="text-faint" />
-        <input
-          type="text"
-          value={q}
-          onChange={(e) => {
-            setQ(e.target.value);
-            setOpen(true);
-          }}
-          onFocus={() => setOpen(true)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && q.trim().length > 0) {
-              navigate(`/search?q=${encodeURIComponent(q.trim())}`);
-              setOpen(false);
-            }
-            if (e.key === "Escape") setOpen(false);
-          }}
-          placeholder="Search…"
-          className="bg-transparent text-sm placeholder-slate-400 w-40 focus:w-56 transition-[width] outline-none"
-        />
-      </div>
-      {open && items.length > 0 && (
+      {!expanded ? (
+        <button
+          onClick={() => setExpanded(true)}
+          title="Search"
+          className="text-faint dark:text-slate-500 hover:text-accent transition p-1.5"
+        >
+          <Search size={15} />
+        </button>
+      ) : (
+        <div className="flex items-center gap-1 px-2 py-1 rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 focus-within:border-cobble-500">
+          <Search size={12} className="text-faint" />
+          <input
+            ref={inputRef}
+            type="text"
+            value={q}
+            onChange={(e) => {
+              setQ(e.target.value);
+              setOpen(true);
+            }}
+            onFocus={() => setOpen(true)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && q.trim().length > 0) {
+                navigate(`/search?q=${encodeURIComponent(q.trim())}`);
+                setOpen(false);
+              }
+              if (e.key === "Escape") {
+                setOpen(false);
+                if (q.trim().length === 0) setExpanded(false);
+              }
+            }}
+            placeholder="Search…"
+            className="bg-transparent text-sm placeholder-slate-400 w-52 outline-none"
+          />
+        </div>
+      )}
+      {open && expanded && items.length > 0 && (
         <div className="absolute right-0 mt-1 w-80 max-h-96 overflow-y-auto bg-surface dark:bg-slate-900 border border-line dark:border-slate-700 rounded shadow-lg z-50 divide-y divide-line dark:divide-slate-800">
           {items.slice(0, 20).map((h) => (
             <button

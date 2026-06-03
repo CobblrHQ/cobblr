@@ -1,4 +1,4 @@
--- Multi-instance support — see docs/design-decisions/instances.md.
+-- Multi-instance support — see docs/architecture/instances.md.
 --
 -- projects has three tables. Tasks are scoped to projects via
 -- project_id; task_dependencies are scoped to tasks. The instance

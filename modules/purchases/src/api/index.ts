@@ -2,10 +2,22 @@
 // /api/v1/orgs/:slug/modules/purchases/ with requireAuth + withTenant.
 
 import { Router } from "express";
+import { sql, type Kysely } from "kysely";
+import { platform } from "@cobblr/platform-contract";
 import { ordersRouter } from "./orders.js";
 import { registerPurchasesResolvers } from "./resolvers.js";
+import { registerPurchasesCalendarSource } from "./calendar-source.js";
 
 registerPurchasesResolvers();
+registerPurchasesCalendarSource();
+
+// Per-instance item count — lets the nav hide an empty auto-created default
+// instance once the workspace has named ones (orders are the primary entity).
+platform().instances.registerItemCounter("purchases", async (orgId, instance) => {
+  const db = (await platform().tenants.getDb(orgId)) as Kysely<unknown>;
+  const r = await sql<{ c: number }>`select count(*)::int as c from purchases_orders where instance = ${instance}`.execute(db);
+  return r.rows[0]?.c ?? 0;
+});
 
 const router = Router({ mergeParams: true });
 

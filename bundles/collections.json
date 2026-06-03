@@ -1,0 +1,39 @@
+{
+  "manifest": {
+    "id": "cobblr.flagship.collections",
+    "name": "Collections",
+    "version": "0.1.0",
+    "description": "Catalog what you collect — books, wine, records, cards, coins — so you see the whole shelf and stop buying the dupe you already own. Each piece tracks its condition, when and what you paid, today's value, the edition/year, and whether it's signed or sealed. A 'By condition' view sorts the mint from the played. Pairs with scan + catalogs to fill details from a barcode.",
+    "author": "Cobblr",
+    "requires": [
+      { "module": "inventory" }
+    ],
+    "field_defs": [
+      { "entity_kind": "inventory:part", "name": "condition", "display_label": "Condition", "type": "text", "position": 1, "choices": ["Mint / Sealed", "Near Mint", "Excellent", "Good", "Fair", "Poor"] },
+      { "entity_kind": "inventory:part", "name": "edition", "display_label": "Edition / year", "type": "text", "position": 2 },
+      { "entity_kind": "inventory:part", "name": "acquired_date", "display_label": "Acquired", "type": "date", "position": 3 },
+      { "entity_kind": "inventory:part", "name": "acquired_price", "display_label": "Paid", "type": "number", "position": 4 },
+      { "entity_kind": "inventory:part", "name": "current_value", "display_label": "Value today", "type": "number", "position": 5 },
+      { "entity_kind": "inventory:part", "name": "signed", "display_label": "Signed / sealed", "type": "boolean", "position": 6 }
+    ],
+    "field_overrides": [
+      { "entity_kind": "inventory:part", "name": "manufacturer", "display_label": "Maker / label" },
+      { "entity_kind": "inventory:part", "name": "serial_number", "hidden": true },
+      { "entity_kind": "inventory:part", "name": "model_number", "hidden": true },
+      { "entity_kind": "inventory:part", "name": "min_qty", "hidden": true }
+    ],
+    "saved_views": [
+      {
+        "entity_kind": "inventory:part",
+        "name": "By condition",
+        "view_type": "table",
+        "pinned": true,
+        "config": {
+          "group_by": "condition",
+          "visible_fields": ["title", "edition", "current_value", "acquired_date"]
+        }
+      }
+    ]
+  },
+  "confirm": true
+}

@@ -1,4 +1,4 @@
--- Marketplace v2 (docs/design-decisions/marketplace.md §4):
+-- Marketplace v2 (docs/modules/marketplace.md §4):
 -- installed_modules records what's in the running image, including
 -- the operator-curated set of marketplace modules. Populated at
 -- api boot by the loader iterating /app/modules/<name>/ and

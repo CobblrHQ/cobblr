@@ -5,7 +5,7 @@
 -- cobblr_meta so the unauthenticated /qr/:token route resolves in
 -- one query — same pattern as public_surface_tokens.
 --
--- See docs/design-decisions/core-labels-qr.md.
+-- See docs/modules/core-labels-qr.md.
 
 create table core_labels_qr_tokens (
   id            uuid primary key default gen_random_uuid(),

@@ -16,6 +16,7 @@ import {
   type CatalogTypeaheadHit,
 } from "@cobblr/platform-web";
 import { useInventory } from "./context";
+import { useFieldPresentation } from "./useFieldPresentation";
 import { InventoryApiError } from "./api";
 
 interface NewPartDialogProps {
@@ -29,6 +30,9 @@ interface NewPartDialogProps {
 
 export function NewPartDialog({ onClose, onCreated }: NewPartDialogProps) {
   const { api } = useInventory();
+  // Native-field presentation: a bundle/config can relabel + hide these on the
+  // create form too (no-op until an override exists). Matches PartDetailPage.
+  const fp = useFieldPresentation("inventory:part");
   const navigate = useNavigate();
   const cats = useQuery({ queryKey: ["inventory-categories"], queryFn: () => api.listCategories() });
   const locs = useQuery({ queryKey: ["inventory-locations"], queryFn: () => api.listLocations() });
@@ -161,23 +165,27 @@ export function NewPartDialog({ onClose, onCreated }: NewPartDialogProps) {
           />
         </Field>
         <div className="grid grid-cols-2 gap-2">
-          <Field label="Qty">
-            <input
-              type="number"
-              step="any"
-              min="0"
-              value={qty}
-              onChange={(e) => setQty(e.target.value)}
-              className="input"
-            />
-          </Field>
-          <Field label="Unit">
-            <input
-              value={unit}
-              onChange={(e) => setUnit(e.target.value)}
-              className="input"
-            />
-          </Field>
+          {!fp.hidden("qty") && (
+            <Field label={fp.label("qty", "Qty")}>
+              <input
+                type="number"
+                step="any"
+                min="0"
+                value={qty}
+                onChange={(e) => setQty(e.target.value)}
+                className="input"
+              />
+            </Field>
+          )}
+          {!fp.hidden("unit") && (
+            <Field label={fp.label("unit", "Unit")}>
+              <input
+                value={unit}
+                onChange={(e) => setUnit(e.target.value)}
+                className="input"
+              />
+            </Field>
+          )}
         </div>
         <Field label="Category">
           <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="input">

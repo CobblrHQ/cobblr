@@ -10,7 +10,7 @@
 //
 // Template vars (in `path` strings as `{var}`, and in `submit.body` string
 // values as `{var}`): fileId, jobId, deviceId, tag, filename.
-// See docs/design-decisions/digifab-drivers.md.
+// See docs/modules/digifab-drivers.md.
 
 import { z } from "zod";
 

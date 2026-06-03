@@ -46,6 +46,27 @@ export interface NavModules {
   isLoading: boolean;
 }
 
+/** A multi-instance module's auto-created default instance is the module's own
+ *  top-level nav entry. Once the workspace has NAMED instances, an EMPTY default
+ *  is clutter the user never created — so hide the module's entry when it has a
+ *  named instance AND its default holds 0 items. count === null (module reports
+ *  no count) or > 0 → keep it (never hide live data). Pure for testability. */
+export function defaultModuleEntriesToHide(instances: ModuleInstance[]): Set<string> {
+  const byModule = new Map<string, ModuleInstance[]>();
+  for (const inst of instances) {
+    const arr = byModule.get(inst.module_name) ?? [];
+    arr.push(inst);
+    byModule.set(inst.module_name, arr);
+  }
+  const hide = new Set<string>();
+  for (const [moduleName, insts] of byModule) {
+    const def = insts.find((i) => i.is_default);
+    const hasNamed = insts.some((i) => !i.is_default);
+    if (hasNamed && def && def.item_count === 0) hide.add(moduleName);
+  }
+  return hide;
+}
+
 export function useNavModules(activeSlug: string): NavModules {
   const modules = useQuery({
     queryKey: ["org-modules", activeSlug],
@@ -141,9 +162,13 @@ export function useNavModules(activeSlug: string): NavModules {
   // starting with `core-` is by convention a foundational /
   // utility module; user-facing modules don't use that prefix.
   const userFacing = enabled.filter((m) => !m.name.startsWith("core-"));
+  // Hide a multi-instance module's own entry when its auto-created default
+  // instance is empty and the workspace has named instances (see helper).
+  const hideDefaultModules = defaultModuleEntriesToHide(instances.data?.items ?? []);
   const childrenByParent = new Map<string, OrgModuleListItem[]>();
   const rawTops: OrgModuleListItem[] = [];
   for (const m of userFacing) {
+    if (hideDefaultModules.has(m.name)) continue;
     const withOverride = applyEntityKindOverride(m);
     if (withOverride.hidden) continue;
     const firstDep = m.dependencies[0];

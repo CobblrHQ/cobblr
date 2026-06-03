@@ -1,0 +1,36 @@
+{
+  "manifest": {
+    "id": "cobblr.flagship.warranties-receipts",
+    "name": "Warranties & Receipts",
+    "version": "0.1.0",
+    "description": "Snap the receipt the day you buy something and never miss a warranty or return window again. Records where and when you bought it, the warranty expiry (or lifetime), the serial number, and the return-by date; a 'Warranties' view sorts everything by what lapses next. Inventory already carries the warranty fields — this skins them into a clean appliance/electronics tracker.",
+    "author": "Cobblr",
+    "requires": [
+      { "module": "inventory" }
+    ],
+    "field_defs": [
+      { "entity_kind": "inventory:part", "name": "purchased_from", "display_label": "Bought from", "type": "text", "position": 1 },
+      { "entity_kind": "inventory:part", "name": "purchase_date", "display_label": "Purchased", "type": "date", "position": 2 },
+      { "entity_kind": "inventory:part", "name": "return_by", "display_label": "Return by", "type": "date", "position": 3 },
+      { "entity_kind": "inventory:part", "name": "category", "display_label": "Category", "type": "text", "position": 4, "choices": ["Appliance", "Electronics", "Tools", "Furniture", "Vehicle", "Other"] }
+    ],
+    "field_overrides": [
+      { "entity_kind": "inventory:part", "name": "manufacturer", "display_label": "Make / brand" },
+      { "entity_kind": "inventory:part", "name": "model_number", "display_label": "Model" },
+      { "entity_kind": "inventory:part", "name": "cost", "display_label": "Paid" }
+    ],
+    "saved_views": [
+      {
+        "entity_kind": "inventory:part",
+        "name": "Warranties",
+        "view_type": "table",
+        "pinned": true,
+        "config": {
+          "group_by": "category",
+          "visible_fields": ["title", "purchase_date", "return_by"]
+        }
+      }
+    ]
+  },
+  "confirm": true
+}

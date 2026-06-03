@@ -12,6 +12,7 @@ import { ChevronRight, Plus, Printer, Search, Tag as TagIcon, Trash2 } from "luc
 import { ApiError, api, type Asset, type OrgModuleListItem, type PlatformFieldDef } from "../lib/api";
 import { queueLabelsBulk } from "../lib/queue-label";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { useFieldPresentation } from "../lib/useFieldPresentation";
 import { CustomFieldsPanel,
   EntityActionsBar,
   Modal,
@@ -429,6 +430,7 @@ function AssetDetailModal({ assetId, onClose }: { assetId: string | null; onClos
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
+  const fp = useFieldPresentation(ENTITY_KIND);
   const asset = useQuery({
     queryKey: ["asset", activeSlug, assetId],
     queryFn: () => api.getAsset(activeSlug, assetId!),
@@ -478,19 +480,22 @@ function AssetDetailModal({ assetId, onClose }: { assetId: string | null; onClos
               <EntityActionsBar entityKind={ENTITY_KIND} entityId={a.id} />
             </div>
           </div>
+          {/* Native fields, reshaped by the workspace's field-presentation
+              overrides — a bundle/config can relabel (e.g. Manufacturer → Make)
+              or hide the ones a focused use-case doesn't need. `name` is the
+              identity, so it's relabel-only (never hidden). */}
           <dl className="grid grid-cols-2 gap-3 text-xs">
-            <EditField label="Name" value={a.name} onCommit={(v) => update.mutate({ name: v })} />
-            <EditField label="Short name" value={a.short_name ?? ""} onCommit={(v) => update.mutate({ short_name: v || null })} />
-            <EditField label="Manufacturer" value={a.manufacturer ?? ""} onCommit={(v) => update.mutate({ manufacturer: v || null })} />
-            <EditField label="Model" value={a.model ?? ""} onCommit={(v) => update.mutate({ model: v || null })} />
-            <EditField label="Type" value={a.type ?? ""} onCommit={(v) => update.mutate({ type: v || null })} />
-            <EditField label="State" value={a.state} onCommit={(v) => update.mutate({ state: v })} />
-            <EditField label="Serial number" value={a.serial_number ?? ""} onCommit={(v) => update.mutate({ serial_number: v || null })} />
-            <EditField label="Purchased at" value={a.purchased_at ?? ""} onCommit={(v) => update.mutate({ purchased_at: v || null })} type="date" />
-            <EditField label="Warranty until" value={a.warranty_until ?? ""} onCommit={(v) => update.mutate({ warranty_until: v || null })} type="date" />
-            <EditField label="Last service" value={a.last_service_at ?? ""} onCommit={(v) => update.mutate({ last_service_at: v || null })} type="date" />
-            <EditField label="Quantity" value={String(a.quantity)} numeric onCommit={(v) => update.mutate({ quantity: Number(v) || 0 })} />
-            <EditField label="Excitement (0-5)" value={String(a.excitement)} numeric onCommit={(v) => update.mutate({ excitement: Math.min(5, Math.max(0, Number(v) || 0)) })} />
+            <EditField label={fp.label("name", "Name")} value={a.name} onCommit={(v) => update.mutate({ name: v })} />
+            {!fp.hidden("short_name") && <EditField label={fp.label("short_name", "Short name")} value={a.short_name ?? ""} onCommit={(v) => update.mutate({ short_name: v || null })} />}
+            {!fp.hidden("manufacturer") && <EditField label={fp.label("manufacturer", "Manufacturer")} value={a.manufacturer ?? ""} onCommit={(v) => update.mutate({ manufacturer: v || null })} />}
+            {!fp.hidden("model") && <EditField label={fp.label("model", "Model")} value={a.model ?? ""} onCommit={(v) => update.mutate({ model: v || null })} />}
+            {!fp.hidden("type") && <EditField label={fp.label("type", "Type")} value={a.type ?? ""} onCommit={(v) => update.mutate({ type: v || null })} />}
+            {!fp.hidden("state") && <EditField label={fp.label("state", "State")} value={a.state} onCommit={(v) => update.mutate({ state: v })} />}
+            {!fp.hidden("serial_number") && <EditField label={fp.label("serial_number", "Serial number")} value={a.serial_number ?? ""} onCommit={(v) => update.mutate({ serial_number: v || null })} />}
+            {!fp.hidden("purchased_at") && <EditField label={fp.label("purchased_at", "Purchased at")} value={a.purchased_at ?? ""} onCommit={(v) => update.mutate({ purchased_at: v || null })} type="date" />}
+            {!fp.hidden("warranty_until") && <EditField label={fp.label("warranty_until", "Warranty until")} value={a.warranty_until ?? ""} onCommit={(v) => update.mutate({ warranty_until: v || null })} type="date" />}
+            {!fp.hidden("last_service_at") && <EditField label={fp.label("last_service_at", "Last service")} value={a.last_service_at ?? ""} onCommit={(v) => update.mutate({ last_service_at: v || null })} type="date" />}
+            {!fp.hidden("quantity") && <EditField label={fp.label("quantity", "Quantity")} value={String(a.quantity)} numeric onCommit={(v) => update.mutate({ quantity: Number(v) || 0 })} />}
             <LocationPicker
               label="Location"
               value={a.location_id}
@@ -500,6 +505,7 @@ function AssetDetailModal({ assetId, onClose }: { assetId: string | null; onClos
           </dl>
           <CustomFieldsPanel
             entityKind={ENTITY_KIND}
+            entityId={a.id}
             values={a.metadata}
             onCommit={(name, value) =>
               update.mutate({ metadata: { ...a.metadata, [name]: value } })

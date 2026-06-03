@@ -8,7 +8,7 @@
 --
 -- Stock roles are unchanged. Custom roles are additive.
 --
--- See docs/design-decisions/member-portal-and-permissions.md §7
+-- See docs/modules/member-portal-and-permissions.md §7
 -- (deferred → now implemented).
 
 create table workspace_roles (

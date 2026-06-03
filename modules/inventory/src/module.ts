@@ -130,6 +130,14 @@ export default defineModule({
         // doesn't make sense; the user has stock-adjust HTTP for
         // direct edits.
         userInvokable: false,
+        // Drives the wire composer's structured "With" form. Values can be
+        // literals or {{tokens}} (e.g. delta = {{event.delta}}), rendered at
+        // fire time against the event payload + target entity.
+        argsSchema: {
+          partId: { label: "Part id", type: "text" },
+          delta: { label: "Change in qty (+ adds, − subtracts)", type: "number" },
+          reason: { label: "Reason (optional)", type: "text" },
+        },
       },
       {
         id: "inventory:disassemble-kit",

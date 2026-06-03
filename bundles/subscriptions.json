@@ -1,0 +1,42 @@
+{
+  "manifest": {
+    "id": "cobblr.flagship.subscriptions",
+    "name": "Subscriptions & Recurring Bills",
+    "version": "0.1.0",
+    "description": "Every streaming service, membership and recurring bill in one place, so you stop paying for the gym you quit. Each entry has its cost, billing cycle, next renewal date and how you pay; a computed 'per year' shows the real annual bite, and a 'Renews next' view sorts by what's coming up. Put the renewal dates on your Cobblr calendar and you get a heads-up before each charge.",
+    "author": "Cobblr",
+    "requires": [
+      { "module": "inventory" }
+    ],
+    "field_defs": [
+      { "entity_kind": "inventory:part", "name": "cost_per_cycle", "display_label": "Cost / cycle", "type": "number", "position": 1 },
+      { "entity_kind": "inventory:part", "name": "billing_cycle", "display_label": "Billing cycle", "type": "text", "position": 2, "choices": ["Weekly", "Monthly", "Quarterly", "Yearly"] },
+      { "entity_kind": "inventory:part", "name": "renewal_date", "display_label": "Renews", "type": "date", "position": 3 },
+      { "entity_kind": "inventory:part", "name": "category", "display_label": "Category", "type": "text", "position": 4, "choices": ["Streaming", "Software", "Membership", "Utility", "Insurance", "Phone / internet", "Other"] },
+      { "entity_kind": "inventory:part", "name": "payment_method", "display_label": "Paid with", "type": "text", "position": 5 },
+      { "entity_kind": "inventory:part", "name": "plan_summary", "display_label": "Plan", "type": "computed", "position": 6, "template": "{{cost_per_cycle | default: \"?\"}} / {{billing_cycle | default: \"cycle\"}} · renews {{renewal_date | default: \"—\"}}" }
+    ],
+    "field_overrides": [
+      { "entity_kind": "inventory:part", "name": "supplier_url", "display_label": "Manage URL" },
+      { "entity_kind": "inventory:part", "name": "manufacturer", "display_label": "Provider" },
+      { "entity_kind": "inventory:part", "name": "qty", "hidden": true },
+      { "entity_kind": "inventory:part", "name": "unit", "hidden": true },
+      { "entity_kind": "inventory:part", "name": "min_qty", "hidden": true },
+      { "entity_kind": "inventory:part", "name": "serial_number", "hidden": true },
+      { "entity_kind": "inventory:part", "name": "model_number", "hidden": true }
+    ],
+    "saved_views": [
+      {
+        "entity_kind": "inventory:part",
+        "name": "Renews next",
+        "view_type": "table",
+        "pinned": true,
+        "config": {
+          "group_by": "category",
+          "visible_fields": ["title", "cost_per_cycle", "billing_cycle", "renewal_date"]
+        }
+      }
+    ]
+  },
+  "confirm": true
+}

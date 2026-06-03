@@ -2,7 +2,7 @@
 // MachineDriver. Built-ins (fdm_monster, mock) are code; everything else is an
 // INSTALLED driver from digifab_drivers (declarative manifest or, later,
 // edge-adapter) — so a user adds a new machine manager without a deploy.
-// See docs/design-decisions/digifab-drivers.md.
+// See docs/modules/digifab-drivers.md.
 
 import type { Kysely } from "kysely";
 import type { DigifabDB } from "../db.js";

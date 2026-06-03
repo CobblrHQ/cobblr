@@ -1,4 +1,4 @@
--- Multi-instance support — see docs/design-decisions/instances.md.
+-- Multi-instance support — see docs/architecture/instances.md.
 
 alter table purchases_orders
   add column instance text not null default 'purchases';

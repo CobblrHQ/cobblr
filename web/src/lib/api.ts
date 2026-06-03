@@ -98,6 +98,18 @@ export interface AuthResponse {
   orgs: OrgMembership[];
 }
 
+export interface SignupInvite {
+  id: string;
+  invited_email: string | null;
+  note: string | null;
+  expires_at: string | null;
+  consumed_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+  consumed_by_email?: string | null;
+  status: "open" | "consumed" | "expired" | "revoked";
+}
+
 export interface MeResponse {
   user: SessionUser;
   orgs: OrgMembership[];
@@ -246,7 +258,21 @@ export const api = {
     password: string;
     display_name: string;
     org_name: string;
+    invite_token?: string;
   }) => request<AuthResponse>("POST", "/auth/signup", body),
+  // Public preview of a single-use signup invite (the /join/:token page).
+  previewSignupInvite: (token: string) =>
+    request<{ status: string; invited_email: string | null; note: string | null }>(
+      "GET",
+      `/auth/signup-invite/${encodeURIComponent(token)}`,
+    ),
+  // Superadmin: mint / list / revoke signup invites.
+  mintSignupInvite: (body: { email?: string; note?: string; expires_in_days?: number }) =>
+    request<SignupInvite & { token: string }>("POST", "/super-admin/signup-invites", body),
+  listSignupInvites: () =>
+    request<{ items: SignupInvite[] }>("GET", "/super-admin/signup-invites"),
+  revokeSignupInvite: (id: string) =>
+    request<void>("POST", `/super-admin/signup-invites/${id}/revoke`),
   login: (body: { email: string; password: string }) =>
     request<AuthResponse>("POST", "/auth/login", body),
   magicRequest: (body: { email: string }) =>
@@ -355,6 +381,11 @@ export const api = {
       "POST",
       `/invites/${token}/accept`,
     ),
+  // New user (no account) signs up AND joins the inviting workspace.
+  acceptInviteAsNewUser: (
+    token: string,
+    body: { email: string; password: string; display_name: string },
+  ) => request<AuthResponse>("POST", `/invites/${token}/accept-signup`, body),
 
   // Long-lived API tokens
   listApiTokens: () =>
@@ -390,6 +421,33 @@ export const api = {
     request<{ items: PlatformEntityKind[] }>("GET", `/orgs/${slug}/entity-kinds`),
   lookupEntity: (slug: string, kind: string, id: string) =>
     request<PlatformResolvedEntity>("GET", `/orgs/${slug}/entities/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`),
+
+  // core-units vocabulary
+  listUnits: (slug: string) =>
+    request<UnitVocabulary>("GET", `/orgs/${slug}/modules/core-units/units`),
+  addUnit: (slug: string, unit: UnitInputBody) =>
+    request<UnitDef>("POST", `/orgs/${slug}/modules/core-units/units`, unit),
+  deleteUnit: (slug: string, code: string) =>
+    request<void>("DELETE", `/orgs/${slug}/modules/core-units/units/${encodeURIComponent(code)}`),
+  setUnitDisplayMode: (slug: string, mode: UnitDisplayMode) =>
+    request<{ display_mode: UnitDisplayMode }>(
+      "PUT",
+      `/orgs/${slug}/modules/core-units/units/settings`,
+      { display_mode: mode },
+    ),
+
+  // workspace calendar
+  calendarEvents: (slug: string, from: string, to: string) =>
+    request<{ items: CalendarEvent[]; from: string; to: string }>(
+      "GET",
+      `/orgs/${slug}/calendar/events?from=${from}&to=${to}`,
+    ),
+  getCalendarFeed: (slug: string) =>
+    request<CalendarFeed>("GET", `/orgs/${slug}/calendar/feed`),
+  setCalendarFeed: (slug: string, enabled: boolean) =>
+    request<CalendarFeed>("PUT", `/orgs/${slug}/calendar/feed`, { enabled }),
+  rotateCalendarFeed: (slug: string) =>
+    request<CalendarFeed>("POST", `/orgs/${slug}/calendar/feed/rotate`, {}),
 
   // Pillar B — actions + invocation
   listActions: (slug: string, kind: string) =>
@@ -454,6 +512,16 @@ export const api = {
     request<PlatformFieldDef>("PATCH", `/orgs/${slug}/field-defs/${id}`, body),
   deleteFieldDef: (slug: string, id: string) =>
     request<void>("DELETE", `/orgs/${slug}/field-defs/${id}`),
+  // Native-field presentation overrides (relabel / show-hide of a module's
+  // own fields). Read by the entity forms; written by Configuration → Presentation.
+  listNativeFieldOverrides: (slug: string, kind?: string) => {
+    const qs = kind ? `?kind=${encodeURIComponent(kind)}` : "";
+    return request<{ items: NativeFieldOverride[] }>("GET", `/orgs/${slug}/native-field-overrides${qs}`);
+  },
+  putNativeFieldOverride: (slug: string, body: { entity_kind: string; name: string; display_label?: string | null; hidden?: boolean; position?: number }) =>
+    request<NativeFieldOverride>("PUT", `/orgs/${slug}/native-field-overrides`, body),
+  deleteNativeFieldOverride: (slug: string, entityKind: string, name: string) =>
+    request<void>("DELETE", `/orgs/${slug}/native-field-overrides/${encodeURIComponent(entityKind)}/${encodeURIComponent(name)}`),
   appendFieldDefChoice: async (slug: string, id: string, value: string) => {
     // Fetch current choices, append, PATCH.
     const list = await request<{ items: PlatformFieldDef[] }>("GET", `/orgs/${slug}/field-defs`);
@@ -465,11 +533,11 @@ export const api = {
   // Bundles (C.2)
   listBundles: (slug: string) =>
     request<{ items: PlatformBundle[] }>("GET", `/orgs/${slug}/bundles`),
-  installBundle: (slug: string, manifest: PlatformBundleManifest) =>
+  installBundle: (slug: string, manifest: PlatformBundleManifest, confirm?: boolean) =>
     request<{ bundle: PlatformBundle; applied: { wires: number; field_defs: number } }>(
       "POST",
       `/orgs/${slug}/bundles/install`,
-      { manifest },
+      { manifest, confirm },
     ),
   uninstallBundle: (slug: string, id: string) =>
     request<void>("DELETE", `/orgs/${slug}/bundles/${id}`),
@@ -483,6 +551,17 @@ export const api = {
       "GET",
       `/registry/index${sources && sources.length ? `?sources=${encodeURIComponent(sources.join(","))}` : ""}`,
     ),
+
+  // ─── installed file-preview renderers (core-file-preview, per workspace) ──
+  getInstalledRenderers: (slug: string) =>
+    request<{ items: InstalledRenderer[] }>("GET", `/orgs/${slug}/modules/core-file-preview/renderers`),
+  installRenderer: (
+    slug: string,
+    body: { name: string; version?: string; exts: string[]; renderer_js: string; pubkey?: string; signature?: string },
+  ) =>
+    request<InstalledRenderer>("POST", `/orgs/${slug}/modules/core-file-preview/renderers`, body),
+  uninstallRenderer: (slug: string, name: string) =>
+    request<void>("DELETE", `/orgs/${slug}/modules/core-file-preview/renderers/${encodeURIComponent(name)}`),
 
   // ─── core-authoring (AI bundle builder, Phase 1: copy-paste) ───────
   authoringContext: (slug: string, selected_kinds?: string[]) =>
@@ -716,6 +795,14 @@ export const api = {
     ),
   deleteTag: (slug: string, id: string) =>
     request<void>("DELETE", `/orgs/${slug}/modules/core-tags/tags/${id}`),
+  mergeTag: (slug: string, id: string, intoTagId: string) =>
+    request<{
+      merged_into: TagRecord;
+      moved_assignments: number;
+      deleted_tag: { id: string; name: string };
+    }>("POST", `/orgs/${slug}/modules/core-tags/tags/${id}/merge`, {
+      into_tag_id: intoTagId,
+    }),
   listTagAttachments: (
     slug: string,
     params:
@@ -1016,7 +1103,7 @@ export const api = {
 
   // Instances (workspace_module_instances) — multi-instance modules.
   // A workspace can install one module multiple times under different
-  // names. See docs/design-decisions/instances.md.
+  // names. See docs/architecture/instances.md.
   listInstances: (slug: string, moduleName?: string) =>
     request<{ items: ModuleInstance[] }>(
       "GET",
@@ -1032,7 +1119,7 @@ export const api = {
 
   // Nav-builder #2 — user-defined navbar headings (org-wide). Group nav
   // entries (modules + instances) under custom headings, cross-module.
-  // See docs/design-decisions/nav-builder.md.
+  // See docs/architecture/nav-builder.md.
   listNavHeadings: (slug: string) =>
     request<{ items: NavHeading[] }>("GET", `/orgs/${slug}/nav-headings`),
   createNavHeading: (slug: string, body: { name: string; icon?: string | null }) =>
@@ -1083,7 +1170,7 @@ export const api = {
     ),
 
   // core-integrations — outbound + inbound connectors. See
-  // docs/design-decisions/core-integrations.md.
+  // docs/modules/core-integrations.md.
   listConnectorCatalogue: (slug: string) =>
     request<{ items: IntegrationConnectorDef[] }>(
       "GET",
@@ -1179,7 +1266,7 @@ export const api = {
     ),
 
   // core-scan — barcode + photo identification, generalized. See
-  // docs/design-decisions/core-scan.md.
+  // docs/modules/core-scan.md.
   scanBarcode: (
     slug: string,
     body: {
@@ -1243,7 +1330,7 @@ export const api = {
     ),
 
   // core-ai — provider config + capability defaults + usage. See
-  // docs/design-decisions/core-ai.md.
+  // docs/modules/core-ai.md.
   listAiProviderCatalogue: (slug: string) =>
     request<{ items: AiProviderDef[] }>(
       "GET",
@@ -1367,7 +1454,7 @@ export const api = {
     ),
 
   // core-templates — per-workspace entity templates. See
-  // docs/homebox-parity-report.md punch-list item #2.
+  // docs/product/homebox-parity-report.md punch-list item #2.
   listTemplates: (slug: string, targetKind?: string) => {
     const qs = targetKind ? `?target_kind=${encodeURIComponent(targetKind)}` : "";
     return request<{ items: EntityTemplate[] }>(
@@ -1460,7 +1547,7 @@ export const api = {
   },
 
   // Member portal — config (branding + pinned views) + per-action
-  // capability grants. See docs/design-decisions/member-portal-and-
+  // capability grants. See docs/modules/member-portal-and-
   // permissions.md.
   getPortalConfig: (slug: string) =>
     request<{ config: PortalConfig; org_name: string }>(
@@ -1471,6 +1558,17 @@ export const api = {
     request<{ config: PortalConfig }>(
       "PUT",
       `/orgs/${slug}/portal-config`,
+      body,
+    ),
+  getDashboardLayout: (slug: string) =>
+    request<{ layout: DashboardLayout }>(
+      "GET",
+      `/orgs/${slug}/dashboard-layout`,
+    ),
+  setDashboardLayout: (slug: string, body: DashboardLayout) =>
+    request<{ layout: DashboardLayout }>(
+      "PUT",
+      `/orgs/${slug}/dashboard-layout`,
       body,
     ),
   listPermissionMatrix: (slug: string) =>
@@ -1823,6 +1921,8 @@ export interface ModuleInstance {
   is_default: boolean;
   config: Record<string, unknown>;
   created_at: string;
+  /** Primary-item count for this instance; null if the module reports none. */
+  item_count?: number | null;
 }
 
 export interface NavHeadingMember {
@@ -1993,6 +2093,13 @@ export interface PairingItem {
   metadata: Record<string, unknown>;
   created_by: string | null;
   created_at: string;
+}
+
+/** Admin dashboard "at a glance" arrangement — an ordered list of widget ids
+ *  with a hidden flag. Ids are owned by the platform-web dashboard-widget
+ *  registry; the server persists only their order + visibility. */
+export interface DashboardLayout {
+  widgets: { id: string; hidden: boolean }[];
 }
 
 export interface PortalConfig {
@@ -2554,6 +2661,46 @@ export interface PlatformResolvedEntity {
   fields: Record<string, unknown>;
 }
 
+// core-units vocabulary (shapes match @cobblr/platform-web's types).
+export type UnitDisplayMode = "symbol" | "name" | "both";
+export interface UnitDef {
+  code: string;
+  symbol: string;
+  name: string;
+  plural: string;
+  category: string;
+}
+export interface UnitInputBody {
+  code: string;
+  symbol: string;
+  name: string;
+  plural?: string;
+  category?: string;
+}
+export interface UnitVocabulary {
+  builtins: UnitDef[];
+  custom: UnitDef[];
+  display_mode: UnitDisplayMode;
+}
+
+export interface CalendarEvent {
+  id: string;
+  title: string;
+  date: string;
+  allDay?: boolean;
+  source: string;
+  category?: string;
+  entityModule?: string;
+  entityType?: string;
+  entityId?: string;
+  detailUrl?: string;
+}
+export interface CalendarFeed {
+  enabled: boolean;
+  token: string | null;
+  url: string | null;
+}
+
 export interface PlatformAction {
   id: string;
   module_name: string;
@@ -2563,6 +2710,8 @@ export interface PlatformAction {
   applies_to: unknown;
   invoke_route: string | null;
   invoke_handler: string | null;
+  /** Per-arg shape for the wire composer's structured "With" form; null if none. */
+  args_schema: Record<string, { label: string; type: "text" | "number" | "boolean" }> | null;
   version: string;
 }
 
@@ -2608,13 +2757,31 @@ export interface PlatformBinding {
   org_id: string;
   source_kind: string;
   action_id: string;
-  trigger_type: "user-invoked" | "event" | "on-create" | "on-update" | "on-delete";
+  trigger_type: "user-invoked" | "event" | "on-create" | "on-update" | "on-delete" | "schedule";
   trigger_event: string | null;
+  /** iCal RRULE for schedule-triggered wires; null otherwise. */
+  trigger_schedule: string | null;
   template: string | null;
   filter: unknown | null;
   args: unknown | null;
+  /** "self" (run on the source) or { rel, dir?, kind? } (run on linked entities). */
+  target: "self" | { rel: string; dir?: "out" | "in"; kind?: string } | null;
   enabled: boolean;
   bundle_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NativeFieldOverride {
+  id: string;
+  org_id: string;
+  entity_kind: string;
+  name: string;
+  display_label: string | null;
+  hidden: boolean;
+  position: number;
+  bundle_id: string | null;
+  source_module: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -2625,13 +2792,16 @@ export interface PlatformFieldDef {
   entity_kind: string;
   name: string;
   display_label: string;
-  type: "text" | "number" | "boolean" | "date" | "url";
+  type: "text" | "number" | "boolean" | "date" | "url" | "computed";
   required: boolean;
   position: number;
   bundle_id: string | null;
   source_module: string | null;
   choices: string[] | null;
   renderer: CatalogFieldRenderer | null;
+  /** type='computed' only: the {{ }} template rendered read-only at
+   *  resolve time. Null for stored value fields. */
+  template: string | null;
   created_at: string;
 }
 
@@ -2674,11 +2844,30 @@ export interface PlatformBundleManifest {
     entity_kind: string;
     name: string;
     display_label: string;
-    type: "text" | "number" | "boolean" | "date" | "url";
+    type: "text" | "number" | "boolean" | "date" | "url" | "computed";
     required?: boolean;
     position?: number;
     /** When type='text', renders as a dropdown of these choices. */
     choices?: string[];
+    /** When type='computed', the {{ }} template rendered read-only. */
+    template?: string;
+  }[];
+  /** Presentation overrides for a kind's native fields (relabel / hide). */
+  field_overrides?: {
+    entity_kind: string;
+    name: string;
+    display_label?: string;
+    hidden?: boolean;
+    position?: number;
+  }[];
+  /** Saved views the bundle installs (optionally pinned to the dashboard). */
+  saved_views?: {
+    entity_kind: string;
+    name: string;
+    view_type?: string;
+    config?: Record<string, unknown>;
+    pinned?: boolean;
+    is_default?: boolean;
   }[];
   /** Optional lens contribution — turns this bundle into a Pillar-E
    *  specialisation. The nav reads installed bundles with
@@ -2731,12 +2920,37 @@ export interface RegistryModuleEntry {
    *  a root-verified index; "unverified" = install behind a consent gate. */
   trust?: "official" | "unverified";
 }
+/** A sandboxed file-preview renderer (core-file-preview). `renderer_js` is
+ *  untrusted code that runs only in an opaque-origin iframe. */
+export interface RegistryRendererEntry {
+  name: string;
+  version?: string;
+  exts: string[];
+  description?: string;
+  glyph?: string;
+  blurb?: string;
+  renderer_js: string;
+  pubkey?: string;
+  signature?: string;
+  source: string;
+  trust?: "official" | "unverified";
+}
+/** A renderer the workspace has installed (GET .../core-file-preview/renderers). */
+export interface InstalledRenderer {
+  id: string;
+  name: string;
+  version: string | null;
+  exts: string[];
+  renderer_js: string;
+  signed_by: string | null;
+}
 /** The merged extension catalog returned by GET /registry/index. */
 export interface RegistryIndex {
   schema: number;
   bundles: RegistryBundleEntry[];
   drivers: RegistryDriverEntry[];
   modules: RegistryModuleEntry[];
+  renderers: RegistryRendererEntry[];
   sources: Array<{ url: string; label: string; ok: boolean; error?: string }>;
   /** Whether the official index's detached sig verified against the baked
    *  root key. null = no root anchor configured (status-quo trust). */

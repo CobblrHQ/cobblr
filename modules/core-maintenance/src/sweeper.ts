@@ -113,6 +113,7 @@ export async function tick(opts: { orgId?: string } = {}): Promise<{
       continue; // Tenant DB might be gone or unprovisioned.
     }
 
+    try {
     let due: DueRow[];
     try {
       const compiled = sql<DueRow>`
@@ -207,6 +208,12 @@ export async function tick(opts: { orgId?: string } = {}): Promise<{
         );
       }
       notified += 1;
+    }
+    } finally {
+      // Release this tenant's pool unless a live request is using it, so a
+      // sweep across every tenant doesn't hold one connection per org and
+      // exhaust Postgres. Reopens lazily on next access.
+      await platform().tenants.releaseIdleDb(org.id);
     }
   }
 

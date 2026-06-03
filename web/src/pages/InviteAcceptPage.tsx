@@ -1,8 +1,10 @@
-// /invite/:token — opened from an invite link. Shows the workspace
-// name + inviter, the role you'll be assigned, and an Accept button.
-// If you're not signed in, we shunt you through AuthPage with a
-// hint to come back here after.
+// /invite/:token — opened from a workspace-invite link. Shows the workspace
+// name + inviter + the role you'll get. Three states: signed-in → one-click
+// Join; signed-out + no account → a signup form that creates the account AND
+// joins (the invite authorises it past the public-signup gate); signed-out +
+// existing account → "sign in to join".
 
+import { useState, type FormEvent } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { CheckCircle2, AlertTriangle } from "lucide-react";
@@ -14,10 +16,13 @@ import { useToast, usePageTitle } from "@cobblr/platform-web";
 export function InviteAcceptPage() {
   usePageTitle("Accept invite");
   const { token } = useParams<{ token: string }>();
-  const { user, setOrgs } = useAuth();
+  const { user, setOrgs, joinViaInvite } = useAuth();
   const { setActiveSlug } = useActiveOrg();
   const navigate = useNavigate();
   const toast = useToast();
+  const [su, setSu] = useState({ email: "", password: "", displayName: "" });
+  const [suBusy, setSuBusy] = useState(false);
+  const [suErr, setSuErr] = useState<string | null>(null);
 
   const preview = useQuery({
     queryKey: ["invite-preview", token],
@@ -88,24 +93,65 @@ export function InviteAcceptPage() {
     );
   }
 
-  // Signed-out users get sent to /auth?next=/invite/:token. Sign-in
-  // / sign-up flow returns here.
+  // Signed-out + a brand-new person: create an account on the spot (the
+  // invite authorises it past the public-signup gate) that joins THIS
+  // workspace. Someone who already has an account uses the "sign in" link.
   if (!user) {
+    const lockedEmail = p.invited_email;
+    const effEmail = lockedEmail ?? su.email;
+    const submit = async (e: FormEvent) => {
+      e.preventDefault();
+      setSuBusy(true); setSuErr(null);
+      try {
+        await joinViaInvite(token, {
+          email: effEmail.replace(/\s+/g, ""),
+          password: su.password.trim(),
+          display_name: su.displayName.trim(),
+        });
+        setActiveSlug(p.org_slug);
+        toast.success(`Welcome to ${p.org_name}.`);
+        navigate("/", { replace: true });
+      } catch (err) {
+        setSuErr(err instanceof ApiError ? err.message : "Couldn't join.");
+      } finally {
+        setSuBusy(false);
+      }
+    };
     return (
-      <CenteredCard tone="info" title={`You're invited to ${p.org_name}`}>
+      <CenteredCard tone="info" title={`Join ${p.org_name}`}>
         <p className="text-sm text-content dark:text-mortar-200">
-          {p.invited_by_name} invited you as <strong>{p.role}</strong>.
+          <strong>{p.invited_by_name}</strong> invited you to{" "}
+          <strong>{p.org_name}</strong> as <strong>{p.role}</strong>. Create an
+          account to join.
         </p>
-        <p className="text-xs text-muted dark:text-slate-400 mt-3">
-          Sign in or create a cobblr account to accept.
-        </p>
+        <form onSubmit={submit} className="mt-4 space-y-3">
+          <Field label="Your email">
+            <input type="email" required value={effEmail} disabled={!!lockedEmail}
+              onChange={(e) => setSu((s) => ({ ...s, email: e.target.value }))}
+              placeholder="you@example.com" className="input w-full" />
+            {lockedEmail && <span className="mt-1 block text-[10px] text-faint dark:text-slate-500">This invite is for {lockedEmail}.</span>}
+          </Field>
+          <Field label="Password">
+            <input type="password" required minLength={8} value={su.password}
+              onChange={(e) => setSu((s) => ({ ...s, password: e.target.value }))}
+              placeholder="at least 8 characters" className="input w-full" />
+          </Field>
+          <Field label="Your name">
+            <input required value={su.displayName}
+              onChange={(e) => setSu((s) => ({ ...s, displayName: e.target.value }))}
+              placeholder="Sam" className="input w-full" />
+          </Field>
+          {suErr && <div className="text-xs text-ember-500">{suErr}</div>}
+          <button type="submit" disabled={suBusy}
+            className="w-full rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition disabled:opacity-50">
+            {suBusy ? "Joining…" : `Create account & join`}
+          </button>
+        </form>
         <button
-          onClick={() =>
-            navigate(`/auth?next=${encodeURIComponent(`/invite/${token}`)}`)
-          }
-          className="btn-primary mt-4"
+          onClick={() => navigate(`/auth?next=${encodeURIComponent(`/invite/${token}`)}`)}
+          className="mt-3 text-xs text-accent hover:underline"
         >
-          Sign in to accept
+          Already have an account? Sign in to join
         </button>
       </CenteredCard>
     );
@@ -168,5 +214,14 @@ function CenteredCard({
         {children}
       </div>
     </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block text-left">
+      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">{label}</span>
+      {children}
+    </label>
   );
 }

@@ -17,8 +17,8 @@
 -- Manifest-declared via `fieldReadScopes`; an admin-configurable
 -- override layer is a planned follow-up.
 --
--- See docs/design-decisions/entity-resolver.md (the trust boundary) and
--- docs/design-decisions/brandon-lego-user-flow.md (H2).
+-- See docs/architecture/entity-resolver.md (the trust boundary) and
+-- docs/walkthroughs/brandon-lego-user-flow.md (H2).
 --
 -- manual recovery if this fails partway:
 --   ALTER TABLE entity_kinds DROP COLUMN field_read_scopes;

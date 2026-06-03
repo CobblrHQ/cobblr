@@ -22,3 +22,4 @@ data/
 # Claude Code per-user overrides
 .claude/settings.local.json
 docker-compose.override.yml
+.agents/

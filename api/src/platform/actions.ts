@@ -209,6 +209,7 @@ function rowToActionRecord(row: {
   invoke_route: string | null;
   invoke_handler: string | null;
   user_invokable?: boolean;
+  args_schema?: unknown;
   version: string;
 }): EntityActionRecord {
   return {
@@ -221,6 +222,8 @@ function rowToActionRecord(row: {
     invoke_route: row.invoke_route,
     invoke_handler: row.invoke_handler,
     user_invokable: row.user_invokable ?? true,
+    args_schema:
+      (row.args_schema as EntityActionRecord["args_schema"]) ?? null,
     version: row.version,
   };
 }

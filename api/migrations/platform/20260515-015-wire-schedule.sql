@@ -1,6 +1,6 @@
 -- Phase 6: schedule as a third wire trigger type.
 --
--- Q4 from docs/design-decisions/wires-and-bundles.md. The
+-- Q4 from docs/architecture/wires-and-bundles.md. The
 -- core-recurrence stock module evaluates RRULE strings and calls
 -- fireEvent() directly when a schedule matches; this migration adds
 -- the schema bits so wires can declare a schedule.
@@ -10,7 +10,7 @@
 -- with the new allowlist that includes 'schedule'.
 --
 -- See:
---   docs/design-decisions/wires-and-bundles.md — Q4 resolution
+--   docs/architecture/wires-and-bundles.md — Q4 resolution
 --   modules/core-recurrence/ — owns the cron-like firing loop
 
 -- Find the existing CHECK constraint by its target column + look-
@@ -35,7 +35,7 @@ alter table entity_action_bindings
   add column trigger_schedule text;
 
 comment on column entity_action_bindings.trigger_schedule is
-  'RRULE string for schedule-triggered wires (Q4). Null for event / user-invoked / on-* triggers. See docs/design-decisions/wires-and-bundles.md.';
+  'RRULE string for schedule-triggered wires (Q4). Null for event / user-invoked / on-* triggers. See docs/architecture/wires-and-bundles.md.';
 
 -- Idempotency state for the core-recurrence scheduler — one row per
 -- wire, tracking last-fired-at so a process restart doesn't double-

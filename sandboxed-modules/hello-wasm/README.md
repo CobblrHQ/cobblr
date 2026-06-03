@@ -5,7 +5,7 @@ Hand-rolled WebAssembly Text format (WAT) → `module.wasm`, with
 every byte through the ABI intentional and documented in source.
 
 For **writing a real module**, use the AssemblyScript SDK + the
-`hello-as` reference instead — see [`docs/SANDBOX_MODULE_AUTHORING.md`](../../docs/SANDBOX_MODULE_AUTHORING.md)
+`hello-as` reference instead — see [`docs/operations/SANDBOX_MODULE_AUTHORING.md`](../../docs/operations/SANDBOX_MODULE_AUTHORING.md)
 and `sandboxed-modules/hello-as/`. This module exists so the ABI's
 shape is readable in 50 lines of WAT for anyone porting the SDK
 to another language, debugging the kernel side, or proving a new

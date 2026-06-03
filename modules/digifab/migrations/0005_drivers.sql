@@ -2,7 +2,7 @@
 -- platform deploy. Built-ins (fdm_monster, mock) live in code; this table
 -- holds the ones a workspace installs: a declarative HTTP manifest, or an
 -- edge-adapter URL. A connection's `type` is the driver key — a built-in
--- key or a row's `key` here. See docs/design-decisions/digifab-drivers.md.
+-- key or a row's `key` here. See docs/modules/digifab-drivers.md.
 create table digifab_drivers (
   id          uuid primary key default gen_random_uuid(),
   key         text not null,                 -- driver key (e.g. "octoprint"); connection.type references this

@@ -3,7 +3,7 @@
 -- corpus queryable: "how often is each flagship template the base?" — a
 -- signal for the templates-first flywheel (business-models/08). The full
 -- chosen template also lives inside context_snapshot; this is the indexable
--- shortcut. See docs/design-decisions/templates-first-authoring.md.
+-- shortcut. See docs/architecture/templates-first-authoring.md.
 --
 -- manual recovery if this fails partway (per-tenant DB; tracked as
 -- `tenant <orgId> / module core-authoring::0002_base_template.sql`):

@@ -20,6 +20,11 @@ interface Props {
   values: Record<string, unknown>;
   onCommit: (name: string, value: unknown) => void;
   className?: string;
+  /** When this entity already exists, its id. Lets the panel resolve
+   *  COMPUTED field values (rendered server-side) so they display here
+   *  the same as on list/views. Omit for a not-yet-saved draft — computed
+   *  fields simply show "—" until the entity exists. */
+  entityId?: string;
   /** Secondary value source — used when the local `values[name]` is
    *  blank. The typical source is the payload of a catalog entry the
    *  entity matches: e.g. an inventory:part with no local `year` set
@@ -42,6 +47,7 @@ export function CustomFieldsPanel({
   className,
   fallbackValues,
   fallbackLabel,
+  entityId,
 }: Props) {
   const { api, orgSlug } = usePlatformWeb();
   const { data } = useQuery({
@@ -54,6 +60,18 @@ export function CustomFieldsPanel({
     () => (data?.items ?? []).slice().sort((a, b) => a.position - b.position),
     [data],
   );
+
+  // Computed fields are rendered server-side at resolve time, so for a
+  // saved entity we fetch the resolved view to display them. Only runs
+  // when the kind actually has a computed field AND the entity exists.
+  const hasComputed = useMemo(() => fields.some((f) => f.type === "computed"), [fields]);
+  const resolved = useQuery({
+    queryKey: ["platform-resolved-entity", orgSlug, entityKind, entityId],
+    queryFn: () => api.lookupEntity(orgSlug, entityKind, entityId!),
+    enabled: !!entityId && hasComputed,
+    staleTime: 10_000,
+  });
+  const computedValues = (resolved.data?.fields ?? {}) as Record<string, unknown>;
 
   // A kind shared by several modules (e.g. machines:machine, extended
   // by 3d-printers / laser-cutters / cnc-machines) accumulates every
@@ -82,22 +100,17 @@ export function CustomFieldsPanel({
   if (fields.length === 0) return null;
   const visible = showAll ? fields : shown;
   return (
-    <div
-      className={
-        "rounded-xl border border-cobble-200 dark:border-cobble-700 bg-cobble-50/50 dark:bg-slate-900 p-5 space-y-3 " +
-        (className ?? "")
-      }
-    >
-      <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
-        // custom fields
-      </div>
+    // No "// custom fields" box or header: to the user there's no stock-vs-custom
+    // distinction — every field they configured is just a field, rendered in the
+    // same grid as the module's native ones.
+    <div className={"space-y-3 " + (className ?? "")}>
       {visible.length > 0 && (
         <div className="grid grid-cols-2 gap-3">
           {visible.map((f) => (
             <FieldRow
               key={f.id}
               def={f}
-              value={values[f.name]}
+              value={f.type === "computed" ? computedValues[f.name] : values[f.name]}
               fallbackValue={fallbackValues?.[f.name]}
               fallbackLabel={fallbackLabel}
               onCommit={(v) => onCommit(f.name, v)}
@@ -138,6 +151,11 @@ function FieldRow({
   fallbackLabel?: string;
   onCommit: (v: unknown) => void;
 }) {
+  // Computed branch — read-only, value derived server-side at resolve
+  // time. Show it (the user configured it) but never let them edit it.
+  if (def.type === "computed") {
+    return <ComputedRow def={def} value={value} fallbackValue={fallbackValue} />;
+  }
   // Dropdown branch — type='text' with choices.
   if (def.type === "text" && def.choices && def.choices.length > 0) {
     return <ChoiceRow def={def} value={value} onCommit={onCommit} />;
@@ -223,6 +241,34 @@ function PlainRow({
             size="inline"
           />
         )}
+      </div>
+    </label>
+  );
+}
+
+/** Read-only display for a computed field. Its value is rendered
+ *  server-side at resolve time (so it shows on detail/list/export); here
+ *  we just surface it, non-editable, with a quiet "computed" marker so the
+ *  user understands why there's no input. */
+function ComputedRow({
+  def,
+  value,
+  fallbackValue,
+}: {
+  def: PlatformFieldDef;
+  value: unknown;
+  fallbackValue?: unknown;
+}) {
+  const shown = !isBlank(value) ? value : fallbackValue;
+  const str = shown == null ? "" : String(shown);
+  return (
+    <label className="block">
+      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+        {def.display_label}
+        <span className="ml-2 italic text-accent normal-case tracking-normal">computed</span>
+      </span>
+      <div className="input flex-1 bg-mortar-50/60 dark:bg-slate-800/60 text-content dark:text-mortar-100 cursor-default select-text">
+        {str || <span className="text-faint dark:text-slate-600">—</span>}
       </div>
     </label>
   );

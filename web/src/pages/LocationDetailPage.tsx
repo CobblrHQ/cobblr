@@ -1,7 +1,7 @@
 // /configuration/locations/:id — full-entity detail view.
 //
 // Locations are now first-class entities (Punch-list #1 from
-// docs/homebox-parity-report.md): notes, description, photos,
+// docs/product/homebox-parity-report.md): notes, description, photos,
 // tags, and a "what's in here" rollup that sweeps every module
 // with location-bearing entities.
 

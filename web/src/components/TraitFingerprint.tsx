@@ -1,7 +1,7 @@
 // Render an entity-kind's 6-axis trait fingerprint inline.
 //
 // One source-of-truth for the display convention in
-// docs/design-decisions/traits.md §"Display convention". Wherever
+// docs/architecture/traits.md §"Display convention". Wherever
 // traits appear in the UI (matched-kinds preview, entity-kind
 // detail surfaces, etc.) they go through here so the format stays
 // consistent.

@@ -12,7 +12,7 @@
 // here: when a kind declares `exposableFields` in its manifest,
 // `lookup()` projects ResolvedEntity.fields to that whitelist
 // before returning. Anything not declared is private to the owning
-// module. See docs/design-decisions/entity-resolver.md.
+// module. See docs/architecture/entity-resolver.md.
 
 import { sql } from "kysely";
 import type {
@@ -24,6 +24,8 @@ import type {
   ResolvedEntity,
 } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
+import { applyComputedFields } from "./computed-fields.js";
+import { normalizeEntitySort } from "./sort.js";
 import { effectiveCapabilities } from "../auth/effective-capabilities.js";
 
 const resolvers = new Map<string, EntityResolver>();
@@ -145,7 +147,7 @@ function applyExposableProjection(
         `[entities] kind '${resolved.kind}' has no exposableFields declared on its manifest. ` +
           `Returning the full ResolvedEntity.fields for cross-module reads. ` +
           `Declare exposableFields on the entity kind to lock in the read-time trust boundary. ` +
-          `See docs/design-decisions/entity-resolver.md.`,
+          `See docs/architecture/entity-resolver.md.`,
       );
     }
     fields = { ...resolved.fields };
@@ -300,7 +302,17 @@ export async function lookup(
   // Own workspace first — common case, no cross-workspace traffic.
   try {
     const resolved = await resolver(orgId, id);
-    if (resolved) return applyExposableProjection(resolved, whitelist, fieldReadScopes);
+    if (resolved) {
+      // Compute AFTER projection: the template renders over exactly what the
+      // reader is allowed to see (exposable natives + `metadata`, minus any
+      // capability-gated field). So a computed template that references a
+      // gated field — e.g. `{{cost}}` — renders empty on an unprivileged /
+      // public read instead of baking the gated value into a string that
+      // survives the trust boundary. Custom-field tier-1 still works because
+      // inventory:part / assets:asset expose `metadata`.
+      const projected = applyExposableProjection(resolved, whitelist, fieldReadScopes);
+      return applyComputedFields(orgId, projected);
+    }
   } catch (err) {
     console.error(`[entities] resolver for ${kind} failed:`, err);
   }
@@ -537,6 +549,9 @@ export async function list(
   query: EntityListQuery = {},
   viewer?: { userId?: string; role?: string },
 ): Promise<EntityListResult> {
+  if (query.sort !== undefined) {
+    query = { ...query, sort: normalizeEntitySort(query.sort) };
+  }
   const resolver = listResolvers.get(kind);
   if (!resolver) return { items: [] };
   const whitelist = await getExposableFields(kind);
@@ -557,8 +572,15 @@ export async function list(
   let total: number | undefined;
   try {
     const result = await resolver(orgId, query);
-    items = result.items.map((r) =>
-      applyExposableProjection(r, whitelist, fieldReadScopes, readScope),
+    // Compute AFTER projection (see lookup() — gated fields are stripped
+    // before the template runs, so a computed field can't leak them).
+    items = await Promise.all(
+      result.items.map(async (r) =>
+        applyComputedFields(
+          orgId,
+          applyExposableProjection(r, whitelist, fieldReadScopes, readScope),
+        ),
+      ),
     );
     total = result.total;
   } catch (err) {

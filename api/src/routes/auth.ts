@@ -17,6 +17,7 @@ import { meta, metaPool } from "../db/meta.js";
 import { provisionTenantDb } from "../db/provision.js";
 import { hashPassword, verifyPassword } from "../auth/password.js";
 import { signSession } from "../auth/jwt.js";
+import { isPlatformAdmin } from "../auth/middleware.js";
 import { publicSignupEnabled } from "../auth/signup-gate.js";
 import * as activity from "../platform/activity.js";
 import { enableDefaultModulesForOrg } from "../modules/enable.js";
@@ -31,6 +32,9 @@ const SignupBody = z.object({
   password: z.string().min(8).max(128),
   display_name: z.string().min(1).max(120),
   org_name: z.string().min(1).max(120),
+  /** Single-use signup-invite token. When public signup is disabled, a
+   *  valid token authorises this registration (the invite-only gate). */
+  invite_token: z.string().max(200).optional(),
 });
 
 const LoginBody = z.object({
@@ -75,6 +79,10 @@ interface AuthResponseUser {
    *  password. Web client redirects to /me/force-password-reset
    *  until the user clears the flag via PATCH /me/password. */
   must_reset_password: boolean;
+  /** True when the user's email is in SUPERADMIN_EMAILS. Must be set
+   *  on the login/signup response too (not just /me) — else the
+   *  super-admin UI shows "access denied" until the next /me refresh. */
+  is_platform_admin: boolean;
 }
 
 interface AuthResponseOrg {
@@ -188,7 +196,7 @@ export async function provisionOrgForUser(
   return { orgId, slug, dbName };
 }
 
-async function buildAuthResponse(userId: string): Promise<AuthResponse> {
+export async function buildAuthResponse(userId: string): Promise<AuthResponse> {
   const user = await meta
     .selectFrom("users")
     .select(["id", "email", "display_name", "must_reset_password"])
@@ -203,7 +211,11 @@ async function buildAuthResponse(userId: string): Promise<AuthResponse> {
     .execute();
 
   const token = await signSession(userId);
-  return { token, user, orgs };
+  return {
+    token,
+    user: { ...user, is_platform_admin: isPlatformAdmin(user.email) },
+    orgs,
+  };
 }
 
 // ────────────────────────── GET /config ──────────────────────────
@@ -229,17 +241,41 @@ authRouter.get("/config", (_req, res) => {
 
 authRouter.post("/signup", async (req, res, next) => {
   try {
-    if (!publicSignupEnabled()) {
-      return res.status(403).json({
-        error: {
-          code: "signup_disabled",
-          message:
-            "Public signup is disabled on this deployment. Ask a platform admin to mint an account.",
-        },
-      });
-    }
     const body = SignupBody.parse(req.body);
     const email = body.email.toLowerCase().trim();
+
+    // Authorisation: either public signup is open, OR the caller holds a
+    // valid single-use signup-invite. Validate (status + email-lock) now;
+    // the atomic claim happens just before user creation (race-safe).
+    let invite: { id: string; invited_email: string | null } | null = null;
+    if (!publicSignupEnabled()) {
+      if (!body.invite_token) {
+        return res.status(403).json({
+          error: {
+            code: "signup_disabled",
+            message:
+              "Public signup is disabled on this deployment. You need an invite link to sign up.",
+          },
+        });
+      }
+      const row = await meta
+        .selectFrom("signup_invites")
+        .select(["id", "invited_email", "expires_at", "consumed_at", "revoked_at"])
+        .where("token", "=", body.invite_token)
+        .executeTakeFirst();
+      const expired = row?.expires_at && new Date(row.expires_at) < new Date();
+      if (!row || row.consumed_at || row.revoked_at || expired) {
+        return res.status(403).json({
+          error: { code: "invite_invalid", message: "This invite link is invalid, already used, or expired." },
+        });
+      }
+      if (row.invited_email && row.invited_email.toLowerCase().trim() !== email) {
+        return res.status(403).json({
+          error: { code: "invite_email_mismatch", message: `This invite is for ${row.invited_email}.` },
+        });
+      }
+      invite = { id: row.id, invited_email: row.invited_email };
+    }
 
     // Cheap existence check before the more expensive bcrypt+insert.
     const existing = await meta
@@ -251,6 +287,25 @@ authRouter.post("/signup", async (req, res, next) => {
       return res
         .status(409)
         .json({ error: { code: "email_taken", message: "That email is already registered." } });
+    }
+
+    // Atomically claim the invite (single-use, race-safe) right before we
+    // create the account. If another request beat us to it, the conditional
+    // update touches no rows → reject.
+    if (invite) {
+      const claimed = await meta
+        .updateTable("signup_invites")
+        .set({ consumed_at: new Date() })
+        .where("id", "=", invite.id)
+        .where("consumed_at", "is", null)
+        .where("revoked_at", "is", null)
+        .returning("id")
+        .executeTakeFirst();
+      if (!claimed) {
+        return res.status(403).json({
+          error: { code: "invite_invalid", message: "This invite link was just used." },
+        });
+      }
     }
 
     const password_hash = await hashPassword(body.password);
@@ -267,6 +322,16 @@ authRouter.post("/signup", async (req, res, next) => {
       .returning("id")
       .executeTakeFirstOrThrow();
     const userId = userRow.id;
+
+    // Attribute the consumed invite to the new user (the claim above only
+    // stamped consumed_at, before the user existed).
+    if (invite) {
+      await meta
+        .updateTable("signup_invites")
+        .set({ consumed_by_user: userId })
+        .where("id", "=", invite.id)
+        .execute();
+    }
 
     // Phase 2: provision the user's first org.
     await provisionOrgForUser(userId, body.org_name);
@@ -294,6 +359,40 @@ authRouter.post("/signup", async (req, res, next) => {
       });
     }
     return next(err);
+  }
+});
+
+// ─────────────────── GET /signup-invite/:token ───────────────────
+// Public, no auth: the /join/:token page calls this to render before the
+// visitor signs up. Returns the invite's status (+ the email it's locked to,
+// if any) without leaking who minted it.
+authRouter.get("/signup-invite/:token", async (req, res, next) => {
+  try {
+    const token = req.params.token;
+    if (!token) {
+      res.status(400).json({ error: { code: "missing_token", message: "token required" } });
+      return;
+    }
+    const row = await meta
+      .selectFrom("signup_invites")
+      .select(["invited_email", "note", "expires_at", "consumed_at", "revoked_at"])
+      .where("token", "=", token)
+      .executeTakeFirst();
+    if (!row) {
+      res.status(404).json({ error: { code: "not_found", message: "Invite not found." } });
+      return;
+    }
+    const expired = row.expires_at && new Date(row.expires_at) < new Date();
+    const status = row.revoked_at
+      ? "revoked"
+      : row.consumed_at
+        ? "consumed"
+        : expired
+          ? "expired"
+          : "open";
+    res.json({ status, invited_email: row.invited_email, note: row.note });
+  } catch (err) {
+    next(err);
   }
 });
 

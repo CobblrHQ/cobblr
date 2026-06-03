@@ -1,8 +1,18 @@
 import { Router } from "express";
+import { sql, type Kysely } from "kysely";
+import { platform } from "@cobblr/platform-contract";
 import { assetsRouter } from "./assets.js";
 import { registerAssetsResolvers } from "./resolvers.js";
 
 registerAssetsResolvers();
+
+// Per-instance item count — lets the nav hide an empty auto-created default
+// instance once the workspace has named ones.
+platform().instances.registerItemCounter("assets", async (orgId, instance) => {
+  const db = (await platform().tenants.getDb(orgId)) as Kysely<unknown>;
+  const r = await sql<{ c: number }>`select count(*)::int as c from assets_assets where instance = ${instance}`.execute(db);
+  return r.rows[0]?.c ?? 0;
+});
 
 const router = Router({ mergeParams: true });
 router.use("/assets", assetsRouter);

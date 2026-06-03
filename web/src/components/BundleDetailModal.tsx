@@ -73,7 +73,8 @@ export function BundleDetailModal(props: Props) {
   });
 
   const install = useMutation({
-    mutationFn: (manifest: PlatformBundleManifest) => api.installBundle(slug, manifest),
+    mutationFn: (vars: { manifest: PlatformBundleManifest; confirm: boolean }) =>
+      api.installBundle(slug, vars.manifest, vars.confirm),
     onSuccess: (r) => {
       toast.success(
         `Installed ${r.bundle.name} v${r.bundle.version} — ${r.applied.wires} wire(s), ${r.applied.field_defs} field def(s).`,
@@ -84,8 +85,10 @@ export function BundleDetailModal(props: Props) {
       onClose();
     },
     onError: (e: unknown) => {
-      const msg = e instanceof ApiError ? e.message : (e as Error).message;
-      toast.error(msg);
+      // `needs_enable` is handled by handleInstall's confirm prompt —
+      // don't also surface it as a raw error toast.
+      if (e instanceof ApiError && e.code === "needs_enable") return;
+      toast.error(e instanceof ApiError ? e.message : (e as Error).message);
     },
   });
 
@@ -119,6 +122,37 @@ export function BundleDetailModal(props: Props) {
     props.mode === "installed" ? props.bundle.author : manifest?.author ?? null;
   const description =
     props.mode === "installed" ? props.bundle.description : (manifest?.description ?? null);
+
+  // Install — transparently offering to enable any module the bundle
+  // depends on. The backend answers 409 `needs_enable` with the list of
+  // missing modules; instead of dead-ending on that error, we ask once
+  // and re-install with confirm:true (enable + install in one step).
+  async function handleInstall() {
+    if (!manifest) return;
+    try {
+      await install.mutateAsync({ manifest, confirm: false });
+    } catch (e) {
+      if (e instanceof ApiError && e.code === "needs_enable") {
+        const mods =
+          (e.details as { needs_enable?: string[] } | undefined)?.needs_enable ?? [];
+        const list = mods
+          .map((m) => m.charAt(0).toUpperCase() + m.slice(1))
+          .join(", ");
+        const plural = mods.length > 1;
+        const ok = await confirm({
+          title: `Enable ${plural ? "modules" : "module"} for this bundle?`,
+          message: `"${name}" needs the ${list} module${plural ? "s" : ""}, which ${
+            plural ? "aren't" : "isn't"
+          } enabled in this workspace yet. Enable ${
+            plural ? "them" : "it"
+          } and install in one step?`,
+          confirmLabel: "Enable & install",
+        });
+        if (ok) await install.mutateAsync({ manifest, confirm: true }).catch(() => {});
+      }
+      // Any other error was already toasted by the mutation's onError.
+    }
+  }
 
   // For installed: wires + field defs come from the server (live state).
   // For featured: we render the manifest's declared wires + field defs
@@ -352,7 +386,7 @@ export function BundleDetailModal(props: Props) {
             </button>
           ) : (
             <button
-              onClick={() => manifest && install.mutate(manifest)}
+              onClick={() => void handleInstall()}
               disabled={
                 !manifest || install.isPending || props.alreadyInstalled === true
               }

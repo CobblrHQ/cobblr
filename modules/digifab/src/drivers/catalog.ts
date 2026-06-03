@@ -7,7 +7,7 @@
 // This is the first non-module population of the eventual UNIFIED registry /
 // app store (modules + bundles + drivers, one browse surface). For now it's
 // a digifab-local shelf; the catalog SHAPE (id/name/summary/manifest) is
-// deliberately registry-ready. See docs/design-decisions/digifab-drivers.md.
+// deliberately registry-ready. See docs/modules/digifab-drivers.md.
 
 import { DriverManifest } from "./manifest.js";
 import octoprint from "../../drivers-catalog/octoprint.json" with { type: "json" };

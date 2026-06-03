@@ -50,7 +50,7 @@ export function requireRole(req: Request, res: Response, ...allowed: OrgRole[]):
  *  workspace_capability_grants. Opt-in per action (default is still
  *  role-based gating). Usage:
  *    if (!(await requireCapability(req, res, "inventory:create-part"))) return;
- *  See docs/design-decisions/member-portal-and-permissions.md. */
+ *  See docs/modules/member-portal-and-permissions.md. */
 export async function requireCapability(
   req: Request,
   res: Response,

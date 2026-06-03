@@ -11,7 +11,7 @@
 // two views here so super-admin's audit page can show "module X is
 // version Y, signed by Z, sha256 W".
 //
-// See docs/design-decisions/marketplace.md §4 + §6.
+// See docs/modules/marketplace.md §4 + §6.
 
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";

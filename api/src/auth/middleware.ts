@@ -20,7 +20,7 @@ const SUPERADMIN_EMAILS: Set<string> = new Set(
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean),
 );
-function isPlatformAdmin(email: string): boolean {
+export function isPlatformAdmin(email: string): boolean {
   return SUPERADMIN_EMAILS.has(email.toLowerCase());
 }
 

@@ -22,7 +22,7 @@
 -- means we never collide across workspaces — workspaces are
 -- DB-isolated.
 --
--- See docs/homebox-comparison.md for the full rationale.
+-- See docs/product/homebox-comparison.md for the full rationale.
 
 create sequence if not exists inventory_parts_asset_id_seq start with 1;
 

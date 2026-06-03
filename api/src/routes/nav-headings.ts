@@ -1,6 +1,6 @@
 // /orgs/:slug/nav-headings — user-defined navbar headings (org-wide).
 // Read by any member (the nav renders them); mutated by owner/admin.
-// See docs/design-decisions/nav-builder.md.
+// See docs/architecture/nav-builder.md.
 
 import { Router } from "express";
 import { z } from "zod";

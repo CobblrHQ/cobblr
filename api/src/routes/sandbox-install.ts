@@ -42,7 +42,8 @@ const InstallBody = z.object({
 });
 
 const DEFAULT_REGISTRY =
-  process.env.COBBLR_REGISTRY_URL ??
+  // `||` not `??` — compose passes an EMPTY string when unset.
+  process.env.COBBLR_REGISTRY_URL ||
   "https://raw.githubusercontent.com/CobblrHQ/registry/main/modules.json";
 
 function authHeaders(url: string): Record<string, string> {

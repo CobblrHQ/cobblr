@@ -2,7 +2,7 @@
 //
 // Backs the member portal feature (a slimmed-down front-end shell)
 // + per-action capability grants. See
-// docs/design-decisions/member-portal-and-permissions.md.
+// docs/modules/member-portal-and-permissions.md.
 
 import { Router } from "express";
 import { z } from "zod";

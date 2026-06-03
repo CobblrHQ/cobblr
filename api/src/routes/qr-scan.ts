@@ -5,7 +5,7 @@
 // core_labels_qr_scans table (best-effort). Returns a JSON payload
 // the web shell uses to navigate or surface a confirmation card.
 //
-// See docs/design-decisions/core-labels-qr.md.
+// See docs/modules/core-labels-qr.md.
 
 import { Router } from "express";
 import { sql } from "kysely";

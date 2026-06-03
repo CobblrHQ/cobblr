@@ -8,6 +8,8 @@
 //     so platform.entities.lookup("inventory:part", id) works.
 
 import { Router } from "express";
+import { sql, type Kysely } from "kysely";
+import { platform } from "@cobblr/platform-contract";
 import { categoriesRouter } from "./categories.js";
 import { partsRouter } from "./parts.js";
 import { allocationsRouter } from "./allocations.js";
@@ -17,6 +19,14 @@ import { registerInventoryActionHandlers } from "./action-handlers.js";
 
 registerInventoryResolvers();
 registerInventoryActionHandlers();
+
+// Per-instance item count — lets the nav hide an empty auto-created default
+// instance once the workspace has named ones (parts are the primary entity).
+platform().instances.registerItemCounter("inventory", async (orgId, instance) => {
+  const db = (await platform().tenants.getDb(orgId)) as Kysely<unknown>;
+  const r = await sql<{ c: number }>`select count(*)::int as c from inventory_parts where instance = ${instance}`.execute(db);
+  return r.rows[0]?.c ?? 0;
+});
 
 const router = Router({ mergeParams: true });
 

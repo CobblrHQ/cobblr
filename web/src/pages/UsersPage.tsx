@@ -1,6 +1,6 @@
 // /configuration/users — admin-only. Mint new workspace members
 // with a temp password they reset on first login. No-email
-// onboarding flow per docs/PRODUCTION_DEPLOY.md.
+// onboarding flow per docs/operations/PRODUCTION_DEPLOY.md.
 //
 // After create, the response carries the plaintext temp password
 // ONCE. We render it in a "copy this and hand it off" card the

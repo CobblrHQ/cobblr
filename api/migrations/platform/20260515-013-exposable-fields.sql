@@ -11,9 +11,9 @@
 -- manifest. Existing modules will get them filled in incrementally.
 --
 -- See:
---   docs/design-decisions/entity-resolver.md — the trust boundary
---   docs/design-decisions/manifest-contract.md — manifest field spec
---   docs/design-decisions/build-plan.md — Phase 1
+--   docs/architecture/entity-resolver.md — the trust boundary
+--   docs/architecture/manifest-contract.md — manifest field spec
+--   docs/product/build-plan.md — Phase 1
 
 alter table entity_kinds
   add column exposable_fields jsonb;

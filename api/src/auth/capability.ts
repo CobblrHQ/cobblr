@@ -31,7 +31,7 @@ export function requireRole(req: Request, res: Response, ...allowed: OrgRole[]):
 /** Gate by a specific action capability. Owner/admin pass implicitly;
  *  members/guests need an explicit grant (workspace_capability_grants
  *  or a custom-role bundle) — see platform().auth.userHasCapability.
- *  docs/design-decisions/member-portal-and-permissions.md. */
+ *  docs/modules/member-portal-and-permissions.md. */
 export async function requireCapability(
   req: Request,
   res: Response,

@@ -6,7 +6,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Copy, Download, Package, Plus, Share2, X } from "lucide-react";
 import { Link } from "react-router-dom";
-import { ApiError, api, type PlatformBundle, type PlatformBundleManifest, type RegistryDriverEntry, type RegistryModuleEntry } from "../lib/api";
+import { ApiError, api, type PlatformBundle, type PlatformBundleManifest, type RegistryDriverEntry, type RegistryModuleEntry, type RegistryRendererEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useAuth } from "../auth/AuthContext";
 import { FEATURED_BUNDLES, type FeaturedBundle } from "../lib/featured-bundles";
@@ -56,6 +56,12 @@ export function BundlesPage() {
     queryKey: ["registry-index", sources],
     queryFn: () => api.getRegistryIndex(sources),
   });
+  const installedRenderers = useQuery({
+    queryKey: ["installed-renderers", slug],
+    queryFn: () => api.getInstalledRenderers(slug),
+    enabled: !!slug,
+  });
+  const installedRendererNames = new Set((installedRenderers.data?.items ?? []).map((r) => r.name));
   const officialOk = registry.data?.sources.find((s) => s.label === "official")?.ok;
   const catalog: Array<FeaturedBundle & { source?: string }> =
     registry.data && registry.data.bundles.length > 0
@@ -130,6 +136,38 @@ export function BundlesPage() {
       if (!ok) return;
     }
     installModule.mutate(m);
+  }
+
+  // ── Renderer lane (sandboxed file-preview renderers) ──
+  const installRenderer = useMutation({
+    mutationFn: (r: RegistryRendererEntry) =>
+      api.installRenderer(slug, {
+        name: r.name,
+        version: r.version,
+        exts: r.exts,
+        renderer_js: r.renderer_js,
+        pubkey: r.pubkey,
+        signature: r.signature,
+      }),
+    onSuccess: (_r, r) => {
+      toast.success(`Installed the ${r.name} renderer (.${r.exts.join(", .")}).`);
+      void qc.invalidateQueries({ queryKey: ["installed-renderers", slug] });
+    },
+    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : (e as Error).message),
+  });
+  async function onInstallRenderer(r: RegistryRendererEntry) {
+    if (r.trust !== "official") {
+      const ok = await confirm({
+        title: `Install ${r.name}?`,
+        message:
+          `Cobblr hasn't reviewed this renderer${r.source !== "official" ? ` (source: ${r.source})` : ""}. ` +
+          `It runs fully sandboxed — no network, no access to your data — it only ever sees the file you preview. Install anyway?`,
+        confirmLabel: "Install anyway",
+        destructive: true,
+      });
+      if (!ok) return;
+    }
+    installRenderer.mutate(r);
   }
 
   function installFromPaste() {
@@ -385,6 +423,55 @@ export function BundlesPage() {
                 )}
               </li>
             ))}
+          </ul>
+        )}
+      </div>
+
+      {/* ── Renderers lane (sandboxed file-preview renderers) ── */}
+      <div>
+        <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-1">
+          // renderers
+        </div>
+        <p className="text-[11px] text-faint dark:text-slate-500 mb-2">
+          File-preview renderers for extra formats — they run fully sandboxed (no network, no data
+          access), so a new file type previews without touching anything else.
+        </p>
+        {(registry.data?.renderers.length ?? 0) === 0 ? (
+          <div className="text-xs text-faint dark:text-slate-500 italic">No renderers in the registry yet.</div>
+        ) : (
+          <ul className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            {registry.data!.renderers.map((r) => {
+              const installed = installedRendererNames.has(r.name);
+              return (
+                <li key={r.name} className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 flex items-start gap-3">
+                  <div className="text-2xl shrink-0">{r.glyph ?? "🖼️"}</div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium text-content dark:text-mortar-100 text-sm flex items-center gap-2 flex-wrap">
+                      {r.name}
+                      <span className="text-[10px] font-mono text-faint">.{r.exts.join(" .")}</span>
+                      {r.trust === "official" ? (
+                        <span className="text-[10px] font-mono uppercase tracking-widest text-moss-600 bg-moss-50 dark:bg-moss-950/30 border border-moss-200 dark:border-moss-800 rounded px-1.5 py-0.5" title="Signed by a Cobblr-vouched key">verified</span>
+                      ) : (
+                        <span className="text-[10px] font-mono uppercase tracking-widest text-faint border border-line dark:border-slate-700 rounded px-1.5 py-0.5" title={`Cobblr hasn't reviewed this — from ${r.source}`}>unverified</span>
+                      )}
+                    </div>
+                    {(r.blurb || r.description) && <div className="text-xs text-content dark:text-mortar-200 mt-1.5">{r.blurb || r.description}</div>}
+                  </div>
+                  {installed ? (
+                    <span className="shrink-0 text-[10px] font-mono uppercase tracking-widest text-moss-600 self-center">installed</span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => void onInstallRenderer(r)}
+                      disabled={installRenderer.isPending}
+                      className="shrink-0 rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-xs font-medium px-3 py-1.5 transition disabled:opacity-50"
+                    >
+                      Install
+                    </button>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>

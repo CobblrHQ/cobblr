@@ -40,6 +40,7 @@
 
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
+import { evictTenantPool } from "../db/tenant.js";
 import type { FieldDefType } from "../db/schema.js";
 
 interface LegacyFieldDef {
@@ -448,17 +449,32 @@ export async function migrateLensModules(): Promise<{
   let bundlesInstalled = 0;
   let fieldsMoved = 0;
   const orgs = new Set<string>();
+  // Group by org so each tenant pool opens/closes once. Pre-`listen`,
+  // serial; leaving every org's pool cached open across the whole boot
+  // sequence exhausts Postgres `max_connections`. Pool reopens lazily.
+  const byOrg = new Map<string, string[]>();
   for (const t of targets) {
+    const list = byOrg.get(t.org_id);
+    if (list) list.push(t.module_name);
+    else byOrg.set(t.org_id, [t.module_name]);
+  }
+  for (const [orgId, moduleNames] of byOrg) {
     try {
-      const out = await migrateOne(t.org_id, t.module_name);
-      orgs.add(t.org_id);
-      if (out.bundleInstalled) bundlesInstalled++;
-      fieldsMoved += out.fieldsMoved;
-    } catch (err) {
-      console.error(
-        `[migrate-lens] ${t.module_name} on org ${t.org_id} failed:`,
-        (err as Error).message,
-      );
+      for (const moduleName of moduleNames) {
+        try {
+          const out = await migrateOne(orgId, moduleName);
+          orgs.add(orgId);
+          if (out.bundleInstalled) bundlesInstalled++;
+          fieldsMoved += out.fieldsMoved;
+        } catch (err) {
+          console.error(
+            `[migrate-lens] ${moduleName} on org ${orgId} failed:`,
+            (err as Error).message,
+          );
+        }
+      }
+    } finally {
+      await evictTenantPool(orgId);
     }
   }
   return { orgsTouched: orgs.size, bundlesInstalled, fieldsMoved };

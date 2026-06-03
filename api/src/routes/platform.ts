@@ -9,11 +9,12 @@ import { z } from "zod";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { requireAuth } from "../auth/middleware.js";
-import { requireCapability } from "../auth/capability.js";
+import { requireCapability, requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
 import { meta } from "../db/meta.js";
 import { listEntries } from "../modules/registry.js";
 import * as activity from "../platform/activity.js";
+import { clearComputedDefsCache } from "../platform/computed-fields.js";
 import { effectiveAppliesTo, matchAction } from "../platform/actions.js";
 import type { ActionAppliesToDecl } from "@cobblr/platform-contract";
 
@@ -68,7 +69,7 @@ platformOrgRouter.get(
 // GET /entities/:kind/:id/pairings?rel=...&dir=in|out&kind=...
 //   → { items: ResolvedEntity[] }  — already exposable-field-projected
 //
-// See docs/design-decisions/entity-resolver.md.
+// See docs/architecture/entity-resolver.md.
 platformOrgRouter.get(
   "/:slug/entities/:kind/:id/pairings",
   requireAuth,
@@ -347,7 +348,7 @@ platformOrgRouter.post(
 
 // ──────────────────────── bindings (wires) ─────────────────────────
 
-// Q1 wire target — see docs/design-decisions/wires-and-bundles.md.
+// Q1 wire target — see docs/architecture/wires-and-bundles.md.
 // Mirror of the WireTarget schema in @cobblr/platform-contract; kept
 // inline here to keep the route's request validation independent of
 // the manifest contract (different concerns, same shape).
@@ -620,7 +621,7 @@ const FieldDefCreate = z.object({
   entity_kind: z.string(),
   name: z.string().regex(/^[a-z][a-z0-9_]*$/),
   display_label: z.string().min(1),
-  type: z.enum(["text", "number", "boolean", "date", "url"]),
+  type: z.enum(["text", "number", "boolean", "date", "url", "computed"]),
   required: z.boolean().optional(),
   position: z.number().int().optional(),
   /** When type='text', renders as a dropdown of these choices. */
@@ -628,9 +629,15 @@ const FieldDefCreate = z.object({
   /** Built-in renderer id for how the value should be drawn on
    *  detail pages + list rows. Null/omit = plain text. */
   renderer: FieldRenderer.nullable().optional(),
+  /** When type='computed': the {{ }} template rendered read-only at
+   *  resolve time. Required for computed; ignored otherwise. */
+  template: z.string().max(2000).optional(),
 }).refine(
   (d) => !d.choices || d.type === "text",
   { message: "choices is only valid for type='text'", path: ["choices"] },
+).refine(
+  (d) => d.type !== "computed" || (d.template && d.template.trim().length > 0),
+  { message: "template is required for type='computed'", path: ["template"] },
 );
 
 const FieldDefPatch = z.object({
@@ -639,6 +646,7 @@ const FieldDefPatch = z.object({
   position: z.number().int().optional(),
   choices: z.array(z.string().max(120)).nullable().optional(),
   renderer: FieldRenderer.nullable().optional(),
+  template: z.string().max(2000).nullable().optional(),
 });
 
 platformOrgRouter.get(
@@ -657,6 +665,99 @@ platformOrgRouter.get(
       if (kind) q = q.where("entity_kind", "=", kind);
       const items = await q.execute();
       res.json({ items });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// Native-field presentation overrides (relabel / show-hide) for a kind. The
+// entity forms read this to reshape their native fields; the config UI writes
+// it. Mirrors /field-defs but targets the fields the module already declares.
+platformOrgRouter.get(
+  "/:slug/native-field-overrides",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      const kind = typeof req.query.kind === "string" ? req.query.kind : null;
+      let q = meta
+        .selectFrom("native_field_overrides")
+        .selectAll()
+        .where("org_id", "=", req.tenant!.org.id)
+        .orderBy("entity_kind")
+        .orderBy("position");
+      if (kind) q = q.where("entity_kind", "=", kind);
+      const items = await q.execute();
+      res.json({ items });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+const NativeFieldOverrideBody = z.object({
+  entity_kind: z.string().min(1),
+  name: z.string().min(1),
+  display_label: z.string().max(160).nullable().optional(),
+  hidden: z.boolean().optional(),
+  position: z.number().int().optional(),
+});
+
+platformOrgRouter.put(
+  "/:slug/native-field-overrides",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      if (!requireRole(req, res, "owner", "admin")) return;
+      const parsed = NativeFieldOverrideBody.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: { code: "invalid_body", message: "Bad override", details: parsed.error.issues } });
+        return;
+      }
+      const d = parsed.data;
+      const row = await meta
+        .insertInto("native_field_overrides")
+        .values({
+          org_id: req.tenant!.org.id,
+          entity_kind: d.entity_kind,
+          name: d.name,
+          display_label: d.display_label ?? null,
+          hidden: d.hidden ?? false,
+          position: d.position ?? 0,
+        })
+        .onConflict((c) =>
+          c.columns(["org_id", "entity_kind", "name"]).doUpdateSet({
+            display_label: d.display_label ?? null,
+            hidden: d.hidden ?? false,
+            position: d.position ?? 0,
+            updated_at: new Date(),
+          }),
+        )
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      res.json(row);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+platformOrgRouter.delete(
+  "/:slug/native-field-overrides/:entityKind/:name",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      if (!requireRole(req, res, "owner", "admin")) return;
+      await meta
+        .deleteFrom("native_field_overrides")
+        .where("org_id", "=", req.tenant!.org.id)
+        .where("entity_kind", "=", req.params.entityKind!)
+        .where("name", "=", req.params.name!)
+        .execute();
+      res.status(204).end();
     } catch (err) {
       next(err);
     }
@@ -690,9 +791,11 @@ platformOrgRouter.post(
             ? (sql`${JSON.stringify(parsed.data.choices)}::jsonb` as unknown as string[])
             : null,
           renderer: parsed.data.renderer ?? null,
+          template: parsed.data.type === "computed" ? parsed.data.template ?? null : null,
         })
         .returningAll()
         .executeTakeFirstOrThrow();
+      clearComputedDefsCache();
       await activity.log({
         orgId: req.tenant!.org.id,
         action: "field_def_created",
@@ -738,6 +841,7 @@ platformOrgRouter.patch(
           : null;
       }
       if (parsed.data.renderer !== undefined) updates.renderer = parsed.data.renderer;
+      if (parsed.data.template !== undefined) updates.template = parsed.data.template;
       if (Object.keys(updates).length === 0) {
         res.status(400).json({ error: { code: "no_changes", message: "no fields to update" } });
         return;
@@ -759,6 +863,7 @@ platformOrgRouter.patch(
         ref: { module: null, entityType: "field_def", entityId: updated.id },
         diff: parsed.data,
       });
+      clearComputedDefsCache();
       res.json(updated);
     } catch (err) {
       next(err);
@@ -792,6 +897,7 @@ platformOrgRouter.delete(
         action: "field_def_deleted",
         ref: { module: null, entityType: "field_def", entityId: deleted.id },
       });
+      clearComputedDefsCache();
       res.status(204).end();
     } catch (err) {
       next(err);

@@ -2,7 +2,7 @@
 // install / list / uninstall machine-manager drivers at runtime. A user
 // adds OctoPrint/Duet/… by installing a declarative manifest — no platform
 // deploy. Built-ins (fdm_monster, mock) are always available and not stored.
-// See docs/design-decisions/digifab-drivers.md.
+// See docs/modules/digifab-drivers.md.
 
 import { Router } from "express";
 import { sql } from "kysely";

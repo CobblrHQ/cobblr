@@ -1,0 +1,50 @@
+{
+  "name": "@cobblr/core-file-preview",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/module.js",
+  "exports": {
+    ".": {
+      "import": "./dist/module.js",
+      "types": "./dist/module.d.ts"
+    },
+    "./ui": {
+      "types": "./src/ui/index.tsx",
+      "import": "./src/ui/index.tsx"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cobblr/platform-contract": "*",
+    "express": "^4.21.2",
+    "fflate": "^0.8.2",
+    "kysely": "^0.27.5",
+    "occt-import-js": "^0.0.23",
+    "three": "^0.171.0",
+    "zod": "^3.24.1"
+  },
+  "peerDependencies": {
+    "@cobblr/platform-web": "*",
+    "react": "^19"
+  },
+  "peerDependenciesMeta": {
+    "@cobblr/platform-web": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@cobblr/platform-web": "*",
+    "@types/express": "^4.17.21",
+    "@types/react": "^19.0.2",
+    "@types/three": "^0.171.0",
+    "react": "^19.0.0",
+    "typescript": "^5.7.2"
+  }
+}

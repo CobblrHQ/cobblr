@@ -20,6 +20,21 @@
     --c-accent: 111 92 68;    /* cobble-600 #6F5C44 — links / focus */
   }
 
+  /* Dark-mode TEXT tokens. The :root defaults above are the LIGHT
+     palette; without these, any bare semantic text class (text-content
+     / text-muted / text-faint / text-accent used WITHOUT a `dark:`
+     override) rendered dark-on-dark in dark mode — e.g. raw <input>
+     values + field labels. Components that already pair a `dark:`
+     variant keep winning (higher specificity). We override only the
+     TEXT + accent tokens here, NOT surface/canvas/line, so backgrounds
+     and borders are untouched (those rely on explicit `dark:bg-*`). */
+  html.dark:not([data-ws-themed]) {
+    --c-content: 244 239 229; /* mortar-100 #F4EFE5 — primary text */
+    --c-muted: 180 186 194;   /* #B4BAC2 — secondary (matches the muted-lift below) */
+    --c-faint: 156 162 172;   /* #9CA2AC — faint */
+    --c-accent: 189 159 119;  /* cobble-300 #BD9F77 — links read on dark */
+  }
+
   /* color-scheme makes the browser render *native* controls —
      <select> chrome, checkboxes, scrollbars, date pickers — in the
      matching light/dark variant. Without this, native selects stay
@@ -36,6 +51,12 @@
     @apply h-full bg-canvas text-content font-sans antialiased
            dark:bg-slate-800 dark:text-mortar-100;
   }
+  /* Native form controls default to the UA `fieldtext` colour, NOT the
+     inherited page colour — so a raw <input> that sets only a dark
+     background (no text-* class) renders dark-on-dark in dark mode.
+     Inherit the page text colour instead; any explicit text-* utility
+     on the control still wins. */
+  input, textarea, select { color: inherit; }
   body {
     /* Subtle paper grain — brand identity calls for slight imperfection
        over algorithmic-perfect flat. Faded in dark mode where lit

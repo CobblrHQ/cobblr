@@ -13,7 +13,7 @@
 // only CSV upload as the import path — no module code required for
 // static datasets.
 //
-// See docs/design-decisions/catalogs.md for the full design.
+// See docs/modules/catalogs.md for the full design.
 
 import { defineModule } from "@cobblr/platform-contract";
 

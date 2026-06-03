@@ -1,0 +1,42 @@
+{
+  "manifest": {
+    "id": "cobblr.flagship.pet-care",
+    "name": "Pet Care",
+    "version": "0.1.0",
+    "description": "Each pet's vitals and schedule in one place — species, breed, birthday, vet, microchip, current weight, and the dates that matter: next vet visit and when the rabies shot is due. A 'My pets' view groups by species, and the vet/vaccination dates land on your calendar automatically so nothing lapses.",
+    "author": "Cobblr",
+    "requires": [
+      { "module": "assets" }
+    ],
+    "field_defs": [
+      { "entity_kind": "assets:asset", "name": "species", "display_label": "Species", "type": "text", "position": 1, "choices": ["Dog", "Cat", "Rabbit", "Bird", "Reptile", "Fish", "Horse", "Other"] },
+      { "entity_kind": "assets:asset", "name": "breed", "display_label": "Breed", "type": "text", "position": 2 },
+      { "entity_kind": "assets:asset", "name": "birthdate", "display_label": "Birthday", "type": "date", "position": 3 },
+      { "entity_kind": "assets:asset", "name": "weight_kg", "display_label": "Weight (kg)", "type": "number", "position": 4 },
+      { "entity_kind": "assets:asset", "name": "vet", "display_label": "Vet", "type": "text", "position": 5 },
+      { "entity_kind": "assets:asset", "name": "microchip", "display_label": "Microchip", "type": "text", "position": 6 },
+      { "entity_kind": "assets:asset", "name": "next_vet_visit", "display_label": "Next vet visit", "type": "date", "position": 7 },
+      { "entity_kind": "assets:asset", "name": "rabies_due", "display_label": "Rabies due", "type": "date", "position": 8 }
+    ],
+    "field_overrides": [
+      { "entity_kind": "assets:asset", "name": "manufacturer", "hidden": true },
+      { "entity_kind": "assets:asset", "name": "model", "hidden": true },
+      { "entity_kind": "assets:asset", "name": "serial_number", "hidden": true },
+      { "entity_kind": "assets:asset", "name": "short_name", "hidden": true },
+      { "entity_kind": "assets:asset", "name": "excitement", "hidden": true }
+    ],
+    "saved_views": [
+      {
+        "entity_kind": "assets:asset",
+        "name": "My pets",
+        "view_type": "table",
+        "pinned": true,
+        "config": {
+          "group_by": "species",
+          "visible_fields": ["title", "breed", "weight_kg", "next_vet_visit", "rabies_due"]
+        }
+      }
+    ]
+  },
+  "confirm": true
+}

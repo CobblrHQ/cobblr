@@ -10,7 +10,7 @@
     }
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "asc assembly/index.ts --noEmit"
   },
   "devDependencies": {
     "assemblyscript": "^0.27.29",

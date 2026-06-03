@@ -40,16 +40,18 @@ export default defineModule({
           { name: "description", type: "text", role: "summary" },
           { name: "status", type: "text" },
           { name: "priority", type: "text" },
+          { name: "start_date", type: "date" },
           { name: "target_date", type: "date" },
         ],
-        // Public face — everything except internal flags. Status + target_date
-        // are needed for cross-module displays (Kanban over multiple modules,
-        // due-date views, notification context).
+        // Public face — everything except internal flags. Status + start/target
+        // dates are needed for cross-module displays (Kanban over multiple
+        // modules, due-date + gantt-timeline views, notification context).
         exposableFields: [
           "name",
           "description",
           "status",
           "priority",
+          "start_date",
           "target_date",
         ],
         detailRoute: "/projects/{id}",

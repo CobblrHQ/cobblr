@@ -16,6 +16,8 @@ const TagCreate = z.object({
 
 const TagUpdate = TagCreate.partial();
 
+const TagMerge = z.object({ into_tag_id: z.string().uuid() });
+
 const AttachBody = z.object({
   tag_name: z.string().min(1).max(60).optional(),
   tag_id: z.string().uuid().optional(),
@@ -141,6 +143,80 @@ tagsRouter.delete(
       name: row.name,
     });
     res.status(204).end();
+  }),
+);
+
+// POST /tags/:id/merge — reassign every attachment from this tag to
+// `into_tag_id`, then delete this tag. Assignments that would collide with
+// an existing attachment on the target (the unique (tag_id, source_*) key)
+// are dropped rather than duplicated. Idempotent-ish: a second merge 404s
+// (source already gone). Consolidates accidental duplicate tags.
+tagsRouter.post(
+  "/tags/:id/merge",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const id = req.params.id;
+    if (!id) {
+      res.status(400).json({ error: { code: "missing_id", message: "id required" } });
+      return;
+    }
+    const parsed = TagMerge.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const into = parsed.data.into_tag_id;
+    if (into === id) {
+      res.status(400).json({ error: { code: "merge_into_self", message: "cannot merge a tag into itself" } });
+      return;
+    }
+    const db = tenantDb(req);
+    const ctx = tenantContext(req);
+    const [source, target] = await Promise.all([
+      db.selectFrom("core_tags_tags").select(["id", "name"]).where("id", "=", id).executeTakeFirst(),
+      db.selectFrom("core_tags_tags").select(["id", "name"]).where("id", "=", into).executeTakeFirst(),
+    ]);
+    if (!source) {
+      res.status(404).json({ error: { code: "not_found", message: "source tag not found" } });
+      return;
+    }
+    if (!target) {
+      res.status(404).json({ error: { code: "target_not_found", message: "target tag not found" } });
+      return;
+    }
+
+    const moved = await db.transaction().execute(async (trx) => {
+      // Drop source assignments that would collide with an existing target
+      // assignment on the same entity (would violate the unique key).
+      await sql`
+        delete from core_tags_assignments a
+        where a.tag_id = ${id}
+          and exists (
+            select 1 from core_tags_assignments b
+            where b.tag_id = ${into}
+              and b.source_module = a.source_module
+              and b.source_type = a.source_type
+              and b.source_id = a.source_id
+          )
+      `.execute(trx);
+      // Reassign the rest to the target.
+      const upd = await trx
+        .updateTable("core_tags_assignments")
+        .set({ tag_id: into })
+        .where("tag_id", "=", id)
+        .executeTakeFirst();
+      // Remove the now-empty source tag.
+      await trx.deleteFrom("core_tags_tags").where("id", "=", id).execute();
+      return Number(upd.numUpdatedRows ?? 0n);
+    });
+
+    await platform().events.emit("core-tags.tag.deleted", {
+      orgId: ctx.org.id,
+      tagId: source.id,
+      name: source.name,
+    });
+    res.json({
+      merged_into: target,
+      moved_assignments: moved,
+      deleted_tag: { id: source.id, name: source.name },
+    });
   }),
 );
 

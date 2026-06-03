@@ -12,7 +12,7 @@ import { resolve } from "node:path";
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { runMigrations } from "../db/migrate.js";
-import { getTenantPool } from "../db/tenant.js";
+import { getTenantPool, evictTenantPool } from "../db/tenant.js";
 import { getEntry, listEntries } from "./registry.js";
 import * as activity from "../platform/activity.js";
 
@@ -263,38 +263,60 @@ export async function syncTenantMigrations(): Promise<number> {
     .select(["org_id", "module_name"])
     .execute();
   let touched = 0;
+  // Group by org so each tenant pool is opened ONCE and closed once. This
+  // pass runs pre-`listen` (index.ts), serially; without the evict, every
+  // org's max:5 pool stays cached open for the whole boot sequence, so a
+  // box with many tenants exhausts Postgres `max_connections` ("remaining
+  // connection slots are reserved for SUPERUSER") — especially when a brand
+  // new module's migration runs real DDL across every tenant at once.
+  // Capping to one live tenant pool at a time keeps the peak at O(1).
+  const byOrg = new Map<string, string[]>();
   for (const row of rows) {
-    const entry = getEntry(row.module_name);
-    if (!entry || !entry.manifest.schema) continue;
+    const list = byOrg.get(row.org_id);
+    if (list) list.push(row.module_name);
+    else byOrg.set(row.org_id, [row.module_name]);
+  }
+  for (const [orgId, moduleNames] of byOrg) {
     try {
-      const migrationsDir = resolve(
-        entry.rootPath,
-        entry.manifest.schema.migrationsDir,
-      );
-      const pool = await getTenantPool(row.org_id);
-      const result = await runMigrations({
-        pool,
-        directory: migrationsDir,
-        scope: `tenant ${row.org_id} / module ${row.module_name}`,
-      });
-      if (result.applied.length > 0) {
-        touched++;
-        // Update the meta-side last_migration pointer so
-        // /modules/:slug/health stays accurate.
-        await meta
-          .updateTable("org_modules")
-          .set({
-            last_migration: result.applied[result.applied.length - 1] ?? null,
-          })
-          .where("org_id", "=", row.org_id)
-          .where("module_name", "=", row.module_name)
-          .execute();
+      for (const moduleName of moduleNames) {
+        const entry = getEntry(moduleName);
+        if (!entry || !entry.manifest.schema) continue;
+        try {
+          const migrationsDir = resolve(
+            entry.rootPath,
+            entry.manifest.schema.migrationsDir,
+          );
+          const pool = await getTenantPool(orgId);
+          const result = await runMigrations({
+            pool,
+            directory: migrationsDir,
+            scope: `tenant ${orgId} / module ${moduleName}`,
+          });
+          if (result.applied.length > 0) {
+            touched++;
+            // Update the meta-side last_migration pointer so
+            // /modules/:slug/health stays accurate.
+            await meta
+              .updateTable("org_modules")
+              .set({
+                last_migration:
+                  result.applied[result.applied.length - 1] ?? null,
+              })
+              .where("org_id", "=", orgId)
+              .where("module_name", "=", moduleName)
+              .execute();
+          }
+        } catch (err) {
+          console.error(
+            `[migrate-sync] failed for ${moduleName} on ${orgId}:`,
+            (err as Error).message,
+          );
+        }
       }
-    } catch (err) {
-      console.error(
-        `[migrate-sync] failed for ${row.module_name} on ${row.org_id}:`,
-        (err as Error).message,
-      );
+    } finally {
+      // Safe pre-`listen`: nothing is serving traffic, and the pool lazily
+      // reopens on this org's first real request.
+      await evictTenantPool(orgId);
     }
   }
   return touched;

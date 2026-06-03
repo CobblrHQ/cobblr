@@ -1,0 +1,39 @@
+{
+  "manifest": {
+    "id": "cobblr.flagship.medications",
+    "name": "Medications & Refills",
+    "version": "0.1.0",
+    "description": "What to take, how much, when — and how many refills are left before you have to call the pharmacy. Caregiver-friendly: track each medication's dose and schedule, the prescriber and pharmacy, the Rx number and refills remaining, and a refill-by date. A 'Current meds' view keeps it scannable; put the refill dates on your calendar so the bottle never runs out on a Sunday.",
+    "author": "Cobblr",
+    "requires": [
+      { "module": "inventory" }
+    ],
+    "field_defs": [
+      { "entity_kind": "inventory:part", "name": "dose", "display_label": "Dose", "type": "text", "position": 1 },
+      { "entity_kind": "inventory:part", "name": "schedule", "display_label": "Schedule", "type": "text", "position": 2, "choices": ["Once daily", "Twice daily", "Three times daily", "Every morning", "Every night", "As needed", "Weekly"] },
+      { "entity_kind": "inventory:part", "name": "form", "display_label": "Form", "type": "text", "position": 3, "choices": ["Tablet", "Capsule", "Liquid", "Injection", "Inhaler", "Topical", "Drops"] },
+      { "entity_kind": "inventory:part", "name": "prescriber", "display_label": "Prescriber", "type": "text", "position": 4 },
+      { "entity_kind": "inventory:part", "name": "pharmacy", "display_label": "Pharmacy", "type": "text", "position": 5 },
+      { "entity_kind": "inventory:part", "name": "rx_number", "display_label": "Rx number", "type": "text", "position": 6 },
+      { "entity_kind": "inventory:part", "name": "refills_left", "display_label": "Refills left", "type": "number", "position": 7 },
+      { "entity_kind": "inventory:part", "name": "refill_by", "display_label": "Refill by", "type": "date", "position": 8 }
+    ],
+    "field_overrides": [
+      { "entity_kind": "inventory:part", "name": "manufacturer", "display_label": "Maker" },
+      { "entity_kind": "inventory:part", "name": "serial_number", "hidden": true },
+      { "entity_kind": "inventory:part", "name": "model_number", "hidden": true }
+    ],
+    "saved_views": [
+      {
+        "entity_kind": "inventory:part",
+        "name": "Current meds",
+        "view_type": "table",
+        "pinned": true,
+        "config": {
+          "visible_fields": ["title", "dose", "schedule", "refills_left", "refill_by"]
+        }
+      }
+    ]
+  },
+  "confirm": true
+}

@@ -8,10 +8,12 @@
 // see which workspaces exist, who's enabled what, disk usage, recent
 // errors. SSH-ing into postgres is the alternative.
 //
-// See docs/PRODUCTION_DEPLOY.md §1 launch checklist.
+// See docs/operations/PRODUCTION_DEPLOY.md §1 launch checklist.
 
 import { Router } from "express";
 import { sql } from "kysely";
+import { z } from "zod";
+import { randomBytes } from "node:crypto";
 import { requireAuth, requirePlatformAdmin } from "../auth/middleware.js";
 import { meta } from "../db/meta.js";
 import { getCpuStats, getInvocationStats } from "../sandbox/pool.js";
@@ -375,10 +377,106 @@ superAdminRouter.get("/health", async (_req, res, next) => {
       activity_1h: Number(recentActivity?.c ?? 0),
       // Backup status would come from a sidecar / restic state file.
       // Stub for v1 — operator confirms via `restic snapshots` on
-      // the host. See docs/PRODUCTION_DEPLOY.md §5.
+      // the host. See docs/operations/PRODUCTION_DEPLOY.md §5.
       backup: { ok: null, note: "Verify via `restic snapshots` on host." },
       timestamp: new Date().toISOString(),
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ───────────────────── signup invites (invite-only beta) ─────────────────
+// Single-use links that let a new person self-register their OWN account +
+// workspace while public signup stays off. Redeemed via POST /auth/signup
+// with the token; minted + managed here.
+
+const MintInvite = z.object({
+  email: z.string().email().max(255).optional(),
+  note: z.string().max(200).optional(),
+  expires_in_days: z.number().int().min(1).max(365).optional(),
+});
+
+function inviteStatus(r: { consumed_at: Date | null; revoked_at: Date | null; expires_at: Date | null }): string {
+  if (r.revoked_at) return "revoked";
+  if (r.consumed_at) return "consumed";
+  if (r.expires_at && new Date(r.expires_at) < new Date()) return "expired";
+  return "open";
+}
+
+// POST /super-admin/signup-invites — mint one. Returns the token (shown once
+// in the link; we don't display it again after).
+superAdminRouter.post("/signup-invites", async (req, res, next) => {
+  try {
+    const parsed = MintInvite.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Bad invite", details: parsed.error.issues } });
+      return;
+    }
+    const userId = (req as unknown as { session?: { id: string } }).session?.id;
+    const token = randomBytes(24).toString("base64url");
+    const expires_at = parsed.data.expires_in_days
+      ? new Date(Date.now() + parsed.data.expires_in_days * 86_400_000)
+      : null;
+    const row = await meta
+      .insertInto("signup_invites")
+      .values({
+        token,
+        created_by: userId!,
+        invited_email: parsed.data.email?.toLowerCase().trim() ?? null,
+        note: parsed.data.note ?? null,
+        expires_at,
+      })
+      .returning(["id", "token", "invited_email", "note", "expires_at", "created_at"])
+      .executeTakeFirstOrThrow();
+    res.status(201).json({ ...row, status: "open" });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /super-admin/signup-invites — list, newest first, with status + who
+// redeemed it. The raw token is NOT returned (it's a credential); the link is
+// shown once at mint time.
+superAdminRouter.get("/signup-invites", async (_req, res, next) => {
+  try {
+    const rows = await meta
+      .selectFrom("signup_invites as i")
+      .leftJoin("users as u", "u.id", "i.consumed_by_user")
+      .select([
+        "i.id",
+        "i.invited_email",
+        "i.note",
+        "i.expires_at",
+        "i.consumed_at",
+        "i.revoked_at",
+        "i.created_at",
+        "u.email as consumed_by_email",
+      ])
+      .orderBy("i.created_at", "desc")
+      .limit(200)
+      .execute();
+    res.json({ items: rows.map((r) => ({ ...r, status: inviteStatus(r) })) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /super-admin/signup-invites/:id/revoke — kill an unused invite.
+superAdminRouter.post("/signup-invites/:id/revoke", async (req, res, next) => {
+  try {
+    const updated = await meta
+      .updateTable("signup_invites")
+      .set({ revoked_at: new Date() })
+      .where("id", "=", req.params.id)
+      .where("consumed_at", "is", null)
+      .returning("id")
+      .executeTakeFirst();
+    if (!updated) {
+      res.status(409).json({ error: { code: "not_revocable", message: "Invite not found or already used." } });
+      return;
+    }
+    res.status(204).end();
   } catch (err) {
     next(err);
   }

@@ -1,0 +1,30 @@
+{
+  "manifest": {
+    "id": "cobblr.flagship.vehicle-maintenance",
+    "name": "Vehicle Maintenance",
+    "version": "0.1.0",
+    "description": "Turn your assets into a garage. Track each vehicle's make/model/year/mileage/plate, log every service you do (oil change, tires, brakes) with its cost, and set the next-due date so you get reminded before it lapses. Replaces a glovebox folder of receipts + a sticky note on the windshield.",
+    "author": "Cobblr",
+    "requires": [
+      { "module": "assets" },
+      { "module": "core-maintenance" }
+    ],
+    "field_defs": [
+      { "entity_kind": "assets:asset", "name": "year", "display_label": "Year", "type": "number", "position": 1 },
+      { "entity_kind": "assets:asset", "name": "license_plate", "display_label": "License plate", "type": "text", "position": 2 },
+      { "entity_kind": "assets:asset", "name": "mileage", "display_label": "Mileage", "type": "number", "position": 3 },
+      { "entity_kind": "assets:asset", "name": "fuel_type", "display_label": "Fuel", "type": "text", "position": 4, "choices": ["Gas", "Diesel", "Hybrid", "Electric"] },
+      { "entity_kind": "assets:asset", "name": "color", "display_label": "Color", "type": "text", "position": 5 }
+    ],
+    "field_overrides": [
+      { "entity_kind": "assets:asset", "name": "manufacturer", "display_label": "Make" },
+      { "entity_kind": "assets:asset", "name": "serial_number", "display_label": "VIN" },
+      { "entity_kind": "assets:asset", "name": "short_name", "hidden": true },
+      { "entity_kind": "assets:asset", "name": "type", "hidden": true },
+      { "entity_kind": "assets:asset", "name": "quantity", "hidden": true },
+      { "entity_kind": "assets:asset", "name": "excitement", "hidden": true },
+      { "entity_kind": "assets:asset", "name": "last_service_at", "hidden": true }
+    ]
+  },
+  "confirm": true
+}

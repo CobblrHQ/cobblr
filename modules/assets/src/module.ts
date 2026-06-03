@@ -43,10 +43,17 @@ export default defineModule({
           { name: "last_service_at", type: "date" },
           { name: "image_path", type: "image-path", role: "image" },
           { name: "notes", type: "text" },
+          // Free-form custom-field blob (bundle / user fields). Declared so
+          // it can be exposed below — mirrors inventory:part.
+          { name: "metadata", type: "object" },
         ],
         // Public face. Service / warranty dates may be sensitive in
         // commercial contexts; keep them private to assets' own UI for
         // now. Serial_number stays internal (anti-theft / privacy).
+        // `metadata` (the custom-field blob) is exposed — mirrors
+        // inventory:part — so bundle/user custom fields can drive saved
+        // views, search, and the calendar. Same opt-in surface, not raw
+        // native columns.
         exposableFields: [
           "name",
           "short_name",
@@ -55,6 +62,7 @@ export default defineModule({
           "type",
           "state",
           "image_path",
+          "metadata",
         ],
         detailRoute: "/assets/{id}",
       },

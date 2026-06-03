@@ -1,0 +1,40 @@
+{
+  "manifest": {
+    "id": "cobblr.flagship.home-maintenance",
+    "name": "Home Maintenance Schedule",
+    "version": "0.1.0",
+    "description": "The home version of Vehicle Maintenance. Track each system in your house — furnace, water heater, HVAC filter, smoke detectors, gutters, sump pump — with its location, install date and filter size, then log every service with its cost and set the next-due date. Filter-change-every-3-months and flush-the-water-heater-yearly land on your calendar so the house stays on schedule instead of in your head.",
+    "author": "Cobblr",
+    "requires": [
+      { "module": "assets" },
+      { "module": "core-maintenance" }
+    ],
+    "field_defs": [
+      { "entity_kind": "assets:asset", "name": "system_type", "display_label": "System", "type": "text", "position": 1, "choices": ["Furnace", "Air conditioner", "Water heater", "HVAC filter", "Smoke / CO detector", "Gutters", "Sump pump", "Dishwasher", "Washer", "Dryer", "Refrigerator", "Garage door", "Other"] },
+      { "entity_kind": "assets:asset", "name": "location", "display_label": "Location", "type": "text", "position": 2 },
+      { "entity_kind": "assets:asset", "name": "installed_date", "display_label": "Installed", "type": "date", "position": 3 },
+      { "entity_kind": "assets:asset", "name": "filter_size", "display_label": "Filter / part size", "type": "text", "position": 4 }
+    ],
+    "field_overrides": [
+      { "entity_kind": "assets:asset", "name": "manufacturer", "display_label": "Brand" },
+      { "entity_kind": "assets:asset", "name": "model", "display_label": "Model" },
+      { "entity_kind": "assets:asset", "name": "short_name", "hidden": true },
+      { "entity_kind": "assets:asset", "name": "type", "hidden": true },
+      { "entity_kind": "assets:asset", "name": "serial_number", "hidden": true },
+      { "entity_kind": "assets:asset", "name": "excitement", "hidden": true }
+    ],
+    "saved_views": [
+      {
+        "entity_kind": "assets:asset",
+        "name": "Home systems",
+        "view_type": "table",
+        "pinned": true,
+        "config": {
+          "group_by": "system_type",
+          "visible_fields": ["title", "location", "installed_date", "filter_size"]
+        }
+      }
+    ]
+  },
+  "confirm": true
+}

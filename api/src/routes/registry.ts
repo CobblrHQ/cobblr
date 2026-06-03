@@ -7,7 +7,7 @@
 // Install still goes through the existing per-lane endpoints
 // (/orgs/:slug/bundles/install, /orgs/:slug/modules/digifab/drivers,
 // /sandbox/install) — each enforces its own permissions. This route is
-// just the read-only catalog. See docs/design-decisions/extension-registry.md.
+// just the read-only catalog. See docs/modules/extension-registry.md.
 
 import { Router } from "express";
 import { verify as cryptoVerify, createPublicKey } from "node:crypto";
@@ -42,7 +42,9 @@ function verifyEd25519(pubkeyB64: string, data: Buffer, sigB64: string): boolean
 // for private repos). When it goes public, a raw URL works too — both are
 // handled by ghHeaders below.
 const DEFAULT_INDEX =
-  process.env.COBBLR_EXTENSIONS_URL ??
+  // `||` not `??` — compose passes `${COBBLR_EXTENSIONS_URL:-}` = an EMPTY
+  // string when unset, which `??` would NOT fall back from. Empty → default.
+  process.env.COBBLR_EXTENSIONS_URL ||
   "https://api.github.com/repos/CobblrHQ/cobblr-extensions/contents/index.json";
 
 function ghHeaders(url: string): Record<string, string> {
@@ -62,12 +64,13 @@ interface IndexShape {
   bundles?: Array<Record<string, unknown>>;
   drivers?: Array<Record<string, unknown>>;
   modules?: Array<Record<string, unknown>>;
+  renderers?: Array<Record<string, unknown>>;
   /** Cobblr-vouched author pubkeys (SPKI DER base64). Trusted only when
    *  the official index is root-verified (or no root is configured). */
   trusted_keys?: string[];
 }
-type Lane = "bundles" | "drivers" | "modules";
-const LANES: Lane[] = ["bundles", "drivers", "modules"];
+type Lane = "bundles" | "drivers" | "modules" | "renderers";
+const LANES: Lane[] = ["bundles", "drivers", "modules", "renderers"];
 
 // The detached signature for the official index — defaults to the index
 // URL with `.sig` appended. Only the OFFICIAL index is root-checked.
@@ -125,12 +128,13 @@ registryRouter.get("/index", async (req, res, next) => {
       bundles: [] as Array<Record<string, unknown>>,
       drivers: [] as Array<Record<string, unknown>>,
       modules: [] as Array<Record<string, unknown>>,
+      renderers: [] as Array<Record<string, unknown>>,
       sources: [] as Array<{ url: string; label: string; ok: boolean; error?: string }>,
       /** Whether the official index's detached signature verified against
        *  COBBLR_ROOT_PUBKEY. null = no root anchor configured. */
       official_root_verified: null as boolean | null,
     };
-    const seen: Record<Lane, Set<string>> = { bundles: new Set(), drivers: new Set(), modules: new Set() };
+    const seen: Record<Lane, Set<string>> = { bundles: new Set(), drivers: new Set(), modules: new Set(), renderers: new Set() };
     // The set of Cobblr-vouched author keys. Honoured only when the
     // official index is root-verified — or when no root is configured at
     // all (status-quo "trust the source"). A configured-but-unverified
@@ -169,11 +173,14 @@ registryRouter.get("/index", async (req, res, next) => {
     await ingest(DEFAULT_INDEX, "official", true);
     for (const s of sources) await ingest(s, s, false);
 
-    // Tag each module's trust tier: "official" iff its pubkey is a vouched
-    // key, else "unverified" (the UI gates those behind consent).
-    for (const m of out.modules) {
-      const pk = typeof m.pubkey === "string" ? m.pubkey : undefined;
-      m.trust = pk && trustedKeys.has(pk) ? "official" : "unverified";
+    // Tag each code extension's trust tier: "official" iff its pubkey is a
+    // vouched key, else "unverified" (the UI gates those behind consent).
+    // Renderers are sandboxed code too, so the same rule applies.
+    for (const lane of [out.modules, out.renderers]) {
+      for (const e of lane) {
+        const pk = typeof e.pubkey === "string" ? e.pubkey : undefined;
+        e.trust = pk && trustedKeys.has(pk) ? "official" : "unverified";
+      }
     }
 
     res.json(out);

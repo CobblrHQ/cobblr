@@ -3,13 +3,25 @@
 // entity-kind resolvers with the platform.
 
 import { Router } from "express";
+import { sql, type Kysely } from "kysely";
+import { platform } from "@cobblr/platform-contract";
 import { projectsRouter } from "./projects.js";
 import { tasksRouter } from "./tasks.js";
 import { registerProjectsHandlers } from "./handlers.js";
 import { registerProjectsNotificationMappers } from "./notification-mapper.js";
+import { registerProjectsCalendarSource } from "./calendar-source.js";
 
+registerProjectsCalendarSource();
 registerProjectsHandlers();
 registerProjectsNotificationMappers();
+
+// Per-instance item count — lets the nav hide an empty auto-created default
+// instance once the workspace has named ones (projects are the primary entity).
+platform().instances.registerItemCounter("projects", async (orgId, instance) => {
+  const db = (await platform().tenants.getDb(orgId)) as Kysely<unknown>;
+  const r = await sql<{ c: number }>`select count(*)::int as c from projects_projects where instance = ${instance}`.execute(db);
+  return r.rows[0]?.c ?? 0;
+});
 
 const router = Router({ mergeParams: true });
 

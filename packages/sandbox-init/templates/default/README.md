@@ -36,7 +36,7 @@ Then either:
 ## ABI
 
 This module targets the cobblr sandbox ABI v2. See
-[cobblr-core/docs/design-decisions/module-isolation.md](https://github.com/CobblrHQ/core/blob/main/docs/design-decisions/module-isolation.md)
+[cobblr-core/docs/architecture/module-isolation.md](https://github.com/CobblrHQ/core/blob/main/docs/architecture/module-isolation.md)
 for the kernel contract.
 
 ## Available kernel ops (via the SDK)

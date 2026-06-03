@@ -14,7 +14,7 @@
 //      the response.
 //   5. Bump last_hit_at + hit_count on the inbound token row.
 //
-// See docs/design-decisions/core-integrations.md.
+// See docs/modules/core-integrations.md.
 
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { sql } from "kysely";

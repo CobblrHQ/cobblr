@@ -1,0 +1,44 @@
+// core-units — the workspace's unit vocabulary.
+//
+// A free-text `unit` field ("each", "g", "grams") means the same unit
+// never correlates across entities and can't offer a shorthand-vs-full-word
+// display toggle. core-units supplies a canonical vocabulary: built-in
+// units (gram/g, meter/m, each/ea, …) in code + per-workspace custom units
+// + a display-mode preference (symbol / name / both). It resolves a stored
+// value to a catalog entry for display and feeds the unit picker.
+//
+// Foundational + ambient: like core-tags / core-locations, it's ON for
+// every workspace and carries no entity kind — it's a vocabulary other
+// modules' fields lean on, not a thing you browse. Storage stays free-text,
+// so nothing it does rewrites existing data.
+
+import { defineModule } from "@cobblr/platform-contract";
+
+export default defineModule({
+  name: "core-units",
+  version: "0.1.0",
+  displayName: "Units",
+  description:
+    "Canonical unit vocabulary — built-in units (gram/g, meter/m, each/ea) plus your own, with a shorthand-vs-full-word display toggle. Powers the unit picker on quantity fields.",
+  icon: "ruler",
+  band: "foundational",
+
+  schema: {
+    tablePrefix: "core_units_",
+    migrationsDir: "./migrations",
+  },
+
+  api: () => import("./api/index.js"),
+
+  provides: {
+    entityKinds: [],
+  },
+
+  exposes: {
+    events: [],
+    api: [],
+    actions: [],
+  },
+
+  subscribes: [],
+});

@@ -1,0 +1,40 @@
+{
+  "manifest": {
+    "id": "cobblr.flagship.documents-renewals",
+    "name": "Important Documents & Renewals",
+    "version": "0.1.0",
+    "description": "Passport, driver's license, vehicle registration, insurance policies — every document that expires, with its number, issuer and expiry date. A 'Renewals' view groups them by type, and every expiry date lands on your Cobblr calendar (and its iCal feed) automatically, so you're reminded before anything lapses — no setup.",
+    "author": "Cobblr",
+    "requires": [
+      { "module": "assets" }
+    ],
+    "field_defs": [
+      { "entity_kind": "assets:asset", "name": "doc_type", "display_label": "Type", "type": "text", "position": 1, "choices": ["Passport", "Driver's license", "Vehicle registration", "Insurance policy", "Membership", "Certification", "Visa / permit", "Warranty", "Other"] },
+      { "entity_kind": "assets:asset", "name": "document_number", "display_label": "Number", "type": "text", "position": 2 },
+      { "entity_kind": "assets:asset", "name": "issuer", "display_label": "Issued by", "type": "text", "position": 3 },
+      { "entity_kind": "assets:asset", "name": "issued_date", "display_label": "Issued", "type": "date", "position": 4 },
+      { "entity_kind": "assets:asset", "name": "expires_date", "display_label": "Expires", "type": "date", "position": 5 },
+      { "entity_kind": "assets:asset", "name": "doc_summary", "display_label": "Summary", "type": "computed", "position": 6, "template": "{{doc_type | default: \"Document\"}} · expires {{expires_date | default: \"—\"}}" }
+    ],
+    "field_overrides": [
+      { "entity_kind": "assets:asset", "name": "manufacturer", "hidden": true },
+      { "entity_kind": "assets:asset", "name": "model", "hidden": true },
+      { "entity_kind": "assets:asset", "name": "serial_number", "hidden": true },
+      { "entity_kind": "assets:asset", "name": "short_name", "hidden": true },
+      { "entity_kind": "assets:asset", "name": "excitement", "hidden": true }
+    ],
+    "saved_views": [
+      {
+        "entity_kind": "assets:asset",
+        "name": "Renewals",
+        "view_type": "table",
+        "pinned": true,
+        "config": {
+          "group_by": "doc_type",
+          "visible_fields": ["title", "document_number", "issuer", "expires_date"]
+        }
+      }
+    ]
+  },
+  "confirm": true
+}

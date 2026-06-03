@@ -7,7 +7,7 @@
 // and the PRIVATE key (store it in your secret manager — 1Password, a CI
 // secret, a hardware key — and NEVER commit it). The private key is the
 // only thing that can mint a trusted official index; treat it accordingly.
-// See docs/design-decisions/extension-registry.md §2.4.
+// See docs/modules/extension-registry.md §2.4.
 import { generateKeyPairSync } from "node:crypto";
 
 const { publicKey, privateKey } = generateKeyPairSync("ed25519");

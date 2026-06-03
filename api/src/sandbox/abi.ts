@@ -11,7 +11,7 @@
 // per call) but predictable + easy to debug. Worth optimising
 // later with a more compact format if benchmarks show it matters.
 //
-// See docs/design-decisions/module-isolation.md §4.3.
+// See docs/architecture/module-isolation.md §4.3.
 
 export const ABI_VERSION = 2 as const;
 

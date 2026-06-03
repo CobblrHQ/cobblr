@@ -28,11 +28,11 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       description:
         "Turn inventory + lists into a kitchen system: expiry + storage fields, auto shopping list on low-stock/expiry, restock on check-off.",
       author: "Cobblr",
-      requires: [{ module: "inventory" }, { module: "core-lists" }],
+      requires: [{ module: "inventory" }, { module: "lists" }],
       wires: [
-        { source_kind: "inventory:part", action_id: "core-lists:add-item", trigger_type: "event", trigger_event: "inventory.stock.low", args: { listTitle: "Shopping list" } },
-        { source_kind: "inventory:part", action_id: "core-lists:add-item", trigger_type: "event", trigger_event: "core-lists.item.expiring", args: { listTitle: "Shopping list" } },
-        { source_kind: "inventory:part", action_id: "inventory:adjust-stock", trigger_type: "event", trigger_event: "core-lists.item.checked", args: { delta: 1, reason: "Restocked — checked off the shopping list" } },
+        { source_kind: "inventory:part", action_id: "lists:add-item", trigger_type: "event", trigger_event: "inventory.stock.low", args: { listTitle: "Shopping list" } },
+        { source_kind: "inventory:part", action_id: "lists:add-item", trigger_type: "event", trigger_event: "lists.item.expiring", args: { listTitle: "Shopping list" } },
+        { source_kind: "inventory:part", action_id: "inventory:adjust-stock", trigger_type: "event", trigger_event: "lists.item.checked", args: { delta: 1, reason: "Restocked — checked off the shopping list" } },
       ],
       field_defs: [
         { entity_kind: "inventory:part", name: "expires_on", display_label: "Expires", type: "date", position: 1 },
@@ -53,11 +53,11 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       description:
         "Connects the grocery flow to the Tracking module: order received → log spend into a metric. Neither module knows about the other.",
       author: "Cobblr",
-      requires: [{ module: "purchases" }, { module: "core-fitness" }],
+      requires: [{ module: "purchases" }, { module: "tracking" }],
       wires: [
         {
           source_kind: "purchases:order_item",
-          action_id: "core-fitness:log-measurement",
+          action_id: "tracking:log-measurement",
           trigger_type: "event",
           trigger_event: "purchases.order_item.received",
           args: { metricName: "Grocery spend", unit: "$", goalDirection: "down", valueKey: "lineCost", note: "auto-logged on order arrival" },
@@ -526,6 +526,409 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           type: "boolean",
           position: 54,
         },
+      ],
+    },
+  },
+  {
+    glyph: "🧶",
+    blurb:
+      "A knitter's stash by brand, colorway, fibre and weight class — tracked by skein, metre or gram. A grouped 'My stash' view sorts it all by weight.",
+    manifest: {
+      id: "cobblr.flagship.yarn-stash",
+      version: "0.1.0",
+      name: "Yarn Stash",
+      description:
+        "Turn inventory into a yarn stash: brand/colorway/fibre/weight, tracked by skein·metre·gram, with a grouped 'My stash' view.",
+      author: "Cobblr",
+      requires: [{ module: "inventory" }],
+      field_defs: [
+        { entity_kind: "inventory:part", name: "colorway", display_label: "Colorway", type: "text", position: 1 },
+        { entity_kind: "inventory:part", name: "fiber", display_label: "Fibre", type: "text", position: 2, choices: ["Wool", "Merino", "Cotton", "Acrylic", "Alpaca", "Silk", "Linen", "Bamboo", "Cashmere", "Blend"] },
+        { entity_kind: "inventory:part", name: "weight_class", display_label: "Weight", type: "text", position: 3, choices: ["Lace", "Fingering", "Sport", "DK", "Worsted", "Aran", "Bulky", "Super Bulky"] },
+        { entity_kind: "inventory:part", name: "length_per_skein", display_label: "Length / skein (m)", type: "number", position: 4 },
+        { entity_kind: "inventory:part", name: "dye_lot", display_label: "Dye lot", type: "text", position: 5 },
+        { entity_kind: "inventory:part", name: "hook_size", display_label: "Hook / needle", type: "text", position: 6 },
+        { entity_kind: "inventory:part", name: "for_project", display_label: "For project", type: "text", position: 7 },
+        { entity_kind: "inventory:part", name: "stash_summary", display_label: "Summary", type: "computed", position: 8, template: '{{weight_class}} {{fiber}} · {{length_per_skein | default: "?"}} m/skein' },
+      ],
+      field_overrides: [
+        { entity_kind: "inventory:part", name: "manufacturer", display_label: "Brand" },
+        { entity_kind: "inventory:part", name: "cost", display_label: "Price / skein" },
+        { entity_kind: "inventory:part", name: "serial_number", hidden: true },
+        { entity_kind: "inventory:part", name: "model_number", hidden: true },
+      ],
+      saved_views: [
+        { entity_kind: "inventory:part", name: "My yarn stash", view_type: "table", pinned: true, config: { group_by: "weight_class", visible_fields: ["title", "colorway", "fiber", "qty", "unit", "length_per_skein"] } },
+      ],
+    },
+  },
+  {
+    glyph: "🖨️🧵",
+    blurb:
+      "The 3D-printer sibling of Yarn Stash — spools by material, colour and diameter, weighed in grams, grouped by material, with the print temps that worked.",
+    manifest: {
+      id: "cobblr.flagship.filament-stash",
+      version: "0.1.0",
+      name: "Filament Stash",
+      description: "Track 3D-printer filament: material/colour/diameter, weighed in grams, grouped by material, with print temps.",
+      author: "Cobblr",
+      requires: [{ module: "inventory" }],
+      field_defs: [
+        { entity_kind: "inventory:part", name: "material", display_label: "Material", type: "text", position: 1, choices: ["PLA", "PLA+", "PETG", "ABS", "ASA", "TPU", "Nylon", "PC", "PVA", "Other"] },
+        { entity_kind: "inventory:part", name: "color", display_label: "Colour", type: "text", position: 2 },
+        { entity_kind: "inventory:part", name: "diameter", display_label: "Diameter", type: "text", position: 3, choices: ["1.75 mm", "2.85 mm"] },
+        { entity_kind: "inventory:part", name: "length_per_spool", display_label: "Length / spool (m)", type: "number", position: 4 },
+        { entity_kind: "inventory:part", name: "spool_weight", display_label: "Empty spool (g)", type: "number", position: 5 },
+        { entity_kind: "inventory:part", name: "nozzle_temp", display_label: "Nozzle °C", type: "number", position: 6 },
+        { entity_kind: "inventory:part", name: "bed_temp", display_label: "Bed °C", type: "number", position: 7 },
+        { entity_kind: "inventory:part", name: "needs_drying", display_label: "Needs drying", type: "boolean", position: 8 },
+        { entity_kind: "inventory:part", name: "spool_summary", display_label: "Summary", type: "computed", position: 9, template: '{{material}} {{color}} · {{diameter}} · {{nozzle_temp | default: "?"}}/{{bed_temp | default: "?"}} °C' },
+      ],
+      field_overrides: [
+        { entity_kind: "inventory:part", name: "manufacturer", display_label: "Brand" },
+        { entity_kind: "inventory:part", name: "cost", display_label: "Price / spool" },
+        { entity_kind: "inventory:part", name: "serial_number", hidden: true },
+        { entity_kind: "inventory:part", name: "model_number", hidden: true },
+      ],
+      saved_views: [
+        { entity_kind: "inventory:part", name: "My filament", view_type: "table", pinned: true, config: { group_by: "material", visible_fields: ["title", "color", "diameter", "qty", "unit", "nozzle_temp"] } },
+      ],
+    },
+  },
+  {
+    glyph: "🏠",
+    blurb:
+      "Photograph and value what you own, room by room, so a fire/theft/move starts from a real list. A 'By room' view totals the shelf.",
+    manifest: {
+      id: "cobblr.flagship.home-inventory",
+      version: "0.1.0",
+      name: "Home Inventory (insurance)",
+      description: "Photograph + value belongings room by room for an insurer; grouped 'By room' view.",
+      author: "Cobblr",
+      requires: [{ module: "inventory" }],
+      field_defs: [
+        { entity_kind: "inventory:part", name: "room", display_label: "Room", type: "text", position: 1, choices: ["Living room", "Kitchen", "Primary bedroom", "Bedroom", "Bathroom", "Office", "Garage", "Basement", "Attic", "Outdoor", "Storage"] },
+        { entity_kind: "inventory:part", name: "replacement_value", display_label: "Replacement value", type: "number", position: 2 },
+        { entity_kind: "inventory:part", name: "purchased_from", display_label: "Bought from", type: "text", position: 3 },
+        { entity_kind: "inventory:part", name: "purchase_date", display_label: "Purchased", type: "date", position: 4 },
+        { entity_kind: "inventory:part", name: "condition", display_label: "Condition", type: "text", position: 5, choices: ["New", "Excellent", "Good", "Fair", "Poor"] },
+      ],
+      field_overrides: [
+        { entity_kind: "inventory:part", name: "cost", display_label: "Paid" },
+        { entity_kind: "inventory:part", name: "manufacturer", display_label: "Make / brand" },
+        { entity_kind: "inventory:part", name: "model_number", display_label: "Model" },
+      ],
+      saved_views: [
+        { entity_kind: "inventory:part", name: "By room", view_type: "table", pinned: true, config: { group_by: "room", visible_fields: ["title", "replacement_value", "condition", "purchase_date"] } },
+      ],
+    },
+  },
+  {
+    glyph: "🧾",
+    blurb:
+      "Snap a receipt at purchase and never miss a warranty or return window. Tracks where/when you bought it, warranty + return-by dates, serial.",
+    manifest: {
+      id: "cobblr.flagship.warranties-receipts",
+      version: "0.1.0",
+      name: "Warranties & Receipts",
+      description: "Skin inventory's warranty fields into an appliance/electronics tracker with purchase + return-by dates.",
+      author: "Cobblr",
+      requires: [{ module: "inventory" }],
+      field_defs: [
+        { entity_kind: "inventory:part", name: "purchased_from", display_label: "Bought from", type: "text", position: 1 },
+        { entity_kind: "inventory:part", name: "purchase_date", display_label: "Purchased", type: "date", position: 2 },
+        { entity_kind: "inventory:part", name: "return_by", display_label: "Return by", type: "date", position: 3 },
+        { entity_kind: "inventory:part", name: "category", display_label: "Category", type: "text", position: 4, choices: ["Appliance", "Electronics", "Tools", "Furniture", "Vehicle", "Other"] },
+      ],
+      field_overrides: [
+        { entity_kind: "inventory:part", name: "manufacturer", display_label: "Make / brand" },
+        { entity_kind: "inventory:part", name: "model_number", display_label: "Model" },
+        { entity_kind: "inventory:part", name: "cost", display_label: "Paid" },
+      ],
+      saved_views: [
+        { entity_kind: "inventory:part", name: "Warranties", view_type: "table", pinned: true, config: { group_by: "category", visible_fields: ["title", "purchase_date", "return_by"] } },
+      ],
+    },
+  },
+  {
+    glyph: "💊",
+    blurb:
+      "What to take, the dose and schedule, and how many refills are left before you call the pharmacy. Caregiver-friendly; a 'Current meds' view.",
+    manifest: {
+      id: "cobblr.flagship.medications",
+      version: "0.1.0",
+      name: "Medications & Refills",
+      description: "Track each medication's dose, schedule, prescriber/pharmacy, refills left and a refill-by date.",
+      author: "Cobblr",
+      requires: [{ module: "inventory" }],
+      field_defs: [
+        { entity_kind: "inventory:part", name: "dose", display_label: "Dose", type: "text", position: 1 },
+        { entity_kind: "inventory:part", name: "schedule", display_label: "Schedule", type: "text", position: 2, choices: ["Once daily", "Twice daily", "Three times daily", "Every morning", "Every night", "As needed", "Weekly"] },
+        { entity_kind: "inventory:part", name: "form", display_label: "Form", type: "text", position: 3, choices: ["Tablet", "Capsule", "Liquid", "Injection", "Inhaler", "Topical", "Drops"] },
+        { entity_kind: "inventory:part", name: "prescriber", display_label: "Prescriber", type: "text", position: 4 },
+        { entity_kind: "inventory:part", name: "pharmacy", display_label: "Pharmacy", type: "text", position: 5 },
+        { entity_kind: "inventory:part", name: "rx_number", display_label: "Rx number", type: "text", position: 6 },
+        { entity_kind: "inventory:part", name: "refills_left", display_label: "Refills left", type: "number", position: 7 },
+        { entity_kind: "inventory:part", name: "refill_by", display_label: "Refill by", type: "date", position: 8 },
+      ],
+      field_overrides: [
+        { entity_kind: "inventory:part", name: "manufacturer", display_label: "Maker" },
+        { entity_kind: "inventory:part", name: "serial_number", hidden: true },
+        { entity_kind: "inventory:part", name: "model_number", hidden: true },
+      ],
+      saved_views: [
+        { entity_kind: "inventory:part", name: "Current meds", view_type: "table", pinned: true, config: { visible_fields: ["title", "dose", "schedule", "refills_left", "refill_by"] } },
+      ],
+    },
+  },
+  {
+    glyph: "🪴",
+    blurb:
+      "Stop killing your houseplants — light and watering needs per plant, grouped by light so the windowsill crowd sits apart from the shady corner.",
+    manifest: {
+      id: "cobblr.flagship.plant-care",
+      version: "0.1.0",
+      name: "Plant Care",
+      description: "Per-plant species, light, watering interval and pot size; a 'By light' view.",
+      author: "Cobblr",
+      requires: [{ module: "assets" }],
+      field_defs: [
+        { entity_kind: "assets:asset", name: "species", display_label: "Species", type: "text", position: 1 },
+        { entity_kind: "assets:asset", name: "light", display_label: "Light", type: "text", position: 2, choices: ["Low", "Medium", "Bright indirect", "Direct sun"] },
+        { entity_kind: "assets:asset", name: "water_every_days", display_label: "Water every (days)", type: "number", position: 3 },
+        { entity_kind: "assets:asset", name: "last_watered", display_label: "Last watered", type: "date", position: 4 },
+        { entity_kind: "assets:asset", name: "pot_size", display_label: "Pot size", type: "text", position: 5 },
+        { entity_kind: "assets:asset", name: "care_summary", display_label: "Care", type: "computed", position: 6, template: '{{light | default: "?"}} light · water every {{water_every_days | default: "?"}}d' },
+      ],
+      field_overrides: [
+        { entity_kind: "assets:asset", name: "manufacturer", hidden: true },
+        { entity_kind: "assets:asset", name: "model", hidden: true },
+        { entity_kind: "assets:asset", name: "serial_number", hidden: true },
+        { entity_kind: "assets:asset", name: "short_name", hidden: true },
+        { entity_kind: "assets:asset", name: "excitement", hidden: true },
+      ],
+      saved_views: [
+        { entity_kind: "assets:asset", name: "By light", view_type: "table", pinned: true, config: { group_by: "light", visible_fields: ["title", "species", "water_every_days", "last_watered", "pot_size"] } },
+      ],
+    },
+  },
+  {
+    glyph: "🔁",
+    blurb:
+      "Every streaming service, membership and recurring bill in one place — a computed per-cycle line + renewal dates, grouped by category.",
+    manifest: {
+      id: "cobblr.flagship.subscriptions",
+      version: "0.1.0",
+      name: "Subscriptions & Recurring Bills",
+      description: "Recurring charges with cost/cycle, renewal date, payment method; a computed plan line + 'Renews next' view.",
+      author: "Cobblr",
+      requires: [{ module: "inventory" }],
+      field_defs: [
+        { entity_kind: "inventory:part", name: "cost_per_cycle", display_label: "Cost / cycle", type: "number", position: 1 },
+        { entity_kind: "inventory:part", name: "billing_cycle", display_label: "Billing cycle", type: "text", position: 2, choices: ["Weekly", "Monthly", "Quarterly", "Yearly"] },
+        { entity_kind: "inventory:part", name: "renewal_date", display_label: "Renews", type: "date", position: 3 },
+        { entity_kind: "inventory:part", name: "category", display_label: "Category", type: "text", position: 4, choices: ["Streaming", "Software", "Membership", "Utility", "Insurance", "Phone / internet", "Other"] },
+        { entity_kind: "inventory:part", name: "payment_method", display_label: "Paid with", type: "text", position: 5 },
+        { entity_kind: "inventory:part", name: "plan_summary", display_label: "Plan", type: "computed", position: 6, template: '{{cost_per_cycle | default: "?"}} / {{billing_cycle | default: "cycle"}} · renews {{renewal_date | default: "—"}}' },
+      ],
+      field_overrides: [
+        { entity_kind: "inventory:part", name: "supplier_url", display_label: "Manage URL" },
+        { entity_kind: "inventory:part", name: "manufacturer", display_label: "Provider" },
+        { entity_kind: "inventory:part", name: "qty", hidden: true },
+        { entity_kind: "inventory:part", name: "unit", hidden: true },
+        { entity_kind: "inventory:part", name: "min_qty", hidden: true },
+        { entity_kind: "inventory:part", name: "serial_number", hidden: true },
+        { entity_kind: "inventory:part", name: "model_number", hidden: true },
+      ],
+      saved_views: [
+        { entity_kind: "inventory:part", name: "Renews next", view_type: "table", pinned: true, config: { group_by: "category", visible_fields: ["title", "cost_per_cycle", "billing_cycle", "renewal_date"] } },
+      ],
+    },
+  },
+  {
+    glyph: "📚",
+    blurb:
+      "Catalog what you collect — books, wine, records, cards, coins — grouped by condition, with paid-vs-value, so you stop buying the dupe.",
+    manifest: {
+      id: "cobblr.flagship.collections",
+      version: "0.1.0",
+      name: "Collections",
+      description: "Catalog a collection by condition, edition, paid + current value; a 'By condition' view.",
+      author: "Cobblr",
+      requires: [{ module: "inventory" }],
+      field_defs: [
+        { entity_kind: "inventory:part", name: "condition", display_label: "Condition", type: "text", position: 1, choices: ["Mint / Sealed", "Near Mint", "Excellent", "Good", "Fair", "Poor"] },
+        { entity_kind: "inventory:part", name: "edition", display_label: "Edition / year", type: "text", position: 2 },
+        { entity_kind: "inventory:part", name: "acquired_date", display_label: "Acquired", type: "date", position: 3 },
+        { entity_kind: "inventory:part", name: "acquired_price", display_label: "Paid", type: "number", position: 4 },
+        { entity_kind: "inventory:part", name: "current_value", display_label: "Value today", type: "number", position: 5 },
+        { entity_kind: "inventory:part", name: "signed", display_label: "Signed / sealed", type: "boolean", position: 6 },
+      ],
+      field_overrides: [
+        { entity_kind: "inventory:part", name: "manufacturer", display_label: "Maker / label" },
+        { entity_kind: "inventory:part", name: "serial_number", hidden: true },
+        { entity_kind: "inventory:part", name: "model_number", hidden: true },
+        { entity_kind: "inventory:part", name: "min_qty", hidden: true },
+      ],
+      saved_views: [
+        { entity_kind: "inventory:part", name: "By condition", view_type: "table", pinned: true, config: { group_by: "condition", visible_fields: ["title", "edition", "current_value", "acquired_date"] } },
+      ],
+    },
+  },
+  {
+    glyph: "🪪",
+    blurb:
+      "Passport, license, registration, insurance — every document that expires, with its number + issuer. Expiry dates land on your calendar automatically.",
+    manifest: {
+      id: "cobblr.flagship.documents-renewals",
+      version: "0.1.0",
+      name: "Important Documents & Renewals",
+      description: "Documents that expire, with number/issuer/expiry; a 'Renewals' view + automatic calendar reminders.",
+      author: "Cobblr",
+      requires: [{ module: "assets" }],
+      field_defs: [
+        { entity_kind: "assets:asset", name: "doc_type", display_label: "Type", type: "text", position: 1, choices: ["Passport", "Driver's license", "Vehicle registration", "Insurance policy", "Membership", "Certification", "Visa / permit", "Warranty", "Other"] },
+        { entity_kind: "assets:asset", name: "document_number", display_label: "Number", type: "text", position: 2 },
+        { entity_kind: "assets:asset", name: "issuer", display_label: "Issued by", type: "text", position: 3 },
+        { entity_kind: "assets:asset", name: "issued_date", display_label: "Issued", type: "date", position: 4 },
+        { entity_kind: "assets:asset", name: "expires_date", display_label: "Expires", type: "date", position: 5 },
+        { entity_kind: "assets:asset", name: "doc_summary", display_label: "Summary", type: "computed", position: 6, template: '{{doc_type | default: "Document"}} · expires {{expires_date | default: "—"}}' },
+      ],
+      field_overrides: [
+        { entity_kind: "assets:asset", name: "manufacturer", hidden: true },
+        { entity_kind: "assets:asset", name: "model", hidden: true },
+        { entity_kind: "assets:asset", name: "serial_number", hidden: true },
+        { entity_kind: "assets:asset", name: "short_name", hidden: true },
+        { entity_kind: "assets:asset", name: "excitement", hidden: true },
+      ],
+      saved_views: [
+        { entity_kind: "assets:asset", name: "Renewals", view_type: "table", pinned: true, config: { group_by: "doc_type", visible_fields: ["title", "document_number", "issuer", "expires_date"] } },
+      ],
+    },
+  },
+  {
+    glyph: "🐾",
+    blurb:
+      "Each pet's vitals + schedule — species, breed, birthday, vet, microchip, weight, and next-vet / rabies-due dates that land on your calendar.",
+    manifest: {
+      id: "cobblr.flagship.pet-care",
+      version: "0.1.0",
+      name: "Pet Care",
+      description: "Per-pet vitals + vet/vaccination dates (calendar-reminded); a 'My pets' view grouped by species.",
+      author: "Cobblr",
+      requires: [{ module: "assets" }],
+      field_defs: [
+        { entity_kind: "assets:asset", name: "species", display_label: "Species", type: "text", position: 1, choices: ["Dog", "Cat", "Rabbit", "Bird", "Reptile", "Fish", "Horse", "Other"] },
+        { entity_kind: "assets:asset", name: "breed", display_label: "Breed", type: "text", position: 2 },
+        { entity_kind: "assets:asset", name: "birthdate", display_label: "Birthday", type: "date", position: 3 },
+        { entity_kind: "assets:asset", name: "weight_kg", display_label: "Weight (kg)", type: "number", position: 4 },
+        { entity_kind: "assets:asset", name: "vet", display_label: "Vet", type: "text", position: 5 },
+        { entity_kind: "assets:asset", name: "microchip", display_label: "Microchip", type: "text", position: 6 },
+        { entity_kind: "assets:asset", name: "next_vet_visit", display_label: "Next vet visit", type: "date", position: 7 },
+        { entity_kind: "assets:asset", name: "rabies_due", display_label: "Rabies due", type: "date", position: 8 },
+      ],
+      field_overrides: [
+        { entity_kind: "assets:asset", name: "manufacturer", hidden: true },
+        { entity_kind: "assets:asset", name: "model", hidden: true },
+        { entity_kind: "assets:asset", name: "serial_number", hidden: true },
+        { entity_kind: "assets:asset", name: "short_name", hidden: true },
+        { entity_kind: "assets:asset", name: "excitement", hidden: true },
+      ],
+      saved_views: [
+        { entity_kind: "assets:asset", name: "My pets", view_type: "table", pinned: true, config: { group_by: "species", visible_fields: ["title", "breed", "weight_kg", "next_vet_visit", "rabies_due"] } },
+      ],
+    },
+  },
+  {
+    glyph: "🎁",
+    blurb:
+      "Stash gift ideas year-round — who, what occasion + its date, a link, a budget, and the idea→bought→wrapped→given pipeline. Dates hit your calendar.",
+    manifest: {
+      id: "cobblr.flagship.gifts-occasions",
+      version: "0.1.0",
+      name: "Gifts & Occasions",
+      description: "Gift ideas by recipient + occasion date (calendar-reminded); a 'By recipient' view + status pipeline.",
+      author: "Cobblr",
+      requires: [{ module: "inventory" }],
+      field_defs: [
+        { entity_kind: "inventory:part", name: "recipient", display_label: "For", type: "text", position: 1 },
+        { entity_kind: "inventory:part", name: "occasion", display_label: "Occasion", type: "text", position: 2, choices: ["Birthday", "Christmas", "Anniversary", "Wedding", "Graduation", "Holiday", "Just because", "Other"] },
+        { entity_kind: "inventory:part", name: "occasion_date", display_label: "Occasion date", type: "date", position: 3 },
+        { entity_kind: "inventory:part", name: "budget", display_label: "Budget", type: "number", position: 4 },
+        { entity_kind: "inventory:part", name: "status", display_label: "Status", type: "text", position: 5, choices: ["Idea", "Bought", "Wrapped", "Given"] },
+      ],
+      field_overrides: [
+        { entity_kind: "inventory:part", name: "supplier_url", display_label: "Idea link" },
+        { entity_kind: "inventory:part", name: "manufacturer", display_label: "Store" },
+        { entity_kind: "inventory:part", name: "cost", display_label: "Spent" },
+        { entity_kind: "inventory:part", name: "qty", hidden: true },
+        { entity_kind: "inventory:part", name: "unit", hidden: true },
+        { entity_kind: "inventory:part", name: "min_qty", hidden: true },
+        { entity_kind: "inventory:part", name: "serial_number", hidden: true },
+        { entity_kind: "inventory:part", name: "model_number", hidden: true },
+      ],
+      saved_views: [
+        { entity_kind: "inventory:part", name: "Gift list", view_type: "table", pinned: true, config: { group_by: "recipient", visible_fields: ["title", "occasion", "occasion_date", "budget", "status"] } },
+      ],
+    },
+  },
+  {
+    glyph: "🧻",
+    blurb:
+      "Toiletries / cleaning / batteries hit their reorder level → auto onto the shopping list; check off after shopping → it restocks. Grouped by area.",
+    manifest: {
+      id: "cobblr.flagship.household-supplies",
+      version: "0.1.0",
+      name: "Household Supplies auto-reorder",
+      description: "Reorder level per supply → auto shopping list on low-stock, restock on check-off; a 'By area' view.",
+      author: "Cobblr",
+      requires: [{ module: "inventory" }, { module: "lists" }],
+      wires: [
+        { source_kind: "inventory:part", action_id: "lists:add-item", trigger_type: "event", trigger_event: "inventory.stock.low", args: { listTitle: "Shopping list" } },
+        { source_kind: "inventory:part", action_id: "inventory:adjust-stock", trigger_type: "event", trigger_event: "lists.item.checked", args: { delta: 1, reason: "Restocked — checked off the shopping list" } },
+      ],
+      field_defs: [
+        { entity_kind: "inventory:part", name: "area", display_label: "Area", type: "text", position: 1, choices: ["Bathroom", "Kitchen", "Laundry", "Cleaning", "Garage", "Office", "General"] },
+        { entity_kind: "inventory:part", name: "typical_pack", display_label: "Usual pack", type: "text", position: 2 },
+      ],
+      field_overrides: [
+        { entity_kind: "inventory:part", name: "min_qty", display_label: "Reorder at" },
+        { entity_kind: "inventory:part", name: "manufacturer", display_label: "Brand" },
+        { entity_kind: "inventory:part", name: "serial_number", hidden: true },
+        { entity_kind: "inventory:part", name: "model_number", hidden: true },
+      ],
+      saved_views: [
+        { entity_kind: "inventory:part", name: "Supplies by area", view_type: "table", pinned: true, config: { group_by: "area", visible_fields: ["title", "qty", "unit", "typical_pack"] } },
+      ],
+    },
+  },
+  {
+    glyph: "🏡🔧",
+    blurb:
+      "The home version of Vehicle Maintenance — furnace, water heater, HVAC filters, detectors — with service logs + next-due dates on your calendar.",
+    manifest: {
+      id: "cobblr.flagship.home-maintenance",
+      version: "0.1.0",
+      name: "Home Maintenance Schedule",
+      description: "Each home system + its service log with cost + next-due dates; a 'Home systems' view grouped by system.",
+      author: "Cobblr",
+      requires: [{ module: "assets" }, { module: "core-maintenance" }],
+      field_defs: [
+        { entity_kind: "assets:asset", name: "system_type", display_label: "System", type: "text", position: 1, choices: ["Furnace", "Air conditioner", "Water heater", "HVAC filter", "Smoke / CO detector", "Gutters", "Sump pump", "Dishwasher", "Washer", "Dryer", "Refrigerator", "Garage door", "Other"] },
+        { entity_kind: "assets:asset", name: "location", display_label: "Location", type: "text", position: 2 },
+        { entity_kind: "assets:asset", name: "installed_date", display_label: "Installed", type: "date", position: 3 },
+        { entity_kind: "assets:asset", name: "filter_size", display_label: "Filter / part size", type: "text", position: 4 },
+      ],
+      field_overrides: [
+        { entity_kind: "assets:asset", name: "manufacturer", display_label: "Brand" },
+        { entity_kind: "assets:asset", name: "model", display_label: "Model" },
+        { entity_kind: "assets:asset", name: "short_name", hidden: true },
+        { entity_kind: "assets:asset", name: "type", hidden: true },
+        { entity_kind: "assets:asset", name: "serial_number", hidden: true },
+        { entity_kind: "assets:asset", name: "excitement", hidden: true },
+      ],
+      saved_views: [
+        { entity_kind: "assets:asset", name: "Home systems", view_type: "table", pinned: true, config: { group_by: "system_type", visible_fields: ["title", "location", "installed_date", "filter_size"] } },
       ],
     },
   },

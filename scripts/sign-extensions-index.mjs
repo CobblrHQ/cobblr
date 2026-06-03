@@ -8,7 +8,7 @@
 // The signature is over the EXACT bytes of index.json — commit index.json
 // and index.json.sig together to the cobblr-extensions repo. The private
 // key is read from the env or a file path; it is never written or logged.
-// See docs/design-decisions/extension-registry.md §2.4.
+// See docs/modules/extension-registry.md §2.4.
 import { readFileSync, writeFileSync } from "node:fs";
 import { sign as cryptoSign, createPrivateKey } from "node:crypto";
 

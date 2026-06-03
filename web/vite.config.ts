@@ -3,6 +3,10 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
+  // occt-import-js is an Emscripten/WASM module (the STEP-preview CAD kernel).
+  // esbuild's dev pre-bundler mangles Emscripten glue + can't see the `?url`
+  // wasm import, so exclude it — it's lazy-loaded only when a STEP is opened.
+  optimizeDeps: { exclude: ["occt-import-js"] },
   server: {
     host: "0.0.0.0",
     port: 5173,
@@ -44,6 +48,11 @@ export default defineConfig({
           }
           if (id.includes("qrcode")) return "vendor-qrcode";
           if (id.includes("lucide-react")) return "vendor-icons";
+          // three.js (~600KB) is reached ONLY via the lazy STL renderer
+          // (core-file-preview). Returning undefined keeps it out of the
+          // eager `vendor` bundle so Rollup leaves it in the dynamic
+          // chunk — it loads only when an STL is actually previewed.
+          if (id.includes("node_modules/three")) return undefined;
           // Everything else from node_modules goes into a generic
           // vendor bundle.
           return "vendor";

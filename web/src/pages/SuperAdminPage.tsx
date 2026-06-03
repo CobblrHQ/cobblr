@@ -9,7 +9,7 @@
 //   5. Activity        — global activity feed (filterable).
 //   6. Health          — db + recent activity + backup status note.
 //
-// See docs/PRODUCTION_DEPLOY.md for the operator's launch flow.
+// See docs/operations/PRODUCTION_DEPLOY.md for the operator's launch flow.
 
 import { useState } from "react";
 import { Link } from "react-router-dom";
@@ -25,15 +25,19 @@ import {
   Server,
   ShoppingBag,
   Users,
+  UserPlus,
+  Copy,
+  Trash2,
 } from "lucide-react";
 import { useConfirm, usePageTitle, useToast } from "@cobblr/platform-web";
-import { ApiError, api } from "../lib/api";
+import { ApiError, api, type SignupInvite } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 
 type Tab =
   | "overview"
   | "workspaces"
   | "users"
+  | "invites"
   | "modules"
   | "marketplace"
   | "activity"
@@ -43,6 +47,7 @@ const TABS: Array<{ id: Tab; label: string; icon: typeof Server }> = [
   { id: "overview", label: "Overview", icon: Server },
   { id: "workspaces", label: "Workspaces", icon: LayoutGrid },
   { id: "users", label: "Users", icon: Users },
+  { id: "invites", label: "Invites", icon: UserPlus },
   { id: "modules", label: "Modules", icon: Boxes },
   { id: "marketplace", label: "Marketplace", icon: ShoppingBag },
   { id: "activity", label: "Activity", icon: Activity },
@@ -50,10 +55,15 @@ const TABS: Array<{ id: Tab; label: string; icon: typeof Server }> = [
 ];
 
 export function SuperAdminPage() {
-  usePageTitle("super-admin");
-  const { user } = useAuth();
+  usePageTitle("Super-admin");
+  const { user, loading } = useAuth();
   const [tab, setTab] = useState<Tab>("overview");
 
+  // Wait for /me hydration before judging access — otherwise a direct
+  // load / fresh login flashes the "denied" box until auth resolves.
+  if (loading) {
+    return <div className="text-xs text-faint">Loading…</div>;
+  }
   if (!user?.is_platform_admin) {
     return (
       <div className="rounded-xl border border-ember-200 dark:border-ember-700 bg-ember-50 dark:bg-ember-900/20 p-5 text-sm text-ember-700 dark:text-ember-300">
@@ -66,11 +76,11 @@ export function SuperAdminPage() {
   return (
     <div className="space-y-5 max-w-6xl">
       <div className="border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">
-          super-admin
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100">
+          Super-admin
         </h1>
         <span className="text-[10px] font-mono text-faint dark:text-slate-500">
-          cross-workspace dashboards for the platform operator. workspace
+          Cross-workspace dashboards for the platform operator. Workspace
           owners + admins can't reach this — separate tier.
         </span>
       </div>
@@ -101,6 +111,7 @@ export function SuperAdminPage() {
       {tab === "overview" && <OverviewTab />}
       {tab === "workspaces" && <WorkspacesTab />}
       {tab === "users" && <UsersTab />}
+      {tab === "invites" && <InvitesTab />}
       {tab === "modules" && <ModulesTab />}
       {tab === "marketplace" && <MarketplaceTab />}
       {tab === "activity" && <ActivityTab />}
@@ -287,6 +298,15 @@ function ModulesTab() {
   );
 }
 
+// Entity cell for the activity feed. UUIDs are noise at full length, so
+// short-prefix them; readable ids (module names, slugs) show in full so
+// the column isn't cut off mid-word ("core-vie" → "core-views").
+function entityLabel(type: string | null, id: string | null): string {
+  if (!type || !id) return "—";
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-/i.test(id);
+  return `${type}/${isUuid ? id.slice(0, 8) : id}`;
+}
+
 function ActivityTab() {
   const q = useQuery({
     queryKey: ["super-admin-activity"],
@@ -314,8 +334,8 @@ function ActivityTab() {
               <td className="px-3 py-1.5 text-xs">{a.org_name ?? "—"}</td>
               <td className="px-3 py-1.5 text-xs">{a.user_display_name ?? a.user_email ?? "system"}</td>
               <td className="px-3 py-1.5 text-[11px] font-mono text-accent">{a.action}</td>
-              <td className="px-3 py-1.5 text-[11px] font-mono text-faint">
-                {a.entity_type && a.entity_id ? `${a.entity_type}/${a.entity_id.slice(0, 8)}` : "—"}
+              <td className="px-3 py-1.5 text-[11px] font-mono text-faint whitespace-nowrap">
+                {entityLabel(a.entity_type, a.entity_id)}
               </td>
             </tr>
           ))}
@@ -728,4 +748,118 @@ function Th({ children, right }: { children: React.ReactNode; right?: boolean })
       {children}
     </th>
   );
+}
+
+// ── Invites: single-use signup links (invite-only beta) ─────────────────
+function InvitesTab() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const confirm = useConfirm();
+  const invites = useQuery({ queryKey: ["signup-invites"], queryFn: () => api.listSignupInvites() });
+  const [email, setEmail] = useState("");
+  const [note, setNote] = useState("");
+  const [days, setDays] = useState("14");
+  const [freshLink, setFreshLink] = useState<string | null>(null);
+
+  const mint = useMutation({
+    mutationFn: () => api.mintSignupInvite({
+      email: email.trim() || undefined,
+      note: note.trim() || undefined,
+      expires_in_days: days ? Number(days) : undefined,
+    }),
+    onSuccess: (inv) => {
+      setFreshLink(`${window.location.origin}/join/${inv.token}`);
+      setEmail(""); setNote("");
+      void qc.invalidateQueries({ queryKey: ["signup-invites"] });
+      toast.success("Invite minted — copy the link below.");
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't mint"),
+  });
+  const revoke = useMutation({
+    mutationFn: (id: string) => api.revokeSignupInvite(id),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ["signup-invites"] }); toast.success("Revoked."); },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't revoke"),
+  });
+
+  return (
+    <div className="space-y-5">
+      <p className="text-sm text-content dark:text-mortar-200">
+        Mint a <strong>single-use link</strong> so one new person can sign up and get their own
+        workspace — even while public signup is off. The link is shown once; it's a credential, so
+        give it directly to the person and set a short expiry.
+      </p>
+
+      <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
+        <div className="text-[10px] font-mono uppercase tracking-widest text-accent">// new invite</div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <label className="block">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Lock to email (optional)</span>
+            <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="friend@example.com" className="input w-full" />
+          </label>
+          <label className="block">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Note (optional)</span>
+            <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="for a beta tester" className="input w-full" />
+          </label>
+          <label className="block">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Expires in (days)</span>
+            <input type="number" min={1} max={365} value={days} onChange={(e) => setDays(e.target.value)} className="input w-full" />
+          </label>
+        </div>
+        <button onClick={() => mint.mutate()} disabled={mint.isPending} className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition disabled:opacity-50 inline-flex items-center gap-1.5">
+          <UserPlus size={14} /> Mint invite link
+        </button>
+        {freshLink && (
+          <div className="rounded-lg border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 p-3 space-y-1.5">
+            <div className="text-[10px] font-mono uppercase tracking-widest text-accent">// copy this now — shown once</div>
+            <div className="flex items-center gap-2">
+              <input readOnly value={freshLink} onFocus={(e) => e.currentTarget.select()} className="input flex-1 font-mono text-xs" />
+              <button onClick={() => { void navigator.clipboard?.writeText(freshLink); toast.success("Copied."); }} className="p-2 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 transition" title="Copy"><Copy size={14} /></button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-xl border border-line dark:border-slate-700 overflow-hidden">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-line dark:border-slate-700 bg-subtle/60 dark:bg-slate-800/40 text-left">
+              <th className="px-3 py-1.5 font-mono text-[10px] uppercase text-muted tracking-wider">Status</th>
+              <th className="px-3 py-1.5 font-mono text-[10px] uppercase text-muted tracking-wider">For</th>
+              <th className="px-3 py-1.5 font-mono text-[10px] uppercase text-muted tracking-wider">Redeemed by</th>
+              <th className="px-3 py-1.5 font-mono text-[10px] uppercase text-muted tracking-wider">Expires</th>
+              <th className="px-3 py-1.5"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {(invites.data?.items ?? []).map((inv: SignupInvite) => (
+              <tr key={inv.id} className="border-b border-line dark:border-slate-800 last:border-0">
+                <td className="px-3 py-1.5"><StatusPill status={inv.status} /></td>
+                <td className="px-3 py-1.5 text-content dark:text-mortar-200">{inv.invited_email ?? <span className="text-faint">anyone</span>}{inv.note ? <span className="text-faint"> · {inv.note}</span> : null}</td>
+                <td className="px-3 py-1.5 text-content dark:text-mortar-200">{inv.consumed_by_email ?? "—"}</td>
+                <td className="px-3 py-1.5 text-muted">{inv.expires_at ? new Date(inv.expires_at).toLocaleDateString() : "never"}</td>
+                <td className="px-3 py-1.5 text-right">
+                  {inv.status === "open" && (
+                    <button onClick={async () => { if (await confirm({ title: "Revoke invite?", message: "The link stops working immediately.", destructive: true })) revoke.mutate(inv.id); }} className="text-faint hover:text-ember-500 transition" title="Revoke"><Trash2 size={13} /></button>
+                  )}
+                </td>
+              </tr>
+            ))}
+            {(invites.data?.items.length ?? 0) === 0 && (
+              <tr><td colSpan={5} className="px-3 py-4 text-center text-faint italic">No invites yet.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function StatusPill({ status }: { status: string }) {
+  const map: Record<string, string> = {
+    open: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
+    consumed: "bg-cobble-100 text-accent dark:bg-cobble-900/40 dark:text-cobble-300",
+    expired: "bg-mortar-100 text-muted dark:bg-slate-800 dark:text-slate-400",
+    revoked: "bg-ember-100 text-ember-700 dark:bg-ember-900/40 dark:text-ember-300",
+  };
+  return <span className={"inline-block rounded px-1.5 py-0.5 text-[10px] font-mono uppercase " + (map[status] ?? map.expired)}>{status}</span>;
 }

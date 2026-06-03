@@ -50,7 +50,7 @@ export interface PlatformFieldDef {
   entity_kind: string;
   name: string;
   display_label: string;
-  type: "text" | "number" | "boolean" | "date" | "url";
+  type: "text" | "number" | "boolean" | "date" | "url" | "computed";
   required: boolean;
   position: number;
   bundle_id: string | null;
@@ -60,6 +60,9 @@ export interface PlatformFieldDef {
   /** Optional built-in renderer for displaying the value on
    *  list rows + detail pages. */
   renderer?: FieldRendererId | null;
+  /** type='computed' only: the {{ }} template rendered read-only at
+   *  resolve time. Null for stored value fields. */
+  template?: string | null;
 }
 
 /** The adapter the host (web app) injects. Every shared component
@@ -85,4 +88,38 @@ export interface PlatformWebApi {
   /** Append a new choice to a text field-def's `choices` array. The
    *  CustomFieldsPanel's "+ add new" affordance calls this. */
   appendFieldDefChoice?(slug: string, id: string, value: string): Promise<PlatformFieldDef>;
+  /** core-units vocabulary: built-in + custom units + the workspace's
+   *  display mode. Optional — the UnitInput / formatting helpers degrade
+   *  to free-text when a host doesn't wire it. */
+  listUnits?(slug: string): Promise<PlatformUnitVocabulary>;
+  addUnit?(slug: string, unit: PlatformUnitInput): Promise<PlatformUnitDef>;
+  deleteUnit?(slug: string, code: string): Promise<void>;
+  setUnitDisplayMode?(
+    slug: string,
+    mode: UnitDisplayMode,
+  ): Promise<{ display_mode: UnitDisplayMode }>;
+}
+
+export type UnitDisplayMode = "symbol" | "name" | "both";
+
+export interface PlatformUnitDef {
+  code: string;
+  symbol: string;
+  name: string;
+  plural: string;
+  category: string;
+}
+
+export interface PlatformUnitInput {
+  code: string;
+  symbol: string;
+  name: string;
+  plural?: string;
+  category?: string;
+}
+
+export interface PlatformUnitVocabulary {
+  builtins: PlatformUnitDef[];
+  custom: PlatformUnitDef[];
+  display_mode: UnitDisplayMode;
 }

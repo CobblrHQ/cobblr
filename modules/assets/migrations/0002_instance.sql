@@ -1,4 +1,4 @@
--- Multi-instance support — see docs/design-decisions/instances.md.
+-- Multi-instance support — see docs/architecture/instances.md.
 --
 -- The instance column scopes each row to a workspace-defined
 -- instance of the module. Default value matches the module name so

@@ -11,7 +11,7 @@
 //      Cheap rejections (no-providers, capability-unsupported)
 //      surface as typed errors.
 //
-// See docs/design-decisions/core-ai.md.
+// See docs/modules/core-ai.md.
 
 import { createHash } from "node:crypto";
 import type {

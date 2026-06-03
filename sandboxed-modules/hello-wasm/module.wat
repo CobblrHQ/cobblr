@@ -4,7 +4,7 @@
 ;; safety mechanism. Hand-rolled WAT for now — a proper SDK in
 ;; AssemblyScript / Rust will eventually generate something like
 ;; this from a higher-level source. See
-;; docs/design-decisions/module-isolation.md.
+;; docs/architecture/module-isolation.md.
 ;;
 ;; Compile with:
 ;;   npx -p wabt wat2wasm \

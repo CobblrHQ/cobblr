@@ -11,14 +11,12 @@
 import { useEffect } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { LogOut, Moon, Server, Sun } from "lucide-react";
-import { useAuth } from "../auth/AuthContext";
-import { useTheme } from "../theme/ThemeContext";
 import { CobblestoneMark } from "../CobblestoneMark";
 import { NotificationsBell } from "./NotificationsBell";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
-import { ModuleNav, ConfigurationLink } from "./ModuleNav";
+import { ModuleNav } from "./ModuleNav";
 import { HeaderActions } from "./HeaderActions";
+import { UserMenu } from "./UserMenu";
 import { MobileNav } from "./MobileNav";
 import { SearchBar } from "./SearchBar";
 import { ErrorBoundary } from "./ErrorBoundary";
@@ -26,8 +24,6 @@ import { api } from "../lib/api";
 import { adminHtmlVars, fontFaceCss } from "../lib/appTheme";
 
 export function AppLayout({ activeSlug }: { activeSlug: string }) {
-  const { user, logout } = useAuth();
-  const { theme, toggle } = useTheme();
   const location = useLocation();
 
   // Workspace brand for the admin shell. The whole dashboard recolours to
@@ -120,47 +116,16 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
             <ModuleNav />
           </nav>
 
-          {/* Right cluster (desktop) — never shrinks */}
+          {/* Right cluster (desktop) — never shrinks. The cryptic icon
+              row (super-admin / calendar / configuration / profile /
+              theme / sign-out) is folded into UserMenu; scan, search +
+              notifications stay as their own affordances. */}
           <div className="hidden md:flex items-center gap-1 shrink-0">
             {/* Module-contributed critical quick-actions (e.g. scan). */}
             <HeaderActions />
             <SearchBar />
-            {user?.is_platform_admin && (
-              <Link
-                to="/super-admin"
-                title="Platform-operator dashboards"
-                className="text-faint dark:text-slate-500 hover:text-accent transition p-1.5"
-              >
-                <Server size={14} />
-              </Link>
-            )}
-            <ConfigurationLink />
             <NotificationsBell />
-            <Link
-              to="/me"
-              className="text-xs text-muted dark:text-slate-400 hidden md:inline hover:text-accent transition"
-              title="Your profile + recent activity"
-            >
-              {user?.display_name}
-            </Link>
-            {/* A workspace theme owns the palette, so the per-user
-                light/dark toggle would just fight it — hide when themed. */}
-            {!skin && (
-              <button
-                onClick={toggle}
-                className="text-faint dark:text-slate-500 hover:text-content dark:hover:text-mortar-100 transition p-1.5"
-                title={theme === "dark" ? "Switch to light" : "Switch to dark"}
-              >
-                {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
-              </button>
-            )}
-            <button
-              onClick={logout}
-              className="text-faint dark:text-slate-500 hover:text-ember-500 transition p-1.5"
-              title="Sign out"
-            >
-              <LogOut size={14} />
-            </button>
+            <UserMenu themed={!!skin} />
           </div>
 
           {/* Mobile: spacer pushes the hamburger to the right edge. */}

@@ -12,7 +12,7 @@
 -- instance_name = module_name and is_default = true. User-created
 -- instances are subsequent rows with chosen names.
 --
--- See docs/design-decisions/instances.md for the full design.
+-- See docs/architecture/instances.md for the full design.
 
 create table workspace_module_instances (
   id              uuid primary key default gen_random_uuid(),

@@ -1,14 +1,15 @@
-// /bindings — manage wires. The user-configurable layer that
-// connects entity kinds to actions, plus the template each binding
-// uses when rendering data from the source entity.
+// /bindings — manage wires (the user-configurable layer connecting entity kinds
+// to actions). The create flow is the no-code WireComposer; below it, the
+// existing wires + recent firings.
 
-import { useState, type FormEvent } from "react";
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ApiError, api, type PlatformBinding } from "../lib/api";
+import { api, type PlatformBinding } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { ChevronRight, Plus } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { useToast, usePageTitle } from "@cobblr/platform-web";
 import { WireDetailModal } from "../components/WireDetailModal";
+import { WireComposer } from "../components/WireComposer";
 
 export function BindingsPage() {
   usePageTitle("Wires");
@@ -21,74 +22,14 @@ export function BindingsPage() {
     queryFn: () => api.listBindings(slug),
     enabled: !!slug,
   });
-  const kinds = useQuery({
-    queryKey: ["entity-kinds", slug],
-    queryFn: () => api.listEntityKinds(slug),
-    enabled: !!slug,
-  });
-
-  // For the create form: pick a source_kind first, then the actions
-  // applicable to it. (Bindings can only be created between
-  // declared kinds + actions; that's the platform's safety net.)
-  const [sourceKind, setSourceKind] = useState("");
-  const actionsForKind = useQuery({
-    queryKey: ["actions-for-kind", slug, sourceKind],
-    queryFn: () => api.listActions(slug, sourceKind),
-    enabled: !!slug && !!sourceKind,
-  });
-
-  // Available trigger events (enabled modules' declared events) for the
-  // composer typeahead — so the user picks a real event instead of
-  // having to know the exact string.
-  const wireEvents = useQuery({
-    queryKey: ["wire-events", slug],
-    queryFn: () => api.listWireEvents(slug),
-    enabled: !!slug,
-  });
-
-  const [actionId, setActionId] = useState("");
-  const [triggerType, setTriggerType] = useState<PlatformBinding["trigger_type"]>("user-invoked");
-  const [triggerEvent, setTriggerEvent] = useState("");
-  const [template, setTemplate] = useState("");
-  const [createErr, setCreateErr] = useState<string | null>(null);
-
-  const create = useMutation({
-    mutationFn: () =>
-      api.createBinding(slug, {
-        source_kind: sourceKind,
-        action_id: actionId,
-        trigger_type: triggerType,
-        trigger_event: triggerEvent || null,
-        template: template || null,
-      }),
-    onSuccess: () => {
-      toast.success("Wire created.");
-      void qc.invalidateQueries({ queryKey: ["bindings", slug] });
-      setSourceKind("");
-      setActionId("");
-      setTriggerEvent("");
-      setTemplate("");
-      setCreateErr(null);
-    },
-    onError: (e: unknown) => {
-      setCreateErr(e instanceof ApiError ? e.message : "Couldn't create");
-    },
-  });
 
   const toggle = useMutation({
-    mutationFn: (b: PlatformBinding) =>
-      api.updateBinding(slug, b.id, { enabled: !b.enabled }),
+    mutationFn: (b: PlatformBinding) => api.updateBinding(slug, b.id, { enabled: !b.enabled }),
     onSuccess: (_data, b) => {
       toast.info(`Wire ${b.enabled ? "disabled" : "enabled"}.`);
       void qc.invalidateQueries({ queryKey: ["bindings", slug] });
     },
   });
-
-  function submit(e: FormEvent) {
-    e.preventDefault();
-    if (!sourceKind || !actionId) return;
-    create.mutate();
-  }
 
   return (
     <div className="space-y-5 max-w-4xl">
@@ -97,119 +38,11 @@ export function BindingsPage() {
           wires
         </h1>
         <span className="text-[10px] font-mono text-faint dark:text-slate-500">
-          when X happens, do Y. Modules don't know about each other —
-          you wire them here.
+          when X happens, do Y. Modules don't know about each other — you wire them here.
         </span>
       </div>
 
-      <form
-        onSubmit={submit}
-        className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3"
-      >
-        <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
-          // new wire
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-              Source entity kind
-            </span>
-            <select
-              value={sourceKind}
-              onChange={(e) => {
-                setSourceKind(e.target.value);
-                setActionId("");
-              }}
-              className="input"
-            >
-              <option value="">— pick one —</option>
-              {kinds.data?.items.map((k) => (
-                <option key={k.id} value={k.id}>
-                  {k.display_name} ({k.id})
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-              Action
-            </span>
-            <select
-              value={actionId}
-              onChange={(e) => setActionId(e.target.value)}
-              className="input"
-              disabled={!sourceKind}
-            >
-              <option value="">— pick one —</option>
-              {actionsForKind.data?.items.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.label} ({a.id})
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-              Trigger type
-            </span>
-            <select
-              value={triggerType}
-              onChange={(e) => setTriggerType(e.target.value as PlatformBinding["trigger_type"])}
-              className="input"
-            >
-              <option value="user-invoked">user-invoked (button)</option>
-              <option value="event">event (fires on named event)</option>
-            </select>
-          </label>
-          <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-              Trigger event (if type=event)
-            </span>
-            {/* Datalist gives a typeahead of every enabled module's
-                declared events while still allowing a hand-typed string
-                (advanced / not-yet-declared events). */}
-            <input
-              value={triggerEvent}
-              onChange={(e) => setTriggerEvent(e.target.value)}
-              placeholder="pick or type — e.g. inventory.stock.changed"
-              list="wire-events-list"
-              className="input font-mono text-xs"
-              disabled={triggerType !== "event"}
-            />
-            <datalist id="wire-events-list">
-              {(wireEvents.data?.items ?? []).map((e) => (
-                <option key={e.event} value={e.event}>
-                  {e.module}
-                </option>
-              ))}
-            </datalist>
-          </label>
-        </div>
-        <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-            Template — {`{{name}} · {{qty}} {{unit}}`} or
-            {` {{set_id | default: "??"}}`}
-          </span>
-          <input
-            value={template}
-            onChange={(e) => setTemplate(e.target.value)}
-            placeholder="optional template"
-            className="input font-mono text-xs"
-          />
-        </label>
-        {createErr && (
-          <div className="text-xs text-ember-500">{createErr}</div>
-        )}
-        <button
-          type="submit"
-          disabled={!sourceKind || !actionId || create.isPending}
-          className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition disabled:opacity-50 flex items-center gap-1.5"
-        >
-          <Plus size={14} /> Create wire
-        </button>
-      </form>
+      <WireComposer slug={slug} onCreated={() => {}} />
 
       <div>
         <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
@@ -217,9 +50,7 @@ export function BindingsPage() {
         </div>
         {bindings.isLoading && <div className="text-xs text-faint">loading…</div>}
         {bindings.data?.items.length === 0 && (
-          <div className="text-xs text-faint dark:text-slate-500 italic">
-            No wires yet.
-          </div>
+          <div className="text-xs text-faint dark:text-slate-500 italic">No wires yet.</div>
         )}
         <ul className="space-y-2">
           {bindings.data?.items.map((b) => (
@@ -230,19 +61,18 @@ export function BindingsPage() {
                 className="w-full text-left rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 text-sm hover:border-cobble-300 dark:hover:border-cobble-700 transition group"
               >
                 <div className="flex items-baseline gap-2 flex-wrap">
-                  <span className="font-mono text-xs text-accent dark:text-cobble-300">
-                    {b.source_kind}
-                  </span>
+                  <span className="font-mono text-xs text-accent dark:text-cobble-300">{b.source_kind}</span>
                   <span className="text-faint">→</span>
-                  <span className="font-mono text-xs text-accent dark:text-cobble-300">
-                    {b.action_id}
-                  </span>
+                  <span className="font-mono text-xs text-accent dark:text-cobble-300">{b.action_id}</span>
                   <span className="text-[10px] font-mono text-faint dark:text-slate-500">
                     ({b.trigger_type}
-                    {b.trigger_event ? ` on ${b.trigger_event}` : ""})
+                    {b.trigger_event ? ` on ${b.trigger_event}` : ""}
+                    {b.trigger_schedule ? ` · ${b.trigger_schedule}` : ""})
                   </span>
+                  {b.target && b.target !== "self" && (
+                    <span className="text-[10px] font-mono text-faint dark:text-slate-500">→ linked</span>
+                  )}
                   <div className="flex-1" />
-                  {/* Inline enable toggle — stop propagation so it doesn't open the modal */}
                   <label
                     onClick={(e) => e.stopPropagation()}
                     className="flex items-center gap-1 text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 cursor-pointer"
@@ -255,10 +85,7 @@ export function BindingsPage() {
                     />
                     enabled
                   </label>
-                  <ChevronRight
-                    size={14}
-                    className="text-faint dark:text-slate-600 group-hover:text-accent transition"
-                  />
+                  <ChevronRight size={14} className="text-faint dark:text-slate-600 group-hover:text-accent transition" />
                 </div>
                 {b.template && (
                   <div className="mt-2 font-mono text-xs text-content dark:text-mortar-200 bg-subtle dark:bg-slate-800/70 rounded px-2 py-1 break-all">
@@ -266,9 +93,7 @@ export function BindingsPage() {
                   </div>
                 )}
                 {b.bundle_id && (
-                  <div className="mt-1 text-[10px] font-mono text-faint dark:text-slate-500">
-                    installed via bundle
-                  </div>
+                  <div className="mt-1 text-[10px] font-mono text-faint dark:text-slate-500">installed via bundle</div>
                 )}
               </button>
             </li>
@@ -278,12 +103,7 @@ export function BindingsPage() {
 
       <WireFiringsPanel slug={slug} />
 
-      <WireDetailModal
-        open={!!selected}
-        onClose={() => setSelected(null)}
-        slug={slug}
-        binding={selected}
-      />
+      <WireDetailModal open={!!selected} onClose={() => setSelected(null)} slug={slug} binding={selected} />
     </div>
   );
 }
@@ -301,9 +121,7 @@ function WireFiringsPanel({ slug }: { slug: string }) {
   return (
     <div>
       <div className="flex items-center gap-3 mb-2">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
-          // recent wire activity
-        </div>
+        <div className="text-[10px] font-mono uppercase tracking-widest text-accent">// recent wire activity</div>
         <div className="flex items-center gap-1 text-[10px] font-mono">
           {(["all", "failed"] as const).map((f) => (
             <button
@@ -324,9 +142,7 @@ function WireFiringsPanel({ slug }: { slug: string }) {
       </div>
       {items.length === 0 && (
         <div className="text-xs text-faint dark:text-slate-500 italic">
-          {filter === "failed"
-            ? "No failures recorded."
-            : "No wire firings yet."}
+          {filter === "failed" ? "No failures recorded." : "No wire firings yet."}
         </div>
       )}
       <ul className="space-y-1.5">
@@ -350,29 +166,16 @@ function WireFiringsPanel({ slug }: { slug: string }) {
               }
             >
               <div className="flex items-center gap-2 flex-wrap">
-                <span
-                  className={
-                    "text-[10px] font-mono uppercase " +
-                    (failed ? "text-ember-500" : "text-moss-600")
-                  }
-                >
+                <span className={"text-[10px] font-mono uppercase " + (failed ? "text-ember-500" : "text-moss-600")}>
                   {failed ? "failed" : "fired"}
                 </span>
-                <span className="font-mono text-[10px] text-faint">
-                  {new Date(it.occurred_at).toLocaleString()}
-                </span>
-                <span className="font-mono text-[10px] text-accent">
-                  {d.event ?? "?"}
-                </span>
+                <span className="font-mono text-[10px] text-faint">{new Date(it.occurred_at).toLocaleString()}</span>
+                <span className="font-mono text-[10px] text-accent">{d.event ?? "?"}</span>
                 <span className="text-faint">→</span>
-                <span className="font-mono text-[10px] text-accent">
-                  {d.action ?? "?"}
-                </span>
+                <span className="font-mono text-[10px] text-accent">{d.action ?? "?"}</span>
               </div>
               {d.error && (
-                <div className="font-mono text-[10px] text-ember-600 dark:text-ember-300 mt-1 break-all">
-                  {d.error}
-                </div>
+                <div className="font-mono text-[10px] text-ember-600 dark:text-ember-300 mt-1 break-all">{d.error}</div>
               )}
             </li>
           );

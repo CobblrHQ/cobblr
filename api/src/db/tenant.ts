@@ -98,6 +98,39 @@ export async function getTenantPool(orgId: string): Promise<Pool> {
   return (await cache.get(orgId)!).pool;
 }
 
+/** Runtime-safe pool release for background cross-tenant sweeps. Closes and
+ *  uncaches this tenant's pool ONLY if it has no checked-out clients (every
+ *  connection idle, none waiting) — so a job that ticks across every tenant
+ *  doesn't accumulate one live pool per org, while a pool a real request is
+ *  mid-flight on is left untouched. The pool reopens lazily on the next
+ *  `getTenantDb`. No-op if not cached or if the open failed.
+ *
+ *  Unlike `evictTenantPool` (used pre-`listen` and on org-delete, where an
+ *  unconditional `pool.end()` is fine), this one is callable while the API
+ *  is serving traffic — hence the idle guard. The guard and the cache delete
+ *  run with no `await` between them, so no checkout can sneak in for the
+ *  pool we're about to end. */
+export async function releaseIdleTenantPool(orgId: string): Promise<void> {
+  const entry = cache.get(orgId);
+  if (!entry) return;
+  let pool: Pool;
+  try {
+    ({ pool } = await entry);
+  } catch {
+    return; // open failed — nothing to release (getTenantDb self-evicts)
+  }
+  // Snapshot + delete with no await gap: in-use → leave it for live traffic.
+  if (cache.get(orgId) !== entry) return; // someone else churned it
+  if (pool.totalCount !== pool.idleCount || pool.waitingCount > 0) return;
+  cache.delete(orgId);
+  try {
+    await pool.end();
+  } catch {
+    // Already ending, or a client raced the end — harmless; the cache entry
+    // is gone, so the next access opens a fresh pool.
+  }
+}
+
 /** For tenant deletion — also useful in tests to reset the pool when
  *  the underlying DB has been dropped/recreated. */
 export async function evictTenantPool(orgId: string): Promise<void> {

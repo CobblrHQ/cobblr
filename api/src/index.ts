@@ -21,7 +21,7 @@ import { sql, type Kysely } from "kysely";
 import { env } from "./env.js";
 import { meta, metaPool, pingMeta } from "./db/meta.js";
 import { runMigrations } from "./db/migrate.js";
-import { getTenantDb } from "./db/tenant.js";
+import { getTenantDb, releaseIdleTenantPool } from "./db/tenant.js";
 import { signAppToken } from "./auth/jwt.js";
 import { loadAllModules } from "./modules/loader.js";
 import { loadAllSandboxedModules } from "./sandbox/loader.js";
@@ -36,6 +36,10 @@ import * as templates from "./platform/templates.js";
 import * as wires from "./platform/wires.js";
 import * as health from "./platform/health.js";
 import * as recurrenceRegistry from "./platform/recurrence-registry.js";
+import * as calendarRegistry from "./platform/calendar-registry.js";
+import { registerDateFieldCalendarSources } from "./platform/date-field-calendar.js";
+import * as computedFields from "./platform/computed-fields.js";
+import * as instancesImpl from "./platform/instances.js";
 import * as queue from "./platform/queue.js";
 import * as notificationsImpl from "./platform/notifications.js";
 import * as integrationsImpl from "./platform/integrations.js";
@@ -77,11 +81,15 @@ async function boot() {
   setPlatform({
     activity: { log: activity.log },
     events: { emit: events.emit, on: events.on },
-    tenants: { getDb: (orgId) => getTenantDb(orgId) },
+    tenants: {
+      getDb: (orgId) => getTenantDb(orgId),
+      releaseIdleDb: (orgId) => releaseIdleTenantPool(orgId),
+    },
     db: { meta },
     entities: {
       registerResolver: entities.registerResolver,
       registerListResolver: entities.registerListResolver,
+      registerComputedContext: computedFields.registerComputedContext,
       lookup: entities.lookup,
       lookupMany: entities.lookupMany,
       list: entities.list,
@@ -104,6 +112,10 @@ async function boot() {
     recurrence: {
       registerScanner: recurrenceRegistry.registerScanner,
       listScanners: recurrenceRegistry.listScanners,
+    },
+    calendar: {
+      registerSource: calendarRegistry.registerSource,
+      collect: calendarRegistry.collect,
     },
     queue: {
       enqueue: queue.enqueue,
@@ -183,12 +195,15 @@ async function boot() {
       registerReader: files.registerReader,
       read: files.read,
     },
+    instances: {
+      registerItemCounter: instancesImpl.registerItemCounter,
+    },
     auth: {
       // Capability check walks three sources in order:
       //   1. Stock role: owner/admin always pass.
       //   2. Direct per-user grant (workspace_capability_grants).
       //   3. Custom-role assignment that includes the capability.
-      // See docs/design-decisions/member-portal-and-permissions.md
+      // See docs/modules/member-portal-and-permissions.md
       // §2.4 + 2026-05-25-audit.md S2.
       userHasCapability: async ({ orgId, userId, role, actionId }) => {
         if (role === "owner" || role === "admin") return true;
@@ -408,7 +423,7 @@ async function boot() {
   // the in-process modules. They get the same Express mount + the
   // same workspace-enable toggle; the difference is invisible to
   // everything except the route handler (which goes through the
-  // wasm sandbox). See docs/design-decisions/module-isolation.md.
+  // wasm sandbox). See docs/architecture/module-isolation.md.
   await loadAllSandboxedModules();
   // Mirror manifests into the cobblr_meta registries after load so
   // <EntityActionsBar> / platform.entities.lookup() etc. have
@@ -418,7 +433,7 @@ async function boot() {
   // Marketplace v2: snapshot the runtime module set into
   // installed_modules so super-admin / workspace-admin can see what
   // code is present + version + signature. See
-  // docs/design-decisions/marketplace.md §4.
+  // docs/modules/marketplace.md §4.
   const installedCount = await syncInstalledModules();
   console.log(`[cobblr-api] installed_modules synced: ${installedCount}`);
   // One-shot: convert the four legacy Pillar-E lens modules
@@ -471,6 +486,10 @@ async function boot() {
   // chance too. Errors per-module are logged + skipped so a stuck
   // hook can't block boot.
   await runOnBoot();
+
+  // Platform-owned calendar source: any date custom-field on the core
+  // entity kinds shows up on the workspace calendar automatically.
+  registerDateFieldCalendarSources();
 
   // Platform-owned background work — the queue worker loop. Started
   // AFTER onBoot so modules have had a chance to register their

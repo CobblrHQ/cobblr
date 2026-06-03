@@ -34,7 +34,7 @@ export interface OrgsTable {
   plan: Generated<"free" | "paid" | "disabled">;
   /** Member-portal config — branding + pinned views shown in the
    *  slimmed-down `/portal/:slug` shell. See
-   *  docs/design-decisions/member-portal-and-permissions.md. */
+   *  docs/modules/member-portal-and-permissions.md. */
   portal_config: Generated<{
     display_name?: string;
     logo_path?: string | null;
@@ -42,6 +42,13 @@ export interface OrgsTable {
     pinned_views: string[];
     welcome_markdown?: string;
   }>;
+  /** Admin dashboard widget arrangement — order + visibility of the home
+   *  "at a glance" tiles. Null = default registration order, all visible.
+   *  Widget ids are owned by the web dashboard-widget registry; this column
+   *  only stores their order + hidden flag. */
+  dashboard_layout: Generated<{
+    widgets: { id: string; hidden: boolean }[];
+  } | null>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }
@@ -153,6 +160,23 @@ export interface WorkspaceInvitesTable {
   created_at: Generated<Date>;
 }
 
+/** Single-use SIGNUP invite (platform-admin minted) — lets one new person
+ *  self-register their own account + workspace while public signup is off.
+ *  Redeemed via POST /auth/signup with an invite_token. Not org-scoped (it
+ *  creates a fresh tenant), unlike workspace_invites. */
+export interface SignupInvitesTable {
+  id: Generated<string>;
+  token: string;
+  created_by: string;
+  invited_email: string | null;
+  note: string | null;
+  expires_at: Date | null;
+  consumed_at: Date | null;
+  consumed_by_user: string | null;
+  revoked_at: Date | null;
+  created_at: Generated<Date>;
+}
+
 // ─────────────────────── platform primitives ──────────────────────
 
 export interface TagsTable {
@@ -256,7 +280,7 @@ export interface EntityKindsTable {
   /** Cross-module read whitelist (jsonb array of field names) — the
    *  read-time trust boundary. Null = legacy (full fields returned,
    *  deprecation logged on first cross-module read of this kind).
-   *  See docs/design-decisions/entity-resolver.md. */
+   *  See docs/architecture/entity-resolver.md. */
   exposable_fields: unknown | null;
   /** Per-field read capability map (jsonb { field_name: capability }).
    *  Layered on exposable_fields: a gated field is omitted unless the
@@ -315,6 +339,9 @@ export interface EntityActionsTable {
    *  button on entity-detail pages (they exist only to be fired by
    *  a wire on an event). */
   user_invokable: Generated<boolean>;
+  /** Machine-readable arg shape { name: { label, type } } from the action
+   *  manifest; null = none. Drives the wire composer's per-arg fields. */
+  args_schema: unknown | null;
 }
 
 export interface EntityActionOrgOverridesTable {
@@ -353,10 +380,10 @@ export interface EntityActionBindingsTable {
    *  - `{ rel: string, dir?: "in" | "out", kind?: string }` — action
    *    runs on entities discovered by walking entity_pairings from
    *    the source. `dir` defaults to "in".
-   *  See docs/design-decisions/wires-and-bundles.md (Q1). */
+   *  See docs/architecture/wires-and-bundles.md (Q1). */
   target: Generated<unknown>;
   /** Q4: RRULE for schedule-triggered wires (null otherwise).
-   *  See docs/design-decisions/wires-and-bundles.md (Q4). */
+   *  See docs/architecture/wires-and-bundles.md (Q4). */
   trigger_schedule: string | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
@@ -391,7 +418,7 @@ export interface BundlesTable {
   install_warnings: Generated<unknown>;
 }
 
-export type FieldDefType = "text" | "number" | "boolean" | "date" | "url";
+export type FieldDefType = "text" | "number" | "boolean" | "date" | "url" | "computed";
 
 export interface ModuleFieldDefsTable {
   id: Generated<string>;
@@ -414,7 +441,39 @@ export interface ModuleFieldDefsTable {
    *  CatalogSchema.field_renderers — color-hex, image-url,
    *  url-link, year, boolean, code, or null (= plain text). */
   renderer: string | null;
+  /** For type='computed': the {{ }} template rendered at entity-resolve
+   *  time over the entity's own fields (tier 1) + registered context
+   *  providers (tier 2). Null for stored value fields. */
+  template: string | null;
   created_at: Generated<Date>;
+}
+
+/** Presentation overrides for a module's NATIVE fields, per entity kind /
+ *  instance. field_defs ADD custom fields; these RELABEL + SHOW/HIDE the ones
+ *  the module already declares. Seeded by a bundle (bundle_id) or edited in
+ *  Configuration → Presentation. */
+export interface NativeFieldOverridesTable {
+  id: Generated<string>;
+  org_id: string;
+  entity_kind: string;
+  name: string;
+  display_label: string | null;
+  hidden: Generated<boolean>;
+  position: Generated<number>;
+  bundle_id: string | null;
+  source_module: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+/** One iCal feed token per workspace, in meta so the unauthenticated
+ *  GET /api/v1/calendar/:token.ics resolves token → org in one query. */
+export interface CalendarFeedsTable {
+  org_id: string;
+  token: string;
+  enabled: Generated<boolean>;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
 }
 
 /** Token-keyed lookup so an unauthenticated GET /api/v1/public/:token
@@ -495,6 +554,7 @@ export interface MetaDB {
   migrations: MigrationsTable;
   org_modules: OrgModulesTable;
   workspace_invites: WorkspaceInvitesTable;
+  signup_invites: SignupInvitesTable;
   api_tokens: ApiTokensTable;
   entity_pairings: EntityPairingsTable;
   tags: TagsTable;
@@ -511,6 +571,8 @@ export interface MetaDB {
   workspace_links: WorkspaceLinksTable;
   bundles: BundlesTable;
   module_field_defs: ModuleFieldDefsTable;
+  native_field_overrides: NativeFieldOverridesTable;
+  calendar_feeds: CalendarFeedsTable;
   public_surface_tokens: PublicSurfaceTokensTable;
   core_queue_jobs: CoreQueueJobsTable;
   auth_magic_tokens: AuthMagicTokensTable;
@@ -532,7 +594,7 @@ export interface MetaDB {
 /** Marketplace v2 — registry of code that can run on this host.
  *  Populated by the loader at boot; distinct from `org_modules`
  *  (per-workspace enable) and `bundles` (data only). See
- *  docs/design-decisions/marketplace.md §4. */
+ *  docs/modules/marketplace.md §4. */
 export interface InstalledModulesTable {
   id: Generated<string>;
   name: string;
@@ -548,7 +610,7 @@ export interface InstalledModulesTable {
 }
 
 /** Custom roles: workspace-defined named bundles of capabilities.
- *  See docs/design-decisions/member-portal-and-permissions.md §7
+ *  See docs/modules/member-portal-and-permissions.md §7
  *  + 2026-05-25-audit.md S2. Stock roles (owner/admin/member/guest)
  *  stay; custom roles are additive. */
 export interface WorkspaceRolesTable {

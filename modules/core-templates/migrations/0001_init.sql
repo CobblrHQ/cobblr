@@ -1,6 +1,6 @@
 -- core-templates — per-workspace entity templates. The "stamp out
 -- household appliances from this template" flow from
--- docs/homebox-comparison.md Tier 2.
+-- docs/product/homebox-comparison.md Tier 2.
 --
 -- A template is a typed payload of default values targeting a
 -- specific entity kind. When a user "creates from template", the

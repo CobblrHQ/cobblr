@@ -47,7 +47,7 @@ export default defineModule({
         // sticker to a part, a machine, an asset, a location. You
         // can't attach one to a task or an order. Users can broaden
         // this per-org via the wires-UI Containment-axis override
-        // (see docs/design-decisions/traits.md §Example).
+        // (see docs/architecture/traits.md §Example).
         appliesTo: { traits: ["physical"] },
         invokeHandler: "labels.queue-from-entity",
       },

@@ -10,8 +10,8 @@
 // surface simply isn't there (the portal still renders pinned views).
 // "Stay structured" — this is NOT a freeform drag-drop builder; the
 // view system + actions + custom fields ARE the customization layer.
-// See docs/design-decisions/custom-app-layer.md +
-// docs/design-decisions/member-portal-and-permissions.md.
+// See docs/modules/custom-app-layer.md +
+// docs/modules/member-portal-and-permissions.md.
 //
 // Module-owned data: one tenant table, core_apps_apps, holding app
 // definitions. Blocks reference views (core-views), actions, and

@@ -37,13 +37,15 @@ COPY modules/core-labels-qr/package.json ./modules/core-labels-qr/
 COPY modules/core-integrations/package.json ./modules/core-integrations/
 COPY modules/core-ai/package.json ./modules/core-ai/
 COPY modules/core-maintenance/package.json ./modules/core-maintenance/
+COPY modules/core-units/package.json ./modules/core-units/
 COPY modules/core-templates/package.json ./modules/core-templates/
 COPY modules/core-scan/package.json ./modules/core-scan/
 COPY modules/core-apps/package.json ./modules/core-apps/
 COPY modules/core-authoring/package.json ./modules/core-authoring/
-COPY modules/core-lists/package.json ./modules/core-lists/
-COPY modules/core-fitness/package.json ./modules/core-fitness/
+COPY modules/lists/package.json ./modules/lists/
+COPY modules/tracking/package.json ./modules/tracking/
 COPY modules/digifab/package.json ./modules/digifab/
+COPY modules/core-file-preview/package.json ./modules/core-file-preview/
 COPY modules/bricklink-connector/package.json ./modules/bricklink-connector/
 # v0.3 sandbox SDK + AS sample module. Workspace-resolved so the
 # AS author repo (sandboxed-modules/hello-as) sees the SDK at build
@@ -67,7 +69,7 @@ COPY modules ./modules
 # manifest of every baked-in marketplace module. `source: "vendored"`
 # entries are no-ops (modules/ COPY put them in place); `source:
 # "registry"` entries are downloaded, sha256+ed25519 verified, and
-# extracted to modules/<name>/. See docs/design-decisions/marketplace.md.
+# extracted to modules/<name>/. See docs/modules/marketplace.md.
 COPY cobblr-modules.json ./cobblr-modules.json
 COPY scripts ./scripts
 
@@ -75,7 +77,7 @@ COPY scripts ./scripts
 # + a module.wasm built ahead of time (the kernel doesn't compile wasm
 # at boot). The sandbox loader scans this dir at api boot and
 # registers each entry as a synthetic module with wasm-backed routes.
-# See docs/design-decisions/module-isolation.md.
+# See docs/architecture/module-isolation.md.
 COPY sandboxed-modules ./sandboxed-modules
 RUN node scripts/install-registry-modules.mjs
 
@@ -104,13 +106,15 @@ RUN npm run --if-present build -w @cobblr/core-labels-qr
 RUN npm run --if-present build -w @cobblr/core-integrations
 RUN npm run --if-present build -w @cobblr/core-ai
 RUN npm run --if-present build -w @cobblr/core-maintenance
+RUN npm run --if-present build -w @cobblr/core-units
 RUN npm run --if-present build -w @cobblr/core-templates
 RUN npm run --if-present build -w @cobblr/core-scan
 RUN npm run --if-present build -w @cobblr/core-apps
 RUN npm run --if-present build -w @cobblr/core-authoring
-RUN npm run --if-present build -w @cobblr/core-lists
-RUN npm run --if-present build -w @cobblr/core-fitness
+RUN npm run --if-present build -w @cobblr/lists
+RUN npm run --if-present build -w @cobblr/tracking
 RUN npm run --if-present build -w @cobblr/digifab
+RUN npm run --if-present build -w @cobblr/core-file-preview
 RUN npm run --if-present build -w @cobblr/bricklink-connector
 WORKDIR /app/api
 RUN npm run build

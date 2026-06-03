@@ -25,7 +25,14 @@ interface AuthCtx extends AuthState {
     password: string;
     display_name: string;
     org_name: string;
+    invite_token?: string;
   }) => Promise<void>;
+  /** Create a NEW account that joins an existing workspace via a
+   *  workspace-invite token (no own workspace provisioned). */
+  joinViaInvite: (
+    token: string,
+    input: { email: string; password: string; display_name: string },
+  ) => Promise<void>;
   logout: () => void;
   /** Replace the in-memory org list, e.g. after creating a new one. */
   setOrgs: (orgs: OrgMembership[]) => void;
@@ -97,6 +104,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const joinViaInvite = useCallback(
+    async (token: string, input: { email: string; password: string; display_name: string }) => {
+      const res = await api.acceptInviteAsNewUser(token, input);
+      setToken(res.token);
+      setState({ user: res.user, orgs: res.orgs, loading: false });
+    },
+    [],
+  );
+
   const logout = useCallback(() => {
     setToken(null);
     setState({ user: null, orgs: [], loading: false });
@@ -112,7 +128,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <Ctx.Provider value={{ ...state, login, signup, logout, setOrgs, refreshMe }}>
+    <Ctx.Provider value={{ ...state, login, signup, joinViaInvite, logout, setOrgs, refreshMe }}>
       {children}
     </Ctx.Provider>
   );

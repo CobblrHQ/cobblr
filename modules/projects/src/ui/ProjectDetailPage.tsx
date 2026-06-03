@@ -8,6 +8,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Check, Plus, Trash2 } from "lucide-react";
 import { EntityActionsBar, CustomFieldsPanel, usePageTitle } from "@cobblr/platform-web";
 import { useProjects } from "./context";
+import { useFieldPresentation } from "./useFieldPresentation";
 import type { Priority, ProjectStatus, Task, TaskStatus } from "./api";
 
 const PROJECT_STATUSES: ProjectStatus[] = ["planning", "active", "blocked", "done", "abandoned"];
@@ -16,6 +17,9 @@ const PRIORITIES: Priority[] = ["low", "med", "high", "urgent"];
 export function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { api } = useProjects();
+  // Native-field presentation (relabel + show/hide via bundle/config); no-op
+  // until an override exists. Matches the assets/inventory pattern.
+  const fp = useFieldPresentation("projects:project");
   const qc = useQueryClient();
 
   const project = useQuery({
@@ -61,42 +65,48 @@ export function ProjectDetailPage() {
           <EntityActionsBar entityKind="projects:project" entityId={project.data.id} className="mt-1" />
         </div>
         <div className="flex gap-4 items-center flex-wrap">
-          <Labelled label="status">
-            <select
-              value={project.data.status}
-              onChange={(e) => updateProject.mutate({ status: e.target.value })}
-              className="input !w-auto !py-1 text-xs"
-            >
-              {PROJECT_STATUSES.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-          </Labelled>
-          <Labelled label="priority">
-            <select
-              value={project.data.priority ?? "med"}
-              onChange={(e) => updateProject.mutate({ priority: e.target.value })}
-              className="input !w-auto !py-1 text-xs"
-            >
-              {PRIORITIES.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
-          </Labelled>
-          <Labelled label="target date">
-            <input
-              type="date"
-              defaultValue={project.data.target_date ?? ""}
-              onBlur={(e) =>
-                updateProject.mutate({ target_date: e.target.value || null })
-              }
-              className="input !w-auto !py-1 text-xs"
-            />
-          </Labelled>
+          {!fp.hidden("status") && (
+            <Labelled label={fp.label("status", "status")}>
+              <select
+                value={project.data.status}
+                onChange={(e) => updateProject.mutate({ status: e.target.value })}
+                className="input !w-auto !py-1 text-xs"
+              >
+                {PROJECT_STATUSES.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </Labelled>
+          )}
+          {!fp.hidden("priority") && (
+            <Labelled label={fp.label("priority", "priority")}>
+              <select
+                value={project.data.priority ?? "med"}
+                onChange={(e) => updateProject.mutate({ priority: e.target.value })}
+                className="input !w-auto !py-1 text-xs"
+              >
+                {PRIORITIES.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
+            </Labelled>
+          )}
+          {!fp.hidden("target_date") && (
+            <Labelled label={fp.label("target_date", "target date")}>
+              <input
+                type="date"
+                defaultValue={project.data.target_date ?? ""}
+                onBlur={(e) =>
+                  updateProject.mutate({ target_date: e.target.value || null })
+                }
+                className="input !w-auto !py-1 text-xs"
+              />
+            </Labelled>
+          )}
           <Labelled label="completed">
             <input
               type="date"

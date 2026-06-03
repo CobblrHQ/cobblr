@@ -10,7 +10,7 @@
 // inline lookups (both keyless free-tier). Photo AI path, web-
 // search fallback, receipt OCR, large-batch bulk confirm: v0.2.
 //
-// See docs/design-decisions/core-scan.md.
+// See docs/modules/core-scan.md.
 
 import { defineModule } from "@cobblr/platform-contract";
 

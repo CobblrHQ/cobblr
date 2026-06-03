@@ -52,6 +52,10 @@ export default defineModule({
     onBoot: async () => {
       const { startMaintenanceSweeper } = await import("./sweeper.js");
       startMaintenanceSweeper();
+      const { registerMaintenanceContext } = await import("./computed-context.js");
+      registerMaintenanceContext();
+      const { registerMaintenanceCalendarSource } = await import("./calendar-source.js");
+      registerMaintenanceCalendarSource();
     },
     onShutdown: async () => {
       const { stopMaintenanceSweeper } = await import("./sweeper.js");

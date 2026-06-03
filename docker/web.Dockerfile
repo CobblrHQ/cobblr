@@ -17,8 +17,9 @@ COPY modules/projects/package.json ./modules/projects/
 COPY modules/purchases/package.json ./modules/purchases/
 COPY modules/machines/package.json ./modules/machines/
 COPY modules/assets/package.json ./modules/assets/
-COPY modules/core-lists/package.json ./modules/core-lists/
-COPY modules/core-fitness/package.json ./modules/core-fitness/
+COPY modules/lists/package.json ./modules/lists/
+COPY modules/tracking/package.json ./modules/tracking/
+COPY modules/core-file-preview/package.json ./modules/core-file-preview/
 
 RUN npm install --workspaces --include-workspace-root --no-audit --no-fund
 
@@ -32,8 +33,9 @@ COPY modules/projects ./modules/projects
 COPY modules/purchases ./modules/purchases
 COPY modules/machines ./modules/machines
 COPY modules/assets ./modules/assets
-COPY modules/core-lists ./modules/core-lists
-COPY modules/core-fitness ./modules/core-fitness
+COPY modules/lists ./modules/lists
+COPY modules/tracking ./modules/tracking
+COPY modules/core-file-preview ./modules/core-file-preview
 COPY web ./web
 
 WORKDIR /app/web
@@ -42,7 +44,7 @@ RUN npm run build
 # Sandboxed module UIs. Each module that ships a `ui/` dir gets
 # its assets served at /sandboxed/<name>/ alongside the main SPA.
 # The parent SPA renders them via iframe — see
-# docs/design-decisions/module-isolation.md §6.
+# docs/architecture/module-isolation.md §6.
 COPY sandboxed-modules /tmp/sandboxed-modules
 RUN mkdir -p /app/web/dist/sandboxed && \
     for d in /tmp/sandboxed-modules/*/ui; do \

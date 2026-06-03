@@ -9,7 +9,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Eye, EyeOff, Pencil, RotateCcw } from "lucide-react";
+import { ArrowLeft, Eye, EyeOff, Pencil, RotateCcw, SlidersHorizontal } from "lucide-react";
 import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 import {
   ApiError,
@@ -26,6 +26,7 @@ export function PresentationPage() {
   const toast = useToast();
   const confirm = useConfirm();
   const [editing, setEditing] = useState<EntityKindOverride | null>(null);
+  const [fieldsFor, setFieldsFor] = useState<{ entityKind: string; label: string } | null>(null);
   const [addingFor, setAddingFor] = useState<
     | null
     | {
@@ -179,9 +180,26 @@ export function PresentationPage() {
               });
               if (ok) reset.mutate(row.override);
             }}
+            onFields={(() => {
+              // The entity kind whose native fields this row's form renders:
+              // a kind row IS that kind; an instance row resolves to its
+              // module's primary kind (what the default form uses).
+              const kind =
+                row.target_kind === "entity_kind"
+                  ? row.target_id
+                  : (kinds.data?.items.find((k) => k.module_name === row.moduleName)?.id ?? null);
+              return kind ? () => setFieldsFor({ entityKind: kind, label: row.defaultLabel }) : undefined;
+            })()}
           />
         ))}
       </div>
+      {fieldsFor && (
+        <FieldsEditorModal
+          entityKind={fieldsFor.entityKind}
+          title={fieldsFor.label}
+          onClose={() => setFieldsFor(null)}
+        />
+      )}
 
       {editing && (
         <PresentationEditModal
@@ -211,6 +229,7 @@ function PresentationRow({
   row,
   onEdit,
   onReset,
+  onFields,
 }: {
   row: {
     target_kind: "entity_kind" | "instance" | "bundle";
@@ -222,6 +241,7 @@ function PresentationRow({
   };
   onEdit: () => void;
   onReset: () => void;
+  onFields?: () => void;
 }) {
   const o = row.override;
   const label = o?.display_label ?? row.defaultLabel;
@@ -260,6 +280,16 @@ function PresentationRow({
       )}
       {hidden && <EyeOff size={14} className="text-faint" />}
       {!hidden && <Eye size={14} className="text-faint" />}
+      {onFields && (
+        <button
+          type="button"
+          onClick={onFields}
+          title="Fields — relabel / show-hide this thing's fields"
+          className="text-faint hover:text-accent transition p-1"
+        >
+          <SlidersHorizontal size={14} />
+        </button>
+      )}
       <button
         type="button"
         onClick={onEdit}
@@ -625,5 +655,90 @@ function PresentationFields({
         <span className="text-sm">Hide from nav</span>
       </label>
     </>
+  );
+}
+
+// Per-kind field editor: relabel + show/hide a thing's NATIVE fields. Lists the
+// fields the module declares (from the entity-kind registry) and writes
+// native_field_overrides; the module's form reads them via useFieldPresentation.
+function FieldsEditorModal({ entityKind, title, onClose }: { entityKind: string; title: string; onClose: () => void }) {
+  const { activeSlug } = useActiveOrg();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const kinds = useQuery({
+    queryKey: ["entity-kinds", activeSlug],
+    queryFn: () => api.listEntityKinds(activeSlug),
+    enabled: !!activeSlug,
+  });
+  const overrides = useQuery({
+    queryKey: ["native-field-overrides", activeSlug, entityKind],
+    queryFn: () => api.listNativeFieldOverrides(activeSlug, entityKind),
+    enabled: !!activeSlug,
+  });
+  const fields = (kinds.data?.items.find((k) => k.id === entityKind)?.fields ?? []).filter(
+    (f) => f.name !== "metadata",
+  );
+  const byName = new Map((overrides.data?.items ?? []).map((o) => [o.name, o]));
+  const invalidate = () =>
+    void qc.invalidateQueries({ queryKey: ["native-field-overrides", activeSlug, entityKind] });
+  const save = useMutation({
+    mutationFn: (b: { name: string; display_label?: string | null; hidden?: boolean }) =>
+      api.putNativeFieldOverride(activeSlug, { entity_kind: entityKind, ...b }),
+    onSuccess: invalidate,
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+  const reset = useMutation({
+    mutationFn: (name: string) => api.deleteNativeFieldOverride(activeSlug, entityKind, name),
+    onSuccess: invalidate,
+  });
+  return (
+    <Modal open onClose={onClose} title={`Fields — ${title}`} size="md">
+      <p className="text-sm text-muted mb-3">
+        Rename or hide each native field on this thing's form — un-clutter the modal, speak your own
+        language. (Custom fields added by bundles are managed where they're defined.)
+      </p>
+      <div className="space-y-1 max-h-[60vh] overflow-auto">
+        {fields.map((f) => {
+          const o = byName.get(f.name);
+          const hidden = o?.hidden ?? false;
+          return (
+            <div
+              key={f.name}
+              className={
+                "flex items-center gap-2 rounded border border-line dark:border-slate-700 px-2 py-1.5 " +
+                (hidden ? "opacity-50" : "")
+              }
+            >
+              <span className="w-32 shrink-0 text-[10px] font-mono text-faint truncate" title={f.name}>
+                {f.name}
+              </span>
+              <input
+                defaultValue={o?.display_label ?? ""}
+                placeholder={f.name}
+                onBlur={(e) => {
+                  const v = e.target.value.trim();
+                  if (v !== (o?.display_label ?? "")) save.mutate({ name: f.name, display_label: v || null, hidden });
+                }}
+                className="flex-1 px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+              />
+              <button
+                type="button"
+                title={hidden ? "Show on the form" : "Hide from the form"}
+                onClick={() => save.mutate({ name: f.name, display_label: o?.display_label ?? null, hidden: !hidden })}
+                className="text-faint hover:text-accent p-1"
+              >
+                {hidden ? <EyeOff size={14} /> : <Eye size={14} />}
+              </button>
+              {o && (
+                <button type="button" title="Reset to default" onClick={() => reset.mutate(f.name)} className="text-faint hover:text-ember-500 p-1">
+                  <RotateCcw size={13} />
+                </button>
+              )}
+            </div>
+          );
+        })}
+        {fields.length === 0 && <div className="text-sm text-muted italic">This kind declares no editable native fields.</div>}
+      </div>
+    </Modal>
   );
 }

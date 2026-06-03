@@ -3,7 +3,7 @@
 // cross-module. CRUD service over the cobblr_meta tables; the web nav
 // renderer folds these into the dropdown tree (reusing ModuleGroupChip).
 //
-// See docs/design-decisions/nav-builder.md.
+// See docs/architecture/nav-builder.md.
 
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";

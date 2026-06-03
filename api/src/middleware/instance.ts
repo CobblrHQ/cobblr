@@ -5,7 +5,7 @@
 // so the dispatched module CRUD can scope every query to the instance.
 // Composes AFTER requireAuth + withTenant (needs req.tenant.org.id).
 //
-// See docs/design-decisions/instances.md §5.
+// See docs/architecture/instances.md §5.
 
 import type { NextFunction, Request, Response } from "express";
 import { getInstance } from "../platform/instances.js";

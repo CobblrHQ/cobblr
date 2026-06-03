@@ -21,10 +21,12 @@ import { meRouter } from "./routes/me.js";
 import { modulesRouter } from "./routes/modules.js";
 import { orgsRouter } from "./routes/orgs.js";
 import { platformOrgRouter } from "./routes/platform.js";
+import { calendarOrgRouter, calendarPublicRouter } from "./routes/calendar.js";
 import { bundlesRouter } from "./routes/bundles.js";
 import { membersRouter, invitesRootRouter } from "./routes/members.js";
 import { pairingsRouter } from "./routes/pairings.js";
 import { portalRouter } from "./routes/portal.js";
+import { dashboardRouter } from "./routes/dashboard.js";
 import { adminUsersRouter } from "./routes/admin-users.js";
 import { superAdminRouter } from "./routes/super-admin.js";
 import { sandboxInstallRouter } from "./routes/sandbox-install.js";
@@ -53,7 +55,7 @@ export function createApp(): AppHandles {
   app.use(helmet({ contentSecurityPolicy: false }));
   app.use(compression());
   // CORS: env-driven allowlist. Set CORS_ALLOWED_ORIGINS to a
-  // comma-separated list in production (see docs/PRODUCTION_DEPLOY.md).
+  // comma-separated list in production (see docs/operations/PRODUCTION_DEPLOY.md).
   // Unset in dev = mirror request origin (matches the prior reflect-
   // any-origin behavior so local localhost:8088 ↔ localhost:4000 keeps
   // working without setup).
@@ -103,6 +105,10 @@ export function createApp(): AppHandles {
   // token in the URL is the secret. Mounted on /api/v1/public/* —
   // outside /orgs because the URL carries no slug.
   v1.use("/public", publicRouter);
+  // Public iCal feed — unauthenticated; token in the URL is the secret.
+  // GET /api/v1/calendar/:token.ics. Paste into Google Calendar / Apple
+  // Calendar to subscribe. Outside /orgs (no slug in the URL).
+  v1.use("/calendar", calendarPublicRouter);
   // QR scan target — unauthenticated GET that resolves a token to
   // (org, entity, mode). See modules/core-labels-qr.
   v1.use("/qr", qrScanRouter);
@@ -115,8 +121,12 @@ export function createApp(): AppHandles {
   // /:slug/actions, /:slug/bindings, /:slug/field-defs, etc. Composed
   // onto /orgs so it inherits the same routing tree.
   v1.use("/orgs", platformOrgRouter);
+  // Workspace calendar — aggregated events + iCal feed config (authed).
+  v1.use("/orgs", calendarOrgRouter);
   // Member portal config + per-action capability grants.
   v1.use("/orgs", portalRouter);
+  // Admin dashboard widget arrangement (order + visibility).
+  v1.use("/orgs", dashboardRouter);
   // Admin user creation (no-email onboarding flow).
   v1.use("/orgs", adminUsersRouter);
   // Custom roles (S2): workspace-defined capability bundles.
@@ -127,7 +137,7 @@ export function createApp(): AppHandles {
   // Sandbox marketplace runtime install (super-admin only). Backs
   // the "Browse + Install" UI: fetch registry, verify, extract,
   // register without restart. See sandbox-install.ts +
-  // docs/design-decisions/module-isolation.md.
+  // docs/architecture/module-isolation.md.
   v1.use("/sandbox", sandboxInstallRouter);
   v1.use("/registry", registryRouter);
   // Bundles live one layer further down — same auth + tenant

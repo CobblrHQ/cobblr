@@ -1,6 +1,6 @@
 // core-recurrence — schedule-triggered wires.
 //
-// Q4 from docs/design-decisions/wires-and-bundles.md: this module
+// Q4 from docs/architecture/wires-and-bundles.md: this module
 // owns the third wire trigger type. A wire with `trigger_type:
 // "schedule"` and an RRULE in `trigger_schedule` fires whenever the
 // RRULE's next occurrence has elapsed since the wire's last firing.

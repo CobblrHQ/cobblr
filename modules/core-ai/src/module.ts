@@ -3,7 +3,7 @@
 // Workspaces install this when they want Cobblr to use AI on their
 // data: classify a brick from a photo, extract structured data from
 // an invoice, suggest matches between user entities and catalog
-// entries. See docs/design-decisions/core-ai.md.
+// entries. See docs/modules/core-ai.md.
 //
 // Stock band. Inert without configured providers. Built-in providers
 // (openai, anthropic, ollama) register at module load time; new

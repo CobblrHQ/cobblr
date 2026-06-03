@@ -12,7 +12,7 @@
 // exactly as before. Header from portal_config (display_name, logo),
 // curated nav from pinned_views, optional welcome markdown on the root.
 //
-// See docs/design-decisions/member-portal-and-permissions.md +
+// See docs/modules/member-portal-and-permissions.md +
 // worker-navigation-and-identity.md.
 
 import { Link, Outlet, useNavigate, useParams } from "react-router-dom";

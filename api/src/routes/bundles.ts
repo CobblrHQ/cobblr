@@ -93,7 +93,7 @@ export const BundleManifest = z.object({
           filter: z.record(z.unknown()).optional(),
           args: z.record(z.unknown()).optional(),
           // Q1 wire target. Default "self" if omitted.
-          // See docs/design-decisions/wires-and-bundles.md.
+          // See docs/architecture/wires-and-bundles.md.
           target: z
             .union([
               z.literal("self"),
@@ -134,11 +134,33 @@ export const BundleManifest = z.object({
         entity_kind: z.string(),
         name: z.string().regex(/^[a-z][a-z0-9_]*$/),
         display_label: z.string(),
-        type: z.enum(["text", "number", "boolean", "date", "url"]),
+        type: z.enum(["text", "number", "boolean", "date", "url", "computed"]),
         required: z.boolean().optional(),
         position: z.number().int().optional(),
         /** When type='text', renders as a dropdown of these choices. */
         choices: z.array(z.string()).optional(),
+        /** When type='computed': the {{ }} template rendered read-only at
+         *  resolve time over the entity's own fields + context providers. */
+        template: z.string().max(2000).optional(),
+      }).refine(
+        (f) => f.type !== "computed" || (f.template && f.template.trim().length > 0),
+        { message: "computed field_defs need a template", path: ["template"] },
+      ),
+    )
+    .default([]),
+  /** Presentation overrides for a kind's NATIVE fields — RELABEL + SHOW/HIDE
+   *  the fields the module already declares (rename assets:asset's
+   *  "manufacturer" → "Make", hide "serial_number"). field_defs add fields;
+   *  these reshape the existing ones. No type — the native field already has
+   *  one. */
+  field_overrides: z
+    .array(
+      z.object({
+        entity_kind: z.string(),
+        name: z.string(),
+        display_label: z.string().optional(),
+        hidden: z.boolean().optional(),
+        position: z.number().int().optional(),
       }),
     )
     .default([]),
@@ -865,7 +887,34 @@ bundlesRouter.post(
                 ? (sql`${JSON.stringify(f.choices)}::jsonb` as unknown as string[])
                 : null,
               renderer: (f as { renderer?: string | null }).renderer ?? null,
+              template: f.type === "computed" ? f.template ?? null : null,
             })
+            .execute();
+        }
+        // Native-field overrides (relabel / show-hide). Upsert so a bundle can
+        // reshape a field another bundle already touched (last writer wins);
+        // tagged with bundle_id so uninstall cleans them up.
+        for (const fo of m.field_overrides) {
+          await trx
+            .insertInto("native_field_overrides")
+            .values({
+              org_id: req.tenant!.org.id,
+              entity_kind: fo.entity_kind,
+              name: fo.name,
+              display_label: fo.display_label ?? null,
+              hidden: fo.hidden ?? false,
+              position: fo.position ?? 0,
+              bundle_id: bundle.id,
+            })
+            .onConflict((c) =>
+              c.columns(["org_id", "entity_kind", "name"]).doUpdateSet({
+                display_label: fo.display_label ?? null,
+                hidden: fo.hidden ?? false,
+                position: fo.position ?? 0,
+                bundle_id: bundle.id,
+                updated_at: new Date(),
+              }),
+            )
             .execute();
         }
         return bundle;
@@ -1055,6 +1104,7 @@ bundlesRouter.post(
         applied: {
           wires: m.wires.length,
           field_defs: m.field_defs.length,
+          field_overrides: m.field_overrides.length,
           catalogs: catalogsInstalled,
           auto_enabled_modules: autoEnabled,
         },
@@ -1166,6 +1216,10 @@ async function uninstallBundleId(bundleId: string): Promise<void> {
       .execute();
     await trx
       .deleteFrom("module_field_defs")
+      .where("bundle_id", "=", bundleId)
+      .execute();
+    await trx
+      .deleteFrom("native_field_overrides")
       .where("bundle_id", "=", bundleId)
       .execute();
     await trx

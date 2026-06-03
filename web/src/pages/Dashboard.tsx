@@ -17,28 +17,25 @@
 // /projects/tasks?blocked=1 and 404. Each query stays cached for
 // 30s so navigating away + back doesn't refire everything.
 
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import {
-  Boxes,
-  LayoutList,
-  ListChecks,
-  Package,
-  ShoppingCart,
-  Sparkles,
-  Sprout,
-  Tags,
-  Wrench,
-} from "lucide-react";
+import { ArrowLeft, ArrowRight, Eye, EyeOff, LayoutList, Sliders, Sparkles } from "lucide-react";
 import { EntityThumb,
   EntityTile,
   ViewModeToggle,
-  useViewMode, usePageTitle } from "@cobblr/platform-web";
+  useViewMode, usePageTitle, useToast,
+  useDashboardWidgets, type DashboardWidgetSpec } from "@cobblr/platform-web";
+// Side-effect: registers the host's built-in "at a glance" widgets through
+// the public registerDashboardWidget seam. ModuleTiles renders whatever's
+// registered for an enabled module — no per-module knowledge in this file.
+import "../dashboard/builtinWidgets";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useAuth } from "../auth/AuthContext";
 import {
   api,
   type ActivityEntry,
+  type DashboardLayout,
   type OrgModuleListItem,
   type SavedView,
 } from "../lib/api";
@@ -82,7 +79,7 @@ export function Dashboard() {
 
       <GettingStartedPanel slug={activeSlug} enabled={enabled} />
 
-      <ModuleTiles slug={activeSlug} enabled={enabled} />
+      <ModuleTiles slug={activeSlug} enabled={enabled} role={activeOrg.role} />
 
       <PinnedViews slug={activeSlug} />
 
@@ -308,33 +305,87 @@ function WorkspaceHeader({
 
 // ────────────────────────── module tiles ────────────────────────────
 
+// The "at a glance" grid is registry-driven: every widget registered through
+// platform-web's `registerDashboardWidget` whose owning module is ENABLED in
+// this workspace gets mounted. The Dashboard knows nothing about any specific
+// module — the host's built-ins (web/src/dashboard/builtinWidgets) and any
+// bundle/third-party module contribute through the same seam.
+//
+// Order + visibility are a per-workspace saved layout (orgs.dashboard_layout):
+// an ordered list of widget ids with a hidden flag. Owners/admins arrange it
+// in place via "Arrange". A widget the layout doesn't mention (a freshly
+// enabled module, or a new bundle widget) appears at the END, visible — so the
+// dashboard never silently drops a new tile.
+
+const widgetId = (w: DashboardWidgetSpec): string => w.id ?? w.module;
+
+interface Arranged {
+  spec: DashboardWidgetSpec;
+  hidden: boolean;
+}
+
+/** Merge the registry widgets (already gated to enabled modules) with the saved
+ *  layout: known ids in saved order (carrying their hidden flag), then any
+ *  unsaved ids appended visible. */
+function arrange(widgets: DashboardWidgetSpec[], layout: DashboardLayout | undefined): Arranged[] {
+  const saved = new Map((layout?.widgets ?? []).map((w, i) => [w.id, { i, hidden: w.hidden }]));
+  const known = widgets
+    .filter((w) => saved.has(widgetId(w)))
+    .sort((a, b) => saved.get(widgetId(a))!.i - saved.get(widgetId(b))!.i)
+    .map<Arranged>((spec) => ({ spec, hidden: saved.get(widgetId(spec))!.hidden }));
+  const fresh = widgets
+    .filter((w) => !saved.has(widgetId(w)))
+    .map<Arranged>((spec) => ({ spec, hidden: false }));
+  return [...known, ...fresh];
+}
+
 function ModuleTiles({
   slug,
   enabled,
+  role,
 }: {
   slug: string;
   enabled: Set<string>;
+  role: string;
 }) {
-  const tiles: React.ReactNode[] = [];
-  if (enabled.has("inventory")) {
-    tiles.push(<InventoryTile key="inv" slug={slug} />);
-  }
-  if (enabled.has("machines")) {
-    tiles.push(<MachinesTile key="mac" slug={slug} />);
-  }
-  if (enabled.has("projects")) {
-    tiles.push(<ProjectsTile key="prj" slug={slug} />);
-  }
-  if (enabled.has("assets")) {
-    tiles.push(<AssetsTile key="ast" slug={slug} />);
-  }
-  if (enabled.has("purchases")) {
-    tiles.push(<PurchasesTile key="pur" slug={slug} />);
-  }
-  if (enabled.has("labels")) {
-    tiles.push(<LabelsTile key="lbl" slug={slug} />);
-  }
-  if (tiles.length === 0) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const widgets = useDashboardWidgets().filter((w) => enabled.has(w.module));
+  const layoutQ = useQuery({
+    queryKey: ["dash-layout", slug],
+    queryFn: () => api.getDashboardLayout(slug),
+    staleTime: 30_000,
+    enabled: !!slug,
+  });
+  const arranged = arrange(widgets, layoutQ.data?.layout);
+
+  // Edit state: a local draft (the arranged list) only while arranging.
+  const [draft, setDraft] = useState<Arranged[] | null>(null);
+  const editing = draft !== null;
+  const canArrange = role === "owner" || role === "admin";
+
+  const save = useMutation({
+    mutationFn: (next: Arranged[]) => {
+      // Preserve saved entries for widgets not currently registered (a
+      // temporarily-disabled module) so arranging doesn't forget them.
+      const liveIds = new Set(next.map((a) => widgetId(a.spec)));
+      const extras = (layoutQ.data?.layout.widgets ?? []).filter((w) => !liveIds.has(w.id));
+      return api.setDashboardLayout(slug, {
+        widgets: [
+          ...next.map((a) => ({ id: widgetId(a.spec), hidden: a.hidden })),
+          ...extras,
+        ],
+      });
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["dash-layout", slug] });
+      setDraft(null);
+      toast.success("Dashboard layout saved");
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
+
+  if (widgets.length === 0) {
     return (
       <section className="rounded-xl border border-dashed border-line dark:border-slate-700 p-6 text-center text-sm text-muted dark:text-slate-400">
         No user-facing modules enabled yet. Visit{" "}
@@ -345,250 +396,124 @@ function ModuleTiles({
       </section>
     );
   }
+
+  const list = editing ? draft! : arranged;
+  const visible = list.filter((a) => !a.hidden);
+
+  const move = (i: number, dir: -1 | 1) => {
+    setDraft((d) => {
+      if (!d) return d;
+      const j = i + dir;
+      if (j < 0 || j >= d.length) return d;
+      const next = [...d];
+      [next[i], next[j]] = [next[j]!, next[i]!];
+      return next;
+    });
+  };
+  const toggleHidden = (i: number) =>
+    setDraft((d) => (d ? d.map((a, k) => (k === i ? { ...a, hidden: !a.hidden } : a)) : d));
+
   return (
     <section>
-      <SectionTitle>at a glance</SectionTitle>
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-        {tiles}
+      <div className="flex items-center gap-2 mb-2">
+        <SectionTitle className="mb-0">at a glance</SectionTitle>
+        <div className="flex-1" />
+        {canArrange && !editing && (
+          <button
+            onClick={() => setDraft(arranged)}
+            className="inline-flex items-center gap-1.5 text-[11px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 hover:text-accent transition"
+            title="Reorder and show/hide tiles"
+          >
+            <Sliders size={13} /> arrange
+          </button>
+        )}
+        {editing && (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setDraft(null)}
+              disabled={save.isPending}
+              className="text-[11px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 hover:text-content transition"
+            >
+              cancel
+            </button>
+            <button
+              onClick={() => save.mutate(draft!)}
+              disabled={save.isPending}
+              className="inline-flex items-center gap-1.5 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2.5 py-1 text-[11px] font-mono uppercase tracking-widest transition disabled:opacity-50"
+            >
+              {save.isPending ? "saving…" : "done"}
+            </button>
+          </div>
+        )}
       </div>
-    </section>
-  );
-}
 
-// Per-module tiles. Each fetches one count (and a secondary signal
-// where it matters) and renders a clickable card. Keep them visually
-// uniform so the grid reads as a rhythm, not a smorgasbord.
-
-function Tile({
-  to,
-  icon: Icon,
-  label,
-  primary,
-  secondary,
-  attention,
-}: {
-  to: string;
-  icon: typeof Boxes;
-  label: string;
-  primary: React.ReactNode;
-  secondary?: React.ReactNode;
-  attention?: boolean;
-}) {
-  return (
-    <Link
-      to={to}
-      className={
-        "rounded-xl border bg-surface dark:bg-slate-900 p-4 hover:border-cobble-300 dark:hover:border-cobble-700 transition flex flex-col gap-2 " +
-        (attention
-          ? "border-ember-300 dark:border-ember-700"
-          : "border-line dark:border-slate-700")
-      }
-    >
-      <div className="flex items-center gap-2">
-        <Icon
-          size={14}
-          className={attention ? "text-ember-500" : "text-accent"}
-        />
-        <span className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
-          {label}
-        </span>
-      </div>
-      <div className="text-3xl font-semibold text-content dark:text-mortar-100 leading-none">
-        {primary}
-      </div>
-      {secondary && (
-        <div className="text-[11px] text-muted dark:text-slate-400">
-          {secondary}
+      {editing ? (
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+            {draft!.map((a, i) => {
+              const Widget = a.spec.component;
+              return (
+                <div
+                  key={widgetId(a.spec)}
+                  className={"relative rounded-xl " + (a.hidden ? "opacity-40" : "")}
+                >
+                  {/* the tile itself — non-interactive while arranging */}
+                  <div className="pointer-events-none">
+                    <Widget slug={slug} />
+                  </div>
+                  {/* control overlay */}
+                  <div className="absolute top-1.5 right-1.5 flex items-center gap-1 rounded-md bg-surface/90 dark:bg-slate-900/90 backdrop-blur border border-line dark:border-slate-700 px-1 py-0.5">
+                    <button
+                      onClick={() => move(i, -1)}
+                      disabled={i === 0}
+                      className="p-0.5 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 disabled:opacity-30 transition"
+                      title="Move earlier"
+                    >
+                      <ArrowLeft size={13} />
+                    </button>
+                    <button
+                      onClick={() => move(i, 1)}
+                      disabled={i === draft!.length - 1}
+                      className="p-0.5 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 disabled:opacity-30 transition"
+                      title="Move later"
+                    >
+                      <ArrowRight size={13} />
+                    </button>
+                    <button
+                      onClick={() => toggleHidden(i)}
+                      className="p-0.5 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 transition"
+                      title={a.hidden ? "Show on dashboard" : "Hide from dashboard"}
+                    >
+                      {a.hidden ? <EyeOff size={13} /> : <Eye size={13} />}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <p className="text-[11px] text-faint dark:text-slate-500 mt-2">
+            Arrows reorder · the eye hides a tile. This arrangement is shared by everyone in the workspace.
+          </p>
+        </>
+      ) : visible.length === 0 ? (
+        <p className="text-sm text-muted dark:text-slate-400 italic">
+          All tiles are hidden.{" "}
+          {canArrange && (
+            <button onClick={() => setDraft(arranged)} className="text-accent hover:underline not-italic">
+              Arrange
+            </button>
+          )}{" "}
+          to show some.
+        </p>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+          {visible.map((a) => {
+            const Widget = a.spec.component;
+            return <Widget key={widgetId(a.spec)} slug={slug} />;
+          })}
         </div>
       )}
-    </Link>
-  );
-}
-
-function InventoryTile({ slug }: { slug: string }) {
-  // One fetch — the list endpoint already returns `low_stock`
-  // per row, so we compute both numbers from the same payload
-  // instead of issuing two separate full-list queries.
-  const all = useQuery({
-    queryKey: ["dash-inv-all", slug],
-    queryFn: () =>
-      api.request<{ items: Array<{ low_stock?: boolean }> }>(
-        "GET",
-        `/orgs/${slug}/modules/inventory/parts?limit=200`,
-      ),
-    enabled: !!slug,
-    staleTime: 30_000,
-  });
-  const items = all.data?.items ?? [];
-  const total = items.length;
-  const lowCount = items.filter((p) => p.low_stock).length;
-  return (
-    <Tile
-      to="/inventory"
-      icon={Package}
-      label="inventory"
-      primary={total}
-      secondary={
-        lowCount > 0 ? (
-          <span className="text-ember-600 dark:text-ember-500">
-            {lowCount} low-stock
-          </span>
-        ) : (
-          "all stocked"
-        )
-      }
-      attention={lowCount > 0}
-    />
-  );
-}
-
-function MachinesTile({ slug }: { slug: string }) {
-  const q = useQuery({
-    queryKey: ["dash-machines", slug],
-    queryFn: () =>
-      api.request<{ items: Array<{ state: string }> }>(
-        "GET",
-        `/orgs/${slug}/modules/machines/machines?limit=200`,
-      ),
-    staleTime: 30_000,
-  });
-  const items = q.data?.items ?? [];
-  const states = items.reduce<Record<string, number>>((acc, m) => {
-    acc[m.state] = (acc[m.state] ?? 0) + 1;
-    return acc;
-  }, {});
-  const breakdown = Object.entries(states)
-    .map(([s, n]) => `${n} ${s}`)
-    .slice(0, 3)
-    .join(" · ");
-  return (
-    <Tile
-      to="/machines"
-      icon={Wrench}
-      label="machines"
-      primary={items.length}
-      secondary={breakdown || "none yet"}
-    />
-  );
-}
-
-function ProjectsTile({ slug }: { slug: string }) {
-  const projects = useQuery({
-    queryKey: ["dash-projects", slug],
-    queryFn: () =>
-      api.request<{ items: Array<{ status: string }> }>(
-        "GET",
-        `/orgs/${slug}/modules/projects/projects?limit=200`,
-      ),
-    staleTime: 30_000,
-  });
-  const blocked = useQuery({
-    queryKey: ["dash-tasks-blocked", slug],
-    queryFn: () =>
-      api.request<{ items: unknown[] }>(
-        "GET",
-        `/orgs/${slug}/modules/projects/tasks?blocked=1&limit=200`,
-      ),
-    staleTime: 30_000,
-  });
-  const all = projects.data?.items ?? [];
-  const active = all.filter((p) => p.status === "active").length;
-  const blockedCount = blocked.data?.items.length ?? 0;
-  return (
-    <Tile
-      to="/projects"
-      icon={ListChecks}
-      label="projects"
-      primary={active}
-      secondary={
-        blockedCount > 0 ? (
-          <span className="text-ember-600 dark:text-ember-500">
-            {blockedCount} blocked
-          </span>
-        ) : (
-          `${all.length} total`
-        )
-      }
-      attention={blockedCount > 0}
-    />
-  );
-}
-
-function AssetsTile({ slug }: { slug: string }) {
-  const q = useQuery({
-    queryKey: ["dash-assets", slug],
-    queryFn: () =>
-      api.request<{ items: Array<{ state: string }> }>(
-        "GET",
-        `/orgs/${slug}/modules/assets/assets?limit=200`,
-      ),
-    staleTime: 30_000,
-  });
-  const items = q.data?.items ?? [];
-  const states = items.reduce<Record<string, number>>((acc, m) => {
-    const k = m.state ?? "—";
-    acc[k] = (acc[k] ?? 0) + 1;
-    return acc;
-  }, {});
-  const top = Object.entries(states).slice(0, 2).map(([s, n]) => `${n} ${s}`).join(" · ");
-  return (
-    <Tile
-      to="/assets"
-      icon={Sprout}
-      label="assets"
-      primary={items.length}
-      secondary={top || "none yet"}
-    />
-  );
-}
-
-function PurchasesTile({ slug }: { slug: string }) {
-  const q = useQuery({
-    queryKey: ["dash-orders", slug],
-    queryFn: () =>
-      api.request<{ items: Array<{ status: string }> }>(
-        "GET",
-        `/orgs/${slug}/modules/purchases/orders?limit=200`,
-      ),
-    staleTime: 30_000,
-  });
-  const items = q.data?.items ?? [];
-  const open = items.filter(
-    (o) => o.status !== "arrived" && o.status !== "cancelled",
-  ).length;
-  return (
-    <Tile
-      to="/purchases"
-      icon={ShoppingCart}
-      label="purchases"
-      primary={open}
-      secondary={open === items.length ? "all open" : `${items.length} total`}
-    />
-  );
-}
-
-function LabelsTile({ slug }: { slug: string }) {
-  // Shared key with BasketWidget + QueuePage so React Query
-  // de-dupes the request in flight (one fetch, three consumers).
-  const q = useQuery({
-    queryKey: ["labels-queue", slug],
-    queryFn: () =>
-      api.request<{ items: unknown[] }>(
-        "GET",
-        `/orgs/${slug}/modules/labels/queue`,
-      ),
-    enabled: !!slug,
-    staleTime: 30_000,
-  });
-  const queued = q.data?.items.length ?? 0;
-  return (
-    <Tile
-      to="/labels"
-      icon={Tags}
-      label="labels"
-      primary={queued}
-      secondary={queued === 0 ? "queue empty" : "in queue"}
-    />
+    </section>
   );
 }
 
@@ -852,9 +777,9 @@ function ActivityGroupRow({ group }: { group: ActivityGroup }) {
 
 // ──────────────────────── tiny helpers ──────────────────────────────
 
-function SectionTitle({ children }: { children: React.ReactNode }) {
+function SectionTitle({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
+    <div className={"text-[10px] font-mono uppercase tracking-widest text-accent " + (className ?? "mb-2")}>
       // {children}
     </div>
   );

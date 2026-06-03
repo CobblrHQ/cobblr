@@ -29,7 +29,7 @@
 // Safe to re-run on every boot until all affected orgs are migrated.
 
 import { meta } from "../db/meta.js";
-import { getTenantPool } from "../db/tenant.js";
+import { getTenantPool, evictTenantPool } from "../db/tenant.js";
 import { enableModuleForOrg } from "../modules/enable.js";
 
 export interface InventoryLocationsMigrationResult {
@@ -168,6 +168,12 @@ export async function migrateInventoryLocations(): Promise<InventoryLocationsMig
         `[migrate-inventory-locations] org ${o.org_id} failed:`,
         (err as Error).message,
       );
+    } finally {
+      // Release this tenant's pool immediately. This boot pass runs
+      // pre-`listen` and serially; leaving every org's max:5 pool cached
+      // open across the whole boot sequence is what exhausts Postgres
+      // `max_connections`. The pool lazily reopens on first real request.
+      await evictTenantPool(o.org_id);
     }
   }
   return { orgsTouched, rowsCopied, fksDropped };

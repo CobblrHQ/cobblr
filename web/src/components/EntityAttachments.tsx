@@ -8,11 +8,11 @@
 
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, ImageIcon, Link, Plus, Tag as TagIcon, Trash2, Upload, X } from "lucide-react";
+import { ArrowRight, Eye, ImageIcon, Link, Plus, Tag as TagIcon, Trash2, Upload, X } from "lucide-react";
 import { ApiError, api, type PairingItem, type TagRecord } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
-import { useImageSrc } from "@cobblr/platform-web";
+import { useImageSrc, FilePreview, canPreviewFile, useFilePreviewRegistry } from "@cobblr/platform-web";
 
 interface Props {
   /** Entity kind id, e.g. "inventory:part". */
@@ -358,6 +358,11 @@ function FilesSection({
   }
 
   const items = list.data?.items ?? [];
+  // Re-evaluate canPreviewFile when the host gate toggles renderers
+  // (e.g. a machine domain gets enabled mid-session).
+  useFilePreviewRegistry();
+  // A non-image file open in the preview modal (STL / G-code / SVG / …).
+  const [preview, setPreview] = useState<{ file_id: string; filename: string } | null>(null);
 
   // Drag-and-drop: drop anywhere on the section to upload. We track
   // `dragOver` so the grid can highlight as a drop target instead of
@@ -456,6 +461,22 @@ function FilesSection({
                 if (ok) detach.mutate(att.id);
               }}
             />
+          ) : canPreviewFile(att.filename) ? (
+            // Previewable model/job file (STL / G-code / SVG / …) — click
+            // to render it (core-file-preview, via the FilePreview seam).
+            <button
+              key={att.id}
+              type="button"
+              onClick={() => setPreview({ file_id: att.file_id, filename: att.filename })}
+              className="aspect-square flex flex-col items-center justify-center text-xs text-muted border border-line dark:border-slate-700 rounded hover:border-cobble-500 hover:text-accent transition p-2 text-center group"
+              title={`Preview ${att.filename}`}
+            >
+              <Eye size={14} className="mb-1 text-faint group-hover:text-accent" />
+              <div className="font-mono text-[10px] uppercase">
+                {att.mime_type.split("/")[1] ?? att.filename.split(".").pop() ?? "file"}
+              </div>
+              <div className="truncate w-full mt-0.5">{att.filename}</div>
+            </button>
           ) : (
             <a
               key={att.id}
@@ -487,6 +508,15 @@ function FilesSection({
           onChange={(e) => void handleFiles(e.target.files)}
         />
       </div>
+
+      {preview && (
+        <Modal open onClose={() => setPreview(null)} title={preview.filename} size="lg">
+          <FilePreview
+            src={api.fileRawUrl(activeSlug, preview.file_id, "original")}
+            filename={preview.filename}
+          />
+        </Modal>
+      )}
     </section>
   );
 }

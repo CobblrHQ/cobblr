@@ -7,12 +7,12 @@
     "author": "Cobblr",
     "requires": [
       { "module": "purchases" },
-      { "module": "core-fitness" }
+      { "module": "tracking" }
     ],
     "wires": [
       {
         "source_kind": "purchases:order_item",
-        "action_id": "core-fitness:log-measurement",
+        "action_id": "tracking:log-measurement",
         "trigger_type": "event",
         "trigger_event": "purchases.order_item.received",
         "args": {

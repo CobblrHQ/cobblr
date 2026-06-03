@@ -3,7 +3,7 @@
 // Save a set of default values + tags against a target entity kind;
 // stamp out new entities pre-filled from that template. Closes the
 // "Tier 2: entity templates" item from
-// docs/homebox-parity-report.md.
+// docs/product/homebox-parity-report.md.
 //
 // Use cases:
 //   - Household appliance template: insured=true, lifetime_warranty

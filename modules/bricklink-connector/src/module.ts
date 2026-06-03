@@ -24,7 +24,7 @@
 //     so the diff can bucket non-part wanted items too.
 //
 // Not foundational — the platform works without a Lego workspace.
-// `marketplace` band per docs/design-decisions/module-layers.md.
+// `marketplace` band per docs/architecture/module-layers.md.
 //
 // VENDORED COPY — canonical source is
 // https://github.com/CobblrHQ/bricklink-connector.
@@ -38,7 +38,7 @@
 //
 // Sync rule: any change to this code MUST also be PR'd to
 // cobblrhq/bricklink-connector. The two diverge if not kept
-// aligned. See docs/design-decisions/bricklink-rename.md.
+// aligned. See docs/history/bricklink-rename.md.
 
 import { defineModule } from "@cobblr/platform-contract";
 

@@ -1,0 +1,40 @@
+{
+  "manifest": {
+    "id": "cobblr.flagship.plant-care",
+    "name": "Plant Care",
+    "version": "0.1.0",
+    "description": "Stop killing your houseplants. Each plant tracks its species, where it lives, how much light it likes, how often to water, when you last watered and its pot size. A 'By light' view groups the windowsill crowd from the shady corner. Log a watering and set the next one on your calendar so the fern never goes a fortnight dry again.",
+    "author": "Cobblr",
+    "requires": [
+      { "module": "assets" }
+    ],
+    "field_defs": [
+      { "entity_kind": "assets:asset", "name": "species", "display_label": "Species", "type": "text", "position": 1 },
+      { "entity_kind": "assets:asset", "name": "light", "display_label": "Light", "type": "text", "position": 2, "choices": ["Low", "Medium", "Bright indirect", "Direct sun"] },
+      { "entity_kind": "assets:asset", "name": "water_every_days", "display_label": "Water every (days)", "type": "number", "position": 3 },
+      { "entity_kind": "assets:asset", "name": "last_watered", "display_label": "Last watered", "type": "date", "position": 4 },
+      { "entity_kind": "assets:asset", "name": "pot_size", "display_label": "Pot size", "type": "text", "position": 5 },
+      { "entity_kind": "assets:asset", "name": "care_summary", "display_label": "Care", "type": "computed", "position": 6, "template": "{{light | default: \"?\"}} light · water every {{water_every_days | default: \"?\"}}d" }
+    ],
+    "field_overrides": [
+      { "entity_kind": "assets:asset", "name": "manufacturer", "hidden": true },
+      { "entity_kind": "assets:asset", "name": "model", "hidden": true },
+      { "entity_kind": "assets:asset", "name": "serial_number", "hidden": true },
+      { "entity_kind": "assets:asset", "name": "short_name", "hidden": true },
+      { "entity_kind": "assets:asset", "name": "excitement", "hidden": true }
+    ],
+    "saved_views": [
+      {
+        "entity_kind": "assets:asset",
+        "name": "By light",
+        "view_type": "table",
+        "pinned": true,
+        "config": {
+          "group_by": "light",
+          "visible_fields": ["title", "species", "water_every_days", "last_watered", "pot_size"]
+        }
+      }
+    ]
+  },
+  "confirm": true
+}

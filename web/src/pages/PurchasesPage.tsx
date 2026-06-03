@@ -9,6 +9,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Plus, Search, Trash2 } from "lucide-react";
 import { ApiError, api, type Order } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { useFieldPresentation } from "../lib/useFieldPresentation";
 import { BulkActionBar, EntityActionsBar, Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 
 const STATUSES: Order["status"][] = ["planned", "ordered", "in-transit", "arrived", "cancelled"];
@@ -243,6 +244,9 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
       void qc.invalidateQueries({ queryKey: ["orders", activeSlug] });
     },
   });
+  // Native-field presentation (relabel + show/hide via bundle/config); no-op
+  // until an override exists. Same pattern as AssetsPage.
+  const fp = useFieldPresentation("purchases:order");
   const remove = useMutation({
     mutationFn: () => api.deleteOrder(activeSlug, orderId!),
     onSuccess: () => {
@@ -277,16 +281,16 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
         <div className="space-y-4">
           <EntityActionsBar entityKind="purchases:order" entityId={o.id} />
           <dl className="grid grid-cols-2 gap-3 text-xs">
-            <EditField label="Vendor" value={o.vendor ?? ""} onCommit={(v) => update.mutate({ vendor: v || null })} />
-            <EditField label="Order #" value={o.order_number ?? ""} onCommit={(v) => update.mutate({ order_number: v || null })} />
-            <EditSelect label="Status" value={o.status} options={STATUSES} onCommit={(v) => update.mutate({ status: v as Order["status"] })} />
-            <EditField label="Tracking #" value={o.tracking_number ?? ""} onCommit={(v) => update.mutate({ tracking_number: v || null })} />
-            <EditField label="Ordered at" value={o.ordered_at ?? ""} type="date" onCommit={(v) => update.mutate({ ordered_at: v || null })} />
-            <EditField label="Expected arrival" value={o.expected_arrival ?? ""} type="date" onCommit={(v) => update.mutate({ expected_arrival: v || null })} />
-            <EditField label="Arrived at" value={o.arrived_at ?? ""} type="date" onCommit={(v) => update.mutate({ arrived_at: v || null })} />
-            <EditField label="URL" value={o.url ?? ""} type="url" onCommit={(v) => update.mutate({ url: v || null })} />
-            <EditField label="Total cost" value={o.total_cost ?? ""} numeric onCommit={(v) => update.mutate({ total_cost: v ? (v as unknown as string) : null })} />
-            <EditField label="Shipping cost" value={o.shipping_cost ?? ""} numeric onCommit={(v) => update.mutate({ shipping_cost: v ? (v as unknown as string) : null })} />
+            {!fp.hidden("vendor") && <EditField label={fp.label("vendor", "Vendor")} value={o.vendor ?? ""} onCommit={(v) => update.mutate({ vendor: v || null })} />}
+            {!fp.hidden("order_number") && <EditField label={fp.label("order_number", "Order #")} value={o.order_number ?? ""} onCommit={(v) => update.mutate({ order_number: v || null })} />}
+            {!fp.hidden("status") && <EditSelect label={fp.label("status", "Status")} value={o.status} options={STATUSES} onCommit={(v) => update.mutate({ status: v as Order["status"] })} />}
+            {!fp.hidden("tracking_number") && <EditField label={fp.label("tracking_number", "Tracking #")} value={o.tracking_number ?? ""} onCommit={(v) => update.mutate({ tracking_number: v || null })} />}
+            {!fp.hidden("ordered_at") && <EditField label={fp.label("ordered_at", "Ordered at")} value={o.ordered_at ?? ""} type="date" onCommit={(v) => update.mutate({ ordered_at: v || null })} />}
+            {!fp.hidden("expected_arrival") && <EditField label={fp.label("expected_arrival", "Expected arrival")} value={o.expected_arrival ?? ""} type="date" onCommit={(v) => update.mutate({ expected_arrival: v || null })} />}
+            {!fp.hidden("arrived_at") && <EditField label={fp.label("arrived_at", "Arrived at")} value={o.arrived_at ?? ""} type="date" onCommit={(v) => update.mutate({ arrived_at: v || null })} />}
+            {!fp.hidden("url") && <EditField label={fp.label("url", "URL")} value={o.url ?? ""} type="url" onCommit={(v) => update.mutate({ url: v || null })} />}
+            {!fp.hidden("total_cost") && <EditField label={fp.label("total_cost", "Total cost")} value={o.total_cost ?? ""} numeric onCommit={(v) => update.mutate({ total_cost: v ? (v as unknown as string) : null })} />}
+            {!fp.hidden("shipping_cost") && <EditField label={fp.label("shipping_cost", "Shipping cost")} value={o.shipping_cost ?? ""} numeric onCommit={(v) => update.mutate({ shipping_cost: v ? (v as unknown as string) : null })} />}
           </dl>
           <EditField label="Notes" value={o.notes ?? ""} multiline onCommit={(v) => update.mutate({ notes: v || null })} />
 
