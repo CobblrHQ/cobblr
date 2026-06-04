@@ -29,10 +29,23 @@ const DashboardLayoutShape = z.object({
         // bad client can't store unbounded ids.
         id: z.string().min(1).max(120),
         hidden: z.boolean().default(false),
+        // Tile width in grid columns (1 = normal, 2 = wide). Bounded.
+        span: z.number().int().min(1).max(2).optional(),
       }),
     )
     .max(200)
     .default([]),
+  // Order + visibility of the whole dashboard sections (at_a_glance /
+  // pinned_views / recent_activity). Optional — absent = default order.
+  sections: z
+    .array(
+      z.object({
+        id: z.string().min(1).max(60),
+        hidden: z.boolean().default(false),
+      }),
+    )
+    .max(50)
+    .optional(),
 });
 
 dashboardRouter.get(

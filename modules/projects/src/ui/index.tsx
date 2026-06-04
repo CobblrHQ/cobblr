@@ -3,6 +3,9 @@
 
 import { Routes, Route } from "react-router-dom";
 import { Layers } from "lucide-react";
+// Side-effect: registers the projects "at a glance" dashboard tile through
+// platform-web's registerDashboardWidget seam when this UI bundle loads.
+import "./DashboardWidget";
 import { ProjectsProvider } from "./context";
 import { ProjectsListPage } from "./ProjectsListPage";
 import { ProjectDetailPage } from "./ProjectDetailPage";

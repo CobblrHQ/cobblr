@@ -2095,11 +2095,14 @@ export interface PairingItem {
   created_at: string;
 }
 
-/** Admin dashboard "at a glance" arrangement — an ordered list of widget ids
- *  with a hidden flag. Ids are owned by the platform-web dashboard-widget
- *  registry; the server persists only their order + visibility. */
+/** Admin dashboard arrangement. `widgets` orders the "at a glance" tiles (ids
+ *  owned by the platform-web registry) with a hidden flag and an optional
+ *  column-span (tile width). `sections` orders the whole dashboard sections
+ *  (at_a_glance / pinned_views / recent_activity) with a hidden flag. The
+ *  server persists order + visibility only. */
 export interface DashboardLayout {
-  widgets: { id: string; hidden: boolean }[];
+  widgets: { id: string; hidden: boolean; span?: number }[];
+  sections?: { id: string; hidden: boolean }[];
 }
 
 export interface PortalConfig {

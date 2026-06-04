@@ -8,6 +8,9 @@
 
 import { Routes, Route } from "react-router-dom";
 import { Tag } from "lucide-react";
+// Side-effect: registers the labels "at a glance" dashboard tile through
+// platform-web's registerDashboardWidget seam when this UI bundle loads.
+import "./DashboardWidget";
 import { LabelsProvider, useLabels } from "./context";
 import { QueuePage } from "./QueuePage";
 import { BasketWidget } from "./BasketWidget";

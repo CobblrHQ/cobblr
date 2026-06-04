@@ -42,12 +42,14 @@ export interface OrgsTable {
     pinned_views: string[];
     welcome_markdown?: string;
   }>;
-  /** Admin dashboard widget arrangement — order + visibility of the home
-   *  "at a glance" tiles. Null = default registration order, all visible.
-   *  Widget ids are owned by the web dashboard-widget registry; this column
-   *  only stores their order + hidden flag. */
+  /** Admin dashboard arrangement — order + visibility (+ tile width) of the
+   *  home "at a glance" tiles AND the order + visibility of the whole sections
+   *  (at-a-glance / pinned views / recent activity). Null = default order, all
+   *  visible. Widget + section ids are owned by the web layer; this column only
+   *  stores their order, a hidden flag, and an optional tile column-span. */
   dashboard_layout: Generated<{
-    widgets: { id: string; hidden: boolean }[];
+    widgets: { id: string; hidden: boolean; span?: number }[];
+    sections?: { id: string; hidden: boolean }[];
   } | null>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;

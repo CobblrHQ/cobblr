@@ -17,23 +17,25 @@
 // /projects/tasks?blocked=1 and 404. Each query stays cached for
 // 30s so navigating away + back doesn't refire everything.
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { ArrowLeft, ArrowRight, Eye, EyeOff, LayoutList, Sliders, Sparkles } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Eye, EyeOff, GripVertical, LayoutList, Maximize2, Minimize2, Sliders, Sparkles } from "lucide-react";
 import { EntityThumb,
   EntityTile,
   ViewModeToggle,
   useViewMode, usePageTitle, useToast,
   useDashboardWidgets, type DashboardWidgetSpec } from "@cobblr/platform-web";
-// Side-effect: registers the host's built-in "at a glance" widgets through
-// the public registerDashboardWidget seam. ModuleTiles renders whatever's
-// registered for an enabled module — no per-module knowledge in this file.
+// Side-effect: registers the host's built-in "at a glance" widgets (machines /
+// assets / purchases) through the public registerDashboardWidget seam. The
+// TileGrid renders whatever's registered for an enabled module — no per-module
+// knowledge here. (inventory / labels / projects register from their own /ui.)
 import "../dashboard/builtinWidgets";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useAuth } from "../auth/AuthContext";
 import {
   api,
+  getToken,
   type ActivityEntry,
   type DashboardLayout,
   type OrgModuleListItem,
@@ -79,11 +81,9 @@ export function Dashboard() {
 
       <GettingStartedPanel slug={activeSlug} enabled={enabled} />
 
-      <ModuleTiles slug={activeSlug} enabled={enabled} role={activeOrg.role} />
-
-      <PinnedViews slug={activeSlug} />
-
-      <RecentActivity slug={activeSlug} />
+      {/* The arrangeable body — at-a-glance tiles + pinned views + recent
+          activity, reorderable/hideable per workspace via one Arrange mode. */}
+      <ArrangeableBody slug={activeSlug} enabled={enabled} role={activeOrg.role} />
     </div>
   );
 }
@@ -319,27 +319,74 @@ function WorkspaceHeader({
 
 const widgetId = (w: DashboardWidgetSpec): string => w.id ?? w.module;
 
-interface Arranged {
+interface WidgetDraft {
   spec: DashboardWidgetSpec;
   hidden: boolean;
+  span: number; // grid columns the tile occupies: 1 (normal) or 2 (wide)
 }
 
 /** Merge the registry widgets (already gated to enabled modules) with the saved
- *  layout: known ids in saved order (carrying their hidden flag), then any
- *  unsaved ids appended visible. */
-function arrange(widgets: DashboardWidgetSpec[], layout: DashboardLayout | undefined): Arranged[] {
-  const saved = new Map((layout?.widgets ?? []).map((w, i) => [w.id, { i, hidden: w.hidden }]));
+ *  layout: known ids in saved order (carrying hidden + span), then any unsaved
+ *  ids appended visible at span 1 — so a freshly enabled module's tile is never
+ *  silently dropped. */
+function arrangeWidgets(
+  widgets: DashboardWidgetSpec[],
+  layout: DashboardLayout | undefined,
+): WidgetDraft[] {
+  const saved = new Map(
+    (layout?.widgets ?? []).map((w, i) => [w.id, { i, hidden: w.hidden, span: w.span === 2 ? 2 : 1 }]),
+  );
   const known = widgets
     .filter((w) => saved.has(widgetId(w)))
     .sort((a, b) => saved.get(widgetId(a))!.i - saved.get(widgetId(b))!.i)
-    .map<Arranged>((spec) => ({ spec, hidden: saved.get(widgetId(spec))!.hidden }));
+    .map<WidgetDraft>((spec) => {
+      const s = saved.get(widgetId(spec))!;
+      return { spec, hidden: s.hidden, span: s.span };
+    });
   const fresh = widgets
     .filter((w) => !saved.has(widgetId(w)))
-    .map<Arranged>((spec) => ({ spec, hidden: false }));
+    .map<WidgetDraft>((spec) => ({ spec, hidden: false, span: 1 }));
   return [...known, ...fresh];
 }
 
-function ModuleTiles({
+// The dashboard's arrangeable sections, in default order.
+const SECTION_IDS = ["at_a_glance", "pinned_views", "recent_activity"] as const;
+type SectionId = (typeof SECTION_IDS)[number];
+const SECTION_TITLE: Record<SectionId, string> = {
+  at_a_glance: "at a glance",
+  pinned_views: "your views",
+  recent_activity: "recent activity",
+};
+
+interface SectionDraft {
+  id: SectionId;
+  hidden: boolean;
+}
+
+/** Known section ids in saved order (carrying hidden), then any not-yet-saved
+ *  ones appended visible. */
+function arrangeSections(layout: DashboardLayout | undefined): SectionDraft[] {
+  const saved = new Map((layout?.sections ?? []).map((s, i) => [s.id, { i, hidden: s.hidden }]));
+  const known = SECTION_IDS.filter((id) => saved.has(id))
+    .sort((a, b) => saved.get(a)!.i - saved.get(b)!.i)
+    .map<SectionDraft>((id) => ({ id, hidden: saved.get(id)!.hidden }));
+  const fresh = SECTION_IDS.filter((id) => !saved.has(id)).map<SectionDraft>((id) => ({ id, hidden: false }));
+  return [...known, ...fresh];
+}
+
+/** Move arr[from] to index `to`, returning a new array (no-op on bad indices). */
+function reorder<T>(arr: T[], from: number, to: number): T[] {
+  if (from === to || from < 0 || to < 0 || from >= arr.length || to >= arr.length) return arr;
+  const next = [...arr];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved!);
+  return next;
+}
+
+// One Arrange mode for the whole body: reorder/hide the SECTIONS (at a glance /
+// your views / recent activity) AND, inside "at a glance", reorder/hide/resize
+// the tiles. Drag or use the buttons. Persisted per workspace; owner/admin only.
+function ArrangeableBody({
   slug,
   enabled,
   role,
@@ -357,24 +404,28 @@ function ModuleTiles({
     staleTime: 30_000,
     enabled: !!slug,
   });
-  const arranged = arrange(widgets, layoutQ.data?.layout);
-
-  // Edit state: a local draft (the arranged list) only while arranging.
-  const [draft, setDraft] = useState<Arranged[] | null>(null);
-  const editing = draft !== null;
+  const layout = layoutQ.data?.layout;
+  const baseWidgets = arrangeWidgets(widgets, layout);
+  const baseSections = arrangeSections(layout);
   const canArrange = role === "owner" || role === "admin";
 
+  const [draft, setDraft] = useState<{ widgets: WidgetDraft[]; sections: SectionDraft[] } | null>(null);
+  const editing = draft !== null;
+  const [dragSection, setDragSection] = useState<number | null>(null);
+
   const save = useMutation({
-    mutationFn: (next: Arranged[]) => {
+    mutationFn: () => {
+      const d = draft!;
       // Preserve saved entries for widgets not currently registered (a
       // temporarily-disabled module) so arranging doesn't forget them.
-      const liveIds = new Set(next.map((a) => widgetId(a.spec)));
-      const extras = (layoutQ.data?.layout.widgets ?? []).filter((w) => !liveIds.has(w.id));
+      const liveIds = new Set(d.widgets.map((w) => widgetId(w.spec)));
+      const extras = (layout?.widgets ?? []).filter((w) => !liveIds.has(w.id));
       return api.setDashboardLayout(slug, {
         widgets: [
-          ...next.map((a) => ({ id: widgetId(a.spec), hidden: a.hidden })),
+          ...d.widgets.map((w) => ({ id: widgetId(w.spec), hidden: w.hidden, span: w.span })),
           ...extras,
         ],
+        sections: d.sections.map((s) => ({ id: s.id, hidden: s.hidden })),
       });
     },
     onSuccess: () => {
@@ -385,7 +436,165 @@ function ModuleTiles({
     onError: (e) => toast.error((e as Error).message),
   });
 
-  if (widgets.length === 0) {
+  const startArrange = () => setDraft({ widgets: baseWidgets, sections: baseSections });
+  const setWidgets = (fn: (w: WidgetDraft[]) => WidgetDraft[]) =>
+    setDraft((d) => (d ? { ...d, widgets: fn(d.widgets) } : d));
+  const setSections = (fn: (s: SectionDraft[]) => SectionDraft[]) =>
+    setDraft((d) => (d ? { ...d, sections: fn(d.sections) } : d));
+
+  const sections = editing ? draft!.sections : baseSections;
+  const wlist = editing ? draft!.widgets : baseWidgets;
+  const shown = editing ? sections : sections.filter((s) => !s.hidden);
+
+  const renderContent = (id: SectionId) => {
+    if (id === "at_a_glance")
+      return (
+        <TileGrid
+          slug={slug}
+          widgets={wlist}
+          editing={editing}
+          hasModules={widgets.length > 0}
+          onMove={(i, dir) => setWidgets((w) => reorder(w, i, i + dir))}
+          onReorder={(from, to) => setWidgets((w) => reorder(w, from, to))}
+          onToggleHidden={(i) =>
+            setWidgets((w) => w.map((a, k) => (k === i ? { ...a, hidden: !a.hidden } : a)))
+          }
+          onResize={(i) =>
+            setWidgets((w) => w.map((a, k) => (k === i ? { ...a, span: a.span === 2 ? 1 : 2 } : a)))
+          }
+        />
+      );
+    if (id === "pinned_views") return <PinnedViews slug={slug} editing={editing} />;
+    return <RecentActivity slug={slug} editing={editing} />;
+  };
+
+  return (
+    <div className="space-y-6">
+      {canArrange && (
+        <div className="flex items-center justify-end gap-2 -mb-3">
+          {!editing ? (
+            <button
+              onClick={startArrange}
+              className="inline-flex items-center gap-1.5 text-[11px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 hover:text-accent transition"
+              title="Reorder, hide, and resize the dashboard"
+            >
+              <Sliders size={13} /> arrange dashboard
+            </button>
+          ) : (
+            <>
+              <button
+                onClick={() => setDraft(null)}
+                disabled={save.isPending}
+                className="text-[11px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 hover:text-content transition"
+              >
+                cancel
+              </button>
+              <button
+                onClick={() => save.mutate()}
+                disabled={save.isPending}
+                className="inline-flex items-center gap-1.5 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2.5 py-1 text-[11px] font-mono uppercase tracking-widest transition disabled:opacity-50"
+              >
+                {save.isPending ? "saving…" : "done"}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {shown.map((s) => {
+        const idx = sections.findIndex((x) => x.id === s.id);
+        const content = renderContent(s.id);
+        // Fragment (not a wrapper div) so a section that renders null — e.g.
+        // empty pinned views — leaves no stray gap in the space-y stack.
+        if (!editing) return <Fragment key={s.id}>{content}</Fragment>;
+        return (
+          <section
+            key={s.id}
+            draggable
+            onDragStart={() => setDragSection(idx)}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={() => {
+              if (dragSection !== null) setSections((arr) => reorder(arr, dragSection, idx));
+              setDragSection(null);
+            }}
+            className={
+              "rounded-xl border border-dashed border-line dark:border-slate-700 p-3 " +
+              (s.hidden ? "opacity-50" : "")
+            }
+          >
+            <div className="flex items-center gap-2 mb-2">
+              <GripVertical size={14} className="text-faint dark:text-slate-600 cursor-grab" />
+              <span className="text-[10px] font-mono uppercase tracking-widest text-accent">
+                {SECTION_TITLE[s.id]}
+              </span>
+              <div className="flex-1" />
+              <button
+                onClick={() => setSections((arr) => reorder(arr, idx, idx - 1))}
+                disabled={idx === 0}
+                className="p-0.5 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 disabled:opacity-30 transition"
+                title="Move up"
+              >
+                <ArrowUp size={14} />
+              </button>
+              <button
+                onClick={() => setSections((arr) => reorder(arr, idx, idx + 1))}
+                disabled={idx === sections.length - 1}
+                className="p-0.5 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 disabled:opacity-30 transition"
+                title="Move down"
+              >
+                <ArrowDown size={14} />
+              </button>
+              <button
+                onClick={() =>
+                  setSections((arr) => arr.map((x, k) => (k === idx ? { ...x, hidden: !x.hidden } : x)))
+                }
+                className="p-0.5 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 transition"
+                title={s.hidden ? "Show section" : "Hide section"}
+              >
+                {s.hidden ? <EyeOff size={14} /> : <Eye size={14} />}
+              </button>
+            </div>
+            {content}
+          </section>
+        );
+      })}
+
+      {editing && (
+        <p className="text-[11px] text-faint dark:text-slate-500">
+          Drag a section (or use ↑↓) to reorder; the eye hides it. Inside “at a glance”, drag tiles or use the controls to reorder, resize, and hide. Shared by everyone in the workspace.
+        </p>
+      )}
+    </div>
+  );
+}
+
+// The "at a glance" tile grid. Pure renderer driven by the arranged widgets:
+// in normal mode it draws the visible tiles (honouring each tile's `span`); in
+// edit mode every tile is draggable and carries reorder / resize / hide
+// controls. The section header + Arrange entry live in ArrangeableBody.
+function TileGrid({
+  slug,
+  widgets,
+  editing,
+  hasModules,
+  onMove,
+  onReorder,
+  onToggleHidden,
+  onResize,
+}: {
+  slug: string;
+  widgets: WidgetDraft[];
+  editing: boolean;
+  hasModules: boolean;
+  onMove: (i: number, dir: -1 | 1) => void;
+  onReorder: (from: number, to: number) => void;
+  onToggleHidden: (i: number) => void;
+  onResize: (i: number) => void;
+}) {
+  const [dragTile, setDragTile] = useState<number | null>(null);
+  const spanCls = (span: number) => (span === 2 ? "col-span-2" : "");
+
+  if (!hasModules) {
     return (
       <section className="rounded-xl border border-dashed border-line dark:border-slate-700 p-6 text-center text-sm text-muted dark:text-slate-400">
         No user-facing modules enabled yet. Visit{" "}
@@ -397,129 +606,92 @@ function ModuleTiles({
     );
   }
 
-  const list = editing ? draft! : arranged;
-  const visible = list.filter((a) => !a.hidden);
-
-  const move = (i: number, dir: -1 | 1) => {
-    setDraft((d) => {
-      if (!d) return d;
-      const j = i + dir;
-      if (j < 0 || j >= d.length) return d;
-      const next = [...d];
-      [next[i], next[j]] = [next[j]!, next[i]!];
-      return next;
-    });
-  };
-  const toggleHidden = (i: number) =>
-    setDraft((d) => (d ? d.map((a, k) => (k === i ? { ...a, hidden: !a.hidden } : a)) : d));
-
-  return (
-    <section>
-      <div className="flex items-center gap-2 mb-2">
-        <SectionTitle className="mb-0">at a glance</SectionTitle>
-        <div className="flex-1" />
-        {canArrange && !editing && (
-          <button
-            onClick={() => setDraft(arranged)}
-            className="inline-flex items-center gap-1.5 text-[11px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 hover:text-accent transition"
-            title="Reorder and show/hide tiles"
-          >
-            <Sliders size={13} /> arrange
-          </button>
-        )}
-        {editing && (
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setDraft(null)}
-              disabled={save.isPending}
-              className="text-[11px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 hover:text-content transition"
-            >
-              cancel
-            </button>
-            <button
-              onClick={() => save.mutate(draft!)}
-              disabled={save.isPending}
-              className="inline-flex items-center gap-1.5 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2.5 py-1 text-[11px] font-mono uppercase tracking-widest transition disabled:opacity-50"
-            >
-              {save.isPending ? "saving…" : "done"}
-            </button>
-          </div>
-        )}
-      </div>
-
-      {editing ? (
-        <>
+  if (!editing) {
+    const visible = widgets.filter((w) => !w.hidden);
+    return (
+      <section>
+        <SectionTitle>at a glance</SectionTitle>
+        {visible.length === 0 ? (
+          <p className="text-sm text-muted dark:text-slate-400 italic">
+            All tiles are hidden — use Arrange to show some.
+          </p>
+        ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-            {draft!.map((a, i) => {
+            {visible.map((a) => {
               const Widget = a.spec.component;
               return (
-                <div
-                  key={widgetId(a.spec)}
-                  className={"relative rounded-xl " + (a.hidden ? "opacity-40" : "")}
-                >
-                  {/* the tile itself — non-interactive while arranging */}
-                  <div className="pointer-events-none">
-                    <Widget slug={slug} />
-                  </div>
-                  {/* control overlay */}
-                  <div className="absolute top-1.5 right-1.5 flex items-center gap-1 rounded-md bg-surface/90 dark:bg-slate-900/90 backdrop-blur border border-line dark:border-slate-700 px-1 py-0.5">
-                    <button
-                      onClick={() => move(i, -1)}
-                      disabled={i === 0}
-                      className="p-0.5 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 disabled:opacity-30 transition"
-                      title="Move earlier"
-                    >
-                      <ArrowLeft size={13} />
-                    </button>
-                    <button
-                      onClick={() => move(i, 1)}
-                      disabled={i === draft!.length - 1}
-                      className="p-0.5 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 disabled:opacity-30 transition"
-                      title="Move later"
-                    >
-                      <ArrowRight size={13} />
-                    </button>
-                    <button
-                      onClick={() => toggleHidden(i)}
-                      className="p-0.5 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 transition"
-                      title={a.hidden ? "Show on dashboard" : "Hide from dashboard"}
-                    >
-                      {a.hidden ? <EyeOff size={13} /> : <Eye size={13} />}
-                    </button>
-                  </div>
+                <div key={widgetId(a.spec)} className={spanCls(a.span)}>
+                  <Widget slug={slug} getToken={getToken} />
                 </div>
               );
             })}
           </div>
-          <p className="text-[11px] text-faint dark:text-slate-500 mt-2">
-            Arrows reorder · the eye hides a tile. This arrangement is shared by everyone in the workspace.
-          </p>
-        </>
-      ) : visible.length === 0 ? (
-        <p className="text-sm text-muted dark:text-slate-400 italic">
-          All tiles are hidden.{" "}
-          {canArrange && (
-            <button onClick={() => setDraft(arranged)} className="text-accent hover:underline not-italic">
-              Arrange
-            </button>
-          )}{" "}
-          to show some.
-        </p>
-      ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-          {visible.map((a) => {
-            const Widget = a.spec.component;
-            return <Widget key={widgetId(a.spec)} slug={slug} />;
-          })}
-        </div>
-      )}
-    </section>
+        )}
+      </section>
+    );
+  }
+
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+      {widgets.map((a, i) => {
+        const Widget = a.spec.component;
+        return (
+          <div
+            key={widgetId(a.spec)}
+            draggable
+            onDragStart={() => setDragTile(i)}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={() => {
+              if (dragTile !== null) onReorder(dragTile, i);
+              setDragTile(null);
+            }}
+            className={"relative rounded-xl cursor-grab " + spanCls(a.span) + (a.hidden ? " opacity-40" : "")}
+          >
+            <div className="pointer-events-none">
+              <Widget slug={slug} getToken={getToken} />
+            </div>
+            <div className="absolute top-1.5 right-1.5 flex items-center gap-1 rounded-md bg-surface/90 dark:bg-slate-900/90 backdrop-blur border border-line dark:border-slate-700 px-1 py-0.5">
+              <button
+                onClick={() => onMove(i, -1)}
+                disabled={i === 0}
+                className="p-0.5 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 disabled:opacity-30 transition"
+                title="Move earlier"
+              >
+                <ArrowLeft size={13} />
+              </button>
+              <button
+                onClick={() => onMove(i, 1)}
+                disabled={i === widgets.length - 1}
+                className="p-0.5 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 disabled:opacity-30 transition"
+                title="Move later"
+              >
+                <ArrowRight size={13} />
+              </button>
+              <button
+                onClick={() => onResize(i)}
+                className="p-0.5 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 transition"
+                title={a.span === 2 ? "Shrink to 1 column" : "Widen to 2 columns"}
+              >
+                {a.span === 2 ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+              </button>
+              <button
+                onClick={() => onToggleHidden(i)}
+                className="p-0.5 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 transition"
+                title={a.hidden ? "Show on dashboard" : "Hide from dashboard"}
+              >
+                {a.hidden ? <EyeOff size={13} /> : <Eye size={13} />}
+              </button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
 // ──────────────────────── pinned saved views ────────────────────────
 
-function PinnedViews({ slug }: { slug: string }) {
+function PinnedViews({ slug, editing = false }: { slug: string; editing?: boolean }) {
   const views = useQuery({
     queryKey: ["dash-views", slug],
     queryFn: () => api.listSavedViews(slug),
@@ -536,14 +708,21 @@ function PinnedViews({ slug }: { slug: string }) {
       ? explicitPinned.slice(0, 4)
       : allViews.filter((v) => v.owner_user_id === null).slice(0, 2);
   const [mode, setMode] = useViewMode("dashboard-pinned-views", "list");
-  if (pinned.length === 0) return null;
+  // When arranging, the section bar (ArrangeableBody) supplies the title, and
+  // an empty section must still show SOMETHING so it stays reorderable.
+  if (pinned.length === 0)
+    return editing ? (
+      <p className="text-xs text-faint dark:text-slate-500 italic">No pinned views yet.</p>
+    ) : null;
   return (
     <section>
+      {!editing && (
       <div className="flex items-center gap-2 mb-2">
         <SectionTitle>your views</SectionTitle>
         <div className="flex-1" />
         <ViewModeToggle mode={mode} onChange={setMode} />
       </div>
+      )}
       <div className="grid gap-3 md:grid-cols-2">
         {pinned.map((v) => (
           <PinnedView key={v.id} slug={slug} view={v} mode={mode} />
@@ -632,7 +811,7 @@ function PinnedView({
 
 // ──────────────────────── recent activity ───────────────────────────
 
-function RecentActivity({ slug }: { slug: string }) {
+function RecentActivity({ slug, editing = false }: { slug: string; editing?: boolean }) {
   const q = useQuery({
     queryKey: ["dash-activity", slug],
     queryFn: () => api.orgActivity(slug, 50),
@@ -642,7 +821,7 @@ function RecentActivity({ slug }: { slug: string }) {
   const groups = groupActivity(items);
   return (
     <section>
-      <SectionTitle>recent activity</SectionTitle>
+      {!editing && <SectionTitle>recent activity</SectionTitle>}
       {q.isLoading && <div className="text-xs text-faint">loading…</div>}
       {!q.isLoading && items.length === 0 && (
         <div className="text-xs text-faint italic">no activity yet</div>

@@ -18,10 +18,13 @@ import {
 } from "react";
 import { Link } from "react-router-dom";
 
-/** Props every dashboard widget receives. The active workspace slug is all a
- *  widget needs to fetch its own count(s); everything else it owns. */
+/** Props every dashboard widget receives. The active workspace slug plus a
+ *  `getToken` (read fresh per request) are enough for a widget — including one
+ *  living inside a packaged module, mounted by the host outside the module's
+ *  own provider — to fetch its own count(s) with auth. Everything else it owns. */
 export interface DashboardWidgetProps {
   slug: string;
+  getToken: () => string | null;
 }
 
 export interface DashboardWidgetSpec {

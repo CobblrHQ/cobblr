@@ -8,6 +8,9 @@
 
 import { Routes, Route, NavLink } from "react-router-dom";
 import { Boxes } from "lucide-react";
+// Side-effect: registers the inventory "at a glance" dashboard tile through
+// platform-web's registerDashboardWidget seam when this UI bundle loads.
+import "./DashboardWidget";
 import { InventoryProvider } from "./context";
 import { PartsListPage } from "./PartsListPage";
 import { SettingsPage } from "./SettingsPage";
