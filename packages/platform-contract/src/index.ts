@@ -847,6 +847,32 @@ export type ComputedContextProvider = (
   id: string,
 ) => Promise<Record<string, unknown>>;
 
+/** Context for resolving create-time field defaults. The kernel passes who is
+ *  creating + what kind; a provider returns a partial of that kind's OWN
+ *  fields. See PlatformEntities.registerCreateDefaults. */
+export interface CreateDefaultsContext {
+  orgId: string;
+  /** The user creating the entity — many defaults are per-user (e.g. presence
+   *  defaults a location from where the user is). Undefined for system / token
+   *  callers; a provider should no-op when it needs a user and there is none. */
+  userId?: string;
+  /** The kind being created, e.g. "core-scan:item" / "inventory:part". */
+  kind: string;
+  /** Field values the caller already has (client-supplied). Providers may read
+   *  these; the kernel never overrides a supplied value — defaults only fill
+   *  keys the caller left unset (see resolveCreateDefaults). */
+  supplied?: Record<string, unknown>;
+}
+
+/** A module's contribution of create-time defaults for one kind. Returns a
+ *  partial of the kind's fields (by the kind's OWN field names). Best-effort:
+ *  a throw is swallowed and contributes nothing. Provider-agnostic — presence,
+ *  a GPS source, a manual room-pin all register the same way; the create path
+ *  never imports any of them. */
+export type CreateDefaultsProvider = (
+  ctx: CreateDefaultsContext,
+) => Promise<Record<string, unknown>>;
+
 export interface PlatformEntities {
   /** Register a resolver for one kind. Called from a module's
    *  api/index.ts at module-load time. */
@@ -871,6 +897,31 @@ export interface PlatformEntities {
    *      },
    *    ); */
   registerComputedContext(name: string, provider: ComputedContextProvider): void;
+  /** Register a provider of create-time field defaults for a kind. The
+   *  provider-agnostic seam behind "default a field from context on create" —
+   *  e.g. a presence module defaulting `scan_area`/`location_id` from the room
+   *  the user is in. Many modules may register for the same kind; the create
+   *  handler calls resolveCreateDefaults() before insert and applies the result
+   *  ONLY to fields the caller left unset, so an explicit client value always
+   *  wins. The create path never imports the provider's module.
+   *
+   *  Example (in a presence module):
+   *    platform().entities.registerCreateDefaults("core-scan:item",
+   *      async ({ userId }) => {
+   *        const room = userId ? await currentRoom(userId) : null;
+   *        return room ? { scan_area: room } : {};
+   *      }); */
+  registerCreateDefaults(kind: string, provider: CreateDefaultsProvider): void;
+  /** Remove a previously-registered create-defaults provider (by reference).
+   *  Mainly for tests / hot-reload symmetry. */
+  unregisterCreateDefaults(kind: string, provider: CreateDefaultsProvider): void;
+  /** Run every registered provider for `ctx.kind` and return the merged
+   *  defaults. The FIRST provider to set a key wins (deterministic); a provider
+   *  that throws contributes nothing; null/undefined values are skipped.
+   *  Returns {} when no provider is registered — so calling this is a no-op for
+   *  kinds nobody augments. The CALLER applies the result; the convention is
+   *  client-supplied value wins, default fills the gap. */
+  resolveCreateDefaults(ctx: CreateDefaultsContext): Promise<Record<string, unknown>>;
   /** Look up one entity by (kind, id). Returns null if the kind
    *  has no resolver (module not enabled) or the entity doesn't
    *  exist. Projects through the kind's exposableFields whitelist.

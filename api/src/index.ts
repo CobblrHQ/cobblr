@@ -39,6 +39,7 @@ import * as recurrenceRegistry from "./platform/recurrence-registry.js";
 import * as calendarRegistry from "./platform/calendar-registry.js";
 import { registerDateFieldCalendarSources } from "./platform/date-field-calendar.js";
 import * as computedFields from "./platform/computed-fields.js";
+import * as createDefaults from "./platform/create-defaults.js";
 import * as instancesImpl from "./platform/instances.js";
 import * as queue from "./platform/queue.js";
 import * as notificationsImpl from "./platform/notifications.js";
@@ -90,6 +91,9 @@ async function boot() {
       registerResolver: entities.registerResolver,
       registerListResolver: entities.registerListResolver,
       registerComputedContext: computedFields.registerComputedContext,
+      registerCreateDefaults: createDefaults.registerCreateDefaults,
+      unregisterCreateDefaults: createDefaults.unregisterCreateDefaults,
+      resolveCreateDefaults: createDefaults.resolveCreateDefaults,
       lookup: entities.lookup,
       lookupMany: entities.lookupMany,
       list: entities.list,

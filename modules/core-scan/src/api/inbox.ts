@@ -66,6 +66,20 @@ inboxRouter.post(
     const ctx = tenantContext(req);
     const session = sessionUser(req);
 
+    // Create-time defaults: a module (e.g. presence) may default scan_area from
+    // context — the room the user is physically in. The seam is provider-
+    // agnostic and inert when nothing's registered; the client's explicit
+    // scan_area always wins over a default.
+    const defaults = await platform().entities.resolveCreateDefaults({
+      orgId: ctx.org.id,
+      userId: session.id,
+      kind: "core-scan:item",
+      supplied: { scan_area: body.scan_area },
+    });
+    const scanArea =
+      body.scan_area ??
+      (typeof defaults.scan_area === "string" ? defaults.scan_area : null);
+
     const inserted = await db
       .insertInto("core_scan_inbox_items")
       .values({
@@ -74,7 +88,7 @@ inboxRouter.post(
         source_url: body.source_url ?? null,
         image_file_id: body.image_file_id ?? null,
         scan_batch_id: body.scan_batch_id ?? null,
-        scan_area: body.scan_area ?? null,
+        scan_area: scanArea,
         created_by_user_id: session.id,
       })
       .returningAll()
