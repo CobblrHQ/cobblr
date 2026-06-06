@@ -11,6 +11,7 @@ import {
   type OrgMembership, type WorkspaceInvite, type WorkspaceMember,
 } from "../lib/api";
 import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
+import { displaySlug } from "../lib/workspaceSlug";
 
 interface Props {
   open: boolean;
@@ -110,7 +111,7 @@ export function MembersModal({ open, onClose, slug }: Props) {
   async function handleRemoveMember(m: WorkspaceMember) {
     const ok = await confirm({
       title: `Remove ${m.display_name}?`,
-      message: `They'll lose access to ${slug}. They can be re-invited later.`,
+      message: `They'll lose access to ${displaySlug(slug)}. They can be re-invited later.`,
       confirmLabel: "Remove",
       destructive: true,
     });
@@ -123,7 +124,7 @@ export function MembersModal({ open, onClose, slug }: Props) {
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="members" subtitle={slug} size="lg">
+    <Modal open={open} onClose={onClose} title="members" subtitle={displaySlug(slug)} size="lg">
       <div className="space-y-5">
         {/* Members list */}
         <div>

@@ -127,20 +127,23 @@ export async function assembleContext(
 // reliability lever; do not widen it (no saved_views/catalogs/lens) until
 // the eval pass-rate on this surface is high.
 const OUTPUT_CONTRACT = `{
-  "id": "cobblr.user.<slug>",
-  "version": "0.1.0",
-  "name": "<short name>",
-  "description": "<one line>",
-  "requires": [{ "module": "<module>" }],
-  "field_defs": [
-    { "entity_kind": "<kind>", "name": "<snake_case>", "display_label": "<label>",
-      "type": "text|number|boolean|date|url", "choices": ["<optional, for text>"] }
-  ],
-  "wires": [
-    { "source_kind": "<kind>", "action_id": "<action>",
-      "trigger_type": "user-invoked|event|on-create|on-update|on-delete",
-      "trigger_event": "<optional event name>", "template": "<optional Jinja2>" }
-  ]
+  "interpretation": "<1-2 plain sentences: what you understood the user wants, and what this bundle does. If the request is too vague or can't be built from the kinds above, say so plainly here and leave field_defs/wires empty.>",
+  "bundle": {
+    "id": "cobblr.user.<slug>",
+    "version": "0.1.0",
+    "name": "<short name>",
+    "description": "<one line>",
+    "requires": [{ "module": "<module>" }],
+    "field_defs": [
+      { "entity_kind": "<kind>", "name": "<snake_case>", "display_label": "<label>",
+        "type": "text|number|boolean|date|url", "choices": ["<optional, for text>"] }
+    ],
+    "wires": [
+      { "source_kind": "<kind>", "action_id": "<action>",
+        "trigger_type": "user-invoked|event|on-create|on-update|on-delete",
+        "trigger_event": "<optional event name>", "template": "<optional Jinja2>" }
+    ]
+  }
 }`;
 
 type TaskBuilder = (ctx: AuthoringContext, intent: string) => string;
@@ -162,7 +165,7 @@ const TASK_TEMPLATES: Record<string, TaskBuilder> = {
     const actions = ctx.actions.length
       ? ctx.actions.map((a) => `- ${a.id} — ${a.label}: ${a.description}`).join("\n")
       : "(none — the selected kinds have no wireable actions; you can only add field_defs)";
-    return `You are generating a Cobblr "bundle": a JSON config that adds custom fields and/or event→action wires to an existing app. Output ONLY the JSON object, nothing else.
+    return `You are generating a Cobblr "bundle": a JSON config that adds custom fields and/or event→action wires to an existing app. Output ONLY one JSON object — your "interpretation" (what you understood + what the bundle does) plus the "bundle" — in the exact shape below, nothing else.
 
 ENTITY KINDS you may use (use these ids exactly; do not invent kinds or fields):
 ${kinds}
@@ -202,7 +205,7 @@ RULES:
     const actions = ctx.actions.length
       ? ctx.actions.map((a) => `- ${a.id} — ${a.label}: ${a.description}`).join("\n")
       : "(none — you can only add/change field_defs)";
-    return `You are customizing an existing Cobblr "${ctx.baseTemplate.name}" template for a user. Start from the template below and MODIFY it to fit what they want — keep what fits, change labels/fields/choices, add what's missing, remove what's irrelevant. Output ONLY the resulting JSON bundle object, nothing else.
+    return `You are customizing an existing Cobblr "${ctx.baseTemplate.name}" template for a user. Start from the template below and MODIFY it to fit what they want — keep what fits, change labels/fields/choices, add what's missing, remove what's irrelevant. Output ONLY one JSON object — your "interpretation" plus the resulting "bundle" — matching the shape below, nothing else.
 
 STARTING TEMPLATE (modify this):
 ${JSON.stringify(ctx.baseTemplate.manifest, null, 2)}
@@ -264,4 +267,21 @@ export function parseJsonObject(raw: string): unknown {
   } catch {
     return null;
   }
+}
+
+/** Split a parsed build reply into its interpretation + the bundle manifest.
+ *  The contract is `{ "interpretation": "...", "bundle": {...} }`, but we
+ *  tolerate a bare bundle (older replies / a model that skipped the wrapper):
+ *  if there's no `bundle` object, treat the whole thing as the bundle. */
+export function unwrapBuild(parsed: unknown): { interpretation: string | null; bundle: unknown } {
+  if (parsed && typeof parsed === "object") {
+    const p = parsed as { bundle?: unknown; interpretation?: unknown };
+    if (p.bundle && typeof p.bundle === "object") {
+      return {
+        interpretation: typeof p.interpretation === "string" ? p.interpretation.trim() : null,
+        bundle: p.bundle,
+      };
+    }
+  }
+  return { interpretation: null, bundle: parsed };
 }

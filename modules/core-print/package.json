@@ -1,0 +1,29 @@
+{
+  "name": "@cobblr/core-print",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/module.js",
+  "exports": {
+    ".": {
+      "import": "./dist/module.js",
+      "types": "./dist/module.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cobblr/platform-contract": "*",
+    "express": "^4.21.2",
+    "ipp": "^1.1.0",
+    "kysely": "^0.27.5",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/ipp": "^2.0.5",
+    "typescript": "^5.7.2"
+  }
+}

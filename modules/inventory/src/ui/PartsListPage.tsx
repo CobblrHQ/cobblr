@@ -7,6 +7,7 @@ import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-quer
 import {
   AlertTriangle,
   Archive,
+  ExternalLink,
   FileDown,
   FileUp,
   Plus,
@@ -19,18 +20,20 @@ import {
   BulkActionBar,
   EntityThumb,
   EntityTile,
+  FieldRenderer,
   Modal,
   ViewModeToggle,
   useToast,
   useConfirm,
   usePageTitle,
   useViewMode,
+  type FieldRendererId,
 } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { NewPartDialog } from "./NewPartDialog";
 import { ImportDialog } from "./ImportDialog";
 import { PartDetailModal } from "./PartDetailPage";
-import type { PartListItem } from "./api";
+import type { PartListItem, InvFieldDef } from "./api";
 
 type StateFilter = "active" | "draft" | "needs_review" | "all";
 
@@ -58,6 +61,20 @@ export function PartsListPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const toast = useToast();
   const confirm = useConfirm();
+
+  // Custom-field columns for the table: the entity's field defs (bundle- or
+  // user-defined) become columns, rendered with their own renderer (color
+  // swatch, url link, …) from each part's metadata. Capped so the table stays
+  // readable; ordered by the field's position (which the user controls).
+  const fieldDefs = useQuery({
+    queryKey: ["platform-field-defs", orgSlug, "inventory:part"],
+    queryFn: () => api.listFieldDefs("inventory:part"),
+    staleTime: 60_000,
+  });
+  const customCols = (fieldDefs.data?.items ?? [])
+    .filter((d) => d.type !== "computed")
+    .sort((a, b) => a.position - b.position)
+    .slice(0, 6);
 
   const cats = useQuery({ queryKey: ["inventory-categories"], queryFn: () => api.listCategories() });
   const locs = useQuery({ queryKey: ["inventory-locations"], queryFn: () => api.listLocations() });
@@ -346,6 +363,7 @@ export function PartsListPage() {
       {partItems.length > 0 && viewMode === "list" && (
         <PartsTable
           items={partItems}
+          customCols={customCols}
           selected={selected}
           allChecked={allChecked}
           onToggle={toggleRow}
@@ -491,17 +509,20 @@ function PartsBulkTagModal({
 
 function PartsTable({
   items,
+  customCols,
   selected,
   allChecked,
   onToggle,
   onSelectAll,
 }: {
   items: PartListItem[];
+  customCols: InvFieldDef[];
   selected: Set<string>;
   allChecked: boolean;
   onToggle: (id: string, checked: boolean) => void;
   onSelectAll: (checked: boolean) => void;
 }) {
+  const anySupplier = items.some((p) => !!p.supplier_url);
   return (
     <>
       {/* Desktop: the full table. Mobile: a stacked-card list (D7) —
@@ -524,9 +545,13 @@ function PartsTable({
             <Th>Name</Th>
             <Th>Category</Th>
             <Th>Location</Th>
+            {customCols.map((c) => (
+              <Th key={c.id}>{c.display_label}</Th>
+            ))}
             <Th className="text-right">Qty</Th>
             <Th className="text-right">Available</Th>
             <Th className="text-right">Min</Th>
+            {anySupplier && <Th>Supplier</Th>}
             <Th />
           </tr>
         </thead>
@@ -567,11 +592,38 @@ function PartsTable({
               </td>
               <td className="px-3 py-2 text-muted dark:text-slate-400">{p.category_name ?? "—"}</td>
               <td className="px-3 py-2 text-muted dark:text-slate-400">{p.location_name ?? "—"}</td>
+              {customCols.map((c) => (
+                <td key={c.id} className="px-3 py-2 text-muted dark:text-slate-400">
+                  <FieldRenderer
+                    value={(p.metadata as Record<string, unknown> | null)?.[c.name]}
+                    renderer={(c.renderer ?? null) as FieldRendererId | null}
+                    fieldName={c.display_label}
+                  />
+                </td>
+              ))}
               <td className="px-3 py-2 text-right font-mono">{fmt(p.qty)} {p.unit}</td>
               <td className="px-3 py-2 text-right font-mono">{fmt(p.available_qty)}</td>
               <td className="px-3 py-2 text-right font-mono text-faint dark:text-slate-500">
                 {p.min_qty == null ? "—" : fmt(p.min_qty)}
               </td>
+              {anySupplier && (
+                <td className="px-3 py-2">
+                  {p.supplier_url ? (
+                    <a
+                      href={p.supplier_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="inline-flex items-center gap-1 text-accent hover:underline text-xs"
+                      title="Open supplier page"
+                    >
+                      <ExternalLink size={13} /> visit
+                    </a>
+                  ) : (
+                    <span className="text-faint dark:text-slate-600">—</span>
+                  )}
+                </td>
+              )}
               <td className="px-3 py-2">
                 <div className="flex flex-wrap gap-1 items-center justify-end">
                   {p.low_stock && (

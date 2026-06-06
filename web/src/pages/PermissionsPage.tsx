@@ -138,10 +138,10 @@ export function PermissionsPage() {
   return (
     <div className="space-y-6 max-w-5xl">
       <div className="border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
           permissions
         </h1>
-        <span className="text-[10px] font-mono text-faint dark:text-slate-500">
+        <span className="page-subtitle">
           per-member capability grants + field visibility. admins / owners have
           everything implicitly.
         </span>
@@ -240,7 +240,7 @@ export function PermissionsPage() {
         <div className="px-4 py-3 border-b border-line dark:border-slate-800">
           <div className="flex items-center gap-2">
             <EyeOff size={14} className="text-accent" />
-            <h2 className="font-display text-sm font-bold text-content dark:text-mortar-100 lowercase">
+            <h2 className="font-display text-sm font-bold text-content dark:text-mortar-100 page-title">
               field visibility
             </h2>
           </div>

@@ -9,6 +9,7 @@ import { mintTokenString } from "../auth/api-tokens.js";
 import { hashPassword, verifyPassword } from "../auth/password.js";
 import * as notifications from "../platform/notifications.js";
 import * as activity from "../platform/activity.js";
+import { issueAndSendVerifyEmail } from "./auth.js";
 
 export const meRouter = Router();
 
@@ -17,7 +18,7 @@ meRouter.get("/me", requireAuth, async (req, res) => {
   const [user, orgs] = await Promise.all([
     meta
       .selectFrom("users")
-      .select(["id", "email", "display_name", "must_reset_password"])
+      .select(["id", "email", "display_name", "must_reset_password", "email_verified_at"])
       .where("id", "=", userId)
       .executeTakeFirstOrThrow(),
     meta
@@ -27,15 +28,43 @@ meRouter.get("/me", requireAuth, async (req, res) => {
       .where("m.user_id", "=", userId)
       .execute(),
   ]);
+  const { email_verified_at, ...rest } = user;
   return res.json({
     user: {
-      ...user,
+      ...rest,
+      email_verified: email_verified_at !== null,
       auth_method: req.session!.auth_method,
       api_token_id: req.session!.api_token_id,
       is_platform_admin: req.session!.is_platform_admin,
     },
     orgs,
   });
+});
+
+// POST /me/verify-email/resend — re-send the email-verification link to the
+// signed-in user's address. No-op-ish if already verified. Returns the dev
+// link in non-prod when no auth-email sender is configured.
+meRouter.post("/me/verify-email/resend", requireAuth, async (req, res, next) => {
+  try {
+    const userId = req.session!.id;
+    const user = await meta
+      .selectFrom("users")
+      .select(["email", "email_verified_at"])
+      .where("id", "=", userId)
+      .executeTakeFirstOrThrow();
+    if (user.email_verified_at) {
+      res.json({ ok: true, already_verified: true });
+      return;
+    }
+    const { emailed, devToken } = await issueAndSendVerifyEmail(userId, user.email, req);
+    res.json({
+      ok: true,
+      emailed,
+      ...(devToken && { dev_token: devToken, dev_link: `/verify/${devToken}` }),
+    });
+  } catch (err) {
+    next(err);
+  }
 });
 
 // PATCH /me — update display_name (and in future preferences). email
@@ -270,15 +299,48 @@ const ChannelConfigSchemas: Record<string, z.ZodTypeAny> = {
     url: z.string().url(),
     headers: z.record(z.string(), z.string()).optional(),
   }),
-  email: z.object({
-    smtp_host: z.string().min(1).max(255),
-    smtp_port: z.number().int().min(1).max(65535).optional(),
-    smtp_user: z.string().min(1).max(255),
-    smtp_pass: z.string().min(1).max(255),
-    smtp_secure: z.boolean().optional(),
-    from: z.string().email(),
-    to: z.string().email(),
-  }),
+  // Pick a delivery provider; SMTP or an HTTP transactional API. `provider`
+  // defaults to "smtp" so configs written before the API providers existed
+  // (no `provider` key) keep validating. Each member strips fields from the
+  // other providers, so switching provider can't leak stale creds.
+  email: z.preprocess(
+    (v) =>
+      v && typeof v === "object" && !("provider" in (v as object))
+        ? { ...(v as object), provider: "smtp" }
+        : v,
+    z.discriminatedUnion("provider", [
+      z.object({
+        provider: z.literal("smtp"),
+        from: z.string().email(),
+        to: z.string().email(),
+        smtp_host: z.string().min(1).max(255),
+        smtp_port: z.number().int().min(1).max(65535).optional(),
+        smtp_user: z.string().min(1).max(255),
+        smtp_pass: z.string().min(1).max(255),
+        smtp_secure: z.boolean().optional(),
+      }),
+      z.object({
+        provider: z.literal("mailgun"),
+        from: z.string().email(),
+        to: z.string().email(),
+        mailgun_api_key: z.string().min(1).max(255),
+        mailgun_domain: z.string().min(1).max(255),
+        mailgun_eu: z.boolean().optional(),
+      }),
+      z.object({
+        provider: z.literal("resend"),
+        from: z.string().email(),
+        to: z.string().email(),
+        resend_api_key: z.string().min(1).max(255),
+      }),
+      z.object({
+        provider: z.literal("postmark"),
+        from: z.string().email(),
+        to: z.string().email(),
+        postmark_token: z.string().min(1).max(255),
+      }),
+    ]),
+  ),
   sms: z.object({
     account_sid: z.string().regex(/^AC[a-f0-9]{32}$/i, {
       message: "must be a Twilio Account SID (ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx)",
@@ -367,6 +429,9 @@ function redactConfig(config: unknown): unknown {
     "smtp_pass",
     "auth_token",
     "headers",
+    "mailgun_api_key",
+    "resend_api_key",
+    "postmark_token",
   ]);
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(config as Record<string, unknown>)) {

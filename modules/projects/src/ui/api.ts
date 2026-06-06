@@ -124,4 +124,58 @@ export class ProjectsApi {
   }) => this.request<TaskDependency>("POST", `/tasks/${taskId}/dependencies`, b);
   removeDependency = (taskId: string, depId: string) =>
     this.request<void>("DELETE", `/tasks/${taskId}/dependencies/${depId}`);
+
+  // ── AI: extract yarn + hooks from a pattern (Phase 3) ──────────────
+  extractPattern = (designId: string, text: string) =>
+    this.request<PatternExtract>("POST", `/projects/${designId}/extract-pattern`, { text });
+
+  // ── Cross-module: yarn allocation (inventory) for a design ──────────
+  // The inventory module owns the allocation engine; we call it directly
+  // (same org + auth). Reserve yarn against this project (target_entity_id),
+  // then consume on done / release on cancel. available_qty already nets
+  // reservations, so the stash shows what's free.
+  private invBase(): string {
+    return `/api/v1/orgs/${this.slug}/modules/inventory`;
+  }
+  listInventoryParts = () =>
+    this.requestUrl<{ items: InvPart[] }>("GET", `${this.invBase()}/parts?limit=200`);
+  listDesignAllocations = (designId: string) =>
+    this.requestUrl<{ items: DesignAllocation[] }>(
+      "GET",
+      `${this.invBase()}/allocations?target_entity_id=${encodeURIComponent(designId)}&limit=200`,
+    );
+  reserveYarn = (designId: string, partId: string, qty: number) =>
+    this.requestUrl<DesignAllocation>("POST", `${this.invBase()}/allocations`, {
+      part_id: partId,
+      qty,
+      target_module: "projects",
+      target_entity_type: "projects:project",
+      target_entity_id: designId,
+      reason: "Reserved for a design",
+    });
+  setAllocationStatus = (id: string, status: "consumed" | "released") =>
+    this.requestUrl<DesignAllocation>("PATCH", `${this.invBase()}/allocations/${id}/status`, { status });
+}
+
+export interface PatternExtract {
+  ai: boolean;
+  reason?: string;
+  yarn: Array<{ fiber?: string | null; weight?: string | null; color?: string | null; length_m?: number | null; skeins?: number | null }>;
+  hooks: Array<{ gauge?: string | null }>;
+}
+export interface InvPart {
+  id: string;
+  name: string;
+  unit: string;
+  qty: number;
+  available_qty: number;
+  metadata?: Record<string, unknown> | null;
+}
+export interface DesignAllocation {
+  id: string;
+  part_id: string;
+  part_name: string | null;
+  qty: string;
+  status: "reserved" | "consumed" | "released";
+  target_entity_id: string;
 }

@@ -191,7 +191,7 @@ export function MachinesPage() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2 border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
           machines
         </h1>
         {lensModule && (
@@ -801,8 +801,12 @@ function NewMachineModal({ open, onClose }: { open: boolean; onClose: () => void
           onChange={setLocationId}
         />
         <p className="text-[10px] text-faint">
-          Specialisation fields (hotend, tube_type, spindle, etc.) come from
-          enabled lens modules and show up on the detail view after create.
+          Want make/model fields — hotend, firmware, bed size, etc.? Add a
+          specialization for your machine type from the{" "}
+          <Link to="/bundles" className="text-accent hover:underline">
+            marketplace
+          </Link>{" "}
+          (e.g. “3D Printers”) and they’ll show up here.
         </p>
         <div className="flex items-center justify-end gap-2 pt-2 border-t border-line dark:border-slate-700">
           <button type="button" onClick={onClose} className="px-3 py-1.5 rounded-md text-sm font-medium text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800 transition">

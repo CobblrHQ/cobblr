@@ -105,7 +105,7 @@ export function PublicSurfacePage() {
     return (
       <PublicShell theme={theme}>
         <div className="text-center py-12">
-          <h1 className="font-display text-3xl font-extrabold text-content dark:text-mortar-100 lowercase mb-2">
+          <h1 className="font-display text-3xl font-extrabold text-content dark:text-mortar-100 page-title mb-2">
             {e === "not_found"
               ? "not found"
               : e === "expired"
@@ -151,7 +151,7 @@ export function PublicSurfacePage() {
           {(data.sections ?? []).map((section, i) => (
             <div key={`${section.title}-${i}`}>
               <header className="mb-3 flex items-baseline gap-2 border-b border-line dark:border-slate-700 pb-2">
-                <h2 className="font-display text-lg font-extrabold text-content dark:text-mortar-100 lowercase">
+                <h2 className="font-display text-lg font-extrabold text-content dark:text-mortar-100 page-title">
                   {section.title}
                 </h2>
                 <span className="text-xs text-faint">{section.items.length}</span>
@@ -302,7 +302,7 @@ function EntityCard({ item }: { item: SurfaceItem }) {
         )}
       </div>
       <div className="p-6">
-        <h2 className="text-2xl font-display font-extrabold text-content dark:text-mortar-100 lowercase">
+        <h2 className="text-2xl font-display font-extrabold text-content dark:text-mortar-100 page-title">
           {item.title}
         </h2>
         {item.subtitle && (

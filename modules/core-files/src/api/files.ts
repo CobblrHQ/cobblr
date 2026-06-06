@@ -7,7 +7,7 @@ import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import type { FileVariants } from "../db.js";
 import { asyncHandler, requireRole } from "./util.js";
-import { readVariant, removeStoredFile, storeUpload } from "./storage.js";
+import { readVariant, readVariantBytes, removeStoredFile, storeUpload } from "./storage.js";
 
 export const filesRouter = Router({ mergeParams: true });
 
@@ -120,6 +120,15 @@ filesRouter.post(
         })
         .returning(["id", "filename", "mime_type", "kind", "width", "height", "created_at"])
         .executeTakeFirstOrThrow();
+
+      // Usage-metering seam: the hosted overlay aggregates stored bytes for
+      // plan limits / billing. No-op in open core.
+      platform().metering.record({
+        orgId: ctx.org.id,
+        kind: "files.bytes_stored",
+        quantity: stored.size_bytes,
+        meta: { fileId: row.id, kind: stored.kind },
+      });
 
       await platform().events.emit("core-files.file.uploaded", {
         orgId: ctx.org.id,
@@ -266,28 +275,36 @@ filesRouter.get(
       return;
     }
     const variants = row.variants as FileVariants;
-    const resolved = await readVariant(ctx.org.id, id, variants, which);
+    // Resolve the requested variant, falling back to the original if a derived
+    // one is gone.
+    let served: "original" | "medium" | "thumb" = which;
+    let resolved = await readVariant(ctx.org.id, id, variants, which);
+    if (!resolved && which !== "original") {
+      served = "original";
+      resolved = await readVariant(ctx.org.id, id, variants, "original");
+    }
     if (!resolved) {
-      // Fall back to original if a derived variant is missing.
-      if (which !== "original") {
-        const fallback = await readVariant(ctx.org.id, id, variants, "original");
-        if (fallback) {
-          res.type(row.mime_type || "application/octet-stream");
-          res.sendFile(fallback.path);
-          return;
-        }
-      }
       res.status(404).json({
-        error: { code: "variant_missing", message: `variant '${which}' not on disk` },
+        error: { code: "variant_missing", message: `variant '${which}' not available` },
       });
       return;
     }
     // Variants are always JPEG for images; original keeps its source mime.
     const variantMime =
-      which === "original" ? row.mime_type || "application/octet-stream" : "image/jpeg";
+      served === "original" ? row.mime_type || "application/octet-stream" : "image/jpeg";
     res.type(variantMime);
     res.setHeader("Cache-Control", "private, max-age=3600");
-    res.sendFile(resolved.path);
+    if (resolved.localPath) {
+      res.sendFile(resolved.localPath); // local driver — fast path
+    } else {
+      // Remote driver (S3/R2) — stream the bytes through.
+      const bytes = await readVariantBytes(ctx.org.id, id, variants, served);
+      if (!bytes) {
+        res.status(404).json({ error: { code: "variant_missing", message: "not found" } });
+        return;
+      }
+      res.send(bytes);
+    }
   }),
 );
 

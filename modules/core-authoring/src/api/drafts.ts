@@ -14,12 +14,15 @@
 import { Router } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
+import { platform } from "@cobblr/platform-contract";
 import { tenantContext, tenantDb, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import {
   assembleContext,
   compilePrompt,
   repairPrompt,
+  parseJsonObject,
+  unwrapBuild,
   type ValidationError,
 } from "../services/compile.js";
 import { listTemplates, getTemplate } from "../services/templates.js";
@@ -161,6 +164,124 @@ draftsRouter.post(
   }),
 );
 
+// ── POST /build — HOSTED build (Phase 2): inline AI + auto-repair ──
+// Compiles the prompt, calls the workspace's AI itself, validates the result
+// through the SAME kernel gate (callBundles validate), and auto-repairs on
+// failure (re-prompts with the validator's errors, up to MAX_BUILD_ATTEMPTS).
+// Returns a validated, ready-to-apply draft — no copy-paste. Degrades cleanly
+// when the workspace has no AI (409 no_ai_provider) so the UI falls back.
+const BuildBody = z.object({
+  intent: z.string().min(1).max(4000),
+  selected_kinds: z.array(z.string()).optional(),
+  task: z.string().optional(),
+  base_template_id: z.string().optional(),
+});
+const MAX_BUILD_ATTEMPTS = 3;
+draftsRouter.post(
+  "/build",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const parsed = BuildBody.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const orgId = tenantContext(req).org.id;
+    const user = sessionUser(req);
+
+    let ctx;
+    try {
+      ctx = await assembleContext(
+        orgId,
+        parsed.data.selected_kinds,
+        parsed.data.task ?? "create-bundle",
+        parsed.data.base_template_id,
+      );
+    } catch (e) {
+      res.status(400).json({ error: { code: "bad_task", message: e instanceof Error ? e.message : String(e) } });
+      return;
+    }
+    const basePrompt = compilePrompt(ctx, parsed.data.intent);
+    const db = tenantDb(req);
+    const draft = await db
+      .insertInto("core_authoring_drafts")
+      .values({
+        task: ctx.task,
+        intent: parsed.data.intent,
+        selected_kinds: jsonb(parsed.data.selected_kinds ?? []) as never,
+        context_snapshot: jsonb(ctx) as never,
+        compiled_prompt: basePrompt,
+        mode: "hosted",
+        status: "prompt-built",
+        base_template_id: parsed.data.base_template_id ?? null,
+        created_by: user?.id ?? null,
+      })
+      .returning(["id"])
+      .executeTakeFirstOrThrow();
+    const draftId = draft.id;
+
+    let prompt = basePrompt;
+    let lastValidation: Record<string, unknown> | null = null;
+    let candidate: unknown = null;
+    let interpretation: string | null = null;
+
+    for (let attempt = 1; attempt <= MAX_BUILD_ATTEMPTS; attempt++) {
+      let text: string;
+      try {
+        const r = await platform().ai.invoke({
+          orgId,
+          capability: "chat",
+          input: { messages: [{ role: "user", content: prompt }] },
+          source: { kind: "core-authoring:build", id: draftId },
+        });
+        const result = r.result as { content?: string; text?: string } | string;
+        text = typeof result === "string" ? result : (result?.content ?? result?.text ?? "");
+      } catch (e) {
+        // No provider / not entitled → degrade so the UI offers copy-paste.
+        const msg = e instanceof Error ? e.message : String(e);
+        const noAi = msg.includes("no provider") || msg.includes("not entitled") || msg.includes("not available");
+        res.status(noAi ? 409 : 502).json({
+          draft_id: draftId,
+          ai: false,
+          error: { code: noAi ? "no_ai_provider" : "ai_error", message: msg },
+        });
+        return;
+      }
+
+      const unwrapped = unwrapBuild(parseJsonObject(text));
+      candidate = unwrapped.bundle;
+      if (unwrapped.interpretation) interpretation = unwrapped.interpretation;
+      if (candidate === null || typeof candidate !== "object") {
+        lastValidation = { valid: false, errors: [{ path: "", code: "not_json", message: "AI did not return a JSON object." }] };
+        prompt = repairPrompt(basePrompt, text, [
+          { path: "", code: "not_json", message: 'Your output was not valid JSON. Return ONLY one JSON object: { "interpretation": "...", "bundle": {...} } — no prose, no fences.' },
+        ]);
+        continue;
+      }
+
+      const { body: v } = await callBundles(req, "validate", { manifest: candidate, autoEnable: true });
+      lastValidation = v;
+      await db
+        .updateTable("core_authoring_drafts")
+        .set({
+          candidate: jsonb(candidate) as never,
+          validation: jsonb(v) as never,
+          status: v.valid ? "validated" : "candidate",
+          updated_at: new Date(),
+        })
+        .where("id", "=", draftId)
+        .execute();
+
+      if (v.valid) {
+        res.json({ draft_id: draftId, ai: true, valid: true, attempts: attempt, validation: v, candidate, interpretation });
+        return;
+      }
+      prompt = repairPrompt(basePrompt, candidate, (v.errors as ValidationError[] | undefined) ?? []);
+    }
+
+    // Exhausted attempts — return the last validation so the UI can show the
+    // errors + offer the copy-paste repair path.
+    res.json({ draft_id: draftId, ai: true, valid: false, attempts: MAX_BUILD_ATTEMPTS, validation: lastValidation, candidate, interpretation });
+  }),
+);
+
 // ── POST /drafts/:id/candidate — paste a manifest back → validate ──
 const CandidateBody = z.object({ manifest: z.unknown() });
 draftsRouter.post(
@@ -175,13 +296,16 @@ draftsRouter.post(
       res.status(404).json({ error: { code: "not_found", message: "Draft not found." } });
       return;
     }
+    // The pasted reply may be the wrapper `{ interpretation, bundle }` (the
+    // new contract) or a bare bundle — unwrap to the bundle before validating.
+    const { bundle } = unwrapBuild(parsed.data.manifest);
     // autoEnable:true → a referenced-but-unenabled module shows in
     // preview.modules_to_enable (apply enables it), not as an error.
-    const { body: v } = await callBundles(req, "validate", { manifest: parsed.data.manifest, autoEnable: true });
+    const { body: v } = await callBundles(req, "validate", { manifest: bundle, autoEnable: true });
     await db
       .updateTable("core_authoring_drafts")
       .set({
-        candidate: jsonb(parsed.data.manifest) as never,
+        candidate: jsonb(bundle) as never,
         validation: jsonb(v) as never,
         status: v.valid ? "validated" : "candidate",
         updated_at: new Date(),

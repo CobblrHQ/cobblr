@@ -213,8 +213,8 @@ export function BundleComposerPage() {
   if (loading) {
     return (
       <div className="space-y-3 max-w-4xl">
-        <h1 className="font-display text-2xl font-extrabold lowercase text-content dark:text-mortar-100">
-          compose bundle
+        <h1 className="font-display text-2xl font-extrabold page-title text-content dark:text-mortar-100">
+          Compose bundle
         </h1>
         <div className="text-sm text-faint">loading workspace…</div>
       </div>
@@ -238,9 +238,9 @@ export function BundleComposerPage() {
         >
           <ArrowLeft size={14} /> bundles
         </Link>
-        <h1 className="font-display text-2xl font-extrabold lowercase text-content dark:text-mortar-100 flex items-center gap-2">
+        <h1 className="font-display text-2xl font-extrabold page-title text-content dark:text-mortar-100 flex items-center gap-2">
           <Package size={20} className="text-accent" />
-          compose bundle
+          Compose bundle
         </h1>
       </div>
       <p className="text-sm text-muted dark:text-slate-400">

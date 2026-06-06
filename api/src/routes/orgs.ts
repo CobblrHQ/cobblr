@@ -19,6 +19,7 @@ import { withTenant } from "../middleware/tenant.js";
 import * as activity from "../platform/activity.js";
 import * as notifications from "../platform/notifications.js";
 import { provisionOrgForUser } from "./auth.js";
+import { checkEntitlement } from "../platform/hosted-seams.js";
 import { disableModuleForOrg, enableModuleForOrg } from "../modules/enable.js";
 import { getEntry as getModuleEntry } from "../modules/registry.js";
 
@@ -72,6 +73,9 @@ orgsRouter.get("/:slug/modules", requireAuth, withTenant, async (req, res, next)
         displayName: m.displayName,
         description: m.description,
         icon: m.icon ?? null,
+        // Module layer (foundational/stock/marketplace/user) — the empty
+        // dashboard suggests only `stock` first-party domains.
+        band: m.band,
         // Icon-only quick-action for the navbar's right cluster (only
         // surfaced when the module is enabled — the web filters on that).
         headerAction: m.headerAction ?? null,
@@ -232,6 +236,19 @@ orgsRouter.post("/", requireAuth, async (req, res, next) => {
     if (!parsed.success) {
       res.status(400).json({
         error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues },
+      });
+      return;
+    }
+    // Entitlement seam: the hosted overlay gates how many workspaces a user's
+    // plan allows (user-scoped, so orgId is empty). No-op in open core.
+    const ent = await checkEntitlement({
+      orgId: "",
+      feature: "workspaces.create",
+      userId: req.session!.id,
+    });
+    if (!ent.allow) {
+      res.status(402).json({
+        error: { code: "plan_limit", message: ent.reason ?? "Your plan's workspace limit is reached." },
       });
       return;
     }

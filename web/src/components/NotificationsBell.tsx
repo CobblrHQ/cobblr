@@ -17,11 +17,21 @@ export function NotificationsBell() {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const qc = useQueryClient();
   const navigate = useNavigate();
-  const { setActiveSlug } = useActiveOrg();
+  const { activeSlug, setActiveSlug } = useActiveOrg();
 
   const unread = useQuery({
     queryKey: ["me-notifications-unread"],
     queryFn: () => api.meNotificationsUnreadCount(),
+    refetchInterval: 15_000,
+  });
+  // Unread in the CURRENT workspace, so the badge can distinguish "you
+  // have something here" (ember red) from "the count is all in another
+  // workspace" (sky blue — cool vs warm so they're distinct at a glance)
+  // — a workspace-A alert shouldn't read as urgent while you're in B.
+  const unreadHere = useQuery({
+    queryKey: ["notifications-unread", activeSlug],
+    queryFn: () => api.notificationsUnreadCount(activeSlug),
+    enabled: !!activeSlug,
     refetchInterval: 15_000,
   });
   const list = useQuery({
@@ -58,6 +68,10 @@ export function NotificationsBell() {
   }, [open]);
 
   const count = unread.data?.count ?? 0;
+  const here = unreadHere.data?.count ?? 0;
+  // Every unread is in OTHER workspaces → sky blue (heads-up, not here).
+  const otherOnly = count > 0 && here === 0;
+  const other = Math.max(0, count - here);
 
   function handleItemClick(n: CrossOrgNotificationEntry) {
     if (!n.read_at) markRead.mutate(n.id);
@@ -75,9 +89,13 @@ export function NotificationsBell() {
         onClick={() => setOpen((o) => !o)}
         className="text-faint dark:text-slate-500 hover:text-content dark:hover:text-mortar-100 transition p-1.5 relative"
         title={
-          count > 0
-            ? `${count} unread notification${count === 1 ? "" : "s"}`
-            : "Notifications"
+          count === 0
+            ? "Notifications"
+            : otherOnly
+              ? `${count} unread notification${count === 1 ? "" : "s"} in other workspaces`
+              : other > 0
+                ? `${here} unread here · ${other} in other workspaces`
+                : `${here} unread notification${here === 1 ? "" : "s"}`
         }
       >
         {/* Always a normal bell — a struck-through (BellOff) icon reads
@@ -86,8 +104,16 @@ export function NotificationsBell() {
         <Bell size={14} />
         {count > 0 && (
           <span
-            className="absolute -top-0.5 -right-0.5 bg-ember-500 text-mortar-50 text-[9px] font-bold rounded-full min-w-[14px] h-[14px] flex items-center justify-center px-1 leading-none"
-            aria-label={`${count} unread`}
+            className={`absolute -top-0.5 -right-0.5 text-[9px] font-bold rounded-full min-w-[14px] h-[14px] flex items-center justify-center px-1 leading-none ${
+              otherOnly
+                ? "bg-sky-600 text-white"
+                : "bg-ember-500 text-mortar-50"
+            }`}
+            aria-label={
+              otherOnly
+                ? `${count} unread in other workspaces`
+                : `${count} unread`
+            }
           >
             {count > 99 ? "99+" : count}
           </span>

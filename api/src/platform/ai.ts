@@ -129,7 +129,7 @@ async function resolveProviderAndModel(
     }
   }
   if (!providerId) {
-    // Fallback: first provider that supports this capability.
+    // Fallback: first INSTALLED provider that supports this capability.
     const rows = await tdb
       .selectFrom("core_ai_providers")
       .selectAll()
@@ -139,6 +139,23 @@ async function resolveProviderAndModel(
       const def = providers.get(candidate.provider_id);
       if (def?.capabilities[capability]) {
         providerId = candidate.provider_id;
+        model = model ?? def.capabilities[capability]?.defaultModel ??
+          def.capabilities[capability]?.models[0];
+        break;
+      }
+    }
+  }
+  if (!providerId) {
+    // Zero-config fallback: a registered CREDENTIAL-LESS ("managed") provider
+    // that supports this capability. It brings its own credentials, so it needs
+    // no per-workspace install or secret; whether THIS workspace may use it is
+    // the entitlement guard's call in invoke(). Open core registers no such
+    // provider (and no guard), so this is inert there — but on the hosted
+    // overlay it makes managed AI AUTO-ON for entitled workspaces: a paying
+    // subscriber gets AI with zero setup instead of having to add a provider.
+    for (const [id, def] of providers) {
+      if (def.capabilities[capability] && Object.keys(def.describeCredentials()).length === 0) {
+        providerId = id;
         model = model ?? def.capabilities[capability]?.defaultModel ??
           def.capabilities[capability]?.models[0];
         break;

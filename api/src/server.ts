@@ -16,6 +16,7 @@ import helmet from "helmet";
 import morgan from "morgan";
 import { env } from "./env.js";
 import { authRouter } from "./routes/auth.js";
+import { requestGuardMiddleware } from "./platform/hosted-seams.js";
 import { publicRouter } from "./routes/public.js";
 import { meRouter } from "./routes/me.js";
 import { modulesRouter } from "./routes/modules.js";
@@ -98,6 +99,10 @@ export function createApp(): AppHandles {
       time: new Date().toISOString(),
     });
   });
+
+  // Hosted-overlay request guard (rate-limit / abuse). No-op until the overlay
+  // registers a guard; mounted after /healthz so health checks are never gated.
+  v1.use(requestGuardMiddleware());
 
   v1.use("/auth", authRouter);
   v1.use(meRouter);

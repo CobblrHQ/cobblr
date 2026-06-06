@@ -11,7 +11,7 @@
 // in Phase 0 owns at least one org (their own). Tenant DB provisioning
 // happens in milestone 3 — the org row here just reserves the db_name.
 
-import { Router } from "express";
+import { Router, type Request } from "express";
 import { z } from "zod";
 import { meta, metaPool } from "../db/meta.js";
 import { provisionTenantDb } from "../db/provision.js";
@@ -20,6 +20,7 @@ import { signSession } from "../auth/jwt.js";
 import { isPlatformAdmin } from "../auth/middleware.js";
 import { publicSignupEnabled } from "../auth/signup-gate.js";
 import * as activity from "../platform/activity.js";
+import { fireSignup, sendAuthEmail } from "../platform/hosted-seams.js";
 import { enableDefaultModulesForOrg } from "../modules/enable.js";
 import type { OrgRole } from "../db/schema.js";
 
@@ -45,14 +46,27 @@ const LoginBody = z.object({
 /** URL-safe slug from a human name. Adds a short random suffix for
  *  collision resistance — we'd rather have `lego-hoard-7k2` than
  *  retry-on-conflict logic on every signup. */
-function slugifyWithSuffix(name: string): string {
-  const base = name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 40) || "org";
-  const suffix = randomShortId(4);
-  return `${base}-${suffix}`;
+function slugifyBase(name: string): string {
+  return (
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 40) || "org"
+  );
+}
+
+/** Candidate slugs in preference order: the bare name, then `-2`, `-3`, … on
+ *  collision, and finally a random suffix as an (astronomically unlikely)
+ *  backstop so signup never hard-fails on a very hot name. The DB's
+ *  `orgs_slug_key` unique constraint is the source of truth — the insert loop
+ *  in provisionOrgForUser walks these until one lands. No more unconditional
+ *  `-<4hex>` suffix: clean slugs the user never has to look past. */
+function* slugCandidates(name: string): Generator<string> {
+  const base = slugifyBase(name);
+  yield base;
+  for (let n = 2; n <= 99; n++) yield `${base}-${n}`;
+  for (;;) yield `${base}-${randomShortId(4)}`;
 }
 
 /** `tenant_<12-hex>` — short enough to read in logs, long enough to
@@ -79,6 +93,10 @@ interface AuthResponseUser {
    *  password. Web client redirects to /me/force-password-reset
    *  until the user clears the flag via PATCH /me/password. */
   must_reset_password: boolean;
+  /** True once the user confirmed their email via a verification link.
+   *  Informational (login is not gated on it); the web shows a "verify your
+   *  email" banner while false. Existing users were grandfathered to true. */
+  email_verified: boolean;
   /** True when the user's email is in SUPERADMIN_EMAILS. Must be set
    *  on the login/signup response too (not just /me) — else the
    *  super-admin UI shows "access denied" until the next /me refresh. */
@@ -111,27 +129,41 @@ export async function provisionOrgForUser(
   orgName: string,
 ): Promise<{ orgId: string; slug: string; dbName: string }> {
   const dbName = tenantDbName();
-  const slug = slugifyWithSuffix(orgName);
   const client = await metaPool.connect();
   let orgId: string;
+  let slug: string;
   try {
-    await client.query("begin");
-    const orgRow = await client.query<{ id: string }>(
-      `insert into orgs (name, slug, db_name)
-       values ($1, $2, $3)
-       returning id`,
-      [orgName.trim(), slug, dbName],
-    );
-    orgId = orgRow.rows[0]!.id;
-    await client.query(
-      `insert into org_memberships (user_id, org_id, role)
-       values ($1, $2, 'owner')`,
-      [userId, orgId],
-    );
-    await client.query("commit");
-  } catch (err) {
-    await client.query("rollback");
-    throw err;
+    // Walk slug candidates (bare name → -2, -3, …) until one doesn't collide.
+    // `orgs_slug_key` enforces uniqueness, so this is race-safe: a concurrent
+    // signup that grabbed the name first trips the constraint and we retry.
+    const candidates = slugCandidates(orgName);
+    for (;;) {
+      slug = candidates.next().value as string;
+      try {
+        await client.query("begin");
+        const orgRow = await client.query<{ id: string }>(
+          `insert into orgs (name, slug, db_name)
+           values ($1, $2, $3)
+           returning id`,
+          [orgName.trim(), slug, dbName],
+        );
+        orgId = orgRow.rows[0]!.id;
+        await client.query(
+          `insert into org_memberships (user_id, org_id, role)
+           values ($1, $2, 'owner')`,
+          [userId, orgId],
+        );
+        await client.query("commit");
+        break;
+      } catch (err) {
+        await client.query("rollback");
+        // Retry the NEXT candidate only on a slug-uniqueness collision;
+        // anything else (incl. the random db_name colliding) is a real error.
+        const e = err as { code?: string; constraint?: string };
+        if (e?.code === "23505" && (e.constraint ?? "").includes("slug")) continue;
+        throw err;
+      }
+    }
   } finally {
     client.release();
   }
@@ -199,7 +231,7 @@ export async function provisionOrgForUser(
 export async function buildAuthResponse(userId: string): Promise<AuthResponse> {
   const user = await meta
     .selectFrom("users")
-    .select(["id", "email", "display_name", "must_reset_password"])
+    .select(["id", "email", "display_name", "must_reset_password", "email_verified_at"])
     .where("id", "=", userId)
     .executeTakeFirstOrThrow();
 
@@ -211,9 +243,14 @@ export async function buildAuthResponse(userId: string): Promise<AuthResponse> {
     .execute();
 
   const token = await signSession(userId);
+  const { email_verified_at, ...rest } = user;
   return {
     token,
-    user: { ...user, is_platform_admin: isPlatformAdmin(user.email) },
+    user: {
+      ...rest,
+      email_verified: email_verified_at !== null,
+      is_platform_admin: isPlatformAdmin(user.email),
+    },
     orgs,
   };
 }
@@ -334,7 +371,16 @@ authRouter.post("/signup", async (req, res, next) => {
     }
 
     // Phase 2: provision the user's first org.
-    await provisionOrgForUser(userId, body.org_name);
+    const provisioned = await provisionOrgForUser(userId, body.org_name);
+
+    // Lifecycle seam: the hosted overlay attaches here. No-op in open core.
+    await fireSignup({ userId, email, orgId: provisioned.orgId });
+
+    // Send an email-verification link (best-effort — never blocks signup;
+    // no-op delivery when no auth-email sender is configured).
+    void issueAndSendVerifyEmail(userId, email, req).catch((err) =>
+      console.error("[signup] verify-email send failed:", err),
+    );
 
     try {
       // user_created lives outside provisionOrgForUser so additional
@@ -511,11 +557,22 @@ authRouter.post("/magic/request", async (req, res, next) => {
     // in a future module) should set NODE_ENV=production AND the
     // requester won't see the link in the response.
     const link = `/auth/magic?token=${encodeURIComponent(plain)}`;
+    const absLink = `${req.protocol}://${req.get("host") ?? ""}${link}`;
+    // Deliver via the registered auth-email sender (a self-hoster's SMTP/API or
+    // the managed overlay) when one exists. No sender → fall back to the inline
+    // dev link below. This is the seam that turns magic-link from a dev-only
+    // affordance into a real prod flow.
+    const emailed = await sendAuthEmail({
+      to: email,
+      subject: "Your Cobblr sign-in link",
+      text: `Sign in to Cobblr:\n\n${absLink}\n\nThe link expires shortly. If you didn't request it, you can ignore this email.`,
+      kind: "magic_link",
+    });
     res.status(202).json({
       ok: true,
-      // dev_token only present in non-prod so the test harness can
-      // grab it without grepping the meta DB.
-      ...(process.env.NODE_ENV !== "production" && { dev_token: plain, dev_link: link }),
+      // Expose the link inline ONLY when we couldn't email it (dev / no sender),
+      // so a prod instance with a sender never leaks it in the response.
+      ...(!emailed && process.env.NODE_ENV !== "production" && { dev_token: plain, dev_link: link }),
       expires_at: new Date(Date.now() + MAGIC_TTL_MS).toISOString(),
       message:
         "If that email exists or is allowed to sign in, a magic link has been issued.",
@@ -597,6 +654,8 @@ authRouter.post("/magic/consume", async (req, res, next) => {
           email: row.email,
           password_hash: "", // empty; verifyPassword will reject all
           display_name: defaultName,
+          // Clicking the magic link proves control of the email → verified.
+          email_verified_at: new Date(),
         })
         .returning("id")
         .executeTakeFirstOrThrow();
@@ -631,5 +690,229 @@ authRouter.post("/magic/consume", async (req, res, next) => {
     return res.json(out);
   } catch (err) {
     return next(err);
+  }
+});
+
+// ═══════════════════ Password reset + email verification ═══════════════════
+//
+// Both deliver their link through the auth-email seam (a self-hoster's BYO
+// sender or the cloud overlay's managed one). With no sender, the link is
+// returned inline in non-prod (dev_link) so the flow is exercisable locally;
+// a prod instance with no sender simply can't complete these (by design).
+//
+// Tokens are stored HASHED (sha256). Lookups are by hash; single-use via
+// consumed_at; time-bounded via expires_at.
+
+function hashToken(plain: string): string {
+  return createHash("sha256").update(plain).digest("hex");
+}
+function mintToken(): { plain: string; hash: string } {
+  const plain = randomBytes(32).toString("base64url");
+  return { plain, hash: hashToken(plain) };
+}
+
+// ───────────────── POST /auth/password/forgot ─────────────────
+// Issues a reset link for an existing, active account. ALWAYS returns the same
+// 202 regardless of whether the email exists, so it can't be used to enumerate
+// registered emails.
+const PasswordForgot = z.object({ email: z.string().email().max(255) });
+
+authRouter.post("/password/forgot", async (req, res, next) => {
+  try {
+    const parsed = PasswordForgot.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Bad request", details: parsed.error.issues } });
+      return;
+    }
+    const email = parsed.data.email.toLowerCase().trim();
+    const user = await meta
+      .selectFrom("users")
+      .select(["id", "active"])
+      .where("email", "=", email)
+      .executeTakeFirst();
+
+    let devToken: string | undefined;
+    if (user && user.active) {
+      const { plain, hash } = mintToken();
+      await meta
+        .insertInto("auth_password_reset_tokens")
+        .values({
+          user_id: user.id,
+          token_hash: hash,
+          request_ip: (req.ip ?? null) as string | null,
+          request_ua: (req.get("user-agent") ?? null) as string | null,
+        })
+        .execute();
+      const absLink = `${req.protocol}://${req.get("host") ?? ""}/reset/${plain}`;
+      const emailed = await sendAuthEmail({
+        to: email,
+        subject: "Reset your Cobblr password",
+        text:
+          `Someone asked to reset your Cobblr password. Open this link to choose a new one:\n\n${absLink}\n\n` +
+          `This link expires in 1 hour. If you didn't request it, you can safely ignore this email — your password won't change.`,
+        kind: "password_reset",
+      });
+      if (!emailed && process.env.NODE_ENV !== "production") devToken = plain;
+    }
+
+    res.status(202).json({
+      ok: true,
+      message: "If that email is registered, a password-reset link has been sent.",
+      ...(devToken && { dev_token: devToken, dev_link: `/reset/${devToken}` }),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ───────────────── POST /auth/password/reset ─────────────────
+// Consumes a reset token + sets the new password. Auto-logs-in on success.
+const PasswordReset = z.object({
+  token: z.string().min(8).max(200),
+  password: z.string().min(8).max(200),
+});
+
+authRouter.post("/password/reset", async (req, res, next) => {
+  try {
+    const parsed = PasswordReset.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Bad request", details: parsed.error.issues } });
+      return;
+    }
+    const hash = hashToken(parsed.data.token);
+    const row = await meta
+      .selectFrom("auth_password_reset_tokens")
+      .selectAll()
+      .where("token_hash", "=", hash)
+      .executeTakeFirst();
+    if (!row) {
+      res.status(404).json({ error: { code: "invalid_token", message: "This reset link is invalid." } });
+      return;
+    }
+    if (row.consumed_at) {
+      res.status(410).json({ error: { code: "already_consumed", message: "This reset link was already used." } });
+      return;
+    }
+    if (row.expires_at <= new Date()) {
+      res.status(410).json({ error: { code: "expired", message: "This reset link has expired." } });
+      return;
+    }
+    const user = await meta
+      .selectFrom("users")
+      .select(["id", "active"])
+      .where("id", "=", row.user_id)
+      .executeTakeFirst();
+    if (!user || !user.active) {
+      res.status(403).json({ error: { code: "user_inactive", message: "This account is disabled." } });
+      return;
+    }
+
+    const newHash = await hashPassword(parsed.data.password);
+    await meta.updateTable("auth_password_reset_tokens").set({ consumed_at: new Date() }).where("id", "=", row.id).execute();
+    await meta
+      .updateTable("users")
+      .set({ password_hash: newHash, must_reset_password: false })
+      .where("id", "=", row.user_id)
+      .execute();
+
+    const firstOrg = await meta
+      .selectFrom("org_memberships")
+      .select("org_id")
+      .where("user_id", "=", row.user_id)
+      .limit(1)
+      .executeTakeFirst();
+    if (firstOrg) {
+      await activity
+        .log({
+          orgId: firstOrg.org_id,
+          userId: row.user_id,
+          action: "password_reset",
+          ref: { module: null, entityType: "user", entityId: row.user_id },
+        })
+        .catch((err) => console.error("[password/reset] activity log failed:", err));
+    }
+
+    const out = await buildAuthResponse(row.user_id);
+    return res.json(out);
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// ───────────────── Email verification ─────────────────
+/** Mint + send an email-verification link for a user. Best-effort; returns
+ *  whether it was emailed (false → no sender) and, in non-prod, the dev token
+ *  so the flow is testable without delivery. Used by signup + the authed
+ *  resend endpoint (me.ts). */
+export async function issueAndSendVerifyEmail(
+  userId: string,
+  email: string,
+  req: Request,
+): Promise<{ emailed: boolean; devToken?: string }> {
+  const normalized = email.toLowerCase().trim();
+  const { plain, hash } = mintToken();
+  await meta
+    .insertInto("auth_email_verify_tokens")
+    .values({
+      user_id: userId,
+      email: normalized,
+      token_hash: hash,
+      request_ip: (req.ip ?? null) as string | null,
+      request_ua: (req.get("user-agent") ?? null) as string | null,
+    })
+    .execute();
+  const absLink = `${req.protocol}://${req.get("host") ?? ""}/verify/${plain}`;
+  const emailed = await sendAuthEmail({
+    to: normalized,
+    subject: "Verify your Cobblr email",
+    text:
+      `Confirm your email to finish setting up your Cobblr account:\n\n${absLink}\n\n` +
+      `This link expires in 24 hours. If you didn't create a Cobblr account, you can ignore this email.`,
+    kind: "verify_email",
+  });
+  return { emailed, devToken: !emailed && process.env.NODE_ENV !== "production" ? plain : undefined };
+}
+
+// ───────────────── POST /auth/verify-email ─────────────────
+// Public: consumes a verification token + marks the user's email verified.
+const VerifyEmail = z.object({ token: z.string().min(8).max(200) });
+
+authRouter.post("/verify-email", async (req, res, next) => {
+  try {
+    const parsed = VerifyEmail.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Bad request", details: parsed.error.issues } });
+      return;
+    }
+    const hash = hashToken(parsed.data.token);
+    const row = await meta
+      .selectFrom("auth_email_verify_tokens")
+      .selectAll()
+      .where("token_hash", "=", hash)
+      .executeTakeFirst();
+    if (!row) {
+      res.status(404).json({ error: { code: "invalid_token", message: "This verification link is invalid." } });
+      return;
+    }
+    if (row.consumed_at) {
+      res.status(410).json({ error: { code: "already_consumed", message: "This link was already used." } });
+      return;
+    }
+    if (row.expires_at <= new Date()) {
+      res.status(410).json({ error: { code: "expired", message: "This verification link has expired." } });
+      return;
+    }
+    await meta.updateTable("auth_email_verify_tokens").set({ consumed_at: new Date() }).where("id", "=", row.id).execute();
+    // Only mark verified if the user's current email still matches the token's
+    // (guards a stale token after an email change).
+    await meta
+      .updateTable("users")
+      .set({ email_verified_at: new Date() })
+      .where("id", "=", row.user_id)
+      .where("email", "=", row.email)
+      .execute();
+    res.json({ ok: true, email: row.email });
+  } catch (err) {
+    next(err);
   }
 });

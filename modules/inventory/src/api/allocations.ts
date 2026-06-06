@@ -23,6 +23,9 @@ export const allocationsRouter = Router({ mergeParams: true });
 const ListQuery = z.object({
   part_id: z.string().uuid().optional(),
   status: z.enum(["reserved", "consumed", "released"]).optional(),
+  /** Filter to allocations made AGAINST a specific target (e.g. a design /
+   *  project) — lets a consuming module list "what's reserved for me". */
+  target_entity_id: z.string().max(120).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(100),
 });
 
@@ -46,6 +49,8 @@ allocationsRouter.get(
       .limit(parsed.data.limit);
     if (parsed.data.part_id) q = q.where("a.part_id", "=", parsed.data.part_id);
     if (parsed.data.status) q = q.where("a.status", "=", parsed.data.status);
+    if (parsed.data.target_entity_id)
+      q = q.where("a.target_entity_id", "=", parsed.data.target_entity_id);
 
     const rows = await q.execute();
     res.json({ items: rows });

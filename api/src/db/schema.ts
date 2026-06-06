@@ -21,6 +21,10 @@ export interface UsersTable {
   must_reset_password: Generated<boolean>;
   /** uuid of the admin who minted the account (null = self-signup). */
   created_by: string | null;
+  /** When the user confirmed their email via a verification link. NULL =
+   *  unverified. Existing users were grandfathered to created_at by the
+   *  20260606-043 migration. Informational today (login is not gated on it). */
+  email_verified_at: Date | null;
   created_at: Generated<Date>;
   last_login_at: Date | null;
 }
@@ -578,6 +582,8 @@ export interface MetaDB {
   public_surface_tokens: PublicSurfaceTokensTable;
   core_queue_jobs: CoreQueueJobsTable;
   auth_magic_tokens: AuthMagicTokensTable;
+  auth_password_reset_tokens: AuthPasswordResetTokensTable;
+  auth_email_verify_tokens: AuthEmailVerifyTokensTable;
   workspace_module_instances: WorkspaceModuleInstancesTable;
   entity_kind_overrides: EntityKindOverridesTable;
   core_labels_qr_tokens: CoreLabelsQrTokensTable;
@@ -640,6 +646,33 @@ export interface WorkspaceRoleAssignmentsTable {
 /** core-auth-extensions v0.1: passwordless magic-link tokens. */
 export interface AuthMagicTokensTable {
   id: Generated<string>;
+  email: string;
+  token_hash: string;
+  expires_at: Generated<Date>;
+  consumed_at: Date | null;
+  created_at: Generated<Date>;
+  request_ip: string | null;
+  request_ua: string | null;
+}
+
+/** Password-reset tokens — hashed, single-use, 1h default. See
+ *  migrations/platform/20260606-043-auth-reset-verify.sql. */
+export interface AuthPasswordResetTokensTable {
+  id: Generated<string>;
+  user_id: string;
+  token_hash: string;
+  expires_at: Generated<Date>;
+  consumed_at: Date | null;
+  created_at: Generated<Date>;
+  request_ip: string | null;
+  request_ua: string | null;
+}
+
+/** Email-verification tokens — hashed, single-use, 24h default. Carries the
+ *  email it was issued for so a stale token can't verify a changed address. */
+export interface AuthEmailVerifyTokensTable {
+  id: Generated<string>;
+  user_id: string;
   email: string;
   token_hash: string;
   expires_at: Generated<Date>;

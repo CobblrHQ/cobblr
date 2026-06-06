@@ -111,7 +111,7 @@ export function MobileNav() {
                       // A heading has no page — just a section label above
                       // its members.
                       <div className={linkClass + " text-faint dark:text-slate-500 uppercase text-[10px] font-mono tracking-widest"}>
-                        {m.displayName.toLowerCase()}
+                        {m.displayName}
                       </div>
                     ) : (
                       <NavLink
@@ -123,7 +123,7 @@ export function MobileNav() {
                         className={linkClass}
                         onClick={() => setOpen(false)}
                       >
-                        {m.displayName.toLowerCase()}
+                        {m.displayName}
                       </NavLink>
                     )}
                     {kids.map((k) => {

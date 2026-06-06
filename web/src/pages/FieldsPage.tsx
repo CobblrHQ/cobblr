@@ -114,10 +114,10 @@ export function FieldsPage() {
   return (
     <div className="space-y-5 max-w-4xl">
       <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
           fields
         </h1>
-        <span className="text-[10px] font-mono text-faint dark:text-slate-500">
+        <span className="page-subtitle">
           custom fields on platform entities. show up on the detail page.
         </span>
       </div>

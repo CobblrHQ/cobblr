@@ -23,6 +23,7 @@
     "@cobblr/platform-web": "*",
     "express": "^4.21.2",
     "kysely": "^0.27.5",
+    "pdf-lib": "^1.17.1",
     "qrcode": "^1.5.4",
     "zod": "^3.24.1"
   },

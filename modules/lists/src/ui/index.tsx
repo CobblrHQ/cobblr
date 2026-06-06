@@ -54,7 +54,7 @@ export function ListsUI({ orgSlug, getToken }: Props) {
   return (
     <div className="space-y-4 max-w-4xl">
       <div className="flex items-baseline justify-between border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">lists</h1>
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">lists</h1>
         <button
           type="button"
           onClick={() => setCreating(true)}

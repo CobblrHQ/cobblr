@@ -4,7 +4,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Copy, Download, Package, Plus, Share2, X } from "lucide-react";
+import { ChevronRight, Copy, Download, Library, Package, Plus, Search, Share2, Trash2, X } from "lucide-react";
 import { Link } from "react-router-dom";
 import { ApiError, api, type PlatformBundle, type PlatformBundleManifest, type RegistryDriverEntry, type RegistryModuleEntry, type RegistryRendererEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -73,6 +73,28 @@ export function BundlesPage() {
         }))
       : FEATURED_BUNDLES;
 
+  // Rank: official flagship first, plain official next, official community
+  // below that, third-party sources last. Stable within a tier, so the
+  // index's own order is preserved. (sort tier is derived from the id
+  // namespace + source — see the personal-bundles note in the page.)
+  const tierOf = (b: FeaturedBundle & { source?: string }): number => {
+    if (b.source && b.source !== "official") return 3; // third-party repo
+    if (b.manifest.id.includes(".flagship.")) return 0;
+    if (b.manifest.id.includes(".community.")) return 2;
+    return 1; // other official
+  };
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLowerCase();
+  const shownCatalog = [...catalog]
+    .sort((a, b) => tierOf(a) - tierOf(b))
+    .filter(
+      (b) =>
+        !q ||
+        `${b.manifest.name} ${b.manifest.id} ${b.blurb} ${b.manifest.description ?? ""}`
+          .toLowerCase()
+          .includes(q),
+    );
+
   const [paste, setPaste] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
@@ -115,6 +137,27 @@ export function BundlesPage() {
   const { user } = useAuth();
   const isPlatformAdmin = !!user?.is_platform_admin;
   const confirm = useConfirm();
+  // Direct remove from an installed-bundle row (was only reachable by opening
+  // the detail modal — users couldn't find it).
+  const uninstall = useMutation({
+    mutationFn: (id: string) => api.uninstallBundle(slug, id),
+    onSuccess: () => {
+      toast.success("Removed.");
+      void qc.invalidateQueries({ queryKey: ["bundles", slug] });
+      void qc.invalidateQueries({ queryKey: ["field-defs", slug] });
+      void qc.invalidateQueries({ queryKey: ["bindings", slug] });
+    },
+    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't remove."),
+  });
+  async function handleRemoveBundle(b: PlatformBundle) {
+    const ok = await confirm({
+      title: `Remove “${b.name}”?`,
+      message: "This removes the bundle's fields, wires and views from this workspace. Your entities (parts, designs, …) stay.",
+      confirmLabel: "Remove",
+      destructive: true,
+    });
+    if (ok) uninstall.mutate(b.id);
+  }
   const installModule = useMutation({
     mutationFn: (m: RegistryModuleEntry) => api.sandboxInstall({ name: m.name, version: m.version }),
     onSuccess: (_r, m) => toast.success(`Installed module ${m.name} v${m.version}.`),
@@ -195,18 +238,19 @@ export function BundlesPage() {
   // choose between download / copy / paste-as-text. Backed by the
   // same exportBundle endpoint.
   const [exportOpen, setExportOpen] = useState(false);
+  const [sourcesOpen, setSourcesOpen] = useState(false);
 
   const installedIds = new Set(
     bundles.data?.items.map((b) => b.external_id) ?? [],
   );
 
   return (
-    <div className="space-y-5 max-w-3xl">
+    <div className="space-y-5 max-w-6xl">
       <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
           bundles
         </h1>
-        <span className="text-[10px] font-mono text-faint dark:text-slate-500">
+        <span className="page-subtitle">
           publishable presets that wire modules together
         </span>
         <div className="flex-1" />
@@ -230,6 +274,68 @@ export function BundlesPage() {
         <ExportBundleModal slug={slug} onClose={() => setExportOpen(false)} />
       )}
 
+      <Modal
+        open={sourcesOpen}
+        onClose={() => setSourcesOpen(false)}
+        title="Bundle sources"
+        subtitle="Cobblr merges the official index with any third-party repos you add — each is a URL to an index.json (HACS-style). Bundles from added repos show a “3rd-party” badge; only the official index is signature-verified."
+      >
+        <ul className="space-y-1.5 mb-4">
+          <li className="flex items-center gap-2 text-sm text-muted dark:text-slate-300">
+            <span className="text-moss-600 shrink-0" title="official source">●</span>
+            <span className="text-content dark:text-mortar-100">official</span>
+            <span className="text-faint font-mono text-xs truncate">CobblrHQ/cobblr-extensions</span>
+            {officialOk === false && (
+              <span className="text-[10px] font-mono uppercase tracking-widest text-ember-500 shrink-0" title="The official index couldn't be reached — showing the built-in list.">offline</span>
+            )}
+          </li>
+          {sources.map((s) => {
+            const st = registry.data?.sources.find((x) => x.label === s);
+            return (
+              <li key={s} className="flex items-center gap-2 text-sm text-muted dark:text-slate-300">
+                <span title={st?.ok === false ? st.error : "ok"} className={`shrink-0 ${st?.ok === false ? "text-ember-500" : "text-moss-600"}`}>
+                  {st?.ok === false ? "✕" : "●"}
+                </span>
+                <span className="font-mono text-xs truncate flex-1 min-w-0">{s}</span>
+                <button type="button" onClick={() => setSources((p) => p.filter((x) => x !== s))} className="text-faint hover:text-ember-500 shrink-0" title="Remove source">
+                  <X size={14} />
+                </button>
+              </li>
+            );
+          })}
+          {sources.length === 0 && (
+            <li className="text-xs text-faint dark:text-slate-500 italic pl-5">
+              No third-party repos added — just the official index.
+            </li>
+          )}
+        </ul>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            const u = newSource.trim();
+            if (!u || sources.includes(u)) return;
+            setSources((p) => [...p, u]);
+            setNewSource("");
+          }}
+          className="flex items-center gap-2"
+        >
+          <input
+            value={newSource}
+            onChange={(e) => setNewSource(e.target.value)}
+            placeholder="https://…/index.json"
+            className="input text-sm flex-1"
+            aria-label="Third-party source URL"
+          />
+          <button
+            type="submit"
+            disabled={!newSource.trim()}
+            className="shrink-0 flex items-center gap-1 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm px-3 py-2 disabled:opacity-40 transition"
+          >
+            <Plus size={14} /> Add repo
+          </button>
+        </form>
+      </Modal>
+
       <div>
         <div className="flex items-center gap-2 mb-2">
           <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
@@ -241,58 +347,48 @@ export function BundlesPage() {
               (offline — built-in list)
             </span>
           )}
-        </div>
-
-        {/* Add a third-party source (HACS-style custom repository): a URL to
-            another index.json. Persisted in this browser; merged server-side. */}
-        <div className="rounded-xl border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-900 p-3 mb-3 space-y-2">
-          <div className="text-[10px] font-mono uppercase tracking-widest text-faint">
-            // sources
-          </div>
-          <ul className="space-y-1">
-            <li className="flex items-center gap-2 text-xs text-muted">
-              <span className="text-moss-600">●</span> official
-              <span className="text-faint font-mono truncate">CobblrHQ/cobblr-extensions</span>
-            </li>
-            {sources.map((s) => {
-              const st = registry.data?.sources.find((x) => x.label === s);
-              return (
-                <li key={s} className="flex items-center gap-2 text-xs text-muted">
-                  <span title={st?.ok === false ? st.error : "ok"} className={st?.ok === false ? "text-ember-500" : "text-moss-600"}>
-                    {st?.ok === false ? "✕" : "●"}
-                  </span>
-                  <span className="font-mono truncate flex-1 min-w-0">{s}</span>
-                  <button type="button" onClick={() => setSources((p) => p.filter((x) => x !== s))} className="text-faint hover:text-ember-500 shrink-0" title="Remove source">
-                    <X size={12} />
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              const u = newSource.trim();
-              if (!u || sources.includes(u)) return;
-              setSources((p) => [...p, u]);
-              setNewSource("");
-            }}
-            className="flex items-center gap-2"
-          >
+          <div className="flex-1" />
+          <div className="relative w-full max-w-xs">
+            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-faint pointer-events-none" />
             <input
-              value={newSource}
-              onChange={(e) => setNewSource(e.target.value)}
-              placeholder="https://…/index.json  (a third-party source)"
-              className="input text-xs flex-1 py-1"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Filter bundles…"
+              className="input text-xs py-1 pl-7 pr-7"
+              aria-label="Filter bundles"
             />
-            <button type="submit" disabled={!newSource.trim()} className="text-[10px] font-mono uppercase tracking-widest text-muted hover:text-accent transition flex items-center gap-1 disabled:opacity-40 shrink-0">
-              <Plus size={12} /> add
-            </button>
-          </form>
+            {query && (
+              <button
+                type="button"
+                onClick={() => setQuery("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-faint hover:text-ember-500"
+                title="Clear filter"
+                aria-label="Clear filter"
+              >
+                <X size={13} />
+              </button>
+            )}
+          </div>
+          {/* Sources live behind this button (HACS-style) — the add-a-repo
+              field doesn't deserve prime real estate. Badge shows how many
+              third-party repos are added on top of the official index. */}
+          <button
+            type="button"
+            onClick={() => setSourcesOpen(true)}
+            className="shrink-0 flex items-center gap-1 text-[10px] font-mono uppercase tracking-widest text-muted hover:text-accent transition border border-line dark:border-slate-700 rounded px-2 py-1"
+            title="Manage bundle sources — add a third-party repository"
+          >
+            <Library size={12} /> sources{sources.length ? ` · ${sources.length}` : ""}
+          </button>
         </div>
 
-        <ul className="grid grid-cols-1 md:grid-cols-2 gap-2">
-          {catalog.map((b) => {
+        {q && shownCatalog.length === 0 && (
+          <div className="text-xs text-faint dark:text-slate-500 italic py-2">
+            No bundles match “{query.trim()}”.
+          </div>
+        )}
+        <ul className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          {shownCatalog.map((b) => {
             const installed = installedIds.has(b.manifest.id);
             const thirdParty = b.source && b.source !== "official";
             return (
@@ -306,7 +402,7 @@ export function BundlesPage() {
                       alreadyInstalled: installed,
                     })
                   }
-                  className="w-full text-left rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 flex items-start gap-3 hover:border-cobble-300 dark:hover:border-cobble-700 transition group"
+                  className="w-full h-full text-left rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 flex items-start gap-3 hover:border-cobble-300 dark:hover:border-cobble-700 transition group"
                 >
                   <div className="text-2xl shrink-0">{b.glyph}</div>
                   <div className="flex-1 min-w-0">
@@ -352,7 +448,7 @@ export function BundlesPage() {
         {(registry.data?.drivers.length ?? 0) === 0 ? (
           <div className="text-xs text-faint dark:text-slate-500 italic">No drivers in the registry yet.</div>
         ) : (
-          <ul className="grid grid-cols-1 md:grid-cols-2 gap-2">
+          <ul className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {registry.data!.drivers.map((d) => (
               <li key={d.id} className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 flex items-start gap-3">
                 <div className="text-2xl shrink-0">{d.glyph ?? "🔌"}</div>
@@ -393,7 +489,7 @@ export function BundlesPage() {
         {(registry.data?.modules.length ?? 0) === 0 ? (
           <div className="text-xs text-faint dark:text-slate-500 italic">No modules published yet.</div>
         ) : (
-          <ul className="grid grid-cols-1 md:grid-cols-2 gap-2">
+          <ul className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {registry.data!.modules.map((m) => (
               <li key={m.name} className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 flex items-start gap-3">
                 <div className="text-2xl shrink-0">{m.glyph ?? "🧩"}</div>
@@ -439,7 +535,7 @@ export function BundlesPage() {
         {(registry.data?.renderers.length ?? 0) === 0 ? (
           <div className="text-xs text-faint dark:text-slate-500 italic">No renderers in the registry yet.</div>
         ) : (
-          <ul className="grid grid-cols-1 md:grid-cols-2 gap-2">
+          <ul className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {registry.data!.renderers.map((r) => {
               const installed = installedRendererNames.has(r.name);
               return (
@@ -514,11 +610,14 @@ export function BundlesPage() {
         )}
         <ul className="space-y-2">
           {bundles.data?.items.map((b) => (
-            <li key={b.id}>
+            <li
+              key={b.id}
+              className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 flex items-stretch hover:border-cobble-300 dark:hover:border-cobble-700 transition group"
+            >
               <button
                 type="button"
                 onClick={() => setSelected({ mode: "installed", bundle: b })}
-                className="w-full text-left rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 text-sm flex items-start gap-3 hover:border-cobble-300 dark:hover:border-cobble-700 transition group"
+                className="flex-1 min-w-0 text-left p-4 text-sm flex items-start gap-3"
               >
                 <Package size={18} className="text-accent mt-0.5 shrink-0" />
                 <div className="flex-1 min-w-0">
@@ -543,6 +642,20 @@ export function BundlesPage() {
                   className="text-faint dark:text-slate-600 group-hover:text-accent transition mt-1"
                 />
               </button>
+              <button
+                type="button"
+                onClick={() => handleRemoveBundle(b)}
+                disabled={uninstall.isPending}
+                title={`Remove ${b.name}`}
+                aria-label={`Remove ${b.name}`}
+                // Icon-only + hover-only colour was invisible on mobile (no
+                // hover on touch). Always-visible label + ember tint + a real
+                // touch target so it reads as a tappable Remove on a phone.
+                className="shrink-0 px-4 min-w-[64px] flex flex-col items-center justify-center gap-0.5 border-l border-line dark:border-slate-700 text-ember-500/80 hover:text-ember-600 hover:bg-ember-50 active:bg-ember-100 dark:hover:bg-ember-950/20 dark:active:bg-ember-950/40 transition disabled:opacity-40"
+              >
+                <Trash2 size={16} />
+                <span className="text-[10px] font-medium leading-none">Remove</span>
+              </button>
             </li>
           ))}
         </ul>
@@ -566,6 +679,12 @@ export function BundlesPage() {
           glyph={selected.featured.glyph}
           blurb={selected.featured.blurb}
           alreadyInstalled={selected.alreadyInstalled}
+          installedBundleId={
+            bundles.data?.items.find(
+              (x) => x.external_id === selected.featured.manifest.id,
+            )?.id ?? null
+          }
+          nextSteps={selected.featured.next_steps}
         />
       ) : (
         <BundleDetailModal

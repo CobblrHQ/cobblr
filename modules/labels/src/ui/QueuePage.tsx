@@ -5,8 +5,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import QRCode from "qrcode";
-import { Printer, Trash2 } from "lucide-react";
-import { usePageTitle } from "@cobblr/platform-web";
+import { Printer, Send, Trash2 } from "lucide-react";
+import { usePageTitle, useToast } from "@cobblr/platform-web";
 import { useLabels } from "./context";
 import { renderPrintSheetHtml } from "./renderPrintSheet";
 import {
@@ -31,6 +31,7 @@ function qrSvg(payload: string): Promise<string> {
 export function QueuePage() {
   usePageTitle("Labels");
   const { api, orgSlug } = useLabels();
+  const toast = useToast();
   const qc = useQueryClient();
   // Shared key with BasketWidget + Dashboard's LabelsTile so the
   // three consumers de-dupe in flight.
@@ -104,12 +105,36 @@ export function QueuePage() {
     },
   });
 
+  // Direct-to-printer: render the queue to a PDF (labels) → dispatch via the
+  // configured printer (core-print). No browser print dialog. core-print uses
+  // the proven companion app path (pdf-lib render + the `ipp` lib to CUPS).
+  const sendToPrinter = useMutation({
+    mutationFn: async () => {
+      const { items: printers } = await api.listPrinters();
+      if (!printers.length) {
+        throw new Error("No printer configured — add one at Configuration → Printers.");
+      }
+      const printer = printers.find((p) => p.is_default) ?? printers[0]!;
+      const { pdf_base64 } = await api.renderPdf(sizeKey);
+      const job = await api.printToPrinter(printer.id, {
+        document_base64: pdf_base64,
+        content_type: "application/pdf",
+        filename: "labels.pdf",
+        job_name: "labels",
+      });
+      return { printer, job };
+    },
+    onSuccess: ({ printer, job }) =>
+      toast.success(`Sent to ${printer.name} — job ${job.jobId} (${job.state})`),
+    onError: (e) => toast.error((e as Error).message),
+  });
+
   const sheets = size ? Math.ceil(Math.max(total, 0) / perSheet(size)) : 0;
 
   return (
     <div className="space-y-4">
       <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3 flex-wrap">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">labels</h1>
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">labels</h1>
         <span className="text-[10px] font-mono text-faint dark:text-slate-500">
           {items.length} item{items.length === 1 ? "" : "s"} · {total} label{total === 1 ? "" : "s"}
           {size ? ` · ${sheets} sheet${sheets === 1 ? "" : "s"}` : ""}
@@ -140,9 +165,19 @@ export function QueuePage() {
           </select>
         </label>
         <button
+          onClick={() => sendToPrinter.mutate()}
+          disabled={sendToPrinter.isPending || items.length === 0 || !size}
+          className="rounded-md border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5 disabled:opacity-50"
+          title="Render + send straight to a configured printer (CUPS) — no print dialog"
+        >
+          <Send size={14} />
+          {sendToPrinter.isPending ? "…" : "Send to printer"}
+        </button>
+        <button
           onClick={() => print.mutate()}
           disabled={print.isPending || items.length === 0 || !size}
           className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5 disabled:opacity-50"
+          title="Open a browser print sheet (⌘P)"
         >
           <Printer size={14} />
           {print.isPending ? "…" : `Print ${total}`}

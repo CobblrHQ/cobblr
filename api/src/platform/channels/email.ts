@@ -1,79 +1,34 @@
-// Email channel — sends via SMTP using nodemailer. User provides
-// their own SMTP creds in the subscription config (we don't ship
-// SMTP infrastructure; users plug in their existing provider:
-// Gmail with an app password, Fastmail, AWS SES SMTP, Postmark, ...).
+// Email channel — sends a notification by email. Cobblr does NOT host outbound
+// mail; the user brings their own delivery, picking ONE provider in the
+// subscription config (notification_subscriptions.config). The provider config
+// shape + per-provider transport live in ../email-send.ts, shared with the
+// platform BYO auth-email sender.
 //
-// Per-user config in notification_subscriptions.config:
-//   {
-//     smtp_host: "smtp.fastmail.com",
-//     smtp_port: 465,
-//     smtp_user: "user@example.com",
-//     smtp_pass: "<app-password>",
-//     smtp_secure?: true,    // true for 465, false for 587 + STARTTLS
-//     from: "cobblr@example.com",
-//     to: "ray@example.com"
-//   }
-//
-// Subject is `[<event_type>] <first 60 chars of message>`. Body is
-// plain text with the full message + a link (if any). Keeping HTML
-// off keeps the driver dependency-free + dodges every email-client
-// rendering quirk.
+// Subject is `[<event_type>] <first 60 chars>`; body is plain text (the full
+// message + a link if any) — no HTML, which keeps every provider's payload
+// trivial and dodges email-client rendering quirks.
 
-import nodemailer from "nodemailer";
+import { checkEmailConfig, sendEmailVia, type EmailConfig, type ValidConfig } from "../email-send.js";
 import type { Channel, ChannelEvent } from "./types.js";
 
-interface EmailConfig {
-  smtp_host?: string;
-  smtp_port?: number;
-  smtp_user?: string;
-  smtp_pass?: string;
-  smtp_secure?: boolean;
-  from?: string;
-  to?: string;
-}
-
-function readConfig(payload: unknown): EmailConfig | null {
+/** Validate config for the chosen provider; null (+ a warn) if incomplete. */
+function readConfig(payload: unknown): ValidConfig | null {
   if (!payload || typeof payload !== "object") return null;
-  const cfg = payload as EmailConfig;
-  if (
-    typeof cfg.smtp_host !== "string" ||
-    typeof cfg.smtp_user !== "string" ||
-    typeof cfg.smtp_pass !== "string" ||
-    typeof cfg.from !== "string" ||
-    typeof cfg.to !== "string"
-  ) {
+  const r = checkEmailConfig(payload as EmailConfig, true);
+  if (!r.ok) {
+    console.warn(`[notify:email] ${r.reason}; skipping`);
     return null;
   }
-  return cfg;
+  return r.config;
 }
 
 export const emailChannel: Channel = {
   name: "email",
   async deliver(event: ChannelEvent): Promise<boolean> {
     const cfg = readConfig(event.subscriptionConfig);
-    if (!cfg) {
-      console.warn(
-        "[notify:email] subscription config missing one of smtp_host/smtp_user/smtp_pass/from/to; skipping",
-      );
-      return false;
-    }
-    const port = cfg.smtp_port ?? 465;
-    // smtp_secure default mirrors the common convention: 465 = TLS,
-    // 587 = STARTTLS, everything else = STARTTLS as well unless
-    // explicitly overridden.
-    const secure = cfg.smtp_secure ?? port === 465;
-    const transport = nodemailer.createTransport({
-      host: cfg.smtp_host,
-      port,
-      secure,
-      auth: { user: cfg.smtp_user!, pass: cfg.smtp_pass! },
-      // Keep the connection short. SMTP servers tend to drop idle.
-      connectionTimeout: 5000,
-      socketTimeout: 5000,
-    });
+    if (!cfg) return false;
     const subject =
-      `[${event.eventType}] ` + event.message.slice(0, 60) +
-      (event.message.length > 60 ? "…" : "");
+      `[${event.eventType}] ` + event.message.slice(0, 60) + (event.message.length > 60 ? "…" : "");
     const text = [
       event.message,
       "",
@@ -85,18 +40,11 @@ export const emailChannel: Channel = {
       .filter((line) => line !== null)
       .join("\n");
     try {
-      await transport.sendMail({
-        from: cfg.from,
-        to: cfg.to,
-        subject,
-        text,
-      });
+      await sendEmailVia(cfg, subject, text);
       return true;
     } catch (err) {
-      console.warn(`[notify:email] send failed: ${(err as Error).message}`);
+      console.warn(`[notify:email] ${cfg.provider} send failed: ${(err as Error).message}`);
       return false;
-    } finally {
-      transport.close();
     }
   },
 };

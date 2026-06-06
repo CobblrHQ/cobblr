@@ -13,6 +13,7 @@ import { Link } from "react-router-dom";
 import {
   Activity,
   Boxes,
+  ChevronRight,
   FileText,
   Files,
   Globe,
@@ -44,6 +45,7 @@ import { MembersModal } from "../components/MembersModal";
 import { NewThingFunnelModal } from "../components/NewThingFunnelModal";
 import { NavCustomizeMenu } from "../components/NavCustomizeMenu";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { displaySlug } from "../lib/workspaceSlug";
 import { usePageTitle } from "@cobblr/platform-web";
 
 interface Tile {
@@ -57,13 +59,22 @@ interface Tile {
 }
 
 const GROUP_LABELS: Record<Tile["group"], string> = {
-  modules: "modules + bundles",
-  data: "your data",
-  access: "people + access",
-  extend: "extend + integrate",
-  admin: "ops + diagnostics",
+  modules: "set up your workspace",
+  data: "customize your data",
+  access: "people & access",
+  extend: "connect & automate",
+  admin: "system & diagnostics",
 };
 const GROUP_ORDER: Tile["group"][] = ["modules", "data", "access", "extend", "admin"];
+// Only the essential "set up" group is expanded on arrival; the rest start
+// collapsed so the page reads as a short menu, not a 35-card wall.
+const DEFAULT_OPEN: Record<Tile["group"], boolean> = {
+  modules: true,
+  data: false,
+  access: false,
+  extend: false,
+  admin: false,
+};
 
 export function ConfigurationPage() {
   usePageTitle("Configuration");
@@ -71,6 +82,7 @@ export function ConfigurationPage() {
   const [modulesOpen, setModulesOpen] = useState(false);
   const [membersOpen, setMembersOpen] = useState(false);
   const [newThingOpen, setNewThingOpen] = useState(false);
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(DEFAULT_OPEN);
 
   const tiles: Tile[] = [
     // ── modules + bundles ──────────────────────────────────────────
@@ -263,6 +275,14 @@ export function ConfigurationPage() {
     },
     {
       group: "extend",
+      icon: Printer,
+      label: "Printers",
+      description:
+        "Send documents to a real printer through a print manager (CUPS) — a Rollo label printer, shipping labels, an office laser. Direct on your LAN, or via the edge-bridge from cloud.",
+      to: "/configuration/print",
+    },
+    {
+      group: "extend",
       icon: FileText,
       label: "OpenAPI",
       description:
@@ -350,13 +370,15 @@ export function ConfigurationPage() {
         </h1>
         {activeOrg && (
           <span className="text-[10px] font-mono text-faint dark:text-slate-500">
-            {activeOrg.name} · {activeSlug} · {activeOrg.role}
+            {activeOrg.name} · {displaySlug(activeSlug)} · {activeOrg.role}
           </span>
         )}
       </div>
 
       <p className="text-sm text-content dark:text-mortar-200">
-        Everything you can configure for this workspace lives here.
+        Start with <span className="font-medium">Set up your workspace</span> — turn on the
+        modules you want or install a starter pack. The rest is optional and opens when you
+        need it.
       </p>
 
       {/* Nav-customize control — relocated out of the navbar (it's a
@@ -369,11 +391,25 @@ export function ConfigurationPage() {
         </span>
       </div>
 
-      {grouped.map(({ group, label, items }) => (
+      {grouped.map(({ group, label, items }) => {
+        const open = openGroups[group] ?? false;
+        return (
         <section key={group} className="space-y-2">
-          <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
+          <button
+            type="button"
+            onClick={() => setOpenGroups((p) => ({ ...p, [group]: !open }))}
+            className="w-full flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-widest text-accent hover:text-content dark:hover:text-mortar-100 transition"
+          >
+            <ChevronRight
+              size={12}
+              className={`transition-transform ${open ? "rotate-90" : ""}`}
+            />
             // {label}
-          </div>
+            <span className="text-faint dark:text-slate-500 normal-case tracking-normal">
+              ({items.length})
+            </span>
+          </button>
+          {open && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {items.map((t) => {
               const Icon = t.icon;
@@ -409,8 +445,10 @@ export function ConfigurationPage() {
               );
             })}
           </div>
+          )}
         </section>
-      ))}
+        );
+      })}
 
       <ModulePickerModal
         open={modulesOpen}

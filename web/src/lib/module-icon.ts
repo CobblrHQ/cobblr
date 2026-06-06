@@ -14,6 +14,7 @@ import {
   ShoppingCart,
   Sparkles,
   Tag,
+  Wand2,
   Wrench,
   Zap,
   type LucideIcon,
@@ -30,6 +31,7 @@ const MAP: Record<string, LucideIcon> = {
   tag: Tag,
   "list-checks": ListChecks,
   sparkles: Sparkles,
+  "wand-2": Wand2,
 };
 
 export function moduleIcon(name: string | null | undefined): LucideIcon {

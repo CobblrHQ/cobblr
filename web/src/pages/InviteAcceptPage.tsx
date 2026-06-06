@@ -207,7 +207,7 @@ function CenteredCard({
           }
         >
           <Icon size={16} />
-          <h1 className="font-display text-lg font-bold text-content dark:text-mortar-100 lowercase">
+          <h1 className="font-display text-lg font-bold text-content dark:text-mortar-100 page-title">
             {title}
           </h1>
         </div>

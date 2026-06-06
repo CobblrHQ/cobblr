@@ -60,7 +60,7 @@ function Header({ title, scoped }: { title: string; scoped: boolean }) {
     isActive ? "text-accent font-semibold" : "text-faint dark:text-slate-500 hover:text-accent";
   return (
     <div className="flex items-baseline gap-4 border-b border-line dark:border-slate-700 pb-3">
-      <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">
+      <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
         {title}
       </h1>
       <nav className="flex gap-3 text-xs font-mono">

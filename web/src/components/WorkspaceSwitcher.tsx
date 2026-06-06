@@ -9,6 +9,7 @@ import { Check, ChevronDown, Plus, Users } from "lucide-react";
 import { ApiError, api } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { displaySlug } from "../lib/workspaceSlug";
 import { Modal, useToast } from "@cobblr/platform-web";
 import { MembersModal } from "./MembersModal";
 
@@ -56,7 +57,7 @@ export function WorkspaceSwitcher() {
       <button
         onClick={() => setOpen((o) => !o)}
         className="flex items-center gap-1.5 px-2 py-1 rounded text-sm text-content dark:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 transition"
-        title={activeOrg ? `${activeOrg.name} · ${activeOrg.slug}` : "Pick a workspace"}
+        title={activeOrg ? `${activeOrg.name} · ${displaySlug(activeOrg.slug)}` : "Pick a workspace"}
       >
         <span className="truncate max-w-[10rem]">{activeOrg?.name ?? "—"}</span>
         <ChevronDown size={12} className="text-faint" />
@@ -89,7 +90,7 @@ export function WorkspaceSwitcher() {
                         {o.name}
                       </div>
                       <div className="text-[10px] font-mono text-faint dark:text-slate-500 truncate">
-                        {o.slug} · {o.role}
+                        {displaySlug(o.slug)} · {o.role}
                       </div>
                     </div>
                   </button>

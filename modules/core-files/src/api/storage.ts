@@ -2,11 +2,12 @@
 // HTTP layer; routes shouldn't touch fs / sharp directly.
 
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 import sharp from "sharp";
+import { platform, type FilesDriver } from "@cobblr/platform-contract";
 import type { FileKind, FileVariants } from "../db.js";
 
 // Default storage root: <repo>/_files. Overridable per-deploy.
@@ -45,6 +46,40 @@ export function resolveVariantPath(
   return abs;
 }
 
+// ── Storage driver seam ──────────────────────────────────────────────────
+// Blob persistence is behind a driver so a hosted deployment can swap local
+// disk for object storage (S3/R2) without touching the image-processing or
+// route layers. Open core ships + falls back to this local-fs driver; the
+// cloud overlay calls platform().files.registerDriver(...) at boot to override.
+const localDriver: FilesDriver = {
+  async put(orgId, fileId, relPath, bytes) {
+    await mkdir(fileDir(orgId, fileId), { recursive: true });
+    await writeFile(resolveVariantPath(orgId, fileId, relPath), bytes);
+  },
+  async getBytes(orgId, fileId, relPath) {
+    try {
+      return await readFile(resolveVariantPath(orgId, fileId, relPath));
+    } catch {
+      return null;
+    }
+  },
+  async remove(orgId, fileId) {
+    await rm(fileDir(orgId, fileId), { recursive: true, force: true });
+  },
+  localPath(orgId, fileId, relPath) {
+    try {
+      return resolveVariantPath(orgId, fileId, relPath);
+    } catch {
+      return null;
+    }
+  },
+};
+
+/** The active blob driver: the overlay's override, else local disk. */
+function driver(): FilesDriver {
+  return platform().files.getDriver() ?? localDriver;
+}
+
 interface StoredFile {
   variants: FileVariants;
   sha256: string;
@@ -64,13 +99,10 @@ export async function storeUpload(
   buffer: Buffer,
   declaredMime: string,
 ): Promise<StoredFile> {
-  const dir = fileDir(orgId, fileId);
-  await mkdir(dir, { recursive: true });
-
   const sha = createHash("sha256").update(buffer).digest("hex");
   const ext = extFromMime(declaredMime);
   const originalRel = `original${ext}`;
-  await writeFile(join(dir, originalRel), buffer);
+  await driver().put(orgId, fileId, originalRel, buffer);
 
   const baseKind = classifyKind(declaredMime);
   const variants: FileVariants = {
@@ -103,7 +135,7 @@ export async function storeUpload(
         .resize({ width: 1024, height: 1024, fit: "inside", withoutEnlargement: true })
         .jpeg({ quality: 85, mozjpeg: true })
         .toBuffer({ resolveWithObject: true });
-      await writeFile(join(dir, "medium.jpg"), medium.data);
+      await driver().put(orgId, fileId, "medium.jpg", medium.data);
       variants.medium = {
         path: "medium.jpg",
         bytes: medium.data.length,
@@ -116,7 +148,7 @@ export async function storeUpload(
         .resize({ width: 256, height: 256, fit: "inside", withoutEnlargement: true })
         .jpeg({ quality: 75, mozjpeg: true })
         .toBuffer({ resolveWithObject: true });
-      await writeFile(join(dir, "thumb.jpg"), thumb.data);
+      await driver().put(orgId, fileId, "thumb.jpg", thumb.data);
       variants.thumb = {
         path: "thumb.jpg",
         bytes: thumb.data.length,
@@ -153,7 +185,7 @@ export async function storeUpload(
 /** Best-effort: remove the file's on-disk directory. Soft-deleted
  *  rows can call this on the way to permanent purge. */
 export async function removeStoredFile(orgId: string, fileId: string): Promise<void> {
-  await rm(fileDir(orgId, fileId), { recursive: true, force: true });
+  await driver().remove(orgId, fileId);
 }
 
 /** Stream a variant's bytes back to the caller. Returns the path so
@@ -164,28 +196,27 @@ export async function readVariant(
   fileId: string,
   variants: FileVariants,
   which: "original" | "medium" | "thumb",
-): Promise<{ path: string; bytes: number } | null> {
+): Promise<{ localPath: string | null; bytes: number } | null> {
   const v = variants[which];
   if (!v) return null;
-  const abs = resolveVariantPath(orgId, fileId, v.path);
-  const exists = await stat(abs).then(
-    () => true,
-    () => false,
-  );
-  if (!exists) return null;
-  return { path: abs, bytes: v.bytes };
+  // localPath is non-null for the local driver (route uses sendFile), null for
+  // remote drivers (route falls back to streaming readVariantBytes).
+  return { localPath: driver().localPath(orgId, fileId, v.path), bytes: v.bytes };
 }
 
-/** Convenience: byte-buffer read for inline rendering / tests. */
+/** Convenience: byte-buffer read for inline rendering / tests / remote serving. */
 export async function readVariantBytes(
   orgId: string,
   fileId: string,
   variants: FileVariants,
   which: "original" | "medium" | "thumb",
 ): Promise<Buffer | null> {
-  const r = await readVariant(orgId, fileId, variants, which);
-  if (!r) return null;
-  return readFile(r.path);
+  const v = variants[which];
+  if (!v) return null;
+  const b = await driver().getBytes(orgId, fileId, v.path);
+  // Drivers return Uint8Array (contract); normalise to Buffer for callers
+  // (Express res.send, sharp, resolvers).
+  return b ? (Buffer.isBuffer(b) ? b : Buffer.from(b)) : null;
 }
 
 function classifyKind(mime: string): FileKind {

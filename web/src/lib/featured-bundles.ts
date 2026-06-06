@@ -8,12 +8,27 @@
 
 import type { PlatformBundleManifest } from "./api";
 
+/** A post-install guided step — the "you can now add some yarn" prompt
+ *  that shows after a bundle installs, so the user isn't left staring at
+ *  a closed modal wondering what changed. */
+export interface BundleNextStep {
+  /** Button label, e.g. "Add your first yarn". */
+  label: string;
+  /** Module to navigate to (route segment under /w/<handle>), e.g. "inventory". */
+  module: string;
+  /** One-line hint under the label. */
+  hint?: string;
+}
+
 export interface FeaturedBundle {
   manifest: PlatformBundleManifest;
   /** Short blurb shown on the catalog card. */
   blurb: string;
   /** Emoji or single-char glyph for the card. */
   glyph: string;
+  /** Post-install guided next steps. When omitted, a generic "go to the
+   *  modules this set up" list is derived from the manifest's requires. */
+  next_steps?: BundleNextStep[];
 }
 
 export const FEATURED_BUNDLES: FeaturedBundle[] = [
@@ -471,68 +486,9 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     },
   },
   {
-    glyph: "🛠️",
-    blurb:
-      "Mod-on-a-machine workflow — projects with parts-needed / ready / in-progress substate, energy estimate, excitement. Drives the 'Workshop Mods' lens on the Projects page.",
-    manifest: {
-      id: "cobblr.community.workshop-mods",
-      version: "0.1.0",
-      name: "Workshop Mods",
-      description:
-        "Extends projects with the mod-on-a-machine workflow: substate vocabulary, energy estimate, excitement, public visibility. Mod ↔ machine link rides on the pairings primitive (relationship_kind='modifies').",
-      author: "Cobblr community",
-      requires: [{ module: "projects" }, { module: "machines" }],
-      provides_lens: {
-        entity_kind: "projects:project",
-        name: "workshop-mods",
-        display_name: "Workshop Mods",
-      },
-      wires: [],
-      field_defs: [
-        {
-          entity_kind: "projects:project",
-          name: "mod_substate",
-          display_label: "Mod substate",
-          type: "text",
-          position: 50,
-          choices: ["planning", "parts-needed", "ready", "in-progress", "done", "abandoned"],
-        },
-        {
-          entity_kind: "projects:project",
-          name: "mod_energy",
-          display_label: "Energy estimate",
-          type: "text",
-          position: 51,
-          choices: ["small", "medium", "large"],
-        },
-        {
-          entity_kind: "projects:project",
-          name: "mod_excitement",
-          display_label: "Excitement (0-5)",
-          type: "number",
-          position: 52,
-        },
-        {
-          entity_kind: "projects:project",
-          name: "mod_external_url",
-          display_label: "External URL",
-          type: "url",
-          position: 53,
-        },
-        {
-          entity_kind: "projects:project",
-          name: "mod_public_visible",
-          display_label: "Public visible",
-          type: "boolean",
-          position: 54,
-        },
-      ],
-    },
-  },
-  {
     glyph: "🧶",
     blurb:
-      "A knitter's stash by brand, colorway, fibre and weight class — tracked by skein, metre or gram. A grouped 'My stash' view sorts it all by weight.",
+      "A knitter's stash by brand, colorway, fibre, and weight class — tracked by skein, metre, or gram. A grouped 'My stash' view sorts it all by weight.",
     manifest: {
       id: "cobblr.flagship.yarn-stash",
       version: "0.1.0",
@@ -542,14 +498,16 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       author: "Cobblr",
       requires: [{ module: "inventory" }],
       field_defs: [
-        { entity_kind: "inventory:part", name: "colorway", display_label: "Colorway", type: "text", position: 1 },
-        { entity_kind: "inventory:part", name: "fiber", display_label: "Fibre", type: "text", position: 2, choices: ["Wool", "Merino", "Cotton", "Acrylic", "Alpaca", "Silk", "Linen", "Bamboo", "Cashmere", "Blend"] },
-        { entity_kind: "inventory:part", name: "weight_class", display_label: "Weight", type: "text", position: 3, choices: ["Lace", "Fingering", "Sport", "DK", "Worsted", "Aran", "Bulky", "Super Bulky"] },
-        { entity_kind: "inventory:part", name: "length_per_skein", display_label: "Length / skein (m)", type: "number", position: 4 },
-        { entity_kind: "inventory:part", name: "dye_lot", display_label: "Dye lot", type: "text", position: 5 },
-        { entity_kind: "inventory:part", name: "hook_size", display_label: "Hook / needle", type: "text", position: 6 },
-        { entity_kind: "inventory:part", name: "for_project", display_label: "For project", type: "text", position: 7 },
-        { entity_kind: "inventory:part", name: "stash_summary", display_label: "Summary", type: "computed", position: 8, template: '{{weight_class}} {{fiber}} · {{length_per_skein | default: "?"}} m/skein' },
+        { entity_kind: "inventory:part", name: "color", display_label: "Color", type: "text", position: 1, renderer: "color-hex" },
+        { entity_kind: "inventory:part", name: "colorway", display_label: "Colorway", type: "text", position: 2 },
+        { entity_kind: "inventory:part", name: "fiber", display_label: "Fibre", type: "text", position: 3, choices: ["Wool", "Merino", "Cotton", "Acrylic", "Nylon", "Chenille", "Alpaca", "Silk", "Linen", "Bamboo", "Cashmere", "Blend"] },
+        { entity_kind: "inventory:part", name: "weight_class", display_label: "Weight", type: "text", position: 4, choices: ["Lace", "Fingering", "Sport", "DK", "Worsted", "Aran", "Bulky", "Super Bulky"] },
+        { entity_kind: "inventory:part", name: "vendor", display_label: "Vendor", type: "text", position: 5, choices: ["Michaels", "Hobby Lobby", "Walmart", "Joann", "Amazon", "Etsy", "Local yarn shop"] },
+        { entity_kind: "inventory:part", name: "length_per_skein", display_label: "Length / skein (m)", type: "number", position: 6 },
+        { entity_kind: "inventory:part", name: "dye_lot", display_label: "Dye lot", type: "text", position: 7 },
+        { entity_kind: "inventory:part", name: "hook_size", display_label: "Hook / needle", type: "text", position: 8 },
+        { entity_kind: "inventory:part", name: "for_project", display_label: "For project", type: "text", position: 9 },
+        { entity_kind: "inventory:part", name: "stash_summary", display_label: "Summary", type: "computed", position: 10, template: '{{weight_class}} {{fiber}} · {{length_per_skein | default: "?"}} m/skein' },
       ],
       field_overrides: [
         { entity_kind: "inventory:part", name: "manufacturer", display_label: "Brand" },
@@ -558,14 +516,68 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         { entity_kind: "inventory:part", name: "model_number", hidden: true },
       ],
       saved_views: [
-        { entity_kind: "inventory:part", name: "My yarn stash", view_type: "table", pinned: true, config: { group_by: "weight_class", visible_fields: ["title", "colorway", "fiber", "qty", "unit", "length_per_skein"] } },
+        { entity_kind: "inventory:part", name: "My yarn stash", view_type: "table", pinned: true, config: { group_by: "weight_class", visible_fields: ["title", "color", "colorway", "fiber", "vendor", "qty", "unit", "length_per_skein"] } },
+      ],
+    },
+  },
+  {
+    glyph: "🧶🪝",
+    blurb:
+      "A full crochet/knitting studio: your yarn + hook stash, your designs as projects (each with its pattern), with yarn allocated to each design — reserved while you work it, used up when it's finished. Out-of-stock yarn lands on your shopping list; scan a skein or receipt to add it.",
+    next_steps: [
+      { label: "Add your first yarn", module: "inventory", hint: "Colour, fibre, weight, length — start your stash." },
+      { label: "Add a design", module: "projects", hint: "Each design holds its pattern and the yarn it needs." },
+    ],
+    manifest: {
+      id: "cobblr.flagship.yarn-studio",
+      version: "0.1.0",
+      name: "Yarn Studio",
+      description:
+        "Designs as projects (pattern file/link + category), a yarn stash + hooks, and yarn allocated per design — reserved while open, consumed when finished. Out-of-stock yarn auto-adds to a shopping list. Scan skeins/hooks/receipts to stock them.",
+      author: "Cobblr",
+      requires: [
+        { module: "projects" },
+        { module: "inventory" },
+        { module: "lists" },
+        { module: "core-scan" },
+        { module: "purchases" },
+      ],
+      field_defs: [
+        // ── Yarn (inventory:part) — positions 1-6 show as stash columns ──
+        { entity_kind: "inventory:part", name: "color", display_label: "Color", type: "text", position: 1, renderer: "color-hex" },
+        { entity_kind: "inventory:part", name: "colorway", display_label: "Colorway", type: "text", position: 2 },
+        { entity_kind: "inventory:part", name: "fiber", display_label: "Fibre", type: "text", position: 3, choices: ["Wool", "Merino", "Cotton", "Acrylic", "Nylon", "Chenille", "Alpaca", "Silk", "Linen", "Bamboo", "Cashmere", "Blend"] },
+        { entity_kind: "inventory:part", name: "weight_class", display_label: "Weight", type: "text", position: 4, choices: ["Lace", "Fingering", "Sport", "DK", "Worsted", "Aran", "Bulky", "Super Bulky"] },
+        { entity_kind: "inventory:part", name: "vendor", display_label: "Vendor", type: "text", position: 5, choices: ["Michaels", "Hobby Lobby", "Walmart", "Joann", "Amazon", "Etsy", "Local yarn shop"] },
+        { entity_kind: "inventory:part", name: "length_per_skein", display_label: "Length / skein (m)", type: "number", position: 6 },
+        // ── Hooks (inventory:part, category "Hooks") — positions 20+ so the
+        //    stash table's column cap keeps them off the yarn list; they show
+        //    on the hook detail + the Hooks view. Track stock as qty. ──
+        { entity_kind: "inventory:part", name: "hook_gauge", display_label: "Hook gauge", type: "text", position: 20, choices: ["1.0 mm", "1.5 mm", "2.0 mm", "2.5 mm", "3.0 mm", "3.5 mm", "4.0 mm", "4.5 mm", "5.0 mm", "5.5 mm", "6.0 mm", "6.5 mm", "7.0 mm", "8.0 mm", "9.0 mm", "10.0 mm"] },
+        { entity_kind: "inventory:part", name: "hook_material", display_label: "Hook material", type: "text", position: 21, choices: ["All-metal", "Metal + silicone grip"] },
+        // ── Designs (projects:project) ──
+        { entity_kind: "projects:project", name: "pattern_url", display_label: "Pattern link", type: "url", position: 1, renderer: "url-link" },
+        { entity_kind: "projects:project", name: "pattern_category", display_label: "Category", type: "text", position: 2, choices: ["Wearables", "Toys", "Home-wear", "Blankets"] },
+      ],
+      field_overrides: [
+        { entity_kind: "inventory:part", name: "manufacturer", display_label: "Brand" },
+        { entity_kind: "inventory:part", name: "cost", display_label: "Price / skein" },
+      ],
+      saved_views: [
+        { entity_kind: "projects:project", name: "Designs", view_type: "table", pinned: true, config: { group_by: "pattern_category", visible_fields: ["title", "pattern_category", "status", "pattern_url"] } },
+        { entity_kind: "inventory:part", name: "My yarn stash", view_type: "table", pinned: true, config: { group_by: "weight_class", visible_fields: ["title", "color", "colorway", "fiber", "vendor", "qty", "unit", "length_per_skein"] } },
+        { entity_kind: "inventory:part", name: "Hooks", view_type: "table", config: { group_by: "hook_material", visible_fields: ["title", "hook_gauge", "hook_material", "qty"] } },
+      ],
+      wires: [
+        // Out-of-stock yarn → shopping list (same primitive as the kitchen bundle).
+        { source_kind: "inventory:part", action_id: "lists:add-item", trigger_type: "event", trigger_event: "inventory.stock.low", args: { listTitle: "Shopping list" } },
       ],
     },
   },
   {
     glyph: "🖨️🧵",
     blurb:
-      "The 3D-printer sibling of Yarn Stash — spools by material, colour and diameter, weighed in grams, grouped by material, with the print temps that worked.",
+      "The 3D-printer sibling of Yarn Stash — spools by material, colour, and diameter, weighed in grams, grouped by material, with the print temps that worked.",
     manifest: {
       id: "cobblr.flagship.filament-stash",
       version: "0.1.0",
@@ -658,7 +670,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       id: "cobblr.flagship.medications",
       version: "0.1.0",
       name: "Medications & Refills",
-      description: "Track each medication's dose, schedule, prescriber/pharmacy, refills left and a refill-by date.",
+      description: "Track each medication's dose, schedule, prescriber/pharmacy, refills left, and a refill-by date.",
       author: "Cobblr",
       requires: [{ module: "inventory" }],
       field_defs: [
@@ -689,7 +701,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       id: "cobblr.flagship.plant-care",
       version: "0.1.0",
       name: "Plant Care",
-      description: "Per-plant species, light, watering interval and pot size; a 'By light' view.",
+      description: "Per-plant species, light, watering interval, and pot size; a 'By light' view.",
       author: "Cobblr",
       requires: [{ module: "assets" }],
       field_defs: [
@@ -715,7 +727,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
     glyph: "🔁",
     blurb:
-      "Every streaming service, membership and recurring bill in one place — a computed per-cycle line + renewal dates, grouped by category.",
+      "Every streaming service, membership, and recurring bill in one place — a computed per-cycle line + renewal dates, grouped by category.",
     manifest: {
       id: "cobblr.flagship.subscriptions",
       version: "0.1.0",

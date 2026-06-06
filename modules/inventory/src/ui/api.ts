@@ -8,6 +8,19 @@
 
 export type AllocationStatus = "reserved" | "consumed" | "released";
 
+/** Subset of a platform field-def the parts table needs to render custom
+ *  columns (label + value renderer). Mirrors @cobblr/platform-web's
+ *  PlatformFieldDef without taking a cross-package dep. */
+export interface InvFieldDef {
+  id: string;
+  name: string;
+  display_label: string;
+  type: string;
+  position: number;
+  choices?: string[] | null;
+  renderer?: string | null;
+}
+
 export interface Category {
   id: string;
   name: string;
@@ -214,6 +227,12 @@ export class InventoryApi {
   listLocations = () => this.requestAbs<{ items: Location[] }>(
     "GET",
     `/api/v1/orgs/${this.slug}/modules/core-locations/locations`,
+  );
+  /** Field defs for an entity kind — drives the parts table's custom-field
+   *  columns (label + renderer). Org-level endpoint, not module-scoped. */
+  listFieldDefs = (kind: string) => this.requestAbs<{ items: InvFieldDef[] }>(
+    "GET",
+    `/api/v1/orgs/${this.slug}/field-defs?kind=${encodeURIComponent(kind)}`,
   );
   createLocation = (b: {
     name: string;

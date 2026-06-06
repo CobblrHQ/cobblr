@@ -19,7 +19,8 @@
 //     least-recently-used worker is evicted to make room.
 
 import { Worker } from "node:worker_threads";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
@@ -40,13 +41,42 @@ import {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-/** Resolves to .ts in dev (tsx loader) or .js in prod (compiled). */
-function workerEntryUrl(): URL {
-  // Loader resolves based on import.meta — adjacent file in the
-  // same dist/src dir. Use .js extension; in tsx the loader maps
-  // back to .ts source automatically.
-  const path = resolve(__dirname, "worker-entry.js");
-  return pathToFileURL(path);
+/** The worker entry URL.
+ *
+ *  Built prod: `worker-entry.js` sits next to the compiled `pool.js`.
+ *
+ *  Dev/test (api runs from source via tsx): only `worker-entry.ts`
+ *  exists, AND tsx does not do `.js`→`.ts` resolution inside worker
+ *  threads (its loader patches the main thread only) — so a worker that
+ *  imports `./abi.js` 500s with "Cannot find module". We sidestep that
+ *  by bundling the worker subtree into a standalone, dependency-inlined
+ *  `.mjs` with esbuild (which ships with tsx) and pointing the Worker at
+ *  THAT. Bundled once per process, cached. esbuild is loaded via dynamic
+ *  import so prod (which never takes this branch) never needs it. */
+let workerEntryPromise: Promise<URL> | null = null;
+function workerEntryUrl(): Promise<URL> {
+  if (!workerEntryPromise) workerEntryPromise = resolveWorkerEntry();
+  return workerEntryPromise;
+}
+async function resolveWorkerEntry(): Promise<URL> {
+  if (!import.meta.url.endsWith(".ts")) {
+    return pathToFileURL(resolve(__dirname, "worker-entry.js"));
+  }
+  // Local tsx dev: the worker thread can't load .ts (no .js→.ts resolution in
+  // worker threads), so esbuild-bundle worker-entry to a temp .mjs. NOTE: this
+  // bundle path is dev-on-macOS only — it miscompiles on Linux, and CI runs
+  // the api built (`node dist`) precisely to avoid it (see .forgejo/ci.yml).
+  const { build } = await import("esbuild");
+  const out = join(tmpdir(), `cobblr-worker-entry-${process.pid}.mjs`);
+  await build({
+    entryPoints: [resolve(__dirname, "worker-entry.ts")],
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    outfile: out,
+    logLevel: "silent",
+  });
+  return pathToFileURL(out);
 }
 
 const WORKER_IDLE_EVICT_MS = Number(process.env.SANDBOX_WORKER_IDLE_MS ?? 5 * 60 * 1000);
@@ -212,7 +242,7 @@ async function spawnWorker(
 
   const sab = new SharedArrayBuffer(SAB_TOTAL_BYTES);
   const sigView = new Int32Array(sab);
-  const worker = new Worker(workerEntryUrl(), {
+  const worker = new Worker(await workerEntryUrl(), {
     workerData: {
       wasmPath,
       moduleName,

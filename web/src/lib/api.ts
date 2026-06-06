@@ -80,6 +80,11 @@ export interface SessionUser {
    *  redirects to /me/force-password-reset until cleared. PATCH
    *  /me/password clears it. */
   must_reset_password: boolean;
+  /** True once the user confirmed their email via a verification link.
+   *  Informational — the app shows a "verify your email" banner while false.
+   *  Optional for back-compat with cached responses; treat undefined as true
+   *  (don't nag a session that predates the field). */
+  email_verified?: boolean;
   /** True when this user's email is in the platform's
    *  SUPERADMIN_EMAILS env var. Unlocks the /super-admin/* shell. */
   is_platform_admin?: boolean;
@@ -212,6 +217,12 @@ export interface OrgModuleListItem {
   displayName: string;
   description: string;
   icon: string | null;
+  /** Module layer: `stock` = Cobblr's shipped first-party domains, `core-*`
+   *  plumbing is `foundational`, marketplace installs / user samples differ.
+   *  Used to suggest only real domain modules on the empty dashboard.
+   *  Optional: real modules from the API always carry it, but synthetic nav
+   *  entries (instances, lens bundles) have no module band. */
+  band?: "foundational" | "stock" | "marketplace" | "user";
   /** Icon-only quick-action pinned to the navbar's right cluster. */
   headerAction: { icon: string; label: string; route: string } | null;
   dependencies: string[];
@@ -268,7 +279,7 @@ export const api = {
     ),
   // Superadmin: mint / list / revoke signup invites.
   mintSignupInvite: (body: { email?: string; note?: string; expires_in_days?: number }) =>
-    request<SignupInvite & { token: string }>("POST", "/super-admin/signup-invites", body),
+    request<SignupInvite & { token: string; emailed: boolean }>("POST", "/super-admin/signup-invites", body),
   listSignupInvites: () =>
     request<{ items: SignupInvite[] }>("GET", "/super-admin/signup-invites"),
   revokeSignupInvite: (id: string) =>
@@ -286,6 +297,25 @@ export const api = {
     }>("POST", "/auth/magic/request", body),
   magicConsume: (body: { token: string }) =>
     request<AuthResponse>("POST", "/auth/magic/consume", body),
+  // Password reset (forgot → email link → set new password, auto-login).
+  passwordForgot: (body: { email: string }) =>
+    request<{
+      ok: boolean;
+      message: string;
+      /** Dev mode only — non-prod with no email sender returns the link. */
+      dev_token?: string;
+      dev_link?: string;
+    }>("POST", "/auth/password/forgot", body),
+  passwordReset: (body: { token: string; password: string }) =>
+    request<AuthResponse>("POST", "/auth/password/reset", body),
+  // Email verification (consume link; resend for the signed-in user).
+  verifyEmail: (body: { token: string }) =>
+    request<{ ok: boolean; email: string }>("POST", "/auth/verify-email", body),
+  resendVerification: () =>
+    request<{ ok: boolean; emailed?: boolean; already_verified?: boolean; dev_link?: string }>(
+      "POST",
+      "/me/verify-email/resend",
+    ),
   me: () => request<MeResponse>("GET", "/me"),
   orgLocal: (slug: string) => request<OrgLocalResponse>("GET", `/orgs/${slug}/local`),
   listOrgs: () => request<{ items: OrgMembership[] }>("GET", "/orgs"),
@@ -572,6 +602,21 @@ export const api = {
       `/orgs/${slug}/modules/core-authoring/compile`,
       body,
     ),
+  /** Hosted build (Phase 2): the server calls AI itself + auto-repairs.
+   *  Returns a validated, ready-to-apply draft; throws 409 when the workspace
+   *  has no AI (caller falls back to authoringCompile). */
+  authoringBuild: (slug: string, body: { intent: string; selected_kinds?: string[] }) =>
+    request<{
+      draft_id: string;
+      ai: boolean;
+      valid?: boolean;
+      attempts?: number;
+      validation?: BundleValidation;
+      candidate?: unknown;
+      /** The AI's plain-language read of the request + what it built. */
+      interpretation?: string | null;
+      error?: { code: string; message: string };
+    }>("POST", `/orgs/${slug}/modules/core-authoring/build`, body),
   authoringCandidate: (slug: string, draftId: string, manifest: unknown) =>
     request<BundleValidation>(
       "POST",
@@ -924,6 +969,31 @@ export const api = {
     ),
   deleteDigifabConnection: (slug: string, id: string) =>
     request<void>("DELETE", `/orgs/${slug}/modules/digifab/connections/${id}`),
+  // ── core-print (CUPS/IPP printers) ──────────────────────────────
+  listPrinters: (slug: string) =>
+    request<{ items: Printer[] }>("GET", `/orgs/${slug}/modules/core-print/printers`),
+  createPrinter: (slug: string, body: PrinterInput) =>
+    request<Printer>("POST", `/orgs/${slug}/modules/core-print/printers`, body),
+  updatePrinter: (slug: string, id: string, body: Partial<PrinterInput>) =>
+    request<Printer>("PATCH", `/orgs/${slug}/modules/core-print/printers/${id}`, body),
+  deletePrinter: (slug: string, id: string) =>
+    request<void>("DELETE", `/orgs/${slug}/modules/core-print/printers/${id}`),
+  testPrinter: (slug: string, id: string) =>
+    request<{ ok: boolean; error?: string }>(
+      "POST",
+      `/orgs/${slug}/modules/core-print/printers/${id}/test`,
+      {},
+    ),
+  printToPrinter: (
+    slug: string,
+    id: string,
+    body: { file_id?: string; document_base64?: string; content_type?: string; filename?: string; copies?: number; job_name?: string },
+  ) =>
+    request<{ printer_id: string; jobId: string; state: string }>(
+      "POST",
+      `/orgs/${slug}/modules/core-print/printers/${id}/print`,
+      body,
+    ),
   listDigifabDrivers: (slug: string) =>
     request<{ builtins: { key: string; name: string; kind: string }[]; installed: DigifabDriver[] }>(
       "GET",
@@ -2370,6 +2440,29 @@ export interface DigifabConnection {
   updated_at: string;
 }
 
+export interface Printer {
+  id: string;
+  name: string;
+  driver: string;
+  base_url: string;
+  queue: string;
+  is_default: boolean;
+  notes: string | null;
+  has_credentials: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PrinterInput {
+  name: string;
+  driver: string;
+  base_url: string;
+  queue: string;
+  credentials?: { username?: string; password?: string; apiKey?: string };
+  is_default?: boolean;
+  notes?: string;
+}
+
 export interface DigifabDevice {
   id: string;
   name: string;
@@ -2854,6 +2947,8 @@ export interface PlatformBundleManifest {
     choices?: string[];
     /** When type='computed', the {{ }} template rendered read-only. */
     template?: string;
+    /** Built-in display renderer (color-hex swatch, url-link, …). */
+    renderer?: "text" | "color-hex" | "image-url" | "url-link" | "year" | "boolean" | "code";
   }[];
   /** Presentation overrides for a kind's native fields (relabel / hide). */
   field_overrides?: {

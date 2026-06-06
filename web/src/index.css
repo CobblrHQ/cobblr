@@ -85,6 +85,22 @@
 }
 
 @layer components {
+  /* Page subtitle — the descriptive line under a page <h1>. One spot to
+     tune the size/tone for every page. (Count/id chips by a title use a
+     smaller meta style, not this.) */
+  .page-subtitle {
+    @apply text-sm text-muted dark:text-slate-400;
+  }
+  /* Page <h1>/<h2> title. The brand wordmark stays all-lowercase
+     (`lowercase`), but page titles read as proper headings: the body
+     keeps its authored (usually lowercase) casing while the first letter
+     is lifted to a capital — sentence case in one spot. Acronym/brand
+     titles ("API tokens", "BrickLink", "QR codes") set their own casing
+     in the source string; ::first-letter only lifts the leading glyph,
+     and doesn't apply to flex headings (those cap their source too). */
+  .page-title::first-letter {
+    text-transform: uppercase;
+  }
   .input {
     /* dark: fields take the page tone (slate-800) — a step darker
        than the slate-900 card they sit on, so they read as inset. */

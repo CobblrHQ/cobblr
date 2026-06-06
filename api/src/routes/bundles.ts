@@ -441,21 +441,63 @@ export async function validateBundle(
       .execute();
     const selfIds = new Set(selfBundles.map((b) => b.id));
     const conflicts = await meta
-      .selectFrom("module_field_defs")
-      .select(["entity_kind", "name", "bundle_id", "source_module"])
-      .where("org_id", "=", orgId)
+      .selectFrom("module_field_defs as fd")
+      .leftJoin("bundles as b", "b.id", "fd.bundle_id")
+      .select([
+        "fd.entity_kind as entity_kind",
+        "fd.name as name",
+        "fd.bundle_id as bundle_id",
+        "fd.source_module as source_module",
+        "b.name as bundle_name",
+      ])
+      .where("fd.org_id", "=", orgId)
       .where((eb) =>
-        eb.or(m.field_defs.map((f) => eb.and([eb("entity_kind", "=", f.entity_kind), eb("name", "=", f.name)]))),
+        eb.or(m.field_defs.map((f) => eb.and([eb("fd.entity_kind", "=", f.entity_kind), eb("fd.name", "=", f.name)]))),
       )
       .execute();
+    // Group conflicts by the owning bundle/module so the user gets ONE
+    // actionable message per owner ("remove Yarn Stash first") instead of a
+    // wall of one-error-per-field telling them to "choose a different name"
+    // (which they can't, installing a superset like Yarn Studio over Yarn Stash).
+    // `label` is the friendly fragment for the human message ("the “Yarn
+    // Stash” bundle"); `ownerRef` is the stable machine id consumers assert
+    // on (`bundle:<name>` / `module:<name>` / `workspace`). Both are kept —
+    // the grouped message is for the UI, the per-field structured conflicts
+    // are the API contract (see the C.2 collision test).
+    const byOwner = new Map<
+      string,
+      { label: string; ownerRef: string; isBundle: boolean; entries: Array<{ entity_kind: string; name: string }> }
+    >();
     for (const c of conflicts) {
       if (c.bundle_id && selfIds.has(c.bundle_id)) continue;
-      const ownedBy = c.bundle_id ? "another-bundle" : c.source_module ? `module:${c.source_module}` : "user-authored";
+      const key = c.bundle_id ? `b:${c.bundle_id}` : c.source_module ? `m:${c.source_module}` : "user";
+      const label = c.bundle_id
+        ? `the “${c.bundle_name ?? "another"}” bundle`
+        : c.source_module
+          ? `the ${c.source_module} module`
+          : "your workspace";
+      const ownerRef = c.bundle_id
+        ? `bundle:${c.bundle_name ?? "unknown"}`
+        : c.source_module
+          ? `module:${c.source_module}`
+          : "workspace";
+      const e = byOwner.get(key) ?? { label, ownerRef, isBundle: !!c.bundle_id, entries: [] };
+      e.entries.push({ entity_kind: c.entity_kind, name: c.name });
+      byOwner.set(key, e);
+    }
+    for (const { label, ownerRef, isBundle, entries } of byOwner.values()) {
+      const fields = entries.map((x) => x.name);
       errors.push({
         path: "field_defs.name",
         code: "field_def_collision",
-        message: `Field "${c.entity_kind}.${c.name}" already exists in this workspace (${ownedBy.replace("-", " ")}). Choose a different field name.`,
-        detail: { entity_kind: c.entity_kind, field_name: c.name, owned_by: ownedBy },
+        message: isBundle
+          ? `These fields already exist from ${label}: ${fields.join(", ")}. Remove that bundle first (Bundles → installed → Remove), then install this one.`
+          : `These fields already exist from ${label}: ${fields.join(", ")}. Rename them here or remove the existing ones first.`,
+        detail: {
+          owned_by: ownerRef,
+          fields,
+          conflicts: entries.map((x) => ({ entity_kind: x.entity_kind, field_name: x.name, owned_by: ownerRef })),
+        },
       });
     }
   }
@@ -791,7 +833,11 @@ bundlesRouter.post(
             error: {
               code: "field_def_collision",
               message: collisions.map((e) => e.message).join(" "),
-              details: { conflicts: collisions.map((e) => e.detail) },
+              details: {
+                conflicts: collisions.flatMap(
+                  (e) => (e.detail as { conflicts?: Array<{ entity_kind: string; field_name: string; owned_by: string }> }).conflicts ?? [],
+                ),
+              },
             },
           });
           return;

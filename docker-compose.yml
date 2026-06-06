@@ -84,6 +84,23 @@ services:
       # loopback (the e2e webhook mock runs on the host). MUST stay unset
       # in production — the webhook SSRF guard relies on it being off.
       COBBLR_WEBHOOK_ALLOW_INTERNAL: ${COBBLR_WEBHOOK_ALLOW_INTERNAL:-1}
+      # Auth email (BYO, optional) — magic-link + signup-invite delivery. Pick
+      # ONE provider via COBBLR_AUTH_EMAIL_PROVIDER (default smtp); unset = no
+      # sender (dev-link / copy-link fallback). See auth-email-config.ts +
+      # docs/operations/PRODUCTION_DEPLOY.md. (Cloud uses the overlay's managed
+      # sender instead.) Empty-string is treated as unset (CLAUDE.md §14.6).
+      COBBLR_AUTH_EMAIL_PROVIDER: ${COBBLR_AUTH_EMAIL_PROVIDER:-}
+      COBBLR_AUTH_EMAIL_FROM: ${COBBLR_AUTH_EMAIL_FROM:-}
+      COBBLR_AUTH_SMTP_HOST: ${COBBLR_AUTH_SMTP_HOST:-}
+      COBBLR_AUTH_SMTP_PORT: ${COBBLR_AUTH_SMTP_PORT:-}
+      COBBLR_AUTH_SMTP_USER: ${COBBLR_AUTH_SMTP_USER:-}
+      COBBLR_AUTH_SMTP_PASS: ${COBBLR_AUTH_SMTP_PASS:-}
+      COBBLR_AUTH_SMTP_SECURE: ${COBBLR_AUTH_SMTP_SECURE:-}
+      COBBLR_AUTH_MAILGUN_API_KEY: ${COBBLR_AUTH_MAILGUN_API_KEY:-}
+      COBBLR_AUTH_MAILGUN_DOMAIN: ${COBBLR_AUTH_MAILGUN_DOMAIN:-}
+      COBBLR_AUTH_MAILGUN_EU: ${COBBLR_AUTH_MAILGUN_EU:-}
+      COBBLR_AUTH_RESEND_API_KEY: ${COBBLR_AUTH_RESEND_API_KEY:-}
+      COBBLR_AUTH_POSTMARK_TOKEN: ${COBBLR_AUTH_POSTMARK_TOKEN:-}
     depends_on:
       db:
         condition: service_healthy

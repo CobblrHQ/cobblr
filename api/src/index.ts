@@ -31,6 +31,8 @@ import * as activity from "./platform/activity.js";
 import * as actions from "./platform/actions.js";
 import * as entities from "./platform/entities.js";
 import * as files from "./platform/files.js";
+import * as hostedSeams from "./platform/hosted-seams.js";
+import { registerConfiguredAuthEmailSender } from "./platform/auth-email-config.js";
 import * as events from "./platform/events.js";
 import * as templates from "./platform/templates.js";
 import * as wires from "./platform/wires.js";
@@ -198,9 +200,26 @@ async function boot() {
     files: {
       registerReader: files.registerReader,
       read: files.read,
+      registerDriver: files.registerDriver,
+      getDriver: files.getDriver,
     },
     instances: {
       registerItemCounter: instancesImpl.registerItemCounter,
+    },
+    // Hosted-overlay extension seams — no-op / allow-all in open core.
+    entitlements: {
+      registerGuard: hostedSeams.registerEntitlementGuard,
+      check: hostedSeams.checkEntitlement,
+    },
+    metering: {
+      registerSink: hostedSeams.registerMeterSink,
+      record: hostedSeams.meter,
+    },
+    accounts: {
+      registerLifecycleHooks: hostedSeams.registerLifecycleHooks,
+    },
+    http: {
+      registerRequestGuard: hostedSeams.registerRequestGuard,
     },
     auth: {
       // Capability check walks three sources in order:
@@ -233,6 +252,9 @@ async function boot() {
         return !!viaRole;
       },
       mintAppToken: ({ userId, appSlug }) => signAppToken(userId, appSlug),
+      registerEmailSender: hostedSeams.registerAuthEmailSender,
+      hasEmailSender: hostedSeams.hasAuthEmailSender,
+      sendEmail: hostedSeams.sendAuthEmail,
     },
     // B1 from 2026-05-25-audit.md: pairings + catalogs platform
     // surfaces so modules stop SELECTing each other's tables.
@@ -421,6 +443,11 @@ async function boot() {
       },
     },
   });
+
+  // Self-hoster BYO auth-email sender (env-configured SMTP / Mailgun / Resend /
+  // Postmark). Registered BEFORE module load so the cloud overlay's managed
+  // sender, registered in its onBoot, wins via last-registration when present.
+  registerConfiguredAuthEmailSender();
 
   await loadAllModules();
   // Marketplace v0.3 PoC: register sandboxed wasm modules alongside

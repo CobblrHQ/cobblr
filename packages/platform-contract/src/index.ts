@@ -1546,6 +1546,17 @@ export interface PlatformAuth {
     userId: string;
     appSlug: string;
   }): Promise<{ token: string; expires_in: number }>;
+  /** Register the platform-level auth-email sender (verify / reset / magic
+   *  link). A self-hoster wires their own; the overlay injects a managed
+   *  sender. Open core registers none — magic-link falls back to the inline
+   *  dev link, reset to admin-managed. Last registration wins. */
+  registerEmailSender(sender: AuthEmailSender): void;
+  /** True if an auth-email sender is registered (so the auth routes know
+   *  whether real delivery is available vs. the dev-link fallback). */
+  hasEmailSender(): boolean;
+  /** Deliver an auth email through the registered sender. No-op (returns
+   *  false) if none is registered. */
+  sendEmail(msg: AuthEmailMessage): Promise<boolean>;
 }
 
 /** Reads + writes against entity_pairings, the polymorphic
@@ -1703,6 +1714,11 @@ export interface PlatformFiles {
     fileId: string,
     variant?: FileVariant,
   ): Promise<FileBytes | null>;
+  /** Override the blob-storage driver (the overlay injects S3/R2). If none is
+   *  registered, core-files uses its built-in local-disk driver. */
+  registerDriver(driver: FilesDriver): void;
+  /** The registered driver, or null → core-files falls back to local disk. */
+  getDriver(): FilesDriver | null;
 }
 
 /** Multi-instance support hooks. A multi-instance module (inventory, assets,
@@ -1716,6 +1732,88 @@ export interface PlatformInstances {
     counter: (orgId: string, instanceName: string) => Promise<number>,
   ): void;
 }
+
+// ─────────────────────── Hosted-overlay extension seams ─────────────────────
+// Open core registers NONE of these → a self-hosted instance runs free and
+// unrestricted. The proprietary cloud overlay registers implementations at boot
+// (plan gating, usage metering, lifecycle/verification, abuse rate-limiting,
+// object storage). See cloud/docs/cloud-offering-roadmap.md.
+
+export interface EntitlementCtx {
+  orgId: string;
+  /** Dotted feature key, e.g. "workspaces.create", "members.add",
+   *  "modules.enable", "sandbox.install", "files.store". */
+  feature: string;
+  /** Units requested (default 1) — e.g. bytes for files.store. */
+  quantity?: number;
+  userId?: string;
+}
+export type EntitlementGuard = (
+  ctx: EntitlementCtx,
+) => Promise<{ allow: boolean; reason?: string }>;
+export interface PlatformEntitlements {
+  /** Hosted overlay registers the plan guard (last wins). */
+  registerGuard(g: EntitlementGuard): void;
+  /** Core / modules ask whether a plan-limited action is allowed. No guard
+   *  registered → always allowed; a guard that throws fails open. */
+  check(ctx: EntitlementCtx): Promise<{ allow: boolean; reason?: string }>;
+}
+
+export interface MeterEvent {
+  orgId?: string;
+  /** e.g. "ai.tokens", "files.bytes_stored", "members.added". */
+  kind: string;
+  quantity: number;
+  meta?: Record<string, unknown>;
+}
+export type MeterSink = (e: MeterEvent) => void;
+export interface PlatformMetering {
+  registerSink(s: MeterSink): void;
+  /** Emit a billable/observable event. No sink → dropped. Never throws. */
+  record(e: MeterEvent): void;
+}
+
+export interface SignupLifecycleCtx { userId: string; email: string; orgId: string }
+export interface AccountDeleteCtx { userId: string; email: string }
+export interface LifecycleHooks {
+  onSignup?: (ctx: SignupLifecycleCtx) => Promise<void> | void;
+  onAccountDelete?: (ctx: AccountDeleteCtx) => Promise<void> | void;
+}
+export interface PlatformAccounts {
+  registerLifecycleHooks(h: LifecycleHooks): void;
+}
+
+export interface RequestGuardCtx { ip: string; path: string; method: string; userId?: string }
+export type RequestGuard = (
+  ctx: RequestGuardCtx,
+) => Promise<{ allow: boolean; retryAfterSec?: number; reason?: string }>;
+export interface PlatformHttp {
+  /** Hosted overlay registers a request guard (rate-limit / abuse). */
+  registerRequestGuard(g: RequestGuard): void;
+}
+
+/** Blob persistence driver. core-files ships + falls back to a local-disk
+ *  driver; the overlay registers an S3/R2 driver via platform().files. */
+export interface FilesDriver {
+  put(orgId: string, fileId: string, relPath: string, bytes: Uint8Array): Promise<void>;
+  getBytes(orgId: string, fileId: string, relPath: string): Promise<Uint8Array | null>;
+  remove(orgId: string, fileId: string): Promise<void>;
+  /** Local drivers return an absolute path (Express sendFile fast path);
+   *  remote drivers return null and the route streams getBytes. */
+  localPath(orgId: string, fileId: string, relPath: string): string | null;
+}
+
+/** Platform-level (pre-workspace) auth email — verification, password reset,
+ *  magic-link delivery. Open core registers no sender (dev returns the link
+ *  inline; admin-reset is the fallback). A self-hoster OR the overlay registers
+ *  one. */
+export interface AuthEmailMessage {
+  to: string;
+  subject: string;
+  text: string;
+  kind: "magic_link" | "verify_email" | "password_reset" | "invite";
+}
+export type AuthEmailSender = (msg: AuthEmailMessage) => Promise<void>;
 
 export interface Platform {
   activity: PlatformActivity;
@@ -1738,6 +1836,11 @@ export interface Platform {
   catalogs: PlatformCatalogs;
   files: PlatformFiles;
   instances: PlatformInstances;
+  // Hosted-overlay seams (no-op / allow-all in open core):
+  entitlements: PlatformEntitlements;
+  metering: PlatformMetering;
+  accounts: PlatformAccounts;
+  http: PlatformHttp;
 }
 
 let _platform: Platform | null = null;

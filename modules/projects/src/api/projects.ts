@@ -185,3 +185,62 @@ projectsRouter.delete(
     res.status(204).end();
   }),
 );
+
+// ── AI: extract materials from a pattern (Phase 3) ─────────────────────
+// Reads pasted pattern text and returns the yarn + hooks it calls for, via
+// core-ai (capability: chat). Degrades to { ai: false } when no provider is
+// configured, so the UI can prompt the user instead of erroring.
+const ExtractBody = z.object({ text: z.string().min(1).max(20_000) });
+
+projectsRouter.post(
+  "/:id/extract-pattern",
+  asyncHandler(async (req, res) => {
+    const parsed = ExtractBody.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const ctx = tenantContext(req);
+    const system =
+      "You read a crochet/knitting pattern and extract ONLY the materials it " +
+      "calls for. Reply with ONLY a JSON object, no prose:\n" +
+      '{"yarn":[{"fiber":<string|null>,"weight":<string|null, e.g. "Worsted",' +
+      '"DK","Aran">,"color":<string|null>,"length_m":<number|null total metres>,' +
+      '"skeins":<number|null>}],"hooks":[{"gauge":<string, e.g. "4.0 mm">}]}\n' +
+      "Use null when the pattern doesn't state something. If it lists no yarn or " +
+      "no hooks, use an empty array. Convert yards to metres (×0.9144).";
+    try {
+      const r = await platform().ai.invoke({
+        orgId: ctx.org.id,
+        capability: "chat",
+        input: {
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: parsed.data.text.slice(0, 20_000) },
+          ],
+        },
+        source: { kind: "projects:pattern-extract", id: req.params.id ?? "" },
+      });
+      const content = (r.result as { content?: string })?.content ?? "";
+      const m = content.match(/\{[\s\S]*\}/);
+      const obj = m ? (JSON.parse(m[0]) as Record<string, unknown>) : null;
+      if (!obj) {
+        res.json({ ai: false, reason: "Couldn't read that pattern — try pasting more of it.", yarn: [], hooks: [] });
+        return;
+      }
+      res.json({
+        ai: true,
+        yarn: Array.isArray(obj.yarn) ? obj.yarn : [],
+        hooks: Array.isArray(obj.hooks) ? obj.hooks : [],
+      });
+    } catch (e) {
+      // No provider / over budget / provider error → graceful degrade.
+      res.json({
+        ai: false,
+        reason:
+          e instanceof Error && /provider|capability|budget/i.test(e.message)
+            ? "No AI provider is set up for this workspace yet (Configuration → AI)."
+            : "AI is unavailable right now.",
+        yarn: [],
+        hooks: [],
+      });
+    }
+  }),
+);

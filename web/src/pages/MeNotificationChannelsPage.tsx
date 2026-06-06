@@ -37,9 +37,16 @@ const CHANNEL_OPTIONS: Array<{
   fields: Array<{
     key: string;
     label: string;
-    type?: "text" | "password" | "number" | "url";
+    type?: "text" | "password" | "number" | "url" | "select" | "checkbox";
     placeholder?: string;
     helpText?: string;
+    /** For type:"select". */
+    options?: Array<{ value: string; label: string }>;
+    /** Default value (used by select; also the assumed value when deciding
+     *  showIf visibility before the user touches the field). */
+    default?: string;
+    /** Only show this field when another field's value is one of these. */
+    showIf?: { key: string; in: string[] };
   }>;
 }> = [
   {
@@ -95,15 +102,36 @@ const CHANNEL_OPTIONS: Array<{
   },
   {
     channel: "email",
-    label: "Email (SMTP)",
-    hint: "You provide the SMTP creds — Cobblr doesn't host an outbound mail server.",
+    label: "Email",
+    hint: "Bring your own delivery — pick a provider and paste its creds. Cobblr doesn't host an outbound mail server.",
     fields: [
-      { key: "smtp_host", label: "SMTP host", placeholder: "smtp.fastmail.com" },
-      { key: "smtp_port", label: "Port", type: "number", placeholder: "465" },
-      { key: "smtp_user", label: "Username", placeholder: "you@example.com" },
-      { key: "smtp_pass", label: "Password (app password)", type: "password" },
+      {
+        key: "provider",
+        label: "Provider",
+        type: "select",
+        default: "smtp",
+        options: [
+          { value: "smtp", label: "SMTP (Gmail, Fastmail, SES SMTP, …)" },
+          { value: "mailgun", label: "Mailgun (HTTP API)" },
+          { value: "resend", label: "Resend (HTTP API)" },
+          { value: "postmark", label: "Postmark (HTTP API)" },
+        ],
+      },
       { key: "from", label: "From", placeholder: "cobblr@example.com" },
       { key: "to", label: "Send to", placeholder: "you@example.com" },
+      // SMTP
+      { key: "smtp_host", label: "SMTP host", placeholder: "smtp.gmail.com", showIf: { key: "provider", in: ["smtp"] } },
+      { key: "smtp_port", label: "Port", type: "number", placeholder: "465", helpText: "465 = TLS, 587 = STARTTLS", showIf: { key: "provider", in: ["smtp"] } },
+      { key: "smtp_user", label: "Username", placeholder: "you@example.com", showIf: { key: "provider", in: ["smtp"] } },
+      { key: "smtp_pass", label: "Password / app password", type: "password", helpText: "Gmail: an App Password (needs 2FA), not your account password. Free Gmail caps ~500/day.", showIf: { key: "provider", in: ["smtp"] } },
+      // Mailgun
+      { key: "mailgun_api_key", label: "Mailgun API key", type: "password", showIf: { key: "provider", in: ["mailgun"] } },
+      { key: "mailgun_domain", label: "Mailgun domain", placeholder: "mg.example.com", showIf: { key: "provider", in: ["mailgun"] } },
+      { key: "mailgun_eu", label: "EU region", type: "checkbox", helpText: "Tick if your Mailgun account is in the EU region.", showIf: { key: "provider", in: ["mailgun"] } },
+      // Resend
+      { key: "resend_api_key", label: "Resend API key", type: "password", placeholder: "re_…", showIf: { key: "provider", in: ["resend"] } },
+      // Postmark
+      { key: "postmark_token", label: "Postmark server token", type: "password", showIf: { key: "provider", in: ["postmark"] } },
     ],
   },
   {
@@ -130,7 +158,7 @@ export function MeNotificationChannelsPage() {
     <div className="space-y-5 max-w-3xl">
       <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
         <Bell size={20} className="text-accent" />
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
           notification channels
         </h1>
       </div>
@@ -388,6 +416,21 @@ function PriorityBadge({ priority }: { priority: NotificationPriority }) {
   );
 }
 
+type ChannelDef = (typeof CHANNEL_OPTIONS)[number];
+type FieldDef = ChannelDef["fields"][number];
+
+/** A field's effective value: what the user typed, else its default. */
+function depValue(def: ChannelDef, config: Record<string, string>, key: string): string {
+  return config[key] ?? def.fields.find((x) => x.key === key)?.default ?? "";
+}
+
+/** Fields to show given the current config (resolves showIf against defaults). */
+function visibleFields(def: ChannelDef, config: Record<string, string>): FieldDef[] {
+  return def.fields.filter(
+    (f) => !f.showIf || f.showIf.in.includes(depValue(def, config, f.showIf.key)),
+  );
+}
+
 function summarizeConfig(config: Record<string, unknown> | null): string {
   if (!config) return "—";
   const keys = Object.keys(config);
@@ -426,8 +469,15 @@ function AddBindingModal({
       // "465" would fail smtp_port (z.number().int()) — coerce on
       // the way out.
       const finalConfig: Record<string, unknown> = {};
-      for (const f of channelDef.fields) {
-        const raw = config[f.key];
+      // Only persist fields visible for the chosen provider, so switching
+      // provider doesn't leak stale creds from another one.
+      for (const f of visibleFields(channelDef, config)) {
+        if (f.type === "checkbox") {
+          if (config[f.key] === "true") finalConfig[f.key] = true;
+          continue;
+        }
+        let raw = config[f.key];
+        if ((raw === undefined || raw === "") && f.default !== undefined) raw = f.default;
         if (raw === undefined || raw === "") continue;
         finalConfig[f.key] = f.type === "number" ? Number(raw) : raw;
       }
@@ -506,7 +556,7 @@ function AddBindingModal({
           </Field>
         </div>
 
-        <div className="text-[11px] text-muted dark:text-slate-400 italic">
+        <div className="text-xs text-muted dark:text-slate-400 italic">
           {channelDef.hint}
         </div>
 
@@ -516,17 +566,40 @@ function AddBindingModal({
               // {channelDef.label.toLowerCase()} config
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {channelDef.fields.map((f) => (
+              {visibleFields(channelDef, config).map((f) => (
                 <Field key={f.key} label={f.label}>
-                  <input
-                    className="input"
-                    type={f.type ?? "text"}
-                    value={config[f.key] ?? ""}
-                    onChange={(e) =>
-                      setConfig((p) => ({ ...p, [f.key]: e.target.value }))
-                    }
-                    placeholder={f.placeholder}
-                  />
+                  {f.type === "select" ? (
+                    <select
+                      className="input"
+                      value={config[f.key] ?? f.default ?? ""}
+                      onChange={(e) => setConfig((p) => ({ ...p, [f.key]: e.target.value }))}
+                    >
+                      {f.options?.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                  ) : f.type === "checkbox" ? (
+                    <label className="flex items-center gap-2 text-xs h-9">
+                      <input
+                        type="checkbox"
+                        checked={config[f.key] === "true"}
+                        onChange={(e) =>
+                          setConfig((p) => ({ ...p, [f.key]: e.target.checked ? "true" : "" }))
+                        }
+                      />
+                      <span>{config[f.key] === "true" ? "yes" : "no"}</span>
+                    </label>
+                  ) : (
+                    <input
+                      className="input"
+                      type={f.type ?? "text"}
+                      value={config[f.key] ?? ""}
+                      onChange={(e) => setConfig((p) => ({ ...p, [f.key]: e.target.value }))}
+                      placeholder={f.placeholder}
+                    />
+                  )}
                   {f.helpText && (
                     <div className="text-[10px] text-faint mt-0.5">
                       {f.helpText}

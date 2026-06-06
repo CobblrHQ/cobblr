@@ -17,6 +17,7 @@ import { randomBytes } from "node:crypto";
 import { requireAuth, requirePlatformAdmin } from "../auth/middleware.js";
 import { meta } from "../db/meta.js";
 import { getCpuStats, getInvocationStats } from "../sandbox/pool.js";
+import { hasAuthEmailSender, sendAuthEmail } from "../platform/hosted-seams.js";
 
 export const superAdminRouter = Router();
 
@@ -429,7 +430,28 @@ superAdminRouter.post("/signup-invites", async (req, res, next) => {
       })
       .returning(["id", "token", "invited_email", "note", "expires_at", "created_at"])
       .executeTakeFirstOrThrow();
-    res.status(201).json({ ...row, status: "open" });
+
+    // If the invite carries an email and a sender is registered (the cloud
+    // overlay's managed sender, or a self-hoster's SMTP), email the join link
+    // straight to the invitee. Otherwise the caller copies the link by hand.
+    let emailed = false;
+    if (row.invited_email && hasAuthEmailSender()) {
+      const link = `${req.protocol}://${req.get("host") ?? ""}/join/${row.token}`;
+      const expiryLine = row.expires_at
+        ? `\n\nThis invite expires ${new Date(row.expires_at).toUTCString()}.`
+        : "";
+      emailed = await sendAuthEmail({
+        to: row.invited_email,
+        subject: "You're invited to Cobblr",
+        text:
+          `You've been invited to create your Cobblr workspace.\n\n` +
+          `Open this link to get started:\n${link}` +
+          expiryLine +
+          `\n\nIf you weren't expecting this, you can ignore this email.`,
+        kind: "invite",
+      });
+    }
+    res.status(201).json({ ...row, status: "open", emailed });
   } catch (err) {
     next(err);
   }

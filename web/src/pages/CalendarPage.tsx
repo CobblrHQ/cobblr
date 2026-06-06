@@ -66,8 +66,8 @@ export function CalendarPage() {
   return (
     <div className="space-y-4 max-w-5xl">
       <div className="flex flex-wrap items-center gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase flex items-center gap-2">
-          <CalendarDays size={22} className="text-accent" /> calendar
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title flex items-center gap-2">
+          <CalendarDays size={22} className="text-accent" /> Calendar
         </h1>
         <div className="flex items-center gap-1">
           <button onClick={() => setCursor((c) => shiftMonth(c, -1))} className="p-1.5 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 transition" title="Previous month">

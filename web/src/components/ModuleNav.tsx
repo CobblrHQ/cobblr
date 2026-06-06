@@ -160,7 +160,7 @@ function ModuleTopLink({ name, label }: { name: string; label: string }) {
           : "text-muted dark:text-slate-400 hover:text-accent")
       }
     >
-      {label.toLowerCase()}
+      {label}
     </NavLink>
   );
 }
@@ -283,11 +283,11 @@ function MoreMenu({
                       onClick={() => setOpen(false)}
                       className="block px-3 py-2 text-sm text-content dark:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 transition"
                     >
-                      {top.displayName.toLowerCase()}
+                      {top.displayName}
                     </NavLink>
                   ) : (
                     <div className="px-3 py-2 text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
-                      {top.displayName.toLowerCase()}
+                      {top.displayName}
                     </div>
                   )}
                   {kids.length > 0 && (
@@ -425,7 +425,7 @@ function ModuleGroupChip({
           onClick={() => setOpen((o) => !o)}
           className="pl-2 pr-1 py-1 rounded-l transition text-sm whitespace-nowrap text-muted dark:text-slate-400 hover:text-accent"
         >
-          {parent.displayName.toLowerCase()}
+          {parent.displayName}
         </button>
       ) : (
         <NavLink
@@ -437,7 +437,7 @@ function ModuleGroupChip({
               : "text-muted dark:text-slate-400 hover:text-accent")
           }
         >
-          {parent.displayName.toLowerCase()}
+          {parent.displayName}
         </NavLink>
       )}
       <button

@@ -19,8 +19,8 @@
 
 import { Fragment, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Eye, EyeOff, GripVertical, LayoutList, Maximize2, Minimize2, Sliders, Sparkles } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Eye, EyeOff, GripVertical, LayoutList, Maximize2, Minimize2, Plus, Sliders, Sparkles } from "lucide-react";
 import { EntityThumb,
   EntityTile,
   ViewModeToggle,
@@ -33,6 +33,7 @@ import { EntityThumb,
 import "../dashboard/builtinWidgets";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useAuth } from "../auth/AuthContext";
+import { displaySlug } from "../lib/workspaceSlug";
 import {
   api,
   getToken,
@@ -77,15 +78,47 @@ export function Dashboard() {
         userName={user?.display_name ?? user?.email ?? ""}
       />
 
-      <CrossWorkspaceStrip />
-
-      <GettingStartedPanel slug={activeSlug} enabled={enabled} />
+      <GettingStartedPanel
+        slug={activeSlug}
+        enabled={enabled}
+        modules={modulesQ.data?.items ?? []}
+      />
 
       {/* The arrangeable body — at-a-glance tiles + pinned views + recent
           activity, reorderable/hideable per workspace via one Arrange mode. */}
       <ArrangeableBody slug={activeSlug} enabled={enabled} role={activeOrg.role} />
     </div>
   );
+}
+
+// Suggestion = a user-facing module a brand-new workspace can be nudged to
+// turn on. Derived data-drivenly from the workspace's module catalog (no
+// hardcoded list): the `stock` band is Cobblr's shipped first-party domains
+// (assets / inventory / projects / …), which excludes `core-*` plumbing,
+// marketplace connectors, and `user`-band samples — exactly the set that
+// would earn a nav entry. Copy comes from each module's own displayName +
+// description, so new modules appear automatically and never drift.
+type Suggestion = { name: string; to: string; label: string; description: string };
+// Plain-language, outcome-first card copy for the common domains — module
+// `description`s are written for builders ("polymorphic allocations") and read
+// poorly on a first-run card. Anything not in this map falls back to the
+// module's own description, so new/3rd-party modules still appear automatically.
+const SUGGESTION_COPY: Record<string, string> = {
+  inventory: "Track parts & supplies you keep on hand — quantities, locations, low-stock alerts.",
+  assets: "Track things you own and look after — tools, gear, plants, collectibles.",
+  machines: "Catalog your machines — printers, tools, equipment — with photos and state.",
+  projects: "Plan projects & tasks, including ones that wait on parts or other work.",
+  lists: "Keep simple checklists — shopping, packing, to-dos.",
+  tracking: "Log a number over time toward a goal and watch the trend.",
+  purchases: "Record orders and what they cost, and roll the spend up.",
+  labels: "Print QR / labels for anything in your workspace.",
+  digifab: "Send design files to the software that runs your machine.",
+};
+// Card blurbs read better as one line — take the module description's first
+// sentence (full descriptions can be a paragraph of detail).
+function firstSentence(s: string): string {
+  const m = s.match(/^.*?[.!?](\s|$)/);
+  return (m ? m[0] : s).trim();
 }
 
 // Empty-state onboarding. Shows when the active workspace has no
@@ -95,10 +128,29 @@ export function Dashboard() {
 function GettingStartedPanel({
   slug,
   enabled,
+  modules,
 }: {
   slug: string;
   enabled: Set<string>;
+  modules: OrgModuleListItem[];
 }) {
+  const qc = useQueryClient();
+  const navigate = useNavigate();
+  const toast = useToast();
+  // Turn on a not-yet-enabled module straight from a suggestion card and
+  // drop the user into it — no detour through Configuration.
+  const enableMut = useMutation({
+    mutationFn: (s: Suggestion) => api.enableModule(slug, s.name),
+    onSuccess: async (_r, s) => {
+      await qc.invalidateQueries({ queryKey: ["org-modules", slug] });
+      navigate(s.to);
+    },
+    onError: (e) =>
+      toast.error(
+        e instanceof Error ? e.message : "Couldn't enable that — open Configuration.",
+      ),
+  });
+
   // One cheap probe per enabled module: any items at all?
   const probe = useQuery({
     queryKey: ["dash-getting-started", slug, Array.from(enabled).sort().join(",")],
@@ -125,9 +177,13 @@ function GettingStartedPanel({
     staleTime: 60_000,
   });
 
-  // Don't render until we know whether the workspace is empty. Once
-  // any entity exists, hide forever for this session.
-  if (probe.data === undefined || probe.data > 0) return null;
+  // Render once we know the workspace is empty. A brand-new workspace
+  // with NO modules enabled (enabled.size === 0) leaves the probe
+  // disabled → data undefined; treat that as "empty" too so the panel
+  // still greets a truly blank install. Hide the moment any module
+  // gains its first entity.
+  if (enabled.size > 0 && probe.data === undefined) return null; // still probing
+  if ((probe.data ?? 0) > 0) return null; // has content already
 
   // Determine the most relevant "first thing to do" based on which
   // user-facing modules are enabled.
@@ -136,27 +192,42 @@ function GettingStartedPanel({
     firstActions.push({
       to: "/inventory",
       label: "Add a part",
-      description: "Track inventory — sets, parts, supplies. Bulk import via CSV.",
+      description:
+        "Countable stock you keep on hand — components, materials, consumables — with quantities and low-stock alerts. Bulk-import via CSV.",
     });
   if (enabled.has("machines"))
     firstActions.push({
       to: "/machines",
       label: "Add a machine",
-      description: "Catalog tools, printers, equipment with photos + state.",
+      description: "Catalog your tools, printers, and equipment with photos + state.",
     });
   if (enabled.has("assets"))
     firstActions.push({
       to: "/assets",
       label: "Add an asset",
       description:
-        "Plants, collectibles, anything you want to track over time. Watering RRULEs work out of the box.",
+        "Something you own and look after over time — a tool, plant, or collectible — with photos, notes, and recurring care reminders.",
     });
   if (enabled.has("projects"))
     firstActions.push({
       to: "/projects",
       label: "Start a project",
-      description: "Group tasks + cross-module dependencies under one heading.",
+      description: "Group tasks and cross-module dependencies under one heading.",
     });
+
+  // Greyed-out "turn this on" cards for the curated domain modules that
+  // are available in this workspace's catalog but not yet enabled.
+  const suggestions: Suggestion[] = modules
+    .filter(
+      (m) => !m.enabled && m.band === "stock" && !m.name.startsWith("core-"),
+    )
+    .map((m) => ({
+      name: m.name,
+      to: `/${m.name}`,
+      label: m.displayName,
+      description: SUGGESTION_COPY[m.name] ?? firstSentence(m.description),
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
 
   return (
     <section className="rounded-xl border-2 border-dashed border-cobble-300 dark:border-cobble-700 bg-cobble-50/30 dark:bg-cobble-900/10 p-5 space-y-3">
@@ -168,8 +239,8 @@ function GettingStartedPanel({
       </div>
       <p className="text-sm text-content dark:text-mortar-200">
         {firstActions.length > 0
-          ? "Pick a first thing to add, or install a starter bundle from the marketplace."
-          : "Nothing's installed yet — that's by design. Install a starter bundle from the marketplace, or switch on just the modules you want from Configuration. Cobblr only shows what you turn on."}
+          ? "Pick a first thing to add below, or install a ready-made starter pack from the marketplace."
+          : "Cobblr starts empty and shows only what you switch on. Turn on a module below to get going, or install a ready-made starter pack — build exactly the workspace you need, nothing you don't."}
       </p>
       <div className="grid gap-2 sm:grid-cols-2">
         {firstActions.map((a) => (
@@ -195,7 +266,7 @@ function GettingStartedPanel({
           </div>
           <div className="text-xs text-muted dark:text-slate-400 mt-0.5">
             One-click install of a starter pack — Lego, Garden, Tool
-            Library, Bookshelf, more. Pre-built field defs + wires.
+            Library, Bookshelf, and more. Comes wired up and ready to use.
           </div>
         </Link>
         <Link
@@ -211,59 +282,39 @@ function GettingStartedPanel({
           </div>
         </Link>
       </div>
-    </section>
-  );
-}
 
-// Cross-workspace summary strip — what's going on across EVERY
-// workspace the user belongs to, even ones they're not currently
-// looking at. Renders nothing when there's nothing to show, so a
-// quiet account stays quiet.
-function CrossWorkspaceStrip() {
-  const { orgs } = useAuth();
-  // Shared key with the NotificationsBell so React Query de-dupes
-  // the call (was ["dash-cross-unread"] — separate from the bell's
-  // ["me-notifications-unread"] — so the same endpoint was fetched
-  // twice on every dashboard mount).
-  const unread = useQuery({
-    queryKey: ["me-notifications-unread"],
-    queryFn: () => api.meNotificationsUnreadCount(),
-    refetchInterval: 30_000,
-  });
-  const links = useQuery({
-    queryKey: ["dash-cross-links"],
-    queryFn: () => api.listWorkspaceLinks(),
-    staleTime: 60_000,
-  });
-  const unreadCount = unread.data?.count ?? 0;
-  const pending = (links.data?.items ?? []).filter((l) => l.status === "pending");
-  if (orgs.length <= 1 && unreadCount === 0 && pending.length === 0) return null;
-
-  return (
-    <section className="flex items-center gap-3 flex-wrap text-sm">
-      <span className="text-[10px] font-mono uppercase tracking-widest text-accent">
-        // across all workspaces
-      </span>
-      {orgs.length > 1 && (
-        <span className="text-content dark:text-mortar-200">
-          {orgs.length} workspaces
-        </span>
-      )}
-      {unreadCount > 0 && (
-        <Link
-          to="/me/notifications"
-          className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded border border-ember-200 dark:border-ember-700 text-ember-700 dark:text-ember-300 hover:bg-ember-50 dark:hover:bg-ember-900/20 text-xs transition"
-        >
-          {unreadCount} unread notification{unreadCount === 1 ? "" : "s"}
-        </Link>
-      )}
-      {pending.length > 0 && (
-        <Link
-          to="/configuration/links"
-          className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded border border-cobble-200 dark:border-cobble-700 text-accent dark:text-cobble-300 hover:bg-cobble-50 dark:hover:bg-cobble-900/20 text-xs transition"
-        >
-          {pending.length} pending link{pending.length === 1 ? "" : "s"}
-        </Link>
+      {/* Greyed-out suggestions — so a new user discovers what Cobblr can
+          track without first digging into Configuration. One tap turns
+          the module on and drops them straight into it. */}
+      {suggestions.length > 0 && (
+        <div className="pt-1 space-y-2">
+          <p className="text-[10px] font-mono uppercase tracking-widest text-accent">
+            // or turn one on to get started
+          </p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {suggestions.map((s) => {
+              const busy =
+                enableMut.isPending && enableMut.variables?.name === s.name;
+              return (
+                <button
+                  key={s.name}
+                  type="button"
+                  disabled={enableMut.isPending}
+                  onClick={() => enableMut.mutate(s)}
+                  className="text-left rounded-lg border border-dashed border-line dark:border-slate-700 bg-surface/40 dark:bg-slate-900/40 p-3 opacity-70 hover:opacity-100 hover:border-accent disabled:cursor-wait transition"
+                >
+                  <div className="flex items-center gap-1.5 text-sm font-medium text-content dark:text-mortar-100">
+                    <Plus size={13} className="text-accent shrink-0" />
+                    {busy ? "Enabling…" : `Enable ${s.label}`}
+                  </div>
+                  <div className="text-xs text-muted dark:text-slate-400 mt-0.5">
+                    {s.description}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
       )}
     </section>
   );
@@ -285,19 +336,29 @@ function WorkspaceHeader({
   return (
     <header className="rounded-xl border border-line dark:border-slate-700 bg-gradient-to-br from-cobble-50/40 to-white dark:from-slate-900 dark:to-slate-900/40 p-5">
       <div className="flex items-baseline gap-3 flex-wrap">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase tracking-tight">
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title tracking-tight">
           {orgName}
         </h1>
         <span className="text-xs font-mono text-faint dark:text-slate-500">
-          {slug}
+          {displaySlug(slug)}
         </span>
         <span className="px-1.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider bg-cobble-100 dark:bg-cobble-900/30 text-accent dark:text-cobble-300">
           {role}
         </span>
         <div className="flex-1" />
-        <span className="text-xs text-muted dark:text-slate-400">
-          welcome back, {userName.split(" ")[0]}
-        </span>
+        {/* Always-available "grow your workspace" path — the empty-state Enable
+            cards vanish once you have data, so this is how you keep adding
+            modules / starter packs without hunting in the account menu. */}
+        <Link
+          to="/configuration"
+          className="inline-flex items-center gap-1.5 text-xs text-accent hover:text-content dark:hover:text-mortar-100 transition shrink-0"
+          title="Turn on modules, install a starter pack, customize this workspace"
+        >
+          <Sliders size={13} /> Set up workspace
+        </Link>
+      </div>
+      <div className="text-xs text-muted dark:text-slate-400 mt-2">
+        welcome back, {userName.split(" ")[0]}
       </div>
     </header>
   );
@@ -595,15 +656,10 @@ function TileGrid({
   const spanCls = (span: number) => (span === 2 ? "col-span-2" : "");
 
   if (!hasModules) {
-    return (
-      <section className="rounded-xl border border-dashed border-line dark:border-slate-700 p-6 text-center text-sm text-muted dark:text-slate-400">
-        No user-facing modules enabled yet. Visit{" "}
-        <Link to="/configuration" className="text-accent hover:underline">
-          /configuration
-        </Link>{" "}
-        to add some.
-      </section>
-    );
+    // The GettingStartedPanel above already owns the empty-workspace message
+    // (with the "Enable X" cards). A second "no modules — visit /configuration"
+    // tile here is just redundant noise, so render nothing.
+    return null;
   }
 
   if (!editing) {
@@ -811,13 +867,21 @@ function PinnedView({
 
 // ──────────────────────── recent activity ───────────────────────────
 
+// Provisioning/plumbing entity-types that mean nothing to a user ("tenant
+// provisioned", "module enabled ×23", "joined user", workspace created). Hidden
+// from the dashboard summary so a fresh workspace doesn't lead with an audit
+// log of things it did to itself. The full /activity page still shows everything.
+const ACTIVITY_NOISE = new Set(["org_module", "org", "user", "tenant"]);
+
 function RecentActivity({ slug, editing = false }: { slug: string; editing?: boolean }) {
   const q = useQuery({
     queryKey: ["dash-activity", slug],
     queryFn: () => api.orgActivity(slug, 50),
     staleTime: 30_000,
   });
-  const items = q.data?.items ?? [];
+  const items = (q.data?.items ?? []).filter(
+    (e) => !ACTIVITY_NOISE.has(e.entity_type ?? ""),
+  );
   const groups = groupActivity(items);
   return (
     <section>

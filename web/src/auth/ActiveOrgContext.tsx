@@ -1,75 +1,110 @@
-// Tracks which of the user's orgs is currently active. Persists the
-// active slug to localStorage so reloads land on the same workspace.
-// Switching invalidates every per-org query so we don't render
-// stale data from the previous tenant.
+// Tracks which of the user's orgs is currently active. The active workspace
+// lives in the URL (/w/:handle/… — set as the router basename), so it is
+// PER-TAB: two tabs on different workspaces don't clobber each other.
+//
+// The URL carries a SHORT HANDLE — the org's name-slug without the random
+// `-<4hex>` uniqueness suffix that signup appends (so `/w/empty-test-1/`, not
+// `/w/empty-test-1-23c4/`). The API still keys on the full `org.slug`; we map
+// handle → org → full slug here. Old `/w/<full-slug>/` URLs still resolve
+// (exact match wins), so existing bookmarks keep working. A handle that's
+// ambiguous among the user's own workspaces (two same-named ones) falls back to
+// the full slug for that workspace so it stays distinguishable.
+//
+// localStorage keeps only the last-active full slug, to pick a default when the
+// user lands on a bare URL. Switching is a full navigation to the new base.
 
 import {
-  createContext, useCallback, useContext, useEffect, useMemo, useState,
+  createContext, useCallback, useContext, useEffect, useMemo,
   type ReactNode,
 } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "./AuthContext";
+import { displaySlug } from "../lib/workspaceSlug";
 import type { OrgMembership } from "../lib/api";
 
 const STORAGE_KEY = "cobblr.activeOrgSlug";
 
+/** The pretty URL handle for an org: its slug without the random suffix, but
+ *  only when that's unique among the user's orgs; otherwise the full slug. */
+export function urlHandleFor(org: OrgMembership, orgs: OrgMembership[]): string {
+  const short = displaySlug(org.slug);
+  const collisions = orgs.filter((o) => displaySlug(o.slug) === short);
+  return collisions.length === 1 ? short : org.slug;
+}
+
+/** Resolve a URL handle (short handle OR a full slug) back to the org. */
+export function resolveHandle(handle: string, orgs: OrgMembership[]): OrgMembership | null {
+  // Exact full-slug match wins — unambiguous + keeps old bookmarks working.
+  const exact = orgs.find((o) => o.slug === handle);
+  if (exact) return exact;
+  const matches = orgs.filter((o) => displaySlug(o.slug) === handle);
+  return matches.length === 1 ? matches[0]! : null;
+}
+
+/** Last-active org if still valid, else the first. null if the user has none. */
+export function pickDefaultOrg(orgs: OrgMembership[]): OrgMembership | null {
+  if (orgs.length === 0) return null;
+  try {
+    const last = localStorage.getItem(STORAGE_KEY);
+    const m = last && orgs.find((o) => o.slug === last);
+    if (m) return m;
+  } catch {
+    /* ignore */
+  }
+  return orgs[0]!;
+}
+
 interface ActiveOrgCtx {
   activeOrg: OrgMembership | null;
-  activeSlug: string;
+  activeSlug: string; // FULL slug — what the API keys on
   setActiveSlug: (slug: string) => void;
 }
 
 const Ctx = createContext<ActiveOrgCtx | null>(null);
 
-export function ActiveOrgProvider({ children }: { children: ReactNode }) {
+export function ActiveOrgProvider({
+  urlHandle,
+  children,
+}: {
+  urlHandle: string;
+  children: ReactNode;
+}) {
   const { orgs } = useAuth();
-  const qc = useQueryClient();
-  const [slug, setSlugState] = useState<string>(() => {
-    try {
-      return localStorage.getItem(STORAGE_KEY) ?? "";
-    } catch {
-      return "";
-    }
-  });
+  const org = useMemo(() => resolveHandle(urlHandle, orgs), [urlHandle, orgs]);
 
-  // Keep slug pointed at a real org. If the stored one isn't in the
-  // user's membership list (revoked, signed-into-different-account,
-  // etc.) fall back to the first org.
+  // If the URL handle doesn't resolve to a membership (revoked, wrong account,
+  // typo), bounce to the user's default workspace.
   useEffect(() => {
-    if (orgs.length === 0) {
-      if (slug) {
-        setSlugState("");
-        try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
-      }
-      return;
+    if (orgs.length === 0 || org) return;
+    const fallback = pickDefaultOrg(orgs);
+    if (fallback) window.location.replace(`/w/${urlHandleFor(fallback, orgs)}/`);
+  }, [orgs, org]);
+
+  // Remember the last-active workspace (by full slug) for bare-URL landings.
+  useEffect(() => {
+    try {
+      if (org) localStorage.setItem(STORAGE_KEY, org.slug);
+    } catch {
+      /* ignore */
     }
-    const valid = slug && orgs.some((o) => o.slug === slug);
-    if (!valid) {
-      const next = orgs[0]!.slug;
-      setSlugState(next);
-      try { localStorage.setItem(STORAGE_KEY, next); } catch { /* ignore */ }
-    }
-  }, [orgs, slug]);
+  }, [org]);
 
   const setActiveSlug = useCallback(
-    (next: string) => {
-      if (next === slug) return;
-      setSlugState(next);
-      try { localStorage.setItem(STORAGE_KEY, next); } catch { /* ignore */ }
-      // Drop every per-org query — they all key on slug, so the
-      // wrong-org rows would otherwise flash before refetch.
-      qc.removeQueries({ predicate: () => true });
+    (nextSlug: string) => {
+      const next = orgs.find((o) => o.slug === nextSlug);
+      if (!next || next.slug === org?.slug) return;
+      try {
+        localStorage.setItem(STORAGE_KEY, next.slug);
+      } catch {
+        /* ignore */
+      }
+      // Full navigation to the new basename — per-tab + clean tenant state.
+      window.location.assign(`/w/${urlHandleFor(next, orgs)}/dashboard`);
     },
-    [slug, qc],
-  );
-
-  const activeOrg = useMemo(
-    () => orgs.find((o) => o.slug === slug) ?? null,
-    [orgs, slug],
+    [org, orgs],
   );
 
   return (
-    <Ctx.Provider value={{ activeOrg, activeSlug: slug, setActiveSlug }}>
+    <Ctx.Provider value={{ activeOrg: org, activeSlug: org?.slug ?? "", setActiveSlug }}>
       {children}
     </Ctx.Provider>
   );

@@ -64,10 +64,10 @@ export function RolesPage() {
     <div className="space-y-5 max-w-5xl">
       <div className="flex items-baseline justify-between border-b border-line dark:border-slate-700 pb-3">
         <div>
-          <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">
+          <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
             custom roles
           </h1>
-          <span className="text-[10px] font-mono text-faint dark:text-slate-500">
+          <span className="page-subtitle">
             workspace-defined capability bundles. members get stock role +
             any custom roles you assign.
           </span>

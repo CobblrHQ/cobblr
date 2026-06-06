@@ -9,8 +9,10 @@
 // For installed bundles we additionally hit /bundles/:id to fetch the
 // actually-installed wires/field-defs (in case the manifest drifted).
 
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Download, Package, Trash2 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { ArrowRight, CheckCircle2, Download, Package, Trash2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import {
   ApiError,
@@ -18,6 +20,7 @@ import {
   type PlatformBundle,
   type PlatformBundleManifest,
 } from "../lib/api";
+import type { BundleNextStep } from "../lib/featured-bundles";
 import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
 
 interface InstalledMode {
@@ -36,6 +39,12 @@ interface FeaturedMode {
    *  installed — the modal shows "Already installed" instead of
    *  enabling Install. */
   alreadyInstalled?: boolean;
+  /** When alreadyInstalled, the internal id of the installed bundle, so
+   *  the footer can offer an enabled Remove right from the marketplace
+   *  modal (uninstall is keyed by internal id, not external_id). */
+  installedBundleId?: string | null;
+  /** Post-install guided steps for the "what's next" panel. */
+  nextSteps?: BundleNextStep[];
 }
 
 type Props = {
@@ -49,6 +58,10 @@ export function BundleDetailModal(props: Props) {
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
+  const navigate = useNavigate();
+  // After a successful install we keep the modal open and swap to a
+  // "what's next" panel instead of dumping the user back on the page.
+  const [justInstalled, setJustInstalled] = useState<{ wires: number; field_defs: number } | null>(null);
 
   // Installed-only: fetch the actually-installed wires + field defs.
   const installedBundleId = props.mode === "installed" ? props.bundle.id : null;
@@ -58,8 +71,18 @@ export function BundleDetailModal(props: Props) {
     enabled: open && !!installedBundleId,
   });
 
+  // The bundle to uninstall: the installed bundle in installed mode, or a
+  // marketplace bundle the user already has installed (featured mode) so
+  // Remove works from the marketplace modal too.
+  const uninstallId =
+    props.mode === "installed"
+      ? props.bundle.id
+      : props.mode === "featured"
+        ? props.installedBundleId ?? null
+        : null;
+
   const uninstall = useMutation({
-    mutationFn: () => api.uninstallBundle(slug, installedBundleId!),
+    mutationFn: () => api.uninstallBundle(slug, uninstallId!),
     onSuccess: () => {
       toast.success(`Uninstalled.`);
       void qc.invalidateQueries({ queryKey: ["bundles", slug] });
@@ -82,7 +105,11 @@ export function BundleDetailModal(props: Props) {
       void qc.invalidateQueries({ queryKey: ["bundles", slug] });
       void qc.invalidateQueries({ queryKey: ["bindings", slug] });
       void qc.invalidateQueries({ queryKey: ["field-defs", slug] });
-      onClose();
+      // The install may have enabled new modules — refresh the nav so they
+      // appear (and so the "what's next" links land on a populated sidebar).
+      void qc.invalidateQueries({ queryKey: ["org-modules", slug] });
+      // Keep the modal open; show the guided "what's next" panel.
+      setJustInstalled(r.applied);
     },
     onError: (e: unknown) => {
       // `needs_enable` is handled by handleInstall's confirm prompt —
@@ -93,11 +120,17 @@ export function BundleDetailModal(props: Props) {
   });
 
   async function handleUninstall() {
-    if (props.mode !== "installed") return;
+    if (!uninstallId) return;
+    const bundleName =
+      props.mode === "installed"
+        ? props.bundle.name
+        : props.mode === "featured"
+          ? props.manifest?.name ?? "this bundle"
+          : "this bundle";
     const ok = await confirm({
-      title: `Uninstall ${props.bundle.name}?`,
+      title: `Remove ${bundleName}?`,
       message: `This removes the bundle's wires and custom fields. Your data (parts, tasks, etc.) is untouched — only the bundle-installed customisations go.`,
-      confirmLabel: "Uninstall",
+      confirmLabel: "Remove",
       destructive: true,
     });
     if (ok) uninstall.mutate();
@@ -217,6 +250,75 @@ export function BundleDetailModal(props: Props) {
   }`;
   const titlePrefix =
     props.mode === "featured" && props.glyph ? `${props.glyph} ` : "";
+
+  // Post-install guided steps: use the bundle's declared next_steps, else
+  // fall back to one "go to" link per unique required module.
+  const declaredSteps = props.mode === "featured" ? props.nextSteps : undefined;
+  const nextSteps: BundleNextStep[] = declaredSteps?.length
+    ? declaredSteps
+    : [...new Set(requires.map((r) => r.module))].map((m) => ({
+        label: `Go to ${m.charAt(0).toUpperCase() + m.slice(1)}`,
+        module: m,
+      }));
+
+  function goTo(moduleName: string) {
+    setJustInstalled(null);
+    onClose();
+    navigate(`/${moduleName}`);
+  }
+
+  // Just installed → the "what's next" panel instead of the closed modal.
+  if (justInstalled) {
+    return (
+      <Modal open={open} onClose={onClose} title={`${titlePrefix}${name}`} subtitle="installed" size="lg">
+        <div className="space-y-5">
+          <div className="flex items-start gap-3">
+            <CheckCircle2 size={22} className="text-moss-600 shrink-0 mt-0.5" />
+            <div>
+              <div className="font-medium text-content dark:text-mortar-100">{name} is set up.</div>
+              <div className="text-sm text-faint dark:text-slate-400 mt-0.5">
+                Added {justInstalled.field_defs} field{justInstalled.field_defs === 1 ? "" : "s"}
+                {justInstalled.wires > 0
+                  ? ` and ${justInstalled.wires} automation${justInstalled.wires === 1 ? "" : "s"}`
+                  : ""}
+                . Here's where to start:
+              </div>
+            </div>
+          </div>
+          {nextSteps.length > 0 && (
+            <ul className="space-y-2">
+              {nextSteps.map((s, i) => (
+                <li key={i}>
+                  <button
+                    type="button"
+                    onClick={() => goTo(s.module)}
+                    className="w-full text-left rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 flex items-center gap-3 hover:border-cobble-300 dark:hover:border-cobble-700 transition group"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-content dark:text-mortar-100">{s.label}</div>
+                      {s.hint && (
+                        <div className="text-xs text-faint dark:text-slate-400 mt-0.5">{s.hint}</div>
+                      )}
+                    </div>
+                    <ArrowRight size={16} className="text-faint group-hover:text-accent transition shrink-0" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="flex justify-end pt-3 border-t border-line dark:border-slate-700">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-3 py-1.5 rounded-md text-sm font-medium text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800 transition"
+            >
+              I'll explore on my own
+            </button>
+          </div>
+        </div>
+      </Modal>
+    );
+  }
 
   return (
     <Modal open={open} onClose={onClose} title={`${titlePrefix}${name}`} subtitle={subtitle} size="lg">
@@ -382,7 +484,19 @@ export function BundleDetailModal(props: Props) {
               disabled={uninstall.isPending}
               className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-ember-500 transition flex items-center gap-1"
             >
-              <Trash2 size={11} /> uninstall bundle
+              <Trash2 size={11} /> {uninstall.isPending ? "removing…" : "uninstall bundle"}
+            </button>
+          ) : props.alreadyInstalled && uninstallId ? (
+            // Marketplace modal, but the user already has this bundle —
+            // offer Remove right here instead of making them hunt for the
+            // installed-list row.
+            <button
+              onClick={handleUninstall}
+              disabled={uninstall.isPending}
+              className="text-xs font-medium px-3 py-1.5 rounded-md bg-ember-600 hover:bg-ember-700 text-white transition flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Trash2 size={13} />
+              {uninstall.isPending ? "Removing…" : "Remove bundle"}
             </button>
           ) : (
             <button

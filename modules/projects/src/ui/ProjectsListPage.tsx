@@ -88,7 +88,7 @@ export function ProjectsListPage() {
   return (
     <div className="space-y-5">
       <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">projects</h1>
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">projects</h1>
         <span className="text-[10px] font-mono text-faint dark:text-slate-500">
           {query ? `${filtered.length} of ${items.length}` : `${items.length} total`}
         </span>

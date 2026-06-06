@@ -17,11 +17,14 @@ import { useToast, usePageTitle } from "@cobblr/platform-web";
 export function MeNotificationsPage() {
   usePageTitle("Notifications");
   const { orgs } = useAuth();
-  const { setActiveSlug } = useActiveOrg();
+  const { activeSlug, setActiveSlug } = useActiveOrg();
   const navigate = useNavigate();
   const qc = useQueryClient();
   const toast = useToast();
-  const [orgFilter, setOrgFilter] = useState<string>("");
+  // Default to THIS workspace, not the cross-workspace firehose — seeing
+  // workspace A's notifications while you're in B is noise. The dropdown
+  // still offers "all workspaces" for the deliberate global view.
+  const [orgFilter, setOrgFilter] = useState<string>(activeSlug);
   const [unreadOnly, setUnreadOnly] = useState(false);
 
   const q = useQuery({

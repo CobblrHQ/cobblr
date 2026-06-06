@@ -71,8 +71,8 @@ export function InstancePage() {
     return (
       <div className="space-y-4">
         <div className="border-b border-line dark:border-slate-700 pb-3">
-          <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">
-            {displayName.toLowerCase()}
+          <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
+            {displayName}
           </h1>
         </div>
         <ProjectsUI
@@ -103,8 +103,8 @@ export function InstancePage() {
   return (
     <div className="space-y-4 max-w-2xl">
       <div className="border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">
-          {displayName.toLowerCase()}
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
+          {displayName}
         </h1>
         <span className="text-[10px] font-mono text-faint dark:text-slate-500">
           instance of {inst.module_name}
@@ -182,8 +182,8 @@ function HostInstanceList({
   return (
     <div className="space-y-4 max-w-2xl" data-testid="host-instance-list">
       <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">
-          {displayName.toLowerCase()}
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
+          {displayName}
         </h1>
         <span className="text-[10px] font-mono text-faint dark:text-slate-500">
           {items.length} · instance of {moduleName}

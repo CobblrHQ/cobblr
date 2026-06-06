@@ -18,6 +18,8 @@ import { ModuleNav } from "./ModuleNav";
 import { HeaderActions } from "./HeaderActions";
 import { UserMenu } from "./UserMenu";
 import { MobileNav } from "./MobileNav";
+import { EmailVerifyBanner } from "./EmailVerifyBanner";
+import { ChatWidget } from "./ChatWidget";
 import { SearchBar } from "./SearchBar";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { api } from "../lib/api";
@@ -74,13 +76,16 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
     // here.
     <div className="min-h-screen grid grid-rows-[auto_1fr] grid-cols-1">
       {fontFace && <style dangerouslySetInnerHTML={{ __html: fontFace }} />}
+      {/* Header + the email-verify nudge share the grid's auto row, so the
+          banner doesn't consume the 1fr content row. */}
+      <div className="min-w-0">
       {/* The root is grid-rows-[auto_1fr] = exactly two row-children
           (header, main). The accent strip lives INSIDE the header as its
           top edge — a third grid child would steal the 1fr row and
           stretch the header. A thin branded edge over the (still neutral +
           readable) functional header; the Cobblr mark stays. */}
       <header
-        className="border-b border-line dark:border-slate-700 bg-surface dark:bg-slate-900/80 backdrop-blur overflow-x-clip"
+        className="relative z-30 border-b border-line dark:border-slate-700 bg-surface dark:bg-slate-900/80 backdrop-blur overflow-x-clip"
         style={skin ? { borderTop: "4px solid var(--app-accent)" } : undefined}
       >
         <div className="max-w-6xl mx-auto px-5 py-3 flex items-center gap-3 min-w-0">
@@ -136,6 +141,9 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
         </div>
       </header>
 
+        <EmailVerifyBanner />
+      </div>
+
       <main className="min-w-0">
         <div className="max-w-6xl mx-auto w-full px-5 py-6">
           {/* Per-page boundary: a crash in one page shows a fallback but
@@ -147,6 +155,9 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           </ErrorBoundary>
         </div>
       </main>
+
+      {/* Floating AI chat — portals to <body>, available on every workspace page. */}
+      <ChatWidget />
     </div>
   );
 }

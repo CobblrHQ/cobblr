@@ -37,7 +37,7 @@ export function TrackingUI({ orgSlug, getToken }: Props) {
   return (
     <div className="space-y-4 max-w-4xl">
       <div className="flex items-baseline justify-between border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">tracking</h1>
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">tracking</h1>
         <button type="button" onClick={() => setCreating(true)} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded bg-cobble-600 text-white hover:bg-cobble-700">
           <Plus size={14} /> New metric
         </button>

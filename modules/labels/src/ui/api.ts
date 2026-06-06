@@ -64,4 +64,37 @@ export class LabelsApi {
   }) => this.request<QueueItem>("POST", "/queue", b);
   removeFromQueue = (id: string) => this.request<void>("DELETE", `/queue/${id}`);
   print = () => this.request<PrintResponse>("POST", "/print", {});
+
+  /** Render the queue to a print-ready PDF (server-side, pdf-lib). */
+  renderPdf = (size_key: string, item_ids?: string[]) =>
+    this.request<{ pdf_base64: string; sheets: number; labels: number }>(
+      "POST",
+      "/print/render",
+      { size_key, item_ids },
+    );
+
+  // core-print is a sibling module reached over HTTP (no import). Labels
+  // renders the PDF; core-print dispatches it to the configured printer.
+  private async requestAbs<T>(method: string, url: string, body?: unknown): Promise<T> {
+    const headers: Record<string, string> = {};
+    if (body !== undefined) headers["Content-Type"] = "application/json";
+    const token = this.opts.getToken();
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const res = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    if (res.status === 204) return undefined as T;
+    const parsed = await res.json().catch(() => null);
+    if (!res.ok) throw new Error((parsed as { error?: { message?: string } } | null)?.error?.message ?? `HTTP ${res.status}`);
+    return parsed as T;
+  }
+  listPrinters = () =>
+    this.requestAbs<{ items: Array<{ id: string; name: string; is_default: boolean }> }>(
+      "GET",
+      `/api/v1/orgs/${this.slug}/modules/core-print/printers`,
+    );
+  printToPrinter = (printerId: string, body: { document_base64: string; content_type?: string; filename?: string; job_name?: string }) =>
+    this.requestAbs<{ jobId: string; state: string }>(
+      "POST",
+      `/api/v1/orgs/${this.slug}/modules/core-print/printers/${printerId}/print`,
+      body,
+    );
 }

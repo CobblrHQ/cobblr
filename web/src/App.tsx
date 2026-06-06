@@ -8,7 +8,7 @@
 // /<module>/* and the module's own internal routes take over.
 
 import { lazy, Suspense } from "react";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { PlatformWebProvider } from "@cobblr/platform-web";
 import { InventoryUI } from "@cobblr/inventory/ui";
 import { LabelsBasket, LabelsUI } from "@cobblr/labels/ui";
@@ -22,12 +22,14 @@ import { FilePreviewGate } from "./components/FilePreviewGate";
 import { InstalledRenderers } from "./components/InstalledRenderers";
 import { PairsWellWith } from "./components/PairsWellWith";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
-import { ActiveOrgProvider, useActiveOrg } from "./auth/ActiveOrgContext";
+import { ActiveOrgProvider, useActiveOrg, pickDefaultOrg, urlHandleFor } from "./auth/ActiveOrgContext";
 import { AuthPage } from "./pages/AuthPage";
 import { Dashboard } from "./pages/Dashboard";
 import { InviteAcceptPage } from "./pages/InviteAcceptPage";
 import { JoinPage } from "./pages/JoinPage";
 import { PublicSurfacePage } from "./pages/PublicSurfacePage";
+import { ResetPasswordPage } from "./pages/ResetPasswordPage";
+import { VerifyEmailPage } from "./pages/VerifyEmailPage";
 // Eager: nav-linked pages users hit from the dashboard frequently.
 import { MachinesPage } from "./pages/MachinesPage";
 import { AssetsPage } from "./pages/AssetsPage";
@@ -53,6 +55,7 @@ const ApiTokensPage = lazy(() => import("./pages/ApiTokensPage").then((m) => ({ 
 const ActivityPage = lazy(() => import("./pages/ActivityPage").then((m) => ({ default: m.ActivityPage })));
 const SurfacesPage = lazy(() => import("./pages/SurfacesPage").then((m) => ({ default: m.SurfacesPage })));
 const DigifabPage = lazy(() => import("./pages/DigifabPage").then((m) => ({ default: m.DigifabPage })));
+const PrintPage = lazy(() => import("./pages/PrintPage").then((m) => ({ default: m.PrintPage })));
 const MaintenancePage = lazy(() => import("./pages/MaintenancePage").then((m) => ({ default: m.MaintenancePage })));
 const UnitsPage = lazy(() => import("./pages/UnitsPage").then((m) => ({ default: m.UnitsPage })));
 const CalendarPage = lazy(() => import("./pages/CalendarPage").then((m) => ({ default: m.CalendarPage })));
@@ -117,32 +120,84 @@ export function App() {
 function Shell() {
   const { loading } = useAuth();
   if (loading) return <BootScrim />;
+
+  // The active workspace lives in the URL: /w/:slug/… . We read it from the
+  // raw path (it isn't a route param — it's the router *basename*) and mount
+  // the authed app under that basename, so every flat route and absolute link
+  // resolves to /w/:slug/… untouched. Each tab's URL owns its workspace.
+  const ws = window.location.pathname.match(/^\/w\/([^/]+)/);
+  if (ws) {
+    return (
+      <BrowserRouter basename={`/w/${ws[1]}`}>
+        <WorkspaceRoutes urlHandle={ws[1]!} />
+      </BrowserRouter>
+    );
+  }
+  // No workspace in the URL: public/token routes, plus a landing redirect
+  // that sends an authed user into /w/:default/… (preserving any deep path).
   return (
     <BrowserRouter>
-      <RootRoutes />
+      <PublicRoutes />
     </BrowserRouter>
   );
 }
 
-// /invite/:token is reachable signed-in OR signed-out (preview works
-// either way; the page bounces unauth'd users through sign-in). All
-// other paths fall through to the auth gate.
-function RootRoutes() {
+// Routes reachable WITHOUT a workspace in the URL. /invite, /join, /p work
+// signed-in or signed-out (the token is the secret). Everything else is a
+// landing redirect into the user's workspace.
+function PublicRoutes() {
   return (
     <Routes>
       <Route path="/invite/:token" element={<InviteAcceptPage />} />
       {/* /join/:token — redeem a single-use signup invite into a NEW
           account + workspace, even when public signup is disabled. */}
       <Route path="/join/:token" element={<JoinPage />} />
+      {/* Password reset + email verification from emailed links — public,
+          the token is the secret. */}
+      <Route path="/reset/:token" element={<ResetPasswordPage />} />
+      <Route path="/verify/:token" element={<VerifyEmailPage />} />
       {/* /p/:token is the un-auth'd public surface render. Reachable
           signed-in or signed-out — the token is the secret. */}
       <Route path="/p/:token" element={<PublicSurfacePage />} />
-      <Route path="*" element={<AuthedOrLogin />} />
+      {/* Legacy un-prefixed member-portal links → workspace-scoped portal. */}
+      <Route path="/portal/:slug/*" element={<PortalSlugRedirect />} />
+      <Route path="*" element={<LandingRedirect />} />
     </Routes>
   );
 }
 
-function AuthedOrLogin() {
+// A bare URL (no /w/:slug): once authed, redirect into the user's default
+// workspace, preserving any deep path so old bookmarks keep working.
+function LandingRedirect() {
+  const { user, orgs } = useAuth();
+  if (!user) return <AuthPage />;
+  if (user.must_reset_password) return <ForcePasswordResetPage />;
+  const org = pickDefaultOrg(orgs);
+  if (!org) {
+    // No workspace yet (admin-minted account with no org). Nothing to route to.
+    return (
+      <div className="min-h-full flex items-center justify-center text-faint font-mono text-xs">
+        no workspace yet — ask an admin to add you to one.
+      </div>
+    );
+  }
+  const { pathname, search, hash } = window.location;
+  const rest = pathname === "/" ? "/" : pathname; // preserve a deep-linked path
+  window.location.replace(`/w/${urlHandleFor(org, orgs)}${rest}${search}${hash}`);
+  return <BootScrim />;
+}
+
+// /portal/:slug/… (legacy, un-prefixed) → /w/:slug/portal/:slug/… so the
+// member portal lives under the workspace basename like everything else.
+function PortalSlugRedirect() {
+  const { pathname, search, hash } = window.location;
+  const m = pathname.match(/^\/portal\/([^/]+)/);
+  const slug = m?.[1];
+  if (slug) window.location.replace(`/w/${slug}${pathname}${search}${hash}`);
+  return <BootScrim />;
+}
+
+function WorkspaceRoutes({ urlHandle }: { urlHandle: string }) {
   const { user } = useAuth();
   if (!user) return <AuthPage />;
   // Force-password-reset gate: if the admin minted this account with
@@ -151,12 +206,8 @@ function AuthedOrLogin() {
   // no admin shell, no nav) so the user can't navigate around it.
   // See docs/operations/PRODUCTION_DEPLOY.md (no-email onboarding).
   if (user.must_reset_password) return <ForcePasswordResetPage />;
-  return <AuthedRoutes />;
-}
-
-function AuthedRoutes() {
   return (
-    <ActiveOrgProvider>
+    <ActiveOrgProvider urlHandle={urlHandle}>
       <ActiveOrgScopedRoutes />
     </ActiveOrgProvider>
   );
@@ -164,6 +215,7 @@ function AuthedRoutes() {
 
 function ActiveOrgScopedRoutes() {
   const { activeSlug, activeOrg } = useActiveOrg();
+  const location = useLocation();
 
   // Shell routing: members + guests land in the portal, admins +
   // owners get the admin shell. If a non-admin lands on an admin
@@ -171,7 +223,9 @@ function ActiveOrgScopedRoutes() {
   // navigate freely once in the portal.
   // See docs/modules/member-portal-and-permissions.md.
   const role = activeOrg?.role;
-  const onPortal = window.location.pathname.startsWith("/portal/");
+  // basename-relative (react-router strips the /w/:slug base) — NOT
+  // window.location.pathname, which still carries the base.
+  const onPortal = location.pathname.startsWith("/portal/");
   const shouldRedirectToPortal =
     activeSlug &&
     role &&
@@ -255,6 +309,7 @@ function ActiveOrgScopedRoutes() {
           <Route path="/configuration/tokens" element={<ApiTokensPage />} />
           <Route path="/configuration/surfaces" element={<SurfacesPage />} />
           <Route path="/configuration/digifab" element={<DigifabPage />} />
+          <Route path="/configuration/print" element={<PrintPage />} />
           <Route path="/configuration/maintenance" element={<MaintenancePage />} />
           <Route path="/configuration/units" element={<UnitsPage />} />
           <Route path="/calendar" element={<CalendarPage />} />

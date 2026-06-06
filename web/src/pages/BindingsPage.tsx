@@ -34,10 +34,10 @@ export function BindingsPage() {
   return (
     <div className="space-y-5 max-w-4xl">
       <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
           wires
         </h1>
-        <span className="text-[10px] font-mono text-faint dark:text-slate-500">
+        <span className="page-subtitle">
           when X happens, do Y. Modules don't know about each other — you wire them here.
         </span>
       </div>

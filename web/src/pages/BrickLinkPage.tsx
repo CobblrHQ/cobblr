@@ -169,10 +169,10 @@ export function BrickLinkPage() {
   return (
     <div className="space-y-5 max-w-5xl">
       <div className="border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 lowercase">
-          bricklink
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
+          BrickLink
         </h1>
-        <span className="text-[10px] font-mono text-faint dark:text-slate-500">
+        <span className="page-subtitle">
           import wanted lists + order csvs; diff a wanted list against
           your lego inventory. v0.2.
         </span>

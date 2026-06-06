@@ -79,10 +79,10 @@ export function SuperAdminPage() {
         <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100">
           Super-admin
         </h1>
-        <span className="text-[10px] font-mono text-faint dark:text-slate-500">
+        <p className="page-subtitle">
           Cross-workspace dashboards for the platform operator. Workspace
           owners + admins can't reach this — separate tier.
-        </span>
+        </p>
       </div>
 
       <div className="flex flex-wrap gap-1 border-b border-line dark:border-slate-700">
@@ -760,6 +760,7 @@ function InvitesTab() {
   const [note, setNote] = useState("");
   const [days, setDays] = useState("14");
   const [freshLink, setFreshLink] = useState<string | null>(null);
+  const [emailedTo, setEmailedTo] = useState<string | null>(null);
 
   const mint = useMutation({
     mutationFn: () => api.mintSignupInvite({
@@ -769,9 +770,11 @@ function InvitesTab() {
     }),
     onSuccess: (inv) => {
       setFreshLink(`${window.location.origin}/join/${inv.token}`);
+      setEmailedTo(inv.emailed ? inv.invited_email : null);
+      const sentTo = inv.emailed ? inv.invited_email : null;
       setEmail(""); setNote("");
       void qc.invalidateQueries({ queryKey: ["signup-invites"] });
-      toast.success("Invite minted — copy the link below.");
+      toast.success(sentTo ? `Invite emailed to ${sentTo}.` : "Invite minted — copy the link below.");
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't mint"),
   });
@@ -785,8 +788,9 @@ function InvitesTab() {
     <div className="space-y-5">
       <p className="text-sm text-content dark:text-mortar-200">
         Mint a <strong>single-use link</strong> so one new person can sign up and get their own
-        workspace — even while public signup is off. The link is shown once; it's a credential, so
-        give it directly to the person and set a short expiry.
+        workspace — even while public signup is off. Add an email and we'll{" "}
+        <strong>send them the link directly</strong>; otherwise the link is shown once (it's a
+        credential — hand it over yourself and set a short expiry).
       </p>
 
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
@@ -810,7 +814,9 @@ function InvitesTab() {
         </button>
         {freshLink && (
           <div className="rounded-lg border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 p-3 space-y-1.5">
-            <div className="text-[10px] font-mono uppercase tracking-widest text-accent">// copy this now — shown once</div>
+            <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
+              {emailedTo ? `// emailed to ${emailedTo} — link also shown here` : "// copy this now — shown once"}
+            </div>
             <div className="flex items-center gap-2">
               <input readOnly value={freshLink} onFocus={(e) => e.currentTarget.select()} className="input flex-1 font-mono text-xs" />
               <button onClick={() => { void navigator.clipboard?.writeText(freshLink); toast.success("Copied."); }} className="p-2 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 transition" title="Copy"><Copy size={14} /></button>

@@ -9,10 +9,10 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Wand2, Copy, Check, AlertTriangle } from "lucide-react";
+import { Wand2, Copy, Check, AlertTriangle, Sparkles } from "lucide-react";
 import { usePageTitle, useToast } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { api, type BundleValidation } from "../lib/api";
+import { api, ApiError, type BundleValidation } from "../lib/api";
 
 // Tolerant: pull the first {…} block out of a paste (handles "Here's your
 // bundle: { … }" prose around the JSON).
@@ -44,6 +44,20 @@ function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) 
   );
 }
 
+// Collapsible raw view of the bundle the AI produced — transparency for the
+// hosted path (where the user never typed/pasted it).
+function BundleDetails({ candidate, label = "Show the generated bundle" }: { candidate: unknown; label?: string }) {
+  if (!candidate || typeof candidate !== "object") return null;
+  return (
+    <details className="text-xs">
+      <summary className="cursor-pointer text-faint hover:text-accent select-none">{label}</summary>
+      <pre className="mt-2 whitespace-pre-wrap bg-subtle dark:bg-slate-800 border border-line dark:border-slate-700 rounded p-3 max-h-72 overflow-auto font-mono text-content dark:text-mortar-200">
+        {JSON.stringify(candidate, null, 2)}
+      </pre>
+    </details>
+  );
+}
+
 export function BuildPage() {
   usePageTitle("Build");
   const { activeSlug } = useActiveOrg();
@@ -57,7 +71,9 @@ export function BuildPage() {
   const [warnings, setWarnings] = useState<string[]>([]);
   const [pasteText, setPasteText] = useState("");
   const [validation, setValidation] = useState<BundleValidation | null>(null);
-  const [busy, setBusy] = useState<null | "compile" | "validate" | "apply" | "repair">(null);
+  const [candidate, setCandidate] = useState<unknown>(null);
+  const [interpretation, setInterpretation] = useState<string | null>(null);
+  const [busy, setBusy] = useState<null | "building" | "compile" | "validate" | "apply" | "repair">(null);
 
   const kinds = useQuery({
     queryKey: ["build-kinds", slug],
@@ -74,6 +90,40 @@ export function BuildPage() {
       else toast.error("Pick at most 3 kinds — fewer is more reliable.");
       return next;
     });
+
+  // Hosted (Phase 2): the server calls AI itself + auto-repairs, returning a
+  // validated, ready-to-apply draft. Falls back to the copy-paste prompt when
+  // the workspace has no AI (409).
+  async function buildHosted() {
+    if (!intent.trim()) return;
+    setBusy("building");
+    setValidation(null);
+    setPasteText("");
+    setPrompt(null);
+    try {
+      const r = await api.authoringBuild(slug, { intent: intent.trim(), selected_kinds: [...selected] });
+      setDraftId(r.draft_id);
+      setCandidate(r.candidate ?? null);
+      setInterpretation(r.interpretation ?? null);
+      if (r.validation) setValidation(r.validation);
+      if (r.valid) {
+        toast.success(
+          `Built it${r.attempts && r.attempts > 1 ? ` — auto-fixed in ${r.attempts} passes` : ""}. Review and apply.`,
+        );
+      } else {
+        toast.error("The AI's result didn't pass validation — see the errors below, or write a prompt to run yourself.");
+      }
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409) {
+        toast.success("AI isn't enabled for this workspace — switching to the copy-paste prompt.");
+        await buildPrompt();
+        return;
+      }
+      toast.error(e instanceof ApiError ? e.message : "Build failed.");
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function buildPrompt() {
     if (!intent.trim()) return;
@@ -100,6 +150,7 @@ export function BuildPage() {
       return;
     }
     setBusy("validate");
+    setCandidate(manifest);
     try {
       setValidation(await api.authoringCandidate(slug, draftId, manifest));
     } catch (e) {
@@ -131,6 +182,8 @@ export function BuildPage() {
       toast.success("Applied — your fields/wires are live.");
       // reset for another build
       setValidation(null);
+      setCandidate(null);
+      setInterpretation(null);
       setPrompt(null);
       setDraftId(null);
       setPasteText("");
@@ -144,7 +197,12 @@ export function BuildPage() {
   }
 
   const preview = validation?.preview;
-  const canApply = !!validation?.valid;
+  const addsSomething =
+    !!preview &&
+    preview.fields_added.length + preview.wires_added.length + preview.modules_to_enable.length > 0;
+  // Valid but empty = the AI couldn't turn the description into changes. Don't
+  // pretend "looks good" — apply would be a no-op.
+  const canApply = !!validation?.valid && addsSomething;
   const label = useMemo(() => (s: string) => s.split(":")[1] ?? s, []);
 
   return (
@@ -154,8 +212,9 @@ export function BuildPage() {
           <Wand2 size={20} className="text-accent" /> Build
         </h1>
         <p className="text-sm text-muted dark:text-slate-400 mt-1">
-          Describe what you want to add. We'll write a prompt you run in any AI — paste the result back and we'll
-          check it works before anything changes.
+          Describe what you want to add and <strong>Build it for me</strong> — we run the AI, fix it up, and check it
+          works before anything changes. No AI on your workspace? <strong>Write a prompt instead</strong> hands you one
+          to run yourself.
         </p>
       </div>
 
@@ -199,14 +258,29 @@ export function BuildPage() {
             className="w-full px-3 py-2 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           />
         </label>
-        <button
-          type="button"
-          onClick={buildPrompt}
-          disabled={!intent.trim() || busy === "compile"}
-          className="inline-flex items-center gap-1.5 rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-1.5 transition disabled:opacity-50"
-        >
-          <Wand2 size={14} /> {busy === "compile" ? "Building…" : "Build prompt"}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={buildHosted}
+            disabled={!intent.trim() || busy !== null}
+            className="inline-flex items-center gap-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-3 py-1.5 transition disabled:opacity-50"
+          >
+            <Sparkles size={14} /> {busy === "building" ? "Building…" : "Build it for me"}
+          </button>
+          <button
+            type="button"
+            onClick={buildPrompt}
+            disabled={!intent.trim() || busy !== null}
+            className="inline-flex items-center gap-1.5 rounded-md border border-line dark:border-slate-600 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 text-sm font-medium px-3 py-1.5 transition disabled:opacity-50"
+          >
+            <Wand2 size={14} /> {busy === "compile" ? "Writing…" : "Write a prompt instead"}
+          </button>
+        </div>
+        {busy === "building" && (
+          <p className="text-xs text-faint dark:text-slate-500">
+            Running the AI, then checking the result against the validator (auto-retrying if needed). A few seconds…
+          </p>
+        )}
       </section>
 
       {/* Step 2 — the compiled prompt + paste-back */}
@@ -261,10 +335,16 @@ export function BuildPage() {
               : "border-ember-300 dark:border-ember-700 bg-ember-50/50 dark:bg-ember-900/10")
           }
         >
-          {validation.valid && preview ? (
+          {interpretation && (
+            <div className="flex gap-2 text-sm text-content dark:text-mortar-100 bg-surface/70 dark:bg-slate-900/50 border border-line dark:border-slate-700 rounded-lg px-3 py-2">
+              <Sparkles size={15} className="text-accent shrink-0 mt-0.5" />
+              <span className="italic">{interpretation}</span>
+            </div>
+          )}
+          {validation.valid && addsSomething && preview ? (
             <>
               <div className="flex items-center gap-2 text-sm font-medium text-emerald-700 dark:text-emerald-300">
-                <Check size={16} /> Looks good — here's what it'll do:
+                <Check size={16} /> Here's what it'll do:
               </div>
               {preview.fields_added.length > 0 && (
                 <div>
@@ -297,6 +377,7 @@ export function BuildPage() {
                   Will enable: {preview.modules_to_enable.join(", ")}
                 </div>
               )}
+              <BundleDetails candidate={candidate} />
               <button
                 type="button"
                 onClick={apply}
@@ -305,6 +386,18 @@ export function BuildPage() {
               >
                 {busy === "apply" ? "Applying…" : "Apply"}
               </button>
+            </>
+          ) : validation.valid ? (
+            <>
+              <div className="flex items-center gap-2 text-sm font-medium text-amber-700 dark:text-amber-300">
+                <AlertTriangle size={16} /> I couldn't tell what to build from that
+              </div>
+              <p className="text-sm text-content dark:text-mortar-200">
+                The AI didn't produce any concrete changes. Try describing it more specifically — name the field, the
+                kind it's on, and any automation. e.g. <em>"add a 'warranty expires' date to parts, and print a
+                reorder label when a part's stock drops below its minimum."</em>
+              </p>
+              <BundleDetails candidate={candidate} label="Show what the AI returned" />
             </>
           ) : (
             <>
@@ -319,6 +412,7 @@ export function BuildPage() {
                   </li>
                 ))}
               </ul>
+              <BundleDetails candidate={candidate} label="Show what the AI returned" />
               <button
                 type="button"
                 onClick={copyRepairPrompt}
