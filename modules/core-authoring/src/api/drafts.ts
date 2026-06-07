@@ -24,6 +24,7 @@ import {
   parseJsonObject,
   unwrapBuild,
   type ValidationError,
+  type SeedGroup,
 } from "../services/compile.js";
 import { listTemplates, getTemplate } from "../services/templates.js";
 import { matchTemplateHosted } from "../services/match-template.js";
@@ -58,6 +59,65 @@ async function callBundles(
 }
 
 const jsonb = (v: unknown) => sql`${JSON.stringify(v ?? null)}::jsonb`;
+
+// Kind → that module's create endpoint, for seeding starter records on apply
+// (mirrors core-scan's commit map + core-ai chat). Only these kinds can be
+// seeded; an unmapped kind's records are skipped (and reported).
+const KIND_CREATE_PATHS: Record<string, string> = {
+  "inventory:part": "inventory/parts",
+  "machines:machine": "machines/machines",
+  "assets:asset": "assets/assets",
+  "projects:project": "projects/projects",
+  "projects:task": "projects/tasks",
+  "lists:list": "lists/lists",
+  "lists:item": "lists/items",
+};
+
+// In-process POST to a module's create endpoint, AS the caller (forwards the
+// bearer) — same loopback pattern as callBundles.
+async function callCreate(
+  req: Parameters<typeof tenantContext>[0],
+  modulePath: string,
+  body: Record<string, unknown>,
+): Promise<number> {
+  const port = process.env.API_PORT ?? "4000";
+  const slug = tenantContext(req).org.slug;
+  const auth = req.headers.authorization ?? "";
+  const r = await fetch(`http://127.0.0.1:${port}/api/v1/orgs/${slug}/modules/${modulePath}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: auth },
+    body: JSON.stringify(body),
+  });
+  return r.status;
+}
+
+// Best-effort: create each planned starter record via its kind's endpoint.
+// Custom-field values ride inline — the create endpoints route unknown keys
+// into the entity's metadata. Never throws; a bad/unmapped row is just skipped.
+async function seedRecords(
+  req: Parameters<typeof tenantContext>[0],
+  seed: SeedGroup[],
+): Promise<{ created: number; skipped: number }> {
+  let created = 0;
+  let skipped = 0;
+  for (const group of seed) {
+    const path = KIND_CREATE_PATHS[group.kind];
+    if (!path) {
+      skipped += group.records.length;
+      continue;
+    }
+    for (const rec of group.records) {
+      try {
+        const status = await callCreate(req, path, rec);
+        if (status >= 200 && status < 300) created++;
+        else skipped++;
+      } catch {
+        skipped++;
+      }
+    }
+  }
+  return { created, skipped };
+}
 
 // ── GET /templates — the flagship template catalog (match-template, Phase 1) ──
 // The driving model / user reads this list and picks the nearest template;
@@ -164,12 +224,14 @@ draftsRouter.post(
   }),
 );
 
-// ── POST /build — HOSTED build (Phase 2): inline AI + auto-repair ──
-// Compiles the prompt, calls the workspace's AI itself, validates the result
-// through the SAME kernel gate (callBundles validate), and auto-repairs on
-// failure (re-prompts with the validator's errors, up to MAX_BUILD_ATTEMPTS).
-// Returns a validated, ready-to-apply draft — no copy-paste. Degrades cleanly
-// when the workspace has no AI (409 no_ai_provider) so the UI falls back.
+// ── POST /build — HOSTED build (Phase 2): inline AI + auto-repair, ASYNC ──
+// A whole-workspace generation runs ~150s and can need a repair pass (~290s) —
+// far past nginx's 60s proxy read timeout and any sane "frozen button". So the
+// request returns IMMEDIATELY with the draft id + status:"building", and the
+// AI+validate+repair loop runs in the background, writing the result back onto
+// the draft row. The client polls GET /drafts/:id until status leaves
+// "building" (→ validated | candidate | failed). Same kernel gate, same
+// auto-repair; only the transport changed from blocking to poll.
 const BuildBody = z.object({
   intent: z.string().min(1).max(4000),
   selected_kinds: z.array(z.string()).optional(),
@@ -177,6 +239,97 @@ const BuildBody = z.object({
   base_template_id: z.string().optional(),
 });
 const MAX_BUILD_ATTEMPTS = 3;
+
+// The background loop. Detached from the request (not awaited) — it owns the
+// draft from "building" to a terminal status. Never throws to the caller; any
+// failure is recorded on the draft as status:"failed".
+async function runBuild(
+  req: Parameters<typeof tenantDb>[0],
+  draftId: string,
+  orgId: string,
+  basePrompt: string,
+  userId: string | null,
+): Promise<void> {
+  const db = tenantDb(req);
+  let prompt = basePrompt;
+  let candidate: unknown = null;
+  let interpretation: string | null = null;
+  let seed: SeedGroup[] = [];
+  try {
+    for (let attempt = 1; attempt <= MAX_BUILD_ATTEMPTS; attempt++) {
+      let text: string;
+      try {
+        const r = await platform().ai.invoke({
+          orgId,
+          capability: "chat",
+          input: { messages: [{ role: "user", content: prompt }] },
+          source: { kind: "core-authoring:build", id: draftId },
+          userId,
+        });
+        const result = r.result as { content?: string; text?: string } | string;
+        text = typeof result === "string" ? result : (result?.content ?? result?.text ?? "");
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        const noAi = msg.includes("no provider") || msg.includes("not entitled") || msg.includes("not available");
+        await db
+          .updateTable("core_authoring_drafts")
+          .set({
+            status: "failed",
+            validation: jsonb({
+              valid: false,
+              errors: [{ path: "", code: noAi ? "no_ai_provider" : "ai_error", message: msg }],
+            }) as never,
+            updated_at: new Date(),
+          })
+          .where("id", "=", draftId)
+          .execute();
+        return;
+      }
+
+      const unwrapped = unwrapBuild(parseJsonObject(text));
+      candidate = unwrapped.bundle;
+      if (unwrapped.interpretation) interpretation = unwrapped.interpretation;
+      if (unwrapped.seed.length > 0) seed = unwrapped.seed;
+      if (candidate === null || typeof candidate !== "object") {
+        prompt = repairPrompt(basePrompt, text, [
+          { path: "", code: "not_json", message: 'Your output was not valid JSON. Return ONLY one JSON object: { "interpretation": "...", "bundle": {...} } — no prose, no fences.' },
+        ]);
+        continue;
+      }
+
+      const { body: v } = await callBundles(req, "validate", { manifest: candidate, autoEnable: true });
+      await db
+        .updateTable("core_authoring_drafts")
+        .set({
+          candidate: jsonb(candidate) as never,
+          validation: jsonb(v) as never,
+          interpretation,
+          seed_plan: jsonb(seed) as never,
+          // Terminal on valid; otherwise keep "building" while we still have
+          // repair attempts left, so the poller doesn't stop early.
+          status: v.valid ? "validated" : attempt >= MAX_BUILD_ATTEMPTS ? "candidate" : "building",
+          updated_at: new Date(),
+        })
+        .where("id", "=", draftId)
+        .execute();
+      if (v.valid) return;
+      prompt = repairPrompt(basePrompt, candidate, (v.errors as ValidationError[] | undefined) ?? []);
+    }
+  } catch (e) {
+    // Defensive: an unexpected error shouldn't leave the draft stuck "building".
+    await db
+      .updateTable("core_authoring_drafts")
+      .set({
+        status: "failed",
+        validation: jsonb({ valid: false, errors: [{ path: "", code: "build_error", message: e instanceof Error ? e.message : String(e) }] }) as never,
+        updated_at: new Date(),
+      })
+      .where("id", "=", draftId)
+      .execute()
+      .catch(() => {});
+  }
+}
+
 draftsRouter.post(
   "/build",
   asyncHandler(async (req, res) => {
@@ -209,76 +362,19 @@ draftsRouter.post(
         context_snapshot: jsonb(ctx) as never,
         compiled_prompt: basePrompt,
         mode: "hosted",
-        status: "prompt-built",
+        status: "building",
         base_template_id: parsed.data.base_template_id ?? null,
         created_by: user?.id ?? null,
       })
       .returning(["id"])
       .executeTakeFirstOrThrow();
-    const draftId = draft.id;
 
-    let prompt = basePrompt;
-    let lastValidation: Record<string, unknown> | null = null;
-    let candidate: unknown = null;
-    let interpretation: string | null = null;
+    // Fire-and-forget: the loop drives the draft to a terminal status; the
+    // client polls GET /drafts/:id. (Single api instance — in-process detach
+    // is fine; a crash mid-build just leaves a stale "building" draft.)
+    void runBuild(req, draft.id, orgId, basePrompt, user?.id ?? null);
 
-    for (let attempt = 1; attempt <= MAX_BUILD_ATTEMPTS; attempt++) {
-      let text: string;
-      try {
-        const r = await platform().ai.invoke({
-          orgId,
-          capability: "chat",
-          input: { messages: [{ role: "user", content: prompt }] },
-          source: { kind: "core-authoring:build", id: draftId },
-        });
-        const result = r.result as { content?: string; text?: string } | string;
-        text = typeof result === "string" ? result : (result?.content ?? result?.text ?? "");
-      } catch (e) {
-        // No provider / not entitled → degrade so the UI offers copy-paste.
-        const msg = e instanceof Error ? e.message : String(e);
-        const noAi = msg.includes("no provider") || msg.includes("not entitled") || msg.includes("not available");
-        res.status(noAi ? 409 : 502).json({
-          draft_id: draftId,
-          ai: false,
-          error: { code: noAi ? "no_ai_provider" : "ai_error", message: msg },
-        });
-        return;
-      }
-
-      const unwrapped = unwrapBuild(parseJsonObject(text));
-      candidate = unwrapped.bundle;
-      if (unwrapped.interpretation) interpretation = unwrapped.interpretation;
-      if (candidate === null || typeof candidate !== "object") {
-        lastValidation = { valid: false, errors: [{ path: "", code: "not_json", message: "AI did not return a JSON object." }] };
-        prompt = repairPrompt(basePrompt, text, [
-          { path: "", code: "not_json", message: 'Your output was not valid JSON. Return ONLY one JSON object: { "interpretation": "...", "bundle": {...} } — no prose, no fences.' },
-        ]);
-        continue;
-      }
-
-      const { body: v } = await callBundles(req, "validate", { manifest: candidate, autoEnable: true });
-      lastValidation = v;
-      await db
-        .updateTable("core_authoring_drafts")
-        .set({
-          candidate: jsonb(candidate) as never,
-          validation: jsonb(v) as never,
-          status: v.valid ? "validated" : "candidate",
-          updated_at: new Date(),
-        })
-        .where("id", "=", draftId)
-        .execute();
-
-      if (v.valid) {
-        res.json({ draft_id: draftId, ai: true, valid: true, attempts: attempt, validation: v, candidate, interpretation });
-        return;
-      }
-      prompt = repairPrompt(basePrompt, candidate, (v.errors as ValidationError[] | undefined) ?? []);
-    }
-
-    // Exhausted attempts — return the last validation so the UI can show the
-    // errors + offer the copy-paste repair path.
-    res.json({ draft_id: draftId, ai: true, valid: false, attempts: MAX_BUILD_ATTEMPTS, validation: lastValidation, candidate, interpretation });
+    res.status(202).json({ draft_id: draft.id, status: "building" });
   }),
 );
 
@@ -350,7 +446,11 @@ draftsRouter.post(
     const parsed = ApplyBody.safeParse(req.body ?? {});
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
-    const draft = await db.selectFrom("core_authoring_drafts").select(["id", "candidate"]).where("id", "=", req.params.id!).executeTakeFirst();
+    const draft = await db
+      .selectFrom("core_authoring_drafts")
+      .select(["id", "candidate", "seed_plan"])
+      .where("id", "=", req.params.id!)
+      .executeTakeFirst();
     if (!draft) {
       res.status(404).json({ error: { code: "not_found", message: "Draft not found." } });
       return;
@@ -370,12 +470,17 @@ draftsRouter.post(
       res.status(status).json(ires);
       return;
     }
+    // Schema is live (modules enabled + fields/wires created) — NOW seed the
+    // starter records the design planned (best-effort; the fields they set
+    // already exist). Other tasks have no seed_plan, so this is a no-op there.
+    const seed = Array.isArray(draft.seed_plan) ? (draft.seed_plan as SeedGroup[]) : [];
+    const seeded = seed.length > 0 ? await seedRecords(req, seed) : { created: 0, skipped: 0 };
     await db
       .updateTable("core_authoring_drafts")
       .set({ status: "applied", updated_at: new Date() })
       .where("id", "=", req.params.id!)
       .execute();
-    res.json({ applied: true, bundle: ires });
+    res.json({ applied: true, bundle: ires, seeded });
   }),
 );
 

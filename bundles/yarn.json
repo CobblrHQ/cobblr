@@ -1,0 +1,29 @@
+{
+  "manifest": {
+    "id": "cobblr.flagship.yarn",
+    "version": "0.2.0",
+    "name": "Yarn",
+    "description": "A yarn stash by brand, colorway, fibre, and weight, tracked by skein·metre·gram, with a grouped 'My yarn stash' view.",
+    "author": "Cobblr",
+    "requires": [{ "module": "inventory" }],
+    "field_defs": [
+      { "entity_kind": "inventory:part", "name": "color", "display_label": "Color", "type": "text", "position": 1, "renderer": "color-hex" },
+      { "entity_kind": "inventory:part", "name": "colorway", "display_label": "Colorway", "type": "text", "position": 2 },
+      { "entity_kind": "inventory:part", "name": "fiber", "display_label": "Fibre", "type": "text", "position": 3, "choices": ["Wool", "Merino", "Cotton", "Acrylic", "Nylon", "Chenille", "Alpaca", "Silk", "Linen", "Bamboo", "Cashmere", "Blend"] },
+      { "entity_kind": "inventory:part", "name": "weight_class", "display_label": "Weight", "type": "text", "position": 4, "choices": ["Lace", "Fingering", "Sport", "DK", "Worsted", "Aran", "Bulky", "Super Bulky"] },
+      { "entity_kind": "inventory:part", "name": "vendor", "display_label": "Vendor", "type": "text", "position": 5, "choices": ["Michaels", "Hobby Lobby", "Walmart", "Joann", "Amazon", "Etsy", "Local yarn shop"] },
+      { "entity_kind": "inventory:part", "name": "length_per_skein", "display_label": "Length / skein (m)", "type": "number", "position": 6 },
+      { "entity_kind": "inventory:part", "name": "dye_lot", "display_label": "Dye lot", "type": "text", "position": 7 },
+      { "entity_kind": "inventory:part", "name": "stash_summary", "display_label": "Summary", "type": "computed", "position": 10, "template": "{{weight_class}} {{fiber}} · {{length_per_skein | default: \"?\"}} m/skein" }
+    ],
+    "field_overrides": [
+      { "entity_kind": "inventory:part", "name": "manufacturer", "display_label": "Brand" },
+      { "entity_kind": "inventory:part", "name": "cost", "display_label": "Price / skein" },
+      { "entity_kind": "inventory:part", "name": "serial_number", "hidden": true },
+      { "entity_kind": "inventory:part", "name": "model_number", "hidden": true }
+    ],
+    "saved_views": [
+      { "entity_kind": "inventory:part", "name": "My yarn stash", "view_type": "table", "pinned": true, "config": { "group_by": "weight_class", "visible_fields": ["title", "color", "colorway", "fiber", "vendor", "qty", "unit", "length_per_skein"] } }
+    ]
+  }
+}

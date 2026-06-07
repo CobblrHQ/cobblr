@@ -9,7 +9,7 @@
 // For installed bundles we additionally hit /bundles/:id to fetch the
 // actually-installed wires/field-defs (in case the manifest drifted).
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { ArrowRight, CheckCircle2, Download, Package, Trash2 } from "lucide-react";
@@ -20,7 +20,11 @@ import {
   type PlatformBundle,
   type PlatformBundleManifest,
 } from "../lib/api";
-import type { BundleNextStep } from "../lib/featured-bundles";
+import {
+  resolveBundleManifest,
+  resolveNextSteps,
+  type BundleNextStep,
+} from "../lib/featured-bundles";
 import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
 
 interface InstalledMode {
@@ -45,6 +49,10 @@ interface FeaturedMode {
   installedBundleId?: string | null;
   /** Post-install guided steps for the "what's next" panel. */
   nextSteps?: BundleNextStep[];
+  /** First-run wizard mode: on a successful install, skip the "what's next"
+   *  panel and navigate straight into the bundle's landing module (the first
+   *  next-step, else the first required module) so the user isn't stranded. */
+  autoLand?: boolean;
 }
 
 type Props = {
@@ -59,17 +67,35 @@ export function BundleDetailModal(props: Props) {
   const toast = useToast();
   const confirm = useConfirm();
   const navigate = useNavigate();
+  // First-run wizard: land the user inside the bundle on install instead of
+  // showing the "what's next" panel (which is the right call from the
+  // marketplace, but leaves a brand-new user a click short of their data).
+  const autoLand = props.mode === "featured" && props.autoLand === true;
   // After a successful install we keep the modal open and swap to a
   // "what's next" panel instead of dumping the user back on the page.
   const [justInstalled, setJustInstalled] = useState<{ wires: number; field_defs: number } | null>(null);
+  // Which optional features are checked. Lazy-init from each feature's `default`.
+  // (Modal is keyed by bundle id in the parent, so this resets per bundle.)
+  const [selectedFeatures, setSelectedFeatures] = useState<Set<string>>(
+    () => new Set((props.mode === "featured" ? props.manifest.features : undefined)?.filter((f) => f.default).map((f) => f.key) ?? []),
+  );
 
-  // Installed-only: fetch the actually-installed wires + field defs.
+  // Installed-only: fetch the actually-installed wires + field defs + the
+  // stored manifest (with features) + enabled_features (for "Manage features").
   const installedBundleId = props.mode === "installed" ? props.bundle.id : null;
   const detail = useQuery({
     queryKey: ["bundle-detail", slug, installedBundleId],
     queryFn: () => api.getBundle(slug, installedBundleId!),
     enabled: open && !!installedBundleId,
   });
+
+  // Installed mode: once the detail loads, seed the feature checkboxes from the
+  // bundle's stored enabled_features so the manage UI reflects reality.
+  useEffect(() => {
+    if (props.mode === "installed" && detail.data) {
+      setSelectedFeatures(new Set(detail.data.bundle.enabled_features ?? []));
+    }
+  }, [props.mode, detail.data]);
 
   // The bundle to uninstall: the installed bundle in installed mode, or a
   // marketplace bundle the user already has installed (featured mode) so
@@ -96,8 +122,8 @@ export function BundleDetailModal(props: Props) {
   });
 
   const install = useMutation({
-    mutationFn: (vars: { manifest: PlatformBundleManifest; confirm: boolean }) =>
-      api.installBundle(slug, vars.manifest, vars.confirm),
+    mutationFn: (vars: { manifest: PlatformBundleManifest; confirm: boolean; enabledFeatures?: string[] }) =>
+      api.installBundle(slug, vars.manifest, vars.confirm, vars.enabledFeatures),
     onSuccess: (r) => {
       toast.success(
         `Installed ${r.bundle.name} v${r.bundle.version} — ${r.applied.wires} wire(s), ${r.applied.field_defs} field def(s).`,
@@ -108,8 +134,9 @@ export function BundleDetailModal(props: Props) {
       // The install may have enabled new modules — refresh the nav so they
       // appear (and so the "what's next" links land on a populated sidebar).
       void qc.invalidateQueries({ queryKey: ["org-modules", slug] });
-      // Keep the modal open; show the guided "what's next" panel.
-      setJustInstalled(r.applied);
+      // Wizard mode lands straight in the module (handled in handleInstall);
+      // marketplace mode keeps the modal open on the guided "what's next" panel.
+      if (!autoLand) setJustInstalled(r.applied);
     },
     onError: (e: unknown) => {
       // `needs_enable` is handled by handleInstall's confirm prompt —
@@ -117,6 +144,27 @@ export function BundleDetailModal(props: Props) {
       if (e instanceof ApiError && e.code === "needs_enable") return;
       toast.error(e instanceof ApiError ? e.message : (e as Error).message);
     },
+  });
+
+  // Installed mode: change which optional features are on. v2 does this as a
+  // reinstall (uninstall + install with the new enabled set) — reuses the
+  // proven paths; entity data is untouched (only field defs/wires/views move).
+  const saveFeatures = useMutation({
+    mutationFn: async () => {
+      if (props.mode !== "installed" || !detail.data) throw new Error("bundle not loaded");
+      const full = detail.data.bundle.manifest;
+      await api.uninstallBundle(slug, props.bundle.id);
+      await api.installBundle(slug, full, true, [...selectedFeatures]);
+    },
+    onSuccess: () => {
+      toast.success("Features updated.");
+      void qc.invalidateQueries({ queryKey: ["bundles", slug] });
+      void qc.invalidateQueries({ queryKey: ["bindings", slug] });
+      void qc.invalidateQueries({ queryKey: ["field-defs", slug] });
+      void qc.invalidateQueries({ queryKey: ["org-modules", slug] });
+      onClose();
+    },
+    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't update features."),
   });
 
   async function handleUninstall() {
@@ -147,6 +195,27 @@ export function BundleDetailModal(props: Props) {
         props.bundle.manifest)
       : props.manifest;
 
+  // Featured bundles can carry opt-in features; merge the selected ones into
+  // the manifest so the preview (wires/fields/requires/counts) and the install
+  // all reflect exactly what the user checked. Base only in installed mode.
+  // Opt-in features now live in the manifest. The featured preview merges the
+  // checked ones for the live wires/fields/counts; install sends the FULL
+  // manifest + the enabled keys and the backend resolves.
+  const features = manifest?.features;
+  const effectiveManifest: PlatformBundleManifest | undefined =
+    props.mode === "featured" && features?.length && manifest
+      ? resolveBundleManifest(manifest, selectedFeatures)
+      : manifest;
+
+  function toggleFeature(key: string) {
+    setSelectedFeatures((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
   const name = props.mode === "installed" ? props.bundle.name : manifest?.name ?? "";
   const externalId =
     props.mode === "installed" ? props.bundle.external_id : manifest?.id ?? "";
@@ -160,10 +229,44 @@ export function BundleDetailModal(props: Props) {
   // depends on. The backend answers 409 `needs_enable` with the list of
   // missing modules; instead of dead-ending on that error, we ask once
   // and re-install with confirm:true (enable + install in one step).
+  // Wizard mode: where to drop the user after install — the first resolved
+  // next-step's module, else the first required module. Same precedence the
+  // "what's next" panel uses, so marketplace + wizard agree. If the bundle
+  // shipped a pinned view for that module's entity kind, land IN that view
+  // (e.g. Yarn → /inventory?view=<My yarn stash>), so the curated, grouped
+  // surface is the landing — its empty-state still carries the add CTA.
+  async function landAfterInstall() {
+    if (!autoLand) return;
+    const steps = resolveNextSteps(
+      props.mode === "featured" ? props.nextSteps : undefined,
+      features,
+      selectedFeatures,
+    );
+    const mod = steps[0]?.module ?? effectiveManifest?.requires?.[0]?.module;
+    if (!mod) return;
+    let target = `/${mod}`;
+    try {
+      const pinned = (effectiveManifest?.saved_views ?? []).find(
+        (v) => v.pinned && v.entity_kind.startsWith(`${mod}:`),
+      );
+      if (pinned) {
+        const res = await api.listSavedViews(slug, pinned.entity_kind);
+        const match = res.items.find((v) => v.name === pinned.name);
+        if (match) target = `/${mod}?view=${match.id}`;
+      }
+    } catch {
+      /* fall back to the plain module page */
+    }
+    onClose();
+    navigate(target);
+  }
+
   async function handleInstall() {
     if (!manifest) return;
+    const enabledFeatures = [...selectedFeatures];
     try {
-      await install.mutateAsync({ manifest, confirm: false });
+      await install.mutateAsync({ manifest, confirm: false, enabledFeatures });
+      await landAfterInstall();
     } catch (e) {
       if (e instanceof ApiError && e.code === "needs_enable") {
         const mods =
@@ -181,7 +284,14 @@ export function BundleDetailModal(props: Props) {
           } and install in one step?`,
           confirmLabel: "Enable & install",
         });
-        if (ok) await install.mutateAsync({ manifest, confirm: true }).catch(() => {});
+        if (ok) {
+          try {
+            await install.mutateAsync({ manifest, confirm: true, enabledFeatures });
+            await landAfterInstall();
+          } catch {
+            // already toasted by the mutation's onError
+          }
+        }
       }
       // Any other error was already toasted by the mutation's onError.
     }
@@ -200,7 +310,7 @@ export function BundleDetailModal(props: Props) {
           trigger_event: w.trigger_event,
           template: w.template,
         }))
-      : (manifest?.wires ?? []).map((w, i) => ({
+      : (effectiveManifest?.wires ?? []).map((w, i) => ({
           id: `preview-${i}`,
           source_kind: w.source_kind,
           action_id: w.action_id,
@@ -218,7 +328,7 @@ export function BundleDetailModal(props: Props) {
           display_label: f.display_label,
           type: f.type,
         }))
-      : (manifest?.field_defs ?? []).map((f, i) => ({
+      : (effectiveManifest?.field_defs ?? []).map((f, i) => ({
           id: `preview-${i}`,
           entity_kind: f.entity_kind,
           name: f.name,
@@ -228,12 +338,12 @@ export function BundleDetailModal(props: Props) {
 
   const readme = manifest?.readme_md;
   const screenshots = manifest?.screenshots ?? [];
-  const requires = manifest?.requires ?? [];
+  const requires = effectiveManifest?.requires ?? [];
   const providesLens = manifest?.provides_lens;
 
   function downloadManifest() {
-    if (!manifest) return;
-    const blob = new Blob([JSON.stringify({ manifest }, null, 2)], {
+    if (!effectiveManifest) return;
+    const blob = new Blob([JSON.stringify({ manifest: effectiveManifest }, null, 2)], {
       type: "application/json",
     });
     const url = URL.createObjectURL(blob);
@@ -253,8 +363,9 @@ export function BundleDetailModal(props: Props) {
 
   // Post-install guided steps: use the bundle's declared next_steps, else
   // fall back to one "go to" link per unique required module.
-  const declaredSteps = props.mode === "featured" ? props.nextSteps : undefined;
-  const nextSteps: BundleNextStep[] = declaredSteps?.length
+  const declaredSteps =
+    props.mode === "featured" ? resolveNextSteps(props.nextSteps, features, selectedFeatures) : [];
+  const nextSteps: BundleNextStep[] = declaredSteps.length
     ? declaredSteps
     : [...new Set(requires.map((r) => r.module))].map((m) => ({
         label: `Go to ${m.charAt(0).toUpperCase() + m.slice(1)}`,
@@ -376,6 +487,65 @@ export function BundleDetailModal(props: Props) {
           </Row>
         </dl>
 
+        {features && features.length > 0 && (
+          <Section title={props.mode === "installed" ? "features" : "optional features"}>
+            <p className="text-xs text-faint dark:text-slate-400 mb-2">
+              {props.mode === "installed"
+                ? "Turn capabilities on or off, then save. Re-applies the bundle with your choice — your entities (parts, designs, …) stay; only the bundle's fields/views/automations change."
+                : "The basics are always included. Turn on what you want — the fields, views, and modules below update to match. (Changeable anytime after install.)"}
+            </p>
+            <ul className="space-y-1.5">
+              {features.map((f) => {
+                const on = selectedFeatures.has(f.key);
+                return (
+                  <li key={f.key}>
+                    <label
+                      className={
+                        "flex items-start gap-3 rounded-md border p-3 cursor-pointer transition " +
+                        (on
+                          ? "border-cobble-400 dark:border-cobble-600 bg-cobble-50/50 dark:bg-cobble-950/20"
+                          : "border-line dark:border-slate-700 bg-surface dark:bg-slate-900 hover:border-cobble-300 dark:hover:border-cobble-700")
+                      }
+                    >
+                      <input
+                        type="checkbox"
+                        checked={on}
+                        onChange={() => toggleFeature(f.key)}
+                        className="mt-0.5 h-4 w-4 shrink-0 accent-cobble-600"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium text-content dark:text-mortar-100">{f.question ?? f.name}</div>
+                        {f.description && (
+                          <div className="text-xs text-faint dark:text-slate-400 mt-0.5">{f.description}</div>
+                        )}
+                      </div>
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
+            {props.mode === "installed" &&
+              (() => {
+                const current = new Set(detail.data?.bundle.enabled_features ?? []);
+                const dirty =
+                  current.size !== selectedFeatures.size ||
+                  [...selectedFeatures].some((k) => !current.has(k));
+                return (
+                  <div className="mt-3 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => saveFeatures.mutate()}
+                      disabled={!dirty || saveFeatures.isPending}
+                      className="text-xs font-medium px-3 py-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white transition disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {saveFeatures.isPending ? "Saving…" : "Save feature changes"}
+                    </button>
+                  </div>
+                );
+              })()}
+          </Section>
+        )}
+
         {requires.length > 0 && (
           <Section title="requires modules">
             <div className="flex flex-wrap gap-1.5">
@@ -464,14 +634,14 @@ export function BundleDetailModal(props: Props) {
           )}
         </Section>
 
-        {/* Raw manifest collapsible */}
-        {manifest && (
+        {/* Raw manifest collapsible — the resolved manifest (base + selected features). */}
+        {effectiveManifest && (
           <details className="text-xs">
             <summary className="font-mono uppercase tracking-widest text-[10px] text-faint cursor-pointer">
               View raw manifest JSON
             </summary>
             <pre className="mt-2 p-2 rounded bg-subtle dark:bg-slate-800 font-mono text-[11px] overflow-x-auto text-content dark:text-mortar-200 max-h-64">
-              {JSON.stringify(manifest, null, 2)}
+              {JSON.stringify(effectiveManifest, null, 2)}
             </pre>
           </details>
         )}
@@ -502,7 +672,7 @@ export function BundleDetailModal(props: Props) {
             <button
               onClick={() => void handleInstall()}
               disabled={
-                !manifest || install.isPending || props.alreadyInstalled === true
+                !effectiveManifest || install.isPending || props.alreadyInstalled === true
               }
               className="text-xs font-medium px-3 py-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white transition flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
             >
@@ -517,7 +687,7 @@ export function BundleDetailModal(props: Props) {
           <div className="flex items-center gap-2">
             <button
               onClick={downloadManifest}
-              disabled={!manifest}
+              disabled={!effectiveManifest}
               className="text-[10px] font-mono uppercase tracking-widest text-muted hover:text-accent transition flex items-center gap-1"
               title="Download the manifest JSON"
             >

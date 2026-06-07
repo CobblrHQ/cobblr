@@ -1480,6 +1480,9 @@ export interface PlatformAi {
      *  match-to-catalog after a user rejects a suggestion. */
     bypass_cache?: boolean;
     source?: { kind: string; id: string };
+    /** The user who initiated this call (for the AI activity log). Null/absent
+     *  for system-initiated calls (e.g. a wire). */
+    userId?: string | null;
   }): Promise<{
     result: unknown;
     provider_id: string;

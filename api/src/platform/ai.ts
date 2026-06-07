@@ -202,6 +202,19 @@ function truncate(s: string, n = 200): string {
   return s.length <= n ? s : s.slice(0, n - 1) + "…";
 }
 
+// Full text for the activity log: JSON, but redact images + clamp any long
+// string (base64), then cap the whole thing — so a vision payload can't balloon
+// the log. Readable for chat/text; safe for everything else.
+function fullText(obj: unknown, cap = 20_000): string {
+  const json = JSON.stringify(obj, (k, v) => {
+    if (k === "image_b64" || k === "images" || k === "image") return "[image]";
+    if (typeof v === "string" && v.length > 4000) return v.slice(0, 200) + "…[clamped]";
+    return v;
+  });
+  if (!json) return "";
+  return json.length <= cap ? json : json.slice(0, cap) + "…[truncated]";
+}
+
 export const invoke: PlatformAi["invoke"] = async (req) => {
   // Instance kill-switch: when AI is disabled for the whole deployment,
   // refuse before touching any per-workspace config. Same error family as
@@ -276,8 +289,11 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
         ok: true,
         cost_cents: 0,
         duration_ms: ms,
+        user_id: req.userId ?? null,
         input_summary: truncate(JSON.stringify(req.input)),
         output_summary: truncate(JSON.stringify(hit.result)),
+        input_full: fullText(req.input),
+        output_full: fullText(hit.result),
         source_kind: req.source?.kind ?? null,
         source_id: req.source?.id ?? null,
         error: null,
@@ -329,8 +345,11 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
     ok,
     cost_cents: payload.cost_cents ?? null,
     duration_ms,
+    user_id: req.userId ?? null,
     input_summary: truncate(JSON.stringify(req.input)),
     output_summary: ok ? truncate(JSON.stringify(payload.result)) : null,
+    input_full: fullText(req.input),
+    output_full: ok ? fullText(payload.result) : null,
     source_kind: req.source?.kind ?? null,
     source_id: req.source?.id ?? null,
     error: errMsg,
@@ -383,8 +402,11 @@ async function writeAuditRow(
     ok: boolean;
     cost_cents: number | null;
     duration_ms: number;
+    user_id: string | null;
     input_summary: string;
     output_summary: string | null;
+    input_full: string;
+    output_full: string | null;
     source_kind: string | null;
     source_id: string | null;
     error: string | null;

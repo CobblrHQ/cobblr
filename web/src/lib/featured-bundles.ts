@@ -6,7 +6,7 @@
 // Adding a bundle: drop a JSON manifest in bundles/<name>.json at
 // the repo root, then import + push it here.
 
-import type { PlatformBundleManifest } from "./api";
+import type { PlatformBundleManifest, PlatformBundleFeature } from "./api";
 
 /** A post-install guided step — the "you can now add some yarn" prompt
  *  that shows after a bundle installs, so the user isn't left staring at
@@ -20,7 +20,16 @@ export interface BundleNextStep {
   hint?: string;
 }
 
+/** An opt-in capability of a bundle, toggled by a checkbox in the install
+ *  modal. Phase 2: features live IN the manifest (manifest.features) so the
+ *  backend stores them and they can be toggled later. The manifest's own
+ *  arrays are the always-on BASE (the "thing"); features add the "what can
+ *  I do with it". Naming rule: the bundle title is the noun; capabilities
+ *  live here. */
+export type BundleFeature = PlatformBundleFeature;
+
 export interface FeaturedBundle {
+  /** Includes the optional `features` array (opt-in capabilities). */
   manifest: PlatformBundleManifest;
   /** Short blurb shown on the catalog card. */
   blurb: string;
@@ -29,6 +38,40 @@ export interface FeaturedBundle {
   /** Post-install guided next steps. When omitted, a generic "go to the
    *  modules this set up" list is derived from the manifest's requires. */
   next_steps?: BundleNextStep[];
+}
+
+/** Merge a manifest's BASE arrays with its selected features into one
+ *  resolved manifest — used by the modal's live preview. The install sends
+ *  the FULL manifest + the enabled feature keys and the backend resolves;
+ *  this is display-only. requires are dedup-unioned by module. */
+export function resolveBundleManifest(
+  manifest: PlatformBundleManifest,
+  selected: ReadonlySet<string>,
+): PlatformBundleManifest {
+  const on = (manifest.features ?? []).filter((f) => selected.has(f.key));
+  if (on.length === 0) return manifest;
+  const seen = new Set<string>();
+  const requires = [...(manifest.requires ?? []), ...on.flatMap((f) => f.requires ?? [])].filter((r) =>
+    seen.has(r.module) ? false : (seen.add(r.module), true),
+  );
+  return {
+    ...manifest,
+    requires,
+    field_defs: [...(manifest.field_defs ?? []), ...on.flatMap((f) => f.field_defs ?? [])],
+    wires: [...(manifest.wires ?? []), ...on.flatMap((f) => f.wires ?? [])],
+    field_overrides: [...(manifest.field_overrides ?? []), ...on.flatMap((f) => f.field_overrides ?? [])],
+    saved_views: [...(manifest.saved_views ?? []), ...on.flatMap((f) => f.saved_views ?? [])],
+  };
+}
+
+/** Base next-steps plus the next-steps of any selected features. */
+export function resolveNextSteps(
+  base: BundleNextStep[] | undefined,
+  features: BundleFeature[] | undefined,
+  selected: ReadonlySet<string>,
+): BundleNextStep[] {
+  const on = (features ?? []).filter((f) => selected.has(f.key));
+  return [...(base ?? []), ...on.flatMap((f) => f.next_steps ?? [])];
 }
 
 export const FEATURED_BUNDLES: FeaturedBundle[] = [
@@ -87,7 +130,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.community.lego",
       version: "0.1.0",
-      name: "Lego Collector",
+      name: "Lego",
       description:
         "Custom inventory fields + label wires for Lego set collections.",
       author: "Cobblr community",
@@ -181,7 +224,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.community.garden",
       version: "0.1.0",
-      name: "Garden Tracker",
+      name: "Garden",
       description:
         "Custom assets:asset fields for tracking plants — species, planted date, watering RRULE, sun exposure.",
       author: "Cobblr community",
@@ -486,15 +529,20 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     },
   },
   {
+    // One "Yarn" bundle (was two: Yarn Stash + Yarn Studio). The title is the
+    // noun; the studio capabilities are now opt-in features. Base = the stash.
     glyph: "🧶",
     blurb:
-      "A knitter's stash by brand, colorway, fibre, and weight class — tracked by skein, metre, or gram. A grouped 'My stash' view sorts it all by weight.",
+      "Your yarn stash — brand, colorway, fibre, and weight, tracked by skein·metre·gram, in a grouped 'My yarn stash' view. Turn on extras at install: designs with patterns, your hooks, an auto shopping list, and scan-to-add.",
+    next_steps: [
+      { label: "Add your first yarn", module: "inventory", hint: "Colour, fibre, weight, length — start your stash." },
+    ],
     manifest: {
-      id: "cobblr.flagship.yarn-stash",
-      version: "0.1.0",
-      name: "Yarn Stash",
+      id: "cobblr.flagship.yarn",
+      version: "0.2.0",
+      name: "Yarn",
       description:
-        "Turn inventory into a yarn stash: brand/colorway/fibre/weight, tracked by skein·metre·gram, with a grouped 'My stash' view.",
+        "A yarn stash by brand, colorway, fibre, and weight, tracked by skein·metre·gram, with a grouped 'My yarn stash' view.",
       author: "Cobblr",
       requires: [{ module: "inventory" }],
       field_defs: [
@@ -505,8 +553,6 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         { entity_kind: "inventory:part", name: "vendor", display_label: "Vendor", type: "text", position: 5, choices: ["Michaels", "Hobby Lobby", "Walmart", "Joann", "Amazon", "Etsy", "Local yarn shop"] },
         { entity_kind: "inventory:part", name: "length_per_skein", display_label: "Length / skein (m)", type: "number", position: 6 },
         { entity_kind: "inventory:part", name: "dye_lot", display_label: "Dye lot", type: "text", position: 7 },
-        { entity_kind: "inventory:part", name: "hook_size", display_label: "Hook / needle", type: "text", position: 8 },
-        { entity_kind: "inventory:part", name: "for_project", display_label: "For project", type: "text", position: 9 },
         { entity_kind: "inventory:part", name: "stash_summary", display_label: "Summary", type: "computed", position: 10, template: '{{weight_class}} {{fiber}} · {{length_per_skein | default: "?"}} m/skein' },
       ],
       field_overrides: [
@@ -518,71 +564,74 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       saved_views: [
         { entity_kind: "inventory:part", name: "My yarn stash", view_type: "table", pinned: true, config: { group_by: "weight_class", visible_fields: ["title", "color", "colorway", "fiber", "vendor", "qty", "unit", "length_per_skein"] } },
       ],
-    },
-  },
-  {
-    glyph: "🧶🪝",
-    blurb:
-      "A full crochet/knitting studio: your yarn + hook stash, your designs as projects (each with its pattern), with yarn allocated to each design — reserved while you work it, used up when it's finished. Out-of-stock yarn lands on your shopping list; scan a skein or receipt to add it.",
-    next_steps: [
-      { label: "Add your first yarn", module: "inventory", hint: "Colour, fibre, weight, length — start your stash." },
-      { label: "Add a design", module: "projects", hint: "Each design holds its pattern and the yarn it needs." },
-    ],
-    manifest: {
-      id: "cobblr.flagship.yarn-studio",
-      version: "0.1.0",
-      name: "Yarn Studio",
-      description:
-        "Designs as projects (pattern file/link + category), a yarn stash + hooks, and yarn allocated per design — reserved while open, consumed when finished. Out-of-stock yarn auto-adds to a shopping list. Scan skeins/hooks/receipts to stock them.",
-      author: "Cobblr",
-      requires: [
-        { module: "projects" },
-        { module: "inventory" },
-        { module: "lists" },
-        { module: "core-scan" },
-        { module: "purchases" },
-      ],
-      field_defs: [
-        // ── Yarn (inventory:part) — positions 1-6 show as stash columns ──
-        { entity_kind: "inventory:part", name: "color", display_label: "Color", type: "text", position: 1, renderer: "color-hex" },
-        { entity_kind: "inventory:part", name: "colorway", display_label: "Colorway", type: "text", position: 2 },
-        { entity_kind: "inventory:part", name: "fiber", display_label: "Fibre", type: "text", position: 3, choices: ["Wool", "Merino", "Cotton", "Acrylic", "Nylon", "Chenille", "Alpaca", "Silk", "Linen", "Bamboo", "Cashmere", "Blend"] },
-        { entity_kind: "inventory:part", name: "weight_class", display_label: "Weight", type: "text", position: 4, choices: ["Lace", "Fingering", "Sport", "DK", "Worsted", "Aran", "Bulky", "Super Bulky"] },
-        { entity_kind: "inventory:part", name: "vendor", display_label: "Vendor", type: "text", position: 5, choices: ["Michaels", "Hobby Lobby", "Walmart", "Joann", "Amazon", "Etsy", "Local yarn shop"] },
-        { entity_kind: "inventory:part", name: "length_per_skein", display_label: "Length / skein (m)", type: "number", position: 6 },
-        // ── Hooks (inventory:part, category "Hooks") — positions 20+ so the
-        //    stash table's column cap keeps them off the yarn list; they show
-        //    on the hook detail + the Hooks view. Track stock as qty. ──
-        { entity_kind: "inventory:part", name: "hook_gauge", display_label: "Hook gauge", type: "text", position: 20, choices: ["1.0 mm", "1.5 mm", "2.0 mm", "2.5 mm", "3.0 mm", "3.5 mm", "4.0 mm", "4.5 mm", "5.0 mm", "5.5 mm", "6.0 mm", "6.5 mm", "7.0 mm", "8.0 mm", "9.0 mm", "10.0 mm"] },
-        { entity_kind: "inventory:part", name: "hook_material", display_label: "Hook material", type: "text", position: 21, choices: ["All-metal", "Metal + silicone grip"] },
-        // ── Designs (projects:project) ──
-        { entity_kind: "projects:project", name: "pattern_url", display_label: "Pattern link", type: "url", position: 1, renderer: "url-link" },
-        { entity_kind: "projects:project", name: "pattern_category", display_label: "Category", type: "text", position: 2, choices: ["Wearables", "Toys", "Home-wear", "Blankets"] },
-      ],
-      field_overrides: [
-        { entity_kind: "inventory:part", name: "manufacturer", display_label: "Brand" },
-        { entity_kind: "inventory:part", name: "cost", display_label: "Price / skein" },
-      ],
-      saved_views: [
-        { entity_kind: "projects:project", name: "Designs", view_type: "table", pinned: true, config: { group_by: "pattern_category", visible_fields: ["title", "pattern_category", "status", "pattern_url"] } },
-        { entity_kind: "inventory:part", name: "My yarn stash", view_type: "table", pinned: true, config: { group_by: "weight_class", visible_fields: ["title", "color", "colorway", "fiber", "vendor", "qty", "unit", "length_per_skein"] } },
-        { entity_kind: "inventory:part", name: "Hooks", view_type: "table", config: { group_by: "hook_material", visible_fields: ["title", "hook_gauge", "hook_material", "qty"] } },
-      ],
-      wires: [
-        // Out-of-stock yarn → shopping list (same primitive as the kitchen bundle).
-        { source_kind: "inventory:part", action_id: "lists:add-item", trigger_type: "event", trigger_event: "inventory.stock.low", args: { listTitle: "Shopping list" } },
+      features: [
+      {
+        key: "designs",
+        name: "Designs",
+        question: "Want to track your designs & patterns too?",
+        description:
+          "Track projects as designs — each with its pattern (file/link) + category, and the yarn it needs allocated to it (reserved while you work it, used up when finished).",
+        default: false,
+        requires: [{ module: "projects" }],
+        field_defs: [
+          { entity_kind: "projects:project", name: "pattern_url", display_label: "Pattern link", type: "url", position: 1, renderer: "url-link" },
+          { entity_kind: "projects:project", name: "pattern_category", display_label: "Category", type: "text", position: 2, choices: ["Wearables", "Toys", "Home-wear", "Blankets"] },
+        ],
+        saved_views: [
+          { entity_kind: "projects:project", name: "Designs", view_type: "table", pinned: true, config: { group_by: "pattern_category", visible_fields: ["title", "pattern_category", "status", "pattern_url"] } },
+        ],
+        next_steps: [
+          { label: "Add a design", module: "projects", hint: "Each design holds its pattern and the yarn it needs." },
+        ],
+      },
+      {
+        key: "hooks",
+        name: "Hooks & needles",
+        question: "Keep track of your hooks & needles?",
+        description: "Track your crochet hooks / knitting needles by gauge + material, with stock counts and a Hooks view.",
+        default: false,
+        field_defs: [
+          { entity_kind: "inventory:part", name: "hook_gauge", display_label: "Hook gauge", type: "text", position: 20, choices: ["1.0 mm", "1.5 mm", "2.0 mm", "2.5 mm", "3.0 mm", "3.5 mm", "4.0 mm", "4.5 mm", "5.0 mm", "5.5 mm", "6.0 mm", "6.5 mm", "7.0 mm", "8.0 mm", "9.0 mm", "10.0 mm"] },
+          { entity_kind: "inventory:part", name: "hook_material", display_label: "Hook material", type: "text", position: 21, choices: ["All-metal", "Metal + silicone grip"] },
+        ],
+        saved_views: [
+          { entity_kind: "inventory:part", name: "Hooks", view_type: "table", config: { group_by: "hook_material", visible_fields: ["title", "hook_gauge", "hook_material", "qty"] } },
+        ],
+      },
+      {
+        key: "shopping-list",
+        name: "Shopping list",
+        question: "Auto-build a shopping list when yarn runs low?",
+        description: "When yarn runs low it auto-lands on a 'Shopping list' so you know what to restock.",
+        default: false,
+        requires: [{ module: "lists" }],
+        wires: [
+          { source_kind: "inventory:part", action_id: "lists:add-item", trigger_type: "event", trigger_event: "inventory.stock.low", args: { listTitle: "Shopping list" } },
+        ],
+      },
+      {
+        key: "scan",
+        name: "Scan to add",
+        question: "Add yarn by scanning a barcode or receipt?",
+        description: "Snap a barcode, skein label, or receipt to stock yarn fast (and log the purchase).",
+        default: false,
+        requires: [{ module: "core-scan" }, { module: "purchases" }],
+      },
       ],
     },
   },
   {
     glyph: "🖨️🧵",
     blurb:
-      "The 3D-printer sibling of Yarn Stash — spools by material, colour, and diameter, weighed in grams, grouped by material, with the print temps that worked.",
+      "Your filament stash — spools by material, colour, and diameter, weighed in grams, grouped by material. Turn on print settings to log the nozzle/bed temps that worked.",
+    next_steps: [
+      { label: "Add a spool", module: "inventory", hint: "Material, colour, diameter, length." },
+    ],
     manifest: {
       id: "cobblr.flagship.filament-stash",
-      version: "0.1.0",
-      name: "Filament Stash",
-      description: "Track 3D-printer filament: material/colour/diameter, weighed in grams, grouped by material, with print temps.",
+      version: "0.2.0",
+      name: "Filament",
+      description: "A 3D-printer filament stash: material/colour/diameter, weighed in grams, grouped by material.",
       author: "Cobblr",
       requires: [{ module: "inventory" }],
       field_defs: [
@@ -591,10 +640,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         { entity_kind: "inventory:part", name: "diameter", display_label: "Diameter", type: "text", position: 3, choices: ["1.75 mm", "2.85 mm"] },
         { entity_kind: "inventory:part", name: "length_per_spool", display_label: "Length / spool (m)", type: "number", position: 4 },
         { entity_kind: "inventory:part", name: "spool_weight", display_label: "Empty spool (g)", type: "number", position: 5 },
-        { entity_kind: "inventory:part", name: "nozzle_temp", display_label: "Nozzle °C", type: "number", position: 6 },
-        { entity_kind: "inventory:part", name: "bed_temp", display_label: "Bed °C", type: "number", position: 7 },
-        { entity_kind: "inventory:part", name: "needs_drying", display_label: "Needs drying", type: "boolean", position: 8 },
-        { entity_kind: "inventory:part", name: "spool_summary", display_label: "Summary", type: "computed", position: 9, template: '{{material}} {{color}} · {{diameter}} · {{nozzle_temp | default: "?"}}/{{bed_temp | default: "?"}} °C' },
+        { entity_kind: "inventory:part", name: "spool_summary", display_label: "Summary", type: "computed", position: 6, template: "{{material}} {{color}} · {{diameter}}" },
       ],
       field_overrides: [
         { entity_kind: "inventory:part", name: "manufacturer", display_label: "Brand" },
@@ -603,27 +649,43 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         { entity_kind: "inventory:part", name: "model_number", hidden: true },
       ],
       saved_views: [
-        { entity_kind: "inventory:part", name: "My filament", view_type: "table", pinned: true, config: { group_by: "material", visible_fields: ["title", "color", "diameter", "qty", "unit", "nozzle_temp"] } },
+        { entity_kind: "inventory:part", name: "My filament", view_type: "table", pinned: true, config: { group_by: "material", visible_fields: ["title", "color", "diameter", "qty", "unit"] } },
+      ],
+      features: [
+        {
+          key: "print-settings",
+          name: "Print settings",
+          question: "Log the print settings that worked?",
+          description: "Log the nozzle/bed temps that worked + whether the spool needs drying.",
+          default: false,
+          field_defs: [
+            { entity_kind: "inventory:part", name: "nozzle_temp", display_label: "Nozzle °C", type: "number", position: 7 },
+            { entity_kind: "inventory:part", name: "bed_temp", display_label: "Bed °C", type: "number", position: 8 },
+            { entity_kind: "inventory:part", name: "needs_drying", display_label: "Needs drying", type: "boolean", position: 9 },
+          ],
+        },
       ],
     },
   },
   {
+    // Title is the noun ("Home Inventory"); the insurance angle is an opt-in
+    // feature, not the headline. Base = catalog what you own, room by room.
     glyph: "🏠",
     blurb:
-      "Photograph and value what you own, room by room, so a fire/theft/move starts from a real list. A 'By room' view totals the shelf.",
+      "Catalog what you own, room by room — make/model, condition, photos — in a grouped 'By room' view. Turn on insurance valuation to add replacement value + purchase details for a claim.",
+    next_steps: [
+      { label: "Add an item", module: "inventory", hint: "What it is, which room, make/model, condition." },
+    ],
     manifest: {
       id: "cobblr.flagship.home-inventory",
-      version: "0.1.0",
-      name: "Home Inventory (insurance)",
-      description: "Photograph + value belongings room by room for an insurer; grouped 'By room' view.",
+      version: "0.2.0",
+      name: "Home Inventory",
+      description: "Catalog belongings room by room — make/model, condition — with a grouped 'By room' view.",
       author: "Cobblr",
       requires: [{ module: "inventory" }],
       field_defs: [
         { entity_kind: "inventory:part", name: "room", display_label: "Room", type: "text", position: 1, choices: ["Living room", "Kitchen", "Primary bedroom", "Bedroom", "Bathroom", "Office", "Garage", "Basement", "Attic", "Outdoor", "Storage"] },
-        { entity_kind: "inventory:part", name: "replacement_value", display_label: "Replacement value", type: "number", position: 2 },
-        { entity_kind: "inventory:part", name: "purchased_from", display_label: "Bought from", type: "text", position: 3 },
-        { entity_kind: "inventory:part", name: "purchase_date", display_label: "Purchased", type: "date", position: 4 },
-        { entity_kind: "inventory:part", name: "condition", display_label: "Condition", type: "text", position: 5, choices: ["New", "Excellent", "Good", "Fair", "Poor"] },
+        { entity_kind: "inventory:part", name: "condition", display_label: "Condition", type: "text", position: 2, choices: ["New", "Excellent", "Good", "Fair", "Poor"] },
       ],
       field_overrides: [
         { entity_kind: "inventory:part", name: "cost", display_label: "Paid" },
@@ -631,7 +693,25 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         { entity_kind: "inventory:part", name: "model_number", display_label: "Model" },
       ],
       saved_views: [
-        { entity_kind: "inventory:part", name: "By room", view_type: "table", pinned: true, config: { group_by: "room", visible_fields: ["title", "replacement_value", "condition", "purchase_date"] } },
+        { entity_kind: "inventory:part", name: "By room", view_type: "table", pinned: true, config: { group_by: "room", visible_fields: ["title", "manufacturer", "model_number", "condition", "qty"] } },
+      ],
+      features: [
+      {
+        key: "insurance",
+        name: "Insurance valuation",
+        question: "Add insurance valuation (for a claim)?",
+        description:
+          "Add replacement value + where/when you bought each item, plus an 'Insurance valuation' view to hand an insurer after a fire/theft/move.",
+        default: false,
+        field_defs: [
+          { entity_kind: "inventory:part", name: "replacement_value", display_label: "Replacement value", type: "number", position: 3 },
+          { entity_kind: "inventory:part", name: "purchased_from", display_label: "Bought from", type: "text", position: 4 },
+          { entity_kind: "inventory:part", name: "purchase_date", display_label: "Purchased", type: "date", position: 5 },
+        ],
+        saved_views: [
+          { entity_kind: "inventory:part", name: "Insurance valuation", view_type: "table", config: { group_by: "room", visible_fields: ["title", "room", "replacement_value", "purchase_date", "condition"] } },
+        ],
+      },
       ],
     },
   },

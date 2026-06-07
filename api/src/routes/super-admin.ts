@@ -16,6 +16,7 @@ import { z } from "zod";
 import { randomBytes } from "node:crypto";
 import { requireAuth, requirePlatformAdmin } from "../auth/middleware.js";
 import { meta } from "../db/meta.js";
+import { getTenantDb } from "../db/tenant.js";
 import { getCpuStats, getInvocationStats } from "../sandbox/pool.js";
 import { hasAuthEmailSender, sendAuthEmail } from "../platform/hosted-seams.js";
 
@@ -499,6 +500,101 @@ superAdminRouter.post("/signup-invites/:id/revoke", async (req, res, next) => {
       return;
     }
     res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─────────────────────── AI activity — cross-workspace ───────────────────────
+// Aggregates each tenant's core_ai_calls into one platform-wide AI log. core_ai_calls
+// is a module table (not in the core tenant type), so we query it with raw SQL
+// per tenant DB. Filterable by workspace / capability / user-email.
+interface AiActivityRow {
+  id: string;
+  user_id: string | null;
+  capability: string;
+  provider_id: string;
+  model: string | null;
+  input_summary: string | null;
+  output_summary: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cost_cents: number | null;
+  duration_ms: number | null;
+  ok: boolean;
+  source_kind: string | null;
+  cached: boolean;
+  invoked_at: Date;
+}
+
+superAdminRouter.get("/ai-activity", async (req, res, next) => {
+  try {
+    const capability = typeof req.query.capability === "string" && req.query.capability ? req.query.capability : null;
+    const orgSlug = typeof req.query.org === "string" && req.query.org ? req.query.org : null;
+    const userFilter = typeof req.query.user === "string" && req.query.user ? req.query.user.toLowerCase() : null;
+    const limit = Math.min(parseInt(String(req.query.limit ?? "200"), 10) || 200, 500);
+    const perOrg = Math.min(limit, 100);
+
+    let orgsQ = meta.selectFrom("orgs").select(["id", "name", "slug"]);
+    if (orgSlug) orgsQ = orgsQ.where("slug", "=", orgSlug);
+    const orgs = await orgsQ.execute();
+
+    const rows: Array<AiActivityRow & { org_id: string; org_name: string; org_slug: string }> = [];
+    for (const org of orgs) {
+      try {
+        const tdb = await getTenantDb(org.id);
+        const whereCap = capability ? sql`where capability = ${capability}` : sql``;
+        const r = await sql<AiActivityRow>`
+          select id, user_id, capability, provider_id, model, input_summary, output_summary,
+                 input_tokens, output_tokens, cost_cents, duration_ms, ok, source_kind, cached, invoked_at
+          from core_ai_calls ${whereCap}
+          order by invoked_at desc limit ${perOrg}`.execute(tdb);
+        for (const row of r.rows) rows.push({ ...row, org_id: org.id, org_name: org.name, org_slug: org.slug });
+      } catch {
+        // Tenant DB may not have core_ai_calls (module never enabled) — skip it.
+      }
+    }
+
+    // Resolve user_id → email/name from the shared users table.
+    const userIds = [...new Set(rows.map((r) => r.user_id).filter((x): x is string => !!x))];
+    const users = userIds.length
+      ? await meta.selectFrom("users").select(["id", "email", "display_name"]).where("id", "in", userIds).execute()
+      : [];
+    const byId = new Map(users.map((u) => [u.id, u]));
+
+    let out = rows.map((r) => ({
+      ...r,
+      user_email: r.user_id ? byId.get(r.user_id)?.email ?? null : null,
+      user_name: r.user_id ? byId.get(r.user_id)?.display_name ?? null : null,
+    }));
+    if (userFilter) out = out.filter((r) => (r.user_email ?? "").toLowerCase().includes(userFilter));
+    out.sort((a, b) => new Date(b.invoked_at).getTime() - new Date(a.invoked_at).getTime());
+    res.json({ items: out.slice(0, limit) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /super-admin/ai-activity/:orgId/:id — full prompt + response for one call.
+superAdminRouter.get("/ai-activity/:orgId/:id", async (req, res, next) => {
+  try {
+    const org = await meta.selectFrom("orgs").select(["id", "name", "slug"]).where("id", "=", req.params.orgId!).executeTakeFirst();
+    if (!org) {
+      res.status(404).json({ error: { code: "not_found", message: "Workspace not found." } });
+      return;
+    }
+    const tdb = await getTenantDb(org.id);
+    const r = await sql<AiActivityRow & { input_full: string | null; output_full: string | null; error: string | null }>`
+      select * from core_ai_calls where id = ${req.params.id} limit 1`.execute(tdb);
+    const row = r.rows[0];
+    if (!row) {
+      res.status(404).json({ error: { code: "not_found", message: "Entry not found." } });
+      return;
+    }
+    const u = row.user_id
+      ? await meta.selectFrom("users").select(["email", "display_name"]).where("id", "=", row.user_id).executeTakeFirst()
+      : null;
+    res.json({ ...row, org: { id: org.id, name: org.name, slug: org.slug }, user_email: u?.email ?? null, user_name: u?.display_name ?? null });
   } catch (err) {
     next(err);
   }

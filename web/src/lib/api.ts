@@ -563,11 +563,16 @@ export const api = {
   // Bundles (C.2)
   listBundles: (slug: string) =>
     request<{ items: PlatformBundle[] }>("GET", `/orgs/${slug}/bundles`),
-  installBundle: (slug: string, manifest: PlatformBundleManifest, confirm?: boolean) =>
+  installBundle: (
+    slug: string,
+    manifest: PlatformBundleManifest,
+    confirm?: boolean,
+    enabledFeatures?: string[],
+  ) =>
     request<{ bundle: PlatformBundle; applied: { wires: number; field_defs: number } }>(
       "POST",
       `/orgs/${slug}/bundles/install`,
-      { manifest, confirm },
+      { manifest, confirm, enabled_features: enabledFeatures },
     ),
   uninstallBundle: (slug: string, id: string) =>
     request<void>("DELETE", `/orgs/${slug}/bundles/${id}`),
@@ -596,27 +601,43 @@ export const api = {
   // ─── core-authoring (AI bundle builder, Phase 1: copy-paste) ───────
   authoringContext: (slug: string, selected_kinds?: string[]) =>
     request<AuthoringContext>("POST", `/orgs/${slug}/modules/core-authoring/context`, { selected_kinds }),
-  authoringCompile: (slug: string, body: { intent: string; selected_kinds?: string[] }) =>
+  authoringCompile: (
+    slug: string,
+    body: { intent: string; selected_kinds?: string[]; task?: string; base_template_id?: string },
+  ) =>
     request<{ draft_id: string; prompt: string; warnings: string[] }>(
       "POST",
       `/orgs/${slug}/modules/core-authoring/compile`,
       body,
     ),
-  /** Hosted build (Phase 2): the server calls AI itself + auto-repairs.
-   *  Returns a validated, ready-to-apply draft; throws 409 when the workspace
-   *  has no AI (caller falls back to authoringCompile). */
-  authoringBuild: (slug: string, body: { intent: string; selected_kinds?: string[] }) =>
+  /** Hosted build (Phase 2): the server calls AI itself + auto-repairs. ASYNC —
+   *  returns { draft_id, status:"building" } immediately; poll authoringDraft
+   *  until status leaves "building". Throws 409 when the workspace has no AI
+   *  (caller falls back to authoringCompile). */
+  authoringBuild: (
+    slug: string,
+    body: { intent: string; selected_kinds?: string[]; task?: string; base_template_id?: string },
+  ) =>
+    request<{ draft_id: string; status: string }>(
+      "POST",
+      `/orgs/${slug}/modules/core-authoring/build`,
+      body,
+    ),
+  /** Poll a build draft. status: building → keep polling; validated | candidate
+   *  | failed → terminal. candidate/validation/interpretation populate as the
+   *  background build progresses. */
+  authoringDraft: (slug: string, draftId: string) =>
     request<{
-      draft_id: string;
-      ai: boolean;
-      valid?: boolean;
-      attempts?: number;
-      validation?: BundleValidation;
+      id: string;
+      status: string;
+      task: string;
+      intent: string;
       candidate?: unknown;
-      /** The AI's plain-language read of the request + what it built. */
+      validation?: BundleValidation | null;
       interpretation?: string | null;
-      error?: { code: string; message: string };
-    }>("POST", `/orgs/${slug}/modules/core-authoring/build`, body),
+      /** design-workspace: starter records that apply will create. */
+      seed_plan?: { kind: string; records: Record<string, unknown>[] }[] | null;
+    }>("GET", `/orgs/${slug}/modules/core-authoring/drafts/${draftId}`),
   authoringCandidate: (slug: string, draftId: string, manifest: unknown) =>
     request<BundleValidation>(
       "POST",
@@ -626,14 +647,14 @@ export const api = {
   authoringRepairPrompt: (slug: string, draftId: string) =>
     request<{ prompt: string }>("POST", `/orgs/${slug}/modules/core-authoring/drafts/${draftId}/repair-prompt`),
   authoringApply: (slug: string, draftId: string, confirm = true) =>
-    request<{ applied: boolean; bundle: unknown }>(
+    request<{ applied: boolean; bundle: unknown; seeded?: { created: number; skipped: number } }>(
       "POST",
       `/orgs/${slug}/modules/core-authoring/drafts/${draftId}/apply`,
       { confirm },
     ),
   getBundle: (slug: string, id: string) =>
     request<{
-      bundle: PlatformBundle & { manifest: unknown };
+      bundle: PlatformBundle & { manifest: PlatformBundleManifest; enabled_features?: string[] };
       wires: PlatformBinding[];
       field_defs: PlatformFieldDef[];
     }>("GET", `/orgs/${slug}/bundles/${id}`),
@@ -1481,10 +1502,51 @@ export const api = {
       cost_cents?: number;
       duration_ms: number;
     }>("POST", `/orgs/${slug}/modules/core-ai/invoke`, body),
+  /** Agentic chat: returns a plain reply OR a proposed write (create/action)
+   *  the user must confirm via aiChatExecute. */
+  aiChat: (slug: string, messages: { role: "user" | "assistant"; content: string }[]) =>
+    request<{
+      type: "reply" | "proposal" | "build-proposal" | "error";
+      text?: string;
+      summary?: string;
+      proposal?: AiChatProposal;
+      /** build-proposal: the build runs async — poll authoringDraft(draft_id)
+       *  until the draft leaves "building", then read its validation.preview. */
+      building?: boolean;
+      draft_id?: string;
+    }>("POST", `/orgs/${slug}/modules/core-ai/chat`, { messages }),
+  aiChatExecute: (slug: string, proposal: AiChatProposal) =>
+    request<{ ok: boolean; message: string; entity?: { kind: string; id?: string } }>(
+      "POST",
+      `/orgs/${slug}/modules/core-ai/chat/execute`,
+      { proposal },
+    ),
   listAiCalls: (slug: string, limit = 50) =>
     request<{ items: AiCall[] }>(
       "GET",
       `/orgs/${slug}/modules/core-ai/usage/calls?limit=${limit}`,
+    ),
+  // AI activity log (full prompt/response). Per-user within a workspace.
+  aiActivity: (slug: string, scope: "mine" | "workspace" = "mine", limit = 100) =>
+    request<{ items: AiActivityItem[]; scope: string }>(
+      "GET",
+      `/orgs/${slug}/modules/core-ai/activity?scope=${scope}&limit=${limit}`,
+    ),
+  aiActivityDetail: (slug: string, id: string) =>
+    request<AiActivityDetail>("GET", `/orgs/${slug}/modules/core-ai/activity/${id}`),
+  // Super-admin: cross-workspace AI log.
+  superAdminAiActivity: (q: { capability?: string; org?: string; user?: string; limit?: number } = {}) => {
+    const qs = new URLSearchParams();
+    if (q.capability) qs.set("capability", q.capability);
+    if (q.org) qs.set("org", q.org);
+    if (q.user) qs.set("user", q.user);
+    if (q.limit) qs.set("limit", String(q.limit));
+    return request<{ items: SuperAdminAiActivityItem[] }>("GET", `/super-admin/ai-activity?${qs.toString()}`);
+  },
+  superAdminAiActivityDetail: (orgId: string, id: string) =>
+    request<AiActivityDetail & SuperAdminAiActivityItem & { error: string | null; org: { id: string; name: string; slug: string } }>(
+      "GET",
+      `/super-admin/ai-activity/${orgId}/${id}`,
     ),
   getAiUsageSummary: (slug: string) =>
     request<{ since: string; items: AiUsageSummaryRow[] }>(
@@ -2413,6 +2475,43 @@ export interface SearchHit {
   fields: Record<string, unknown>;
 }
 
+/** One AI call in the activity log (list view). */
+export interface AiActivityItem {
+  id: string;
+  user_id: string | null;
+  capability: string;
+  provider_id: string;
+  model: string | null;
+  input_summary: string | null;
+  output_summary: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cost_cents: number | null;
+  duration_ms: number | null;
+  ok: boolean;
+  error?: string | null;
+  source_kind: string | null;
+  cached: boolean;
+  invoked_at: string;
+}
+export interface AiActivityDetail extends AiActivityItem {
+  input_full: string | null;
+  output_full: string | null;
+}
+export interface SuperAdminAiActivityItem extends AiActivityItem {
+  org_id: string;
+  org_name: string;
+  org_slug: string;
+  user_email: string | null;
+  user_name: string | null;
+}
+
+/** A write the agentic chat proposes; the user confirms before it runs. */
+export type AiChatProposal =
+  | { kind: "create"; entity_kind: string; fields: Record<string, unknown> }
+  | { kind: "action"; action_id: string; entity_kind: string; entity_id: string; entity_label?: string }
+  | { kind: "build"; draft_id: string };
+
 export interface SurfaceRecord {
   id: string;
   name: string;
@@ -2914,6 +3013,8 @@ export interface PlatformBundle {
    *  to read `provides_lens` so lens-contributing bundles render
    *  under their parent module's popover. */
   manifest?: PlatformBundleManifest;
+  /** Which opt-in features are enabled on this installed bundle. */
+  enabled_features?: string[];
 }
 
 export interface PlatformBundleManifest {
@@ -2975,6 +3076,30 @@ export interface PlatformBundleManifest {
     name: string;
     display_name: string;
   };
+  /** Phase 2: opt-in features (checkboxes in the install modal). The arrays
+   *  above are the always-on BASE; each enabled feature merges its same-shaped
+   *  arrays in. Toggleable later via re-install with a new enabled set. */
+  features?: PlatformBundleFeature[];
+}
+
+/** An opt-in capability of a bundle — its contributions merge into the
+ *  manifest when its key is enabled. */
+export interface PlatformBundleFeature {
+  key: string;
+  name: string;
+  description?: string;
+  /** The question form of the feature, shown in the install modal
+   *  ("Want to track your designs too?"). Falls back to `name`. Display-only. */
+  question?: string;
+  /** Pre-checked in the install modal. Default false → installs "basic". */
+  default?: boolean;
+  requires?: PlatformBundleManifest["requires"];
+  wires?: PlatformBundleManifest["wires"];
+  field_defs?: PlatformBundleManifest["field_defs"];
+  field_overrides?: PlatformBundleManifest["field_overrides"];
+  saved_views?: PlatformBundleManifest["saved_views"];
+  /** Post-install guided steps (web nav only; stripped server-side). */
+  next_steps?: { label: string; module: string; hint?: string }[];
 }
 
 /** A bundle entry in the extension registry index — the manifest plus the

@@ -2,7 +2,7 @@
 // low-stock toggle. Clicking a row opens the part detail page.
 
 import { useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -36,6 +36,15 @@ import { PartDetailModal } from "./PartDetailPage";
 import type { PartListItem, InvFieldDef } from "./api";
 
 type StateFilter = "active" | "draft" | "needs_review" | "all";
+
+type SavedViewLite = {
+  id: string;
+  name: string;
+  view_type: string;
+  pinned?: boolean;
+  is_default?: boolean;
+  config?: { group_by?: string; visible_fields?: string[] };
+};
 
 export function PartsListPage() {
   usePageTitle("Inventory");
@@ -71,10 +80,51 @@ export function PartsListPage() {
     queryFn: () => api.listFieldDefs("inventory:part"),
     staleTime: 60_000,
   });
-  const customCols = (fieldDefs.data?.items ?? [])
+  const allCustomCols = (fieldDefs.data?.items ?? [])
     .filter((d) => d.type !== "computed")
-    .sort((a, b) => a.position - b.position)
-    .slice(0, 6);
+    .sort((a, b) => a.position - b.position);
+
+  // Saved views for inventory:part — bundles ship pinned ones ("My yarn
+  // stash"). When `?view=<id>` is set, the list renders AS that view: its
+  // group_by groups the rows, its visible_fields pick the columns. A chip bar
+  // lets the user switch (and "All parts" returns to the native list). The
+  // inventory module has no typed views client, so hit the core-views endpoint
+  // directly with the same Bearer (same pattern as bulk-tag below).
+  const [params, setParams] = useSearchParams();
+  const viewId = params.get("view");
+  const savedViews = useQuery({
+    queryKey: ["inv-saved-views", orgSlug],
+    queryFn: async (): Promise<{ items: SavedViewLite[] }> => {
+      const token = getToken();
+      const res = await fetch(
+        `/api/v1/orgs/${orgSlug}/modules/core-views/views?kind=${encodeURIComponent("inventory:part")}`,
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+      );
+      if (!res.ok) return { items: [] };
+      return res.json();
+    },
+    staleTime: 60_000,
+  });
+  const views = savedViews.data?.items ?? [];
+  const activeView = viewId ? views.find((v) => v.id === viewId) ?? null : null;
+  const groupBy = activeView?.config?.group_by;
+  const viewFields = activeView?.config?.visible_fields;
+  // When a view is active, restrict the custom columns to its visible_fields;
+  // otherwise show the first 6 (the prior behaviour).
+  const customCols = viewFields
+    ? allCustomCols.filter((c) => viewFields.includes(c.name))
+    : allCustomCols.slice(0, 6);
+  function selectView(id: string | null) {
+    setParams(
+      (p) => {
+        const n = new URLSearchParams(p);
+        if (id) n.set("view", id);
+        else n.delete("view");
+        return n;
+      },
+      { replace: true },
+    );
+  }
 
   const cats = useQuery({ queryKey: ["inventory-categories"], queryFn: () => api.listCategories() });
   const locs = useQuery({ queryKey: ["inventory-locations"], queryFn: () => api.listLocations() });
@@ -350,26 +400,71 @@ export function PartsListPage() {
         </button>
       </div>
 
+      {/* Saved-view chips — bundles ship pinned ones; the wizard lands here. */}
+      {views.length > 0 && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <ViewChip active={!activeView} onClick={() => selectView(null)}>
+            All parts
+          </ViewChip>
+          {views.map((v) => (
+            <ViewChip key={v.id} active={activeView?.id === v.id} onClick={() => selectView(v.id)}>
+              {v.name}
+            </ViewChip>
+          ))}
+        </div>
+      )}
+
       {parts.isLoading && <div className="text-sm text-faint dark:text-slate-500">loading…</div>}
       {parts.error && (
         <div className="text-sm text-ember-500">{(parts.error as Error).message}</div>
       )}
       {parts.data && partItems.length === 0 && (
         <div className="border-2 border-dashed border-line dark:border-slate-700 rounded-xl p-12 text-center text-faint dark:text-slate-500">
-          No parts match. Try widening the filter or add the first one.
+          {activeView
+            ? `Nothing in “${activeView.name}” yet — add your first with New part.`
+            : "No parts match. Try widening the filter or add the first one."}
         </div>
       )}
-      {partItems.length > 0 && viewMode === "tiles" && <PartsTileGrid items={partItems} />}
-      {partItems.length > 0 && viewMode === "list" && (
-        <PartsTable
-          items={partItems}
-          customCols={customCols}
-          selected={selected}
-          allChecked={allChecked}
-          onToggle={toggleRow}
-          onSelectAll={selectAll}
-        />
-      )}
+      {/* Grouped (a view with group_by) → one section per group; else flat. */}
+      {partItems.length > 0 && groupBy
+        ? groupItems(partItems, groupBy).map((g) => (
+            <div key={g.key} className="space-y-2">
+              <h3 className="text-xs font-mono uppercase tracking-widest text-accent">{g.key}</h3>
+              {viewMode === "tiles" ? (
+                <PartsTileGrid items={g.rows} />
+              ) : (
+                <PartsTable
+                  items={g.rows}
+                  customCols={customCols}
+                  selected={selected}
+                  allChecked={g.rows.every((r) => selected.has(r.id))}
+                  onToggle={toggleRow}
+                  onSelectAll={(checked) =>
+                    setSelected((s) => {
+                      const n = new Set(s);
+                      for (const r of g.rows) checked ? n.add(r.id) : n.delete(r.id);
+                      return n;
+                    })
+                  }
+                />
+              )}
+            </div>
+          ))
+        : (
+          <>
+            {partItems.length > 0 && viewMode === "tiles" && <PartsTileGrid items={partItems} />}
+            {partItems.length > 0 && viewMode === "list" && (
+              <PartsTable
+                items={partItems}
+                customCols={customCols}
+                selected={selected}
+                allChecked={allChecked}
+                onToggle={toggleRow}
+                onSelectAll={selectAll}
+              />
+            )}
+          </>
+        )}
       {parts.hasNextPage && (
         <div className="flex justify-center">
           <button
@@ -716,6 +811,46 @@ function PartsTable({
 
 function Th({ children, className = "" }: { children?: React.ReactNode; className?: string }) {
   return <th className={`px-3 py-2 font-medium text-left ${className}`}>{children}</th>;
+}
+
+function ViewChip({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={
+        "text-xs font-medium px-3 py-1 rounded-full border transition " +
+        (active
+          ? "border-cobble-400 dark:border-cobble-600 bg-cobble-50 dark:bg-cobble-950/30 text-accent"
+          : "border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:border-cobble-300 dark:hover:border-cobble-700")
+      }
+    >
+      {children}
+    </button>
+  );
+}
+
+/** Partition parts by a metadata field (e.g. weight_class), into ordered
+ *  sections. Blank/missing values fall into a trailing "—" group. */
+function groupItems(items: PartListItem[], key: string): { key: string; rows: PartListItem[] }[] {
+  const map = new Map<string, PartListItem[]>();
+  for (const p of items) {
+    const raw = (p.metadata as Record<string, unknown> | null)?.[key];
+    const v = raw == null || String(raw).trim() === "" ? "—" : String(raw).trim();
+    if (!map.has(v)) map.set(v, []);
+    map.get(v)!.push(p);
+  }
+  return [...map.entries()]
+    .sort((a, b) => (a[0] === "—" ? 1 : b[0] === "—" ? -1 : a[0].localeCompare(b[0])))
+    .map(([k, rows]) => ({ key: k, rows }));
 }
 
 function PartsTileGrid({ items }: { items: PartListItem[] }) {

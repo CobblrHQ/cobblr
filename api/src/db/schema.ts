@@ -422,6 +422,9 @@ export interface BundlesTable {
    *   - "pending" → install in flight (reserved for v0.3 async). */
   install_status: Generated<"active" | "partial" | "pending">;
   install_warnings: Generated<unknown>;
+  /** Which optional manifest features (manifest.features[].key) are ON.
+   *  Phase 2: changeable later via PATCH /bundles/:id/features. */
+  enabled_features: Generated<string[]>;
 }
 
 export type FieldDefType = "text" | "number" | "boolean" | "date" | "url" | "computed";

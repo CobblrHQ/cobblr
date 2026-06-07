@@ -35,8 +35,9 @@ export function AssetsPage() {
   const { activeSlug } = useActiveOrg();
   const navigate = useNavigate();
   const { id } = useParams<{ id?: string }>();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const lensName = searchParams.get("lens");
+  const viewId = searchParams.get("view");
 
   const list = useQuery({
     queryKey: ["assets", activeSlug],
@@ -55,11 +56,42 @@ export function AssetsPage() {
     enabled: !!activeSlug,
     staleTime: 60_000,
   });
+  // Saved views for assets — bundles (Plant Care, Pet Care, …) ship pinned
+  // ones; the wizard lands here via ?view=. A chip bar switches between them
+  // and "All assets". An active view drives the columns (its visible_fields)
+  // and grouping (its group_by).
+  const savedViews = useQuery({
+    queryKey: ["saved-views", activeSlug, ENTITY_KIND],
+    queryFn: () => api.listSavedViews(activeSlug, ENTITY_KIND),
+    enabled: !!activeSlug,
+    staleTime: 60_000,
+  });
+  const views = savedViews.data?.items ?? [];
+  const activeView = viewId ? views.find((v) => v.id === viewId) ?? null : null;
+  const groupBy = (activeView?.config as { group_by?: string } | undefined)?.group_by;
+  const viewFields = (activeView?.config as { visible_fields?: string[] } | undefined)?.visible_fields;
+  function selectView(id: string | null) {
+    setSearchParams(
+      (p) => {
+        const n = new URLSearchParams(p);
+        if (id) n.set("view", id);
+        else n.delete("view");
+        return n;
+      },
+      { replace: true },
+    );
+  }
 
   const lensFieldDefs: PlatformFieldDef[] = (fieldDefs.data?.items ?? []).filter((d) => {
     if (lensName) return d.source_module === lensName;
     return d.source_module !== null;
   });
+  // Columns shown after the native ones: an active view picks them by
+  // visible_fields (includes bundle fields, which lensFieldDefs would skip);
+  // otherwise fall back to the lens behaviour.
+  const customCols: PlatformFieldDef[] = viewFields
+    ? (fieldDefs.data?.items ?? []).filter((d) => viewFields.includes(d.name))
+    : lensFieldDefs;
   const lensModule: OrgModuleListItem | undefined = lensName
     ? orgModules.data?.items.find((m) => m.name === lensName)
     : undefined;
@@ -120,6 +152,8 @@ export function AssetsPage() {
     else setSelected(new Set());
   }
   const allChecked = filtered.length > 0 && filtered.every((r) => selected.has(r.id));
+  const openAsset = (aid: string) =>
+    navigate(`/assets/${aid}${searchParams.toString() ? `?${searchParams}` : ""}`);
 
   const [bulkTagOpen, setBulkTagOpen] = useState(false);
   const bulkTag = useMutation({
@@ -179,121 +213,65 @@ export function AssetsPage() {
         </button>
       </div>
 
-      {viewMode === "tiles" && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-          {filtered.map((a) => (
-            <button
-              key={a.id}
-              type="button"
-              onClick={() => navigate(`/assets/${a.id}${searchParams.toString() ? `?${searchParams}` : ""}`)}
-              className="text-left"
-            >
-              <EntityTile
-                src={a.image_path}
-                title={a.name}
-                subtitle={a.manufacturer || a.model || a.short_name || null}
-                badge={a.state}
-              />
-            </button>
+      {/* Saved-view chips — bundles ship pinned ones; the wizard lands here. */}
+      {views.length > 0 && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <AssetViewChip active={!activeView} onClick={() => selectView(null)}>
+            All assets
+          </AssetViewChip>
+          {views.map((v) => (
+            <AssetViewChip key={v.id} active={activeView?.id === v.id} onClick={() => selectView(v.id)}>
+              {v.name}
+            </AssetViewChip>
           ))}
-          {filtered.length === 0 && (
-            <div className="col-span-full px-3 py-10 text-center text-xs text-faint italic">
-              {allRows.length === 0
-                ? "No assets yet. Click + new to add one."
-                : "No matches with the current filters."}
-            </div>
-          )}
         </div>
       )}
 
-      {viewMode === "list" && (
-      <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="bg-subtle/60 dark:bg-slate-800/40 text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
-            <tr>
-              <th className="w-8 px-3 py-2">
-                <input
-                  type="checkbox"
-                  checked={allChecked}
-                  onChange={(e) => selectAll(e.target.checked)}
-                  className="accent-cobble-600"
-                  aria-label="Select all"
-                />
-              </th>
-              <th className="text-left px-3 py-2">Name</th>
-              <th className="text-left px-3 py-2">Manufacturer</th>
-              <th className="text-left px-3 py-2">Model</th>
-              <th className="text-left px-3 py-2">State</th>
-              {lensFieldDefs.map((d) => (
-                <th key={d.id} className="text-left px-3 py-2">{d.display_label}</th>
-              ))}
-              <th className="text-right px-3 py-2">qty</th>
-              <th className="w-6"></th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-line dark:divide-slate-700">
-            {filtered.map((a) => (
-              <tr
-                key={a.id}
-                onClick={() => navigate(`/assets/${a.id}${searchParams.toString() ? `?${searchParams}` : ""}`)}
-                className="hover:bg-subtle dark:hover:bg-slate-800/40 transition cursor-pointer"
-              >
-                <td
-                  className="px-3 py-2 w-8"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <input
-                    type="checkbox"
-                    checked={selected.has(a.id)}
-                    onChange={(e) => toggleRow(a.id, e.target.checked)}
-                    className="accent-cobble-600"
-                    aria-label={`Select ${a.name}`}
-                  />
-                </td>
-                <td className="px-3 py-2 text-content dark:text-mortar-100 font-medium">
-                  <div className="flex items-center gap-3">
-                    <EntityThumb src={a.image_path} alt={a.name} size={56} />
-                    <span className="truncate">
-                      {a.name}
-                      {a.short_name && (
-                        <span className="ml-1.5 text-[10px] font-mono text-faint">{a.short_name}</span>
-                      )}
-                    </span>
-                  </div>
-                </td>
-                <td className="px-3 py-2 text-muted dark:text-slate-400">{a.manufacturer || "—"}</td>
-                <td className="px-3 py-2 text-muted dark:text-slate-400">{a.model || "—"}</td>
-                <td className="px-3 py-2">
-                  <span className="font-mono text-[10px] uppercase tracking-widest text-muted dark:text-slate-400">
-                    {a.state}
-                  </span>
-                </td>
-                {lensFieldDefs.map((d) => {
-                  const v = (a.metadata as Record<string, unknown>)[d.name];
-                  return (
-                    <td key={d.id} className="px-3 py-2 text-content dark:text-mortar-200 text-xs">
-                      {v === null || v === undefined || v === "" ? "—" : String(v)}
-                    </td>
-                  );
-                })}
-                <td className="px-3 py-2 text-right font-mono text-xs text-muted">{a.quantity}</td>
-                <td className="px-2 py-2 text-faint dark:text-slate-600">
-                  <ChevronRight size={14} />
-                </td>
-              </tr>
-            ))}
-            {filtered.length === 0 && (
-              <tr>
-                <td colSpan={6 + lensFieldDefs.length + 1} className="px-3 py-10 text-center text-xs text-faint italic">
-                  {allRows.length === 0
-                    ? "No assets yet. Click + new to add one."
-                    : "No matches with the current filters."}
-                </td>
-              </tr>
+      {filtered.length === 0 ? (
+        <div className="border-2 border-dashed border-line dark:border-slate-700 rounded-xl p-12 text-center text-xs text-faint dark:text-slate-500 italic">
+          {allRows.length === 0
+            ? "No assets yet. Click + New asset to add one."
+            : activeView
+              ? `Nothing in “${activeView.name}” yet — add your first with New asset.`
+              : "No matches with the current filters."}
+        </div>
+      ) : groupBy ? (
+        groupItems(filtered, groupBy).map((g) => (
+          <div key={g.key} className="space-y-2">
+            <h3 className="text-xs font-mono uppercase tracking-widest text-accent">{g.key}</h3>
+            {viewMode === "tiles" ? (
+              <AssetsTiles rows={g.rows} onOpen={openAsset} />
+            ) : (
+              <AssetsTable
+                rows={g.rows}
+                customCols={customCols}
+                selected={selected}
+                allChecked={g.rows.every((r) => selected.has(r.id))}
+                onToggle={toggleRow}
+                onSelectAll={(checked) =>
+                  setSelected((s) => {
+                    const n = new Set(s);
+                    for (const r of g.rows) checked ? n.add(r.id) : n.delete(r.id);
+                    return n;
+                  })
+                }
+                onOpen={openAsset}
+              />
             )}
-          </tbody>
-        </table>
-      </div>
+          </div>
+        ))
+      ) : viewMode === "tiles" ? (
+        <AssetsTiles rows={filtered} onOpen={openAsset} />
+      ) : (
+        <AssetsTable
+          rows={filtered}
+          customCols={customCols}
+          selected={selected}
+          allChecked={allChecked}
+          onToggle={toggleRow}
+          onSelectAll={selectAll}
+          onOpen={openAsset}
+        />
       )}
 
       <AssetDetailModal
@@ -366,6 +344,158 @@ export function AssetsPage() {
       )}
     </div>
   );
+}
+
+function AssetViewChip({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={
+        "text-xs font-medium px-3 py-1 rounded-full border transition " +
+        (active
+          ? "border-cobble-400 dark:border-cobble-600 bg-cobble-50 dark:bg-cobble-950/30 text-accent"
+          : "border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:border-cobble-300 dark:hover:border-cobble-700")
+      }
+    >
+      {children}
+    </button>
+  );
+}
+
+function AssetsTiles({ rows, onOpen }: { rows: Asset[]; onOpen: (id: string) => void }) {
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+      {rows.map((a) => (
+        <button key={a.id} type="button" onClick={() => onOpen(a.id)} className="text-left">
+          <EntityTile
+            src={a.image_path}
+            title={a.name}
+            subtitle={a.manufacturer || a.model || a.short_name || null}
+            badge={a.state}
+          />
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function AssetsTable({
+  rows,
+  customCols,
+  selected,
+  allChecked,
+  onToggle,
+  onSelectAll,
+  onOpen,
+}: {
+  rows: Asset[];
+  customCols: PlatformFieldDef[];
+  selected: Set<string>;
+  allChecked: boolean;
+  onToggle: (id: string, checked: boolean) => void;
+  onSelectAll: (checked: boolean) => void;
+  onOpen: (id: string) => void;
+}) {
+  return (
+    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead className="bg-subtle/60 dark:bg-slate-800/40 text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
+          <tr>
+            <th className="w-8 px-3 py-2">
+              <input
+                type="checkbox"
+                checked={allChecked}
+                onChange={(e) => onSelectAll(e.target.checked)}
+                className="accent-cobble-600"
+                aria-label="Select all"
+              />
+            </th>
+            <th className="text-left px-3 py-2">Name</th>
+            <th className="text-left px-3 py-2">Manufacturer</th>
+            <th className="text-left px-3 py-2">Model</th>
+            <th className="text-left px-3 py-2">State</th>
+            {customCols.map((d) => (
+              <th key={d.id} className="text-left px-3 py-2">{d.display_label}</th>
+            ))}
+            <th className="text-right px-3 py-2">qty</th>
+            <th className="w-6"></th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-line dark:divide-slate-700">
+          {rows.map((a) => (
+            <tr
+              key={a.id}
+              onClick={() => onOpen(a.id)}
+              className="hover:bg-subtle dark:hover:bg-slate-800/40 transition cursor-pointer"
+            >
+              <td className="px-3 py-2 w-8" onClick={(e) => e.stopPropagation()}>
+                <input
+                  type="checkbox"
+                  checked={selected.has(a.id)}
+                  onChange={(e) => onToggle(a.id, e.target.checked)}
+                  className="accent-cobble-600"
+                  aria-label={`Select ${a.name}`}
+                />
+              </td>
+              <td className="px-3 py-2 text-content dark:text-mortar-100 font-medium">
+                <div className="flex items-center gap-3">
+                  <EntityThumb src={a.image_path} alt={a.name} size={56} />
+                  <span className="truncate">
+                    {a.name}
+                    {a.short_name && (
+                      <span className="ml-1.5 text-[10px] font-mono text-faint">{a.short_name}</span>
+                    )}
+                  </span>
+                </div>
+              </td>
+              <td className="px-3 py-2 text-muted dark:text-slate-400">{a.manufacturer || "—"}</td>
+              <td className="px-3 py-2 text-muted dark:text-slate-400">{a.model || "—"}</td>
+              <td className="px-3 py-2">
+                <span className="font-mono text-[10px] uppercase tracking-widest text-muted dark:text-slate-400">
+                  {a.state}
+                </span>
+              </td>
+              {customCols.map((d) => {
+                const v = (a.metadata as Record<string, unknown>)[d.name];
+                return (
+                  <td key={d.id} className="px-3 py-2 text-content dark:text-mortar-200 text-xs">
+                    {v === null || v === undefined || v === "" ? "—" : String(v)}
+                  </td>
+                );
+              })}
+              <td className="px-3 py-2 text-right font-mono text-xs text-muted">{a.quantity}</td>
+              <td className="px-2 py-2 text-faint dark:text-slate-600">
+                <ChevronRight size={14} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** Partition assets by a metadata field (e.g. light), ordered; blanks last. */
+function groupItems(items: Asset[], key: string): { key: string; rows: Asset[] }[] {
+  const map = new Map<string, Asset[]>();
+  for (const a of items) {
+    const raw = (a.metadata as Record<string, unknown> | null)?.[key];
+    const v = raw == null || String(raw).trim() === "" ? "—" : String(raw).trim();
+    if (!map.has(v)) map.set(v, []);
+    map.get(v)!.push(a);
+  }
+  return [...map.entries()]
+    .sort((a, b) => (a[0] === "—" ? 1 : b[0] === "—" ? -1 : a[0].localeCompare(b[0])))
+    .map(([k, rows]) => ({ key: k, rows }));
 }
 
 function BulkTagPromptModal({

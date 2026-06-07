@@ -151,7 +151,7 @@ export function NewPartDialog({ onClose, onCreated }: NewPartDialogProps) {
             selected={matched}
             onSelect={handleMatch}
             search={(q) => api.searchCatalogs(q)}
-            placeholder="Search Lego sets, parts, anything…"
+            placeholder="Search a catalog…"
           />
         </Field>
         <Field label="Name">
@@ -160,7 +160,7 @@ export function NewPartDialog({ onClose, onCreated }: NewPartDialogProps) {
             required
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder={matched ? matched.title : "e.g. Brick 2×4 — Red"}
+            placeholder={matched ? matched.title : "Name this item"}
             className="input"
           />
         </Field>

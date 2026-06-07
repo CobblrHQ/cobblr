@@ -5,7 +5,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { platform, AiCapabilities } from "@cobblr/platform-contract";
-import { tenantContext } from "../db.js";
+import { tenantContext, sessionUserId } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 
 export const invokeRouter = Router({ mergeParams: true });
@@ -35,6 +35,7 @@ invokeRouter.post(
         model: parsed.data.model,
         bypass_cache: parsed.data.bypass_cache,
         source: parsed.data.source,
+        userId: sessionUserId(req),
       });
       res.json(r);
     } catch (err) {

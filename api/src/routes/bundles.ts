@@ -54,6 +54,72 @@ interface BundleTenantDB {
 
 export const bundlesRouter = Router({ mergeParams: true });
 
+// ── Reusable element schemas — used by the manifest BASE arrays and, Phase 2,
+// by each optional feature's same-shaped arrays. ──────────────────────────────
+const RequireEntry = z.object({ module: z.string(), version: z.string().optional() });
+
+const WireEntry = z
+  .object({
+    source_kind: z.string(),
+    action_id: z.string(),
+    trigger_type: z
+      .enum(["user-invoked", "event", "on-create", "on-update", "on-delete", "schedule"])
+      .default("user-invoked"),
+    trigger_event: z.string().optional(),
+    trigger_schedule: z.string().optional(),
+    template: z.string().optional(),
+    filter: z.record(z.unknown()).optional(),
+    args: z.record(z.unknown()).optional(),
+    target: z
+      .union([
+        z.literal("self"),
+        z.object({ rel: z.string().min(1), dir: z.enum(["in", "out"]).optional(), kind: z.string().optional() }),
+      ])
+      .optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.trigger_type === "event" && !data.trigger_event) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "trigger_event is required when trigger_type is 'event'", path: ["trigger_event"] });
+    }
+    if (data.trigger_type === "schedule" && !data.trigger_schedule) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "trigger_schedule (an RRULE) is required when trigger_type is 'schedule'", path: ["trigger_schedule"] });
+    }
+  });
+
+const FieldDefEntry = z
+  .object({
+    entity_kind: z.string(),
+    name: z.string().regex(/^[a-z][a-z0-9_]*$/),
+    display_label: z.string(),
+    type: z.enum(["text", "number", "boolean", "date", "url", "computed"]),
+    required: z.boolean().optional(),
+    position: z.number().int().optional(),
+    choices: z.array(z.string()).optional(),
+    renderer: z.string().optional(),
+    template: z.string().max(2000).optional(),
+  })
+  .refine((f) => f.type !== "computed" || (f.template && f.template.trim().length > 0), {
+    message: "computed field_defs need a template",
+    path: ["template"],
+  });
+
+const FieldOverrideEntry = z.object({
+  entity_kind: z.string(),
+  name: z.string(),
+  display_label: z.string().optional(),
+  hidden: z.boolean().optional(),
+  position: z.number().int().optional(),
+});
+
+const SavedViewEntry = z.object({
+  entity_kind: z.string(),
+  name: z.string().min(1),
+  view_type: z.string().min(1).default("list"),
+  config: z.record(z.unknown()).default({}),
+  pinned: z.boolean().optional(),
+  is_default: z.boolean().optional(),
+});
+
 export const BundleManifest = z.object({
   id: z.string().min(1),
   version: z.string().min(1),
@@ -73,118 +139,33 @@ export const BundleManifest = z.object({
    *  order. Treated as URLs verbatim — no embedding, no inlining;
    *  bundle authors host the images wherever. */
   screenshots: z.array(z.string().min(1)).optional(),
-  requires: z
-    .array(z.object({ module: z.string(), version: z.string().optional() }))
-    .default([]),
-  wires: z
-    .array(
-      z
-        .object({
-          source_kind: z.string(),
-          action_id: z.string(),
-          trigger_type: z
-            .enum(["user-invoked", "event", "on-create", "on-update", "on-delete", "schedule"])
-            .default("user-invoked"),
-          trigger_event: z.string().optional(),
-          // Q4: RRULE for schedule-triggered wires. Required when
-          // trigger_type='schedule', ignored otherwise.
-          trigger_schedule: z.string().optional(),
-          template: z.string().optional(),
-          filter: z.record(z.unknown()).optional(),
-          args: z.record(z.unknown()).optional(),
-          // Q1 wire target. Default "self" if omitted.
-          // See docs/architecture/wires-and-bundles.md.
-          target: z
-            .union([
-              z.literal("self"),
-              z.object({
-                rel: z.string().min(1),
-                dir: z.enum(["in", "out"]).optional(),
-                kind: z.string().optional(),
-              }),
-            ])
-            .optional(),
-        })
-        .superRefine((data, ctx) => {
-          // Same trigger / companion-field validation as the
-          // /bindings POST endpoint. Catches bundle authoring bugs
-          // at install time, with a clear path to the offending
-          // wire's field.
-          if (data.trigger_type === "event" && !data.trigger_event) {
-            ctx.addIssue({
-              code: z.ZodIssueCode.custom,
-              message: "trigger_event is required when trigger_type is 'event'",
-              path: ["trigger_event"],
-            });
-          }
-          if (data.trigger_type === "schedule" && !data.trigger_schedule) {
-            ctx.addIssue({
-              code: z.ZodIssueCode.custom,
-              message:
-                "trigger_schedule (an RRULE) is required when trigger_type is 'schedule'",
-              path: ["trigger_schedule"],
-            });
-          }
-        }),
-    )
-    .default([]),
-  field_defs: z
+  requires: z.array(RequireEntry).default([]),
+  wires: z.array(WireEntry).default([]),
+  field_defs: z.array(FieldDefEntry).default([]),
+  /** Presentation overrides for a kind's NATIVE fields — RELABEL + SHOW/HIDE. */
+  field_overrides: z.array(FieldOverrideEntry).default([]),
+  /** v1.5: bundle ships saved views, tagged with the bundle's id. */
+  saved_views: z.array(SavedViewEntry).default([]),
+  /** Phase 2: opt-in features. The BASE arrays above always apply; each
+   *  feature contributes its same-shaped arrays when its key is in the
+   *  install's enabled_features. Definitions are stored in the manifest so
+   *  features can be toggled later (PATCH /bundles/:id/features). */
+  features: z
     .array(
       z.object({
-        entity_kind: z.string(),
-        name: z.string().regex(/^[a-z][a-z0-9_]*$/),
-        display_label: z.string(),
-        type: z.enum(["text", "number", "boolean", "date", "url", "computed"]),
-        required: z.boolean().optional(),
-        position: z.number().int().optional(),
-        /** When type='text', renders as a dropdown of these choices. */
-        choices: z.array(z.string()).optional(),
-        /** When type='computed': the {{ }} template rendered read-only at
-         *  resolve time over the entity's own fields + context providers. */
-        template: z.string().max(2000).optional(),
-      }).refine(
-        (f) => f.type !== "computed" || (f.template && f.template.trim().length > 0),
-        { message: "computed field_defs need a template", path: ["template"] },
-      ),
-    )
-    .default([]),
-  /** Presentation overrides for a kind's NATIVE fields — RELABEL + SHOW/HIDE
-   *  the fields the module already declares (rename assets:asset's
-   *  "manufacturer" → "Make", hide "serial_number"). field_defs add fields;
-   *  these reshape the existing ones. No type — the native field already has
-   *  one. */
-  field_overrides: z
-    .array(
-      z.object({
-        entity_kind: z.string(),
-        name: z.string(),
-        display_label: z.string().optional(),
-        hidden: z.boolean().optional(),
-        position: z.number().int().optional(),
-      }),
-    )
-    .default([]),
-  /** v1.5 (wires-and-bundles.md Q5, alt 3): bundle ships saved views.
-   *  The "skin over a generic module" framing — a Lego bundle wants
-   *  to ship not just custom field defs but also "see them grouped
-   *  by theme, filtered to low-stock" as a default view.
-   *
-   *  Each entry creates a row in core_views_views tagged with the
-   *  bundle's id; uninstall removes them, the user can edit them
-   *  freely while installed (edits stick across re-install since the
-   *  install path is upsert-by-(bundle_id, name, entity_kind)). */
-  saved_views: z
-    .array(
-      z.object({
-        entity_kind: z.string(),
+        key: z.string().min(1),
         name: z.string().min(1),
-        view_type: z.string().min(1).default("list"),
-        config: z.record(z.unknown()).default({}),
-        /** Pin this view to the dashboard on install. */
-        pinned: z.boolean().optional(),
-        /** Mark as default-for-entity-kind on install. The same
-         *  unique-default guard the views API enforces applies. */
-        is_default: z.boolean().optional(),
+        description: z.string().optional(),
+        /** Display-only: the question form of the feature, shown in the
+         *  install modal ("Want to track your designs too?"). Never read by
+         *  resolveManifestFeatures — it just rides in the stored manifest. */
+        question: z.string().optional(),
+        default: z.boolean().optional(),
+        requires: z.array(RequireEntry).default([]),
+        wires: z.array(WireEntry).default([]),
+        field_defs: z.array(FieldDefEntry).default([]),
+        field_overrides: z.array(FieldOverrideEntry).default([]),
+        saved_views: z.array(SavedViewEntry).default([]),
       }),
     )
     .default([]),
@@ -305,17 +286,43 @@ export interface BundleValidationResult {
   valid: boolean;
   errors: BundleValidationError[];
   preview: BundleValidationPreview | null;
-  /** The parsed manifest when structural validation passed — so the
-   *  install path doesn't re-parse. Undefined on structural failure. */
+  /** The RESOLVED manifest (base + enabled features merged) when structural
+   *  validation passed — this is what the install applies. Undefined on
+   *  structural failure. */
   manifest?: BundleManifestT;
+  /** The FULL parsed manifest (features intact) — stored on the bundle row so
+   *  features can be toggled later. */
+  fullManifest?: BundleManifestT;
+  /** The feature keys that were resolved into `manifest`. */
+  enabledFeatures?: string[];
 }
 
 const moduleOf = (id: string): string | null => (id.includes(":") ? (id.split(":")[0] ?? null) : null);
 
+/** Merge a bundle's BASE manifest with its enabled optional features into one
+ *  resolved manifest (arrays concatenated, requires dedup-unioned by module).
+ *  Mirrors the web-side resolveBundleManifest used for the install preview. */
+export function resolveManifestFeatures(full: BundleManifestT, enabledKeys: string[]): BundleManifestT {
+  const on = full.features.filter((f) => enabledKeys.includes(f.key));
+  if (on.length === 0) return full;
+  const seen = new Set<string>();
+  const requires = [...full.requires, ...on.flatMap((f) => f.requires)].filter((r) =>
+    seen.has(r.module) ? false : (seen.add(r.module), true),
+  );
+  return {
+    ...full,
+    requires,
+    wires: [...full.wires, ...on.flatMap((f) => f.wires)],
+    field_defs: [...full.field_defs, ...on.flatMap((f) => f.field_defs)],
+    field_overrides: [...full.field_overrides, ...on.flatMap((f) => f.field_overrides)],
+    saved_views: [...full.saved_views, ...on.flatMap((f) => f.saved_views)],
+  };
+}
+
 export async function validateBundle(
   orgId: string,
   rawManifest: unknown,
-  opts: { autoEnable?: boolean } = {},
+  opts: { autoEnable?: boolean; enabledFeatures?: string[] } = {},
 ): Promise<BundleValidationResult> {
   // 1. Structural.
   const parsed = BundleManifest.safeParse(rawManifest);
@@ -330,7 +337,13 @@ export async function validateBundle(
       })),
     };
   }
-  const m = parsed.data;
+  const full = parsed.data;
+  // Phase 2: resolve BASE + enabled optional features; everything below
+  // validates/previews the resolved set. Default = features marked default:true
+  // when the caller doesn't specify an explicit set.
+  const enabledFeatures =
+    opts.enabledFeatures ?? full.features.filter((f) => f.default).map((f) => f.key);
+  const m = resolveManifestFeatures(full, enabledFeatures);
   const errors: BundleValidationError[] = [];
 
   // 2. Referential — every referenced kind/action exists + is applicable.
@@ -508,7 +521,7 @@ export async function validateBundle(
     modules_required: [...declaredRequires],
     modules_to_enable: modulesToEnable,
   };
-  return { valid: errors.length === 0, errors, preview, manifest: m };
+  return { valid: errors.length === 0, errors, preview, manifest: m, fullManifest: full, enabledFeatures };
 }
 
 bundlesRouter.get(
@@ -532,6 +545,9 @@ bundlesRouter.get(
           // `provides_lens` for lens-contributing bundles. Cheap
           // to ship since manifests are small.
           "manifest",
+          // Which opt-in features are on — so the UI can show feature state
+          // without a per-bundle detail fetch.
+          "enabled_features",
         ])
         .where("org_id", "=", req.tenant!.org.id)
         .orderBy("installed_at", "desc")
@@ -794,6 +810,9 @@ bundlesRouter.post(
       const ManifestBody = z.object({
         manifest: z.unknown(),
         confirm: z.boolean().optional(),
+        /** Phase 2: which optional features to install. Omitted → the
+         *  features' own default:true set (validateBundle's fallback). */
+        enabled_features: z.array(z.string()).optional(),
       });
       const body = ManifestBody.safeParse(req.body);
       if (!body.success) {
@@ -808,7 +827,10 @@ bundlesRouter.post(
       // preview.modules_to_enable (not a needs_enable error) and enabled
       // below. The HTTP error codes below preserve the prior contract the
       // bundle-install UI depends on.
-      const v = await validateBundle(req.tenant!.org.id, body.data.manifest, { autoEnable: confirm });
+      const v = await validateBundle(req.tenant!.org.id, body.data.manifest, {
+        autoEnable: confirm,
+        enabledFeatures: body.data.enabled_features,
+      });
       if (!v.valid) {
         const unknownModule = v.errors.find((e) => e.code === "unknown_module");
         if (unknownModule) {
@@ -846,6 +868,10 @@ bundlesRouter.post(
         return;
       }
       const m = v.manifest!;
+      // Apply the RESOLVED manifest (m); store the FULL manifest (features
+      // intact) + which features were enabled, so they can be toggled later.
+      const fullManifest = v.fullManifest ?? m;
+      const enabledFeatures = v.enabledFeatures ?? [];
 
       // Confirmed path: enable the modules that need enabling, parents
       // before children (dependency order).
@@ -884,7 +910,8 @@ bundlesRouter.post(
             author: m.author ?? null,
             description: m.description ?? null,
             source_url: null,
-            manifest: sql`${JSON.stringify(m)}::jsonb`,
+            manifest: sql`${JSON.stringify(fullManifest)}::jsonb`,
+            enabled_features: enabledFeatures,
           })
           .returning(["id", "external_id", "name", "version"])
           .executeTakeFirstOrThrow();

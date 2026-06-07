@@ -27,6 +27,7 @@ import {
   type AiProvider,
   type AiProviderDef,
   type AiCapabilityDefault,
+  type AiActivityItem,
 } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
@@ -242,6 +243,8 @@ export function AiPage() {
           onClose={() => setEditingCapability(null)}
         />
       )}
+
+      <AiActivitySection slug={activeSlug} />
     </div>
   );
 }
@@ -710,6 +713,98 @@ function CapabilityDefaultModal({
           </div>
         </form>
       )}
+    </Modal>
+  );
+}
+
+// ── AI activity — your own AI calls (prompts + responses); owners/admins can
+// toggle to the whole workspace. Full text in the detail modal. ──
+function AiActivitySection({ slug }: { slug: string }) {
+  const [scope, setScope] = useState<"mine" | "workspace">("mine");
+  const [detail, setDetail] = useState<AiActivityItem | null>(null);
+  const q = useQuery({
+    queryKey: ["ai-activity", slug, scope],
+    queryFn: () => api.aiActivity(slug, scope, 100),
+    enabled: !!slug,
+  });
+  const items = q.data?.items ?? [];
+
+  return (
+    <section className="space-y-3">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <h2 className="text-sm font-semibold text-content dark:text-mortar-100">AI activity</h2>
+        <div className="flex rounded-md border border-line dark:border-slate-700 overflow-hidden text-xs">
+          {(["mine", "workspace"] as const).map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => setScope(s)}
+              className={"px-3 py-1 transition " + (scope === s ? "bg-cobble-600 text-white" : "text-muted hover:text-accent")}
+            >
+              {s === "mine" ? "My calls" : "Whole workspace"}
+            </button>
+          ))}
+        </div>
+      </div>
+      <p className="text-xs text-faint dark:text-slate-500">
+        Every AI call you made — the chat, Build, scan, summaries — with the full prompt + response. {scope === "workspace" ? "Showing everyone's (owner/admin)." : "Showing yours."}
+      </p>
+      <div className="rounded-xl border border-line dark:border-slate-700 overflow-hidden overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-line dark:border-slate-700 bg-subtle/60 dark:bg-slate-800/40 text-left">
+              {["When", "Capability", "Model", "Tokens", "Source", ""].map((h) => (
+                <th key={h} className="px-3 py-1.5 font-mono text-[10px] uppercase text-muted tracking-wider whitespace-nowrap">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((c) => (
+              <tr key={c.id} className="border-b border-line dark:border-slate-800 last:border-0 hover:bg-subtle/40 dark:hover:bg-slate-800/30 cursor-pointer" onClick={() => setDetail(c)}>
+                <td className="px-3 py-1.5 text-muted whitespace-nowrap">{new Date(c.invoked_at).toLocaleString()}</td>
+                <td className="px-3 py-1.5"><span className="font-mono text-[11px]">{c.capability}</span></td>
+                <td className="px-3 py-1.5 text-muted whitespace-nowrap">{c.model ?? "—"}</td>
+                <td className="px-3 py-1.5 text-muted whitespace-nowrap">{(c.input_tokens ?? 0) + (c.output_tokens ?? 0) || "—"}</td>
+                <td className="px-3 py-1.5 text-faint whitespace-nowrap">{c.cached ? "cache" : c.source_kind ?? "—"}{c.ok ? "" : " ⚠"}</td>
+                <td className="px-3 py-1.5 text-right text-accent">view</td>
+              </tr>
+            ))}
+            {items.length === 0 && (
+              <tr><td colSpan={6} className="px-3 py-4 text-center text-faint italic">{q.isLoading ? "Loading…" : "No AI calls yet."}</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      {detail && <AiActivityDetail slug={slug} item={detail} onClose={() => setDetail(null)} />}
+    </section>
+  );
+}
+
+function AiActivityDetail({ slug, item, onClose }: { slug: string; item: AiActivityItem; onClose: () => void }) {
+  const q = useQuery({ queryKey: ["ai-activity-detail", slug, item.id], queryFn: () => api.aiActivityDetail(slug, item.id) });
+  const d = q.data;
+  return (
+    <Modal open onClose={onClose} title={`AI call · ${item.capability}`} size="lg">
+      <div className="space-y-3 text-sm">
+        <div className="text-xs text-muted">
+          {item.model ?? "—"} · {new Date(item.invoked_at).toLocaleString()} · {(item.input_tokens ?? 0)}/{(item.output_tokens ?? 0)} tokens
+          {item.cost_cents != null ? ` · $${(item.cost_cents / 100).toFixed(2)}` : ""}{item.cached ? " · cached" : ""}
+        </div>
+        {!d ? (
+          <div className="text-faint text-xs">Loading full text…</div>
+        ) : (
+          <>
+            <div>
+              <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-1">Prompt</div>
+              <pre className="text-xs whitespace-pre-wrap bg-subtle dark:bg-slate-800 border border-line dark:border-slate-700 rounded p-3 max-h-64 overflow-auto text-content dark:text-mortar-200">{d.input_full ?? "(purged or none)"}</pre>
+            </div>
+            <div>
+              <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-1">Response</div>
+              <pre className="text-xs whitespace-pre-wrap bg-subtle dark:bg-slate-800 border border-line dark:border-slate-700 rounded p-3 max-h-64 overflow-auto text-content dark:text-mortar-200">{d.output_full ?? (d.error ? `Error: ${d.error}` : "(purged or none)")}</pre>
+            </div>
+          </>
+        )}
+      </div>
     </Modal>
   );
 }

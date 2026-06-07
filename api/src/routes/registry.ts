@@ -13,6 +13,7 @@ import { Router } from "express";
 import { verify as cryptoVerify, createPublicKey } from "node:crypto";
 import { requireAuth } from "../auth/middleware.js";
 import { assertSafeUrl } from "../sandbox/ssrf.js";
+import { githubRegistryHeaders, fetchGithubText } from "../lib/github-registry.js";
 
 export const registryRouter = Router();
 registryRouter.use(requireAuth);
@@ -40,24 +41,12 @@ function verifyEd25519(pubkeyB64: string, data: Buffer, sigB64: string): boolean
 // The official index. While the repo is private, fetch via the GitHub API
 // contents endpoint (raw.githubusercontent doesn't accept a Bearer token
 // for private repos). When it goes public, a raw URL works too — both are
-// handled by ghHeaders below.
+// handled by the shared helpers in lib/github-registry.ts.
 const DEFAULT_INDEX =
   // `||` not `??` — compose passes `${COBBLR_EXTENSIONS_URL:-}` = an EMPTY
   // string when unset, which `??` would NOT fall back from. Empty → default.
   process.env.COBBLR_EXTENSIONS_URL ||
   "https://api.github.com/repos/CobblrHQ/cobblr-extensions/contents/index.json";
-
-function ghHeaders(url: string): Record<string, string> {
-  const token = process.env.COBBLR_REGISTRY_TOKEN || process.env.GITHUB_TOKEN;
-  const h: Record<string, string> = {};
-  if (/^https:\/\/api\.github\.com\//.test(url)) {
-    h.Accept = "application/vnd.github.raw+json"; // return the raw file body
-    if (token) h.Authorization = `Bearer ${token}`;
-  } else if (/^https:\/\/([^/]*\.)?githubusercontent\.com\b/.test(url) && token) {
-    h.Authorization = `Bearer ${token}`;
-  }
-  return h;
-}
 
 interface IndexShape {
   schema?: number;
@@ -86,10 +75,7 @@ const TTL_MS = 5 * 60_000;
 async function fetchIndex(url: string): Promise<{ raw: string; data: IndexShape }> {
   const hit = cache.get(url);
   if (hit && Date.now() - hit.at < TTL_MS) return hit;
-  await assertSafeUrl(url);
-  const r = await fetch(url, { headers: ghHeaders(url) });
-  if (!r.ok) throw new Error(`fetch ${r.status} ${r.statusText}`);
-  const raw = await r.text();
+  const raw = await fetchGithubText(url);
   const data = JSON.parse(raw) as IndexShape;
   const entry = { at: Date.now(), raw, data };
   cache.set(url, entry);
@@ -102,7 +88,7 @@ async function verifyRoot(rawIndex: string): Promise<boolean> {
   if (!ROOT_PUBKEY) return false; // no anchor configured
   try {
     await assertSafeUrl(DEFAULT_SIG);
-    const r = await fetch(DEFAULT_SIG, { headers: ghHeaders(DEFAULT_SIG) });
+    const r = await fetch(DEFAULT_SIG, { headers: githubRegistryHeaders(DEFAULT_SIG) });
     if (!r.ok) return false;
     const sig = (await r.text()).trim();
     return verifyEd25519(ROOT_PUBKEY, Buffer.from(rawIndex, "utf8"), sig);

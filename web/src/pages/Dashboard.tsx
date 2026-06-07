@@ -33,6 +33,7 @@ import { EntityThumb,
 import "../dashboard/builtinWidgets";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useAuth } from "../auth/AuthContext";
+import { FirstRunWizard } from "../components/FirstRunWizard";
 import { displaySlug } from "../lib/workspaceSlug";
 import {
   api,
@@ -137,6 +138,18 @@ function GettingStartedPanel({
   const qc = useQueryClient();
   const navigate = useNavigate();
   const toast = useToast();
+  // First-run wizard is the default empty-state. "Skip for now" remembers the
+  // dismissal per-workspace (device-local) and falls back to the plain
+  // action-card panel. The empty-state self-heals once any entity exists, so
+  // this flag only matters for a skipped-but-still-empty workspace.
+  const dismissKey = `cobblr.firstRun.dismissed.${slug}`;
+  const [skippedWizard, setSkippedWizard] = useState(() => {
+    try {
+      return localStorage.getItem(dismissKey) === "1";
+    } catch {
+      return false;
+    }
+  });
   // Turn on a not-yet-enabled module straight from a suggestion card and
   // drop the user into it — no detour through Configuration.
   const enableMut = useMutation({
@@ -184,6 +197,25 @@ function GettingStartedPanel({
   // gains its first entity.
   if (enabled.size > 0 && probe.data === undefined) return null; // still probing
   if ((probe.data ?? 0) > 0) return null; // has content already
+
+  // The default empty-state: the bundle-rooted "what do you want to set up?"
+  // wizard. The plain action-card fallback below is reached only if the user
+  // taps "Skip for now".
+  if (!skippedWizard) {
+    return (
+      <FirstRunWizard
+        slug={slug}
+        onSkip={() => {
+          try {
+            localStorage.setItem(dismissKey, "1");
+          } catch {
+            /* private mode / disabled storage — just skip in-memory */
+          }
+          setSkippedWizard(true);
+        }}
+      />
+    );
+  }
 
   // Determine the most relevant "first thing to do" based on which
   // user-facing modules are enabled.

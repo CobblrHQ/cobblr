@@ -25,7 +25,7 @@ import { requireAuth, requirePlatformAdmin } from "../auth/middleware.js";
 import { meta } from "../db/meta.js";
 import { RUNTIME_INSTALL_DIR, loadOneSandboxedModule, uninstallSandboxedModule } from "../sandbox/loader.js";
 import { mountNewlyRegistered } from "../modules/mount.js";
-import { assertSafeUrl } from "../sandbox/ssrf.js";
+import { fetchGithubJson, fetchGithubBuffer } from "../lib/github-registry.js";
 export const sandboxInstallRouter = Router();
 sandboxInstallRouter.use(requireAuth, requirePlatformAdmin);
 
@@ -42,32 +42,12 @@ const InstallBody = z.object({
 });
 
 const DEFAULT_REGISTRY =
-  // `||` not `??` — compose passes an EMPTY string when unset.
+  // `||` not `??` — compose passes an EMPTY string when unset. The repo is
+  // PRIVATE, so this is the GitHub contents-API URL (Bearer-authed, returns
+  // raw JSON); see api/src/lib/github-registry.ts for why a raw.github URL
+  // can't auth private repos. When the repo goes public a raw URL works too.
   process.env.COBBLR_REGISTRY_URL ||
-  "https://raw.githubusercontent.com/CobblrHQ/registry/main/modules.json";
-
-function authHeaders(url: string): Record<string, string> {
-  const token = process.env.COBBLR_REGISTRY_TOKEN || process.env.GITHUB_TOKEN;
-  if (!token) return {};
-  if (/^https:\/\/([^/]*\.)?github(usercontent)?\.com\b/.test(url)) {
-    return { Authorization: `Bearer ${token}`, Accept: "application/octet-stream" };
-  }
-  return {};
-}
-
-async function fetchJson(url: string): Promise<unknown> {
-  await assertSafeUrl(url);
-  const r = await fetch(url, { headers: authHeaders(url) });
-  if (!r.ok) throw new Error(`fetch ${url} → ${r.status} ${r.statusText}`);
-  return r.json();
-}
-
-async function fetchBuffer(url: string): Promise<Buffer> {
-  await assertSafeUrl(url);
-  const r = await fetch(url, { headers: { ...authHeaders(url), Accept: "application/octet-stream" } });
-  if (!r.ok) throw new Error(`fetch ${url} → ${r.status} ${r.statusText}`);
-  return Buffer.from(await r.arrayBuffer());
-}
+  "https://api.github.com/repos/CobblrHQ/registry/contents/modules.json";
 
 function verifyEd25519(publicKeyB64: string, tarball: Buffer, signatureB64: string): boolean {
   const keyDer = Buffer.from(publicKeyB64, "base64");
@@ -101,7 +81,7 @@ sandboxInstallRouter.post("/install", async (req, res, next) => {
       }>;
     };
 
-    const registry = (await fetchJson(registryUrl)) as RegistryShape;
+    const registry = (await fetchGithubJson(registryUrl)) as RegistryShape;
     const modSpec = registry.modules.find((m) => m.name === name);
     if (!modSpec) {
       res.status(404).json({ error: { code: "not_in_registry", message: `${name} not in registry` } });
@@ -140,7 +120,7 @@ sandboxInstallRouter.post("/install", async (req, res, next) => {
     }
 
     // Fetch + verify + extract.
-    const tarball = await fetchBuffer(versionSpec.source_url);
+    const tarball = await fetchGithubBuffer(versionSpec.source_url);
     const gotSha = createHash("sha256").update(tarball).digest("hex");
     if (gotSha !== versionSpec.sha256) {
       res.status(400).json({
@@ -259,7 +239,7 @@ sandboxInstallRouter.get("/registry", async (req, res, next) => {
   try {
     const registryUrl =
       (typeof req.query.url === "string" ? req.query.url : undefined) ?? DEFAULT_REGISTRY;
-    const registry = (await fetchJson(registryUrl)) as { modules: Array<{ name: string }> };
+    const registry = (await fetchGithubJson(registryUrl)) as { modules: Array<{ name: string }> };
     const installedRows = await meta
       .selectFrom("installed_modules")
       .select(["name", "version", "source"])

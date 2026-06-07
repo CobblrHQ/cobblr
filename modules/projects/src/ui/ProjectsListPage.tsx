@@ -1,12 +1,19 @@
 // Projects index. Status-grouped list + search + new-project form.
 
 import { useMemo, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Search, Trash2 } from "lucide-react";
 import { BulkActionBar, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 import { useProjects } from "./context";
 import type { Project } from "./api";
+
+type SavedViewLite = {
+  id: string;
+  name: string;
+  config?: { group_by?: string; visible_fields?: string[] };
+};
+type FieldDefLite = { name: string; display_label: string };
 
 const STATUS_LABEL: Record<string, string> = {
   planning: "Planning",
@@ -19,11 +26,58 @@ const STATUS_ORDER = ["planning", "active", "blocked", "done", "abandoned"];
 
 export function ProjectsListPage() {
   usePageTitle("Projects");
-  const { api } = useProjects();
+  const { api, orgSlug, getToken } = useProjects();
   const qc = useQueryClient();
   const list = useQuery({ queryKey: ["projects-list"], queryFn: () => api.listProjects() });
   const [name, setName] = useState("");
   const [query, setQuery] = useState("");
+
+  // Saved views for projects:project — the Yarn "Designs" feature ships one
+  // pinned. `?view=<id>` renders the list AS that view (its group_by groups,
+  // visible_fields pick the columns); a chip bar switches (and "All projects"
+  // returns to the native status-grouped list). The projects api has no views
+  // client, so hit the platform endpoints directly with the same Bearer.
+  const [params, setParams] = useSearchParams();
+  const viewId = params.get("view");
+  const savedViews = useQuery({
+    queryKey: ["proj-saved-views", orgSlug],
+    queryFn: async (): Promise<{ items: SavedViewLite[] }> => {
+      const token = getToken();
+      const res = await fetch(
+        `/api/v1/orgs/${orgSlug}/modules/core-views/views?kind=${encodeURIComponent("projects:project")}`,
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+      );
+      return res.ok ? res.json() : { items: [] };
+    },
+    staleTime: 60_000,
+  });
+  const projFieldDefs = useQuery({
+    queryKey: ["proj-field-defs", orgSlug],
+    queryFn: async (): Promise<{ items: FieldDefLite[] }> => {
+      const token = getToken();
+      const res = await fetch(
+        `/api/v1/orgs/${orgSlug}/field-defs?kind=${encodeURIComponent("projects:project")}`,
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+      );
+      return res.ok ? res.json() : { items: [] };
+    },
+    staleTime: 60_000,
+  });
+  const views = savedViews.data?.items ?? [];
+  const activeView = viewId ? views.find((v) => v.id === viewId) ?? null : null;
+  const groupByField = activeView?.config?.group_by;
+  const viewFields = activeView?.config?.visible_fields;
+  function selectView(id: string | null) {
+    setParams(
+      (p) => {
+        const n = new URLSearchParams(p);
+        if (id) n.set("view", id);
+        else n.delete("view");
+        return n;
+      },
+      { replace: true },
+    );
+  }
 
   const create = useMutation({
     mutationFn: () => api.createProject({ name: name.trim() }),
@@ -120,6 +174,20 @@ export function ProjectsListPage() {
         </button>
       </form>
 
+      {/* Saved-view chips — bundles (Yarn → Designs) ship pinned ones. */}
+      {views.length > 0 && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <ProjViewChip active={!activeView} onClick={() => selectView(null)}>
+            All projects
+          </ProjViewChip>
+          {views.map((v) => (
+            <ProjViewChip key={v.id} active={activeView?.id === v.id} onClick={() => selectView(v.id)}>
+              {v.name}
+            </ProjViewChip>
+          ))}
+        </div>
+      )}
+
       {items.length === 0 && !list.isLoading && (
         <div className="border-2 border-dashed border-line dark:border-slate-700 rounded-xl p-12 text-center text-faint dark:text-slate-500">
           No projects yet — create one above.
@@ -131,7 +199,16 @@ export function ProjectsListPage() {
         </div>
       )}
 
-      {STATUS_ORDER.map((s) => {
+      {activeView && filtered.length > 0 && (
+        <ProjectsViewTable
+          rows={filtered}
+          groupBy={groupByField}
+          fields={viewFields}
+          fieldDefs={projFieldDefs.data?.items ?? []}
+        />
+      )}
+
+      {!activeView && STATUS_ORDER.map((s) => {
         const rows = grouped.get(s) ?? [];
         if (rows.length === 0) return null;
         return (
@@ -208,6 +285,134 @@ export function ProjectsListPage() {
           </button>
         }
       />
+    </div>
+  );
+}
+
+function ProjViewChip({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={
+        "text-xs font-medium px-3 py-1 rounded-full border transition " +
+        (active
+          ? "border-cobble-400 dark:border-cobble-600 bg-cobble-50 dark:bg-cobble-950/30 text-accent"
+          : "border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:border-cobble-300 dark:hover:border-cobble-700")
+      }
+    >
+      {children}
+    </button>
+  );
+}
+
+function projCellValue(p: Project, field: string): string {
+  if (field === "title" || field === "name") return p.name;
+  if (field === "status") return p.status;
+  if (field === "priority") return p.priority ?? "";
+  if (field === "target_date") return p.target_date ?? "";
+  const v = (p.metadata as Record<string, unknown> | null)?.[field];
+  return v == null ? "" : String(v);
+}
+
+function projGroup(rows: Project[], groupBy?: string): { key: string; rows: Project[] }[] {
+  if (!groupBy) return [{ key: "", rows }];
+  const map = new Map<string, Project[]>();
+  for (const p of rows) {
+    const k = projCellValue(p, groupBy).trim() || "—";
+    if (!map.has(k)) map.set(k, []);
+    map.get(k)!.push(p);
+  }
+  return [...map.entries()]
+    .sort((a, b) => (a[0] === "—" ? 1 : b[0] === "—" ? -1 : a[0].localeCompare(b[0])))
+    .map(([k, r]) => ({ key: k, rows: r }));
+}
+
+function projHumanize(s: string): string {
+  return s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/** Renders the projects list AS a saved view: grouped by the view's group_by,
+ *  columns from its visible_fields. Used when `?view=<id>` is set. */
+function ProjectsViewTable({
+  rows,
+  groupBy,
+  fields,
+  fieldDefs,
+}: {
+  rows: Project[];
+  groupBy?: string;
+  fields?: string[];
+  fieldDefs: FieldDefLite[];
+}) {
+  const cols = (fields && fields.length ? fields : ["title", "status"]).filter(
+    (f) => f !== "title" && f !== "name",
+  );
+  const label = (f: string) =>
+    ({ status: "Status", priority: "Priority", target_date: "Target" } as Record<string, string>)[f] ??
+    fieldDefs.find((d) => d.name === f)?.display_label ??
+    projHumanize(f);
+  return (
+    <div className="space-y-4">
+      {projGroup(rows, groupBy).map((g) => (
+        <section key={g.key} className="space-y-2">
+          {groupBy && (
+            <h3 className="text-[10px] font-mono uppercase tracking-widest text-accent">
+              // {g.key} <span className="text-faint dark:text-slate-500">({g.rows.length})</span>
+            </h3>
+          )}
+          <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-subtle/60 dark:bg-slate-800/40 text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
+                <tr>
+                  <th className="text-left px-3 py-2">Name</th>
+                  {cols.map((c) => (
+                    <th key={c} className="text-left px-3 py-2">{label(c)}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line dark:divide-slate-700">
+                {g.rows.map((p) => (
+                  <tr key={p.id} className="hover:bg-subtle dark:hover:bg-slate-800/40 transition">
+                    <td className="px-3 py-2">
+                      <Link to={`/projects/${p.id}`} className="font-medium text-content dark:text-mortar-100 hover:text-accent">
+                        {p.name}
+                      </Link>
+                    </td>
+                    {cols.map((c) => {
+                      const raw = projCellValue(p, c);
+                      const isUrl = /^https?:\/\//.test(raw);
+                      return (
+                        <td key={c} className="px-3 py-2 text-muted dark:text-slate-400 text-xs">
+                          {raw ? (
+                            isUrl ? (
+                              <a href={raw} target="_blank" rel="noreferrer" className="text-accent hover:underline">
+                                link
+                              </a>
+                            ) : (
+                              raw
+                            )
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ))}
     </div>
   );
 }

@@ -10,6 +10,8 @@ import { capabilitiesRouter } from "./capabilities.js";
 import { invokeRouter } from "./invoke.js";
 import { usageRouter } from "./usage.js";
 import { matchToCatalogRouter } from "./match-to-catalog.js";
+import { chatRouter } from "./chat.js";
+import { activityRouter } from "./activity.js";
 import { register as registerOllama } from "../providers/ollama.js";
 import { register as registerOpenAI } from "../providers/openai.js";
 import { register as registerAnthropic } from "../providers/anthropic.js";
@@ -31,5 +33,7 @@ router.use("/capability-defaults", capabilitiesRouter);
 router.use("/invoke", invokeRouter);
 router.use("/usage", usageRouter);
 router.use("/match-to-catalog", matchToCatalogRouter);
+router.use("/chat", chatRouter);
+router.use("/activity", activityRouter);
 
 export default router;

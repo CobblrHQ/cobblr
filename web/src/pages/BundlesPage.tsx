@@ -9,8 +9,10 @@ import { Link } from "react-router-dom";
 import { ApiError, api, type PlatformBundle, type PlatformBundleManifest, type RegistryDriverEntry, type RegistryModuleEntry, type RegistryRendererEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useAuth } from "../auth/AuthContext";
-import { FEATURED_BUNDLES, type FeaturedBundle } from "../lib/featured-bundles";
+import { type FeaturedBundle } from "../lib/featured-bundles";
+import { useBundleCatalog } from "../lib/useBundleCatalog";
 import { BundleDetailModal } from "../components/BundleDetailModal";
+import { RegistryItemModal, type RegistryItem } from "../components/RegistryItemModal";
 import { Modal, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
 
 // Third-party source index URLs (the HACS "add a custom repository" list).
@@ -52,10 +54,10 @@ export function BundlesPage() {
   useEffect(() => {
     localStorage.setItem(SOURCES_KEY, JSON.stringify(sources));
   }, [sources]);
-  const registry = useQuery({
-    queryKey: ["registry-index", sources],
-    queryFn: () => api.getRegistryIndex(sources),
-  });
+  // Catalog + registry come from one shared hook so the marketplace and the
+  // first-run wizard agree (and so the registry's dropped next_steps are
+  // restored in one place — see useBundleCatalog).
+  const { registry, catalog } = useBundleCatalog(sources);
   const installedRenderers = useQuery({
     queryKey: ["installed-renderers", slug],
     queryFn: () => api.getInstalledRenderers(slug),
@@ -63,15 +65,6 @@ export function BundlesPage() {
   });
   const installedRendererNames = new Set((installedRenderers.data?.items ?? []).map((r) => r.name));
   const officialOk = registry.data?.sources.find((s) => s.label === "official")?.ok;
-  const catalog: Array<FeaturedBundle & { source?: string }> =
-    registry.data && registry.data.bundles.length > 0
-      ? registry.data.bundles.map((e) => ({
-          manifest: e.manifest,
-          glyph: e.glyph ?? "📦",
-          blurb: e.blurb ?? e.description ?? "",
-          source: e.source,
-        }))
-      : FEATURED_BUNDLES;
 
   // Rank: official flagship first, plain official next, official community
   // below that, third-party sources last. Stable within a tier, so the
@@ -239,6 +232,8 @@ export function BundlesPage() {
   // same exportBundle endpoint.
   const [exportOpen, setExportOpen] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  // Detail modal for a clicked driver/module/renderer card.
+  const [regItem, setRegItem] = useState<RegistryItem | null>(null);
 
   const installedIds = new Set(
     bundles.data?.items.map((b) => b.external_id) ?? [],
@@ -452,7 +447,7 @@ export function BundlesPage() {
             {registry.data!.drivers.map((d) => (
               <li key={d.id} className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 flex items-start gap-3">
                 <div className="text-2xl shrink-0">{d.glyph ?? "🔌"}</div>
-                <div className="flex-1 min-w-0">
+                <button type="button" onClick={() => setRegItem({ kind: "driver", entry: d })} className="flex-1 min-w-0 text-left">
                   <div className="font-medium text-content dark:text-mortar-100 text-sm flex items-center gap-2 flex-wrap">
                     {d.name}
                     {d.source !== "official" && (
@@ -462,7 +457,7 @@ export function BundlesPage() {
                   <div className="text-[10px] font-mono text-faint dark:text-slate-500 mt-0.5">{d.id}</div>
                   {d.blurb && <div className="text-xs text-content dark:text-mortar-200 mt-1.5">{d.blurb}</div>}
                   {d.caveat && <div className="text-[10px] text-faint dark:text-slate-500 italic mt-1">⚠ {d.caveat}</div>}
-                </div>
+                </button>
                 <button
                   type="button"
                   onClick={() => installDriver.mutate(d)}
@@ -493,7 +488,7 @@ export function BundlesPage() {
             {registry.data!.modules.map((m) => (
               <li key={m.name} className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 flex items-start gap-3">
                 <div className="text-2xl shrink-0">{m.glyph ?? "🧩"}</div>
-                <div className="flex-1 min-w-0">
+                <button type="button" onClick={() => setRegItem({ kind: "module", entry: m })} className="flex-1 min-w-0 text-left">
                   <div className="font-medium text-content dark:text-mortar-100 text-sm flex items-center gap-2 flex-wrap">
                     {m.name}
                     <span className="text-[10px] font-mono text-faint">v{m.version}</span>
@@ -504,7 +499,7 @@ export function BundlesPage() {
                     )}
                   </div>
                   {(m.blurb || m.description) && <div className="text-xs text-content dark:text-mortar-200 mt-1.5">{m.blurb || m.description}</div>}
-                </div>
+                </button>
                 {isPlatformAdmin ? (
                   <button
                     type="button"
@@ -541,7 +536,7 @@ export function BundlesPage() {
               return (
                 <li key={r.name} className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 flex items-start gap-3">
                   <div className="text-2xl shrink-0">{r.glyph ?? "🖼️"}</div>
-                  <div className="flex-1 min-w-0">
+                  <button type="button" onClick={() => setRegItem({ kind: "renderer", entry: r })} className="flex-1 min-w-0 text-left">
                     <div className="font-medium text-content dark:text-mortar-100 text-sm flex items-center gap-2 flex-wrap">
                       {r.name}
                       <span className="text-[10px] font-mono text-faint">.{r.exts.join(" .")}</span>
@@ -552,7 +547,7 @@ export function BundlesPage() {
                       )}
                     </div>
                     {(r.blurb || r.description) && <div className="text-xs text-content dark:text-mortar-200 mt-1.5">{r.blurb || r.description}</div>}
-                  </div>
+                  </button>
                   {installed ? (
                     <span className="shrink-0 text-[10px] font-mono uppercase tracking-widest text-moss-600 self-center">installed</span>
                   ) : (
@@ -671,6 +666,9 @@ export function BundlesPage() {
         />
       ) : selected?.mode === "featured" ? (
         <BundleDetailModal
+          // key by bundle id so per-bundle state (selected features, post-install
+          // panel) resets when switching bundles in the same modal slot.
+          key={selected.featured.manifest.id}
           open
           onClose={() => setSelected(null)}
           slug={slug}
@@ -694,6 +692,23 @@ export function BundlesPage() {
           mode={null}
         />
       )}
+
+      <RegistryItemModal
+        open={!!regItem}
+        onClose={() => setRegItem(null)}
+        item={regItem}
+        installed={regItem?.kind === "renderer" ? installedRendererNames.has(regItem.entry.name) : false}
+        canInstall={regItem?.kind === "module" ? isPlatformAdmin : true}
+        cannotInstallNote="Super-admin only"
+        busy={installDriver.isPending || installModule.isPending || installRenderer.isPending}
+        onInstall={() => {
+          if (!regItem) return;
+          if (regItem.kind === "driver") installDriver.mutate(regItem.entry);
+          else if (regItem.kind === "module") void onInstallModule(regItem.entry);
+          else void onInstallRenderer(regItem.entry);
+          setRegItem(null);
+        }}
+      />
     </div>
   );
 }

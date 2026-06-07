@@ -64,6 +64,10 @@ export function BuildPage() {
   const slug = activeSlug ?? "";
   const toast = useToast();
 
+  // "tweak" = add a field/wire to existing kinds (pick 1-3). "workspace" = the
+  // architect: describe a whole app, the AI enables modules + builds the schema
+  // from the full catalog (no kind picker, task=design-workspace).
+  const [mode, setMode] = useState<"tweak" | "workspace">("tweak");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [intent, setIntent] = useState("");
   const [draftId, setDraftId] = useState<string | null>(null);
@@ -73,6 +77,7 @@ export function BuildPage() {
   const [validation, setValidation] = useState<BundleValidation | null>(null);
   const [candidate, setCandidate] = useState<unknown>(null);
   const [interpretation, setInterpretation] = useState<string | null>(null);
+  const [seedCount, setSeedCount] = useState(0); // starter records apply will create
   const [busy, setBusy] = useState<null | "building" | "compile" | "validate" | "apply" | "repair">(null);
 
   const kinds = useQuery({
@@ -91,28 +96,57 @@ export function BuildPage() {
       return next;
     });
 
-  // Hosted (Phase 2): the server calls AI itself + auto-repairs, returning a
-  // validated, ready-to-apply draft. Falls back to the copy-paste prompt when
-  // the workspace has no AI (409).
+  // Hosted (Phase 2): the server calls AI itself + auto-repairs. ASYNC — /build
+  // returns a "building" draft id immediately (a whole-workspace generation runs
+  // ~150s, past any proxy timeout), so we poll the draft until it's done. Falls
+  // back to the copy-paste prompt when the workspace has no AI.
   async function buildHosted() {
     if (!intent.trim()) return;
     setBusy("building");
     setValidation(null);
     setPasteText("");
     setPrompt(null);
+    setCandidate(null);
+    setInterpretation(null);
+    setSeedCount(0);
     try {
-      const r = await api.authoringBuild(slug, { intent: intent.trim(), selected_kinds: [...selected] });
+      const r = await api.authoringBuild(
+        slug,
+        mode === "workspace"
+          ? { intent: intent.trim(), task: "design-workspace" }
+          : { intent: intent.trim(), selected_kinds: [...selected] },
+      );
       setDraftId(r.draft_id);
-      setCandidate(r.candidate ?? null);
-      setInterpretation(r.interpretation ?? null);
-      if (r.validation) setValidation(r.validation);
-      if (r.valid) {
-        toast.success(
-          `Built it${r.attempts && r.attempts > 1 ? ` — auto-fixed in ${r.attempts} passes` : ""}. Review and apply.`,
-        );
-      } else {
-        toast.error("The AI's result didn't pass validation — see the errors below, or write a prompt to run yourself.");
+
+      const started = Date.now();
+      while (Date.now() - started < 330_000) {
+        await new Promise((res) => setTimeout(res, 3000));
+        let d;
+        try {
+          d = await api.authoringDraft(slug, r.draft_id);
+        } catch {
+          continue; // transient — keep polling
+        }
+        if (d.status === "building") continue;
+        if (d.status === "failed") {
+          const err = d.validation?.errors?.[0];
+          if (err?.code === "no_ai_provider") {
+            toast.success("AI isn't enabled for this workspace — switching to the copy-paste prompt.");
+            await buildPrompt();
+            return;
+          }
+          toast.error(err?.message ?? "Build failed.");
+          return;
+        }
+        setCandidate(d.candidate ?? null);
+        setInterpretation(d.interpretation ?? null);
+        setSeedCount((d.seed_plan ?? []).reduce((n, g) => n + (g.records?.length ?? 0), 0));
+        if (d.validation) setValidation(d.validation);
+        if (d.status === "validated") toast.success("Built it. Review and apply.");
+        else toast.error("The AI's result didn't pass validation — see the errors below, or write a prompt to run yourself.");
+        return;
       }
+      toast.error("That took longer than expected — try again in a moment.");
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
         toast.success("AI isn't enabled for this workspace — switching to the copy-paste prompt.");
@@ -131,7 +165,12 @@ export function BuildPage() {
     setValidation(null);
     setPasteText("");
     try {
-      const r = await api.authoringCompile(slug, { intent: intent.trim(), selected_kinds: [...selected] });
+      const r = await api.authoringCompile(
+        slug,
+        mode === "workspace"
+          ? { intent: intent.trim(), task: "design-workspace" }
+          : { intent: intent.trim(), selected_kinds: [...selected] },
+      );
       setDraftId(r.draft_id);
       setPrompt(r.prompt);
       setWarnings(r.warnings ?? []);
@@ -178,12 +217,18 @@ export function BuildPage() {
     if (!draftId) return;
     setBusy("apply");
     try {
-      await api.authoringApply(slug, draftId);
-      toast.success("Applied — your fields/wires are live.");
+      const r = await api.authoringApply(slug, draftId);
+      const created = r.seeded?.created ?? 0;
+      toast.success(
+        created > 0
+          ? `Applied — your fields/wires are live, plus ${created} starter record${created === 1 ? "" : "s"} created.`
+          : "Applied — your fields/wires are live.",
+      );
       // reset for another build
       setValidation(null);
       setCandidate(null);
       setInterpretation(null);
+      setSeedCount(0);
       setPrompt(null);
       setDraftId(null);
       setPasteText("");
@@ -212,49 +257,84 @@ export function BuildPage() {
           <Wand2 size={20} className="text-accent" /> Build
         </h1>
         <p className="text-sm text-muted dark:text-slate-400 mt-1">
-          Describe what you want to add and <strong>Build it for me</strong> — we run the AI, fix it up, and check it
-          works before anything changes. No AI on your workspace? <strong>Write a prompt instead</strong> hands you one
-          to run yourself.
+          {mode === "workspace" ? (
+            <>
+              Describe your <strong>whole workspace</strong> in one go — the AI turns on the modules you need and builds
+              the fields and automations for your entire workflow. <strong>Build it for me</strong> runs it and checks
+              the result before anything changes.
+            </>
+          ) : (
+            <>
+              Describe what you want to add and <strong>Build it for me</strong> — we run the AI, fix it up, and check it
+              works before anything changes. No AI on your workspace? <strong>Write a prompt instead</strong> hands you
+              one to run yourself.
+            </>
+          )}
         </p>
+      </div>
+
+      {/* Mode — one tweak vs. design the whole workspace */}
+      <div className="inline-flex rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-0.5 text-sm">
+        {(["tweak", "workspace"] as const).map((m) => (
+          <button
+            key={m}
+            type="button"
+            onClick={() => setMode(m)}
+            className={
+              "px-3 py-1.5 rounded-md font-medium transition " +
+              (mode === m
+                ? "bg-cobble-600 text-white"
+                : "text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-200")
+            }
+          >
+            {m === "tweak" ? "Add to my app" : "Design my whole workspace"}
+          </button>
+        ))}
       </div>
 
       {/* Step 1 — pick kinds + intent */}
       <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-3">
-        <div>
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-2">
-            What does this touch? (pick 1–3)
-          </span>
-          <div className="flex flex-wrap gap-2">
-            {kindItems.map((k) => (
-              <button
-                key={k.id}
-                type="button"
-                onClick={() => toggleKind(k.id)}
-                className={
-                  "px-3 py-1 rounded-full text-sm border transition " +
-                  (selected.has(k.id)
-                    ? "bg-cobble-600 border-cobble-600 text-white"
-                    : "border-line dark:border-slate-600 text-content dark:text-mortar-200 hover:border-accent")
-                }
-                title={k.id}
-              >
-                {k.display_name}
-              </button>
-            ))}
-            {kindItems.length === 0 && (
-              <span className="text-xs text-faint italic">No entity kinds yet — enable a domain module first.</span>
-            )}
+        {mode === "tweak" && (
+          <div>
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-2">
+              What does this touch? (pick 1–3)
+            </span>
+            <div className="flex flex-wrap gap-2">
+              {kindItems.map((k) => (
+                <button
+                  key={k.id}
+                  type="button"
+                  onClick={() => toggleKind(k.id)}
+                  className={
+                    "px-3 py-1 rounded-full text-sm border transition " +
+                    (selected.has(k.id)
+                      ? "bg-cobble-600 border-cobble-600 text-white"
+                      : "border-line dark:border-slate-600 text-content dark:text-mortar-200 hover:border-accent")
+                  }
+                  title={k.id}
+                >
+                  {k.display_name}
+                </button>
+              ))}
+              {kindItems.length === 0 && (
+                <span className="text-xs text-faint italic">No entity kinds yet — enable a domain module first.</span>
+              )}
+            </div>
           </div>
-        </div>
+        )}
         <label className="block">
           <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
-            What do you want to add?
+            {mode === "workspace" ? "Describe the workspace you want" : "What do you want to add?"}
           </span>
           <textarea
             value={intent}
             onChange={(e) => setIntent(e.target.value)}
-            rows={3}
-            placeholder="e.g. add a 'warranty expires' date to parts, and when one is low on stock, print a reorder label"
+            rows={mode === "workspace" ? 6 : 3}
+            placeholder={
+              mode === "workspace"
+                ? "e.g. A yarn & crochet tracker. I design patterns (wearables, toys, blankets), each links to a PDF or URL and lists the yarn and hook sizes it needs. Track yarn by colour, weight and metres left, and a hooks section with sizes 1–10mm and how many I own."
+                : "e.g. add a 'warranty expires' date to parts, and when one is low on stock, print a reorder label"
+            }
             className="w-full px-3 py-2 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           />
         </label>
@@ -277,8 +357,11 @@ export function BuildPage() {
           </button>
         </div>
         {busy === "building" && (
-          <p className="text-xs text-faint dark:text-slate-500">
-            Running the AI, then checking the result against the validator (auto-retrying if needed). A few seconds…
+          <p className="text-xs text-faint dark:text-slate-500 flex items-center gap-2">
+            <span className="inline-block h-2 w-2 rounded-full bg-accent animate-pulse" />
+            {mode === "workspace"
+              ? "Turning on the modules you need and building your fields + automations, then validating it. This takes a minute or two…"
+              : "Running the AI, then checking the result against the validator (auto-retrying if needed). A few seconds…"}
           </p>
         )}
       </section>
@@ -377,6 +460,11 @@ export function BuildPage() {
                   Will enable: {preview.modules_to_enable.join(", ")}
                 </div>
               )}
+              {seedCount > 0 && (
+                <div className="text-xs text-content dark:text-mortar-200">
+                  Plus <strong>{seedCount}</strong> starter record{seedCount === 1 ? "" : "s"} will be created.
+                </div>
+              )}
               <BundleDetails candidate={candidate} />
               <button
                 type="button"
@@ -390,12 +478,12 @@ export function BuildPage() {
           ) : validation.valid ? (
             <>
               <div className="flex items-center gap-2 text-sm font-medium text-amber-700 dark:text-amber-300">
-                <AlertTriangle size={16} /> I couldn't tell what to build from that
+                <AlertTriangle size={16} /> Nothing to apply
               </div>
               <p className="text-sm text-content dark:text-mortar-200">
-                The AI didn't produce any concrete changes. Try describing it more specifically — name the field, the
-                kind it's on, and any automation. e.g. <em>"add a 'warranty expires' date to parts, and print a
-                reorder label when a part's stock drops below its minimum."</em>
+                {interpretation
+                  ? "No changes were generated — see why above. If that's not what you meant, try describing it more specifically (name the field, the kind it's on, and any automation)."
+                  : "The AI didn't produce any concrete changes. Try describing it more specifically — e.g. \"add a 'warranty expires' date to parts, and print a reorder label when stock drops below the minimum.\""}
               </p>
               <BundleDetails candidate={candidate} label="Show what the AI returned" />
             </>

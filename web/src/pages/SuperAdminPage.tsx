@@ -12,7 +12,6 @@
 // See docs/operations/PRODUCTION_DEPLOY.md for the operator's launch flow.
 
 import { useState } from "react";
-import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
@@ -20,6 +19,7 @@ import {
   CheckCircle,
   Download,
   HeartPulse,
+  Sparkles,
   LayoutGrid,
   ShieldCheck,
   Server,
@@ -29,8 +29,8 @@ import {
   Copy,
   Trash2,
 } from "lucide-react";
-import { useConfirm, usePageTitle, useToast } from "@cobblr/platform-web";
-import { ApiError, api, type SignupInvite } from "../lib/api";
+import { useConfirm, usePageTitle, useToast, Modal } from "@cobblr/platform-web";
+import { ApiError, api, type SignupInvite, type SuperAdminAiActivityItem } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 
 type Tab =
@@ -41,6 +41,7 @@ type Tab =
   | "modules"
   | "marketplace"
   | "activity"
+  | "ai"
   | "health";
 
 const TABS: Array<{ id: Tab; label: string; icon: typeof Server }> = [
@@ -51,6 +52,7 @@ const TABS: Array<{ id: Tab; label: string; icon: typeof Server }> = [
   { id: "modules", label: "Modules", icon: Boxes },
   { id: "marketplace", label: "Marketplace", icon: ShoppingBag },
   { id: "activity", label: "Activity", icon: Activity },
+  { id: "ai", label: "AI", icon: Sparkles },
   { id: "health", label: "Health", icon: HeartPulse },
 ];
 
@@ -115,6 +117,7 @@ export function SuperAdminPage() {
       {tab === "modules" && <ModulesTab />}
       {tab === "marketplace" && <MarketplaceTab />}
       {tab === "activity" && <ActivityTab />}
+      {tab === "ai" && <AiActivityTab />}
       {tab === "health" && <HealthTab />}
     </div>
   );
@@ -231,13 +234,17 @@ function UsersTab() {
                 )}
                 <div className="flex flex-wrap gap-1">
                   {u.orgs.map((o) => (
-                    <Link
+                    // Not a link: operators can't open another user's
+                    // workspace (separate tier — the member route would
+                    // dead-end). Informational chip; manage tenants from
+                    // the Workspaces tab.
+                    <span
                       key={o.org_id}
-                      to={`/orgs/${o.org_slug}`}
-                      className="inline-flex items-center gap-1 rounded border border-line dark:border-slate-700 px-1.5 py-0.5 text-[10px] font-mono hover:bg-subtle dark:hover:bg-slate-800"
+                      title="Operators can't open another user's workspace — manage tenants from the Workspaces tab."
+                      className="inline-flex items-center gap-1 rounded border border-line dark:border-slate-700 px-1.5 py-0.5 text-[10px] font-mono text-content dark:text-mortar-100"
                     >
                       {o.org_name} <span className="text-accent">{o.role}</span>
-                    </Link>
+                    </span>
                   ))}
                 </div>
               </td>
@@ -868,4 +875,120 @@ function StatusPill({ status }: { status: string }) {
     revoked: "bg-ember-100 text-ember-700 dark:bg-ember-900/40 dark:text-ember-300",
   };
   return <span className={"inline-block rounded px-1.5 py-0.5 text-[10px] font-mono uppercase " + (map[status] ?? map.expired)}>{status}</span>;
+}
+
+// ── AI tab — cross-workspace AI activity log ──
+function AiActivityTab() {
+  const [org, setOrg] = useState("");
+  const [userQ, setUserQ] = useState("");
+  const [capability, setCapability] = useState("");
+  const [filters, setFilters] = useState<{ org?: string; user?: string; capability?: string }>({});
+  const [detail, setDetail] = useState<SuperAdminAiActivityItem | null>(null);
+
+  const q = useQuery({
+    queryKey: ["sa-ai-activity", filters],
+    queryFn: () => api.superAdminAiActivity({ ...filters, limit: 300 }),
+  });
+  const items = q.data?.items ?? [];
+
+  const apply = () =>
+    setFilters({ org: org.trim() || undefined, user: userQ.trim() || undefined, capability: capability.trim() || undefined });
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-content dark:text-mortar-200">
+        Every AI call across all workspaces — the chat, Build, scan, summaries. Click a row for the full prompt + response.
+      </p>
+      <div className="flex flex-wrap items-end gap-2">
+        <FilterInput label="Workspace (slug)" value={org} onChange={setOrg} placeholder="workshop-2e2d" />
+        <FilterInput label="User (email contains)" value={userQ} onChange={setUserQ} placeholder="grace@" />
+        <FilterInput label="Capability" value={capability} onChange={setCapability} placeholder="chat" />
+        <button onClick={apply} className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition">
+          Filter
+        </button>
+        {(filters.org || filters.user || filters.capability) && (
+          <button onClick={() => { setOrg(""); setUserQ(""); setCapability(""); setFilters({}); }} className="text-xs text-faint hover:text-accent">
+            clear
+          </button>
+        )}
+      </div>
+
+      <div className="rounded-xl border border-line dark:border-slate-700 overflow-hidden overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-line dark:border-slate-700 bg-subtle/60 dark:bg-slate-800/40 text-left">
+              {["When", "Workspace", "User", "Capability", "Model", "Tokens", "Cost", "Source", ""].map((h) => (
+                <th key={h} className="px-3 py-1.5 font-mono text-[10px] uppercase text-muted tracking-wider whitespace-nowrap">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((c) => (
+              <tr key={`${c.org_id}:${c.id}`} className="border-b border-line dark:border-slate-800 last:border-0 hover:bg-subtle/40 dark:hover:bg-slate-800/30 cursor-pointer" onClick={() => setDetail(c)}>
+                <td className="px-3 py-1.5 text-muted whitespace-nowrap">{new Date(c.invoked_at).toLocaleString()}</td>
+                <td className="px-3 py-1.5 text-content dark:text-mortar-200 whitespace-nowrap">{c.org_slug}</td>
+                <td className="px-3 py-1.5 text-content dark:text-mortar-200 whitespace-nowrap">{c.user_email ?? <span className="text-faint italic">system</span>}</td>
+                <td className="px-3 py-1.5"><span className="font-mono text-[11px]">{c.capability}</span></td>
+                <td className="px-3 py-1.5 text-muted whitespace-nowrap">{c.model ?? "—"}</td>
+                <td className="px-3 py-1.5 text-muted whitespace-nowrap">{(c.input_tokens ?? 0) + (c.output_tokens ?? 0) || "—"}</td>
+                <td className="px-3 py-1.5 text-muted whitespace-nowrap">{c.cost_cents != null ? `$${(c.cost_cents / 100).toFixed(2)}` : "—"}</td>
+                <td className="px-3 py-1.5 text-faint whitespace-nowrap">{c.cached ? "cache" : c.source_kind ?? "—"}{c.ok ? "" : " ⚠"}</td>
+                <td className="px-3 py-1.5 text-right text-accent">view</td>
+              </tr>
+            ))}
+            {items.length === 0 && (
+              <tr><td colSpan={9} className="px-3 py-4 text-center text-faint italic">{q.isLoading ? "Loading…" : "No AI calls match."}</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {detail && <AiActivityDetailModal item={detail} onClose={() => setDetail(null)} />}
+    </div>
+  );
+}
+
+function FilterInput({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string }) {
+  return (
+    <label className="block">
+      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">{label}</span>
+      <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="input text-sm" />
+    </label>
+  );
+}
+
+function AiActivityDetailModal({ item, onClose }: { item: SuperAdminAiActivityItem; onClose: () => void }) {
+  const q = useQuery({
+    queryKey: ["sa-ai-detail", item.org_id, item.id],
+    queryFn: () => api.superAdminAiActivityDetail(item.org_id, item.id),
+  });
+  const d = q.data;
+  return (
+    <Modal open onClose={onClose} title={`AI call · ${item.capability}`} size="lg">
+      <div className="space-y-3 text-sm">
+        <div className="grid grid-cols-2 gap-2 text-xs text-muted">
+          <div><span className="text-faint">Workspace:</span> {item.org_name} ({item.org_slug})</div>
+          <div><span className="text-faint">User:</span> {item.user_email ?? "system"}</div>
+          <div><span className="text-faint">Model:</span> {item.model ?? "—"} · {item.provider_id}</div>
+          <div><span className="text-faint">When:</span> {new Date(item.invoked_at).toLocaleString()}</div>
+          <div><span className="text-faint">Tokens:</span> {item.input_tokens ?? 0} in / {item.output_tokens ?? 0} out</div>
+          <div><span className="text-faint">Cost:</span> {item.cost_cents != null ? `$${(item.cost_cents / 100).toFixed(2)}` : "—"}{item.cached ? " (cached)" : ""}</div>
+        </div>
+        {!d ? (
+          <div className="text-faint text-xs">Loading full text…</div>
+        ) : (
+          <>
+            <div>
+              <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-1">Prompt</div>
+              <pre className="text-xs whitespace-pre-wrap bg-subtle dark:bg-slate-800 border border-line dark:border-slate-700 rounded p-3 max-h-64 overflow-auto text-content dark:text-mortar-200">{d.input_full ?? "(none)"}</pre>
+            </div>
+            <div>
+              <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-1">Response</div>
+              <pre className="text-xs whitespace-pre-wrap bg-subtle dark:bg-slate-800 border border-line dark:border-slate-700 rounded p-3 max-h-64 overflow-auto text-content dark:text-mortar-200">{d.output_full ?? (d.error ? `Error: ${d.error}` : "(none)")}</pre>
+            </div>
+          </>
+        )}
+      </div>
+    </Modal>
+  );
 }

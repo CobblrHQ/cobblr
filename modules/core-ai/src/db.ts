@@ -29,8 +29,13 @@ export interface CoreAiCallsTable {
   provider_id: string;
   capability: string;
   model: string | null;
+  /** Who initiated the call (null = system-initiated, e.g. a wire). */
+  user_id: string | null;
   input_summary: string | null;
   output_summary: string | null;
+  /** Full prompt / response (images redacted, capped). For the activity log. */
+  input_full: string | null;
+  output_full: string | null;
   input_tokens: number | null;
   output_tokens: number | null;
   cost_cents: number | null;
@@ -81,4 +86,9 @@ export function tenantContext(req: Request) {
   const t = (req as unknown as RequestWithTenant).tenant;
   if (!t) throw new Error("core-ai route called without tenant context");
   return { org: t.org, role: t.role };
+}
+
+/** The user who made the request (for the AI activity log). Null if absent. */
+export function sessionUserId(req: Request): string | null {
+  return (req as unknown as RequestWithTenant).session?.id ?? null;
 }

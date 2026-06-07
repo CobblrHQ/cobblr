@@ -91,11 +91,15 @@ export async function assembleContext(
     }
   } else {
     chosen = all;
-    warnings.push(
-      "No kinds selected — using all declared kinds. Pick 1-3 for the best result; a small model wires to the wrong kind when given too many.",
-    );
+    // design-workspace deliberately uses the FULL catalog (it designs an app
+    // from scratch and may enable any module); other tasks want a tight scope.
+    if (task !== "design-workspace") {
+      warnings.push(
+        "No kinds selected — using all declared kinds. Pick 1-3 for the best result; a small model wires to the wrong kind when given too many.",
+      );
+    }
   }
-  if (chosen.length > MAX_KINDS) {
+  if (task !== "design-workspace" && chosen.length > MAX_KINDS) {
     warnings.push(
       `${chosen.length} kinds in scope — capped to ${MAX_KINDS}. More kinds = lower small-model success rate. Narrow the selection.`,
     );
@@ -229,6 +233,54 @@ RULES:
 - requires must list every module owning a referenced kind/action.
 - Give it a fresh id "cobblr.user.<kebab-slug>" reflecting the user's use case; version "0.1.0".`;
   },
+
+  // design-workspace: the "build my whole workspace from one prompt" task. Unlike
+  // create-bundle (a tight 1-3 kind scope), this gets the FULL catalog and is
+  // expected to ENABLE several modules + add many fields + wires in ONE bundle.
+  // The interpretation MUST own the honest part: what a schema bundle can't do
+  // (seed category rows, configure scan, create instance data) becomes follow-ups.
+  "design-workspace": (ctx, intent) => {
+    const kinds = ctx.kinds
+      .map(
+        (k) =>
+          `- ${k.id} (${k.displayName}) — fields: ${
+            k.fields.map((f) => `${f.name}:${f.type}`).join(", ") || "(none)"
+          }`,
+      )
+      .join("\n");
+    const actions = ctx.actions.length
+      ? ctx.actions.map((a) => `- ${a.id} — ${a.label}: ${a.description}`).join("\n")
+      : "(none)";
+    return `You are the Cobblr workspace architect. From the user's description of the WHOLE workspace they want, design ONE bundle that ENABLES the modules they need and adds the custom fields + wires to support their entire workflow. Cobblr is a no-code platform of composable modules; a "bundle" is the schema that turns a set of modules into their app. Output ONLY one JSON object — your "interpretation" plus the "bundle" — nothing else.
+
+AVAILABLE ENTITY KINDS (the full catalog — every kind here belongs to an installable module; using a kind enables its module via requires):
+${kinds}
+
+AVAILABLE ACTIONS to wire:
+${actions}
+
+THE USER WANTS THEIR WHOLE WORKSPACE TO BE:
+"${intent}"
+
+OUTPUT — one JSON object, this exact shape (the "seed" key is new — read its rule below):
+{
+  "interpretation": "<1-2 sentences: what you set up + what you seeded, and any remaining follow-ups>",
+  "bundle": { ...same shape as ${"`{ id, version, name, description, requires[], field_defs[], wires[] }`"}... },
+  "seed": [
+    { "kind": "<entity kind id>", "records": [ { "<field>": <value>, ... }, ... ] }
+  ]
+}
+
+RULES:
+- name: the bundle's title is the SUBJECT NOUN of what they track — the thing itself ("Yarn", "Home Inventory", "Plants"), NEVER a use-case or capability suffix ("Yarn Tracker", "Yarn Studio", "Crochet Manager"). The depth and use-cases live in the fields/wires you add, not the title. Keep it 1-3 words, a clean noun.
+- requires: list EVERY module you use (module = the id prefix before ":"). Listing it ENABLES it for the workspace. Pick the closest-fitting existing kinds — do NOT invent kinds or fields.
+- field_defs add columns to an entity_kind. type ∈ {text,number,boolean,date,url}; name must match ^[a-z][a-z0-9_]*$ (snake_case). For a fixed set of options (categories, statuses, sizes), add a text field with a "choices" array — that is how you seed category vocabularies.
+- wires.source_kind / action_id must be ids listed above; never reference an unlisted id. trigger_type ∈ {user-invoked,event,on-create,on-update,on-delete}.
+- Be comprehensive: model every "thing they track" as a kind + its fields, and every automation they describe as a wire. This is a whole app, not one tweak.
+- seed: ONLY records the user EXPLICITLY enumerated as a fixed starter set — e.g. "hooks from 1mm to 10mm" → one record per size; "rooms: kitchen, garage" → one per room. Each record's "kind" must be one you listed in requires/field_defs; its keys are field names from that kind (native like "name", plus the custom field_defs you added — extra keys are stored as custom-field values). Always include a human "name". Do NOT invent data the user didn't describe (no fake yarn colours, no sample parts). If they enumerated nothing concrete, use "seed": [].
+- "interpretation" MUST (a) summarise the workspace + what you seeded, and (b) honestly name any remaining follow-ups you could NOT do — e.g. tuning scan/receipt capture rules, or creating extra named module instances/collections. Don't claim more than you built.
+- id = "cobblr.user.<kebab-slug>"; version = "0.1.0".`;
+  },
 };
 
 export function compilePrompt(context: AuthoringContext, intent: string): string {
@@ -273,15 +325,42 @@ export function parseJsonObject(raw: string): unknown {
  *  The contract is `{ "interpretation": "...", "bundle": {...} }`, but we
  *  tolerate a bare bundle (older replies / a model that skipped the wrapper):
  *  if there's no `bundle` object, treat the whole thing as the bundle. */
-export function unwrapBuild(parsed: unknown): { interpretation: string | null; bundle: unknown } {
+// One starter record to seed after the schema applies: a kind + the record's
+// fields (native + custom, mixed — the create endpoint routes unknowns to
+// metadata). Only the design-workspace task produces these.
+export interface SeedGroup {
+  kind: string;
+  records: Array<Record<string, unknown>>;
+}
+
+function parseSeed(raw: unknown): SeedGroup[] {
+  if (!Array.isArray(raw)) return [];
+  const out: SeedGroup[] = [];
+  for (const g of raw) {
+    if (!g || typeof g !== "object") continue;
+    const kind = (g as { kind?: unknown }).kind;
+    const records = (g as { records?: unknown }).records;
+    if (typeof kind !== "string" || !Array.isArray(records)) continue;
+    const rows = records.filter((r): r is Record<string, unknown> => !!r && typeof r === "object" && !Array.isArray(r));
+    if (rows.length > 0) out.push({ kind, records: rows });
+  }
+  return out;
+}
+
+export function unwrapBuild(parsed: unknown): {
+  interpretation: string | null;
+  bundle: unknown;
+  seed: SeedGroup[];
+} {
   if (parsed && typeof parsed === "object") {
-    const p = parsed as { bundle?: unknown; interpretation?: unknown };
+    const p = parsed as { bundle?: unknown; interpretation?: unknown; seed?: unknown };
     if (p.bundle && typeof p.bundle === "object") {
       return {
         interpretation: typeof p.interpretation === "string" ? p.interpretation.trim() : null,
         bundle: p.bundle,
+        seed: parseSeed(p.seed),
       };
     }
   }
-  return { interpretation: null, bundle: parsed };
+  return { interpretation: null, bundle: parsed, seed: [] };
 }

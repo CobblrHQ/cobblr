@@ -1,19 +1,16 @@
 {
   "manifest": {
     "id": "cobblr.flagship.home-inventory",
-    "name": "Home Inventory (insurance)",
-    "version": "0.1.0",
-    "description": "Photograph and value what you own, room by room, so a fire, theft, flood or move starts from a real list instead of memory. Each item gets a room, a replacement value, where/when you bought it and its condition; a 'By room' view totals the shelf at a glance. Export or screenshot it for your insurer.",
+    "name": "Home Inventory",
+    "version": "0.2.0",
+    "description": "Catalog what you own, room by room — make/model, condition, photos — with a grouped 'By room' view. (The marketplace 'Insurance valuation' feature adds replacement value + purchase details for a claim.)",
     "author": "Cobblr",
     "requires": [
       { "module": "inventory" }
     ],
     "field_defs": [
       { "entity_kind": "inventory:part", "name": "room", "display_label": "Room", "type": "text", "position": 1, "choices": ["Living room", "Kitchen", "Primary bedroom", "Bedroom", "Bathroom", "Office", "Garage", "Basement", "Attic", "Outdoor", "Storage"] },
-      { "entity_kind": "inventory:part", "name": "replacement_value", "display_label": "Replacement value", "type": "number", "position": 2 },
-      { "entity_kind": "inventory:part", "name": "purchased_from", "display_label": "Bought from", "type": "text", "position": 3 },
-      { "entity_kind": "inventory:part", "name": "purchase_date", "display_label": "Purchased", "type": "date", "position": 4 },
-      { "entity_kind": "inventory:part", "name": "condition", "display_label": "Condition", "type": "text", "position": 5, "choices": ["New", "Excellent", "Good", "Fair", "Poor"] }
+      { "entity_kind": "inventory:part", "name": "condition", "display_label": "Condition", "type": "text", "position": 2, "choices": ["New", "Excellent", "Good", "Fair", "Poor"] }
     ],
     "field_overrides": [
       { "entity_kind": "inventory:part", "name": "cost", "display_label": "Paid" },
@@ -28,7 +25,7 @@
         "pinned": true,
         "config": {
           "group_by": "room",
-          "visible_fields": ["title", "replacement_value", "condition", "purchase_date"]
+          "visible_fields": ["title", "manufacturer", "model_number", "condition", "qty"]
         }
       }
     ]

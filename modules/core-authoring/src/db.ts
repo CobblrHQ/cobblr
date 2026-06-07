@@ -15,6 +15,8 @@ export interface DraftsTable {
   model: string | null;
   candidate: unknown | null;
   validation: unknown | null;
+  interpretation: string | null;
+  seed_plan: unknown | null;
   base_template_id: string | null;
   repair_attempts: Generated<number>;
   status: Generated<string>;

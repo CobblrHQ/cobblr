@@ -63,17 +63,93 @@ COPY packages/platform-contract ./packages/platform-contract
 # runtime image. Source copy is still required for the inventory tsc
 # build to satisfy the @cobblr/platform-web import.
 COPY packages/platform-web ./packages/platform-web
-COPY api ./api
-COPY modules ./modules
+
+# Per-module COPY+build, each its own cache layer: a change to ONE module
+# only invalidates that module (and the ones listed after it) instead of
+# rebuilding all 34. Modules are isolated — none imports another — so build
+# order is free; only platform-contract / platform-web must precede them
+# (they do). Ordered stable-first / actively-developed-last so a typical
+# commit re-runs just the last few layers. When adding a module, drop its
+# COPY+RUN pair in (hot ones near the bottom).
+COPY modules/labels ./modules/labels
+RUN npm run --if-present build -w @cobblr/labels
+COPY modules/projects ./modules/projects
+RUN npm run --if-present build -w @cobblr/projects
+COPY modules/purchases ./modules/purchases
+RUN npm run --if-present build -w @cobblr/purchases
+COPY modules/machines ./modules/machines
+RUN npm run --if-present build -w @cobblr/machines
+COPY modules/assets ./modules/assets
+RUN npm run --if-present build -w @cobblr/assets
+COPY modules/core-recurrence ./modules/core-recurrence
+RUN npm run --if-present build -w @cobblr/core-recurrence
+COPY modules/core-activity-log ./modules/core-activity-log
+RUN npm run --if-present build -w @cobblr/core-activity-log
+COPY modules/core-notifications ./modules/core-notifications
+RUN npm run --if-present build -w @cobblr/core-notifications
+COPY modules/core-healthcheck ./modules/core-healthcheck
+RUN npm run --if-present build -w @cobblr/core-healthcheck
+COPY modules/core-tags ./modules/core-tags
+RUN npm run --if-present build -w @cobblr/core-tags
+COPY modules/core-views ./modules/core-views
+RUN npm run --if-present build -w @cobblr/core-views
+COPY modules/core-files ./modules/core-files
+RUN npm run --if-present build -w @cobblr/core-files
+COPY modules/core-search ./modules/core-search
+RUN npm run --if-present build -w @cobblr/core-search
+COPY modules/core-public-surfaces ./modules/core-public-surfaces
+RUN npm run --if-present build -w @cobblr/core-public-surfaces
+COPY modules/core-openapi ./modules/core-openapi
+RUN npm run --if-present build -w @cobblr/core-openapi
+COPY modules/core-queue ./modules/core-queue
+RUN npm run --if-present build -w @cobblr/core-queue
+COPY modules/core-locations ./modules/core-locations
+RUN npm run --if-present build -w @cobblr/core-locations
+COPY modules/core-catalogs ./modules/core-catalogs
+RUN npm run --if-present build -w @cobblr/core-catalogs
+COPY modules/core-labels-qr ./modules/core-labels-qr
+RUN npm run --if-present build -w @cobblr/core-labels-qr
+COPY modules/core-integrations ./modules/core-integrations
+RUN npm run --if-present build -w @cobblr/core-integrations
+COPY modules/core-maintenance ./modules/core-maintenance
+RUN npm run --if-present build -w @cobblr/core-maintenance
+COPY modules/core-units ./modules/core-units
+RUN npm run --if-present build -w @cobblr/core-units
+COPY modules/core-templates ./modules/core-templates
+RUN npm run --if-present build -w @cobblr/core-templates
+COPY modules/core-file-preview ./modules/core-file-preview
+RUN npm run --if-present build -w @cobblr/core-file-preview
+COPY modules/bricklink-connector ./modules/bricklink-connector
+RUN npm run --if-present build -w @cobblr/bricklink-connector
+COPY modules/core-print ./modules/core-print
+RUN npm run --if-present build -w @cobblr/core-print
+# ── actively-developed (hot) modules last — their edits rebuild fewest layers ──
+COPY modules/digifab ./modules/digifab
+RUN npm run --if-present build -w @cobblr/digifab
+COPY modules/inventory ./modules/inventory
+RUN npm run --if-present build -w @cobblr/inventory
+COPY modules/lists ./modules/lists
+RUN npm run --if-present build -w @cobblr/lists
+COPY modules/tracking ./modules/tracking
+RUN npm run --if-present build -w @cobblr/tracking
+COPY modules/core-scan ./modules/core-scan
+RUN npm run --if-present build -w @cobblr/core-scan
+COPY modules/core-apps ./modules/core-apps
+RUN npm run --if-present build -w @cobblr/core-apps
+COPY modules/core-ai ./modules/core-ai
+RUN npm run --if-present build -w @cobblr/core-ai
+COPY modules/core-authoring ./modules/core-authoring
+RUN npm run --if-present build -w @cobblr/core-authoring
 
 # Marketplace v2: fetch/verify registry-sourced modules + record the
 # manifest of every baked-in marketplace module. `source: "vendored"`
-# entries are no-ops (modules/ COPY put them in place); `source:
-# "registry"` entries are downloaded, sha256+ed25519 verified, and
-# extracted to modules/<name>/. See docs/modules/marketplace.md.
+# entries are no-ops (the per-module COPYs above put them in place);
+# `source: "registry"` entries are downloaded, sha256+ed25519 verified,
+# and extracted to modules/<name>/. See docs/modules/marketplace.md.
+# Runs AFTER the per-module builds: it depends only on cobblr-modules.json
+# + scripts (rarely changed), so a module source edit doesn't re-run it.
 COPY cobblr-modules.json ./cobblr-modules.json
 COPY scripts ./scripts
-
 # Marketplace v0.3 sandboxed modules. Each subdir has a manifest.json
 # + a module.wasm built ahead of time (the kernel doesn't compile wasm
 # at boot). The sandbox loader scans this dir at api boot and
@@ -82,42 +158,8 @@ COPY scripts ./scripts
 COPY sandboxed-modules ./sandboxed-modules
 RUN node scripts/install-registry-modules.mjs
 
-# Build every module that has a build script. The loader's
-# package.json#main resolution picks up dist/module.js at boot.
-RUN npm run --if-present build -w @cobblr/inventory
-RUN npm run --if-present build -w @cobblr/labels
-RUN npm run --if-present build -w @cobblr/projects
-RUN npm run --if-present build -w @cobblr/purchases
-RUN npm run --if-present build -w @cobblr/machines
-RUN npm run --if-present build -w @cobblr/assets
-RUN npm run --if-present build -w @cobblr/core-recurrence
-RUN npm run --if-present build -w @cobblr/core-activity-log
-RUN npm run --if-present build -w @cobblr/core-notifications
-RUN npm run --if-present build -w @cobblr/core-healthcheck
-RUN npm run --if-present build -w @cobblr/core-tags
-RUN npm run --if-present build -w @cobblr/core-views
-RUN npm run --if-present build -w @cobblr/core-files
-RUN npm run --if-present build -w @cobblr/core-search
-RUN npm run --if-present build -w @cobblr/core-public-surfaces
-RUN npm run --if-present build -w @cobblr/core-openapi
-RUN npm run --if-present build -w @cobblr/core-queue
-RUN npm run --if-present build -w @cobblr/core-locations
-RUN npm run --if-present build -w @cobblr/core-catalogs
-RUN npm run --if-present build -w @cobblr/core-labels-qr
-RUN npm run --if-present build -w @cobblr/core-integrations
-RUN npm run --if-present build -w @cobblr/core-ai
-RUN npm run --if-present build -w @cobblr/core-maintenance
-RUN npm run --if-present build -w @cobblr/core-units
-RUN npm run --if-present build -w @cobblr/core-templates
-RUN npm run --if-present build -w @cobblr/core-scan
-RUN npm run --if-present build -w @cobblr/core-apps
-RUN npm run --if-present build -w @cobblr/core-authoring
-RUN npm run --if-present build -w @cobblr/lists
-RUN npm run --if-present build -w @cobblr/tracking
-RUN npm run --if-present build -w @cobblr/digifab
-RUN npm run --if-present build -w @cobblr/core-file-preview
-RUN npm run --if-present build -w @cobblr/bricklink-connector
-RUN npm run --if-present build -w @cobblr/core-print
+# api last: an api-only change rebuilds just the api, not the 34 modules.
+COPY api ./api
 WORKDIR /app/api
 RUN npm run build
 
