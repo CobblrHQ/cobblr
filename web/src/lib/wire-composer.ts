@@ -64,6 +64,26 @@ export function buildRRule(r: Recurrence): string {
   return parts.join(";");
 }
 
+/** Reverse of buildRRule: parse an iCal RRULE back into a Recurrence so a
+ *  schedule wire can be prefilled into the composer for editing. Unknown /
+ *  malformed input falls back to DEFAULT_RECURRENCE. */
+export function parseRRule(rrule: string | null | undefined): Recurrence {
+  if (!rrule) return { ...DEFAULT_RECURRENCE };
+  const parts: Record<string, string> = {};
+  for (const seg of rrule.split(";")) {
+    const eq = seg.indexOf("=");
+    if (eq <= 0) continue;
+    parts[seg.slice(0, eq).toUpperCase()] = seg.slice(eq + 1);
+  }
+  const freq = (["DAILY", "WEEKLY", "MONTHLY"].includes(parts.FREQ ?? "") ? parts.FREQ : "WEEKLY") as Freq;
+  return {
+    freq,
+    interval: Math.max(1, parseInt(parts.INTERVAL ?? "1", 10) || 1),
+    byday: parts.BYDAY ? parts.BYDAY.split(",").filter((c) => WEEKDAYS.some((d) => d.code === c)) : ["MO"],
+    bymonthday: parts.BYMONTHDAY ? parseInt(parts.BYMONTHDAY, 10) || 1 : 1,
+  };
+}
+
 const ORD = (n: number): string => {
   if (n === -1) return "last day";
   const s = ["th", "st", "nd", "rd"];

@@ -150,6 +150,15 @@ export interface ApiTokensTable {
   last_used_at: Date | null;
   revoked_at: Date | null;
   created_at: Generated<Date>;
+  /** Capability scopes; NULL/empty = unrestricted (legacy full-access). */
+  scopes: string[] | null;
+}
+
+export interface PlatformAnnounceSettingsTable {
+  category: string;
+  enabled: Generated<boolean>;
+  webhook_url: string | null;
+  updated_at: Generated<Date>;
 }
 
 export interface WorkspaceInvitesTable {
@@ -454,6 +463,9 @@ export interface ModuleFieldDefsTable {
    *  time over the entity's own fields (tier 1) + registered context
    *  providers (tier 2). Null for stored value fields. */
   template: string | null;
+  /** Plain-language one-line hint shown under the input on create + detail
+   *  forms, so jargon fields (colorway, dye lot…) explain themselves. */
+  help: string | null;
   created_at: Generated<Date>;
 }
 
@@ -556,7 +568,21 @@ export interface OrgEncryptionKeysTable {
   created_at: Generated<Date>;
 }
 
+export interface FeedbackTable {
+  id: Generated<string>;
+  user_id: string;
+  org_id: string | null;
+  type: Generated<string>;
+  message: string;
+  context: Generated<Record<string, unknown>>;
+  status: Generated<string>;
+  admin_notes: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
 export interface MetaDB {
+  feedback: FeedbackTable;
   users: UsersTable;
   orgs: OrgsTable;
   org_memberships: OrgMembershipsTable;
@@ -565,6 +591,7 @@ export interface MetaDB {
   workspace_invites: WorkspaceInvitesTable;
   signup_invites: SignupInvitesTable;
   api_tokens: ApiTokensTable;
+  platform_announce_settings: PlatformAnnounceSettingsTable;
   entity_pairings: EntityPairingsTable;
   tags: TagsTable;
   tag_assignments: TagAssignmentsTable;

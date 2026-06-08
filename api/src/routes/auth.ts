@@ -19,6 +19,7 @@ import { hashPassword, verifyPassword } from "../auth/password.js";
 import { signSession } from "../auth/jwt.js";
 import { isPlatformAdmin } from "../auth/middleware.js";
 import { publicSignupEnabled } from "../auth/signup-gate.js";
+import { dispatch } from "../platform/notifications.js";
 import * as activity from "../platform/activity.js";
 import { fireSignup, sendAuthEmail } from "../platform/hosted-seams.js";
 import { enableDefaultModulesForOrg } from "../modules/enable.js";
@@ -284,7 +285,7 @@ authRouter.post("/signup", async (req, res, next) => {
     // Authorisation: either public signup is open, OR the caller holds a
     // valid single-use signup-invite. Validate (status + email-lock) now;
     // the atomic claim happens just before user creation (race-safe).
-    let invite: { id: string; invited_email: string | null } | null = null;
+    let invite: { id: string; invited_email: string | null; created_by: string } | null = null;
     if (!publicSignupEnabled()) {
       if (!body.invite_token) {
         return res.status(403).json({
@@ -297,7 +298,7 @@ authRouter.post("/signup", async (req, res, next) => {
       }
       const row = await meta
         .selectFrom("signup_invites")
-        .select(["id", "invited_email", "expires_at", "consumed_at", "revoked_at"])
+        .select(["id", "invited_email", "created_by", "expires_at", "consumed_at", "revoked_at"])
         .where("token", "=", body.invite_token)
         .executeTakeFirst();
       const expired = row?.expires_at && new Date(row.expires_at) < new Date();
@@ -311,7 +312,7 @@ authRouter.post("/signup", async (req, res, next) => {
           error: { code: "invite_email_mismatch", message: `This invite is for ${row.invited_email}.` },
         });
       }
-      invite = { id: row.id, invited_email: row.invited_email };
+      invite = { id: row.id, invited_email: row.invited_email, created_by: row.created_by };
     }
 
     // Cheap existence check before the more expensive bcrypt+insert.
@@ -368,6 +369,28 @@ authRouter.post("/signup", async (req, res, next) => {
         .set({ consumed_by_user: userId })
         .where("id", "=", invite.id)
         .execute();
+      // Tell the inviter their invitee just signed up. Notifications are
+      // org-scoped, so fire it in the inviter's first org → it fans out to their
+      // channels (in-app always; Discord/email/etc. if they've added those in
+      // notification settings). Best-effort — never block the signup.
+      try {
+        const inviterOrg = await meta
+          .selectFrom("org_memberships")
+          .select("org_id")
+          .where("user_id", "=", invite.created_by)
+          .orderBy("joined_at", "asc")
+          .executeTakeFirst();
+        if (inviterOrg) {
+          await dispatch({
+            orgId: inviterOrg.org_id,
+            userId: invite.created_by,
+            eventType: "platform.invite.accepted",
+            message: `${body.display_name.trim()} (${email}) signed up via your invite.`,
+          });
+        }
+      } catch (err) {
+        console.error("[signup] invite-accepted notification failed:", err);
+      }
     }
 
     // Phase 2: provision the user's first org.
@@ -540,6 +563,26 @@ authRouter.post("/magic/request", async (req, res, next) => {
       return;
     }
     const email = parsed.data.email.toLowerCase().trim();
+
+    // Invite-only gate at request time: only issue a link if the email can
+    // actually sign in — an existing user, a platform admin (bootstrap), or when
+    // public signup is open. Otherwise return the SAME 202 (no enumeration) but
+    // send nothing, so a non-invited address never gets a usable sign-in email.
+    // (consume is gated too — defense in depth.)
+    const existingForLink = await meta
+      .selectFrom("users")
+      .select("id")
+      .where("email", "=", email)
+      .executeTakeFirst();
+    if (!existingForLink && !isPlatformAdmin(email) && !publicSignupEnabled()) {
+      res.status(202).json({
+        ok: true,
+        expires_at: new Date(Date.now() + MAGIC_TTL_MS).toISOString(),
+        message: "If that email exists or is allowed to sign in, a magic link has been issued.",
+      });
+      return;
+    }
+
     const { plain, hash } = mintMagicToken();
     await meta
       .insertInto("auth_magic_tokens")
@@ -644,6 +687,19 @@ authRouter.post("/magic/consume", async (req, res, next) => {
       }
       userId = existing.id;
     } else {
+      // Invite-only gate: a magic link is NOT a signup backdoor. Only mint a
+      // fresh account if public signup is open, OR the email is a platform admin
+      // (the operator's own first-login bootstrap). Everyone else must join via
+      // an invite (/join/:token) — which collects their workspace name properly.
+      if (!publicSignupEnabled() && !isPlatformAdmin(row.email)) {
+        res.status(403).json({
+          error: {
+            code: "signup_closed",
+            message: "Sign-in links work for existing accounts. To create one, you'll need an invite.",
+          },
+        });
+        return;
+      }
       // Fresh user via magic link — no password set (they'll always
       // be magic-only unless they later use POST /me/password).
       // Display name defaults to the email's local-part.

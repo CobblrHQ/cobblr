@@ -32,12 +32,12 @@ export function hashToken(token: string): string {
  *  not found, revoked, or expired. Updates last_used_at on hit. */
 export async function resolveApiToken(
   plaintext: string,
-): Promise<{ userId: string; tokenId: string } | null> {
+): Promise<{ userId: string; tokenId: string; scopes: string[] | null } | null> {
   if (!plaintext.startsWith(PREFIX)) return null;
   const hash = hashToken(plaintext);
   const row = await meta
     .selectFrom("api_tokens")
-    .select(["id", "user_id", "expires_at", "revoked_at"])
+    .select(["id", "user_id", "expires_at", "revoked_at", "scopes"])
     .where("token_hash", "=", hash)
     .executeTakeFirst();
   if (!row) return null;
@@ -52,5 +52,7 @@ export async function resolveApiToken(
     .execute()
     .catch((err) => console.error("[api-tokens] last_used update failed:", err));
 
-  return { userId: row.user_id, tokenId: row.id };
+  const scopes =
+    Array.isArray(row.scopes) && row.scopes.length > 0 ? (row.scopes as string[]) : null;
+  return { userId: row.user_id, tokenId: row.id, scopes };
 }

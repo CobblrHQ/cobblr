@@ -153,21 +153,32 @@ function FieldRow({
 }) {
   // Computed branch — read-only, value derived server-side at resolve
   // time. Show it (the user configured it) but never let them edit it.
-  if (def.type === "computed") {
-    return <ComputedRow def={def} value={value} fallbackValue={fallbackValue} />;
-  }
-  // Dropdown branch — type='text' with choices.
-  if (def.type === "text" && def.choices && def.choices.length > 0) {
-    return <ChoiceRow def={def} value={value} onCommit={onCommit} />;
-  }
+  const inner =
+    def.type === "computed" ? (
+      <ComputedRow def={def} value={value} fallbackValue={fallbackValue} />
+    ) : def.renderer === "color-hex" ? (
+      // Colour branch — a real swatch picker (type a hex/name OR pick).
+      <ColorRow def={def} value={value} onCommit={onCommit} />
+    ) : def.type === "text" && def.choices && def.choices.length > 0 ? (
+      // Dropdown branch — type='text' with choices.
+      <ChoiceRow def={def} value={value} onCommit={onCommit} />
+    ) : (
+      <PlainRow
+        def={def}
+        value={value}
+        fallbackValue={fallbackValue}
+        fallbackLabel={fallbackLabel}
+        onCommit={onCommit}
+      />
+    );
+  // The bundle-authored plain-language hint, rendered under any field type so
+  // jargon fields (colorway, dye lot…) explain themselves.
+  if (!def.help) return inner;
   return (
-    <PlainRow
-      def={def}
-      value={value}
-      fallbackValue={fallbackValue}
-      fallbackLabel={fallbackLabel}
-      onCommit={onCommit}
-    />
+    <div className="space-y-1">
+      {inner}
+      <p className="text-[11px] text-faint dark:text-slate-500 leading-snug">{def.help}</p>
+    </div>
   );
 }
 
@@ -269,6 +280,56 @@ function ComputedRow({
       </span>
       <div className="input flex-1 bg-mortar-50/60 dark:bg-slate-800/60 text-content dark:text-mortar-100 cursor-default select-text">
         {str || <span className="text-faint dark:text-slate-600">—</span>}
+      </div>
+    </label>
+  );
+}
+
+/** A colour field — native OS swatch picker + a free-text box (so a named
+ *  colour like "Peacock" still works). Commits on change/blur. */
+function ColorRow({
+  def,
+  value,
+  onCommit,
+}: {
+  def: PlatformFieldDef;
+  value: unknown;
+  onCommit: (v: unknown) => void;
+}) {
+  const initial = value == null ? "" : String(value);
+  const [draft, setDraft] = useState(initial);
+  const t = draft.trim();
+  const swatch = /^#?[0-9a-fA-F]{6}$/.test(t) ? (t[0] === "#" ? t : `#${t}`) : "#cccccc";
+  return (
+    <label className="block">
+      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+        {def.display_label}
+        {def.required ? <span className="text-ember-500"> *</span> : null}
+      </span>
+      <div className="flex items-center gap-2">
+        <input
+          type="color"
+          value={swatch}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            onCommit(e.target.value);
+          }}
+          className="h-9 w-12 shrink-0 rounded border border-line dark:border-slate-600 cursor-pointer bg-transparent p-0.5"
+          aria-label={`${def.display_label} colour picker`}
+        />
+        <input
+          type="text"
+          value={draft}
+          placeholder="#hex or a colour name"
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={() => {
+            if (draft !== initial) onCommit(draft.trim() === "" ? null : draft);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          }}
+          className="input flex-1"
+        />
       </div>
     </label>
   );

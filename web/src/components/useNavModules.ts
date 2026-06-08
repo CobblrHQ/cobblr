@@ -160,8 +160,12 @@ export function useNavModules(activeSlug: string): NavModules {
   // inline UI like EntityAttachments / SearchBar) — not as peer-
   // level entries alongside "machines" or "inventory". A name
   // starting with `core-` is by convention a foundational /
-  // utility module; user-facing modules don't use that prefix.
-  const userFacing = enabled.filter((m) => !m.name.startsWith("core-"));
+  // utility module; user-facing modules don't use that prefix. We also exclude
+  // band:"foundational" by manifest — operator plumbing like `cobblr-cloud` (the
+  // hosted overlay) isn't core-prefixed but is still not a user-facing nav noun.
+  const userFacing = enabled.filter(
+    (m) => !m.name.startsWith("core-") && m.band !== "foundational",
+  );
   // Hide a multi-instance module's own entry when its auto-created default
   // instance is empty and the workspace has named instances (see helper).
   const hideDefaultModules = defaultModuleEntriesToHide(instances.data?.items ?? []);

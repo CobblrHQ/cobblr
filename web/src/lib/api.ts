@@ -115,6 +115,30 @@ export interface SignupInvite {
   status: "open" | "consumed" | "expired" | "revoked";
 }
 
+export interface FeedbackItem {
+  id: string;
+  type: string;
+  message: string;
+  context: Record<string, unknown>;
+  status: string;
+  admin_notes: string | null;
+  created_at: string;
+  updated_at: string;
+  user_email: string | null;
+  user_name: string | null;
+  workspace_slug: string | null;
+  workspace_name: string | null;
+}
+
+export interface AnnounceSetting {
+  key: string;
+  label: string;
+  description: string;
+  enabled: boolean;
+  webhook_url: string | null;
+  default_channel_set: boolean;
+}
+
 export interface MeResponse {
   user: SessionUser;
   orgs: OrgMembership[];
@@ -284,6 +308,43 @@ export const api = {
     request<{ items: SignupInvite[] }>("GET", "/super-admin/signup-invites"),
   revokeSignupInvite: (id: string) =>
     request<void>("POST", `/super-admin/signup-invites/${id}/revoke`),
+  // Feedback: any authed user submits; super-admin lists / triages.
+  submitFeedback: (body: {
+    type: "bug" | "confusing" | "idea" | "other";
+    message: string;
+    workspace_slug?: string;
+    context?: Record<string, unknown>;
+  }) => request<{ id: string; created_at: string }>("POST", "/feedback", body),
+  listFeedback: (status?: string) =>
+    request<{ items: FeedbackItem[] }>(
+      "GET",
+      `/super-admin/feedback${status ? `?status=${encodeURIComponent(status)}` : ""}`,
+    ),
+  listAnnounceSettings: () =>
+    request<{ items: AnnounceSetting[] }>("GET", "/super-admin/announce-settings"),
+  setAnnounceSetting: (
+    category: string,
+    body: { enabled?: boolean; webhook_url?: string | null },
+  ) =>
+    request<{ ok: boolean }>(
+      "PATCH",
+      `/super-admin/announce-settings/${encodeURIComponent(category)}`,
+      body,
+    ),
+  updateFeedback: (
+    id: string,
+    body: {
+      status?: string;
+      admin_notes?: string | null;
+      notify_reporter?: boolean;
+      reply_message?: string;
+    },
+  ) =>
+    request<{ id: string; status: string; admin_notes: string | null; updated_at: string; notified?: boolean }>(
+      "PATCH",
+      `/super-admin/feedback/${id}`,
+      body,
+    ),
   login: (body: { email: string; password: string }) =>
     request<AuthResponse>("POST", "/auth/login", body),
   magicRequest: (body: { email: string }) =>
@@ -420,13 +481,19 @@ export const api = {
   // Long-lived API tokens
   listApiTokens: () =>
     request<{ items: ApiTokenListItem[] }>("GET", "/me/api-tokens"),
-  mintApiToken: (body: { name: string; expires_at?: string }) =>
+  apiTokenScopes: () =>
+    request<{ items: { key: string; label: string; description: string }[] }>(
+      "GET",
+      "/me/api-token-scopes",
+    ),
+  mintApiToken: (body: { name: string; expires_at?: string; scopes?: string[] }) =>
     request<{
       id: string;
       name: string;
       token_prefix: string;
       expires_at: string | null;
       created_at: string;
+      scopes: string[] | null;
       token: string;
     }>("POST", "/me/api-tokens", body),
   revokeApiToken: (id: string) =>
@@ -1392,6 +1459,10 @@ export const api = {
     body: {
       target_module?: string;
       target_kind?: string;
+      /** Commit into a module INSTANCE (e.g. the "yarn" inventory instance)
+       *  instead of the default — the backend routes the create to
+       *  /instances/:name/items, scoping the new entity to that instance. */
+      instance?: string;
       name?: string;
       location_id?: string;
       quantity?: number;
@@ -1417,6 +1488,14 @@ export const api = {
     request<{ id: string }>(
       "POST",
       `/orgs/${slug}/modules/core-scan/batches`,
+      {},
+    ),
+  // Matchmaker — route a scanned item to the best workspace table(s) + fill
+  // each table's fields. Run after identify; returns + persists ranked chips.
+  matchScanItem: (slug: string, id: string) =>
+    request<{ candidates: ScanCandidate[] }>(
+      "POST",
+      `/orgs/${slug}/modules/core-scan/inbox/${id}/match`,
       {},
     ),
 
@@ -2100,6 +2179,16 @@ export interface Location {
   updated_at: string;
 }
 
+export interface ScanCandidate {
+  module: string;
+  instance: string | null;
+  kind: string;
+  label: string;
+  confidence: number;
+  name: string;
+  fields: Record<string, string | number | boolean>;
+}
+
 export interface ScanInboxItem {
   id: string;
   status: "pending" | "enriching" | "resolved" | "discarded";
@@ -2113,6 +2202,8 @@ export interface ScanInboxItem {
   suggested_manufacturer: string | null;
   suggested_sku: string | null;
   suggested_metadata: Record<string, unknown>;
+  /** Ranked matchmaker routing candidates (which table + filled fields). */
+  suggested_candidates: ScanCandidate[];
   ai_notes: string | null;
   ai_confidence: string | null;
   ai_suggested_at: string | null;
@@ -2779,6 +2870,8 @@ export interface ApiTokenListItem {
   last_used_at: string | null;
   revoked_at: string | null;
   created_at: string;
+  /** Capability scopes; null = unrestricted (full access). */
+  scopes: string[] | null;
 }
 
 export interface InvitePreview {
@@ -2997,6 +3090,8 @@ export interface PlatformFieldDef {
   /** type='computed' only: the {{ }} template rendered read-only at
    *  resolve time. Null for stored value fields. */
   template: string | null;
+  /** Plain-language one-line hint shown under the input. */
+  help: string | null;
   created_at: string;
 }
 
@@ -3023,6 +3118,12 @@ export interface PlatformBundleManifest {
   name: string;
   description?: string;
   author?: string;
+  /** Release date of THIS version (ISO date), shown on the update prompt. */
+  released_at?: string;
+  /** Plain-language "what changed in this version" — shown prominently when
+   *  the user is updating an installed bundle. The technical detail (new
+   *  modules / wires / fields) stays in the requires/details accordion. */
+  changelog?: string;
   /** v1.5: markdown walkthrough rendered on the bundle detail page. */
   readme_md?: string;
   /** v1.5: image URLs displayed as a screenshot strip. */
@@ -3050,6 +3151,9 @@ export interface PlatformBundleManifest {
     template?: string;
     /** Built-in display renderer (color-hex swatch, url-link, …). */
     renderer?: "text" | "color-hex" | "image-url" | "url-link" | "year" | "boolean" | "code";
+    /** Plain-language one-line hint shown under the input ("the maker's named
+     *  shade — e.g. 'Peacock Heather'") so jargon fields explain themselves. */
+    help?: string;
   }[];
   /** Presentation overrides for a kind's native fields (relabel / hide). */
   field_overrides?: {
@@ -3080,6 +3184,40 @@ export interface PlatformBundleManifest {
    *  above are the always-on BASE; each enabled feature merges its same-shaped
    *  arrays in. Toggleable later via re-install with a new enabled set. */
   features?: PlatformBundleFeature[];
+  /** Module instances this bundle creates on install (skinned copies of a
+   *  multi-instance module — e.g. an "inventory" instance named "Yarn"). Each
+   *  instance's fields/views/wires apply scoped to `<instance_name>:item`. */
+  provides_instances?: PlatformBundleInstance[];
+  /** WorkspaceApps this bundle seeds on install (e.g. the Outfit Planner). */
+  provides_apps?: PlatformBundleApp[];
+}
+
+/** A WorkspaceApp a bundle seeds — pages → blocks (a custom block carries its
+ *  own HTML). Validated structurally on install, deeply by core-apps. */
+export interface PlatformBundleApp {
+  slug: string;
+  name: string;
+  icon?: string;
+  visible_capability?: string | null;
+  pages: { slug: string; title: string; blocks: Record<string, unknown>[] }[];
+  theme?: Record<string, unknown> | null;
+}
+
+/** A module instance a bundle creates — its own nav entry, fields, views, and
+ *  add flow, isolated to the instance kind `<instance_name>:item`. */
+export interface PlatformBundleInstance {
+  module: string;
+  instance_name: string;
+  display_name: string;
+  glyph?: string;
+  /** Singular noun for the add button + modal title ("yarn" → "New yarn"). */
+  item_noun?: string;
+  /** Default unit for new items (e.g. "skein"). */
+  qty_unit?: string;
+  field_defs?: PlatformBundleManifest["field_defs"];
+  field_overrides?: PlatformBundleManifest["field_overrides"];
+  saved_views?: PlatformBundleManifest["saved_views"];
+  wires?: PlatformBundleManifest["wires"];
 }
 
 /** An opt-in capability of a bundle — its contributions merge into the
@@ -3098,8 +3236,13 @@ export interface PlatformBundleFeature {
   field_defs?: PlatformBundleManifest["field_defs"];
   field_overrides?: PlatformBundleManifest["field_overrides"];
   saved_views?: PlatformBundleManifest["saved_views"];
+  /** Instances this feature creates when enabled (e.g. the "hooks" feature
+   *  creates a Hooks inventory instance). */
+  provides_instances?: PlatformBundleManifest["provides_instances"];
+  /** WorkspaceApps this feature seeds when enabled (e.g. the Outfit Planner). */
+  provides_apps?: PlatformBundleManifest["provides_apps"];
   /** Post-install guided steps (web nav only; stripped server-side). */
-  next_steps?: { label: string; module: string; hint?: string }[];
+  next_steps?: { label: string; module: string; path?: string; hint?: string }[];
 }
 
 /** A bundle entry in the extension registry index — the manifest plus the

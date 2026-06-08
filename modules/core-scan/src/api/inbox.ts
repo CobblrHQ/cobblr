@@ -22,8 +22,20 @@ import { bearer, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { enrichBarcodeItem } from "../services/enrich.js";
 import { enrichPhotoItem } from "../services/enrich-photo.js";
+import { assembleScanMenu, runMatchmaker } from "../services/matchmaker.js";
 
 export const inboxRouter = Router({ mergeParams: true });
+
+// Internal self-call base for the create/enrich loopbacks below. These calls
+// re-issue through our OWN api (to inherit requireAuth + withTenant + role
+// gating) carrying the user's bearer token — so the base MUST be loopback to
+// this process, never a caller-influenced value. `req.headers.host` is the
+// BROWSER's origin (nginx forwards `Host: $host`); fetching it from inside the
+// api container is unreachable (ECONNREFUSED → confirm 500) and would leak the
+// token to whatever host the caller named. Mirrors services/enrich.ts. The
+// `x-cobblr-base-url` override stays for isolated-stack e2e (home-life maps
+// :4055→:4000); it's an explicit opt-in, not the default.
+const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
 
 // ─────────────────────────── POST /scan ────────────────────────────
 
@@ -107,8 +119,7 @@ inboxRouter.post(
     const token = bearer(req);
     if (body.barcode && token) {
       const baseUrl =
-        (req.headers["x-cobblr-base-url"] as string | undefined) ??
-        `${req.protocol}://${req.headers.host ?? "localhost"}`;
+        (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
       const enrichTask = enrichBarcodeItem({
         db,
         orgId: ctx.org.id,
@@ -311,6 +322,10 @@ inboxRouter.post(
     // The quantity rides on the kind's own field name (qty vs quantity).
     const qty = parsed.data.quantity ?? Number(row.quantity ?? 1);
     const qtyField = KIND_QTY_FIELD[kindKey];
+    // `extras.metadata` (the instance's custom fields the user filled on the
+    // confirm form — colorway, fibre, …) is DEEP-merged into the scan metadata
+    // so it doesn't wipe the barcode/sku/source we stamp for catalog re-match.
+    const { metadata: extrasMetadata, ...restExtras } = (parsed.data.extras ?? {}) as Record<string, unknown>;
     const body: Record<string, unknown> = {
       name: parsed.data.name ?? row.suggested_name ?? "Untitled",
       manufacturer: row.suggested_manufacturer ?? undefined,
@@ -321,18 +336,18 @@ inboxRouter.post(
         sku: row.suggested_sku ?? undefined,
         category: (meta as { category?: string }).category ?? undefined,
         scan_source: (meta as { source?: string }).source ?? undefined,
+        ...((extrasMetadata as Record<string, unknown> | undefined) ?? {}),
       },
       ...(qtyField && qty ? { [qtyField]: qty } : {}),
       ...(parsed.data.location_id ? { location_id: parsed.data.location_id } : {}),
-      ...(parsed.data.extras ?? {}),
+      ...restExtras,
     };
 
     // Re-issue through the api against the SAME bearer token so
     // requireAuth + withTenant + role gating fire on the target
     // endpoint.
     const baseUrl =
-      (req.headers["x-cobblr-base-url"] as string | undefined) ??
-      `${req.protocol}://${req.headers.host ?? "localhost"}`;
+      (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
     // An explicit instance routes through the platform instance dispatcher
     // (/instances/:name/items), which scopes the create to that instance of
     // the owning module. The kind still drives the qty-field mapping above —
@@ -509,8 +524,7 @@ inboxRouter.post(
     }
 
     const baseUrl =
-      (req.headers["x-cobblr-base-url"] as string | undefined) ??
-      `${req.protocol}://${req.headers.host ?? "localhost"}`;
+      (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
     await enrichBarcodeItem({
       db,
       orgId: ctx.org.id,
@@ -527,6 +541,63 @@ inboxRouter.post(
       .where("id", "=", id)
       .executeTakeFirstOrThrow();
     res.json(fresh);
+  }),
+);
+
+// ──────────────────────── POST /inbox/:id/match ─────────────────────
+// The matchmaker: route this scanned item into the workspace's tables +
+// fill each table's fields. Runs AFTER identify (uses the item's suggested_*),
+// assembles the "scan menu" over the internal API with the caller's token, and
+// persists the ranked candidates so the inbox can show them as tap chips.
+inboxRouter.post(
+  "/inbox/:id/match",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const db = tenantDb(req);
+    const ctx = tenantContext(req);
+    const token = bearer(req);
+    const id = req.params.id;
+    if (!id) {
+      res.status(400).json({ error: { code: "missing_id", message: "missing id" } });
+      return;
+    }
+    if (!token) {
+      res.status(401).json({ error: { code: "unauthenticated", message: "missing bearer" } });
+      return;
+    }
+    const row = await db
+      .selectFrom("core_scan_inbox_items")
+      .selectAll()
+      .where("id", "=", id)
+      .executeTakeFirst();
+    if (!row) {
+      res.status(404).json({ error: { code: "not_found", message: "item not found" } });
+      return;
+    }
+
+    const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+    const meta = (row.suggested_metadata ?? {}) as { category?: string; entity_type?: "asset" | "part"; description?: string };
+    const menu = await assembleScanMenu(baseUrl, ctx.org.slug, token);
+    const candidates = await runMatchmaker(
+      ctx.org.id,
+      {
+        name: row.suggested_name ?? "",
+        manufacturer: row.suggested_manufacturer,
+        category: meta.category ?? null,
+        description: meta.description ?? null,
+        entityType: meta.entity_type ?? null,
+        barcode: row.barcode_text,
+      },
+      menu,
+    );
+
+    await db
+      .updateTable("core_scan_inbox_items")
+      .set({ suggested_candidates: JSON.stringify(candidates) as never, updated_at: new Date() })
+      .where("id", "=", id)
+      .execute();
+
+    res.json({ candidates });
   }),
 );
 

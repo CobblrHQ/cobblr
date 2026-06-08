@@ -4,7 +4,7 @@
 // "inventory:part", id) and the platform routes here.
 
 import { sql, type Kysely } from "kysely";
-import { platform, type ResolvedEntity } from "@cobblr/platform-contract";
+import { platform, type EntityListQuery, type ResolvedEntity } from "@cobblr/platform-contract";
 import type { InventoryDB } from "../db.js";
 
 let registered = false;
@@ -34,12 +34,16 @@ export function registerInventoryResolvers(): void {
   //   filter.<top-level col>  → WHERE col = value          (native)
   //   filter._tag             → join through tags (D7)
   //   filter.<anything else>  → WHERE metadata ->> key = value (D8)
-  platform().entities.registerListResolver("inventory:part", async (orgId, query) => {
+  // Shared parts list — used for the base `inventory:part` kind (all parts)
+  // and, with an `instance` arg, for any inventory instance kind
+  // (`<name>:item`), scoped to that instance's parts.
+  const partsListResolver = async (orgId: string, query: EntityListQuery, instance?: string) => {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
     const limit = Math.min(query.limit ?? 50, 200);
     const offset = query.offset ?? 0;
     const NATIVE_FILTER_COLS = new Set(["category_id", "location_id", "state"]);
     let q = db.selectFrom("inventory_parts").selectAll();
+    if (instance) q = q.where("instance", "=", instance as never);
     if (query.q && query.q.length > 0) {
       const needle = `%${query.q.toLowerCase()}%`;
       q = q.where((eb) =>
@@ -116,7 +120,15 @@ export function registerInventoryResolvers(): void {
     return {
       items: rows.map((r) => toResolvedPart(r)),
     };
-  });
+  };
+  platform().entities.registerListResolver("inventory:part", (orgId, query) =>
+    partsListResolver(orgId, query),
+  );
+  // Instance kinds (`<name>:item`) → this module's parts scoped to the instance.
+  // Lets a Wardrobe/Filament/… instance's items flow through views/data/search.
+  platform().entities.registerInstanceListResolver("inventory", (orgId, instance, query) =>
+    partsListResolver(orgId, query, instance),
+  );
 }
 
 function toResolvedPart(row: {

@@ -6,7 +6,8 @@
 // operator. Search, notifications + module quick-actions stay as their
 // own navbar affordances.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import {
   CalendarDays,
@@ -20,21 +21,45 @@ import {
   UserCog,
 } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
+import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useTheme } from "../theme/ThemeContext";
+import { UpdateBadge } from "./UpdateBadge";
 
 // `themed` = a workspace admin_theme owns the palette, so the per-user
 // light/dark toggle is hidden (it would just fight the theme).
 export function UserMenu({ themed }: { themed: boolean }) {
   const { user, logout } = useAuth();
+  const { activeSlug } = useActiveOrg();
   const { theme, toggle } = useTheme();
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement | null>(null);
+  const btnRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  // Portaled to <body> so the header's overflow-x-clip + backdrop-blur don't
+  // hide it; positioned `fixed` from the button's rect (right-aligned).
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const r = btnRef.current?.getBoundingClientRect();
+      if (r) setPos({ top: r.bottom + 4, right: Math.max(8, window.innerWidth - r.right) });
+    };
+    place();
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    return () => {
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+    };
+  }, [open]);
 
   // Click-outside / Escape close.
   useEffect(() => {
     if (!open) return;
     function onDocClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (btnRef.current?.contains(t) || menuRef.current?.contains(t)) return;
+      setOpen(false);
     }
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") setOpen(false);
@@ -53,21 +78,30 @@ export function UserMenu({ themed }: { themed: boolean }) {
     "w-full flex items-center gap-2 px-3 py-2 text-sm text-content dark:text-slate-200 hover:bg-subtle dark:hover:bg-slate-700/60 transition";
 
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative">
       <button
+        ref={btnRef}
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs text-muted dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-700/60 transition"
+        className="relative flex items-center gap-1.5 px-2 py-1 rounded-md text-xs text-muted dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-700/60 transition"
         title={`${user.display_name} — account menu`}
       >
         <span className="font-medium">{user.display_name}</span>
         {isAdmin && <SuperAdminChip />}
         <ChevronDown size={12} className={open ? "rotate-180 transition" : "transition"} />
+        {/* Bundle-updates signal — visible without opening the menu. */}
+        {!open && (
+          <span className="absolute -top-0.5 -right-0.5">
+            <UpdateBadge slug={activeSlug} variant="dot" />
+          </span>
+        )}
       </button>
 
-      {open && (
+      {open && pos && createPortal(
         <div
+          ref={menuRef}
           role="menu"
-          className="absolute right-0 mt-1 w-56 bg-surface dark:bg-slate-800 border border-line dark:border-slate-700 rounded-lg shadow-lg py-1 z-50"
+          style={{ position: "fixed", top: pos.top, right: pos.right }}
+          className="w-56 max-w-[calc(100vw-1rem)] bg-surface dark:bg-slate-800 border border-line dark:border-slate-700 rounded-lg shadow-lg py-1 z-[100]"
         >
           {/* Identity header */}
           <div className="px-3 py-2 border-b border-line dark:border-slate-700">
@@ -95,6 +129,8 @@ export function UserMenu({ themed }: { themed: boolean }) {
             role="menuitem"
           >
             <SlidersHorizontal size={14} className="text-faint dark:text-slate-400" /> Configuration
+            {/* Bundles + their updates live under Configuration. */}
+            <UpdateBadge slug={activeSlug} variant="count" className="ml-auto" />
           </Link>
 
           {/* Platform-operator section — only for super-admins. */}
@@ -143,7 +179,8 @@ export function UserMenu({ themed }: { themed: boolean }) {
           >
             <LogOut size={14} className="text-faint dark:text-slate-400" /> Sign out
           </button>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

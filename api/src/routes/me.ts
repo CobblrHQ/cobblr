@@ -6,6 +6,7 @@ import { z } from "zod";
 import { meta } from "../db/meta.js";
 import { requireAuth } from "../auth/middleware.js";
 import { mintTokenString } from "../auth/api-tokens.js";
+import { listScopeChoices, sanitizeScopes } from "../auth/scopes.js";
 import { hashPassword, verifyPassword } from "../auth/password.js";
 import * as notifications from "../platform/notifications.js";
 import * as activity from "../platform/activity.js";
@@ -672,6 +673,15 @@ const TokenCreate = z.object({
   name: z.string().min(1).max(120),
   /** ISO timestamp; if omitted, the token never expires. */
   expires_at: z.string().datetime().optional(),
+  /** Capability scopes. Omitted/empty = unrestricted (legacy full access).
+   *  Unknown keys are dropped server-side (sanitizeScopes). */
+  scopes: z.array(z.string().max(80)).max(20).optional(),
+});
+
+// The capability scopes a token can be minted with (secret-free; for the
+// mint UI). Static, but served so the UI never drifts from the server.
+meRouter.get("/me/api-token-scopes", requireAuth, (_req, res) => {
+  res.json({ items: listScopeChoices() });
 });
 
 // List the user's tokens. Plaintext is NEVER returned here — only on
@@ -682,7 +692,7 @@ meRouter.get("/me/api-tokens", requireAuth, async (req, res, next) => {
       .selectFrom("api_tokens")
       .select([
         "id", "name", "token_prefix", "expires_at",
-        "last_used_at", "revoked_at", "created_at",
+        "last_used_at", "revoked_at", "created_at", "scopes",
       ])
       .where("user_id", "=", req.session!.id)
       .orderBy("created_at", "desc")
@@ -703,6 +713,7 @@ meRouter.post("/me/api-tokens", requireAuth, async (req, res, next) => {
       return;
     }
     const { plaintext, hash, tokenPrefix } = mintTokenString();
+    const cleanScopes = parsed.data.scopes ? sanitizeScopes(parsed.data.scopes) : [];
     const inserted = await meta
       .insertInto("api_tokens")
       .values({
@@ -711,8 +722,10 @@ meRouter.post("/me/api-tokens", requireAuth, async (req, res, next) => {
         token_hash: hash,
         token_prefix: tokenPrefix,
         expires_at: parsed.data.expires_at ? new Date(parsed.data.expires_at) : null,
+        // Empty → NULL = unrestricted (legacy). Non-empty = deny-by-default.
+        scopes: cleanScopes.length > 0 ? cleanScopes : null,
       })
-      .returning(["id", "name", "token_prefix", "expires_at", "created_at"])
+      .returning(["id", "name", "token_prefix", "expires_at", "created_at", "scopes"])
       .executeTakeFirstOrThrow();
     // Plaintext goes back exactly once. The DB only ever has the hash.
     res.status(201).json({ ...inserted, token: plaintext });

@@ -12,7 +12,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { ArrowRight, CheckCircle2, Download, Package, Trash2 } from "lucide-react";
+import { ArrowRight, CheckCircle2, ChevronDown, ChevronRight, Compass, Download, Package, Trash2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import {
   ApiError,
@@ -23,8 +23,11 @@ import {
 import {
   resolveBundleManifest,
   resolveNextSteps,
+  deriveNextSteps,
+  FEATURED_BUNDLES,
   type BundleNextStep,
 } from "../lib/featured-bundles";
+import { recordSetup } from "../lib/setupCards";
 import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
 
 interface InstalledMode {
@@ -47,6 +50,10 @@ interface FeaturedMode {
    *  the footer can offer an enabled Remove right from the marketplace
    *  modal (uninstall is keyed by internal id, not external_id). */
   installedBundleId?: string | null;
+  /** When alreadyInstalled, the version currently installed — if it differs
+   *  from this manifest's version, the modal offers an Update instead of just
+   *  "Already installed". */
+  installedVersion?: string | null;
   /** Post-install guided steps for the "what's next" panel. */
   nextSteps?: BundleNextStep[];
   /** First-run wizard mode: on a successful install, skip the "what's next"
@@ -71,9 +78,26 @@ export function BundleDetailModal(props: Props) {
   // showing the "what's next" panel (which is the right call from the
   // marketplace, but leaves a brand-new user a click short of their data).
   const autoLand = props.mode === "featured" && props.autoLand === true;
+  // An installed bundle whose installed version differs from this manifest's
+  // version → offer an Update (install supersedes by external_id).
+  const installedVersion = props.mode === "featured" ? props.installedVersion ?? null : null;
+  const isUpdate =
+    props.mode === "featured" &&
+    props.alreadyInstalled === true &&
+    !!installedVersion &&
+    installedVersion !== (props.manifest?.version ?? "");
+  // A fresh install (featured bundle not yet installed) — the changelog is noise
+  // for a first-time user, so we hide it. It only matters once installed/updating.
+  const isFreshInstall = props.mode === "featured" && props.alreadyInstalled !== true;
   // After a successful install we keep the modal open and swap to a
   // "what's next" panel instead of dumping the user back on the page.
-  const [justInstalled, setJustInstalled] = useState<{ wires: number; field_defs: number } | null>(null);
+  // `reopened` = the user re-opened the "where to start" panel from an already-
+  // installed bundle (no fresh "Added N fields" line — that's install-time only).
+  const [justInstalled, setJustInstalled] = useState<{ wires: number; field_defs: number; reopened?: boolean } | null>(null);
+  // Technical details (wires + custom fields + raw manifest) are collapsed by
+  // default — a novice doesn't need them; the requires-modules row is the
+  // always-visible accordion header.
+  const [showTech, setShowTech] = useState(false);
   // Which optional features are checked. Lazy-init from each feature's `default`.
   // (Modal is keyed by bundle id in the parent, so this resets per bundle.)
   const [selectedFeatures, setSelectedFeatures] = useState<Set<string>>(
@@ -114,6 +138,8 @@ export function BundleDetailModal(props: Props) {
       void qc.invalidateQueries({ queryKey: ["bundles", slug] });
       void qc.invalidateQueries({ queryKey: ["bindings", slug] });
       void qc.invalidateQueries({ queryKey: ["field-defs", slug] });
+      void qc.invalidateQueries({ queryKey: ["instances", slug] });
+      void qc.invalidateQueries({ queryKey: ["entity-kind-overrides", slug] });
       onClose();
     },
     onError: (e: unknown) => {
@@ -134,14 +160,30 @@ export function BundleDetailModal(props: Props) {
       // The install may have enabled new modules — refresh the nav so they
       // appear (and so the "what's next" links land on a populated sidebar).
       void qc.invalidateQueries({ queryKey: ["org-modules", slug] });
+      // …and may have created module instances (Yarn/Hooks/Designs) — refresh
+      // the instances + their nav overrides so the new entries + item_noun
+      // ("New yarn") show without a full reload.
+      void qc.invalidateQueries({ queryKey: ["instances", slug] });
+      void qc.invalidateQueries({ queryKey: ["entity-kind-overrides", slug] });
+      // Persist a "where to start" card to the dashboard so it's re-findable
+      // after the user navigates away (the author: "I could never find it again").
+      if (props.mode === "featured" && props.manifest) {
+        recordSetup(slug, {
+          externalId: r.bundle.external_id,
+          name: r.bundle.name,
+          glyph: props.glyph ?? "📦",
+          nextSteps: deriveNextSteps(props.manifest, props.nextSteps, selectedFeatures),
+        });
+      }
       // Wizard mode lands straight in the module (handled in handleInstall);
       // marketplace mode keeps the modal open on the guided "what's next" panel.
       if (!autoLand) setJustInstalled(r.applied);
     },
     onError: (e: unknown) => {
-      // `needs_enable` is handled by handleInstall's confirm prompt —
-      // don't also surface it as a raw error toast.
-      if (e instanceof ApiError && e.code === "needs_enable") return;
+      // `needs_enable` + `field_def_collision` are handled by handleInstall's
+      // confirm prompts (enable-modules / replace-conflicting) — don't also
+      // surface them as a raw error toast.
+      if (e instanceof ApiError && (e.code === "needs_enable" || e.code === "field_def_collision")) return;
       toast.error(e instanceof ApiError ? e.message : (e as Error).message);
     },
   });
@@ -162,6 +204,8 @@ export function BundleDetailModal(props: Props) {
       void qc.invalidateQueries({ queryKey: ["bindings", slug] });
       void qc.invalidateQueries({ queryKey: ["field-defs", slug] });
       void qc.invalidateQueries({ queryKey: ["org-modules", slug] });
+      void qc.invalidateQueries({ queryKey: ["instances", slug] });
+      void qc.invalidateQueries({ queryKey: ["entity-kind-overrides", slug] });
       onClose();
     },
     onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't update features."),
@@ -237,6 +281,14 @@ export function BundleDetailModal(props: Props) {
   // surface is the landing — its empty-state still carries the add CTA.
   async function landAfterInstall() {
     if (!autoLand) return;
+    // Instance bundles (Yarn/Hooks/Designs) land in their primary instance —
+    // its own page with its own fields + add flow.
+    const instances = effectiveManifest?.provides_instances ?? [];
+    if (instances[0]) {
+      onClose();
+      navigate(`/instances/${instances[0].instance_name}`);
+      return;
+    }
     const steps = resolveNextSteps(
       props.mode === "featured" ? props.nextSteps : undefined,
       features,
@@ -261,39 +313,81 @@ export function BundleDetailModal(props: Props) {
     navigate(target);
   }
 
+  // Field-def collision → offer to SUPERSEDE the conflicting installed
+  // bundle(s): "Replace Yarn Stash?". On OK, uninstall them (their fields/views
+  // go; the user's items stay) so the new bundle can take over. Returns true if
+  // the user approved a removal (caller should retry the install), false if it
+  // can't be auto-resolved (module/workspace-owned fields) or the user declined.
+  async function offerSupersede(e: ApiError): Promise<boolean> {
+    const conflicts =
+      (e.details as { conflicts?: Array<{ owned_by?: string }> } | undefined)?.conflicts ?? [];
+    const bundleNames = [
+      ...new Set(
+        conflicts
+          .map((c) => c.owned_by ?? "")
+          .filter((o) => o.startsWith("bundle:"))
+          .map((o) => o.slice("bundle:".length)),
+      ),
+    ];
+    if (bundleNames.length === 0) {
+      toast.error(e.message); // module/workspace-owned fields — can't auto-replace
+      return false;
+    }
+    const list = bundleNames.join(", ");
+    const plural = bundleNames.length > 1;
+    const ok = await confirm({
+      title: `Replace ${plural ? "these bundles" : `"${list}"`}?`,
+      message: `${list} already ${plural ? "provide" : "provides"} some of these fields. Replace ${
+        plural ? "them" : "it"
+      } with "${name}"? This removes ${plural ? "their" : "its"} fields, views and automations — your items (parts, etc.) stay.`,
+      confirmLabel: `Replace & install`,
+      destructive: true,
+    });
+    if (!ok) return false;
+    // Map the conflicting names → installed bundle ids and uninstall them.
+    const installed = await api.listBundles(slug).catch(() => ({ items: [] }));
+    const toRemove = installed.items.filter((b) => bundleNames.includes(b.name));
+    for (const b of toRemove) {
+      await api.uninstallBundle(slug, b.id).catch(() => {});
+    }
+    return true;
+  }
+
   async function handleInstall() {
     if (!manifest) return;
     const enabledFeatures = [...selectedFeatures];
-    try {
-      await install.mutateAsync({ manifest, confirm: false, enabledFeatures });
-      await landAfterInstall();
-    } catch (e) {
-      if (e instanceof ApiError && e.code === "needs_enable") {
-        const mods =
-          (e.details as { needs_enable?: string[] } | undefined)?.needs_enable ?? [];
-        const list = mods
-          .map((m) => m.charAt(0).toUpperCase() + m.slice(1))
-          .join(", ");
-        const plural = mods.length > 1;
-        const ok = await confirm({
-          title: `Enable ${plural ? "modules" : "module"} for this bundle?`,
-          message: `"${name}" needs the ${list} module${plural ? "s" : ""}, which ${
-            plural ? "aren't" : "isn't"
-          } enabled in this workspace yet. Enable ${
-            plural ? "them" : "it"
-          } and install in one step?`,
-          confirmLabel: "Enable & install",
-        });
-        if (ok) {
-          try {
-            await install.mutateAsync({ manifest, confirm: true, enabledFeatures });
-            await landAfterInstall();
-          } catch {
-            // already toasted by the mutation's onError
-          }
+    let confirmEnable = false;
+    // Up to a few passes: enable-modules confirm, then collision-supersede,
+    // then the clean install. Each handled error sets up the next retry.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await install.mutateAsync({ manifest, confirm: confirmEnable, enabledFeatures });
+        await landAfterInstall();
+        return;
+      } catch (e) {
+        if (!(e instanceof ApiError)) return;
+        if (e.code === "needs_enable") {
+          const mods = (e.details as { needs_enable?: string[] } | undefined)?.needs_enable ?? [];
+          const list = mods.map((m) => m.charAt(0).toUpperCase() + m.slice(1)).join(", ");
+          const plural = mods.length > 1;
+          const ok = await confirm({
+            title: `Enable ${plural ? "modules" : "module"} for this bundle?`,
+            message: `"${name}" needs the ${list} module${plural ? "s" : ""}, which ${
+              plural ? "aren't" : "isn't"
+            } enabled in this workspace yet. Enable ${plural ? "them" : "it"} and install in one step?`,
+            confirmLabel: "Enable & install",
+          });
+          if (!ok) return;
+          confirmEnable = true;
+          continue;
         }
+        if (e.code === "field_def_collision") {
+          const handled = await offerSupersede(e);
+          if (!handled) return;
+          continue; // conflicting bundle(s) removed — retry install
+        }
+        return; // any other error was already toasted by the mutation's onError
       }
-      // Any other error was already toasted by the mutation's onError.
     }
   }
 
@@ -361,21 +455,34 @@ export function BundleDetailModal(props: Props) {
   const titlePrefix =
     props.mode === "featured" && props.glyph ? `${props.glyph} ` : "";
 
-  // Post-install guided steps: use the bundle's declared next_steps, else
-  // fall back to one "go to" link per unique required module.
-  const declaredSteps =
-    props.mode === "featured" ? resolveNextSteps(props.nextSteps, features, selectedFeatures) : [];
-  const nextSteps: BundleNextStep[] = declaredSteps.length
-    ? declaredSteps
-    : [...new Set(requires.map((r) => r.module))].map((m) => ({
-        label: `Go to ${m.charAt(0).toUpperCase() + m.slice(1)}`,
-        module: m,
-      }));
+  // Post-install guided steps: the bundle's declared next_steps, else one "go
+  // to" link per required DOMAIN module (core-* plumbing filtered). Shared with
+  // the persisted dashboard setup card via deriveNextSteps so they agree. For an
+  // installed bundle we re-derive from its stored manifest + the embedded
+  // flagship's base next_steps (the registry drops the web-only next_steps).
+  const installedManifest = props.mode === "installed" ? detail.data?.bundle.manifest : undefined;
+  const installedBaseNextSteps =
+    props.mode === "installed"
+      ? FEATURED_BUNDLES.find((b) => b.manifest.id === props.bundle.external_id)?.next_steps
+      : undefined;
+  const nextSteps: BundleNextStep[] =
+    props.mode === "featured" && props.manifest
+      ? deriveNextSteps(props.manifest, props.nextSteps, selectedFeatures)
+      : installedManifest
+        ? deriveNextSteps(installedManifest, installedBaseNextSteps, selectedFeatures)
+        : [...new Set(requires.map((r) => r.module))]
+            .filter((m) => !m.startsWith("core-"))
+            .map((m) => ({
+              label: `Go to ${m.charAt(0).toUpperCase() + m.slice(1)}`,
+              module: m,
+            }));
 
-  function goTo(moduleName: string) {
+  // Navigate to a step's target: an explicit `path` (e.g. an instance route
+  // "/instances/yarn/items") wins, else the module's own route.
+  function goTo(target: string) {
     setJustInstalled(null);
     onClose();
-    navigate(`/${moduleName}`);
+    navigate(target.startsWith("/") ? target : `/${target}`);
   }
 
   // Just installed → the "what's next" panel instead of the closed modal.
@@ -388,11 +495,17 @@ export function BundleDetailModal(props: Props) {
             <div>
               <div className="font-medium text-content dark:text-mortar-100">{name} is set up.</div>
               <div className="text-sm text-faint dark:text-slate-400 mt-0.5">
-                Added {justInstalled.field_defs} field{justInstalled.field_defs === 1 ? "" : "s"}
-                {justInstalled.wires > 0
-                  ? ` and ${justInstalled.wires} automation${justInstalled.wires === 1 ? "" : "s"}`
-                  : ""}
-                . Here's where to start:
+                {justInstalled.reopened ? (
+                  "Here's where to start:"
+                ) : (
+                  <>
+                    Added {justInstalled.field_defs} field{justInstalled.field_defs === 1 ? "" : "s"}
+                    {justInstalled.wires > 0
+                      ? ` and ${justInstalled.wires} automation${justInstalled.wires === 1 ? "" : "s"}`
+                      : ""}
+                    . Here's where to start:
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -402,7 +515,7 @@ export function BundleDetailModal(props: Props) {
                 <li key={i}>
                   <button
                     type="button"
-                    onClick={() => goTo(s.module)}
+                    onClick={() => goTo(s.path ?? s.module)}
                     className="w-full text-left rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 flex items-center gap-3 hover:border-cobble-300 dark:hover:border-cobble-700 transition group"
                   >
                     <div className="flex-1 min-w-0">
@@ -443,6 +556,48 @@ export function BundleDetailModal(props: Props) {
           <p className="text-sm text-content dark:text-mortar-200">{description}</p>
         )}
 
+        {/* Re-open the post-install "where to start" guide from an installed
+            bundle (the author: "once I navigated away I could never find it again"). */}
+        {props.mode === "installed" && nextSteps.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setJustInstalled({ wires: 0, field_defs: 0, reopened: true })}
+            className="w-full text-left rounded-md border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 px-3 py-2.5 flex items-center gap-2 hover:border-cobble-400 transition group"
+          >
+            <Compass size={15} className="text-accent shrink-0" />
+            <span className="text-sm font-medium text-content dark:text-mortar-100">Where to start</span>
+            <span className="text-xs text-faint dark:text-slate-400">— jump into what this set up</span>
+            <div className="flex-1" />
+            <ArrowRight size={15} className="text-faint group-hover:text-accent transition shrink-0" />
+          </button>
+        )}
+
+        {/* What's new — shown prominently when updating; the technical detail of
+            what the new version touches stays in the requires/details accordion.
+            Hidden on a fresh install (noise for a first-time user). */}
+        {manifest?.changelog && !isFreshInstall && (
+          <div
+            className={
+              "rounded-md border p-3 " +
+              (isUpdate
+                ? "border-cobble-400 dark:border-cobble-600 bg-cobble-50 dark:bg-cobble-900/30"
+                : "border-line dark:border-slate-700 bg-subtle/50 dark:bg-slate-800/40")
+            }
+          >
+            <div className="flex items-baseline gap-2 mb-1">
+              <span className="text-[10px] font-mono uppercase tracking-widest text-accent">
+                {isUpdate ? `what's new in v${version}` : `v${version} changes`}
+              </span>
+              {manifest.released_at && (
+                <span className="text-[10px] font-mono text-faint dark:text-slate-500">
+                  {new Date(manifest.released_at).toLocaleDateString()}
+                </span>
+              )}
+            </div>
+            <p className="text-sm text-content dark:text-mortar-200 whitespace-pre-line">{manifest.changelog}</p>
+          </div>
+        )}
+
         {screenshots.length > 0 && (
           <div className="flex gap-2 overflow-x-auto pb-1">
             {screenshots.map((src, i) => (
@@ -465,28 +620,6 @@ export function BundleDetailModal(props: Props) {
           </Section>
         )}
 
-        <dl className="grid grid-cols-3 gap-2 text-xs">
-          {props.mode === "installed" ? (
-            <Row label="Installed">
-              {new Date(props.bundle.installed_at).toLocaleString()}
-            </Row>
-          ) : (
-            <Row label="Status">
-              {props.alreadyInstalled ? (
-                <span className="text-moss-600">installed</span>
-              ) : (
-                <span className="text-faint">preview</span>
-              )}
-            </Row>
-          )}
-          <Row label={props.mode === "installed" ? "Wires installed" : "Wires added"}>
-            {wires.length}
-          </Row>
-          <Row label={props.mode === "installed" ? "Fields installed" : "Fields added"}>
-            {fieldDefs.length}
-          </Row>
-        </dl>
-
         {features && features.length > 0 && (
           <Section title={props.mode === "installed" ? "features" : "optional features"}>
             <p className="text-xs text-faint dark:text-slate-400 mb-2">
@@ -503,7 +636,7 @@ export function BundleDetailModal(props: Props) {
                       className={
                         "flex items-start gap-3 rounded-md border p-3 cursor-pointer transition " +
                         (on
-                          ? "border-cobble-400 dark:border-cobble-600 bg-cobble-50/50 dark:bg-cobble-950/20"
+                          ? "border-cobble-500 dark:border-cobble-500 bg-cobble-50 dark:bg-cobble-900/30"
                           : "border-line dark:border-slate-700 bg-surface dark:bg-slate-900 hover:border-cobble-300 dark:hover:border-cobble-700")
                       }
                     >
@@ -516,7 +649,7 @@ export function BundleDetailModal(props: Props) {
                       <div className="flex-1 min-w-0">
                         <div className="text-sm font-medium text-content dark:text-mortar-100">{f.question ?? f.name}</div>
                         {f.description && (
-                          <div className="text-xs text-faint dark:text-slate-400 mt-0.5">{f.description}</div>
+                          <div className="text-xs text-muted dark:text-slate-300 mt-0.5">{f.description}</div>
                         )}
                       </div>
                     </label>
@@ -546,105 +679,134 @@ export function BundleDetailModal(props: Props) {
           </Section>
         )}
 
-        {requires.length > 0 && (
-          <Section title="requires modules">
-            <div className="flex flex-wrap gap-1.5">
-              {requires.map((r) => (
-                <span
-                  key={r.module}
-                  className="font-mono text-[11px] px-2 py-0.5 rounded border border-line dark:border-slate-700 text-content dark:text-mortar-200"
-                >
-                  {r.module}
-                  {r.version ? `@${r.version}` : ""}
-                </span>
-              ))}
+        {/* Technical details — collapsed for novices. The always-visible header
+            row is the required modules; the toggle on its left expands the
+            wires + custom fields + raw manifest. */}
+        <div className="rounded-md border border-line dark:border-slate-700">
+          <button
+            type="button"
+            onClick={() => setShowTech((v) => !v)}
+            className="w-full px-3 py-2.5 text-left hover:bg-subtle/60 dark:hover:bg-slate-800/40 transition rounded-md"
+            aria-expanded={showTech}
+          >
+            {/* Top line is a single flat row: chevron + label + counts. The
+                module chips wrap on their OWN full-width line below — squeezing
+                them between the label and counts collapsed them into a tall
+                vertical column on phones. */}
+            <div className="flex items-center gap-2">
+              {showTech ? (
+                <ChevronDown size={15} className="text-faint shrink-0" />
+              ) : (
+                <ChevronRight size={15} className="text-faint shrink-0" />
+              )}
+              <span className="text-[10px] font-mono uppercase tracking-widest text-accent shrink-0">
+                requires
+              </span>
+              <div className="flex-1" />
+              <span className="text-[10px] font-mono text-faint dark:text-slate-500 shrink-0">
+                {showTech ? "hide details" : `${wires.length}w · ${fieldDefs.length}f`}
+              </span>
             </div>
-          </Section>
-        )}
-
-        {providesLens && (
-          <Section title="provides a lens">
-            <div className="text-xs text-content dark:text-mortar-200">
-              Adds a{" "}
-              <strong>{providesLens.display_name ?? providesLens.name}</strong> view
-              under <code className="font-mono">{providesLens.entity_kind}</code>.
-            </div>
-          </Section>
-        )}
-
-        {/* Wires */}
-        <Section title={`wires (${wires.length})`}>
-          {wires.length === 0 ? (
-            <EmptyHint>This bundle doesn't add any wires.</EmptyHint>
-          ) : (
-            <ul className="space-y-1.5">
-              {wires.map((w) => (
-                <li
-                  key={w.id}
-                  className="rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-2 text-xs"
-                >
-                  <div className="flex items-baseline gap-2 flex-wrap">
-                    <code className="font-mono text-accent dark:text-cobble-300">
-                      {w.source_kind}
-                    </code>
-                    <span className="text-faint">→</span>
-                    <code className="font-mono text-accent dark:text-cobble-300">
-                      {w.action_id}
-                    </code>
-                    <span className="text-[10px] font-mono text-faint">
-                      ({w.trigger_type}
-                      {w.trigger_event ? ` on ${w.trigger_event}` : ""})
-                    </span>
-                  </div>
-                  {w.template && (
-                    <div className="mt-1.5 font-mono text-[11px] text-content dark:text-mortar-200 bg-subtle dark:bg-slate-800/70 rounded px-2 py-1 break-all">
-                      {w.template}
-                    </div>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-        </Section>
-
-        {/* Field defs */}
-        <Section title={`custom fields (${fieldDefs.length})`}>
-          {fieldDefs.length === 0 ? (
-            <EmptyHint>This bundle doesn't add any custom fields.</EmptyHint>
-          ) : (
-            <ul className="space-y-1">
-              {fieldDefs.map((f) => (
-                <li
-                  key={f.id}
-                  className="flex items-baseline gap-3 text-sm text-content dark:text-mortar-100 py-1 border-b border-line dark:border-slate-700 last:border-0"
-                >
-                  <code className="font-mono text-xs text-accent dark:text-cobble-300 w-32 truncate">
-                    {f.entity_kind}
-                  </code>
-                  <code className="font-mono text-xs text-faint w-32 truncate">
-                    {f.name}
-                  </code>
-                  <span className="flex-1">{f.display_label}</span>
-                  <span className="text-[10px] font-mono uppercase tracking-widest text-faint">
-                    {f.type}
+            <div className="flex flex-wrap gap-1.5 mt-1.5 pl-[23px]">
+              {requires.length > 0 ? (
+                requires.map((r) => (
+                  <span
+                    key={r.module}
+                    className="font-mono text-[11px] px-2 py-0.5 rounded border border-line dark:border-slate-700 text-content dark:text-mortar-200 whitespace-nowrap"
+                  >
+                    {r.module}
+                    {r.version ? `@${r.version}` : ""}
                   </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Section>
+                ))
+              ) : (
+                <span className="text-xs text-faint dark:text-slate-500">no extra modules</span>
+              )}
+            </div>
+          </button>
 
-        {/* Raw manifest collapsible — the resolved manifest (base + selected features). */}
-        {effectiveManifest && (
-          <details className="text-xs">
-            <summary className="font-mono uppercase tracking-widest text-[10px] text-faint cursor-pointer">
-              View raw manifest JSON
-            </summary>
-            <pre className="mt-2 p-2 rounded bg-subtle dark:bg-slate-800 font-mono text-[11px] overflow-x-auto text-content dark:text-mortar-200 max-h-64">
-              {JSON.stringify(effectiveManifest, null, 2)}
-            </pre>
-          </details>
-        )}
+          {showTech && (
+            <div className="border-t border-line dark:border-slate-700 p-3 space-y-4">
+              {providesLens && (
+                <div className="text-xs text-content dark:text-mortar-200">
+                  Adds a{" "}
+                  <strong>{providesLens.display_name ?? providesLens.name}</strong> view
+                  under <code className="font-mono">{providesLens.entity_kind}</code>.
+                </div>
+              )}
+
+              <Section title={`wires (${wires.length})`}>
+                {wires.length === 0 ? (
+                  <EmptyHint>This bundle doesn't add any wires.</EmptyHint>
+                ) : (
+                  <ul className="space-y-1.5">
+                    {wires.map((w) => (
+                      <li
+                        key={w.id}
+                        className="rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-2 text-xs"
+                      >
+                        <div className="flex items-baseline gap-2 flex-wrap">
+                          <code className="font-mono text-accent dark:text-cobble-300">
+                            {w.source_kind}
+                          </code>
+                          <span className="text-faint">→</span>
+                          <code className="font-mono text-accent dark:text-cobble-300">
+                            {w.action_id}
+                          </code>
+                          <span className="text-[10px] font-mono text-faint">
+                            ({w.trigger_type}
+                            {w.trigger_event ? ` on ${w.trigger_event}` : ""})
+                          </span>
+                        </div>
+                        {w.template && (
+                          <div className="mt-1.5 font-mono text-[11px] text-content dark:text-mortar-200 bg-subtle dark:bg-slate-800/70 rounded px-2 py-1 break-all">
+                            {w.template}
+                          </div>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </Section>
+
+              <Section title={`custom fields (${fieldDefs.length})`}>
+                {fieldDefs.length === 0 ? (
+                  <EmptyHint>This bundle doesn't add any custom fields.</EmptyHint>
+                ) : (
+                  <ul className="space-y-1">
+                    {fieldDefs.map((f) => (
+                      <li
+                        key={f.id}
+                        className="flex items-baseline gap-3 text-sm text-content dark:text-mortar-100 py-1 border-b border-line dark:border-slate-700 last:border-0"
+                      >
+                        <code className="font-mono text-xs text-accent dark:text-cobble-300 w-32 truncate">
+                          {f.entity_kind}
+                        </code>
+                        <code className="font-mono text-xs text-faint w-32 truncate">
+                          {f.name}
+                        </code>
+                        <span className="flex-1">{f.display_label}</span>
+                        <span className="text-[10px] font-mono uppercase tracking-widest text-faint">
+                          {f.type}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </Section>
+
+              {effectiveManifest && (
+                <details className="text-xs">
+                  <summary className="font-mono uppercase tracking-widest text-[10px] text-faint cursor-pointer">
+                    View raw manifest JSON
+                  </summary>
+                  <pre className="mt-2 p-2 rounded bg-subtle dark:bg-slate-800 font-mono text-[11px] overflow-x-auto text-content dark:text-mortar-200 max-h-64">
+                    {JSON.stringify(effectiveManifest, null, 2)}
+                  </pre>
+                </details>
+              )}
+            </div>
+          )}
+        </div>
 
         {/* Footer actions */}
         <div className="flex items-center justify-between pt-3 border-t border-line dark:border-slate-700">
@@ -656,6 +818,25 @@ export function BundleDetailModal(props: Props) {
             >
               <Trash2 size={11} /> {uninstall.isPending ? "removing…" : "uninstall bundle"}
             </button>
+          ) : isUpdate ? (
+            // Installed, but an older version — offer the update (supersedes).
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => void handleInstall()}
+                disabled={!effectiveManifest || install.isPending}
+                className="text-xs font-medium px-3 py-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white transition flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Package size={13} />
+                {install.isPending ? "Updating…" : `Update v${installedVersion} → v${version}`}
+              </button>
+              <button
+                onClick={handleUninstall}
+                disabled={uninstall.isPending}
+                className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-ember-500 transition"
+              >
+                {uninstall.isPending ? "removing…" : "remove"}
+              </button>
+            </div>
           ) : props.alreadyInstalled && uninstallId ? (
             // Marketplace modal, but the user already has this bundle —
             // offer Remove right here instead of making them hunt for the
@@ -703,17 +884,6 @@ export function BundleDetailModal(props: Props) {
         </div>
       </div>
     </Modal>
-  );
-}
-
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <dt className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-0.5">
-        {label}
-      </dt>
-      <dd className="text-content dark:text-mortar-100">{children}</dd>
-    </div>
   );
 }
 

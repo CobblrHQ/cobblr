@@ -6,6 +6,11 @@ import { z } from "zod";
 
 const Schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  // Deploy-environment LABEL (staging vs production), surfaced on /healthz so
+  // the web can tint the navbar + show a chip. Distinct from NODE_ENV, which
+  // is "production" on BOTH staging and prod. Compose passes ${COBBLR_ENV:-},
+  // i.e. an empty string when unset — callers must treat "" as unset (use ||).
+  COBBLR_ENV: z.string().optional(),
   API_PORT: z.coerce.number().int().positive().default(4000),
 
   // Postgres connections. SUPERUSER is only used for tenant

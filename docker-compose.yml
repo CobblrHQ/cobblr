@@ -33,6 +33,8 @@ services:
       dockerfile: docker/api.Dockerfile
     environment:
       NODE_ENV: ${NODE_ENV:-development}
+      # Deploy label for the web's env indicator (navbar tint + chip).
+      COBBLR_ENV: ${COBBLR_ENV:-development}
       API_PORT: 4000
       DATABASE_URL: ${DATABASE_URL:-postgres://cobblr:cobblr@db:5432/cobblr_meta}
       SUPERUSER_DATABASE_URL: ${SUPERUSER_DATABASE_URL:-postgres://cobblr:cobblr@db:5432/postgres}

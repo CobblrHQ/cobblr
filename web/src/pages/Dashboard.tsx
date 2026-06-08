@@ -20,7 +20,9 @@
 import { Fragment, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Eye, EyeOff, GripVertical, LayoutList, Maximize2, Minimize2, Plus, Sliders, Sparkles } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpCircle, Compass, Eye, EyeOff, GripVertical, LayoutList, Maximize2, Minimize2, Plus, Sliders, Sparkles, X } from "lucide-react";
+import { useBundleUpdates } from "../lib/useBundleUpdates";
+import { useSetupCards, dismissSetup } from "../lib/setupCards";
 import { EntityThumb,
   EntityTile,
   ViewModeToggle,
@@ -79,6 +81,9 @@ export function Dashboard() {
         userName={user?.display_name ?? user?.email ?? ""}
       />
 
+      <BundleUpdatesBanner slug={activeSlug} />
+      <SetupCardsPanel slug={activeSlug} />
+
       <GettingStartedPanel
         slug={activeSlug}
         enabled={enabled}
@@ -88,6 +93,88 @@ export function Dashboard() {
       {/* The arrangeable body — at-a-glance tiles + pinned views + recent
           activity, reorderable/hideable per workspace via one Arrange mode. */}
       <ArrangeableBody slug={activeSlug} enabled={enabled} role={activeOrg.role} />
+    </div>
+  );
+}
+
+// Update nudge — surfaces installed-bundle updates on the dashboard so the user
+// doesn't have to hunt the marketplace (the author's #2). Auto-clears once everything's
+// up to date; the "Review" button drops them on the marketplace where the
+// per-bundle "Update" button lives.
+function BundleUpdatesBanner({ slug }: { slug: string }) {
+  const updates = useBundleUpdates(slug);
+  const navigate = useNavigate();
+  if (updates.length === 0) return null;
+  return (
+    <div className="rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 p-4 flex items-center gap-3">
+      <ArrowUpCircle size={20} className="text-amber-600 dark:text-amber-400 shrink-0" />
+      <div className="flex-1 min-w-0">
+        <div className="font-medium text-content dark:text-mortar-100">
+          {updates.length} bundle update{updates.length === 1 ? "" : "s"} available
+        </div>
+        <div className="text-sm text-muted dark:text-slate-400 truncate">
+          {updates.map((u) => `${u.glyph} ${u.name} v${u.installedV} → v${u.latestV}`).join(" · ")}
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={() => navigate("/bundles")}
+        className="shrink-0 rounded-md bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium px-3 py-1.5 transition"
+      >
+        Review
+      </button>
+    </div>
+  );
+}
+
+// Persisted "where to start" cards from recent bundle installs (the author's #3 — the
+// post-install guide that vanished). Each is dismissible once you're oriented.
+function SetupCardsPanel({ slug }: { slug: string }) {
+  const cards = useSetupCards(slug);
+  const navigate = useNavigate();
+  if (cards.length === 0) return null;
+  return (
+    <div className="space-y-3">
+      {cards.map((card) => (
+        <div
+          key={card.externalId}
+          className="rounded-xl border border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20 p-4"
+        >
+          <div className="flex items-center gap-2 mb-3">
+            <Compass size={16} className="text-accent shrink-0" />
+            <span className="text-base shrink-0">{card.glyph}</span>
+            <div className="font-medium text-content dark:text-mortar-100 min-w-0 truncate">
+              Set up {card.name} — where to start
+            </div>
+            <div className="flex-1" />
+            <button
+              type="button"
+              onClick={() => dismissSetup(slug, card.externalId)}
+              className="text-faint hover:text-content dark:hover:text-mortar-100 p-1 shrink-0"
+              title="Dismiss"
+              aria-label={`Dismiss ${card.name} setup`}
+            >
+              <X size={15} />
+            </button>
+          </div>
+          <div className="grid sm:grid-cols-2 gap-2">
+            {card.nextSteps.map((s, i) => (
+              <button
+                key={i}
+                type="button"
+                onClick={() => navigate(s.path ?? `/${s.module}`)}
+                className="text-left rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 flex items-center gap-2 hover:border-cobble-400 dark:hover:border-cobble-600 transition group"
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium text-content dark:text-mortar-100">{s.label}</div>
+                  {s.hint && <div className="text-xs text-faint dark:text-slate-400 mt-0.5">{s.hint}</div>}
+                </div>
+                <ArrowRight size={15} className="text-faint group-hover:text-accent transition shrink-0" />
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

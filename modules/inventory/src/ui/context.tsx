@@ -14,6 +14,19 @@ interface InventoryCtx {
   api: InventoryApi;
   /** The module instance this UI is scoped to (undefined = default). */
   instance?: string;
+  /** Presentation entity kind: `<instance>:item` when scoped, else
+   *  "inventory:part". Drives field defs / overrides / saved views / custom
+   *  fields so each instance shows ONLY its own fields. */
+  entityKind: string;
+  /** Singular noun for the add button + create modal ("yarn" → "New yarn").
+   *  Falls back to "part". */
+  itemNoun: string;
+  /** Default unit for new items in this instance (e.g. "skein"). */
+  qtyUnit?: string;
+  /** Route base for this UI — `/instances/<instance>` when scoped, else
+   *  "/inventory". Row links + detail-close + create-navigate use it so the
+   *  detail modal opens within the instance (and shows its fields). */
+  basePath: string;
 }
 
 const Ctx = createContext<InventoryCtx | null>(null);
@@ -22,19 +35,27 @@ export function InventoryProvider({
   orgSlug,
   getToken,
   instance,
+  itemNoun,
+  qtyUnit,
   children,
 }: {
   orgSlug: string;
   getToken: () => string | null;
   instance?: string;
+  itemNoun?: string;
+  qtyUnit?: string;
   children: ReactNode;
 }) {
   const api = useMemo(
     () => new InventoryApi(orgSlug, { getToken, instance }),
     [orgSlug, getToken, instance],
   );
+  const entityKind = instance ? `${instance}:item` : "inventory:part";
+  const basePath = instance ? `/instances/${instance}` : "/inventory";
   return (
-    <Ctx.Provider value={{ orgSlug, getToken, api, instance }}>
+    <Ctx.Provider
+      value={{ orgSlug, getToken, api, instance, entityKind, itemNoun: itemNoun ?? "part", qtyUnit, basePath }}
+    >
       {children}
     </Ctx.Provider>
   );

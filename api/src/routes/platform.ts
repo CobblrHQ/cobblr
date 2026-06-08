@@ -537,8 +537,22 @@ platformOrgRouter.patch(
         res.status(400).json({ error: { code: "missing_id", message: "id required" } });
         return;
       }
+      // Full edit: any wire field may change, not just template/enabled — so a
+      // user can re-point an existing wire (source kind / action / trigger /
+      // args / target) from the composer without losing its id + firing
+      // history. Every field is optional; only the ones present are written.
       const Patch = z.object({
-        template: z.string().nullable().optional(),
+        source_kind: z.string().optional(),
+        action_id: z.string().optional(),
+        trigger_type: z
+          .enum(["user-invoked", "event", "on-create", "on-update", "on-delete", "schedule"])
+          .optional(),
+        trigger_event: z.string().nullish(),
+        trigger_schedule: z.string().nullish(),
+        template: z.string().max(2000).nullable().optional(),
+        filter: z.record(z.unknown()).nullable().optional(),
+        args: z.record(z.unknown()).nullable().optional(),
+        target: BindingTarget.optional(),
         enabled: z.boolean().optional(),
       });
       const parsed = Patch.safeParse(req.body);
@@ -548,9 +562,23 @@ platformOrgRouter.patch(
         });
         return;
       }
+      // Build the SET only from supplied keys; jsonb columns (filter/args/target)
+      // serialise the same way the create route does.
+      const d = parsed.data;
+      const setObj: Record<string, unknown> = { updated_at: new Date() };
+      if (d.source_kind !== undefined) setObj.source_kind = d.source_kind;
+      if (d.action_id !== undefined) setObj.action_id = d.action_id;
+      if (d.trigger_type !== undefined) setObj.trigger_type = d.trigger_type;
+      if (d.trigger_event !== undefined) setObj.trigger_event = d.trigger_event ?? null;
+      if (d.trigger_schedule !== undefined) setObj.trigger_schedule = d.trigger_schedule ?? null;
+      if (d.template !== undefined) setObj.template = d.template ?? null;
+      if (d.enabled !== undefined) setObj.enabled = d.enabled;
+      if (d.filter !== undefined) setObj.filter = d.filter ? sql`${JSON.stringify(d.filter)}::jsonb` : null;
+      if (d.args !== undefined) setObj.args = d.args ? sql`${JSON.stringify(d.args)}::jsonb` : null;
+      if (d.target !== undefined) setObj.target = sql`${JSON.stringify(d.target)}::jsonb`;
       const updated = await meta
         .updateTable("entity_action_bindings")
-        .set({ ...parsed.data, updated_at: new Date() })
+        .set(setObj)
         .where("id", "=", id)
         .where("org_id", "=", req.tenant!.org.id)
         .returningAll()

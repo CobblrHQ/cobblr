@@ -14,6 +14,7 @@ import * as activity from "../platform/activity.js";
 import { enableModuleForOrg } from "../modules/enable.js";
 import { getEntry } from "../modules/registry.js";
 import { upsertOverride, deleteOverride } from "../platform/entity-kind-overrides.js";
+import { createInstance, getInstance } from "../platform/instances.js";
 
 // Cross-module table type for the tenant-DB writes. core-views owns
 // `core_views_views`; bundles install rows into it tagged with
@@ -47,9 +48,22 @@ interface CoreCatalogsCatalogsRow {
   created_at: Date;
   updated_at: Date;
 }
+// core-apps lives in the same tenant DB. Bundles can seed WorkspaceApps
+// (e.g. the Outfit Planner) idempotently on install.
+interface CoreAppsAppsRow {
+  id: string;
+  slug: string;
+  name: string;
+  icon: string | null;
+  visible_capability: string | null;
+  pages: unknown;
+  theme: unknown | null;
+  created_by: string | null;
+}
 interface BundleTenantDB {
   core_views_views: CoreViewsViewsRow;
   core_catalogs_catalogs: CoreCatalogsCatalogsRow;
+  core_apps_apps: CoreAppsAppsRow;
 }
 
 export const bundlesRouter = Router({ mergeParams: true });
@@ -97,6 +111,9 @@ const FieldDefEntry = z
     choices: z.array(z.string()).optional(),
     renderer: z.string().optional(),
     template: z.string().max(2000).optional(),
+    /** Plain-language one-line hint shown under the input ("the maker's named
+     *  shade — e.g. 'Peacock Heather'") so jargon fields explain themselves. */
+    help: z.string().max(280).optional(),
   })
   .refine((f) => f.type !== "computed" || (f.template && f.template.trim().length > 0), {
     message: "computed field_defs need a template",
@@ -120,12 +137,54 @@ const SavedViewEntry = z.object({
   is_default: z.boolean().optional(),
 });
 
+/** A module INSTANCE a bundle creates on install — a skinned copy of a
+ *  multi-instance module (e.g. an "inventory" instance named "Yarn"). Its
+ *  field_defs/overrides/saved_views/wires are applied scoped to the instance's
+ *  entity kind `<instance_name>:item`, so they live ONLY on that instance. The
+ *  instance gets its own nav entry (display_name + glyph) + add flow. `item_noun`
+ *  drives the "New <noun>" button + create-modal title; `qty_unit` the default unit. */
+const InstanceEntry = z.object({
+  module: z.string().min(1),
+  instance_name: z.string().min(1).regex(/^[a-z0-9][a-z0-9-]*$/),
+  display_name: z.string().min(1),
+  glyph: z.string().optional(),
+  item_noun: z.string().optional(),
+  qty_unit: z.string().optional(),
+  field_defs: z.array(FieldDefEntry).default([]),
+  field_overrides: z.array(FieldOverrideEntry).default([]),
+  saved_views: z.array(SavedViewEntry).default([]),
+  wires: z.array(WireEntry).default([]),
+});
+
+/** A WorkspaceApp a bundle seeds on install (e.g. Wardrobe → the Outfit
+ *  Planner). `pages`/`blocks` follow the core-apps AppDefinition shape (a
+ *  custom block carries its own HTML); validated structurally here, deeply by
+ *  core-apps when rendered. Requires the core-apps module (declare it in the
+ *  bundle/feature `requires`). Idempotent on slug. */
+const AppPageEntry = z.object({
+  slug: z.string().regex(/^[a-z0-9-]+$/),
+  title: z.string().min(1).max(160),
+  blocks: z.array(z.record(z.unknown())).max(50),
+});
+const AppEntry = z.object({
+  slug: z.string().regex(/^[a-z0-9-]+$/),
+  name: z.string().min(1).max(120),
+  icon: z.string().max(40).optional(),
+  visible_capability: z.string().max(120).nullable().optional(),
+  pages: z.array(AppPageEntry).max(30).default([]),
+  theme: z.record(z.unknown()).nullable().optional(),
+});
+
 export const BundleManifest = z.object({
   id: z.string().min(1),
   version: z.string().min(1),
   name: z.string().min(1),
   description: z.string().optional(),
   author: z.string().optional(),
+  /** Release date of this version (ISO) + plain-language changelog, shown on
+   *  the update prompt. Display-only; stored in the manifest jsonb. */
+  released_at: z.string().optional(),
+  changelog: z.string().max(2000).optional(),
   /** v1.5: long-form walkthrough rendered on the bundle's detail page.
    *  Markdown. The short `description` field still appears in lists +
    *  install confirmations; `readme_md` is for the "here's how I use
@@ -166,9 +225,16 @@ export const BundleManifest = z.object({
         field_defs: z.array(FieldDefEntry).default([]),
         field_overrides: z.array(FieldOverrideEntry).default([]),
         saved_views: z.array(SavedViewEntry).default([]),
+        provides_instances: z.array(InstanceEntry).default([]),
+        provides_apps: z.array(AppEntry).default([]),
       }),
     )
     .default([]),
+  /** Module instances this bundle creates on install (skinned copies of a
+   *  multi-instance module — see InstanceEntry). Features can declare their own. */
+  provides_instances: z.array(InstanceEntry).default([]),
+  /** WorkspaceApps this bundle seeds on install (e.g. the Outfit Planner). */
+  provides_apps: z.array(AppEntry).default([]),
   /** Bundles can ship catalog SHELLS — name + schema config, no
    *  rows. Used so a "Rebrickable Lego" bundle can install the six
    *  catalogs with their hero_field / image_column / field_renderer
@@ -316,6 +382,8 @@ export function resolveManifestFeatures(full: BundleManifestT, enabledKeys: stri
     field_defs: [...full.field_defs, ...on.flatMap((f) => f.field_defs)],
     field_overrides: [...full.field_overrides, ...on.flatMap((f) => f.field_overrides)],
     saved_views: [...full.saved_views, ...on.flatMap((f) => f.saved_views)],
+    provides_instances: [...full.provides_instances, ...on.flatMap((f) => f.provides_instances)],
+    provides_apps: [...full.provides_apps, ...on.flatMap((f) => f.provides_apps)],
   };
 }
 
@@ -884,17 +952,46 @@ bundlesRouter.post(
         autoEnabled.push(name);
       }
 
-      // Already installed (same external_id + version)? Idempotent
-      // re-install removes the old set and applies the new.
+      // Already installed? Replace ANY existing version of the same bundle
+      // (external_id) — not just the same version — so installing a newer
+      // version SUPERSEDES the old one (the update path) and a re-install is
+      // idempotent. Removing the old set first frees its field defs/views so
+      // the new set applies cleanly; the user's entities (parts, etc.) stay.
       const existing = await meta
         .selectFrom("bundles")
-        .select("id")
+        .select(["id", "version"])
         .where("org_id", "=", req.tenant!.org.id)
         .where("external_id", "=", m.id)
-        .where("version", "=", m.version)
-        .executeTakeFirst();
-      if (existing) {
-        await uninstallBundleId(existing.id);
+        .execute();
+      for (const old of existing) {
+        await uninstallBundleId(old.id);
+      }
+
+      // Create the module instances this bundle ships (skinned copies of a
+      // multi-instance module — e.g. a "Yarn" instance of inventory). Their
+      // field defs / views / wires are applied below scoped to `<name>:item`.
+      // Idempotent: skip createInstance if the instance already exists; the nav
+      // override is insert-only so a re-install won't clobber a user's rename.
+      for (const inst of m.provides_instances) {
+        const existingInst = await getInstance(req.tenant!.org.id, inst.instance_name);
+        if (!existingInst) {
+          await createInstance({
+            orgId: req.tenant!.org.id,
+            moduleName: inst.module,
+            instanceName: inst.instance_name,
+            displayName: inst.display_name,
+            isDefault: false,
+          });
+        }
+        await upsertOverride({
+          orgId: req.tenant!.org.id,
+          targetKind: "instance",
+          targetId: `${inst.module}:${inst.instance_name}`,
+          displayLabel: inst.display_name,
+          icon: inst.glyph ?? null,
+          config: { item_noun: inst.item_noun ?? null, qty_unit: inst.qty_unit ?? null },
+          insertOnly: true,
+        });
       }
 
       // (Field-def collisions are checked inside validateBundle above.)
@@ -961,6 +1058,7 @@ bundlesRouter.post(
                 : null,
               renderer: (f as { renderer?: string | null }).renderer ?? null,
               template: f.type === "computed" ? f.template ?? null : null,
+              help: f.help ?? null,
             })
             .execute();
         }
@@ -989,6 +1087,76 @@ bundlesRouter.post(
               }),
             )
             .execute();
+        }
+
+        // Per-instance contributions — same shapes, but scoped to the
+        // instance's entity kind `<instance_name>:item` so they live ONLY on
+        // that instance (the Yarn instance shows yarn fields; the base
+        // inventory is untouched). saved_views run in the tenant-DB block below.
+        for (const inst of m.provides_instances) {
+          const kind = `${inst.instance_name}:item`;
+          for (const w of inst.wires) {
+            await trx
+              .insertInto("entity_action_bindings")
+              .values({
+                org_id: req.tenant!.org.id,
+                source_kind: kind,
+                action_id: w.action_id,
+                trigger_type: w.trigger_type,
+                trigger_event: w.trigger_event ?? null,
+                trigger_schedule: w.trigger_schedule ?? null,
+                template: w.template ?? null,
+                filter: w.filter ? sql`${JSON.stringify(w.filter)}::jsonb` : null,
+                args: w.args ? sql`${JSON.stringify(w.args)}::jsonb` : null,
+                bundle_id: bundle.id,
+                target: w.target ? sql`${JSON.stringify(w.target)}::jsonb` : sql`'"self"'::jsonb`,
+              })
+              .execute();
+          }
+          for (const f of inst.field_defs) {
+            await trx
+              .insertInto("module_field_defs")
+              .values({
+                org_id: req.tenant!.org.id,
+                entity_kind: kind,
+                name: f.name,
+                display_label: f.display_label,
+                type: f.type,
+                required: f.required ?? false,
+                position: f.position ?? 0,
+                bundle_id: bundle.id,
+                choices: f.choices
+                  ? (sql`${JSON.stringify(f.choices)}::jsonb` as unknown as string[])
+                  : null,
+                renderer: (f as { renderer?: string | null }).renderer ?? null,
+                template: f.type === "computed" ? f.template ?? null : null,
+                help: f.help ?? null,
+              })
+              .execute();
+          }
+          for (const fo of inst.field_overrides) {
+            await trx
+              .insertInto("native_field_overrides")
+              .values({
+                org_id: req.tenant!.org.id,
+                entity_kind: kind,
+                name: fo.name,
+                display_label: fo.display_label ?? null,
+                hidden: fo.hidden ?? false,
+                position: fo.position ?? 0,
+                bundle_id: bundle.id,
+              })
+              .onConflict((c) =>
+                c.columns(["org_id", "entity_kind", "name"]).doUpdateSet({
+                  display_label: fo.display_label ?? null,
+                  hidden: fo.hidden ?? false,
+                  position: fo.position ?? 0,
+                  bundle_id: bundle.id,
+                  updated_at: new Date(),
+                }),
+              )
+              .execute();
+          }
         }
         return bundle;
       });
@@ -1070,10 +1238,18 @@ bundlesRouter.post(
       // (the existing-version uninstall path cleans up first) to
       // recover. Logged loud so the partial state is visible.
       let viewsInstalled = 0;
-      if (m.saved_views.length > 0) {
+      // Base views (declared entity_kind) + per-instance views (scoped to
+      // `<instance_name>:item`) are applied the same way.
+      const allViews = [
+        ...m.saved_views,
+        ...m.provides_instances.flatMap((inst) =>
+          inst.saved_views.map((v) => ({ ...v, entity_kind: `${inst.instance_name}:item` })),
+        ),
+      ];
+      if (allViews.length > 0) {
         try {
           const tdb = (await getTenantDb(req.tenant!.org.id)) as unknown as Kysely<BundleTenantDB>;
-          for (const v of m.saved_views) {
+          for (const v of allViews) {
             await tdb
               .insertInto("core_views_views")
               .values({
@@ -1111,6 +1287,39 @@ bundlesRouter.post(
             })
             .where("id", "=", inserted.id)
             .execute();
+        }
+      }
+
+      // Seed bundle-provided WorkspaceApps (e.g. Wardrobe → the Outfit
+      // Planner). Idempotent on slug — skip if one already exists so a
+      // re-install doesn't clobber a workspace's edits. Needs core-apps
+      // enabled (declare it in the bundle/feature requires) so the table
+      // exists; a miss is logged, non-fatal.
+      if (m.provides_apps.length > 0) {
+        try {
+          const tdb = (await getTenantDb(req.tenant!.org.id)) as unknown as Kysely<BundleTenantDB>;
+          for (const app of m.provides_apps) {
+            const exists = await tdb
+              .selectFrom("core_apps_apps")
+              .select("id")
+              .where("slug", "=", app.slug)
+              .executeTakeFirst();
+            if (exists) continue;
+            await tdb
+              .insertInto("core_apps_apps")
+              .values({
+                slug: app.slug,
+                name: app.name,
+                icon: app.icon ?? null,
+                visible_capability: app.visible_capability ?? null,
+                pages: sql`${JSON.stringify(app.pages)}::jsonb` as never,
+                theme: app.theme ? (sql`${JSON.stringify(app.theme)}::jsonb` as never) : null,
+                created_by: null,
+              } as never)
+              .execute();
+          }
+        } catch (err) {
+          console.error(`[bundle-install] provides_apps insert failed for bundle ${inserted.id}:`, err);
         }
       }
 
@@ -1158,6 +1367,14 @@ bundlesRouter.post(
         }
       }
 
+      // Count instance-scoped field_defs/wires too — an instance bundle (e.g.
+      // Yarn) carries ALL its fields on `provides_instances`, with an empty base
+      // `field_defs`. Counting only the base reported "Added 0 fields" even
+      // though the Yarn table got colorway/fibre/weight/… (applied above).
+      const instanceFieldDefs = m.provides_instances.reduce((n, inst) => n + inst.field_defs.length, 0);
+      const instanceWires = m.provides_instances.reduce((n, inst) => n + inst.wires.length, 0);
+      const totalFieldDefs = m.field_defs.length + instanceFieldDefs;
+      const totalWires = m.wires.length + instanceWires;
       await activity.log({
         orgId: req.tenant!.org.id,
         action: "bundle_installed",
@@ -1166,8 +1383,8 @@ bundlesRouter.post(
           external_id: m.id,
           version: m.version,
           name: m.name,
-          wires: m.wires.length,
-          field_defs: m.field_defs.length,
+          wires: totalWires,
+          field_defs: totalFieldDefs,
           saved_views: viewsInstalled,
           catalogs: catalogsInstalled,
         },
@@ -1175,8 +1392,8 @@ bundlesRouter.post(
       res.status(201).json({
         bundle: inserted,
         applied: {
-          wires: m.wires.length,
-          field_defs: m.field_defs.length,
+          wires: totalWires,
+          field_defs: totalFieldDefs,
           field_overrides: m.field_overrides.length,
           catalogs: catalogsInstalled,
           auto_enabled_modules: autoEnabled,

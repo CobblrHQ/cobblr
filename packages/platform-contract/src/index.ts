@@ -837,6 +837,18 @@ export type EntityListResolver = (
   query: EntityListQuery,
 ) => Promise<EntityListResult>;
 
+/** Module-side list resolver for the items of ANY instance of a multi-instance
+ *  module. Registered once per module (not per instance); the platform calls it
+ *  for `<instance_name>:item` kinds, resolving the instance→module via the
+ *  workspace_module_instances table. Lets views/search/data/calendar see
+ *  instance entities through the generic layer. Same projection rules as
+ *  EntityListResolver. */
+export type EntityInstanceListResolver = (
+  orgId: string,
+  instance: string,
+  query: EntityListQuery,
+) => Promise<EntityListResult>;
+
 /** Tier-2 context provider for computed fields. Given an entity, returns
  *  a namespaced bag of related/aggregated data referenced in a computed
  *  template as {{<namespace>.<key>}}. Best-effort: a throw renders the
@@ -881,6 +893,14 @@ export interface PlatformEntities {
    *  list() returns an empty result. Modules opt in when they want
    *  their kind to appear in core-views, search results, etc. */
   registerListResolver(kind: string, resolver: EntityListResolver): void;
+  /** Register a list-resolver for the items of any instance of a multi-instance
+   *  module (keyed by module name). The platform invokes it for
+   *  `<instance_name>:item` kinds. Lets instance entities appear in
+   *  views/`data`/search/calendar through the generic layer. */
+  registerInstanceListResolver(
+    moduleName: string,
+    resolver: EntityInstanceListResolver,
+  ): void;
   /** Register a tier-2 context provider for COMPUTED fields, under a
    *  namespace. A computed field def (type='computed') references it in
    *  its template as {{<name>.<key>}}; the kernel invokes the provider at

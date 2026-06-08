@@ -19,6 +19,8 @@ import { meta } from "../db/meta.js";
 import { getTenantDb } from "../db/tenant.js";
 import { getCpuStats, getInvocationStats } from "../sandbox/pool.js";
 import { hasAuthEmailSender, sendAuthEmail } from "../platform/hosted-seams.js";
+import { dispatch } from "../platform/notifications.js";
+import { announce, listAnnounceSettings, setAnnounceSetting } from "../platform/announce.js";
 
 export const superAdminRouter = Router();
 
@@ -596,6 +598,166 @@ superAdminRouter.get("/ai-activity/:orgId/:id", async (req, res, next) => {
       : null;
     res.json({ ...row, org: { id: org.id, name: org.name, slug: org.slug }, user_email: u?.email ?? null, user_name: u?.display_name ?? null });
   } catch (err) {
+    next(err);
+  }
+});
+
+// ───────────────────────────── feedback triage ───────────────────────────────
+// The queue users submit into (POST /feedback). Reviewed + worked here.
+
+const UpdateFeedback = z.object({
+  status: z.enum(["new", "triaged", "in_progress", "resolved", "wontfix"]).optional(),
+  admin_notes: z.string().max(5000).nullable().optional(),
+  // When true, send the reporter an in-app notification (a "we looked at
+  // this" / "it's fixed" reply). `reply_message` is the human note; falls
+  // back to a status-derived default. Best-effort — never fails the update.
+  notify_reporter: z.boolean().optional(),
+  reply_message: z.string().max(2000).optional(),
+});
+
+// GET /super-admin/feedback?status=new — triage queue, newest first, with who
+// submitted + which workspace.
+superAdminRouter.get("/feedback", async (req, res, next) => {
+  try {
+    const status = typeof req.query.status === "string" ? req.query.status : null;
+    let q = meta
+      .selectFrom("feedback as f")
+      .leftJoin("users as u", "u.id", "f.user_id")
+      .leftJoin("orgs as o", "o.id", "f.org_id")
+      .select([
+        "f.id",
+        "f.type",
+        "f.message",
+        "f.context",
+        "f.status",
+        "f.admin_notes",
+        "f.created_at",
+        "f.updated_at",
+        "u.email as user_email",
+        "u.display_name as user_name",
+        "o.slug as workspace_slug",
+        "o.name as workspace_name",
+      ])
+      .orderBy("f.created_at", "desc")
+      .limit(200);
+    if (status) q = q.where("f.status", "=", status);
+    res.json({ items: await q.execute() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PATCH /super-admin/feedback/:id — set status / admin notes during triage.
+superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
+  try {
+    const parsed = UpdateFeedback.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Bad update", details: parsed.error.issues } });
+      return;
+    }
+    const patch: Record<string, unknown> = { updated_at: new Date() };
+    if (parsed.data.status !== undefined) patch.status = parsed.data.status;
+    if (parsed.data.admin_notes !== undefined) patch.admin_notes = parsed.data.admin_notes;
+    const row = await meta
+      .updateTable("feedback")
+      .set(patch)
+      .where("id", "=", req.params.id)
+      .returning(["id", "status", "admin_notes", "updated_at", "user_id", "org_id", "message", "context"])
+      .executeTakeFirst();
+    if (!row) {
+      res.status(404).json({ error: { code: "not_found", message: "Feedback not found." } });
+      return;
+    }
+
+    // Optionally close the loop with the reporter — "we looked at this / it's
+    // fixed". Best-effort: a failed notification must not fail the triage update.
+    let notified = false;
+    if (parsed.data.notify_reporter && row.user_id) {
+      try {
+        // The reporter's workspace: the org they filed from, else their first.
+        let orgId = row.org_id ?? null;
+        if (!orgId) {
+          const m = await meta
+            .selectFrom("org_memberships")
+            .select("org_id")
+            .where("user_id", "=", row.user_id)
+            .orderBy("joined_at", "asc")
+            .executeTakeFirst();
+          orgId = m?.org_id ?? null;
+        }
+        if (orgId) {
+          const ctx = (row.context ?? {}) as { route?: string };
+          const defaultMsg =
+            parsed.data.status === "resolved"
+              ? "The issue you reported has been fixed — it's live now."
+              : parsed.data.status === "wontfix"
+                ? "We reviewed your feedback — thanks for flagging it."
+                : "We're looking into the feedback you sent.";
+          await dispatch({
+            orgId,
+            userId: row.user_id,
+            eventType: "platform.feedback.replied",
+            message: parsed.data.reply_message?.trim() || defaultMsg,
+            link_url: typeof ctx.route === "string" ? ctx.route : undefined,
+          });
+          notified = true;
+        }
+      } catch (err) {
+        console.error("[super-admin] feedback-reply notification failed:", err);
+      }
+    }
+
+    // Announce a resolution to Discord (toggleable; off by default of the
+    // category if an admin silences it — e.g. to avoid doubling a commit feed).
+    if (parsed.data.status === "resolved") {
+      const ctx = (row.context ?? {}) as { route?: string };
+      void announce("feedback.resolved", {
+        title: "✅ Feedback resolved",
+        body: (row.message ?? "").slice(0, 1500),
+        color: 0x2e7d32,
+        fields: typeof ctx.route === "string" && ctx.route ? [{ name: "page", value: ctx.route, inline: true }] : undefined,
+      });
+    }
+
+    res.json({ ...row, notified });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ───────────────────────── announcements config ──────────────────────────────
+// Per-category Discord posting toggles (feedback new/resolved, bundle events,
+// platform updates). See platform/announce.ts. Super-admin only (whole router
+// is already behind requirePlatformAdmin).
+
+superAdminRouter.get("/announce-settings", async (_req, res, next) => {
+  try {
+    res.json({ items: await listAnnounceSettings() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const AnnounceSettingPatch = z.object({
+  enabled: z.boolean().optional(),
+  // null clears the per-category channel override (falls back to the default).
+  webhook_url: z.string().url().max(500).nullable().optional(),
+});
+
+superAdminRouter.patch("/announce-settings/:category", async (req, res, next) => {
+  try {
+    const parsed = AnnounceSettingPatch.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Bad update", details: parsed.error.issues } });
+      return;
+    }
+    await setAnnounceSetting(req.params.category, parsed.data);
+    res.json({ ok: true });
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith("unknown announce category")) {
+      res.status(404).json({ error: { code: "not_found", message: err.message } });
+      return;
+    }
     next(err);
   }
 });

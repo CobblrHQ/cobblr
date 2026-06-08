@@ -6,12 +6,14 @@ import { useAuth } from "../auth/AuthContext";
 import { CobblestoneMark } from "../CobblestoneMark";
 import { api, ApiError, setToken } from "../lib/api";
 import { usePageTitle } from "@cobblr/platform-web";
+import { useDeployEnv } from "../lib/deploy-env";
 
 type Mode = "login" | "signup";
 
 export function AuthPage() {
   usePageTitle("Sign in");
   const { login, signup } = useAuth();
+  const { badge: envBadge } = useDeployEnv();
   const [mode, setMode] = useState<Mode>("login");
   // signup_enabled gates the "create account" toggle. Default true
   // so the toggle is shown in the brief window before /auth/config
@@ -83,6 +85,15 @@ export function AuthPage() {
             <h1 className="font-display text-3xl font-extrabold text-content dark:text-mortar-100 lowercase tracking-tight">
               cobblr
             </h1>
+            {/* Env indicator on the sign-in screen too, so testers pick the
+                right instance before logging in. Prod = no chip. */}
+            {envBadge && (
+              <span
+                className={`inline-block mt-1.5 rounded px-2 py-0.5 text-[10px] font-mono font-bold uppercase tracking-widest ${envBadge.chip}`}
+              >
+                {envBadge.label}
+              </span>
+            )}
             <p className="mt-1 text-xs text-faint dark:text-slate-500">Cobble together what works.</p>
           </div>
           <p className="text-sm text-muted dark:text-slate-300 max-w-xs">
@@ -361,7 +372,11 @@ function MagicLinkPanel({ email }: { email: string }) {
         disabled={busy}
         className="w-full rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 text-sm font-medium px-3 py-2 transition disabled:opacity-50"
       >
-        {busy ? "…" : sent && !devLink ? "Magic link sent — check your email." : "Send a magic link"}
+        {busy
+          ? "…"
+          : sent && !devLink
+            ? "If that email has an account, check your inbox"
+            : "Send a magic link"}
       </button>
       {error && (
         <div className="text-xs text-ember-500 bg-ember-50 rounded-md px-3 py-2">
@@ -383,6 +398,56 @@ function MagicLinkPanel({ email }: { email: string }) {
             Sign in with this token
           </button>
         </div>
+      )}
+    </div>
+  );
+}
+
+/** Landing for the emailed magic-link `/auth/magic?token=...`. Reads the token
+ *  from the URL, consumes it for a session, and redirects in. Without this route
+ *  the emailed link just hits the SPA catch-all → login screen and nothing
+ *  consumes the token (the dev flow above only handles the inline dev_token). */
+export function MagicConsumePage() {
+  usePageTitle("Signing in");
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const token = new URLSearchParams(window.location.search).get("token");
+    if (!token) {
+      setError("This sign-in link is missing its token.");
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await api.magicConsume({ token });
+        if (cancelled) return;
+        setToken(res.token);
+        // Hard redirect so AuthContext re-reads the new session.
+        window.location.href = "/";
+      } catch (err) {
+        if (cancelled) return;
+        setError(
+          err instanceof ApiError ? err.message : "This sign-in link is invalid or has expired.",
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return (
+    <div className="min-h-screen flex items-center justify-center p-6 text-center">
+      {error ? (
+        <div className="space-y-2">
+          <div className="text-sm text-ember-500">{error}</div>
+          <a href="/" className="text-xs text-accent underline">
+            Back to sign in
+          </a>
+        </div>
+      ) : (
+        <div className="text-sm text-muted">Signing you in…</div>
       )}
     </div>
   );

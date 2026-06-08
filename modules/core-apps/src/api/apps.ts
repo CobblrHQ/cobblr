@@ -8,6 +8,7 @@
 
 import { Router } from "express";
 import { z } from "zod";
+import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
@@ -217,6 +218,78 @@ appsRouter.post(
     }
     const minted = await platform().auth.mintAppToken({ userId: user.id, appSlug: row.slug });
     res.json(minted);
+  }),
+);
+
+// ── Per-app key/value store (Tier-B scratchpad) ──────────────────
+// A custom app persists its OWN data here (e.g. the Outfit Planner's saved
+// looks) via the bridge's cobblr.appLoad/appSave. Gated by canOpen — only a
+// member who can open the app can read/write its bag — and scoped to the app's
+// own slug, so it can never touch your real entities. The app token (acting AS
+// the member) authenticates these, same as the read/invoke bridge calls.
+const AppDataKey = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,80}$/);
+
+async function loadAppForData(
+  req: Parameters<typeof tenantDb>[0],
+  res: import("express").Response,
+  slug: string,
+): Promise<boolean> {
+  const db = tenantDb(req);
+  const app = (await db
+    .selectFrom("core_apps_apps")
+    .select(["slug", "visible_capability"])
+    .where("slug", "=", slug)
+    .executeTakeFirst()) as { slug: string; visible_capability: string | null } | undefined;
+  if (!app || !(await canOpen(req, app))) {
+    res.status(404).json({ error: { code: "not_found", message: "App not found" } });
+    return false;
+  }
+  return true;
+}
+
+appsRouter.get(
+  "/:slug/data/:key",
+  asyncHandler(async (req, res) => {
+    if (!AppDataKey.safeParse(req.params.key).success) {
+      res.status(400).json({ error: { code: "bad_key", message: "invalid data key" } });
+      return;
+    }
+    if (!(await loadAppForData(req, res, req.params.slug!))) return;
+    const db = tenantDb(req);
+    const row = await db
+      .selectFrom("core_apps_app_data")
+      .select("value")
+      .where("app_slug", "=", req.params.slug!)
+      .where("key", "=", req.params.key!)
+      .executeTakeFirst();
+    res.json({ key: req.params.key, value: row?.value ?? null });
+  }),
+);
+
+appsRouter.put(
+  "/:slug/data/:key",
+  asyncHandler(async (req, res) => {
+    if (!AppDataKey.safeParse(req.params.key).success) {
+      res.status(400).json({ error: { code: "bad_key", message: "invalid data key" } });
+      return;
+    }
+    if (!(await loadAppForData(req, res, req.params.slug!))) return;
+    const parsed = z.object({ value: z.unknown() }).safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const json = JSON.stringify(parsed.data.value ?? null);
+    if (json.length > 400_000) {
+      res.status(413).json({ error: { code: "too_large", message: "app data exceeds 400 KB" } });
+      return;
+    }
+    const db = tenantDb(req);
+    await db
+      .insertInto("core_apps_app_data")
+      .values({ app_slug: req.params.slug!, key: req.params.key!, value: sql`${json}::jsonb` as never })
+      .onConflict((c) =>
+        c.columns(["app_slug", "key"]).doUpdateSet({ value: sql`${json}::jsonb` as never, updated_at: new Date() }),
+      )
+      .execute();
+    res.json({ ok: true });
   }),
 );
 

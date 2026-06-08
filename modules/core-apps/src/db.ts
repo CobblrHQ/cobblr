@@ -25,8 +25,21 @@ export interface AppsTable {
   updated_at: Generated<Date>;
 }
 
+/** Per-app key/value scratchpad for Tier-B custom apps (e.g. the Outfit
+ *  Planner's saved looks). Written only through the capability-gated bridge
+ *  by members who can open the app — NOT arbitrary entity write access. */
+export interface AppDataTable {
+  id: Generated<string>;
+  app_slug: string;
+  key: string;
+  value: Generated<unknown>;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
 export interface CoreAppsDB {
   core_apps_apps: AppsTable;
+  core_apps_app_data: AppDataTable;
 }
 
 export type OrgRole = "owner" | "admin" | "member" | "guest";

@@ -1,10 +1,19 @@
+# syntax=docker/dockerfile:1
 # Multi-stage Dockerfile for the cobblr-web service. Vite build →
 # nginx serves the static SPA + proxies /api to the api container.
+# BuildKit (enabled in CI) makes the npm-cache mount below persist npm's
+# download cache across builds.
 
 # ─── builder ─────────────────────────────────────────────────────────
 FROM node:22-alpine AS builder
 
 WORKDIR /app
+
+# The workspace install pulls in api's native bcrypt. node-pre-gyp normally
+# fetches a musl prebuilt, but a transient registry/CDN miss falls back to a
+# source build — which needs a toolchain. Without this the web image build dies
+# on "gyp ERR! find Python" whenever the prebuilt fetch hiccups.
+RUN apk add --no-cache python3 make g++
 
 COPY package.json package-lock.json* tsconfig.base.json ./
 COPY web/package.json ./web/
@@ -21,7 +30,8 @@ COPY modules/lists/package.json ./modules/lists/
 COPY modules/tracking/package.json ./modules/tracking/
 COPY modules/core-file-preview/package.json ./modules/core-file-preview/
 
-RUN npm install --workspaces --include-workspace-root --no-audit --no-fund
+RUN --mount=type=cache,target=/root/.npm \
+    npm install --workspaces --include-workspace-root --no-audit --no-fund
 
 COPY packages/platform-contract ./packages/platform-contract
 COPY packages/platform-web ./packages/platform-web

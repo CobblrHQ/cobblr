@@ -149,21 +149,23 @@ export function ChatWidget() {
 
   if (!activeSlug) return null;
 
-  return createPortal(
+  return (
     <>
-      {!open && (
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          className="fixed bottom-5 right-5 z-[60] h-12 w-12 rounded-full bg-cobble-600 hover:bg-cobble-700 text-white shadow-lg flex items-center justify-center transition"
-          title="Ask Cobblr"
-          aria-label="Ask Cobblr"
-        >
-          <Sparkles size={20} />
-        </button>
-      )}
+      {/* Header trigger — an icon button in the navbar's right cluster (was a
+          floating bottom-right FAB that overlapped modals/cards). The panel
+          still portals to <body> so the header's backdrop-blur can't trap it. */}
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="transition p-1.5 text-faint dark:text-slate-500 hover:text-accent"
+        title="Ask Cobblr"
+        aria-label="Ask Cobblr"
+      >
+        <Sparkles size={16} />
+      </button>
 
-      {open && (
+      {open &&
+        createPortal(
         <div className="fixed top-0 right-0 z-[60] h-screen w-[min(100vw,440px)] border-l border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-2xl flex flex-col">
           <header className="flex items-center justify-between px-4 py-3 border-b border-line dark:border-slate-700 shrink-0">
             <div className="flex items-center gap-2 text-sm font-semibold text-content dark:text-mortar-100">
@@ -286,9 +288,9 @@ export function ChatWidget() {
               <Send size={16} />
             </button>
           </div>
-        </div>
-      )}
-    </>,
-    document.body,
+        </div>,
+          document.body,
+        )}
+    </>
   );
 }

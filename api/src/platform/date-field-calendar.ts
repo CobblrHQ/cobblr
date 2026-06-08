@@ -26,6 +26,7 @@ interface Spec {
 const SPECS: Spec[] = [
   { kind: "inventory:part", table: "inventory_parts", entityModule: "inventory", entityType: "part" },
   { kind: "assets:asset", table: "assets_assets", entityModule: "assets", entityType: "asset" },
+  { kind: "projects:project", table: "projects_projects", entityModule: "projects", entityType: "project" },
 ];
 
 // Date fields a DEDICATED source already puts on the calendar — skip them
@@ -42,16 +43,32 @@ interface DateRow {
 export function registerDateFieldCalendarSources(): void {
   for (const spec of SPECS) {
     calendar.registerSource(`${spec.entityModule}-dates`, async (orgId, from, to) => {
-      // The date field defs for this kind in this workspace.
+      // Date field defs for this module in this workspace — the base kind AND
+      // every instance kind (`<instance>:item`). The data query below reads the
+      // module's table by metadata key (instance-agnostic), so a date field on
+      // a Wardrobe / Warranties / Medications / Outfits instance lands on the
+      // calendar just like one on the base kind.
       let defs: { name: string; display_label: string }[];
       try {
-        defs = await meta
+        const instances = await meta
+          .selectFrom("workspace_module_instances")
+          .select(["instance_name"])
+          .where("org_id", "=", orgId)
+          .where("module_name", "=", spec.entityModule)
+          .execute()
+          .catch(() => [] as { instance_name: string }[]);
+        const kinds = [spec.kind, ...instances.map((i) => `${i.instance_name}:item`)];
+        const rawDefs = await meta
           .selectFrom("module_field_defs")
           .select(["name", "display_label"])
           .where("org_id", "=", orgId)
-          .where("entity_kind", "=", spec.kind)
+          .where("entity_kind", "in", kinds)
           .where("type", "=", "date")
           .execute();
+        // Dedupe by field name (two instances may share a date field name; the
+        // data query reads by metadata key, so once per name is enough).
+        const seen = new Set<string>();
+        defs = rawDefs.filter((d) => (seen.has(d.name) ? false : (seen.add(d.name), true)));
       } catch {
         return [];
       }

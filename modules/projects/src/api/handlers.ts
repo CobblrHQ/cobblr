@@ -7,7 +7,7 @@
 // at signup is on inventory.stock.changed).
 
 import { sql, type Kysely } from "kysely";
-import { platform, type ResolvedEntity } from "@cobblr/platform-contract";
+import { platform, type EntityListQuery, type ResolvedEntity } from "@cobblr/platform-contract";
 import type { ProjectsDB } from "../db.js";
 
 let registered = false;
@@ -47,11 +47,12 @@ export function registerProjectsHandlers(): void {
 
   // List resolvers — let core-views / core-search iterate without
   // each consumer learning our table layout.
-  platform().entities.registerListResolver("projects:project", async (orgId, query) => {
+  const projectsListResolver = async (orgId: string, query: EntityListQuery, instance?: string) => {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<ProjectsDB>;
     const limit = Math.min(query.limit ?? 50, 200);
     const offset = query.offset ?? 0;
     let q = db.selectFrom("projects_projects").selectAll();
+    if (instance) q = q.where("instance", "=", instance as never);
     if (query.q) {
       const needle = `%${query.q.toLowerCase()}%`;
       q = q.where((eb) =>
@@ -95,7 +96,14 @@ export function registerProjectsHandlers(): void {
     }
     const rows = await q.limit(limit).offset(offset).execute();
     return { items: rows.map((r) => toResolvedProject(r)) };
-  });
+  };
+  platform().entities.registerListResolver("projects:project", (orgId, query) =>
+    projectsListResolver(orgId, query),
+  );
+  // Projects instances (e.g. the Outfits table) → projects scoped to instance.
+  platform().entities.registerInstanceListResolver("projects", (orgId, instance, query) =>
+    projectsListResolver(orgId, query, instance),
+  );
 
   platform().entities.registerListResolver("projects:task", async (orgId, query) => {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<ProjectsDB>;

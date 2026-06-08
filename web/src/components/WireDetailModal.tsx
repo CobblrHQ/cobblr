@@ -5,7 +5,7 @@
 
 import { useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, Trash2 } from "lucide-react";
+import { ExternalLink, Trash2, Pencil } from "lucide-react";
 import { Link } from "react-router-dom";
 import { ApiError, api, type PlatformBinding } from "../lib/api";
 import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
@@ -15,9 +15,11 @@ interface Props {
   onClose: () => void;
   slug: string;
   binding: PlatformBinding | null;
+  /** Opens the full WireComposer (edit every field) — wired up by the page. */
+  onEdit?: (b: PlatformBinding) => void;
 }
 
-export function WireDetailModal({ open, onClose, slug, binding }: Props) {
+export function WireDetailModal({ open, onClose, slug, binding, onEdit }: Props) {
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
@@ -137,6 +139,18 @@ export function WireDetailModal({ open, onClose, slug, binding }: Props) {
             )}
           </Row>
         </dl>
+
+        {/* Full edit — re-point source/action/trigger/args in the composer.
+            (The inline fields below are the quick template + enable tweak.) */}
+        {onEdit && (
+          <button
+            type="button"
+            onClick={() => { onEdit(binding); onClose(); }}
+            className="inline-flex items-center gap-1.5 rounded-md border border-line dark:border-slate-600 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 text-xs font-medium px-2.5 py-1.5 transition"
+          >
+            <Pencil size={13} /> Edit all fields
+          </button>
+        )}
 
         {/* Editable fields */}
         <div className="space-y-3">

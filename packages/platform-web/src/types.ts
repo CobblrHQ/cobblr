@@ -63,6 +63,9 @@ export interface PlatformFieldDef {
   /** type='computed' only: the {{ }} template rendered read-only at
    *  resolve time. Null for stored value fields. */
   template?: string | null;
+  /** Plain-language one-line hint shown under the input, so jargon fields
+   *  (colorway, dye lot…) explain themselves to a novice. */
+  help?: string | null;
 }
 
 /** The adapter the host (web app) injects. Every shared component

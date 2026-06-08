@@ -17,6 +17,7 @@
 import { sql } from "kysely";
 import type {
   EntityKindRecord,
+  EntityInstanceListResolver,
   EntityListQuery,
   EntityListResolver,
   EntityListResult,
@@ -30,6 +31,42 @@ import { effectiveCapabilities } from "../auth/effective-capabilities.js";
 
 const resolvers = new Map<string, EntityResolver>();
 const listResolvers = new Map<string, EntityListResolver>();
+// Per-module resolver for the items of ANY of its instances. The platform
+// calls it for `<instance_name>:item` kinds (resolving instance→module below),
+// so views/data/search/calendar see instance entities through the generic
+// layer. Modules register once (not per instance).
+const instanceListResolvers = new Map<string, EntityInstanceListResolver>();
+
+export function registerInstanceListResolver(
+  moduleName: string,
+  resolver: EntityInstanceListResolver,
+): void {
+  instanceListResolvers.set(moduleName, resolver);
+}
+
+/** For a `<name>:item` kind with no exact list resolver, find the instance's
+ *  owning module + its registered instance resolver, bound to the instance
+ *  name. Returns a plain EntityListResolver, or null if the kind isn't an
+ *  instance / the module didn't register one. (Queries the meta-side
+ *  workspace_module_instances directly to avoid an import cycle.) */
+async function instanceFallbackResolver(
+  orgId: string,
+  kind: string,
+): Promise<EntityListResolver | null> {
+  const m = /^([a-z0-9][a-z0-9-]*):item$/.exec(kind);
+  if (!m) return null;
+  const instanceName = m[1]!;
+  const row = await meta
+    .selectFrom("workspace_module_instances")
+    .select(["module_name"])
+    .where("org_id", "=", orgId)
+    .where("instance_name", "=", instanceName)
+    .executeTakeFirst();
+  if (!row) return null;
+  const fn = instanceListResolvers.get(row.module_name);
+  if (!fn) return null;
+  return (oid, query) => fn(oid, instanceName, query);
+}
 
 // In-process cache of the exposable-fields whitelist per kind. Filled
 // lazily on first lookup; kept until process restart (kinds rarely
@@ -552,7 +589,7 @@ export async function list(
   if (query.sort !== undefined) {
     query = { ...query, sort: normalizeEntitySort(query.sort) };
   }
-  const resolver = listResolvers.get(kind);
+  const resolver = listResolvers.get(kind) ?? (await instanceFallbackResolver(orgId, kind));
   if (!resolver) return { items: [] };
   const whitelist = await getExposableFields(kind);
   const fieldReadScopes = await getFieldReadScopes(kind, orgId);

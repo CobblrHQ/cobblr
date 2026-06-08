@@ -104,6 +104,18 @@ export function ApiTokensPage() {
                     expired
                   </span>
                 )}
+                {t.scopes && t.scopes.length > 0 ? (
+                  <span
+                    className="text-[10px] font-mono uppercase tracking-widest text-cobble-600 dark:text-cobble-400"
+                    title={`Restricted token — ${t.scopes.join(", ")}`}
+                  >
+                    scoped: {t.scopes.join(", ")}
+                  </span>
+                ) : (
+                  <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
+                    full access
+                  </span>
+                )}
               </div>
               <div className="text-[11px] font-mono text-faint dark:text-slate-500 mt-0.5">
                 {t.token_prefix}… · created {new Date(t.created_at).toLocaleDateString()}
@@ -154,7 +166,14 @@ function MintModal({
 }) {
   const [name, setName] = useState("");
   const [expiresInDays, setExpiresInDays] = useState<"" | "30" | "90" | "365" | "never">("never");
+  const [scopes, setScopes] = useState<Set<string>>(new Set());
   const toast = useToast();
+
+  const scopeChoices = useQuery({
+    queryKey: ["api-token-scopes"],
+    queryFn: () => api.apiTokenScopes(),
+    staleTime: Infinity,
+  });
 
   const mint = useMutation({
     mutationFn: () => {
@@ -162,12 +181,17 @@ function MintModal({
         expiresInDays === "" || expiresInDays === "never"
           ? undefined
           : new Date(Date.now() + Number(expiresInDays) * 24 * 3600_000).toISOString();
-      return api.mintApiToken({ name: name.trim(), expires_at });
+      return api.mintApiToken({
+        name: name.trim(),
+        expires_at,
+        scopes: scopes.size > 0 ? [...scopes] : undefined,
+      });
     },
     onSuccess: (r) => {
       onMinted(r.token, r.name);
       setName("");
       setExpiresInDays("never");
+      setScopes(new Set());
     },
     onError: (e: unknown) => {
       toast.error(e instanceof ApiError ? e.message : "Couldn't mint token.");
@@ -210,6 +234,52 @@ function MintModal({
             <option value="365">in 365 days</option>
           </select>
         </label>
+        <div className="block">
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+            Access
+          </span>
+          <div className="space-y-1.5">
+            {(scopeChoices.data?.items ?? []).map((s) => (
+              <label
+                key={s.key}
+                className="flex items-start gap-2 text-sm text-content dark:text-mortar-200 cursor-pointer"
+              >
+                <input
+                  type="checkbox"
+                  checked={scopes.has(s.key)}
+                  onChange={(e) =>
+                    setScopes((prev) => {
+                      const next = new Set(prev);
+                      if (e.target.checked) next.add(s.key);
+                      else next.delete(s.key);
+                      return next;
+                    })
+                  }
+                  className="accent-cobble-500 mt-0.5"
+                />
+                <span>
+                  <span className="font-medium">{s.label}</span>
+                  <span className="block text-xs text-muted dark:text-slate-400">{s.description}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+          <p className="mt-1.5 text-xs text-muted dark:text-slate-400">
+            {scopes.size === 0 ? (
+              <>
+                <strong>Full access</strong> — same as your browser session
+                (every workspace you belong to). Check a scope to mint a{" "}
+                <strong>restricted, deny-by-default</strong> token instead.
+              </>
+            ) : (
+              <>
+                <strong>Restricted token</strong> — can ONLY do the checked
+                scope(s); every other endpoint is 403, even though it carries
+                your identity.
+              </>
+            )}
+          </p>
+        </div>
         <p className="text-xs text-muted dark:text-slate-400">
           You'll see the token value <strong>exactly once</strong> after
           minting. Copy it before closing the next dialog.

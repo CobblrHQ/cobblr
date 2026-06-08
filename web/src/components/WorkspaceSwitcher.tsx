@@ -3,7 +3,8 @@
 // one checkmarked) plus a "Create new workspace" footer that
 // launches the CreateWorkspaceModal.
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
+import { createPortal } from "react-dom";
 import { useMutation } from "@tanstack/react-query";
 import { Check, ChevronDown, Plus, Users } from "lucide-react";
 import { ApiError, api } from "../lib/api";
@@ -19,15 +20,40 @@ export function WorkspaceSwitcher() {
   const [open, setOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [manageSlug, setManageSlug] = useState<string | null>(null);
-  const wrapperRef = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  // The menu is portaled to <body> so the header's `overflow-x-clip` (which
+  // also clips vertically per spec) + backdrop-blur don't hide it. Positioned
+  // with `fixed` from the button's rect.
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
 
-  // Close on outside click.
+  useLayoutEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const r = btnRef.current?.getBoundingClientRect();
+      if (r) {
+        // Clamp so the 288px (w-72) menu stays on-screen on narrow phones.
+        const left = Math.max(8, Math.min(r.left, window.innerWidth - 288 - 8));
+        setPos({ top: r.bottom + 4, left });
+      }
+    };
+    place();
+    // Reposition on scroll/resize so it stays anchored to the button.
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    return () => {
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+    };
+  }, [open]);
+
+  // Close on outside click (button OR the portaled menu).
   useEffect(() => {
     if (!open) return;
     function handler(e: MouseEvent) {
-      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      const t = e.target as Node;
+      if (btnRef.current?.contains(t) || menuRef.current?.contains(t)) return;
+      setOpen(false);
     }
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
@@ -53,8 +79,9 @@ export function WorkspaceSwitcher() {
   }
 
   return (
-    <div className="relative" ref={wrapperRef}>
+    <div className="relative">
       <button
+        ref={btnRef}
         onClick={() => setOpen((o) => !o)}
         className="flex items-center gap-1.5 px-2 py-1 rounded text-sm text-content dark:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 transition"
         title={activeOrg ? `${activeOrg.name} · ${displaySlug(activeOrg.slug)}` : "Pick a workspace"}
@@ -62,8 +89,12 @@ export function WorkspaceSwitcher() {
         <span className="truncate max-w-[10rem]">{activeOrg?.name ?? "—"}</span>
         <ChevronDown size={12} className="text-faint" />
       </button>
-      {open && (
-        <div className="absolute left-0 top-9 w-72 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg z-50 overflow-hidden">
+      {open && pos && createPortal(
+        <div
+          ref={menuRef}
+          style={{ position: "fixed", top: pos.top, left: pos.left }}
+          className="w-72 max-w-[calc(100vw-1rem)] rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg z-[100] overflow-hidden"
+        >
           <div className="px-3 py-2 border-b border-line dark:border-slate-700 text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
             workspaces
           </div>
@@ -121,7 +152,8 @@ export function WorkspaceSwitcher() {
             <Plus size={13} />
             Create new workspace
           </button>
-        </div>
+        </div>,
+        document.body,
       )}
       <CreateWorkspaceModal
         open={createOpen}

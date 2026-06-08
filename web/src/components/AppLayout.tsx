@@ -24,6 +24,7 @@ import { SearchBar } from "./SearchBar";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { api } from "../lib/api";
 import { adminHtmlVars, fontFaceCss } from "../lib/appTheme";
+import { useDeployEnv, DEFAULT_HEADER } from "../lib/deploy-env";
 
 export function AppLayout({ activeSlug }: { activeSlug: string }) {
   const location = useLocation();
@@ -41,6 +42,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
   });
   const skin = config.data?.config.admin_theme ?? null;
   const wsLogo = config.data?.config.logo_path ?? null;
+  const { badge: envBadge } = useDeployEnv();
   const fontFace = fontFaceCss(skin);
 
   // Publish the theme on <html> so the semantic tokens resolve to the
@@ -85,20 +87,39 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           stretch the header. A thin branded edge over the (still neutral +
           readable) functional header; the Cobblr mark stays. */}
       <header
-        className="relative z-30 border-b border-line dark:border-slate-700 bg-surface dark:bg-slate-900/80 backdrop-blur overflow-x-clip"
+        className={`relative z-30 border-b backdrop-blur overflow-x-clip ${envBadge ? envBadge.header : DEFAULT_HEADER}`}
         style={skin ? { borderTop: "4px solid var(--app-accent)" } : undefined}
       >
-        <div className="max-w-6xl mx-auto px-5 py-3 flex items-center gap-3 min-w-0">
-          {/* Brand — never compressed. Cobblr mark always present. */}
+        <div className="max-w-6xl mx-auto px-5 py-3 flex items-center gap-2 sm:gap-3 min-w-0">
+          {/* Brand — never compressed. Cobblr mark + wordmark always present. */}
           <Link
             to="/"
-            className="flex items-center gap-2 shrink-0 hover:opacity-80 transition"
+            className="relative flex items-center gap-2 shrink-0 hover:opacity-80 transition"
           >
             <CobblestoneMark size={26} />
             <span className="font-display font-extrabold text-content dark:text-mortar-100 lowercase">
               cobblr
             </span>
+            {/* Mobile: overlay the env chip ON the wordmark (right-aligned) so
+                it adds ZERO width — the navbar fits exactly as it does in prod,
+                the chip can't push the right menu off-screen. */}
+            {envBadge && (
+              <span
+                className={`sm:hidden absolute right-0 top-1/2 -translate-y-1/2 rounded px-1 py-0.5 text-[9px] font-mono font-bold uppercase tracking-widest ${envBadge.chip}`}
+              >
+                {envBadge.label}
+              </span>
+            )}
           </Link>
+          {/* Desktop: the chip sits inline beside the wordmark (room to spare). */}
+          {envBadge && (
+            <span
+              className={`hidden sm:inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-mono font-bold uppercase tracking-widest ${envBadge.chip}`}
+              title={`You are on the ${envBadge.label} environment — not production.`}
+            >
+              {envBadge.label}
+            </span>
+          )}
           <span className="text-faint dark:text-slate-700 shrink-0">/</span>
           {/* Workspace logo — the builder's brand, alongside the Cobblr mark. */}
           {wsLogo && (
@@ -108,7 +129,10 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
               className="w-6 h-6 rounded object-contain shrink-0 border border-line dark:border-slate-700"
             />
           )}
-          <div className="shrink-0">
+          {/* min-w-0 (not shrink-0): if the row is still too tight, the
+              workspace name truncates here FIRST, keeping the right-side menu
+              button on-screen instead of clipping it. */}
+          <div className="min-w-0">
             <WorkspaceSwitcher />
           </div>
 
@@ -130,12 +154,18 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
             <HeaderActions />
             <SearchBar />
             <NotificationsBell />
+            {/* Ask-Cobblr launcher — a header button, not a floating FAB. */}
+            <ChatWidget />
             <UserMenu themed={!!skin} />
           </div>
 
-          {/* Mobile: spacer pushes the hamburger to the right edge. */}
+          {/* Mobile: spacer pushes the right cluster to the edge. The scan
+              quick-action + AI launcher live here too (were desktop-only) so
+              the phone navbar has the buttons, not just the hamburger. */}
           <div className="flex-1 md:hidden" />
-          <div className="shrink-0 md:hidden">
+          <div className="shrink-0 md:hidden flex items-center gap-0.5">
+            <HeaderActions />
+            <ChatWidget />
             <MobileNav />
           </div>
         </div>
@@ -155,9 +185,6 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           </ErrorBoundary>
         </div>
       </main>
-
-      {/* Floating AI chat — portals to <body>, available on every workspace page. */}
-      <ChatWidget />
     </div>
   );
 }

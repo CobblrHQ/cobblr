@@ -1,4 +1,4 @@
-import { platform, type ResolvedEntity } from "@cobblr/platform-contract";
+import { platform, type EntityListQuery, type ResolvedEntity } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { AssetsDB } from "../db.js";
 
@@ -45,11 +45,12 @@ export function registerAssetsResolvers(): void {
     return toResolvedAsset(row);
   });
 
-  platform().entities.registerListResolver("assets:asset", async (orgId, query) => {
+  const assetsListResolver = async (orgId: string, query: EntityListQuery, instance?: string) => {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<AssetsDB>;
     const limit = Math.min(query.limit ?? 50, 200);
     const offset = query.offset ?? 0;
     let q = db.selectFrom("assets_assets").selectAll();
+    if (instance) q = q.where("instance", "=", instance as never);
     if (query.q) {
       const needle = `%${query.q.toLowerCase()}%`;
       q = q.where((eb) => eb(eb.fn("lower", ["name"]), "like", needle));
@@ -105,7 +106,13 @@ export function registerAssetsResolvers(): void {
     }
     const rows = await q.orderBy("name", "asc").limit(limit).offset(offset).execute();
     return { items: rows.map((r) => toResolvedAsset(r)) };
-  });
+  };
+  platform().entities.registerListResolver("assets:asset", (orgId, query) =>
+    assetsListResolver(orgId, query),
+  );
+  platform().entities.registerInstanceListResolver("assets", (orgId, instance, query) =>
+    assetsListResolver(orgId, query, instance),
+  );
 }
 
 function toResolvedAsset(row: {

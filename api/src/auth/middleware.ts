@@ -9,6 +9,7 @@ import type { NextFunction, Request, Response } from "express";
 import { meta } from "../db/meta.js";
 import { verifySession } from "./jwt.js";
 import { resolveApiToken } from "./api-tokens.js";
+import { tokenScopeAllows } from "./scopes.js";
 import { runWithActor } from "../lib/request-context.js";
 import { env } from "../env.js";
 
@@ -43,6 +44,11 @@ export interface SessionUser {
    *  request is clamped server-side to the Tier-B allowlist (see
    *  `appTokenPathAllowed`). */
   app_scope: string | null;
+  /** Capability scopes of the API token that signed this request, when it
+   *  was minted with restrictions. Null = unrestricted (session, or a legacy
+   *  full-access token). When non-null, requireAuth has already clamped the
+   *  request to these scopes' allowlist (`tokenScopeAllows`). */
+  token_scopes: string[] | null;
 }
 
 // H1 Tier B — server-side clamp for capability-scoped app tokens. The
@@ -59,16 +65,25 @@ function orgRelativePath(originalUrl: string): string | null {
   if (!m) return null; // not an org-scoped path → not reachable by an app token
   return m[1] ?? "/";
 }
-function appTokenPathAllowed(method: string, rel: string): boolean {
+function appTokenPathAllowed(method: string, rel: string, appScope: string): boolean {
   if (rel.includes("..")) return false;
+  // An app's OWN key/value scratchpad (cobblr.appLoad/appSave) — scoped to the
+  // token's app slug so one app can't read/write another's bag.
+  const ownData = new RegExp(`^/modules/core-apps/apps/${appScope.replace(/[^a-z0-9-]/gi, "")}/data/[a-z0-9_-]+$`).test(rel);
   if (method === "GET") {
     return (
       rel.startsWith("/modules/core-views/views") ||
       rel.startsWith("/entities/") ||
       rel.startsWith("/entity-kinds") ||
-      rel === "/me/capabilities"
+      rel === "/me/capabilities" ||
+      // Workspace photos — an entity's image (core-files raw), so a sandboxed
+      // app can render garment/part photos via the scoped token (member-bounded;
+      // the raw handler enforces its own access). Read-only, GET-only.
+      /^\/modules\/core-files\/files\/[^/]+\/raw(\?|$)/.test(rel) ||
+      ownData
     );
   }
+  if (method === "PUT") return ownData;
   if (method === "POST") return rel === "/actions/invoke";
   return false;
 }
@@ -103,12 +118,14 @@ export async function requireAuth(
     let authMethod: "session" | "api_token" = "session";
     let apiTokenId: string | null = null;
     let appScope: string | null = null;
+    let tokenScopes: string[] | null = null;
     if (token.startsWith("cbt_")) {
       const resolved = await resolveApiToken(token);
       if (resolved) {
         userId = resolved.userId;
         authMethod = "api_token";
         apiTokenId = resolved.tokenId;
+        tokenScopes = resolved.scopes;
       }
     } else {
       const claims = await verifySession(token);
@@ -139,7 +156,7 @@ export async function requireAuth(
     // client-side mediator: the boundary holds even if that JS is bypassed.
     if (appScope) {
       const rel = orgRelativePath(req.originalUrl);
-      if (rel === null || !appTokenPathAllowed(req.method, rel)) {
+      if (rel === null || !appTokenPathAllowed(req.method, rel, appScope)) {
         res.status(403).json({
           error: {
             code: "app_token_out_of_scope",
@@ -150,6 +167,20 @@ export async function requireAuth(
         return;
       }
     }
+    // Capability-scoped API token — DENY-by-default clamp to its scopes'
+    // allowlist, before any handler runs. The token still carries the user's
+    // full identity (incl. is_platform_admin), so this clamp is the ONLY thing
+    // keeping a "feedback:triage" token out of every other admin surface.
+    if (tokenScopes && !tokenScopeAllows(tokenScopes, req.method, req.originalUrl)) {
+      res.status(403).json({
+        error: {
+          code: "token_out_of_scope",
+          message:
+            "This API token is capability-scoped and is not permitted to access this endpoint.",
+        },
+      });
+      return;
+    }
     req.session = {
       id: user.id,
       email: user.email,
@@ -158,6 +189,7 @@ export async function requireAuth(
       api_token_id: apiTokenId,
       is_platform_admin: isPlatformAdmin(user.email),
       app_scope: appScope,
+      token_scopes: tokenScopes,
     };
     // Wrap the rest of the request chain in actor context so any
     // deeply-nested activity.log() call automatically picks up

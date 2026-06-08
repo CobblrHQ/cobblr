@@ -238,6 +238,11 @@ export function BundlesPage() {
   const installedIds = new Set(
     bundles.data?.items.map((b) => b.external_id) ?? [],
   );
+  // external_id → installed version, to flag "update available" when the
+  // registry's version differs from what's installed.
+  const installedVersionById = new Map(
+    (bundles.data?.items ?? []).map((b) => [b.external_id, b.version]),
+  );
 
   return (
     <div className="space-y-5 max-w-6xl">
@@ -385,6 +390,8 @@ export function BundlesPage() {
         <ul className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           {shownCatalog.map((b) => {
             const installed = installedIds.has(b.manifest.id);
+            const installedV = installedVersionById.get(b.manifest.id);
+            const updateAvailable = installed && !!installedV && installedV !== b.manifest.version;
             const thirdParty = b.source && b.source !== "official";
             return (
               <li key={b.manifest.id}>
@@ -403,11 +410,15 @@ export function BundlesPage() {
                   <div className="flex-1 min-w-0">
                     <div className="font-medium text-content dark:text-mortar-100 text-sm flex items-center gap-2 flex-wrap">
                       {b.manifest.name}
-                      {installed && (
+                      {updateAvailable ? (
+                        <span className="text-[10px] font-mono uppercase tracking-widest text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 rounded px-1.5 py-0.5" title={`Installed v${installedV} · latest v${b.manifest.version}`}>
+                          update available
+                        </span>
+                      ) : installed ? (
                         <span className="text-[10px] font-mono uppercase tracking-widest text-moss-600 bg-moss-50 dark:bg-moss-950/30 border border-moss-200 dark:border-moss-800 rounded px-1.5 py-0.5">
                           installed
                         </span>
-                      )}
+                      ) : null}
                       {thirdParty && (
                         <span className="text-[10px] font-mono uppercase tracking-widest text-faint border border-line dark:border-slate-700 rounded px-1.5 py-0.5" title={`From ${b.source}`}>
                           3rd-party
@@ -682,6 +693,7 @@ export function BundlesPage() {
               (x) => x.external_id === selected.featured.manifest.id,
             )?.id ?? null
           }
+          installedVersion={installedVersionById.get(selected.featured.manifest.id) ?? null}
           nextSteps={selected.featured.next_steps}
         />
       ) : (

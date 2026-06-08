@@ -648,8 +648,9 @@ function RecordView({
 const SDK_SCRIPT = `<script>(function(){
 var pending={},seq=0;
 window.addEventListener("message",function(e){var m=e.data;if(!m||m.type!=="cobblr:result")return;var p=pending[m.id];if(!p)return;delete pending[m.id];m.ok?p.resolve(m.data):p.reject(new Error(m.error||"request failed"));});
-function fetchPath(path){return new Promise(function(res,rej){var id=++seq;pending[id]={resolve:res,reject:rej};parent.postMessage({type:"cobblr:fetch",id:id,path:path},"*");});}
-function invoke(actionId,opts){opts=opts||{};return new Promise(function(res,rej){var id=++seq;pending[id]={resolve:res,reject:rej};parent.postMessage({type:"cobblr:invoke",id:id,actionId:actionId,entityKind:opts.entityKind||"",entityId:opts.entityId||"",args:opts.args||null},"*");});}
+function send(type,payload){return new Promise(function(res,rej){var id=++seq;pending[id]={resolve:res,reject:rej};var msg={type:type,id:id};if(payload)for(var k in payload)msg[k]=payload[k];parent.postMessage(msg,"*");});}
+function fetchPath(path){return send("cobblr:fetch",{path:path});}
+function invoke(actionId,opts){opts=opts||{};return send("cobblr:invoke",{actionId:actionId,entityKind:opts.entityKind||"",entityId:opts.entityId||"",args:opts.args||null});}
 function qs(o){if(!o)return"";var s=[];for(var k in o){if(o[k]!=null)s.push(encodeURIComponent(k)+"="+encodeURIComponent(o[k]));}return s.length?"?"+s.join("&"):"";}
 window.cobblr={
 get:fetchPath,
@@ -659,6 +660,9 @@ me:function(){return fetchPath("/me/capabilities");},
 can:function(actionId){return window.cobblr.me().then(function(c){return !!c&&(c.role==="owner"||c.role==="admin"||((c.grants||[]).indexOf(actionId)>=0));});},
 invoke:invoke,
 action:invoke,
+image:function(path){if(!path)return Promise.resolve(null);return send("cobblr:image",{path:path}).then(function(r){return (r&&r.dataUrl)||null;}).catch(function(){return null;});},
+appLoad:function(key){return send("cobblr:appdata",{op:"load",key:key}).then(function(r){return r?r.value:null;});},
+appSave:function(key,value){return send("cobblr:appdata",{op:"save",key:key,value:value});},
 mount:function(target,loader,render){var el=typeof target==="string"?document.querySelector(target):target;if(!el)return Promise.resolve();el.textContent="Loading\\u2026";return Promise.resolve().then(loader).then(function(data){el.innerHTML="";render(el,data);}).catch(function(err){el.textContent="\\u26a0 "+((err&&err.message)||err);});}
 };
 })();</script>`;
@@ -712,8 +716,12 @@ function CustomBlock({
         entityKind?: string;
         entityId?: string;
         args?: Record<string, unknown>;
+        op?: string;
+        key?: string;
+        value?: unknown;
       };
-      if (!m || (m.type !== "cobblr:fetch" && m.type !== "cobblr:invoke")) return;
+      const KNOWN = ["cobblr:fetch", "cobblr:invoke", "cobblr:image", "cobblr:appdata"];
+      if (!m || !m.type || !KNOWN.includes(m.type)) return;
       const reply = (payload: Record<string, unknown>) =>
         ifr.contentWindow?.postMessage({ type: "cobblr:result", id: m.id, ...payload }, "*");
       const token = tokenRef.current;
@@ -745,6 +753,48 @@ function CustomBlock({
             });
             const data = await res.json().catch(() => null);
             reply({ ok: res.ok, data, error: res.ok ? undefined : "request failed" });
+          } else if (m.type === "cobblr:image") {
+            // IMAGE READS — an entity's `image_path` (core-files raw) fetched
+            // with the scoped token and returned as a data URL, so a sandboxed
+            // app (opaque origin, no token) can render workspace photos. Still
+            // member-scoped + read-only; only the core-files raw path is
+            // permitted. We normalise off any absolute prefix the entity
+            // payload carries, then require it under /modules/core-files/files.
+            let rel = (m.path ?? "").replace(/^https?:\/\/[^/]+/, "").replace(/^\/api\/v1\/orgs\/[^/]+/, "");
+            if (rel.startsWith("/files/")) rel = "/modules/core-files" + rel;
+            if (!rel.startsWith("/modules/core-files/files/") || rel.includes("..")) {
+              reply({ ok: false, error: "image not permitted" });
+              return;
+            }
+            const res = await fetch(`/api/v1/orgs/${slug}${rel}`, { headers: { authorization: `Bearer ${token}` } });
+            if (!res.ok) { reply({ ok: false, error: "image fetch failed" }); return; }
+            const blob = await res.blob();
+            if (blob.size > 8_000_000 || !/^image\//.test(blob.type)) { reply({ ok: false, error: "not an image" }); return; }
+            const dataUrl = await new Promise<string>((resolve, reject) => {
+              const fr = new FileReader();
+              fr.onload = () => resolve(String(fr.result));
+              fr.onerror = () => reject(new Error("read failed"));
+              fr.readAsDataURL(blob);
+            });
+            reply({ ok: true, data: { dataUrl } });
+          } else if (m.type === "cobblr:appdata") {
+            // APP SCRATCHPAD — the app's OWN key/value bag (e.g. saved looks),
+            // gated server-side by canOpen(app). Never touches real entities.
+            const key = encodeURIComponent(String(m.key ?? ""));
+            if (m.op === "save") {
+              const res = await fetch(`/api/v1/orgs/${slug}/modules/core-apps/apps/${appSlug}/data/${key}`, {
+                method: "PUT",
+                headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+                body: JSON.stringify({ value: m.value ?? null }),
+              });
+              reply({ ok: res.ok, data: { ok: res.ok }, error: res.ok ? undefined : "save failed" });
+            } else {
+              const res = await fetch(`/api/v1/orgs/${slug}/modules/core-apps/apps/${appSlug}/data/${key}`, {
+                headers: { authorization: `Bearer ${token}` },
+              });
+              const data = await res.json().catch(() => null);
+              reply({ ok: res.ok, data, error: res.ok ? undefined : "load failed" });
+            }
           } else {
             // WRITES — routed through the ONE capability-gated action
             // endpoint. The server's requireCapability(actionId) enforces
@@ -777,7 +827,7 @@ function CustomBlock({
     }
     window.addEventListener("message", onMsg);
     return () => window.removeEventListener("message", onMsg);
-  }, [slug]);
+  }, [slug, appSlug]);
 
   // SDK first so `cobblr.get` is defined before the author's scripts run.
   // In a themed app, seed the sandbox body with the app's bg + text +

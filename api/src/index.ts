@@ -92,6 +92,7 @@ async function boot() {
     entities: {
       registerResolver: entities.registerResolver,
       registerListResolver: entities.registerListResolver,
+      registerInstanceListResolver: entities.registerInstanceListResolver,
       registerComputedContext: computedFields.registerComputedContext,
       registerCreateDefaults: createDefaults.registerCreateDefaults,
       unregisterCreateDefaults: createDefaults.unregisterCreateDefaults,

@@ -8,7 +8,7 @@
 // /<module>/* and the module's own internal routes take over.
 
 import { lazy, Suspense } from "react";
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { PlatformWebProvider } from "@cobblr/platform-web";
 import { InventoryUI } from "@cobblr/inventory/ui";
 import { LabelsBasket, LabelsUI } from "@cobblr/labels/ui";
@@ -23,7 +23,8 @@ import { InstalledRenderers } from "./components/InstalledRenderers";
 import { PairsWellWith } from "./components/PairsWellWith";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { ActiveOrgProvider, useActiveOrg, pickDefaultOrg, urlHandleFor } from "./auth/ActiveOrgContext";
-import { AuthPage } from "./pages/AuthPage";
+import { AuthPage, MagicConsumePage } from "./pages/AuthPage";
+import { FeedbackWidget } from "./components/FeedbackWidget";
 import { Dashboard } from "./pages/Dashboard";
 import { InviteAcceptPage } from "./pages/InviteAcceptPage";
 import { JoinPage } from "./pages/JoinPage";
@@ -156,6 +157,9 @@ function PublicRoutes() {
           the token is the secret. */}
       <Route path="/reset/:token" element={<ResetPasswordPage />} />
       <Route path="/verify/:token" element={<VerifyEmailPage />} />
+      {/* Emailed magic-link landing: consumes ?token= and signs in. Without it
+          the link falls to the catch-all and nothing consumes the token. */}
+      <Route path="/auth/magic" element={<MagicConsumePage />} />
       {/* /p/:token is the un-auth'd public surface render. Reachable
           signed-in or signed-out — the token is the secret. */}
       <Route path="/p/:token" element={<PublicSurfacePage />} />
@@ -213,6 +217,14 @@ function WorkspaceRoutes({ urlHandle }: { urlHandle: string }) {
   );
 }
 
+/** /w/:slug/app/:appSlug → the portal app player for the active workspace,
+ *  so deep-links don't need to embed the slug. */
+function WorkspaceAppRedirect() {
+  const { appSlug } = useParams<{ appSlug: string }>();
+  const { activeSlug } = useActiveOrg();
+  return <Navigate to={`/portal/${activeSlug}/app/${appSlug}`} replace />;
+}
+
 function ActiveOrgScopedRoutes() {
   const { activeSlug, activeOrg } = useActiveOrg();
   const location = useLocation();
@@ -255,6 +267,8 @@ function ActiveOrgScopedRoutes() {
           domain-agnostic; this is the integrator wiring (see the file). */}
       <FilePreviewGate />
       <InstalledRenderers />
+      {/* Always-on feedback button for every signed-in user. */}
+      <FeedbackWidget />
       {shouldRedirectToPortal && <Navigate to={`/portal/${activeSlug}`} replace />}
       <Routes>
         <Route element={<AppLayout activeSlug={activeSlug} />}>
@@ -355,6 +369,10 @@ function ActiveOrgScopedRoutes() {
           <Route path="/tags" element={<TagsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
+        {/* Convenience deep-link: /w/:slug/app/:appSlug → the portal app
+            player (so a bundle's "Open the X app" next-step + dashboard
+            setup card resolve without knowing the slug). */}
+        <Route path="/app/:appSlug" element={<WorkspaceAppRedirect />} />
         {/* Member portal — sibling route, not nested under AppLayout.
             Same auth + tenant context (PlatformWebProvider above),
             different chrome. /portal/:slug/* is open to every role;

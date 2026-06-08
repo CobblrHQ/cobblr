@@ -1,10 +1,18 @@
+# syntax=docker/dockerfile:1
 # Multi-stage Dockerfile for the cobblr-api service. Image is the
 # source of truth at runtime — no bind mounts in compose.
+# BuildKit is enabled in CI (docker-build.yml) so the npm-cache mount below
+# persists npm's download cache across builds — installs don't re-fetch tarballs.
 
 # ─── builder ─────────────────────────────────────────────────────────
 FROM node:22-alpine AS builder
 
 WORKDIR /app
+
+# Toolchain for native deps (bcrypt): node-pre-gyp fetches a musl prebuilt,
+# but a transient fetch miss falls back to a source build that needs Python +
+# a C++ compiler. Cheap insurance against "gyp ERR! find Python" build deaths.
+RUN apk add --no-cache python3 make g++
 
 # Copy every workspace's package.json before installing so npm can
 # resolve the symlinks without redoing the install on every source
@@ -54,7 +62,8 @@ COPY modules/core-print/package.json ./modules/core-print/
 COPY packages/sandbox-sdk-as/package.json ./packages/sandbox-sdk-as/
 COPY sandboxed-modules/hello-as/package.json ./sandboxed-modules/hello-as/
 
-RUN npm install --workspaces --include-workspace-root --no-audit --no-fund
+RUN --mount=type=cache,target=/root/.npm \
+    npm install --workspaces --include-workspace-root --no-audit --no-fund
 
 # Source for every workspace the runtime needs.
 COPY packages/platform-contract ./packages/platform-contract

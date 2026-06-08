@@ -14,6 +14,7 @@ import { createPortal } from "react-dom";
 import { NavLink, useNavigate } from "react-router-dom";
 import { Menu, X, Moon, Sun, LogOut, Sliders } from "lucide-react";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { UpdateBadge } from "./UpdateBadge";
 import { useAuth } from "../auth/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
 import { useNavModules } from "./useNavModules";
@@ -62,9 +63,15 @@ export function MobileNav() {
         onClick={() => setOpen((o) => !o)}
         aria-label={open ? "Close menu" : "Open menu"}
         aria-expanded={open}
-        className="md:hidden text-muted dark:text-slate-400 hover:text-accent transition p-1.5"
+        className="md:hidden relative text-muted dark:text-slate-400 hover:text-accent transition p-1.5"
       >
         {open ? <X size={20} /> : <Menu size={20} />}
+        {/* Bundle-updates signal so it's visible without opening the menu. */}
+        {!open && (
+          <span className="absolute top-0.5 right-0.5">
+            <UpdateBadge slug={activeSlug} variant="dot" />
+          </span>
+        )}
       </button>
 
       {open &&
@@ -164,6 +171,8 @@ export function MobileNav() {
               >
                 <Sliders size={14} />
                 configuration
+                {/* Bundles (with their updates) live under Configuration. */}
+                <UpdateBadge slug={activeSlug} variant="count" className="ml-auto" />
               </NavLink>
 
               <button

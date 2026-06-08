@@ -19,8 +19,8 @@ import { useFieldPresentation } from "./useFieldPresentation";
 // not a separate full page. Takes the part id + an onClose from the
 // list route, instead of reading the route param itself.
 export function PartDetailPage({ id, onClose }: { id: string; onClose: () => void }) {
-  const { api, orgSlug, getToken } = useInventory();
-  const fp = useFieldPresentation("inventory:part");
+  const { api, orgSlug, getToken, entityKind } = useInventory();
+  const fp = useFieldPresentation(entityKind);
   const units = useUnits();
   const qc = useQueryClient();
 
@@ -174,7 +174,8 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
             />
           </Field>
           )}
-          <Field label="Category">
+          {!fp.hidden("category") && (
+          <Field label={fp.label("category", "Category")}>
             <select
               value={p.category_id ?? ""}
               onChange={(e) => update.mutate({ category_id: e.target.value || null })}
@@ -188,7 +189,9 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
               ))}
             </select>
           </Field>
-          <Field label="Location">
+          )}
+          {!fp.hidden("location") && (
+          <Field label={fp.label("location", "Location")}>
             <select
               value={p.location_id ?? ""}
               onChange={(e) => update.mutate({ location_id: e.target.value || null })}
@@ -203,6 +206,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
               ))}
             </select>
           </Field>
+          )}
           {!fp.hidden("manufacturer") && (
           <Field label={fp.label("manufacturer", "Manufacturer")}>
             <InlineText
@@ -248,6 +252,26 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
         </Field>
       </div>
 
+      {/* The instance's own fields, promoted to the top (right under the
+          identity card) — the point of a skinned instance is that THESE are
+          the fields that matter, not the generic inventory ones below. */}
+      <CustomFieldsPanel
+        entityKind={entityKind}
+        entityId={p.id}
+        values={(p.metadata as Record<string, unknown> | null) ?? {}}
+        fallbackValues={matched.data?.fields}
+        fallbackLabel={matched.data ? `catalog (${matched.data.title})` : undefined}
+        onCommit={(name, value) =>
+          update.mutate({
+            metadata: {
+              ...((p.metadata as Record<string, unknown> | null) ?? {}),
+              [name]: value,
+            },
+          })
+        }
+      />
+
+      {!fp.hidden("warranty") && (
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
         <h3 className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
           warranty & status
@@ -310,6 +334,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
           </label>
         </div>
       </div>
+      )}
 
       <PartGallery
         partId={p.id}
@@ -318,22 +343,6 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
       />
 
       <MaintenancePanel entityModule="inventory" entityType="part" entityId={p.id} />
-
-      <CustomFieldsPanel
-        entityKind="inventory:part"
-        entityId={p.id}
-        values={(p.metadata as Record<string, unknown> | null) ?? {}}
-        fallbackValues={matched.data?.fields}
-        fallbackLabel={matched.data ? `catalog (${matched.data.title})` : undefined}
-        onCommit={(name, value) =>
-          update.mutate({
-            metadata: {
-              ...((p.metadata as Record<string, unknown> | null) ?? {}),
-              [name]: value,
-            },
-          })
-        }
-      />
 
       <AllocationsPanel partId={p.id} />
 

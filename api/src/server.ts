@@ -30,6 +30,7 @@ import { portalRouter } from "./routes/portal.js";
 import { dashboardRouter } from "./routes/dashboard.js";
 import { adminUsersRouter } from "./routes/admin-users.js";
 import { superAdminRouter } from "./routes/super-admin.js";
+import { feedbackRouter } from "./routes/feedback.js";
 import { sandboxInstallRouter } from "./routes/sandbox-install.js";
 import { registryRouter } from "./routes/registry.js";
 import { customRolesRouter } from "./routes/custom-roles.js";
@@ -96,6 +97,9 @@ export function createApp(): AppHandles {
       ok: true,
       service: "cobblr-api",
       env: env.NODE_ENV,
+      // Deploy label (staging/production/development) for the web's env
+      // indicator. `||` not `??`: COBBLR_ENV arrives as "" when unset.
+      deploy_env: env.COBBLR_ENV || env.NODE_ENV,
       time: new Date().toISOString(),
     });
   });
@@ -139,6 +143,8 @@ export function createApp(): AppHandles {
   // Super-admin (platform operator) surface — cross-workspace
   // dashboards. Gated by SUPERADMIN_EMAILS env var.
   v1.use("/super-admin", superAdminRouter);
+  // User feedback about the platform (submit: any authed user; triage: super-admin).
+  v1.use("/feedback", feedbackRouter);
   // Sandbox marketplace runtime install (super-admin only). Backs
   // the "Browse + Install" UI: fetch registry, verify, extract,
   // register without restart. See sandbox-install.ts +

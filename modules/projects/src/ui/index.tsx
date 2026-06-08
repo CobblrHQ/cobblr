@@ -26,7 +26,14 @@ export function ProjectsUI({ orgSlug, getToken, instance }: ProjectsUIProps) {
     <ProjectsProvider orgSlug={orgSlug} getToken={getToken} instance={instance}>
       <Routes>
         <Route index element={<ProjectsListPage />} />
+        {/* Bundle setup-cards / next-steps deep-link to
+            /instances/<name>/items (the API path convention). Without an
+            explicit static route, "items" would match :id and try to open
+            a project with id "items". Map it to the list — and add a splat
+            fallback — so a deep-link never dead-ends on a blank page. */}
+        <Route path="items" element={<ProjectsListPage />} />
         <Route path=":id" element={<ProjectDetailPage />} />
+        <Route path="*" element={<ProjectsListPage />} />
       </Routes>
     </ProjectsProvider>
   );

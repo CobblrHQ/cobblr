@@ -9,8 +9,8 @@
 // around can fire 5-10 scans in a row without leaving. Each one
 // shows up as a green toast + appends to a "this session" list.
 
-import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
 import { ArrowLeft, Camera, Check, ScanLine, X } from "lucide-react";
 import { useToast, usePageTitle } from "@cobblr/platform-web";
@@ -40,6 +40,9 @@ const SUPPORTED_FORMATS = [
 export function ScanCameraPage() {
   usePageTitle("Scan camera");
   const { activeSlug } = useActiveOrg();
+  // Preserve the instance-scan target (?into=…) so returning to /scan keeps it.
+  const [params] = useSearchParams();
+  const backToScan = `/scan${params.toString() ? `?${params}` : ""}`;
   const toast = useToast();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -66,20 +69,41 @@ export function ScanCameraPage() {
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
 
-  // Feature-detect once.
+  // Does this browser have the native BarcodeDetector? (Chromium/Android +
+  // iOS Safari 17+.) If not, we lazy-load the ZXing JS decoder as a fallback so
+  // live scanning still works on older iOS Safari etc.
   useEffect(() => {
     const Detector = (window as unknown as { BarcodeDetector?: BarcodeDetectorCtor })
       .BarcodeDetector;
     setSupported(!!Detector);
   }, []);
 
-  // Start / stop the camera + detection loop based on `running`.
+  // One detection handler for both decoders: dedupe + buzz + look up.
+  const onDetect = useCallback(
+    (rawIn: string) => {
+      const raw = rawIn.trim();
+      if (!raw) return;
+      const last = lastSeenRef.current;
+      if (last && last.value === raw && Date.now() - last.at < 3_000) return;
+      lastSeenRef.current = { value: raw, at: Date.now() };
+      if (typeof navigator.vibrate === "function") navigator.vibrate(80);
+      scan.mutate(raw);
+    },
+    [scan],
+  );
+
+  // Start / stop the camera + detection based on `running`. Native path uses
+  // BarcodeDetector against our own stream; the fallback hands the camera to
+  // ZXing (lazy-imported — never in the eager bundle).
   useEffect(() => {
     if (!running) return;
     let cancelled = false;
     let raf: number | null = null;
+    let zxingControls: { stop: () => void } | null = null;
+    const useNative = !!(window as unknown as { BarcodeDetector?: BarcodeDetectorCtor })
+      .BarcodeDetector;
 
-    async function start() {
+    async function startNative() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: { ideal: "environment" } },
@@ -95,11 +119,9 @@ export function ScanCameraPage() {
           await videoRef.current.play();
         }
         const Detector = (window as unknown as { BarcodeDetector?: BarcodeDetectorCtor })
-          .BarcodeDetector;
-        if (Detector) {
-          detectorRef.current = new Detector({ formats: SUPPORTED_FORMATS });
-          loop();
-        }
+          .BarcodeDetector!;
+        detectorRef.current = new Detector({ formats: SUPPORTED_FORMATS });
+        loop();
       } catch (err) {
         setError((err as Error).message);
         setRunning(false);
@@ -118,16 +140,7 @@ export function ScanCameraPage() {
         .detect(video)
         .then((results) => {
           if (cancelled || results.length === 0) return;
-          const raw = results[0]!.rawValue.trim();
-          // Dedupe: ignore the same code twice within 3 seconds.
-          const last = lastSeenRef.current;
-          if (last && last.value === raw && Date.now() - last.at < 3_000) return;
-          lastSeenRef.current = { value: raw, at: Date.now() };
-          // Haptic feedback if available — mobile users like the buzz.
-          if (typeof navigator.vibrate === "function") {
-            navigator.vibrate(80);
-          }
-          scan.mutate(raw);
+          onDetect(results[0]!.rawValue);
         })
         .catch(() => {
           // detect() can throw transiently; just keep looping.
@@ -137,21 +150,62 @@ export function ScanCameraPage() {
         });
     }
 
-    void start();
+    async function startZxing() {
+      try {
+        // Lazy chunk — only loads when the native detector is absent (iOS<17).
+        const { BrowserMultiFormatReader, BarcodeFormat } = await import("@zxing/browser");
+        const { DecodeHintType } = await import("@zxing/library");
+        if (cancelled) return;
+        // Default ZXing tries every symbology with a single pass — slow + flaky
+        // on a phone camera. Restrict to the retail + QR formats we care about
+        // and turn on TRY_HARDER (multi-pass, handles rotation/partial frames).
+        // This is the companion app-grade decode the compatibility path was missing.
+        const hints = new Map<number, unknown>([
+          [DecodeHintType.TRY_HARDER, true],
+          [
+            DecodeHintType.POSSIBLE_FORMATS,
+            [
+              BarcodeFormat.UPC_A,
+              BarcodeFormat.EAN_13,
+              BarcodeFormat.EAN_8,
+              BarcodeFormat.UPC_E,
+              BarcodeFormat.CODE_128,
+              BarcodeFormat.CODE_39,
+              BarcodeFormat.QR_CODE,
+            ],
+          ],
+        ]);
+        const reader = new BrowserMultiFormatReader(hints);
+        zxingControls = await reader.decodeFromConstraints(
+          { video: { facingMode: { ideal: "environment" } }, audio: false },
+          videoRef.current!,
+          (result) => {
+            if (!cancelled && result) onDetect(result.getText());
+          },
+        );
+      } catch (err) {
+        setError((err as Error).message);
+        setRunning(false);
+      }
+    }
+
+    if (useNative) void startNative();
+    else void startZxing();
 
     return () => {
       cancelled = true;
       if (raf !== null) cancelAnimationFrame(raf);
       streamRef.current?.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
+      zxingControls?.stop();
     };
-  }, [running, scan]);
+  }, [running, onDetect]);
 
   return (
     <div className="space-y-4 max-w-2xl">
       <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
         <Link
-          to="/scan"
+          to={backToScan}
           className="text-sm text-muted hover:text-accent inline-flex items-center gap-1"
         >
           <ArrowLeft size={14} /> Back to inbox
@@ -162,9 +216,8 @@ export function ScanCameraPage() {
       </div>
 
       {supported === false && (
-        <div className="rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 p-3 text-sm text-amber-700 dark:text-amber-200">
-          This browser doesn't support the BarcodeDetector API. Use Chrome
-          on Android, Safari 17+, or fall back to manual entry below.
+        <div className="rounded-md border border-line dark:border-slate-700 bg-subtle/60 dark:bg-slate-800/40 p-3 text-xs text-muted dark:text-slate-400">
+          Hold the barcode steady in the frame. You can also type the UPC below.
         </div>
       )}
 
@@ -180,8 +233,7 @@ export function ScanCameraPage() {
             <button
               type="button"
               onClick={() => setRunning(true)}
-              disabled={supported === false}
-              className="inline-flex items-center gap-2 rounded-full bg-cobble-600 hover:bg-cobble-700 px-4 py-2 text-sm font-medium disabled:opacity-50"
+              className="inline-flex items-center gap-2 rounded-full bg-cobble-600 hover:bg-cobble-700 px-4 py-2 text-sm font-medium"
             >
               <Camera size={16} /> Start camera
             </button>
@@ -265,7 +317,7 @@ export function ScanCameraPage() {
             ))}
           </ul>
           <Link
-            to="/scan"
+            to={backToScan}
             className="block text-center text-xs text-accent hover:text-accent mt-3"
           >
             Open inbox to confirm →

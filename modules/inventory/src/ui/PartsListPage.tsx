@@ -12,6 +12,7 @@ import {
   FileUp,
   Plus,
   Printer,
+  ScanLine,
   Search,
   ShieldCheck,
   Tag as TagIcon,
@@ -48,7 +49,7 @@ type SavedViewLite = {
 
 export function PartsListPage() {
   usePageTitle("Inventory");
-  const { api, orgSlug, getToken } = useInventory();
+  const { api, orgSlug, getToken, entityKind, itemNoun, basePath, instance } = useInventory();
   const qc = useQueryClient();
   // /inventory/parts/:id keeps this list mounted and opens the detail
   // modal (D4). Closing returns to /inventory.
@@ -76,8 +77,8 @@ export function PartsListPage() {
   // swatch, url link, …) from each part's metadata. Capped so the table stays
   // readable; ordered by the field's position (which the user controls).
   const fieldDefs = useQuery({
-    queryKey: ["platform-field-defs", orgSlug, "inventory:part"],
-    queryFn: () => api.listFieldDefs("inventory:part"),
+    queryKey: ["platform-field-defs", orgSlug, entityKind],
+    queryFn: () => api.listFieldDefs(entityKind),
     staleTime: 60_000,
   });
   const allCustomCols = (fieldDefs.data?.items ?? [])
@@ -93,11 +94,11 @@ export function PartsListPage() {
   const [params, setParams] = useSearchParams();
   const viewId = params.get("view");
   const savedViews = useQuery({
-    queryKey: ["inv-saved-views", orgSlug],
+    queryKey: ["inv-saved-views", orgSlug, entityKind],
     queryFn: async (): Promise<{ items: SavedViewLite[] }> => {
       const token = getToken();
       const res = await fetch(
-        `/api/v1/orgs/${orgSlug}/modules/core-views/views?kind=${encodeURIComponent("inventory:part")}`,
+        `/api/v1/orgs/${orgSlug}/modules/core-views/views?kind=${encodeURIComponent(entityKind)}`,
         { headers: token ? { Authorization: `Bearer ${token}` } : {} },
       );
       if (!res.ok) return { items: [] };
@@ -301,10 +302,16 @@ export function PartsListPage() {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="search parts…"
+            placeholder={`search ${itemNoun === "part" ? "parts" : itemNoun}…`}
             className="input pl-9"
           />
         </div>
+        {/* The generic inventory filters (category / location / state /
+            lifecycle / low-stock / archived / warranty / insured) are
+            base-inventory concepts — noise on a skinned instance (Yarn). Hide
+            them when scoped; search + the saved-view chips are the navigation. */}
+        {!instance && (
+        <>
         <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="input !w-auto">
           <option value="">All categories</option>
           {cats.data?.items.map((c) => (
@@ -377,6 +384,8 @@ export function PartsListPage() {
           />
           insured only
         </label>
+        </>
+        )}
         <div className="ml-auto" />
         <ViewModeToggle mode={viewMode} onChange={setViewMode} />
         <button
@@ -392,11 +401,24 @@ export function PartsListPage() {
         >
           <FileUp size={14} /> Import CSV
         </button>
+        {/* Scan into THIS instance — lands the scanned item in the yarn table
+            (core-scan is always on). The /scan page reads the target params. */}
+        {instance && (
+          <Link
+            to={`/scan?into=${instance}&module=inventory&kind=part&label=${encodeURIComponent(
+              itemNoun.charAt(0).toUpperCase() + itemNoun.slice(1),
+            )}`}
+            className="rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800/70 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
+            title={`Scan a barcode into ${itemNoun}`}
+          >
+            <ScanLine size={14} /> Scan
+          </Link>
+        )}
         <button
           onClick={() => setAdding(true)}
           className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
         >
-          <Plus size={14} /> New part
+          <Plus size={14} /> New {itemNoun}
         </button>
       </div>
 
@@ -404,7 +426,7 @@ export function PartsListPage() {
       {views.length > 0 && (
         <div className="flex items-center gap-1.5 flex-wrap">
           <ViewChip active={!activeView} onClick={() => selectView(null)}>
-            All parts
+            All {itemNoun === "part" ? "parts" : itemNoun}
           </ViewChip>
           {views.map((v) => (
             <ViewChip key={v.id} active={activeView?.id === v.id} onClick={() => selectView(v.id)}>
@@ -421,8 +443,10 @@ export function PartsListPage() {
       {parts.data && partItems.length === 0 && (
         <div className="border-2 border-dashed border-line dark:border-slate-700 rounded-xl p-12 text-center text-faint dark:text-slate-500">
           {activeView
-            ? `Nothing in “${activeView.name}” yet — add your first with New part.`
-            : "No parts match. Try widening the filter or add the first one."}
+            ? `Nothing in “${activeView.name}” yet — add your first with New ${itemNoun}.`
+            : instance
+              ? `No ${itemNoun === "part" ? "parts" : itemNoun} yet — add your first with New ${itemNoun}.`
+              : "No parts match. Try widening the filter or add the first one."}
         </div>
       )}
       {/* Grouped (a view with group_by) → one section per group; else flat. */}
@@ -431,10 +455,11 @@ export function PartsListPage() {
             <div key={g.key} className="space-y-2">
               <h3 className="text-xs font-mono uppercase tracking-widest text-accent">{g.key}</h3>
               {viewMode === "tiles" ? (
-                <PartsTileGrid items={g.rows} />
+                <PartsTileGrid items={g.rows} basePath={basePath} />
               ) : (
                 <PartsTable
                   items={g.rows}
+                  basePath={basePath}
                   customCols={customCols}
                   selected={selected}
                   allChecked={g.rows.every((r) => selected.has(r.id))}
@@ -452,10 +477,11 @@ export function PartsListPage() {
           ))
         : (
           <>
-            {partItems.length > 0 && viewMode === "tiles" && <PartsTileGrid items={partItems} />}
+            {partItems.length > 0 && viewMode === "tiles" && <PartsTileGrid items={partItems} basePath={basePath} />}
             {partItems.length > 0 && viewMode === "list" && (
               <PartsTable
                 items={partItems}
+                basePath={basePath}
                 customCols={customCols}
                 selected={selected}
                 allChecked={allChecked}
@@ -498,7 +524,7 @@ export function PartsListPage() {
       {detailId && (
         <PartDetailModal
           id={detailId}
-          onClose={() => navigate("/inventory")}
+          onClose={() => navigate(basePath)}
         />
       )}
       <BulkActionBar
@@ -604,6 +630,7 @@ function PartsBulkTagModal({
 
 function PartsTable({
   items,
+  basePath,
   customCols,
   selected,
   allChecked,
@@ -611,12 +638,14 @@ function PartsTable({
   onSelectAll,
 }: {
   items: PartListItem[];
+  basePath: string;
   customCols: InvFieldDef[];
   selected: Set<string>;
   allChecked: boolean;
   onToggle: (id: string, checked: boolean) => void;
   onSelectAll: (checked: boolean) => void;
 }) {
+  const navigate = useNavigate();
   const anySupplier = items.some((p) => !!p.supplier_url);
   return (
     <>
@@ -652,8 +681,12 @@ function PartsTable({
         </thead>
         <tbody>
           {items.map((p) => (
-            <tr key={p.id} className="border-t border-line dark:border-slate-700 hover:bg-subtle dark:hover:bg-slate-800/70 transition">
-              <td className="px-3 py-2 w-8">
+            <tr
+              key={p.id}
+              onClick={() => navigate(`${basePath}/parts/${p.id}`)}
+              className="border-t border-line dark:border-slate-700 hover:bg-subtle dark:hover:bg-slate-800/70 transition cursor-pointer"
+            >
+              <td className="px-3 py-2 w-8" onClick={(e) => e.stopPropagation()}>
                 <input
                   type="checkbox"
                   checked={selected.has(p.id)}
@@ -669,7 +702,7 @@ function PartsTable({
                 <div className="flex items-center gap-3">
                   <EntityThumb src={p.image_path} alt={p.name} size={56} />
                   <div className="min-w-0">
-                    <Link to={`/inventory/parts/${p.id}`} className="font-medium text-content dark:text-mortar-100 hover:text-accent">
+                    <Link to={`${basePath}/parts/${p.id}`} className="font-medium text-content dark:text-mortar-100 hover:text-accent">
                       {p.name}
                     </Link>
                     {p.manufacturer && (
@@ -750,12 +783,14 @@ function PartsTable({
         {items.map((p) => (
           <div
             key={p.id}
-            className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3"
+            onClick={() => navigate(`${basePath}/parts/${p.id}`)}
+            className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 cursor-pointer hover:border-cobble-300 dark:hover:border-cobble-700 transition"
           >
             <div className="flex items-start gap-3">
               <input
                 type="checkbox"
                 checked={selected.has(p.id)}
+                onClick={(e) => e.stopPropagation()}
                 onChange={(e) => onToggle(p.id, e.target.checked)}
                 className="accent-cobble-600 mt-1 shrink-0"
                 aria-label={`Select ${p.name}`}
@@ -763,7 +798,7 @@ function PartsTable({
               <EntityThumb src={p.image_path} alt={p.name} size={48} />
               <div className="flex-1 min-w-0">
                 <Link
-                  to={`/inventory/parts/${p.id}`}
+                  to={`${basePath}/parts/${p.id}`}
                   className="font-medium text-content dark:text-mortar-100 hover:text-accent"
                 >
                   {p.name}
@@ -853,11 +888,11 @@ function groupItems(items: PartListItem[], key: string): { key: string; rows: Pa
     .map(([k, rows]) => ({ key: k, rows }));
 }
 
-function PartsTileGrid({ items }: { items: PartListItem[] }) {
+function PartsTileGrid({ items, basePath }: { items: PartListItem[]; basePath: string }) {
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
       {items.map((p) => (
-        <Link key={p.id} to={`/inventory/parts/${p.id}`} className="block">
+        <Link key={p.id} to={`${basePath}/parts/${p.id}`} className="block">
           <EntityTile
             src={p.image_path}
             title={p.name}

@@ -8,9 +8,10 @@
 
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Camera, Star, Trash2, Upload, X } from "lucide-react";
+import { Camera, Scissors, Star, Trash2, Upload, X } from "lucide-react";
 import { useConfirm, useToast } from "@cobblr/platform-web";
 import { useInventory } from "./context";
+import { cutoutPlainBackground } from "./remove-background";
 
 interface AttachmentRow {
   id: string;
@@ -100,6 +101,41 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
       void qc.invalidateQueries({ queryKey: ["part-gallery", orgSlug, partId] });
     },
   });
+
+  // Background removal — fetch the photo, knock out a plain background
+  // (zero-dep canvas chroma key), upload the transparent PNG as a new gallery
+  // photo, and make it the cover. Great for garment/product shots on white.
+  const [cutting, setCutting] = useState<string | null>(null);
+  async function handleCutout(att: AttachmentRow) {
+    setCutting(att.id);
+    try {
+      const r = await fetch(fullUrl(att.file_id), { headers: auth() });
+      const blob = await r.blob();
+      const out = await cutoutPlainBackground(blob);
+      if (!out) {
+        toast.error("No plain background to cut out — works best on a photo over a plain backdrop.");
+        return;
+      }
+      const fd = new FormData();
+      fd.append("file", new File([out], (att.filename.replace(/\.\w+$/, "") || "cutout") + "-cutout.png", { type: "image/png" }));
+      const ures = await fetch(`${base}/files`, { method: "POST", headers: auth(), body: fd });
+      if (!ures.ok) throw new Error(`upload ${ures.status}`);
+      const f = (await ures.json()) as { id: string };
+      const ares = await fetch(`${base}/attachments`, {
+        method: "POST",
+        headers: { ...auth(), "Content-Type": "application/json" },
+        body: JSON.stringify({ file_id: f.id, source_module: "inventory", source_type: "part", source_id: partId, role: "gallery" }),
+      });
+      if (!ares.ok) throw new Error(`attach ${ares.status}`);
+      onSetCover(fullUrl(f.id));
+      toast.success("Background removed — cut-out set as the cover.");
+      void qc.invalidateQueries({ queryKey: ["part-gallery", orgSlug, partId] });
+    } catch (e) {
+      toast.error(`Cut-out failed: ${(e as Error).message}`);
+    } finally {
+      setCutting(null);
+    }
+  }
 
   async function handleFiles(files: FileList | null) {
     if (!files) return;
@@ -218,6 +254,16 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
                       <Star size={10} /> cover
                     </button>
                   )}
+                  <button
+                    type="button"
+                    onClick={() => void handleCutout(att)}
+                    disabled={cutting === att.id}
+                    className="text-[10px] text-white/90 hover:text-white inline-flex items-center gap-0.5 disabled:opacity-60"
+                    title="Remove background (cut out the item)"
+                  >
+                    <Scissors size={10} className={cutting === att.id ? "animate-pulse" : ""} />
+                    {cutting === att.id ? "…" : "cut out"}
+                  </button>
                   <button
                     type="button"
                     onClick={async () => {

@@ -3,7 +3,7 @@
 // preview) lives in ../lib/wire-composer; this is the UI shell.
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
+import { Plus, Check } from "lucide-react";
 import { useToast } from "@cobblr/platform-web";
 import { ApiError, api, type PlatformBinding } from "../lib/api";
 import {
@@ -11,6 +11,7 @@ import {
   WEEKDAYS,
   DEFAULT_RECURRENCE,
   buildRRule,
+  parseRRule,
   describeWire,
   insertToken,
   type TriggerType,
@@ -20,26 +21,46 @@ import {
 
 const L = "block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
 
-export function WireComposer({ slug, onCreated }: { slug: string; onCreated: () => void }) {
+// `editing` switches the composer to edit-an-existing-wire mode: state prefills
+// from the binding and Save PATCHes it (preserving id + firing history) instead
+// of creating a new one. Mount with key={wire.id} so the prefill re-runs per wire.
+export function WireComposer({
+  slug,
+  onCreated,
+  editing,
+  onCancel,
+}: {
+  slug: string;
+  onCreated: () => void;
+  editing?: PlatformBinding | null;
+  onCancel?: () => void;
+}) {
   const qc = useQueryClient();
   const toast = useToast();
+  const ed = editing ?? null;
 
   const kinds = useQuery({ queryKey: ["entity-kinds", slug], queryFn: () => api.listEntityKinds(slug), enabled: !!slug });
   const wireEvents = useQuery({ queryKey: ["wire-events", slug], queryFn: () => api.listWireEvents(slug), enabled: !!slug });
 
-  const [triggerType, setTriggerType] = useState<TriggerType>("on-create");
-  const [triggerEvent, setTriggerEvent] = useState("");
-  const [recurrence, setRecurrence] = useState<Recurrence>(DEFAULT_RECURRENCE);
-  const [sourceKind, setSourceKind] = useState("");
-  const [actionId, setActionId] = useState("");
-  const [template, setTemplate] = useState("");
-  const [target, setTarget] = useState<WireTarget>("self");
-  const [showTarget, setShowTarget] = useState(false);
+  const [triggerType, setTriggerType] = useState<TriggerType>(ed?.trigger_type ?? "on-create");
+  const [triggerEvent, setTriggerEvent] = useState(ed?.trigger_event ?? "");
+  const [recurrence, setRecurrence] = useState<Recurrence>(
+    ed?.trigger_schedule ? parseRRule(ed.trigger_schedule) : DEFAULT_RECURRENCE,
+  );
+  const [sourceKind, setSourceKind] = useState(ed?.source_kind ?? "");
+  const [actionId, setActionId] = useState(ed?.action_id ?? "");
+  const [template, setTemplate] = useState(ed?.template ?? "");
+  const [target, setTarget] = useState<WireTarget>(ed?.target && ed.target !== "self" ? ed.target : "self");
+  const [showTarget, setShowTarget] = useState(!!(ed?.target && ed.target !== "self"));
   const [err, setErr] = useState<string | null>(null);
   // Structured action args (per the action's argsSchema): each value is a
   // literal or a {{token}}. The field picker inserts into whichever field
   // (an arg input or the template) is focused.
-  const [args, setArgs] = useState<Record<string, string>>({});
+  const [args, setArgs] = useState<Record<string, string>>(
+    ed?.args && typeof ed.args === "object"
+      ? Object.fromEntries(Object.entries(ed.args as Record<string, unknown>).map(([k, v]) => [k, String(v)]))
+      : {},
+  );
   const activeRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
   const activeField = useRef<string>("__template__"); // "__template__" or an arg name
   const templateRef = useRef<HTMLTextAreaElement>(null);
@@ -81,30 +102,38 @@ export function WireComposer({ slug, onCreated }: { slug: string; onCreated: () 
   };
 
   const create = useMutation({
-    mutationFn: () =>
-      api.createBinding(slug, {
+    mutationFn: () => {
+      const payload = {
         source_kind: sourceKind,
         action_id: actionId,
         trigger_type: triggerType,
         trigger_event: triggerType === "event" ? triggerEvent || null : null,
         trigger_schedule: triggerType === "schedule" ? buildRRule(recurrence) : null,
         template: template.trim() || null,
-        args: filledArgs(),
+        // null (not undefined) so editing CLEARS removed args/target, not "leave as-is".
+        args: filledArgs() ?? null,
         target: target === "self" ? "self" : target,
-      } as Partial<PlatformBinding>),
+      } as Partial<PlatformBinding>;
+      return ed ? api.updateBinding(slug, ed.id, payload) : api.createBinding(slug, payload);
+    },
     onSuccess: () => {
-      toast.success("Wire created.");
+      toast.success(ed ? "Wire updated." : "Wire created.");
       void qc.invalidateQueries({ queryKey: ["bindings", slug] });
+      setErr(null);
+      if (ed) {
+        onCreated();
+        onCancel?.();
+        return;
+      }
       setActionId("");
       setArgs({});
       setTriggerEvent("");
       setTemplate("");
       setTarget("self");
       setShowTarget(false);
-      setErr(null);
       onCreated();
     },
-    onError: (e: unknown) => setErr(e instanceof ApiError ? e.message : "Couldn't create"),
+    onError: (e: unknown) => setErr(e instanceof ApiError ? e.message : ed ? "Couldn't save" : "Couldn't create"),
   });
 
   const ready =
@@ -121,7 +150,7 @@ export function WireComposer({ slug, onCreated }: { slug: string; onCreated: () 
       }}
       className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-4"
     >
-      <div className="text-[10px] font-mono uppercase tracking-widest text-accent">// new wire</div>
+      <div className="text-[10px] font-mono uppercase tracking-widest text-accent">{ed ? "// edit wire" : "// new wire"}</div>
 
       {/* live plain-language preview */}
       <div className="rounded-lg bg-subtle dark:bg-slate-800/70 px-3 py-2 text-sm text-content dark:text-mortar-100">
@@ -292,13 +321,24 @@ export function WireComposer({ slug, onCreated }: { slug: string; onCreated: () 
       </div>
 
       {err && <div className="text-xs text-ember-500">{err}</div>}
-      <button
-        type="submit"
-        disabled={!ready || create.isPending}
-        className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition disabled:opacity-50 flex items-center gap-1.5"
-      >
-        <Plus size={14} /> Create wire
-      </button>
+      <div className="flex items-center gap-2">
+        <button
+          type="submit"
+          disabled={!ready || create.isPending}
+          className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition disabled:opacity-50 flex items-center gap-1.5"
+        >
+          {ed ? <Check size={14} /> : <Plus size={14} />} {ed ? (create.isPending ? "Saving…" : "Save changes") : "Create wire"}
+        </button>
+        {ed && onCancel && (
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-md border border-line dark:border-slate-600 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 text-sm font-medium px-3 py-2 transition"
+          >
+            Cancel
+          </button>
+        )}
+      </div>
     </form>
   );
 }

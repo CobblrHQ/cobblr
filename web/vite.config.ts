@@ -53,6 +53,14 @@ export default defineConfig({
           // eager `vendor` bundle so Rollup leaves it in the dynamic
           // chunk — it loads only when an STL is actually previewed.
           if (id.includes("node_modules/three")) return undefined;
+          // @zxing (the camera-scan compatibility decoder) is reached ONLY
+          // via the lazy `import("@zxing/browser")` on /scan/camera when the
+          // native BarcodeDetector is absent (older iOS Safari). It's a
+          // UMD-style bundle whose top-level `exports` assignment crashes the
+          // SPA if pulled into the EAGER vendor chunk (same failure mode as
+          // the @xyflow incident). Return undefined so Rollup keeps it in the
+          // dynamic chunk — it loads only when the fallback actually runs.
+          if (id.includes("node_modules/@zxing")) return undefined;
           // Everything else from node_modules goes into a generic
           // vendor bundle.
           return "vendor";

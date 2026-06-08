@@ -7,9 +7,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type PlatformBinding } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ChevronRight } from "lucide-react";
-import { useToast, usePageTitle } from "@cobblr/platform-web";
+import { Modal, useToast, usePageTitle } from "@cobblr/platform-web";
 import { WireDetailModal } from "../components/WireDetailModal";
 import { WireComposer } from "../components/WireComposer";
+import { WireGraph } from "../components/WireGraph";
+import { ErrorBoundary } from "../components/ErrorBoundary";
 
 export function BindingsPage() {
   usePageTitle("Wires");
@@ -17,6 +19,8 @@ export function BindingsPage() {
   const qc = useQueryClient();
   const toast = useToast();
   const [selected, setSelected] = useState<PlatformBinding | null>(null);
+  const [editing, setEditing] = useState<PlatformBinding | null>(null);
+  const [view, setView] = useState<"list" | "graph">("list");
   const bindings = useQuery({
     queryKey: ["bindings", slug],
     queryFn: () => api.listBindings(slug),
@@ -45,14 +49,36 @@ export function BindingsPage() {
       <WireComposer slug={slug} onCreated={() => {}} />
 
       <div>
-        <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
-          // existing wires
+        <div className="flex items-center gap-3 mb-2">
+          <div className="text-[10px] font-mono uppercase tracking-widest text-accent">// existing wires</div>
+          <div className="flex items-center gap-0.5 text-[10px] font-mono">
+            {(["list", "graph"] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => setView(v)}
+                className={
+                  "px-1.5 py-0.5 rounded transition " +
+                  (view === v
+                    ? "bg-cobble-100 text-accent dark:bg-cobble-700 dark:text-mortar-100"
+                    : "text-faint hover:text-accent")
+                }
+              >
+                {v}
+              </button>
+            ))}
+          </div>
         </div>
         {bindings.isLoading && <div className="text-xs text-faint">loading…</div>}
         {bindings.data?.items.length === 0 && (
           <div className="text-xs text-faint dark:text-slate-500 italic">No wires yet.</div>
         )}
-        <ul className="space-y-2">
+        {view === "graph" && bindings.data && (
+          <ErrorBoundary scope="graph">
+            <WireGraph bindings={bindings.data.items} onSelect={(b) => setSelected(b)} />
+          </ErrorBoundary>
+        )}
+        <ul className={"space-y-2 " + (view === "graph" ? "hidden" : "")}>
           {bindings.data?.items.map((b) => (
             <li key={b.id}>
               <button
@@ -103,7 +129,27 @@ export function BindingsPage() {
 
       <WireFiringsPanel slug={slug} />
 
-      <WireDetailModal open={!!selected} onClose={() => setSelected(null)} slug={slug} binding={selected} />
+      <WireDetailModal
+        open={!!selected}
+        onClose={() => setSelected(null)}
+        slug={slug}
+        binding={selected}
+        onEdit={(b) => setEditing(b)}
+      />
+
+      {/* Full-edit composer (re-point source/action/trigger/args). key forces a
+          fresh prefill per wire. */}
+      <Modal open={!!editing} onClose={() => setEditing(null)} title="edit wire" size="lg">
+        {editing && (
+          <WireComposer
+            key={editing.id}
+            slug={slug}
+            editing={editing}
+            onCancel={() => setEditing(null)}
+            onCreated={() => void qc.invalidateQueries({ queryKey: ["bindings", slug] })}
+          />
+        )}
+      </Modal>
     </div>
   );
 }

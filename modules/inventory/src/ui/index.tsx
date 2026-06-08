@@ -35,11 +35,15 @@ interface InventoryUIProps {
   /** Heading to show (the instance's display label). Default
    *  "inventory" = the default instance. */
   displayName?: string;
+  /** Singular noun for the add button + create modal ("yarn" → "New yarn"). */
+  itemNoun?: string;
+  /** Default unit for new items (e.g. "skein"). */
+  qtyUnit?: string;
 }
 
-export function InventoryUI({ orgSlug, getToken, instance, displayName }: InventoryUIProps) {
+export function InventoryUI({ orgSlug, getToken, instance, displayName, itemNoun, qtyUnit }: InventoryUIProps) {
   return (
-    <InventoryProvider orgSlug={orgSlug} getToken={getToken} instance={instance}>
+    <InventoryProvider orgSlug={orgSlug} getToken={getToken} instance={instance} itemNoun={itemNoun} qtyUnit={qtyUnit}>
       <div className="space-y-4">
         <Header title={displayName ?? "inventory"} scoped={!!instance} />
         <Routes>
@@ -49,6 +53,15 @@ export function InventoryUI({ orgSlug, getToken, instance, displayName }: Invent
           <Route index element={<PartsListPage />} />
           <Route path="parts/:id" element={<PartsListPage />} />
           <Route path="settings" element={<SettingsPage />} />
+          {/* Bundle setup-cards / next-steps deep-link to
+              /instances/<name>/items (mirroring the API path
+              /orgs/:slug/instances/:name/items). That UI path had no
+              matching route, so it rendered the Header + a blank below.
+              Map it — and any other stray instance sub-path — to the
+              list so a deep-link never dead-ends on a blank page. */}
+          <Route path="items" element={<PartsListPage />} />
+          <Route path="items/:id" element={<PartsListPage />} />
+          <Route path="*" element={<PartsListPage />} />
         </Routes>
       </div>
     </InventoryProvider>
@@ -63,13 +76,13 @@ function Header({ title, scoped }: { title: string; scoped: boolean }) {
       <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
         {title}
       </h1>
+      {/* The default inventory page reads "// parts // settings". On a skinned
+          instance (Yarn) "parts" is the wrong noun, but settings still has to be
+          reachable — it's where you edit a list's dropdown options (otherwise
+          there's no findable "config area"). So keep a settings link either way. */}
       <nav className="flex gap-3 text-xs font-mono">
-        <NavLink to="." end className={cls}>// parts</NavLink>
-        {/* Settings (categories) live in the default instance — only
-            expose them on the default inventory page. */}
-        {!scoped && (
-          <NavLink to="settings" className={cls}>// settings</NavLink>
-        )}
+        <NavLink to="." end className={cls}>{scoped ? "// list" : "// parts"}</NavLink>
+        <NavLink to="settings" className={cls}>// settings</NavLink>
       </nav>
     </div>
   );

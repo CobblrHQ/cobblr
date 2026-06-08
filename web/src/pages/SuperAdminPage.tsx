@@ -28,9 +28,17 @@ import {
   UserPlus,
   Copy,
   Trash2,
+  MessageSquare,
+  Megaphone,
 } from "lucide-react";
 import { useConfirm, usePageTitle, useToast, Modal } from "@cobblr/platform-web";
-import { ApiError, api, type SignupInvite, type SuperAdminAiActivityItem } from "../lib/api";
+import {
+  ApiError,
+  api,
+  type SignupInvite,
+  type SuperAdminAiActivityItem,
+  type FeedbackItem,
+} from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 
 type Tab =
@@ -38,6 +46,8 @@ type Tab =
   | "workspaces"
   | "users"
   | "invites"
+  | "feedback"
+  | "announce"
   | "modules"
   | "marketplace"
   | "activity"
@@ -49,6 +59,8 @@ const TABS: Array<{ id: Tab; label: string; icon: typeof Server }> = [
   { id: "workspaces", label: "Workspaces", icon: LayoutGrid },
   { id: "users", label: "Users", icon: Users },
   { id: "invites", label: "Invites", icon: UserPlus },
+  { id: "feedback", label: "Feedback", icon: MessageSquare },
+  { id: "announce", label: "Announcements", icon: Megaphone },
   { id: "modules", label: "Modules", icon: Boxes },
   { id: "marketplace", label: "Marketplace", icon: ShoppingBag },
   { id: "activity", label: "Activity", icon: Activity },
@@ -114,6 +126,8 @@ export function SuperAdminPage() {
       {tab === "workspaces" && <WorkspacesTab />}
       {tab === "users" && <UsersTab />}
       {tab === "invites" && <InvitesTab />}
+      {tab === "feedback" && <FeedbackTab />}
+      {tab === "announce" && <AnnouncementsTab />}
       {tab === "modules" && <ModulesTab />}
       {tab === "marketplace" && <MarketplaceTab />}
       {tab === "activity" && <ActivityTab />}
@@ -990,5 +1004,236 @@ function AiActivityDetailModal({ item, onClose }: { item: SuperAdminAiActivityIt
         )}
       </div>
     </Modal>
+  );
+}
+
+// Announcements → Discord. Per-category toggles so noteworthy platform events
+// (new/resolved feedback, bundle releases, feature updates) post to a channel —
+// each silenceable (e.g. to avoid doubling a separate commit feed).
+function AnnouncementsTab() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const q = useQuery({
+    queryKey: ["sa-announce"],
+    queryFn: () => api.listAnnounceSettings(),
+  });
+  const update = useMutation({
+    mutationFn: ({ key, body }: { key: string; body: { enabled?: boolean; webhook_url?: string | null } }) =>
+      api.setAnnounceSetting(key, body),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["sa-announce"] }),
+    onError: () => toast.error("Couldn't update."),
+  });
+  const items = q.data?.items ?? [];
+  const noDefault = items.length > 0 && !items[0]!.default_channel_set;
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-content dark:text-mortar-200">
+        Post noteworthy platform events to Discord. Each category is independently
+        toggleable — silence one if it doubles up with another feed. A category
+        with no channel override uses the default{" "}
+        <code className="font-mono text-xs">COBBLR_FEEDBACK_DISCORD_WEBHOOK</code>.
+      </p>
+      {noDefault && (
+        <div className="text-xs text-ember-500">
+          No default Discord channel is set (COBBLR_FEEDBACK_DISCORD_WEBHOOK). Set
+          it, or give each enabled category its own webhook below, or nothing posts.
+        </div>
+      )}
+      {q.isLoading && <div className="text-sm text-faint">loading…</div>}
+      <ul className="space-y-2">
+        {items.map((a) => (
+          <li
+            key={a.key}
+            className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 flex items-start gap-3"
+          >
+            <label className="relative inline-flex items-center cursor-pointer mt-0.5 shrink-0">
+              <input
+                type="checkbox"
+                className="sr-only peer"
+                checked={a.enabled}
+                onChange={(e) => update.mutate({ key: a.key, body: { enabled: e.target.checked } })}
+              />
+              <span className="w-9 h-5 rounded-full bg-line dark:bg-slate-700 peer-checked:bg-cobble-600 transition relative after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:rounded-full after:bg-white after:transition peer-checked:after:translate-x-4" />
+            </label>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium text-content dark:text-mortar-100">
+                {a.label}{" "}
+                <span className="font-mono text-[10px] text-faint">{a.key}</span>
+              </div>
+              <div className="text-xs text-muted dark:text-slate-400">{a.description}</div>
+              <input
+                defaultValue={a.webhook_url ?? ""}
+                placeholder="channel webhook override (blank = default channel)"
+                onBlur={(e) => {
+                  const v = e.target.value.trim();
+                  if (v === (a.webhook_url ?? "")) return;
+                  update.mutate({ key: a.key, body: { webhook_url: v || null } });
+                }}
+                className="mt-1.5 w-full text-xs font-mono rounded border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800/70 px-2 py-1 text-content dark:text-mortar-200"
+              />
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+const FEEDBACK_STATUSES = ["new", "triaged", "in_progress", "resolved", "wontfix"] as const;
+
+// Feedback triage queue — what users submit via the FeedbackWidget lands here.
+function FeedbackTab() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [filter, setFilter] = useState<string>("new");
+  const q = useQuery({
+    queryKey: ["sa-feedback", filter],
+    queryFn: () => api.listFeedback(filter === "all" ? undefined : filter),
+  });
+  const update = useMutation({
+    mutationFn: ({
+      id,
+      body,
+    }: {
+      id: string;
+      body: {
+        status?: string;
+        admin_notes?: string | null;
+        notify_reporter?: boolean;
+        reply_message?: string;
+      };
+    }) => api.updateFeedback(id, body),
+    onSuccess: (res, vars) => {
+      void qc.invalidateQueries({ queryKey: ["sa-feedback"] });
+      if (vars.body.notify_reporter) {
+        toast[res.notified ? "success" : "error"](
+          res.notified ? "Reporter notified." : "Couldn't notify — reporter has no workspace.",
+        );
+      }
+    },
+    onError: () => toast.error("Update failed."),
+  });
+  const items = q.data?.items ?? [];
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-1 text-xs font-mono">
+        {(["all", ...FEEDBACK_STATUSES] as const).map((s) => (
+          <button
+            key={s}
+            type="button"
+            onClick={() => setFilter(s)}
+            className={
+              "px-2 py-1 rounded transition " +
+              (filter === s
+                ? "bg-cobble-100 text-accent dark:bg-cobble-700 dark:text-mortar-100"
+                : "text-faint hover:text-accent")
+            }
+          >
+            {s}
+          </button>
+        ))}
+      </div>
+      {q.isLoading && <div className="text-xs text-faint">loading…</div>}
+      {items.length === 0 && !q.isLoading && (
+        <div className="text-xs text-faint dark:text-slate-500 italic">
+          No feedback{filter !== "all" ? ` with status "${filter}"` : " yet"}.
+        </div>
+      )}
+      <ul className="space-y-3">
+        {items.map((f) => (
+          <FeedbackCard key={f.id} f={f} onUpdate={(body) => update.mutate({ id: f.id, body })} />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function FeedbackCard({
+  f,
+  onUpdate,
+}: {
+  f: FeedbackItem;
+  onUpdate: (body: {
+    status?: string;
+    admin_notes?: string | null;
+    notify_reporter?: boolean;
+    reply_message?: string;
+  }) => void;
+}) {
+  const [notes, setNotes] = useState(f.admin_notes ?? "");
+  const [reply, setReply] = useState("");
+  const ctx = (f.context ?? {}) as { url?: string; route?: string };
+  const emoji = f.type === "bug" ? "🐛" : f.type === "confusing" ? "😕" : f.type === "idea" ? "💡" : "•";
+  return (
+    <li className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 text-sm space-y-2">
+      <div className="flex items-center gap-2 flex-wrap text-xs">
+        <span>
+          {emoji} <span className="font-mono uppercase text-accent">{f.type}</span>
+        </span>
+        <span className="text-faint dark:text-slate-500">{f.user_name || f.user_email || "?"}</span>
+        {f.workspace_slug && (
+          <span className="text-faint dark:text-slate-500">· {f.workspace_name || f.workspace_slug}</span>
+        )}
+        <span className="text-faint dark:text-slate-500">· {new Date(f.created_at).toLocaleString()}</span>
+        <div className="flex-1" />
+        <select
+          value={f.status}
+          onChange={(e) => onUpdate({ status: e.target.value })}
+          className="text-xs rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-1 py-0.5"
+        >
+          {FEEDBACK_STATUSES.map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="text-content dark:text-mortar-100 whitespace-pre-wrap">{f.message}</div>
+      {ctx.route && (
+        <div className="text-[10px] font-mono text-faint dark:text-slate-500 break-all">@ {ctx.route}</div>
+      )}
+      <div className="flex items-end gap-2">
+        <textarea
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          rows={1}
+          placeholder="triage notes…"
+          className="flex-1 text-xs rounded border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800/70 px-2 py-1 text-content dark:text-mortar-200"
+        />
+        <button
+          type="button"
+          onClick={() => onUpdate({ admin_notes: notes })}
+          className="text-xs px-2 py-1 rounded bg-cobble-600 hover:bg-cobble-700 text-white"
+        >
+          save note
+        </button>
+      </div>
+      {/* Close the loop with the reporter — sends them an in-app notification
+          ("we fixed it" / "we're looking into it"). Empty reply = a default
+          keyed off the current status. */}
+      <div className="flex items-end gap-2 border-t border-line/60 dark:border-slate-800 pt-2">
+        <input
+          value={reply}
+          onChange={(e) => setReply(e.target.value)}
+          placeholder={`reply to ${f.user_name || f.user_email || "the reporter"} (in-app)…`}
+          className="flex-1 text-xs rounded border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800/70 px-2 py-1 text-content dark:text-mortar-200"
+        />
+        <button
+          type="button"
+          onClick={() => {
+            onUpdate({
+              notify_reporter: true,
+              reply_message: reply.trim() || undefined,
+              status: f.status,
+            });
+            setReply("");
+          }}
+          className="text-xs px-2 py-1 rounded bg-violet-600 hover:bg-violet-700 text-white whitespace-nowrap"
+          title="Send the reporter an in-app notification. Uses your reply, or a default based on the current status."
+        >
+          notify reporter
+        </button>
+      </div>
+    </li>
   );
 }

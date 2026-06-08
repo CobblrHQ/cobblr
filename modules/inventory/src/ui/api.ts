@@ -19,6 +19,8 @@ export interface InvFieldDef {
   position: number;
   choices?: string[] | null;
   renderer?: string | null;
+  /** Plain-language one-line hint shown under the input. */
+  help?: string | null;
 }
 
 export interface Category {
@@ -233,6 +235,13 @@ export class InventoryApi {
   listFieldDefs = (kind: string) => this.requestAbs<{ items: InvFieldDef[] }>(
     "GET",
     `/api/v1/orgs/${this.slug}/field-defs?kind=${encodeURIComponent(kind)}`,
+  );
+  /** Patch a field def — used to add a new option to a `choices` dropdown on
+   *  the fly (e.g. a vendor not yet in the list). */
+  updateFieldDef = (id: string, b: { choices?: string[] }) => this.requestAbs<InvFieldDef>(
+    "PATCH",
+    `/api/v1/orgs/${this.slug}/field-defs/${id}`,
+    b,
   );
   createLocation = (b: {
     name: string;

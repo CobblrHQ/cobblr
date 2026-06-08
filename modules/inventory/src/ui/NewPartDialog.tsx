@@ -7,9 +7,9 @@
 // `matches → core-catalogs:entry` pairing is written after create so
 // the rest of the app can hydrate matched-entry data into the row.
 
-import { useState, type FormEvent } from "react";
+import { useState, type FormEvent, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CatalogTypeahead,
   Modal,
@@ -17,7 +17,7 @@ import {
 } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { useFieldPresentation } from "./useFieldPresentation";
-import { InventoryApiError } from "./api";
+import { InventoryApiError, type InvFieldDef } from "./api";
 
 interface NewPartDialogProps {
   onClose: (created: boolean) => void;
@@ -29,20 +29,34 @@ interface NewPartDialogProps {
 }
 
 export function NewPartDialog({ onClose, onCreated }: NewPartDialogProps) {
-  const { api } = useInventory();
-  // Native-field presentation: a bundle/config can relabel + hide these on the
-  // create form too (no-op until an override exists). Matches PartDetailPage.
-  const fp = useFieldPresentation("inventory:part");
+  const { api, instance, entityKind, itemNoun, qtyUnit, basePath, orgSlug } = useInventory();
+  // Native-field presentation: a bundle/config relabels + hides natives on the
+  // create form too (the Yarn instance hides category/location/etc.). Scoped to
+  // the instance kind so each instance's create form shows only its fields.
+  const fp = useFieldPresentation(entityKind);
   const navigate = useNavigate();
   const cats = useQuery({ queryKey: ["inventory-categories"], queryFn: () => api.listCategories() });
   const locs = useQuery({ queryKey: ["inventory-locations"], queryFn: () => api.listLocations() });
+  // The instance's custom fields (yarn: colour, fibre, weight, …) — promoted
+  // INTO the create form so the user fills them at creation, not after.
+  const fieldDefs = useQuery({
+    queryKey: ["platform-field-defs", orgSlug, entityKind],
+    queryFn: () => api.listFieldDefs(entityKind),
+    staleTime: 60_000,
+  });
+  const customFields = (fieldDefs.data?.items ?? [])
+    .filter((d) => d.type !== "computed")
+    .sort((a, b) => a.position - b.position);
 
   const [matched, setMatched] = useState<CatalogTypeaheadHit | null>(null);
   const [name, setName] = useState("");
   const [qty, setQty] = useState("1");
-  const [unit, setUnit] = useState("each");
+  const [unit, setUnit] = useState(qtyUnit ?? "each");
   const [categoryId, setCategoryId] = useState("");
   const [locationId, setLocationId] = useState("");
+  const [manufacturer, setManufacturer] = useState("");
+  const [cost, setCost] = useState("");
+  const [meta, setMeta] = useState<Record<string, unknown>>({});
   const [printLabel, setPrintLabel] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -103,6 +117,13 @@ export function NewPartDialog({ onClose, onCreated }: NewPartDialogProps) {
         unit: unit.trim() || "each",
         category_id: categoryId || null,
         location_id: locationId || null,
+        manufacturer: manufacturer.trim() || null,
+        // `cost` is number-or-omitted on the server (not nullable) — only
+        // send it when the user typed one, else leave it off entirely.
+        ...(cost.trim() === "" ? {} : { cost: Number(cost) }),
+        // The instance's custom fields (colour, fibre, weight, …) filled in
+        // the form go straight onto the new item.
+        ...(Object.keys(meta).length ? { metadata: meta } : {}),
         // Stamp the matched catalog's image so the list row shows it
         // immediately. (Hydration would still find it via the pairing,
         // but this avoids the join cost on every list render.)
@@ -134,7 +155,7 @@ export function NewPartDialog({ onClose, onCreated }: NewPartDialogProps) {
       if (onCreated) {
         onCreated(part.id);
       } else {
-        navigate(`/inventory/parts/${part.id}`);
+        navigate(`${basePath}/parts/${part.id}`);
       }
     } catch (err) {
       setError(err instanceof InventoryApiError ? err.message : "Couldn't create part");
@@ -144,23 +165,27 @@ export function NewPartDialog({ onClose, onCreated }: NewPartDialogProps) {
   }
 
   return (
-    <Modal open onClose={() => onClose(false)} title="new part" size="sm">
+    <Modal open onClose={() => onClose(false)} title={`new ${itemNoun}`} size="sm">
       <form onSubmit={submit} className="space-y-3">
-        <Field label="Match to a catalog (optional)">
-          <CatalogTypeahead
-            selected={matched}
-            onSelect={handleMatch}
-            search={(q) => api.searchCatalogs(q)}
-            placeholder="Search a catalog…"
-          />
-        </Field>
+        {/* Catalog matching is for the base inventory (Lego/BrickLink etc.) —
+            irrelevant noise on a skinned instance, so hide it when scoped. */}
+        {!instance && (
+          <Field label="Match to a catalog (optional)">
+            <CatalogTypeahead
+              selected={matched}
+              onSelect={handleMatch}
+              search={(q) => api.searchCatalogs(q)}
+              placeholder="Search a catalog…"
+            />
+          </Field>
+        )}
         <Field label="Name">
           <input
             autoFocus
             required
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder={matched ? matched.title : "Name this item"}
+            placeholder={matched ? matched.title : `Name this ${itemNoun}`}
             className="input"
           />
         </Field>
@@ -187,27 +212,71 @@ export function NewPartDialog({ onClose, onCreated }: NewPartDialogProps) {
             </Field>
           )}
         </div>
-        <Field label="Category">
-          <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="input">
-            <option value="">— none —</option>
-            {cats.data?.items.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Location">
-          <select value={locationId} onChange={(e) => setLocationId(e.target.value)} className="input">
-            <option value="">— none —</option>
-            {locs.data?.items.map((l) => (
-              <option key={l.id} value={l.id}>
-                {"  ".repeat(l.depth)}
-                {l.name}
-              </option>
-            ))}
-          </select>
-        </Field>
+        {/* The instance's own fields, promoted into create (the whole point of a
+            skinned instance — fill yarn fields here, not after). */}
+        {customFields.map((f) => (
+          <CustomFieldInput
+            key={f.id}
+            def={f}
+            value={meta[f.name]}
+            entityKind={entityKind}
+            onChange={(v) => setMeta((m) => ({ ...m, [f.name]: v }))}
+          />
+        ))}
+        {/* Brand + Price — natives that belong on the first create modal,
+            not buried in the full-size editor. Relabelled per instance via fp
+            (Yarn: "Brand" / "Price"); an instance can still hide either. */}
+        {(!fp.hidden("manufacturer") || !fp.hidden("cost")) && (
+          <div className="grid grid-cols-2 gap-2">
+            {!fp.hidden("manufacturer") && (
+              <Field label={fp.label("manufacturer", "Brand")}>
+                <input
+                  value={manufacturer}
+                  onChange={(e) => setManufacturer(e.target.value)}
+                  className="input"
+                />
+              </Field>
+            )}
+            {!fp.hidden("cost") && (
+              <Field label={fp.label("cost", "Price")}>
+                <input
+                  type="number"
+                  step="any"
+                  min="0"
+                  inputMode="decimal"
+                  value={cost}
+                  onChange={(e) => setCost(e.target.value)}
+                  className="input"
+                />
+              </Field>
+            )}
+          </div>
+        )}
+        {!fp.hidden("category") && (
+          <Field label={fp.label("category", "Category")}>
+            <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="input">
+              <option value="">— none —</option>
+              {cats.data?.items.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
+        {!fp.hidden("location") && (
+          <Field label={fp.label("location", "Location")}>
+            <select value={locationId} onChange={(e) => setLocationId(e.target.value)} className="input">
+              <option value="">— none —</option>
+              {locs.data?.items.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {"  ".repeat(l.depth)}
+                  {l.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
         <label className="flex items-center gap-2 text-xs text-content dark:text-mortar-200 cursor-pointer pt-1">
           <input
             type="checkbox"
@@ -249,5 +318,200 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       </span>
       {children}
     </label>
+  );
+}
+
+/** Renders one custom-field input on the create form, by the field def's type:
+ *  a colour-swatch picker for `color-hex`, an add-as-you-go dropdown for
+ *  `choices`, then number/date/checkbox/text. */
+function CustomFieldInput({
+  def,
+  value,
+  onChange,
+  entityKind,
+}: {
+  def: InvFieldDef;
+  value: unknown;
+  onChange: (v: unknown) => void;
+  entityKind: string;
+}) {
+  const s = value == null ? "" : String(value);
+  const help = def.help ? (
+    <p className="text-[11px] text-faint dark:text-slate-500 leading-snug mt-1">{def.help}</p>
+  ) : null;
+
+  // Colour: a real swatch picker (type a hex/name OR pick from the OS picker).
+  if (def.renderer === "color-hex") {
+    const t = s.trim();
+    const swatch = /^#?[0-9a-fA-F]{6}$/.test(t) ? (t[0] === "#" ? t : `#${t}`) : "#cccccc";
+    return (
+      <Field label={def.display_label}>
+        <div className="flex items-center gap-2">
+          <input
+            type="color"
+            value={swatch}
+            onChange={(e) => onChange(e.target.value)}
+            className="h-9 w-12 shrink-0 rounded border border-line dark:border-slate-600 cursor-pointer bg-transparent p-0.5"
+            aria-label={`${def.display_label} colour picker`}
+          />
+          <input
+            type="text"
+            value={s}
+            onChange={(e) => onChange(e.target.value || null)}
+            placeholder="#hex or a colour name"
+            className="input flex-1"
+          />
+        </div>
+        {help}
+      </Field>
+    );
+  }
+
+  if (def.choices && def.choices.length > 0) {
+    return <ChoiceInput def={def} value={s} onChange={onChange} entityKind={entityKind} help={help} />;
+  }
+  if (def.type === "boolean") {
+    return (
+      <div>
+        <label className="flex items-center gap-2 text-sm text-content dark:text-mortar-200 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={value === true}
+            onChange={(e) => onChange(e.target.checked)}
+            className="accent-cobble-500"
+          />
+          {def.display_label}
+        </label>
+        {help}
+      </div>
+    );
+  }
+  const inputType = def.type === "number" ? "number" : def.type === "date" ? "date" : def.type === "url" ? "url" : "text";
+  return (
+    <Field label={def.display_label}>
+      <input
+        type={inputType}
+        step={def.type === "number" ? "any" : undefined}
+        value={s}
+        onChange={(e) => onChange(e.target.value === "" ? null : e.target.value)}
+        className="input"
+      />
+      {help}
+    </Field>
+  );
+}
+
+/** A choice dropdown that lets the user add a new option on the fly — the new
+ *  value is persisted to the field def's `choices` (so it sticks for next
+ *  time) and selected immediately. */
+function ChoiceInput({
+  def,
+  value,
+  onChange,
+  entityKind,
+  help,
+}: {
+  def: InvFieldDef;
+  value: string;
+  onChange: (v: unknown) => void;
+  entityKind: string;
+  help: ReactNode;
+}) {
+  const { api, orgSlug } = useInventory();
+  const qc = useQueryClient();
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function commitNew() {
+    const v = draft.trim();
+    if (!v) return;
+    if ((def.choices ?? []).some((c) => c.toLowerCase() === v.toLowerCase())) {
+      onChange(v);
+      setAdding(false);
+      setDraft("");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.updateFieldDef(def.id, { choices: [...(def.choices ?? []), v] });
+      await qc.invalidateQueries({ queryKey: ["platform-field-defs", orgSlug, entityKind] });
+      onChange(v);
+      setAdding(false);
+      setDraft("");
+    } catch (e) {
+      setErr(e instanceof InventoryApiError ? e.message : "Couldn't add that option");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (adding) {
+    return (
+      <Field label={def.display_label}>
+        <div className="flex gap-2">
+          <input
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void commitNew();
+              } else if (e.key === "Escape") {
+                setAdding(false);
+              }
+            }}
+            placeholder={`New ${def.display_label.toLowerCase()}…`}
+            className="input flex-1"
+          />
+          <button
+            type="button"
+            onClick={() => void commitNew()}
+            disabled={busy || !draft.trim()}
+            className="rounded-lg bg-cobble-600 px-3 text-sm font-medium text-white disabled:opacity-50"
+          >
+            {busy ? "Adding…" : "Add"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setAdding(false)}
+            className="rounded-lg border border-line dark:border-slate-600 px-3 text-sm text-faint"
+            aria-label="Cancel adding a new option"
+          >
+            ✕
+          </button>
+        </div>
+        {err ? <p className="text-[11px] text-red-500 mt-1">{err}</p> : help}
+      </Field>
+    );
+  }
+
+  return (
+    <Field label={def.display_label}>
+      <select
+        value={value}
+        onChange={(e) => {
+          if (e.target.value === "__add__") {
+            setAdding(true);
+            setDraft("");
+          } else {
+            onChange(e.target.value || null);
+          }
+        }}
+        className="input"
+      >
+        <option value="">— none —</option>
+        {(def.choices ?? []).map((c) => (
+          <option key={c} value={c}>
+            {c}
+          </option>
+        ))}
+        <option value="__add__">＋ Add new…</option>
+      </select>
+      {help}
+    </Field>
   );
 }

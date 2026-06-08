@@ -19,6 +19,8 @@ export interface CoreScanInboxItemsTable {
   suggested_manufacturer: string | null;
   suggested_sku: string | null;
   suggested_metadata: Generated<Record<string, unknown>>;
+  /** Ranked matchmaker routing candidates (services/matchmaker.ts). */
+  suggested_candidates: Generated<unknown[]>;
   ai_notes: string | null;
   ai_confidence: string | null;
   ai_suggested_at: Date | null;
