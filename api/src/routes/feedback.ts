@@ -8,6 +8,7 @@ import { z } from "zod";
 import { requireAuth } from "../auth/middleware.js";
 import { meta } from "../db/meta.js";
 import { announce } from "../platform/announce.js";
+import { pokeTriage } from "../platform/triage-trigger.js";
 
 export const feedbackRouter = Router();
 feedbackRouter.use(requireAuth);
@@ -19,6 +20,20 @@ const SubmitFeedback = z.object({
   workspace_slug: z.string().max(255).optional(),
   // auto-captured by the client: { url, route, userAgent, viewport, build, ... }
   context: z.record(z.unknown()).default({}),
+  // Screenshots the client already uploaded to ITS workspace's core-files; we
+  // store only the refs. Bytes are read back via platform().files.read under the
+  // feedback's own org_id (resolved below), so a client can't reference another
+  // org's file — a mismatched org_id simply reads null.
+  attachments: z
+    .array(
+      z.object({
+        file_id: z.string().uuid(),
+        name: z.string().max(255).optional(),
+        content_type: z.string().max(120).optional(),
+      }),
+    )
+    .max(8)
+    .default([]),
 });
 
 // POST /feedback — submit. user_id comes from the session (never the body);
@@ -42,6 +57,9 @@ feedbackRouter.post("/", async (req, res, next) => {
         .executeTakeFirst();
       orgId = org?.id ?? null;
     }
+    // Attachments only make sense with a workspace (that's where the files live
+    // + where org-scoped read resolves). Drop them if we couldn't resolve one.
+    const attachments = orgId ? parsed.data.attachments : [];
     const row = await meta
       .insertInto("feedback")
       .values({
@@ -50,6 +68,7 @@ feedbackRouter.post("/", async (req, res, next) => {
         type: parsed.data.type,
         message: parsed.data.message,
         context: sql`${JSON.stringify(parsed.data.context)}::jsonb`,
+        attachments: sql`${JSON.stringify(attachments)}::jsonb`,
       })
       .returning(["id", "created_at"])
       .executeTakeFirstOrThrow();
@@ -69,6 +88,10 @@ feedbackRouter.post("/", async (req, res, next) => {
         ...(route ? [{ name: "page", value: route, inline: true }] : []),
       ],
     });
+
+    // Nudge the host-side triage analyzer so the item is judged within seconds
+    // (it sweeps hourly as a backstop). Fire-and-forget; no-op if unconfigured.
+    pokeTriage(row.id);
 
     res.status(201).json({ id: row.id, created_at: row.created_at });
   } catch (err) {

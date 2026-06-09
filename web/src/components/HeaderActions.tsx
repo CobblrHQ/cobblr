@@ -41,6 +41,19 @@ export function HeaderActions() {
   const actions = (modules.data?.items ?? []).filter(
     (m) => m.enabled && m.headerAction && !hiddenSet.has(m.name),
   );
+  const scanOn = actions.some((m) => m.name === "core-scan");
+
+  // The scan inbox is otherwise invisible (no nav noun) — a count badge on
+  // its header icon is what makes "you have things waiting to be filed"
+  // discoverable. Poll while the action is shown.
+  const scanInbox = useQuery({
+    queryKey: ["scan-inbox", activeSlug, "pending"],
+    queryFn: () => api.listScanInbox(activeSlug, { status: "pending" }),
+    enabled: !!activeSlug && scanOn,
+    refetchInterval: 30_000,
+  });
+  const scanPending = scanInbox.data?.items.length ?? 0;
+
   if (actions.length === 0) return null;
 
   return (
@@ -48,21 +61,27 @@ export function HeaderActions() {
       {actions.map((m) => {
         const ha = m.headerAction!;
         const Icon = moduleIcon(ha.icon);
+        const badge = m.name === "core-scan" && scanPending > 0 ? scanPending : null;
         return (
           <NavLink
             key={m.name}
             to={ha.route}
-            title={ha.label}
-            aria-label={ha.label}
+            title={badge ? `${ha.label} — ${badge} pending` : ha.label}
+            aria-label={badge ? `${ha.label}, ${badge} pending` : ha.label}
             data-testid={`header-action-${m.name}`}
             className={({ isActive }) =>
-              "transition p-1.5 " +
+              "relative transition p-1.5 " +
               (isActive
                 ? "text-accent"
                 : "text-faint dark:text-slate-500 hover:text-accent")
             }
           >
             <Icon size={16} />
+            {badge !== null && (
+              <span className="absolute -top-0.5 -right-0.5 min-w-[15px] h-[15px] px-1 rounded-full bg-cobble-600 text-white text-[9px] font-semibold leading-[15px] text-center">
+                {badge > 99 ? "99+" : badge}
+              </span>
+            )}
           </NavLink>
         );
       })}

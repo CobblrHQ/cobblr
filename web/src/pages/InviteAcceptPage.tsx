@@ -10,14 +10,13 @@ import { useNavigate, useParams } from "react-router-dom";
 import { CheckCircle2, AlertTriangle } from "lucide-react";
 import { ApiError, api } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
-import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { urlHandleFor } from "../auth/ActiveOrgContext";
 import { useToast, usePageTitle } from "@cobblr/platform-web";
 
 export function InviteAcceptPage() {
   usePageTitle("Accept invite");
   const { token } = useParams<{ token: string }>();
-  const { user, setOrgs, joinViaInvite } = useAuth();
-  const { setActiveSlug } = useActiveOrg();
+  const { user, joinViaInvite } = useAuth();
   const navigate = useNavigate();
   const toast = useToast();
   const [su, setSu] = useState({ email: "", password: "", displayName: "" });
@@ -39,12 +38,12 @@ export function InviteAcceptPage() {
           ? `You're already in ${r.org.name}. Switched.`
           : `Welcome to ${r.org.name}.`,
       );
-      // Refresh the org list so the header switcher sees the new one
-      // and flip the active workspace to it.
+      // This page renders OUTSIDE ActiveOrgProvider, so land in the new
+      // workspace with a HARD navigation — it re-mounts the app with the new
+      // membership and the provider initialized to that workspace.
       const list = await api.listOrgs();
-      setOrgs(list.items);
-      setActiveSlug(r.org.slug);
-      navigate("/", { replace: true });
+      const org = list.items.find((o) => o.slug === r.org.slug);
+      window.location.assign(org ? `/w/${urlHandleFor(org, list.items)}` : "/");
     },
     onError: (e: unknown) => {
       toast.error(e instanceof ApiError ? e.message : "Couldn't accept invite.");
@@ -108,9 +107,10 @@ export function InviteAcceptPage() {
           password: su.password.trim(),
           display_name: su.displayName.trim(),
         });
-        setActiveSlug(p.org_slug);
         toast.success(`Welcome to ${p.org_name}.`);
-        navigate("/", { replace: true });
+        const list = await api.listOrgs();
+        const org = list.items.find((o) => o.slug === p.org_slug);
+        window.location.assign(org ? `/w/${urlHandleFor(org, list.items)}` : "/");
       } catch (err) {
         setSuErr(err instanceof ApiError ? err.message : "Couldn't join.");
       } finally {

@@ -9,7 +9,7 @@
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Camera, Scissors, Star, Trash2, Upload, X } from "lucide-react";
-import { useConfirm, useToast } from "@cobblr/platform-web";
+import { useConfirm, useImageSrc, useToast } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { cutoutPlainBackground } from "./remove-background";
 
@@ -230,14 +230,11 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
                     : "border-line dark:border-slate-700")
                 }
               >
-                <a href={fullUrl(att.file_id)} target="_blank" rel="noopener noreferrer">
-                  <img
-                    src={thumbUrl(att.file_id)}
-                    alt={att.filename}
-                    className="w-full aspect-square object-cover"
-                    loading="lazy"
-                  />
-                </a>
+                <GalleryImg
+                  thumb={thumbUrl(att.file_id)}
+                  full={fullUrl(att.file_id)}
+                  alt={att.filename}
+                />
                 {isCover && (
                   <div className="absolute top-1 left-1 text-[9px] font-mono uppercase tracking-widest bg-cobble-600 text-white rounded px-1.5 py-0.5">
                     cover
@@ -296,5 +293,27 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
         </div>
       )}
     </section>
+  );
+}
+
+/** A gallery thumbnail. The core-files `/raw` endpoint is Bearer-gated, and a
+ *  bare <img src> can't carry the SPA's token — so it 401s and renders broken.
+ *  useImageSrc fetches with the token and hands back a blob: URL. The "open
+ *  full size" link points at the same authed blob (a new tab to the raw URL
+ *  would 401 too). */
+function GalleryImg({ thumb, full, alt }: { thumb: string; full: string; alt: string }) {
+  const resolvedThumb = useImageSrc(thumb);
+  const resolvedFull = useImageSrc(full);
+  if (!resolvedThumb) {
+    return (
+      <div className="w-full aspect-square bg-subtle dark:bg-slate-800 flex items-center justify-center text-faint dark:text-slate-500">
+        <Camera size={20} />
+      </div>
+    );
+  }
+  return (
+    <a href={resolvedFull ?? resolvedThumb} target="_blank" rel="noopener noreferrer">
+      <img src={resolvedThumb} alt={alt} className="w-full aspect-square object-cover" loading="lazy" />
+    </a>
   );
 }

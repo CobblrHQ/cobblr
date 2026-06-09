@@ -700,7 +700,12 @@ function PartsTable({
               </td>
               <td className="px-3 py-2">
                 <div className="flex items-center gap-3">
-                  <EntityThumb src={p.image_path} alt={p.name} size={56} />
+                  <EntityThumb
+                    src={p.image_path}
+                    alt={p.name}
+                    size={56}
+                    color={(p.metadata as Record<string, unknown> | null)?.color as string | undefined}
+                  />
                   <div className="min-w-0">
                     <Link to={`${basePath}/parts/${p.id}`} className="font-medium text-content dark:text-mortar-100 hover:text-accent">
                       {p.name}
@@ -795,7 +800,12 @@ function PartsTable({
                 className="accent-cobble-600 mt-1 shrink-0"
                 aria-label={`Select ${p.name}`}
               />
-              <EntityThumb src={p.image_path} alt={p.name} size={48} />
+              <EntityThumb
+                src={p.image_path}
+                alt={p.name}
+                size={48}
+                color={(p.metadata as Record<string, unknown> | null)?.color as string | undefined}
+              />
               <div className="flex-1 min-w-0">
                 <Link
                   to={`${basePath}/parts/${p.id}`}

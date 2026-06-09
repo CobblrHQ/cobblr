@@ -15,6 +15,7 @@ import {
   createContext, useCallback, useContext, useEffect, useRef, useState,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import { CheckCircle2, Info, AlertTriangle, X } from "lucide-react";
 
 type Kind = "info" | "success" | "error" | "action";
@@ -95,12 +96,18 @@ export function useToast(): ToastCtx {
 }
 
 function ToastStack({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: number) => void }) {
-  return (
-    <div className="fixed right-4 bottom-4 z-50 flex flex-col gap-2 max-w-[calc(100vw-2rem)] w-80 pointer-events-none">
+  if (typeof document === "undefined") return null;
+  // Portal to <body> + z above modals (Modal backdrop is z-50): a plain fixed
+  // div gets TRAPPED behind a modal's backdrop-blur (same stacking issue the
+  // overlay-portal rule fixes) — the "token minted/copied" toast came out
+  // blurred. Body-portal + z-[100] lifts toasts above any modal.
+  return createPortal(
+    <div className="fixed right-4 bottom-4 z-[100] flex flex-col gap-2 max-w-[calc(100vw-2rem)] w-80 pointer-events-none">
       {toasts.map((t) => (
         <ToastCard key={t.id} toast={t} dismiss={dismiss} />
       ))}
-    </div>
+    </div>,
+    document.body,
   );
 }
 

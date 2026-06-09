@@ -262,10 +262,26 @@ ${actions}
 THE USER WANTS THEIR WHOLE WORKSPACE TO BE:
 "${intent}"
 
-OUTPUT — one JSON object, this exact shape (the "seed" key is new — read its rule below):
+OUTPUT — one JSON object, this exact shape (the "seed" key is new — read its rule below).
+EVERY field_def MUST include "display_label", and "requires" entries are OBJECTS ({ "module": … }), not bare strings — a bundle missing either is rejected:
 {
   "interpretation": "<1-2 sentences: what you set up + what you seeded, and any remaining follow-ups>",
-  "bundle": { ...same shape as ${"`{ id, version, name, description, requires[], field_defs[], wires[] }`"}... },
+  "bundle": {
+    "id": "cobblr.user.<slug>",
+    "version": "0.1.0",
+    "name": "<short subject noun>",
+    "description": "<one line>",
+    "requires": [{ "module": "<module>" }],
+    "field_defs": [
+      { "entity_kind": "<kind>", "name": "<snake_case>", "display_label": "<Human Label>",
+        "type": "text|number|boolean|date|url", "choices": ["<optional, for text>"] }
+    ],
+    "wires": [
+      { "source_kind": "<kind>", "action_id": "<action>",
+        "trigger_type": "user-invoked|event|on-create|on-update|on-delete",
+        "trigger_event": "<optional event name>", "template": "<optional Jinja2>" }
+    ]
+  },
   "seed": [
     { "kind": "<entity kind id>", "records": [ { "<field>": <value>, ... }, ... ] }
   ]

@@ -103,7 +103,7 @@ export interface WorkspaceNavHeadingMembersTable {
   created_at: Generated<Date>;
 }
 
-export type OrgRole = "owner" | "admin" | "member" | "guest";
+export type OrgRole = "owner" | "admin" | "editor" | "member" | "guest";
 
 export interface OrgMembershipsTable {
   user_id: string;
@@ -152,6 +152,29 @@ export interface ApiTokensTable {
   created_at: Generated<Date>;
   /** Capability scopes; NULL/empty = unrestricted (legacy full-access). */
   scopes: string[] | null;
+}
+
+/** A personal (user-scoped) credential — a BYO AI provider config a user sets
+ *  up once and routes to chosen workspaces. See migration 053. */
+export interface UserCredentialsTable {
+  id: Generated<string>;
+  user_id: string;
+  kind: Generated<string>; // 'ai-provider'
+  provider_id: string; // 'ollama' | 'openai' | 'anthropic' | 'edge-bridge' | …
+  label: Generated<string>;
+  credentials_encrypted: string; // AES-256-GCM (global key), JSON object
+  route_mode: Generated<"my-calls" | "workspace-default">;
+  route_scope: Generated<"sole_member" | "owner" | "all_mine" | "explicit">;
+  auto_enable_new: Generated<boolean>;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+/** Explicit-scope routing: which workspaces an 'explicit'-scoped personal
+ *  credential reaches. */
+export interface UserCredentialOrgsTable {
+  credential_id: string;
+  org_id: string;
 }
 
 export interface PlatformAnnounceSettingsTable {
@@ -570,13 +593,40 @@ export interface OrgEncryptionKeysTable {
 
 export interface FeedbackTable {
   id: Generated<string>;
-  user_id: string;
+  // Null for a discord-origin ticket (no platform user — see origin_ref).
+  user_id: string | null;
   org_id: string | null;
   type: Generated<string>;
   message: string;
   context: Generated<Record<string, unknown>>;
   status: Generated<string>;
   admin_notes: string | null;
+  // Where it came from + how to reply (20260609-051). 'in-app' → notification +
+  // email; 'discord' → the support bot posts into origin_ref.thread_id.
+  origin: Generated<"in-app" | "discord">;
+  origin_ref: {
+    channel_id: string;
+    thread_id: string;
+    message_id?: string;
+    user_id?: string;
+    username?: string;
+  } | null;
+  // Conversation follow-ups (20260609-052). The original report is `message`;
+  // each reporter reply in the ticket thread appends here. Re-triage reads both.
+  followups: Generated<
+    Array<{ at: string; from: string; text: string; images?: Array<{ url: string; name?: string }> }>
+  >;
+  // Reporter-attached screenshots (20260609-050). Refs into the reporter's
+  // workspace core-files; bytes read cross-tenant for the super-admin view.
+  attachments: Generated<Array<{ file_id: string; name?: string; content_type?: string }>>;
+  // AI triage verdict (20260609-049). Null until the analyzer claims the row.
+  triage_priority: "urgent" | "high" | "medium" | "low" | null;
+  triage_valid: boolean | null;
+  triage_viable: boolean | null;
+  triage_summary: string | null;
+  triage_action: string | null;
+  triaged_at: Date | null;
+  triage_model: string | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }
@@ -591,6 +641,8 @@ export interface MetaDB {
   workspace_invites: WorkspaceInvitesTable;
   signup_invites: SignupInvitesTable;
   api_tokens: ApiTokensTable;
+  user_credentials: UserCredentialsTable;
+  user_credential_orgs: UserCredentialOrgsTable;
   platform_announce_settings: PlatformAnnounceSettingsTable;
   entity_pairings: EntityPairingsTable;
   tags: TagsTable;

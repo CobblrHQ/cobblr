@@ -28,13 +28,31 @@ interface Props {
   size: number;
   /** Extra classes (e.g. ring-1 ring-line on detail headers). */
   className?: string;
+  /** Optional hex color (e.g. a yarn's `color` field). With no photo, the
+   *  thumbnail becomes a swatch of this color instead of an initial-letter chip
+   *  — gives the square an obvious purpose. Ignored if not a valid hex. */
+  color?: string | null;
 }
 
-export function EntityThumb({ src, alt, size, className }: Props) {
+const HEX = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i;
+
+export function EntityThumb({ src, alt, size, className, color }: Props) {
   const resolved = useImageSrc(src);
   const s = { width: size, height: size } as const;
   const base = "rounded shrink-0 object-cover";
   if (!resolved) {
+    // Color swatch fallback (e.g. yarn): the square shows the colour itself.
+    const hex = color && HEX.test(color.trim()) ? color.trim() : null;
+    if (hex) {
+      return (
+        <div
+          style={{ ...s, backgroundColor: hex }}
+          title={alt}
+          aria-label={alt}
+          className={`${base} ring-1 ring-black/10 dark:ring-white/15` + (className ? ` ${className}` : "")}
+        />
+      );
+    }
     const initial = alt.trim().slice(0, 1).toUpperCase() || "?";
     return (
       <div

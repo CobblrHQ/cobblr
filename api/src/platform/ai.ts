@@ -16,12 +16,14 @@
 import { createHash } from "node:crypto";
 import type {
   AiCapability,
+  AiEndpointPolicy,
   AiEntitlementGuard,
   AiProviderDef,
   PlatformAi,
 } from "@cobblr/platform-contract";
 import { getTenantDb } from "../db/tenant.js";
 import * as integrationsImpl from "./integrations.js";
+import { resolvePersonalProvider } from "./user-credentials.js";
 import { env } from "../env.js";
 
 const providers = new Map<string, AiProviderDef>();
@@ -37,6 +39,21 @@ let entitlementGuard: AiEntitlementGuard | null = null;
 
 export function registerEntitlementGuard(g: AiEntitlementGuard): void {
   entitlementGuard = g;
+}
+
+// SSRF policy for providers that fetch a workspace-supplied URL (the
+// ollama base_url). Open core defaults to "lan" (a self-hosted Ollama
+// is legitimately on the LAN); the hosted overlay calls
+// setEndpointPolicy("strict") at boot so cloud blocks private/metadata.
+// Fail-safe by image: the policy travels with the build, not an env.
+let endpointPolicy: AiEndpointPolicy = "lan";
+
+export function getEndpointPolicy(): AiEndpointPolicy {
+  return endpointPolicy;
+}
+
+export function setEndpointPolicy(p: AiEndpointPolicy): void {
+  endpointPolicy = p;
 }
 
 export function listProviders(): ReturnType<PlatformAi["listProviders"]> {
@@ -223,10 +240,47 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
   if (!env.COBBLR_AI_ENABLED) {
     throw new Error("no provider configured: AI features are disabled for this instance (COBBLR_AI_ENABLED=false)");
   }
-  const { row, model } = await resolveProviderAndModel(req.orgId, req.capability, {
-    provider_id: req.provider_id,
-    model: req.model,
-  });
+  // Personal (user-scoped) connections — DEFAULT-OFF. When the caller hasn't
+  // forced a provider, a credential the user (or a member, per its routing
+  // policy) has routed to this workspace can supply the provider + secret,
+  // instead of the workspace's own config. Returns null when nothing's routed,
+  // so this is byte-for-byte the old path until someone opts in. An explicit
+  // provider override (e.g. the eval harness) always wins over a personal cred.
+  let personalCredentials: Record<string, unknown> | undefined;
+  let resolved: { row: ProviderRow; model: string } | null = null;
+  if (!req.provider_id) {
+    const personal = await resolvePersonalProvider(
+      req.orgId,
+      req.userId ?? null,
+      (pid) => !!providers.get(pid)?.capabilities[req.capability],
+    );
+    if (personal) {
+      const pdef = providers.get(personal.providerId);
+      const pmodel =
+        req.model ??
+        pdef?.capabilities[req.capability]?.defaultModel ??
+        pdef?.capabilities[req.capability]?.models[0];
+      if (pdef && pmodel) {
+        resolved = {
+          row: {
+            id: `personal:${personal.credentialId}`,
+            provider_id: personal.providerId,
+            credentials_enc: "",
+            enabled: true,
+            config: {},
+          },
+          model: pmodel,
+        };
+        personalCredentials = personal.credentials;
+      }
+    }
+  }
+  const { row, model } =
+    resolved ??
+    (await resolveProviderAndModel(req.orgId, req.capability, {
+      provider_id: req.provider_id,
+      model: req.model,
+    }));
 
   // Entitlement gate (hosted overlay only — open core registers no guard).
   // Denials surface in the "no provider" error family so existing degrade
@@ -311,12 +365,14 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
     }
   }
 
-  // Real call. A virtual (credential-less) row has no ciphertext to
-  // decrypt — the provider supplies its own credentials (e.g. an instance
-  // key), so pass an empty bag.
-  const credentials = row.credentials_enc
-    ? await integrationsImpl.decryptCredentials(req.orgId, row.credentials_enc)
-    : {};
+  // Real call. A personal (user-scoped) credential supplies its own already-
+  // decrypted secret; otherwise decrypt the workspace row (a virtual
+  // credential-less row has no ciphertext — the provider brings its own).
+  const credentials =
+    personalCredentials ??
+    (row.credentials_enc
+      ? await integrationsImpl.decryptCredentials(req.orgId, row.credentials_enc)
+      : {});
   const start = Date.now();
   let ok = false;
   let errMsg: string | null = null;
@@ -420,7 +476,16 @@ async function writeAuditRow(
         values: (v: Record<string, unknown>) => { execute: () => Promise<unknown> };
       };
     };
-    await tdb.insertInto("core_ai_calls").values(row).execute();
+    // source_id is a UUID column, but callers sometimes pass a non-UUID handle
+    // (a barcode, a product name) as source.id — that would make the whole audit
+    // insert throw, silently dropping the call from the AI log. Coerce anything
+    // that isn't a UUID to null so observability never loses a row over it.
+    const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const safeRow = {
+      ...row,
+      source_id: row.source_id && UUID.test(row.source_id) ? row.source_id : null,
+    };
+    await tdb.insertInto("core_ai_calls").values(safeRow).execute();
   } catch (err) {
     console.error("[core-ai] audit insert failed:", err);
   }

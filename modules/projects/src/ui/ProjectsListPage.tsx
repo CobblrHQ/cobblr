@@ -25,8 +25,13 @@ const STATUS_LABEL: Record<string, string> = {
 const STATUS_ORDER = ["planning", "active", "blocked", "done", "abandoned"];
 
 export function ProjectsListPage() {
-  usePageTitle("Projects");
-  const { api, orgSlug, getToken } = useProjects();
+  const { api, orgSlug, getToken, displayName, itemNoun } = useProjects();
+  // Instance skin: an "Outfits" instance reads "Outfits" / "New outfit", not
+  // "projects" / "New project". Falls back to the plain module wording.
+  const heading = displayName ?? "projects";
+  const noun = itemNoun ?? "project";
+  const nounPlural = `${noun}s`;
+  usePageTitle(displayName ?? "Projects");
   const qc = useQueryClient();
   const list = useQuery({ queryKey: ["projects-list"], queryFn: () => api.listProjects() });
   const [name, setName] = useState("");
@@ -142,7 +147,7 @@ export function ProjectsListPage() {
   return (
     <div className="space-y-5">
       <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">projects</h1>
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">{heading}</h1>
         <span className="text-[10px] font-mono text-faint dark:text-slate-500">
           {query ? `${filtered.length} of ${items.length}` : `${items.length} total`}
         </span>
@@ -162,7 +167,7 @@ export function ProjectsListPage() {
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="new project name…"
+          placeholder={`new ${noun} name…`}
           className="input flex-1"
         />
         <button
@@ -170,7 +175,7 @@ export function ProjectsListPage() {
           disabled={create.isPending || !name.trim()}
           className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5 disabled:opacity-50"
         >
-          <Plus size={14} /> New project
+          <Plus size={14} /> New {noun}
         </button>
       </form>
 
@@ -178,7 +183,7 @@ export function ProjectsListPage() {
       {views.length > 0 && (
         <div className="flex items-center gap-1.5 flex-wrap">
           <ProjViewChip active={!activeView} onClick={() => selectView(null)}>
-            All projects
+            All {nounPlural}
           </ProjViewChip>
           {views.map((v) => (
             <ProjViewChip key={v.id} active={activeView?.id === v.id} onClick={() => selectView(v.id)}>
@@ -190,12 +195,12 @@ export function ProjectsListPage() {
 
       {items.length === 0 && !list.isLoading && (
         <div className="border-2 border-dashed border-line dark:border-slate-700 rounded-xl p-12 text-center text-faint dark:text-slate-500">
-          No projects yet — create one above.
+          No {nounPlural} yet — create one above.
         </div>
       )}
       {items.length > 0 && filtered.length === 0 && (
         <div className="text-xs text-faint dark:text-slate-500 italic">
-          No projects match "{query}".
+          No {nounPlural} match "{query}".
         </div>
       )}
 

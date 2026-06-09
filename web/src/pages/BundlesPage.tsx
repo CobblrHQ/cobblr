@@ -5,7 +5,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Copy, Download, Library, Package, Plus, Search, Share2, Trash2, X } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { ApiError, api, type PlatformBundle, type PlatformBundleManifest, type RegistryDriverEntry, type RegistryModuleEntry, type RegistryRendererEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useAuth } from "../auth/AuthContext";
@@ -58,6 +58,33 @@ export function BundlesPage() {
   // first-run wizard agree (and so the registry's dropped next_steps are
   // restored in one place — see useBundleCatalog).
   const { registry, catalog } = useBundleCatalog(sources);
+
+  // Deep-link: the dashboard "Update" nudge sends ?open=<bundle-id> so the
+  // bundle's modal opens straight away (the author: the home Update button shouldn't
+  // just dump you on the bundles page). Open it once the catalog is loaded,
+  // then strip the param so closing the modal doesn't reopen it.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const openId = searchParams.get("open");
+  useEffect(() => {
+    if (!openId || selected || !catalog.length || !bundles.data) return;
+    const b = catalog.find((c) => c.manifest.id === openId);
+    if (b) {
+      setSelected({
+        mode: "featured",
+        featured: b,
+        alreadyInstalled: bundles.data.items.some((x) => x.external_id === b.manifest.id),
+      });
+    }
+    setSearchParams(
+      (p) => {
+        const n = new URLSearchParams(p);
+        n.delete("open");
+        return n;
+      },
+      { replace: true },
+    );
+  }, [openId, selected, catalog, bundles.data, setSearchParams]);
+
   const installedRenderers = useQuery({
     queryKey: ["installed-renderers", slug],
     queryFn: () => api.getInstalledRenderers(slug),

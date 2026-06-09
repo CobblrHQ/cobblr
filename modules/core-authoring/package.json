@@ -8,6 +8,10 @@
     ".": {
       "import": "./dist/module.js",
       "types": "./dist/module.d.ts"
+    },
+    "./services/compile": {
+      "types": "./src/services/compile.ts",
+      "import": "./dist/services/compile.js"
     }
   },
   "scripts": {

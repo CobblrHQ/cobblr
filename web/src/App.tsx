@@ -52,6 +52,7 @@ const MeActivityPage = lazy(() => import("./pages/MeActivityPage").then((m) => (
 const MeNotificationsPage = lazy(() => import("./pages/MeNotificationsPage").then((m) => ({ default: m.MeNotificationsPage })));
 const MeNotificationChannelsPage = lazy(() => import("./pages/MeNotificationChannelsPage").then((m) => ({ default: m.MeNotificationChannelsPage })));
 const MeProfilePage = lazy(() => import("./pages/MeProfilePage").then((m) => ({ default: m.MeProfilePage })));
+const ConnectionsPage = lazy(() => import("./pages/ConnectionsPage").then((m) => ({ default: m.ConnectionsPage })));
 const ApiTokensPage = lazy(() => import("./pages/ApiTokensPage").then((m) => ({ default: m.ApiTokensPage })));
 const ActivityPage = lazy(() => import("./pages/ActivityPage").then((m) => ({ default: m.ActivityPage })));
 const SurfacesPage = lazy(() => import("./pages/SurfacesPage").then((m) => ({ default: m.SurfacesPage })));
@@ -229,11 +230,10 @@ function ActiveOrgScopedRoutes() {
   const { activeSlug, activeOrg } = useActiveOrg();
   const location = useLocation();
 
-  // Shell routing: members + guests land in the portal, admins +
-  // owners get the admin shell. If a non-admin lands on an admin
-  // route via direct link, the redirect below bounces them. They can
-  // navigate freely once in the portal.
-  // See docs/modules/member-portal-and-permissions.md.
+  // Shell routing: members + guests land in the portal; owners, admins, and
+  // editors get the full builder shell. If a non-builder lands on a builder
+  // route via direct link, the redirect below bounces them. They can navigate
+  // freely once in the portal. See docs/modules/member-portal-and-permissions.md.
   const role = activeOrg?.role;
   // basename-relative (react-router strips the /w/:slug base) — NOT
   // window.location.pathname, which still carries the base.
@@ -243,6 +243,7 @@ function ActiveOrgScopedRoutes() {
     role &&
     role !== "owner" &&
     role !== "admin" &&
+    role !== "editor" &&
     !onPortal;
 
   return (
@@ -360,6 +361,7 @@ function ActiveOrgScopedRoutes() {
           {/* /me is canonical; /me/profile redirects so old bookmarks keep working. */}
           <Route path="/me/profile" element={<Navigate to="/me" replace />} />
           <Route path="/me" element={<MeProfilePage />} />
+          <Route path="/me/connections" element={<ConnectionsPage />} />
           <Route path="/core-files" element={<FilesPage />} />
           <Route path="/core-views" element={<ViewsPage />} />
           <Route path="/core-tags" element={<TagsPage />} />

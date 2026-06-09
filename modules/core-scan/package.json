@@ -8,6 +8,18 @@
     ".": {
       "import": "./dist/module.js",
       "types": "./dist/module.d.ts"
+    },
+    "./services/matchmaker": {
+      "types": "./src/services/matchmaker.ts",
+      "import": "./dist/services/matchmaker.js"
+    },
+    "./services/barcode-websearch": {
+      "types": "./src/services/barcode-websearch.ts",
+      "import": "./dist/services/barcode-websearch.js"
+    },
+    "./services/enrich-photo": {
+      "types": "./src/services/enrich-photo.ts",
+      "import": "./dist/services/enrich-photo.js"
     }
   },
   "scripts": {

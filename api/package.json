@@ -12,6 +12,8 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@cobblr/core-authoring": "*",
+    "@cobblr/core-scan": "*",
     "@cobblr/platform-contract": "*",
     "@types/nodemailer": "^8.0.0",
     "bcrypt": "^5.1.1",

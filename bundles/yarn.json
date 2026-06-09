@@ -10,7 +10,7 @@
       { "entity_kind": "inventory:part", "name": "color", "display_label": "Color", "type": "text", "position": 1, "renderer": "color-hex" },
       { "entity_kind": "inventory:part", "name": "colorway", "display_label": "Colorway", "type": "text", "position": 2 },
       { "entity_kind": "inventory:part", "name": "fiber", "display_label": "Fibre", "type": "text", "position": 3, "choices": ["Wool", "Merino", "Cotton", "Acrylic", "Nylon", "Chenille", "Alpaca", "Silk", "Linen", "Bamboo", "Cashmere", "Blend"] },
-      { "entity_kind": "inventory:part", "name": "weight_class", "display_label": "Weight", "type": "text", "position": 4, "choices": ["Lace", "Fingering", "Sport", "DK", "Worsted", "Aran", "Bulky", "Super Bulky"] },
+      { "entity_kind": "inventory:part", "name": "weight_class", "display_label": "Weight", "type": "text", "position": 4, "choices": ["0 – Lace", "1 – Fingering", "2 – Sport", "3 – DK", "4 – Worsted", "4 – Aran", "5 – Bulky", "6 – Super Bulky"], "help": "Craft Yarn Council standard weight — 0 (Lace, thinnest) to 6 (Super Bulky, thickest)." },
       { "entity_kind": "inventory:part", "name": "vendor", "display_label": "Vendor", "type": "text", "position": 5, "choices": ["Michaels", "Hobby Lobby", "Walmart", "Joann", "Amazon", "Etsy", "Local yarn shop"] },
       { "entity_kind": "inventory:part", "name": "length_per_skein", "display_label": "Length / skein (m)", "type": "number", "position": 6 },
       { "entity_kind": "inventory:part", "name": "dye_lot", "display_label": "Dye lot", "type": "text", "position": 7 },

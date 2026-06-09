@@ -19,6 +19,7 @@ import { authRouter } from "./routes/auth.js";
 import { requestGuardMiddleware } from "./platform/hosted-seams.js";
 import { publicRouter } from "./routes/public.js";
 import { meRouter } from "./routes/me.js";
+import { connectionsRouter } from "./routes/connections.js";
 import { modulesRouter } from "./routes/modules.js";
 import { orgsRouter } from "./routes/orgs.js";
 import { platformOrgRouter } from "./routes/platform.js";
@@ -110,6 +111,7 @@ export function createApp(): AppHandles {
 
   v1.use("/auth", authRouter);
   v1.use(meRouter);
+  v1.use(connectionsRouter);
   // Public read endpoint for core-public-surfaces. No auth required;
   // token in the URL is the secret. Mounted on /api/v1/public/* —
   // outside /orgs because the URL carries no slug.

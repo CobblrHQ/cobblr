@@ -75,10 +75,10 @@ export function NotificationsBell() {
 
   function handleItemClick(n: CrossOrgNotificationEntry) {
     if (!n.read_at) markRead.mutate(n.id);
-    // Switch the active workspace to the notification's org BEFORE
-    // navigating, so /configuration/links etc. show the right
-    // workspace's data when the page mounts.
-    setActiveSlug(n.org_slug);
+    // A workspace-invite is about ANOTHER workspace you're not in yet — it's
+    // scoped to one of your own only so it surfaces. Don't switch to that scope
+    // workspace; just open the accept link.
+    if (n.event_type !== "workspace.invited") setActiveSlug(n.org_slug);
     if (n.link_url) navigate(n.link_url);
     setOpen(false);
   }
@@ -165,7 +165,7 @@ export function NotificationsBell() {
                   </div>
                   <div className="text-[10px] font-mono text-faint dark:text-slate-500 mt-1 flex items-center gap-1.5">
                     <span className="px-1 py-0.5 rounded bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300">
-                      {n.org_name}
+                      {n.event_type === "workspace.invited" ? "invite" : n.org_name}
                     </span>
                     <span>·</span>
                     <span>{n.event_type}</span>

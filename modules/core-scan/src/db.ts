@@ -57,10 +57,26 @@ export interface CoreScanBarcodeCacheTable {
   fetched_at: Generated<Date>;
 }
 
+/** Captured eval cases — P2 of the matchmaker eval harness. A platform admin's
+ *  corrected scan commit, recorded as a golden case (input + menu + expected). */
+export interface CoreScanEvalCasesTable {
+  id: Generated<string>;
+  inbox_item_id: string | null;
+  surface: Generated<string>;
+  perceived_input: Record<string, unknown>;
+  scan_menu: Generated<unknown[]>;
+  candidates: Generated<unknown[]>;
+  expected: Record<string, unknown>;
+  note: string | null;
+  created_by_user_id: string | null;
+  created_at: Generated<Date>;
+}
+
 export interface CoreScanDB {
   core_scan_inbox_items: CoreScanInboxItemsTable;
   core_scan_batches: CoreScanBatchesTable;
   core_scan_barcode_cache: CoreScanBarcodeCacheTable;
+  core_scan_eval_cases: CoreScanEvalCasesTable;
 }
 
 export type OrgRole = "owner" | "admin" | "member" | "guest";
@@ -71,7 +87,7 @@ interface RequestWithTenant {
     role: OrgRole;
     db: unknown;
   };
-  session?: { id: string; email: string; display_name: string };
+  session?: { id: string; email: string; display_name: string; is_platform_admin?: boolean };
 }
 
 export function tenantDb(req: Request): Kysely<CoreScanDB> {

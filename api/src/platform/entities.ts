@@ -241,6 +241,7 @@ export function clearExposableFieldsCache(): void {
 const ROLE_RANK: Record<string, number> = {
   guest: 0,
   member: 1,
+  editor: 2, // a trusted builder; ≈ admin for cross-workspace read gating
   admin: 2,
   owner: 3,
 };

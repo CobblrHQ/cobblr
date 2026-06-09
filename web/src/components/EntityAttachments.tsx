@@ -295,6 +295,8 @@ function FilesSection({
 
   const uploadAndAttach = useMutation({
     mutationFn: async (file: File) => {
+      // Snapshot BEFORE the upload: does the entity already have a photo?
+      const hadImage = (list.data?.items ?? []).some((i) => i.kind === "image");
       const f = await api.uploadFile(activeSlug, file);
       // Then attach to this entity.
       const res = await fetch(
@@ -315,12 +317,34 @@ function FilesSection({
         },
       );
       if (!res.ok) throw new Error(`attach failed ${res.status}`);
+      // The FIRST photo on an entity auto-becomes its cover — uploading a photo
+      // should "just show" without a separate Set-as-cover tap (feedback: Grace,
+      // "uploaded a yarn photo, it did not retain"). Best-effort: a failure here
+      // never fails the upload, and we only claim the cover when there isn't one.
+      if (file.type.startsWith("image/") && !hadImage) {
+        try {
+          await setEntityImagePath(
+            activeSlug,
+            sourceModule,
+            sourceType,
+            sourceId,
+            api.fileRawUrl(activeSlug, f.id, "medium"),
+          );
+        } catch {
+          /* gallery attachment already succeeded — cover is a bonus */
+        }
+      }
       return f;
     },
     onSuccess: () => {
       void qc.invalidateQueries({
         queryKey: ["file-attachments", activeSlug, sourceType, sourceId],
       });
+      // Bust the entity's list/detail queries so a freshly auto-set cover renders.
+      void qc.invalidateQueries({ queryKey: [sourceType + "s"] });
+      void qc.invalidateQueries({ queryKey: ["inventory-parts"] });
+      void qc.invalidateQueries({ queryKey: ["assets"] });
+      void qc.invalidateQueries({ queryKey: ["machines"] });
     },
     onError: (e) => toast.error(`Upload failed: ${(e as Error).message}`),
   });

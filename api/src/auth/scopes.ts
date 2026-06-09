@@ -31,6 +31,48 @@ export const TOKEN_SCOPES: TokenScopeDef[] = [
       ["PATCH", /^\/super-admin\/feedback\/[^/]+$/],
     ],
   },
+  {
+    key: "scan:eval",
+    label: "Scan eval harness",
+    description:
+      "Run the matchmaker prompt-eval endpoint + read/prune captured eval cases " +
+      "(scan-eval, scan-eval-cases). No other admin surface.",
+    allow: [
+      ["POST", /^\/super-admin\/scan-eval$/],
+      ["GET", /^\/super-admin\/scan-eval-cases$/],
+      ["DELETE", /^\/super-admin\/scan-eval-cases\/[^/]+\/[^/]+$/],
+    ],
+  },
+  {
+    key: "authoring:eval",
+    label: "Bundle-authoring eval harness",
+    description:
+      "Run the bundle-authoring prompt-eval endpoint (POST /super-admin/authoring-eval). " +
+      "No DB writes, no other admin surface.",
+    allow: [["POST", /^\/super-admin\/authoring-eval$/]],
+  },
+  {
+    key: "feedback:ingest",
+    label: "Feedback ingest (Discord bot)",
+    description:
+      "Submit a feedback ticket + append follow-up messages from an external " +
+      "channel (the Discord support bot). Can ONLY create/append — never read, " +
+      "triage, or resolve.",
+    allow: [
+      ["POST", /^\/super-admin\/feedback\/ingest$/],
+      ["POST", /^\/super-admin\/feedback\/append$/],
+    ],
+  },
+  {
+    key: "announce:post",
+    label: "Post announcements",
+    description:
+      "Post bundle / feature updates to the announcement channels. Read-only on the settings; can't reconfigure channels.",
+    allow: [
+      ["GET", /^\/super-admin\/announce-settings$/],
+      ["POST", /^\/super-admin\/announce$/],
+    ],
+  },
 ];
 
 const BY_KEY = new Map(TOKEN_SCOPES.map((s) => [s.key, s] as const));

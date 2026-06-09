@@ -90,14 +90,15 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
             src={p.image_path ?? matched.data?.image_path ?? null}
             alt={p.name}
             size={96}
+            color={(p.metadata as Record<string, unknown> | null)?.color as string | undefined}
             className="ring-1 ring-line dark:ring-slate-700"
           />
           <div className="flex flex-col sm:flex-row items-start gap-3 flex-1 min-w-0">
             <div className="flex-1 min-w-0">
-              <InlineText
+              <EditableTitle
                 value={p.name}
                 onCommit={(v) => update.mutate({ name: v })}
-                className="font-display text-2xl font-bold text-content dark:text-mortar-100 w-full"
+                className="font-display text-xl sm:text-2xl font-bold text-content dark:text-mortar-100"
               />
               <div className="flex flex-wrap items-center gap-2 mt-1">
                 {p.asset_id != null && (
@@ -482,6 +483,51 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       </span>
       {children}
     </label>
+  );
+}
+
+/** The part title. A single-line <input> can't wrap, so a long name (e.g.
+ *  "Loops & Thread Impeccable") clipped mid-word on a narrow phone. This renders
+ *  the name as a WRAPPING heading and only swaps to an input when tapped to
+ *  rename — so long names wrap to two lines instead of being cut off. */
+function EditableTitle({
+  value,
+  onCommit,
+  className,
+}: {
+  value: string;
+  onCommit: (v: string) => void;
+  className: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        defaultValue={value}
+        onBlur={(e) => {
+          setEditing(false);
+          if (e.target.value !== value) onCommit(e.target.value);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          if (e.key === "Escape") {
+            (e.target as HTMLInputElement).value = value;
+            (e.target as HTMLInputElement).blur();
+          }
+        }}
+        className={`${className} w-full min-w-0`}
+      />
+    );
+  }
+  return (
+    <h1
+      onClick={() => setEditing(true)}
+      title="Click to rename"
+      className={`${className} w-full min-w-0 break-words cursor-text leading-tight`}
+    >
+      {value || <span className="text-faint dark:text-slate-500 font-normal">Unnamed</span>}
+    </h1>
   );
 }
 

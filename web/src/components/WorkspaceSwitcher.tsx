@@ -95,55 +95,78 @@ export function WorkspaceSwitcher() {
           style={{ position: "fixed", top: pos.top, left: pos.left }}
           className="w-72 max-w-[calc(100vw-1rem)] rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg z-[100] overflow-hidden"
         >
-          <div className="px-3 py-2 border-b border-line dark:border-slate-700 text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
-            workspaces
-          </div>
           <ul className="max-h-80 overflow-y-auto">
-            {orgs.map((o) => {
-              const canManage = o.role === "owner" || o.role === "admin";
-              return (
-                <li key={o.id} className="group flex items-stretch hover:bg-subtle dark:hover:bg-slate-800 transition">
-                  {/* Main row → switch active workspace */}
-                  <button
-                    onClick={() => pick(o.slug)}
-                    className="flex-1 text-left px-3 py-2 flex items-center gap-2 min-w-0"
-                  >
-                    <Check
-                      size={12}
-                      className={
-                        o.slug === activeSlug
-                          ? "text-accent dark:text-cobble-300"
-                          : "text-transparent"
-                      }
-                    />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm text-content dark:text-mortar-100 truncate">
-                        {o.name}
-                      </div>
-                      <div className="text-[10px] font-mono text-faint dark:text-slate-500 truncate">
-                        {displaySlug(o.slug)} · {o.role}
-                      </div>
-                    </div>
-                  </button>
-                  {/* Per-workspace manage affordance — only for owner/admin.
-                      Opens the members modal for THIS workspace (no need
-                      to switch active org first). */}
-                  {canManage && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setOpen(false);
-                        setManageSlug(o.slug);
-                      }}
-                      className="px-3 text-faint dark:text-slate-500 hover:text-accent dark:hover:text-cobble-300 opacity-0 group-hover:opacity-100 focus:opacity-100 transition"
-                      title={`Manage members + invites for ${o.name}`}
-                    >
-                      <Users size={13} />
-                    </button>
-                  )}
+            {(() => {
+              const owned = orgs.filter((o) => o.role === "owner");
+              const shared = orgs.filter((o) => o.role !== "owner");
+              const header = (label: string, border: boolean) => (
+                <li
+                  className={
+                    "px-3 pt-2 pb-1 text-[9px] font-mono uppercase tracking-widest text-muted dark:text-slate-500 " +
+                    (border ? "border-t border-line dark:border-slate-800 mt-1" : "")
+                  }
+                >
+                  {label}
                 </li>
               );
-            })}
+              const row = (o: (typeof orgs)[number]) => {
+                // Only owners/admins manage members — editors/members can't.
+                const canManage = o.role === "owner" || o.role === "admin";
+                return (
+                  <li key={o.id} className="group flex items-stretch hover:bg-subtle dark:hover:bg-slate-800 transition">
+                    <button
+                      onClick={() => pick(o.slug)}
+                      className="flex-1 text-left px-3 py-2 flex items-center gap-2 min-w-0"
+                    >
+                      <Check
+                        size={12}
+                        className={o.slug === activeSlug ? "text-accent dark:text-cobble-300" : "text-transparent"}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm text-content dark:text-mortar-100 truncate flex items-center gap-1.5">
+                          <span className="truncate">{o.name}</span>
+                          {/* On a workspace you don't own, your role is the key
+                              signal ("I'm an editor here") — show it as a badge. */}
+                          {o.role !== "owner" && (
+                            <span className="shrink-0 text-[9px] font-mono uppercase tracking-wide px-1 py-0.5 rounded bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300">
+                              {o.role}
+                            </span>
+                          )}
+                        </div>
+                        {/* On a workspace you don't own, name the owner — that's
+                            what resolves "whose 'Yarn' is this?". The unique slug
+                            disambiguates further. */}
+                        <div className="text-[10px] font-mono text-faint dark:text-slate-500 truncate">
+                          {o.role !== "owner" && o.owner_name ? `owner: ${o.owner_name} · ` : ""}
+                          {displaySlug(o.slug)}
+                        </div>
+                      </div>
+                    </button>
+                    {canManage && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOpen(false);
+                          setManageSlug(o.slug);
+                        }}
+                        className="px-3 text-faint dark:text-slate-500 hover:text-accent dark:hover:text-cobble-300 opacity-0 group-hover:opacity-100 focus:opacity-100 transition"
+                        title={`Manage members + invites for ${o.name}`}
+                      >
+                        <Users size={13} />
+                      </button>
+                    )}
+                  </li>
+                );
+              };
+              return (
+                <>
+                  {owned.length > 0 && header("your workspaces", false)}
+                  {owned.map(row)}
+                  {shared.length > 0 && header("shared with you", owned.length > 0)}
+                  {shared.map(row)}
+                </>
+              );
+            })()}
           </ul>
           <button
             onClick={openCreate}

@@ -1473,11 +1473,24 @@ export interface AiEntitlementGuard {
   }): Promise<{ allow: boolean; reason?: string }>;
 }
 
+/** SSRF policy for AI providers that fetch a workspace-supplied URL
+ *  (e.g. the ollama `base_url`). "lan" allows RFC1918 (a self-hosted
+ *  Ollama lives on the LAN); "strict" blocks all private/loopback/
+ *  metadata (a cloud tenant's "home" endpoint is reached over the
+ *  public internet). Open core defaults to "lan"; the hosted overlay
+ *  sets "strict" at boot. See docs/operations/security-audit.md §10. */
+export type AiEndpointPolicy = "lan" | "strict";
+
 export interface PlatformAi {
   registerProvider(p: AiProviderDef): void;
   /** Register the (single) entitlement guard. Last registration wins;
    *  open core never calls this — only the hosted overlay does. */
   registerEntitlementGuard(g: AiEntitlementGuard): void;
+  /** SSRF policy for workspace-supplied provider URLs. Defaults to
+   *  "lan"; the hosted overlay sets "strict" at boot. Providers that
+   *  fetch a user URL read this via getEndpointPolicy(). */
+  getEndpointPolicy(): AiEndpointPolicy;
+  setEndpointPolicy(p: AiEndpointPolicy): void;
   listProviders(): Array<{
     id: string;
     label: string;
@@ -1513,6 +1526,50 @@ export interface PlatformAi {
     cost_cents?: number;
     duration_ms: number;
   }>;
+}
+
+// ───────────────────────────── Edge channel seam ─────────────────────────────
+// A workspace can have a live OUTBOUND connection from a user-run edge agent
+// (the Cobblr edge-bridge dialing the cloud). The agent dials out and holds the
+// pipe open, so the cloud reaches a device behind NAT / on a private network /
+// tailnet WITHOUT that user exposing a public URL — the inverse of an SSRF-
+// guarded fetch. Open core defines the registry + request/response contract;
+// the hosted relay server (proprietary overlay) authenticates edge connections
+// and registers them here. Consumers (e.g. the "Local AI via edge bridge"
+// provider) route a request to a workspace's edge via send().
+//
+// The registry is keyed by orgId and lives in-process — single-instance only
+// for now (the socket lives on whichever api process the agent dialed). Scaling
+// out to multiple replicas needs a shared backplane; that swaps THIS impl while
+// keeping the seam, so providers + the agent never change.
+
+export interface EdgeRequest {
+  /** Path on the edge's local target, e.g. "/api/chat". */
+  path: string;
+  method?: "GET" | "POST";
+  body?: unknown;
+  /** Per-request budget (ms). The relay rejects if the edge doesn't answer. */
+  timeoutMs?: number;
+}
+
+export interface EdgeResponse {
+  status: number;
+  body: unknown;
+}
+
+/** A live edge connection's send function — supplied by the hosted relay when
+ *  an agent connects, removed (via the returned unregister fn) when it drops. */
+export type EdgeChannelSender = (req: EdgeRequest) => Promise<EdgeResponse>;
+
+export interface PlatformEdge {
+  /** Hosted relay: register a live channel for a workspace. Returns an
+   *  unregister fn. One channel per workspace — a newer connection replaces an
+   *  older one (the relay reaps the stale socket). */
+  registerChannel(orgId: string, send: EdgeChannelSender): () => void;
+  /** Is there a live edge channel for this workspace right now? */
+  hasChannel(orgId: string): boolean;
+  /** Send a request to the workspace's edge; rejects if none is connected. */
+  send(orgId: string, req: EdgeRequest): Promise<EdgeResponse>;
 }
 
 export interface PlatformQueue {
@@ -1834,7 +1891,10 @@ export interface AuthEmailMessage {
   to: string;
   subject: string;
   text: string;
-  kind: "magic_link" | "verify_email" | "password_reset" | "invite";
+  // `notification` = a platform-level transactional note to a known user (e.g.
+  // "the feedback you reported is live"). Distinct from the pre-workspace auth
+  // kinds; reuses the same registered sender (the overlay's managed mailer).
+  kind: "magic_link" | "verify_email" | "password_reset" | "invite" | "notification";
 }
 export type AuthEmailSender = (msg: AuthEmailMessage) => Promise<void>;
 
@@ -1854,6 +1914,7 @@ export interface Platform {
   notifications: PlatformNotifications;
   integrations: PlatformIntegrations;
   ai: PlatformAi;
+  edge: PlatformEdge;
   auth: PlatformAuth;
   pairings: PlatformPairings;
   catalogs: PlatformCatalogs;

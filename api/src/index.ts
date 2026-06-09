@@ -47,6 +47,7 @@ import * as queue from "./platform/queue.js";
 import * as notificationsImpl from "./platform/notifications.js";
 import * as integrationsImpl from "./platform/integrations.js";
 import * as aiImpl from "./platform/ai.js";
+import * as edgeImpl from "./platform/edge.js";
 import { syncManifestRegistries } from "./platform/registry-sync.js";
 import { syncInstalledModules } from "./platform/installed-modules.js";
 import { migrateLensModules } from "./platform/migrate-lens-modules.js";
@@ -194,9 +195,16 @@ async function boot() {
     ai: {
       registerProvider: aiImpl.registerProvider,
       registerEntitlementGuard: aiImpl.registerEntitlementGuard,
+      getEndpointPolicy: aiImpl.getEndpointPolicy,
+      setEndpointPolicy: aiImpl.setEndpointPolicy,
       listProviders: aiImpl.listProviders,
       getProvider: aiImpl.getProvider,
       invoke: aiImpl.invoke,
+    },
+    edge: {
+      registerChannel: edgeImpl.registerChannel,
+      hasChannel: edgeImpl.hasChannel,
+      send: edgeImpl.send,
     },
     files: {
       registerReader: files.registerReader,

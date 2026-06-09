@@ -1,100 +1,99 @@
-// /scan/camera — mobile-first camera capture page.
+// /scan/camera — mobile-first camera capture, companion app-grade.
 //
-// Opens the back-facing camera in a <video> element and uses the
-// browser's BarcodeDetector API (Chromium-on-Android: solid;
-// iOS Safari 17+: shipped; older: not present — falls back to a
-// manual-entry input). On a hit we POST /scan + flash the result.
+// Two things make this feel fast on an iPhone (see lib/barcodeScanner):
+//   1. we lock to a *plain* wide rear lens (not the ultra-wide that can't
+//      focus close, nor the virtual composite that switches mid-scan) and
+//      apply continuous autofocus — so you don't move the phone in/out;
+//   2. on a hit we BLOCK — stop reading, pop a result modal with the
+//      instant catalog match + a quantity stepper + one-tap "add to a
+//      table" — instead of silently re-scanning the same code forever.
 //
-// Stays on the page after a successful scan so a user walking
-// around can fire 5-10 scans in a row without leaving. Each one
-// shows up as a green toast + appends to a "this session" list.
+// Native BarcodeDetector (Chromium / iOS 17+) drives the loop when present;
+// ZXing (tuned, ~110ms cadence) is the fallback. Both run on the SAME
+// lens-locked stream.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { useMutation } from "@tanstack/react-query";
-import { ArrowLeft, Camera, Check, ScanLine, X } from "lucide-react";
-import { useToast, usePageTitle } from "@cobblr/platform-web";
-import { ApiError, api, type ScanInboxItem } from "../lib/api";
-import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { ArrowLeft, Camera, Check, Flashlight, ScanLine, X } from "lucide-react";
+import { usePageTitle } from "@cobblr/platform-web";
+import { type ScanInboxItem } from "../lib/api";
+import {
+  NATIVE_FORMATS,
+  acquireScannerStream,
+  cameraHasTorch,
+  createBarcodeReader,
+  setTorch,
+} from "../lib/barcodeScanner";
+import { ScanResultModal } from "./ScanResultModal";
 
-// BarcodeDetector type — not in lib.dom.d.ts as of TS 5.7. Local
-// shim so we can call it without DOM typings yelling.
+// BarcodeDetector type — not in lib.dom.d.ts as of TS 5.7. Local shim.
 interface BarcodeDetectorCtor {
   new (opts?: { formats?: string[] }): {
-    detect: (source: HTMLVideoElement | ImageBitmap | HTMLCanvasElement) =>
-      Promise<Array<{ rawValue: string; format?: string }>>;
+    detect: (source: HTMLVideoElement | ImageBitmap | HTMLCanvasElement) => Promise<
+      Array<{ rawValue: string; format?: string }>
+    >;
   };
   getSupportedFormats(): Promise<string[]>;
 }
 
-const SUPPORTED_FORMATS = [
-  "ean_13",
-  "ean_8",
-  "upc_a",
-  "upc_e",
-  "code_128",
-  "code_39",
-  "qr_code",
-];
+type Phase = "idle" | "scanning" | "result";
 
 export function ScanCameraPage() {
   usePageTitle("Scan camera");
-  const { activeSlug } = useActiveOrg();
-  // Preserve the instance-scan target (?into=…) so returning to /scan keeps it.
+  // Preserve the instance-scan target (?into=…) so the modal + return keep it.
   const [params] = useSearchParams();
   const backToScan = `/scan${params.toString() ? `?${params}` : ""}`;
-  const toast = useToast();
+
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const deviceIdRef = useRef<string | null>(null);
   const detectorRef = useRef<InstanceType<BarcodeDetectorCtor> | null>(null);
   const lastSeenRef = useRef<{ value: string; at: number } | null>(null);
+  // phaseRef mirrors `phase` so the decode callbacks (set up once) read the
+  // live value — once we're in the result modal, decodes are ignored. That
+  // guard IS the "stop scanning the same thing over and over" fix.
+  const phaseRef = useRef<Phase>("idle");
+
+  const [phase, setPhaseState] = useState<Phase>("idle");
+  const setPhase = useCallback((p: Phase) => {
+    phaseRef.current = p;
+    setPhaseState(p);
+  }, []);
 
   const [supported, setSupported] = useState<boolean | null>(null);
-  const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recent, setRecent] = useState<ScanInboxItem[]>([]);
   const [manual, setManual] = useState("");
+  const [pendingBarcode, setPendingBarcode] = useState<string | null>(null);
+  const [hasTorch, setHasTorch] = useState(false);
+  const [torchOn, setTorchOn] = useState(false);
 
-  const scan = useMutation({
-    mutationFn: (value: string) =>
-      api.scanBarcode(activeSlug, { barcode: value.trim() }),
-    onSuccess: (item) => {
-      setRecent((prev) => [item, ...prev].slice(0, 8));
-      toast.success(
-        item.suggested_name
-          ? `Found: ${item.suggested_name}`
-          : `Scanned ${item.barcode_text} (no catalog hit)`,
-      );
-    },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
-  });
-
-  // Does this browser have the native BarcodeDetector? (Chromium/Android +
-  // iOS Safari 17+.) If not, we lazy-load the ZXing JS decoder as a fallback so
-  // live scanning still works on older iOS Safari etc.
   useEffect(() => {
     const Detector = (window as unknown as { BarcodeDetector?: BarcodeDetectorCtor })
       .BarcodeDetector;
     setSupported(!!Detector);
   }, []);
 
-  // One detection handler for both decoders: dedupe + buzz + look up.
+  // A decoded value → block into the result modal (dedup a stale repeat first).
   const onDetect = useCallback(
     (rawIn: string) => {
+      if (phaseRef.current !== "scanning") return;
       const raw = rawIn.trim();
       if (!raw) return;
       const last = lastSeenRef.current;
-      if (last && last.value === raw && Date.now() - last.at < 3_000) return;
+      if (last && last.value === raw && Date.now() - last.at < 2_000) return;
       lastSeenRef.current = { value: raw, at: Date.now() };
-      if (typeof navigator.vibrate === "function") navigator.vibrate(80);
-      scan.mutate(raw);
+      if (typeof navigator.vibrate === "function") navigator.vibrate(70);
+      setPendingBarcode(raw);
+      setPhase("result");
     },
-    [scan],
+    [setPhase],
   );
 
-  // Start / stop the camera + detection based on `running`. Native path uses
-  // BarcodeDetector against our own stream; the fallback hands the camera to
-  // ZXing (lazy-imported — never in the eager bundle).
+  // Start / stop the camera. Acquire ONE lens-locked stream and keep it alive
+  // for the whole session; the phase guard pauses/resumes decoding so re-arm
+  // after a scan is instant and the lens never switches.
+  const running = phase !== "idle";
   useEffect(() => {
     if (!running) return;
     let cancelled = false;
@@ -103,28 +102,44 @@ export function ScanCameraPage() {
     const useNative = !!(window as unknown as { BarcodeDetector?: BarcodeDetectorCtor })
       .BarcodeDetector;
 
-    async function startNative() {
+    function afterStream(stream: MediaStream) {
+      streamRef.current = stream;
+      const track = stream.getVideoTracks()[0] ?? null;
+      setHasTorch(cameraHasTorch(track));
+    }
+
+    async function start() {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: "environment" } },
-          audio: false,
-        });
-        streamRef.current = stream;
+        const { stream, deviceId } = await acquireScannerStream(deviceIdRef.current);
         if (cancelled) {
           stream.getTracks().forEach((t) => t.stop());
           return;
         }
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play();
+        deviceIdRef.current = deviceId;
+        afterStream(stream);
+
+        if (useNative) {
+          if (videoRef.current) {
+            videoRef.current.srcObject = stream;
+            await videoRef.current.play();
+          }
+          const Detector = (window as unknown as { BarcodeDetector?: BarcodeDetectorCtor })
+            .BarcodeDetector!;
+          detectorRef.current = new Detector({ formats: NATIVE_FORMATS });
+          loop();
+        } else {
+          const reader = createBarcodeReader();
+          zxingControls = await reader.decodeFromStream(
+            stream,
+            videoRef.current!,
+            (result) => {
+              if (!cancelled && result) onDetect(result.getText());
+            },
+          );
         }
-        const Detector = (window as unknown as { BarcodeDetector?: BarcodeDetectorCtor })
-          .BarcodeDetector!;
-        detectorRef.current = new Detector({ formats: SUPPORTED_FORMATS });
-        loop();
       } catch (err) {
         setError((err as Error).message);
-        setRunning(false);
+        setPhase("idle");
       }
     }
 
@@ -132,7 +147,7 @@ export function ScanCameraPage() {
       if (cancelled) return;
       const video = videoRef.current;
       const detector = detectorRef.current;
-      if (!video || !detector || video.readyState < 2) {
+      if (!video || !detector || video.readyState < 2 || phaseRef.current !== "scanning") {
         raf = requestAnimationFrame(loop);
         return;
       }
@@ -150,47 +165,7 @@ export function ScanCameraPage() {
         });
     }
 
-    async function startZxing() {
-      try {
-        // Lazy chunk — only loads when the native detector is absent (iOS<17).
-        const { BrowserMultiFormatReader, BarcodeFormat } = await import("@zxing/browser");
-        const { DecodeHintType } = await import("@zxing/library");
-        if (cancelled) return;
-        // Default ZXing tries every symbology with a single pass — slow + flaky
-        // on a phone camera. Restrict to the retail + QR formats we care about
-        // and turn on TRY_HARDER (multi-pass, handles rotation/partial frames).
-        // This is the companion app-grade decode the compatibility path was missing.
-        const hints = new Map<number, unknown>([
-          [DecodeHintType.TRY_HARDER, true],
-          [
-            DecodeHintType.POSSIBLE_FORMATS,
-            [
-              BarcodeFormat.UPC_A,
-              BarcodeFormat.EAN_13,
-              BarcodeFormat.EAN_8,
-              BarcodeFormat.UPC_E,
-              BarcodeFormat.CODE_128,
-              BarcodeFormat.CODE_39,
-              BarcodeFormat.QR_CODE,
-            ],
-          ],
-        ]);
-        const reader = new BrowserMultiFormatReader(hints);
-        zxingControls = await reader.decodeFromConstraints(
-          { video: { facingMode: { ideal: "environment" } }, audio: false },
-          videoRef.current!,
-          (result) => {
-            if (!cancelled && result) onDetect(result.getText());
-          },
-        );
-      } catch (err) {
-        setError((err as Error).message);
-        setRunning(false);
-      }
-    }
-
-    if (useNative) void startNative();
-    else void startZxing();
+    void start();
 
     return () => {
       cancelled = true;
@@ -198,8 +173,30 @@ export function ScanCameraPage() {
       streamRef.current?.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
       zxingControls?.stop();
+      setTorchOn(false);
+      setHasTorch(false);
     };
-  }, [running, onDetect]);
+    // Acquire once per session (running 0→1). Phase flips within a session
+    // are handled by phaseRef, not by re-running this effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running, onDetect, setPhase]);
+
+  const toggleTorch = useCallback(async () => {
+    const track = streamRef.current?.getVideoTracks()[0] ?? null;
+    const next = !torchOn;
+    const ok = await setTorch(track, next);
+    if (ok) setTorchOn(next);
+  }, [torchOn]);
+
+  // Modal closed → re-arm the scanner (or back to idle if the camera stopped).
+  const rearm = useCallback(() => {
+    setPendingBarcode(null);
+    setPhase(streamRef.current ? "scanning" : "idle");
+  }, [setPhase]);
+
+  const onSaved = useCallback((item: ScanInboxItem) => {
+    setRecent((prev) => [item, ...prev.filter((p) => p.id !== item.id)].slice(0, 8));
+  }, []);
 
   return (
     <div className="space-y-4 max-w-2xl">
@@ -222,17 +219,12 @@ export function ScanCameraPage() {
       )}
 
       <div className="rounded-xl overflow-hidden border border-line dark:border-slate-700 bg-black aspect-[3/4] relative">
-        <video
-          ref={videoRef}
-          playsInline
-          muted
-          className="w-full h-full object-cover"
-        />
+        <video ref={videoRef} playsInline muted className="w-full h-full object-cover" />
         {!running && (
           <div className="absolute inset-0 flex items-center justify-center bg-slate-900/85 text-white">
             <button
               type="button"
-              onClick={() => setRunning(true)}
+              onClick={() => setPhase("scanning")}
               className="inline-flex items-center gap-2 rounded-full bg-cobble-600 hover:bg-cobble-700 px-4 py-2 text-sm font-medium"
             >
               <Camera size={16} /> Start camera
@@ -242,12 +234,14 @@ export function ScanCameraPage() {
         {running && (
           <div className="absolute top-3 right-3 flex items-center gap-2 text-white text-xs">
             <span className="inline-flex items-center gap-1 bg-black/50 rounded-full px-2 py-1">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              live
+              <span
+                className={`w-2 h-2 rounded-full ${phase === "scanning" ? "bg-emerald-400 animate-pulse" : "bg-amber-400"}`}
+              />
+              {phase === "scanning" ? "live" : "paused"}
             </span>
             <button
               type="button"
-              onClick={() => setRunning(false)}
+              onClick={() => setPhase("idle")}
               className="bg-black/50 rounded-full p-1 hover:bg-black/70"
               title="Stop"
             >
@@ -255,21 +249,31 @@ export function ScanCameraPage() {
             </button>
           </div>
         )}
-        {running && (
+        {running && hasTorch && (
+          <button
+            type="button"
+            onClick={toggleTorch}
+            className={`absolute top-3 left-3 rounded-full p-2 ${torchOn ? "bg-amber-400 text-slate-900" : "bg-black/50 text-white hover:bg-black/70"}`}
+            title="Torch"
+          >
+            <Flashlight size={15} />
+          </button>
+        )}
+        {phase === "scanning" && (
           <div className="absolute inset-x-6 top-1/2 -translate-y-1/2 border-2 border-accent/80 rounded-md h-32 pointer-events-none" />
         )}
       </div>
 
-      {error && (
-        <div className="text-sm text-ember-500">Camera error: {error}</div>
-      )}
+      {error && <div className="text-sm text-ember-500">Camera error: {error}</div>}
 
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          if (!manual.trim()) return;
-          scan.mutate(manual.trim());
+          const v = manual.trim();
+          if (!v) return;
           setManual("");
+          setPendingBarcode(v);
+          setPhase("result");
         }}
         className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 flex gap-2 items-center"
       >
@@ -284,7 +288,7 @@ export function ScanCameraPage() {
         />
         <button
           type="submit"
-          disabled={!manual.trim() || scan.isPending}
+          disabled={!manual.trim()}
           className="rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm font-medium disabled:opacity-50"
         >
           Scan
@@ -305,12 +309,11 @@ export function ScanCameraPage() {
                 <Check size={14} className="text-moss-600 shrink-0" />
                 <div className="min-w-0 flex-1">
                   <div className="font-medium text-content dark:text-mortar-100 truncate">
-                    {item.suggested_name ?? (
-                      <span className="text-faint italic">no catalog hit</span>
-                    )}
+                    {item.suggested_name ?? <span className="text-faint italic">no catalog hit</span>}
                   </div>
                   <div className="text-[10px] font-mono text-faint truncate">
                     {item.barcode_text}
+                    {item.quantity > 1 && ` · ×${item.quantity}`}
                   </div>
                 </div>
               </li>
@@ -323,6 +326,20 @@ export function ScanCameraPage() {
             Open inbox to confirm →
           </Link>
         </section>
+      )}
+
+      {phase === "result" && pendingBarcode && (
+        <ScanResultModal
+          barcode={pendingBarcode}
+          scanTarget={{
+            into: params.get("into"),
+            module: params.get("module"),
+            kind: params.get("kind"),
+            label: params.get("label"),
+          }}
+          onSaved={onSaved}
+          onClose={rearm}
+        />
       )}
     </div>
   );

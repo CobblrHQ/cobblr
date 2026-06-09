@@ -1,10 +1,11 @@
 // Always-on feedback button. Any signed-in user can report a bug, flag something
 // confusing, or suggest an idea from anywhere in the app. Auto-attaches the page
-// + browser so triage (super-admin → Feedback) has context. POSTs to /feedback.
+// + browser, and lets them attach screenshot(s) of the issue, so triage
+// (super-admin → Feedback) has context. POSTs to /feedback.
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Modal, useToast } from "@cobblr/platform-web";
-import { MessageSquare } from "lucide-react";
+import { MessageSquare, ImagePlus, X } from "lucide-react";
 import { api } from "../lib/api";
 
 const TYPES = [
@@ -15,13 +16,63 @@ const TYPES = [
 
 type FType = (typeof TYPES)[number]["id"];
 
+const MAX_SHOTS = 5;
+const MAX_BYTES = 10 * 1024 * 1024; // 10 MB / image
+
+interface Pick {
+  file: File;
+  url: string; // object URL for the preview (revoked on remove/close)
+}
+
 export function FeedbackWidget() {
   const [open, setOpen] = useState(false);
   const [type, setType] = useState<FType>("bug");
   const [message, setMessage] = useState("");
+  const [picks, setPicks] = useState<Pick[]>([]);
   const [busy, setBusy] = useState(false);
+  const [stage, setStage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
   const toast = useToast();
+
+  // Screenshots upload to the workspace's core-files, so they need a workspace.
+  const slug = window.location.pathname.match(/^\/w\/([^/]+)/)?.[1];
+
+  function addFiles(list: FileList | null) {
+    if (!list) return;
+    const next: Pick[] = [];
+    for (const file of Array.from(list)) {
+      if (!file.type.startsWith("image/")) continue;
+      if (file.size > MAX_BYTES) {
+        setError(`"${file.name}" is over 10 MB — skipped.`);
+        continue;
+      }
+      next.push({ file, url: URL.createObjectURL(file) });
+    }
+    setPicks((cur) => [...cur, ...next].slice(0, MAX_SHOTS));
+  }
+
+  function removePick(i: number) {
+    setPicks((cur) => {
+      const p = cur[i];
+      if (p) URL.revokeObjectURL(p.url);
+      return cur.filter((_, idx) => idx !== i);
+    });
+  }
+
+  function reset() {
+    picks.forEach((p) => URL.revokeObjectURL(p.url));
+    setPicks([]);
+    setMessage("");
+    setType("bug");
+    setStage(null);
+    setError(null);
+  }
+
+  function close() {
+    reset();
+    setOpen(false);
+  }
 
   async function submit() {
     const text = message.trim();
@@ -29,11 +80,21 @@ export function FeedbackWidget() {
     setBusy(true);
     setError(null);
     try {
-      const slug = window.location.pathname.match(/^\/w\/([^/]+)/)?.[1];
+      let attachments: Array<{ file_id: string; name?: string; content_type?: string }> = [];
+      if (slug && picks.length) {
+        setStage(`Uploading ${picks.length} screenshot${picks.length === 1 ? "" : "s"}…`);
+        attachments = [];
+        for (const p of picks) {
+          const rec = await api.uploadFile(slug, p.file);
+          attachments.push({ file_id: rec.id, name: p.file.name, content_type: p.file.type });
+        }
+      }
+      setStage("Sending…");
       await api.submitFeedback({
         type,
         message: text,
         workspace_slug: slug,
+        attachments,
         context: {
           url: window.location.href,
           route: window.location.pathname,
@@ -42,13 +103,12 @@ export function FeedbackWidget() {
         },
       });
       toast.info("Thanks — your feedback was sent.");
-      setMessage("");
-      setType("bug");
-      setOpen(false);
+      close();
     } catch {
       setError("Couldn't send that. Please try again.");
     } finally {
       setBusy(false);
+      setStage(null);
     }
   }
 
@@ -65,7 +125,7 @@ export function FeedbackWidget() {
         <span className="hidden sm:inline">Feedback</span>
       </button>
 
-      <Modal open={open} onClose={() => setOpen(false)} title="Send feedback" size="md">
+      <Modal open={open} onClose={close} title="Send feedback" size="md">
         <div className="space-y-3">
           <div className="flex gap-2">
             {TYPES.map((t) => (
@@ -90,8 +150,56 @@ export function FeedbackWidget() {
             rows={5}
             autoFocus
             placeholder="What happened, what's confusing, or what you'd love to see…"
-            className="w-full rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-2 text-sm text-content dark:text-mortar-100"
+            className="w-full rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-2 text-base sm:text-sm text-content dark:text-mortar-100"
           />
+
+          {/* Screenshots */}
+          {slug ? (
+            <div className="space-y-2">
+              {picks.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {picks.map((p, i) => (
+                    <div
+                      key={i}
+                      className="relative w-16 h-16 rounded-md overflow-hidden border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800"
+                    >
+                      <img src={p.url} alt={p.file.name} className="w-full h-full object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => removePick(i)}
+                        className="absolute top-0.5 right-0.5 p-0.5 rounded bg-black/50 text-white hover:bg-ember-600 transition"
+                        title="Remove"
+                      >
+                        <X size={11} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {picks.length < MAX_SHOTS && (
+                <button
+                  type="button"
+                  onClick={() => fileInput.current?.click()}
+                  className="flex items-center gap-1.5 text-xs text-muted hover:text-accent border border-dashed border-line dark:border-slate-700 hover:border-cobble-400 rounded-md px-2.5 py-1.5 transition"
+                >
+                  <ImagePlus size={14} />
+                  Attach screenshot{picks.length ? "s" : ""} <span className="text-faint">(up to {MAX_SHOTS})</span>
+                </button>
+              )}
+              <input
+                ref={fileInput}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  addFiles(e.target.files);
+                  e.target.value = ""; // allow re-picking the same file
+                }}
+              />
+            </div>
+          ) : null}
+
           <div className="text-[10px] text-faint dark:text-slate-500">
             We attach the page you're on + your browser so we can track it down.
           </div>
@@ -102,7 +210,7 @@ export function FeedbackWidget() {
             disabled={busy || !message.trim()}
             className="w-full rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-3 py-2 transition disabled:opacity-50"
           >
-            {busy ? "Sending…" : "Send feedback"}
+            {busy ? (stage ?? "Sending…") : "Send feedback"}
           </button>
         </div>
       </Modal>

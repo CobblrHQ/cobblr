@@ -19,11 +19,15 @@ interface ProjectsUIProps {
   getToken: () => string | null;
   /** When set, scopes project CRUD to this module instance. */
   instance?: string;
+  /** Instance skin: heading label ("Outfits") + singular noun ("outfit") so the
+   *  page reads as the user's thing, not "projects" / "New project". */
+  displayName?: string;
+  itemNoun?: string;
 }
 
-export function ProjectsUI({ orgSlug, getToken, instance }: ProjectsUIProps) {
+export function ProjectsUI({ orgSlug, getToken, instance, displayName, itemNoun }: ProjectsUIProps) {
   return (
-    <ProjectsProvider orgSlug={orgSlug} getToken={getToken} instance={instance}>
+    <ProjectsProvider orgSlug={orgSlug} getToken={getToken} instance={instance} displayName={displayName} itemNoun={itemNoun}>
       <Routes>
         <Route index element={<ProjectsListPage />} />
         {/* Bundle setup-cards / next-steps deep-link to

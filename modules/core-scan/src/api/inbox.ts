@@ -214,6 +214,44 @@ inboxRouter.get(
   }),
 );
 
+// ─────────────────────────── PATCH /inbox/:id ──────────────────────
+// Light edits the camera modal makes in-the-moment: the quantity stepper,
+// and an optional name correction. Triage/commit still happens on /scan.
+
+const PatchBody = z.object({
+  quantity: z.number().int().min(1).max(100_000).optional(),
+  name: z.string().min(1).max(160).optional(),
+});
+
+inboxRouter.patch(
+  "/inbox/:id",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const id = req.params.id;
+    if (!id) {
+      res.status(400).json({ error: { code: "missing_id", message: "id required" } });
+      return;
+    }
+    const parsed = PatchBody.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const patch: Record<string, unknown> = { updated_at: new Date() };
+    if (parsed.data.quantity !== undefined) patch.quantity = parsed.data.quantity;
+    if (parsed.data.name !== undefined) patch.suggested_name = parsed.data.name;
+    const db = tenantDb(req);
+    const row = await db
+      .updateTable("core_scan_inbox_items")
+      .set(patch)
+      .where("id", "=", id)
+      .returningAll()
+      .executeTakeFirst();
+    if (!row) {
+      res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
+      return;
+    }
+    res.json(row);
+  }),
+);
+
 // ──────────────────────── POST /inbox/:id/confirm ──────────────────
 
 const ConfirmBody = z.object({
@@ -234,6 +272,12 @@ const ConfirmBody = z.object({
    *  workspace-level instance slug; the platform's instance router resolves
    *  it to (module, instance) and scopes the create. Absent → default. */
   instance: z.string().regex(/^[a-z0-9][a-z0-9-]*$/).max(80).optional(),
+  /** Platform-admin only: also record this commit as a matchmaker eval case
+   *  (the corrected answer is the ground truth). Best-effort; ignored for
+   *  non-admins. See docs/operations/ai-prompt-eval-harness.md (P2). */
+  save_eval_case: z.boolean().optional(),
+  /** Optional note / hard-case label stored on the captured eval case. */
+  eval_note: z.string().max(200).optional(),
 });
 
 const KIND_CREATE_ENDPOINTS: Record<string, string> = {
@@ -433,6 +477,44 @@ inboxRouter.post(
       entityId: created.id,
     });
 
+    // P2 eval-harness capture (platform-admin only, best-effort): the admin's
+    // corrected commit IS the ground-truth answer. Record the perceived input +
+    // the menu the model saw + the route/fields committed, so the matchmaker
+    // golden set grows from real triage rather than hand-authoring. A capture
+    // failure must never fail the commit. See docs/operations/ai-prompt-eval-harness.md.
+    const sess = sessionUser(req);
+    if (parsed.data.save_eval_case && sess.is_platform_admin) {
+      try {
+        const menu = await assembleScanMenu(baseUrl, ctx.org.slug, token);
+        await db
+          .insertInto("core_scan_eval_cases")
+          .values({
+            inbox_item_id: id,
+            surface: "matchmaker",
+            perceived_input: JSON.stringify({
+              name: row.suggested_name ?? "",
+              manufacturer: row.suggested_manufacturer,
+              category: (meta as { category?: string }).category ?? null,
+              description: (meta as { description?: string }).description ?? null,
+              entityType: (meta as { entity_type?: "asset" | "part" }).entity_type ?? null,
+              barcode: row.barcode_text,
+            }) as never,
+            scan_menu: JSON.stringify(menu) as never,
+            candidates: JSON.stringify(row.suggested_candidates ?? []) as never,
+            expected: JSON.stringify({
+              route: { module: target.module, instance: parsed.data.instance ?? null },
+              fields: (extrasMetadata as Record<string, unknown> | undefined) ?? {},
+              name: body.name,
+            }) as never,
+            note: parsed.data.eval_note ?? null,
+            created_by_user_id: sess.id,
+          })
+          .execute();
+      } catch (err) {
+        console.error("[core-scan] eval-case capture failed:", (err as Error).message);
+      }
+    }
+
     res.json({ item: resolvedRow, created });
   }),
 );
@@ -589,6 +671,7 @@ inboxRouter.post(
         barcode: row.barcode_text,
       },
       menu,
+      id, // inbox item UUID → links the AI-log row to this scan
     );
 
     await db

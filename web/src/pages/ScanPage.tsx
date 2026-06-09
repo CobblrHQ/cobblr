@@ -28,6 +28,7 @@ import {
   type ScanCandidate,
 } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { useAuth } from "../auth/AuthContext";
 
 const TARGET_KINDS = [
   { module: "inventory", kind: "part", label: "Inventory part" },
@@ -158,10 +159,10 @@ export function ScanPage() {
       </form>
 
       <p className="text-xs text-muted dark:text-slate-400">
-        Lookups hit Open Products Facts + upcitemdb in parallel (both
-        keyless free tiers). Hits land here with a suggested name + brand +
-        catalog photo; misses become bare barcode rows you can fill in
-        manually. The web-search fallback + photo-only path are v0.2.
+        Lookups hit Open Products Facts + upcitemdb in parallel, with a
+        web-search + AI fallback when the catalogs miss. Hits land here with a
+        suggested name + brand + catalog photo; the best-fitting tables show as
+        one-tap chips. Use the camera for the fast blocking scan flow.
       </p>
 
       {list.isLoading && <div className="text-sm text-faint">loading…</div>}
@@ -374,8 +375,13 @@ function ConfirmModal({
   onClose: () => void;
 }) {
   const { activeSlug } = useActiveOrg();
+  const { user } = useAuth();
+  const isAdmin = !!user?.is_platform_admin;
   const qc = useQueryClient();
   const toast = useToast();
+  // Platform-admin only: capture this corrected commit as a matchmaker eval case.
+  const [saveEvalCase, setSaveEvalCase] = useState(false);
+  const [evalNote, setEvalNote] = useState("");
   // Default the kind: a preset instance target wins; else the identify's
   // asset/part hint (asset → assets:asset, else inventory:part).
   const hintedKey = target
@@ -445,6 +451,9 @@ function ConfirmModal({
         quantity: Number.isFinite(quantity) && quantity > 0 ? quantity : undefined,
         location_id: locationId || undefined,
         extras: extras && Object.keys(extras).length ? extras : undefined,
+        ...(isAdmin && saveEvalCase
+          ? { save_eval_case: true, eval_note: evalNote.trim() || undefined }
+          : {}),
       });
     },
     onSuccess: (r) => {
@@ -594,6 +603,31 @@ function ConfirmModal({
             ))}
           </select>
         </label>
+        {isAdmin && (
+          <div className="rounded border border-dashed border-line dark:border-slate-700 p-2 space-y-2">
+            <label className="flex items-center gap-2 text-sm text-content cursor-pointer">
+              <input
+                type="checkbox"
+                checked={saveEvalCase}
+                onChange={(e) => setSaveEvalCase(e.target.checked)}
+              />
+              Save as matchmaker eval case
+            </label>
+            {saveEvalCase && (
+              <input
+                type="text"
+                value={evalNote}
+                onChange={(e) => setEvalNote(e.target.value)}
+                placeholder="Note / hard-case label (optional)"
+                className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+              />
+            )}
+            <p className="text-[10px] text-muted dark:text-slate-400">
+              Records this corrected commit (input + menu + your route/fields) as a golden case
+              for the prompt-eval harness.
+            </p>
+          </div>
+        )}
         <div className="flex justify-end gap-2 pt-2">
           <button
             type="button"

@@ -239,7 +239,7 @@ export async function buildAuthResponse(userId: string): Promise<AuthResponse> {
   const orgs = await meta
     .selectFrom("org_memberships as m")
     .innerJoin("orgs as o", "o.id", "m.org_id")
-    .select(["o.id", "o.name", "o.slug", "m.role"])
+    .select((eb) => ["o.id", "o.name", "o.slug", "m.role", eb.selectFrom("org_memberships as om").innerJoin("users as ou", "ou.id", "om.user_id").select("ou.display_name").whereRef("om.org_id", "=", "o.id").where("om.role", "=", "owner").limit(1).as("owner_name")])
     .where("m.user_id", "=", userId)
     .execute();
 

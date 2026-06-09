@@ -36,7 +36,7 @@ orgsRouter.get("/", requireAuth, async (req, res, next) => {
     const orgs = await meta
       .selectFrom("org_memberships as m")
       .innerJoin("orgs as o", "o.id", "m.org_id")
-      .select(["o.id", "o.name", "o.slug", "m.role"])
+      .select((eb) => ["o.id", "o.name", "o.slug", "m.role", eb.selectFrom("org_memberships as om").innerJoin("users as ou", "ou.id", "om.user_id").select("ou.display_name").whereRef("om.org_id", "=", "o.id").where("om.role", "=", "owner").limit(1).as("owner_name")])
       .where("m.user_id", "=", req.session!.id)
       .orderBy("o.created_at")
       .execute();
@@ -104,9 +104,9 @@ orgsRouter.post(
   withTenant,
   async (req, res, next) => {
     try {
-      if (req.tenant!.role !== "owner" && req.tenant!.role !== "admin") {
+      if (req.tenant!.role !== "owner" && req.tenant!.role !== "admin" && req.tenant!.role !== "editor") {
         res.status(403).json({
-          error: { code: "forbidden", message: "Only owners/admins can enable modules." },
+          error: { code: "forbidden", message: "Only owners, admins, or editors can enable modules." },
         });
         return;
       }
@@ -147,9 +147,9 @@ orgsRouter.post(
   withTenant,
   async (req, res, next) => {
     try {
-      if (req.tenant!.role !== "owner" && req.tenant!.role !== "admin") {
+      if (req.tenant!.role !== "owner" && req.tenant!.role !== "admin" && req.tenant!.role !== "editor") {
         res.status(403).json({
-          error: { code: "forbidden", message: "Only owners/admins can disable modules." },
+          error: { code: "forbidden", message: "Only owners, admins, or editors can disable modules." },
         });
         return;
       }
@@ -256,7 +256,7 @@ orgsRouter.post("/", requireAuth, async (req, res, next) => {
     const row = await meta
       .selectFrom("org_memberships as m")
       .innerJoin("orgs as o", "o.id", "m.org_id")
-      .select(["o.id", "o.name", "o.slug", "m.role"])
+      .select((eb) => ["o.id", "o.name", "o.slug", "m.role", eb.selectFrom("org_memberships as om").innerJoin("users as ou", "ou.id", "om.user_id").select("ou.display_name").whereRef("om.org_id", "=", "o.id").where("om.role", "=", "owner").limit(1).as("owner_name")])
       .where("m.user_id", "=", req.session!.id)
       .where("o.id", "=", orgId)
       .executeTakeFirstOrThrow();

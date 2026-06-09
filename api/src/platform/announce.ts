@@ -14,14 +14,17 @@ import { meta } from "../db/meta.js";
 /** Known announcement categories + their human labels (for the config UI).
  *  Adding a category here makes it appear in the super-admin toggle list;
  *  call announce("<key>", …) wherever the event fires. */
-// Each entry both registers a toggle in the super-admin UI AND is fired by an
-// announce("<key>", …) call at the event site. Keep these in lockstep — a
-// category with a toggle but no firing site is a dead switch. Bundle-publish /
-// platform-release categories are the next to wire (the trigger semantics —
-// publish vs per-workspace install — need pinning so they don't spam).
-export const ANNOUNCE_CATEGORIES: Array<{ key: string; label: string; description: string; defaultEnabled: boolean }> = [
+// Each entry registers a toggle (+ optional per-category channel) in the super-
+// admin UI. `feedback.*` fire automatically from their event sites; `bundle.
+// release` + `platform.update` are curated — fired from the "Post an update"
+// composer (there's no runtime bundle-publish event: bundles install per-
+// workspace and featured bundles ship in-code at deploy, so announcing what's
+// noteworthy is a human call, not an auto-trigger).
+export const ANNOUNCE_CATEGORIES: Array<{ key: string; label: string; description: string; defaultEnabled: boolean; composable?: boolean }> = [
   { key: "feedback.new", label: "New feedback", description: "A user submitted feedback.", defaultEnabled: true },
   { key: "feedback.resolved", label: "Feedback resolved", description: "A super-admin resolved a feedback item.", defaultEnabled: true },
+  { key: "bundle.release", label: "Bundle release", description: "A new bundle or noteworthy bundle update (posted from the composer).", defaultEnabled: true, composable: true },
+  { key: "platform.update", label: "Platform / feature update", description: "A feature or release note (posted from the composer).", defaultEnabled: true, composable: true },
 ];
 
 const KNOWN = new Map(ANNOUNCE_CATEGORIES.map((c) => [c.key, c] as const));
@@ -94,6 +97,13 @@ export interface AnnounceSettingView {
   webhook_url: string | null;
   /** Whether a default channel is configured at all (so the UI can warn). */
   default_channel_set: boolean;
+  /** True if the "Post an update" composer can fire this category. */
+  composable: boolean;
+}
+
+/** Whether a category may be posted from the manual composer. */
+export function isComposable(category: string): boolean {
+  return ANNOUNCE_CATEGORIES.some((c) => c.key === category && c.composable === true);
 }
 
 /** All categories with their effective enabled/override state, merging the
@@ -114,6 +124,7 @@ export async function listAnnounceSettings(): Promise<AnnounceSettingView[]> {
       enabled: row ? row.enabled : c.defaultEnabled,
       webhook_url: row?.webhook_url ?? null,
       default_channel_set: hasDefault,
+      composable: c.composable === true,
     };
   });
 }

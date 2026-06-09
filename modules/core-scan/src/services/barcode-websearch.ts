@@ -110,7 +110,7 @@ export function pickImage(results: DdgImageResult[], name: string): string | nul
   return best?.url ?? results.find((r) => r.url)?.url ?? null;
 }
 
-interface LlmIdentity {
+export interface LlmIdentity {
   name: string;
   brand: string | null;
   sku: string | null;
@@ -121,8 +121,10 @@ interface LlmIdentity {
 
 /** One folded identify+classify call via core-ai `chat`. Returns null
  *  if there's no provider, the call fails/times out, or the model can't
- *  name a product. */
-async function llmIdentify(orgId: string, upc: string, titles: string[]): Promise<LlmIdentity | null> {
+ *  name a product. Exported as the barcode-identify eval seam (P3) — given
+ *  fixed result titles it's deterministic-input (only model variance), unlike
+ *  the full `resolveBarcodeViaWebSearch` which also depends on live DDG. */
+export async function llmIdentify(orgId: string, upc: string, titles: string[]): Promise<LlmIdentity | null> {
   const system =
     "You identify ONE retail product from web-search result titles for its " +
     "barcode (UPC/EAN). The titles come from retailer and barcode-database " +

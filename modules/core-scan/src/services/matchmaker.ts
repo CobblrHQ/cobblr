@@ -161,6 +161,9 @@ export async function runMatchmaker(
   orgId: string,
   item: PerceivedItem,
   menu: ScanMenuEntry[],
+  /** The inbox item's UUID — links the AI-log row to the scan (source_id is a
+   *  UUID column; passing the barcode/name here breaks the audit insert). */
+  sourceId?: string,
 ): Promise<MatchCandidate[]> {
   if (menu.length === 0) return [];
 
@@ -216,7 +219,7 @@ export async function runMatchmaker(
       orgId,
       capability: "chat",
       input: { messages: [{ role: "system", content: system }, { role: "user", content: user }] },
-      source: { kind: "core-scan:matchmaker", id: item.barcode ?? item.name.slice(0, 60) },
+      source: { kind: "core-scan:matchmaker", id: sourceId ?? "" },
     })
     .then((r) => r.result as { content?: string })
     .catch(() => null);

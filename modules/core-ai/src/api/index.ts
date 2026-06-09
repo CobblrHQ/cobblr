@@ -15,6 +15,8 @@ import { activityRouter } from "./activity.js";
 import { register as registerOllama } from "../providers/ollama.js";
 import { register as registerOpenAI } from "../providers/openai.js";
 import { register as registerAnthropic } from "../providers/anthropic.js";
+import { register as registerEdgeBridge } from "../providers/edge-bridge.js";
+import { edgeStatusRouter } from "./edge-status.js";
 
 let registered = false;
 function registerBuiltins(): void {
@@ -23,6 +25,10 @@ function registerBuiltins(): void {
   registerOllama();
   registerOpenAI();
   registerAnthropic();
+  // Reaches an Ollama-API endpoint on the workspace's own device via a live
+  // edge channel (the proprietary relay registers channels into platform().edge).
+  // Credential-less; inert until an edge agent connects — usable on self-host too.
+  registerEdgeBridge();
 }
 
 registerBuiltins();
@@ -35,5 +41,6 @@ router.use("/usage", usageRouter);
 router.use("/match-to-catalog", matchToCatalogRouter);
 router.use("/chat", chatRouter);
 router.use("/activity", activityRouter);
+router.use("/edge-status", edgeStatusRouter);
 
 export default router;

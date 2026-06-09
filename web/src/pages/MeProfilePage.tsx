@@ -10,7 +10,7 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { Bell, History, KeyRound, UserCog } from "lucide-react";
+import { Bell, History, KeyRound, Plug, UserCog } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { api, ApiError } from "../lib/api";
 import { useToast, usePageTitle } from "@cobblr/platform-web";
@@ -60,6 +60,13 @@ export function MeProfilePage() {
         >
           <Bell size={14} />
           Notification channels (Discord / Slack / email / SMS / webhook) →
+        </Link>
+        <Link
+          to="/me/connections"
+          className="inline-flex items-center gap-2 text-sm text-accent hover:text-accent"
+        >
+          <Plug size={14} />
+          Connections — BYO AI keys / edge bridge that follow you to your workspaces →
         </Link>
       </div>
     </div>

@@ -6,6 +6,12 @@
 //   moss    #6B8E4E  success / growth (sparingly)
 //   ember   #C7593E  critical actions / errors (very sparingly)
 export default {
+  // Gate every `hover:` utility behind `@media (hover: hover)` — so hover
+  // styles only apply on devices that actually hover (desktop), not touch.
+  // Fixes the iOS "sticky hover" double-tap: without this, the first tap on a
+  // hoverable control just applies :hover and the SECOND tap fires the click
+  // (e.g. switching workspace took two taps). App-wide.
+  future: { hoverOnlyWhenSupported: true },
   // Scan the web app's own sources + every first-party module's UI
   // source so module-only classnames make it into the final CSS.
   // As more modules ship, add them here.

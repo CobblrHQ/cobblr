@@ -20,7 +20,19 @@ import { getTenantDb } from "../db/tenant.js";
 import { getCpuStats, getInvocationStats } from "../sandbox/pool.js";
 import { hasAuthEmailSender, sendAuthEmail } from "../platform/hosted-seams.js";
 import { dispatch } from "../platform/notifications.js";
-import { announce, listAnnounceSettings, setAnnounceSetting } from "../platform/announce.js";
+import { announce, listAnnounceSettings, setAnnounceSetting, isComposable } from "../platform/announce.js";
+import { pokeDiscordResolved } from "../platform/discord-bot-trigger.js";
+import { pokeTriage } from "../platform/triage-trigger.js";
+import {
+  runMatchmaker,
+  type PerceivedItem,
+  type ScanMenuEntry,
+} from "@cobblr/core-scan/services/matchmaker";
+import { llmIdentify } from "@cobblr/core-scan/services/barcode-websearch";
+import { identifyImage } from "@cobblr/core-scan/services/enrich-photo";
+import { platform } from "@cobblr/platform-contract";
+import { assembleContext, compilePrompt, unwrapBuild, parseJsonObject } from "@cobblr/core-authoring/services/compile";
+import { validateBundle } from "./bundles.js";
 
 export const superAdminRouter = Router();
 
@@ -534,6 +546,9 @@ superAdminRouter.get("/ai-activity", async (req, res, next) => {
     const capability = typeof req.query.capability === "string" && req.query.capability ? req.query.capability : null;
     const orgSlug = typeof req.query.org === "string" && req.query.org ? req.query.org : null;
     const userFilter = typeof req.query.user === "string" && req.query.user ? req.query.user.toLowerCase() : null;
+    // Substring match on source_kind — "matchmaker" / "core-scan" / "barcode"
+    // isolates the scanner calls from Ask-Cobblr chat (both log capability=chat).
+    const source = typeof req.query.source === "string" && req.query.source ? req.query.source : null;
     const limit = Math.min(parseInt(String(req.query.limit ?? "200"), 10) || 200, 500);
     const perOrg = Math.min(limit, 100);
 
@@ -545,11 +560,18 @@ superAdminRouter.get("/ai-activity", async (req, res, next) => {
     for (const org of orgs) {
       try {
         const tdb = await getTenantDb(org.id);
-        const whereCap = capability ? sql`where capability = ${capability}` : sql``;
+        // Filter in SQL so the per-org cap applies to MATCHING rows (not the
+        // newest 100 of everything, then filtered down to nothing).
+        const conds = [];
+        if (capability) conds.push(sql`capability = ${capability}`);
+        if (source) conds.push(sql`source_kind ilike ${"%" + source + "%"}`);
+        const whereClause = conds.length
+          ? sql`where ${sql.join(conds, sql` and `)}`
+          : sql``;
         const r = await sql<AiActivityRow>`
           select id, user_id, capability, provider_id, model, input_summary, output_summary,
                  input_tokens, output_tokens, cost_cents, duration_ms, ok, source_kind, cached, invoked_at
-          from core_ai_calls ${whereCap}
+          from core_ai_calls ${whereClause}
           order by invoked_at desc limit ${perOrg}`.execute(tdb);
         for (const row of r.rows) rows.push({ ...row, org_id: org.id, org_name: org.name, org_slug: org.slug });
       } catch {
@@ -613,6 +635,24 @@ const UpdateFeedback = z.object({
   // back to a status-derived default. Best-effort — never fails the update.
   notify_reporter: z.boolean().optional(),
   reply_message: z.string().max(2000).optional(),
+  // Third-person "what was reported → what we fixed" note for the PUBLIC Discord
+  // feedback-resolved post (NOT addressed to the reporter). Distinct from
+  // reply_message (the personal in-app/email reply). Used when status=resolved.
+  public_summary: z.string().max(2000).optional(),
+  // AI triage verdict, written by the host-side analyzer (feedback:triage
+  // token). Setting this stamps triaged_at; the analyzer also passes
+  // status:"triaged". Kept a nested object so a human PATCH (status/notes)
+  // and a machine PATCH (verdict) don't step on each other's shapes.
+  triage: z
+    .object({
+      priority: z.enum(["urgent", "high", "medium", "low"]),
+      valid: z.boolean(),
+      viable: z.boolean(),
+      summary: z.string().max(4000),
+      action: z.string().max(2000),
+      model: z.string().max(80).optional(),
+    })
+    .optional(),
 });
 
 // GET /super-admin/feedback?status=new — triage queue, newest first, with who
@@ -620,6 +660,9 @@ const UpdateFeedback = z.object({
 superAdminRouter.get("/feedback", async (req, res, next) => {
   try {
     const status = typeof req.query.status === "string" ? req.query.status : null;
+    // sort=priority → analyzed queue, highest priority first (untriaged last);
+    // default → newest first.
+    const byPriority = req.query.sort === "priority";
     let q = meta
       .selectFrom("feedback as f")
       .leftJoin("users as u", "u.id", "f.user_id")
@@ -631,6 +674,17 @@ superAdminRouter.get("/feedback", async (req, res, next) => {
         "f.context",
         "f.status",
         "f.admin_notes",
+        "f.attachments",
+        "f.triage_priority",
+        "f.triage_valid",
+        "f.triage_viable",
+        "f.triage_summary",
+        "f.triage_action",
+        "f.triaged_at",
+        "f.triage_model",
+        "f.origin",
+        "f.origin_ref",
+        "f.followups",
         "f.created_at",
         "f.updated_at",
         "u.email as user_email",
@@ -638,10 +692,135 @@ superAdminRouter.get("/feedback", async (req, res, next) => {
         "o.slug as workspace_slug",
         "o.name as workspace_name",
       ])
-      .orderBy("f.created_at", "desc")
       .limit(200);
+    if (byPriority) {
+      // urgent > high > medium > low > untriaged(null). Postgres sorts the
+      // CASE rank ascending (1..5), then newest-first within a rank.
+      q = q
+        .orderBy(
+          sql`case f.triage_priority when 'urgent' then 1 when 'high' then 2 when 'medium' then 3 when 'low' then 4 else 5 end`,
+          "asc",
+        )
+        .orderBy("f.created_at", "desc");
+    } else {
+      q = q.orderBy("f.created_at", "desc");
+    }
     if (status) q = q.where("f.status", "=", status);
     res.json({ items: await q.execute() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /super-admin/feedback/ingest — create a ticket from an external channel
+// (the Discord support bot). A discord ticket has no platform user (user_id
+// null); the reporter + how-to-reply live in origin_ref. Gated by the narrow
+// feedback:ingest scope (create-only). Fires triage like a normal submission.
+const IngestFeedback = z.object({
+  type: z.enum(["bug", "confusing", "idea", "other"]).default("other"),
+  message: z.string().trim().min(1).max(5000),
+  origin_ref: z.object({
+    channel_id: z.string().max(40),
+    thread_id: z.string().max(40),
+    message_id: z.string().max(40).optional(),
+    user_id: z.string().max(40).optional(),
+    username: z.string().max(120).optional(),
+  }),
+});
+superAdminRouter.post("/feedback/ingest", async (req, res, next) => {
+  try {
+    const parsed = IngestFeedback.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Bad ticket", details: parsed.error.issues } });
+      return;
+    }
+    const row = await meta
+      .insertInto("feedback")
+      .values({
+        user_id: null,
+        org_id: null,
+        type: parsed.data.type,
+        message: parsed.data.message,
+        origin: "discord",
+        origin_ref: sql`${JSON.stringify(parsed.data.origin_ref)}::jsonb`,
+      })
+      .returning(["id", "created_at"])
+      .executeTakeFirstOrThrow();
+    pokeTriage(row.id);
+    const emoji =
+      parsed.data.type === "bug" ? "🐛" : parsed.data.type === "confusing" ? "😕" : parsed.data.type === "idea" ? "💡" : "•";
+    void announce("feedback.new", {
+      title: `${emoji} New ${parsed.data.type} ticket (Discord)`,
+      body: parsed.data.message.slice(0, 1500),
+      color: 0x5865f2,
+      fields: parsed.data.origin_ref.username ? [{ name: "from", value: parsed.data.origin_ref.username, inline: true }] : undefined,
+    });
+    res.status(201).json({ id: row.id, created_at: row.created_at });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /super-admin/feedback/append — a reporter replied in a ticket thread.
+// Finds the ticket by its Discord thread, appends the message to the
+// conversation, REOPENS it if it had been resolved/wontfix, and clears
+// triaged_at so the analyzer re-judges with the new context. Same create/append
+// scope as ingest. The actual reply back to the user stays human-in-the-loop.
+const AppendFeedback = z.object({
+  thread_id: z.string().max(40),
+  from: z.string().max(120).optional(),
+  text: z.string().trim().max(5000).default(""),
+  images: z
+    .array(z.object({ url: z.string().url().max(2000), name: z.string().max(255).optional() }))
+    .max(8)
+    .default([]),
+});
+superAdminRouter.post("/feedback/append", async (req, res, next) => {
+  try {
+    const parsed = AppendFeedback.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Bad follow-up", details: parsed.error.issues } });
+      return;
+    }
+    if (!parsed.data.text && parsed.data.images.length === 0) {
+      res.status(400).json({ error: { code: "empty", message: "Nothing to append." } });
+      return;
+    }
+    const fb = await meta
+      .selectFrom("feedback")
+      .select(["id", "status", "message"])
+      .where(sql`origin_ref ->> 'thread_id'`, "=", parsed.data.thread_id)
+      .executeTakeFirst();
+    if (!fb) {
+      res.status(404).json({ error: { code: "not_found", message: "No ticket for that thread." } });
+      return;
+    }
+    const entry = {
+      at: new Date().toISOString(),
+      from: parsed.data.from ?? "reporter",
+      text: parsed.data.text,
+      ...(parsed.data.images.length ? { images: parsed.data.images } : {}),
+    };
+    const reopened = fb.status === "resolved" || fb.status === "wontfix";
+    await meta
+      .updateTable("feedback")
+      .set({
+        followups: sql`coalesce(followups, '[]'::jsonb) || ${JSON.stringify([entry])}::jsonb`,
+        ...(reopened ? { status: "in_progress" as never } : {}),
+        triaged_at: null, // re-judge with the new context
+        updated_at: new Date(),
+      })
+      .where("id", "=", fb.id)
+      .execute();
+    pokeTriage(fb.id);
+    if (reopened) {
+      void announce("feedback.new", {
+        title: "🔄 Ticket reopened (Discord follow-up)",
+        body: (parsed.data.text || "(image / attachment)").slice(0, 1500),
+        color: 0xfaa61a,
+      });
+    }
+    res.json({ id: fb.id, reopened });
   } catch (err) {
     next(err);
   }
@@ -658,11 +837,21 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
     const patch: Record<string, unknown> = { updated_at: new Date() };
     if (parsed.data.status !== undefined) patch.status = parsed.data.status;
     if (parsed.data.admin_notes !== undefined) patch.admin_notes = parsed.data.admin_notes;
+    if (parsed.data.triage) {
+      const t = parsed.data.triage;
+      patch.triage_priority = t.priority;
+      patch.triage_valid = t.valid;
+      patch.triage_viable = t.viable;
+      patch.triage_summary = t.summary;
+      patch.triage_action = t.action;
+      patch.triage_model = t.model ?? null;
+      patch.triaged_at = new Date();
+    }
     const row = await meta
       .updateTable("feedback")
       .set(patch)
       .where("id", "=", req.params.id)
-      .returning(["id", "status", "admin_notes", "updated_at", "user_id", "org_id", "message", "context"])
+      .returning(["id", "status", "admin_notes", "updated_at", "user_id", "org_id", "message", "context", "origin", "origin_ref"])
       .executeTakeFirst();
     if (!row) {
       res.status(404).json({ error: { code: "not_found", message: "Feedback not found." } });
@@ -672,6 +861,22 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
     // Optionally close the loop with the reporter — "we looked at this / it's
     // fixed". Best-effort: a failed notification must not fail the triage update.
     let notified = false;
+    let emailed = false;
+    // A discord-origin ticket has no platform user — its reply goes back into
+    // the Discord thread via the support bot (the API never touches Discord).
+    if (parsed.data.notify_reporter && row.origin === "discord") {
+      const ref = (row.origin_ref ?? null) as { thread_id?: string } | null;
+      if (ref?.thread_id) {
+        const defaultMsg =
+          parsed.data.status === "resolved"
+            ? "Fixed — this is live now. 🎉"
+            : parsed.data.status === "wontfix"
+              ? "We reviewed this — thanks for flagging it."
+              : "We're looking into this.";
+        pokeDiscordResolved({ thread_id: ref.thread_id, text: parsed.data.reply_message?.trim() || defaultMsg });
+        notified = true;
+      }
+    }
     if (parsed.data.notify_reporter && row.user_id) {
       try {
         // The reporter's workspace: the org they filed from, else their first.
@@ -702,6 +907,32 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
           });
           notified = true;
         }
+        // When the reported thing actually SHIPPED (resolved), also EMAIL the
+        // reporter — "your request is live" — not just an in-app note (the author:
+        // "give the requesting user a notification and even an email ... when
+        // it's live in prod"). Reuses the platform's registered sender (the
+        // overlay's managed mailer in prod); no-op if none is configured.
+        if (parsed.data.status === "resolved" && hasAuthEmailSender()) {
+          const u = await meta
+            .selectFrom("users")
+            .select(["email", "display_name"])
+            .where("id", "=", row.user_id)
+            .executeTakeFirst();
+          if (u?.email) {
+            const note =
+              parsed.data.reply_message?.trim() || "The thing you reported is fixed — it's live now.";
+            const hi = u.display_name ? `Hi ${u.display_name},` : "Hi,";
+            emailed = await sendAuthEmail({
+              to: u.email,
+              subject: "Your Cobblr request is live",
+              text:
+                `${hi}\n\n${note}\n\n` +
+                `You'd sent us:\n  "${(row.message ?? "").slice(0, 500)}"\n\n` +
+                `Thanks for helping make Cobblr better.\n— The Cobblr team`,
+              kind: "notification",
+            });
+          }
+        }
       } catch (err) {
         console.error("[super-admin] feedback-reply notification failed:", err);
       }
@@ -711,15 +942,171 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
     // category if an admin silences it — e.g. to avoid doubling a commit feed).
     if (parsed.data.status === "resolved") {
       const ctx = (row.context ?? {}) as { route?: string };
+      const reported = (row.message ?? "").slice(0, 1200);
+      const fixed = parsed.data.public_summary?.trim();
       void announce("feedback.resolved", {
         title: "✅ Feedback resolved",
-        body: (row.message ?? "").slice(0, 1500),
+        // When a "what we fixed" summary is provided, the post reads as a public
+        // changelog entry (reported → fixed); otherwise just the original report.
+        body: fixed ? `**Reported:** ${reported}\n\n**Fixed:** ${fixed.slice(0, 2400)}` : reported,
         color: 0x2e7d32,
         fields: typeof ctx.route === "string" && ctx.route ? [{ name: "page", value: ctx.route, inline: true }] : undefined,
       });
     }
 
-    res.json({ ...row, notified });
+    res.json({ ...row, notified, emailed });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /super-admin/feedback/:id/context — the SITUATIONAL picture the AI triage
+// analyzer needs to judge an item well: which workspace it came from, what the
+// page the user was on actually IS (its entity kind + that table's fields and
+// their current choices), and what the workspace is shaped like (installed
+// bundles + enabled modules). Without this the model sees only the raw message +
+// a route string and reads concrete requests as vague — e.g. "incorporate the
+// numbers for Weight" looks empty until you can see there's a yarn `Weight`
+// field with choices. Everything is org-scoped meta, so no tenant connection.
+//
+// Allowed by the feedback:triage scope (GET /super-admin/feedback/*), so the
+// host-side analyzer reads it with the same narrow token it already holds.
+
+// Default entity kind for a module's primary (is_default) instance. Named
+// instances use `<instance_name>:item` (mirrors core-scan's matchmaker).
+const DEFAULT_ENTITY_KIND: Record<string, string> = {
+  inventory: "inventory:part",
+  assets: "assets:asset",
+  machines: "machines:machine",
+};
+
+/** Best-effort: resolve the page route → the entity kind whose fields the user
+ *  was looking at. Handles `/instances/<name>/…` (named/default instances) and
+ *  `/<module>` module pages. Returns null when nothing matches. */
+function entityKindForRoute(
+  route: string,
+  instances: Array<{ module_name: string; instance_name: string; is_default: boolean }>,
+): string | null {
+  const m = route.match(/\/instances\/([^/]+)/);
+  if (m) {
+    const inst = instances.find((i) => i.instance_name === m[1]);
+    if (inst) {
+      return inst.is_default
+        ? DEFAULT_ENTITY_KIND[inst.module_name] ?? `${inst.module_name}:item`
+        : `${inst.instance_name}:item`;
+    }
+    return `${m[1]}:item`; // instance gone but the noun is still a signal
+  }
+  // module page: first path segment that names an enabled module/instance.
+  const segs = route.split("/").filter(Boolean);
+  for (const s of segs) {
+    const inst = instances.find((i) => i.module_name === s && i.is_default);
+    if (inst) return DEFAULT_ENTITY_KIND[s] ?? `${s}:item`;
+    if (DEFAULT_ENTITY_KIND[s]) return DEFAULT_ENTITY_KIND[s];
+  }
+  return null;
+}
+
+superAdminRouter.get("/feedback/:id/context", async (req, res, next) => {
+  try {
+    const fb = await meta
+      .selectFrom("feedback")
+      .select(["id", "org_id", "context"])
+      .where("id", "=", req.params.id)
+      .executeTakeFirst();
+    if (!fb) {
+      res.status(404).json({ error: { code: "not_found", message: "Feedback not found." } });
+      return;
+    }
+    if (!fb.org_id) {
+      res.json({ workspace: null });
+      return;
+    }
+    const orgId = fb.org_id;
+    const route = ((fb.context ?? {}) as { route?: string }).route ?? "";
+
+    const [org, bundles, modules, instances] = await Promise.all([
+      meta.selectFrom("orgs").select(["slug", "name"]).where("id", "=", orgId).executeTakeFirst(),
+      meta
+        .selectFrom("bundles")
+        .select(["name"])
+        .where("org_id", "=", orgId)
+        .where("install_status", "=", "active")
+        .execute(),
+      meta.selectFrom("org_modules").select(["module_name"]).where("org_id", "=", orgId).execute(),
+      meta
+        .selectFrom("workspace_module_instances")
+        .select(["module_name", "instance_name", "display_name", "is_default"])
+        .where("org_id", "=", orgId)
+        .execute(),
+    ]);
+
+    const kind = entityKindForRoute(route, instances);
+    const pageFields = kind
+      ? await meta
+          .selectFrom("module_field_defs")
+          .select(["name", "display_label", "type", "choices"])
+          .where("org_id", "=", orgId)
+          .where("entity_kind", "=", kind)
+          .where("type", "!=", "computed")
+          .orderBy("position")
+          .execute()
+      : [];
+
+    res.json({
+      workspace: org ? { slug: org.slug, name: org.name } : null,
+      page: { route, entity_kind: kind },
+      page_fields: pageFields.map((f) => ({
+        name: f.name,
+        label: f.display_label,
+        type: f.type,
+        ...(f.choices && f.choices.length ? { choices: f.choices } : {}),
+      })),
+      installed_bundles: bundles.map((b) => b.name),
+      enabled_modules: modules.map((m) => m.module_name).filter((m) => !m.startsWith("core-")),
+      instances: instances.map((i) => ({
+        module: i.module_name,
+        instance: i.is_default ? null : i.instance_name,
+        label: i.display_name,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /super-admin/feedback/:id/attachments/:fileId/raw — stream a reporter's
+// screenshot. The bytes live in the REPORTER's workspace core-files; we read
+// them server-side under the feedback's own org_id (so the endpoint can't be
+// pointed at another org's file — a non-matching id just reads null). Only
+// file_ids actually listed on the feedback row are served. Images only.
+superAdminRouter.get("/feedback/:id/attachments/:fileId/raw", async (req, res, next) => {
+  try {
+    const fb = await meta
+      .selectFrom("feedback")
+      .select(["org_id", "attachments"])
+      .where("id", "=", req.params.id)
+      .executeTakeFirst();
+    if (!fb || !fb.org_id) {
+      res.status(404).json({ error: { code: "not_found", message: "no such attachment" } });
+      return;
+    }
+    const atts = (fb.attachments ?? []) as Array<{ file_id: string }>;
+    if (!atts.some((a) => a.file_id === req.params.fileId)) {
+      res.status(404).json({ error: { code: "not_found", message: "no such attachment" } });
+      return;
+    }
+    const variant = req.query.variant === "thumb" || req.query.variant === "medium" ? req.query.variant : "medium";
+    const file =
+      (await platform().files.read(fb.org_id, req.params.fileId, variant)) ??
+      (await platform().files.read(fb.org_id, req.params.fileId, "original"));
+    if (!file || !file.mimeType.startsWith("image/")) {
+      res.status(404).json({ error: { code: "not_found", message: "no such image" } });
+      return;
+    }
+    res.type(file.mimeType);
+    res.setHeader("Cache-Control", "private, max-age=3600");
+    res.send(Buffer.from(file.bytes));
   } catch (err) {
     next(err);
   }
@@ -758,6 +1145,310 @@ superAdminRouter.patch("/announce-settings/:category", async (req, res, next) =>
       res.status(404).json({ error: { code: "not_found", message: err.message } });
       return;
     }
+    next(err);
+  }
+});
+
+// POST /super-admin/announce — the "Post an update" composer. Fires a curated
+// announcement (bundle release / feature note) into its category's channel.
+// Only `composable` categories may be posted this way.
+const ComposeAnnounce = z.object({
+  category: z.string().min(1).max(80),
+  title: z.string().min(1).max(240),
+  body: z.string().max(3500).optional(),
+});
+
+superAdminRouter.post("/announce", async (req, res, next) => {
+  try {
+    const parsed = ComposeAnnounce.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Bad announcement", details: parsed.error.issues } });
+      return;
+    }
+    if (!isComposable(parsed.data.category)) {
+      res.status(400).json({ error: { code: "not_composable", message: "That category can't be posted from the composer." } });
+      return;
+    }
+    const color = parsed.data.category === "bundle.release" ? 0x6d28d9 : 0x2563eb;
+    await announce(parsed.data.category, {
+      title: parsed.data.title.trim(),
+      body: parsed.data.body?.trim() || undefined,
+      color,
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─────────────────────── AI prompt-eval — scan matchmaker ────────────────────
+// The decoupled eval seam for the scan matchmaker (docs/operations/
+// ai-prompt-eval-harness.md). Runs `runMatchmaker` on an EXPLICIT item + menu —
+// no inbox row, no instance setup, no DB writes — so the e2e harness can score a
+// prompt against fixtures without standing up a workspace per menu. The model
+// invoke runs under a real workspace's AI config (the `org` slug if given, else
+// the caller's first workspace) since `platform().ai.invoke` is org-scoped.
+//
+// Runnable with a narrow `scan:eval` capability token (see auth/scopes.ts), so
+// the harness needn't carry a full super-admin token.
+
+const ScanEvalMenuField = z.object({
+  name: z.string(),
+  label: z.string(),
+  type: z.string(),
+  help: z.string().optional(),
+  choices: z.array(z.string()).optional(),
+});
+
+// Fixtures route by {module, instance} + noun; `kind` is only used to label the
+// returned candidate, so it's optional here and derived when omitted.
+const ScanEvalMenuEntry = z.object({
+  module: z.string().min(1),
+  instance: z.string().nullable().default(null),
+  kind: z.string().optional(),
+  noun: z.string(),
+  label: z.string(),
+  fields: z.array(ScanEvalMenuField).default([]),
+});
+
+const ScanEvalItem = z.object({
+  name: z.string(),
+  manufacturer: z.string().nullable().optional(),
+  category: z.string().nullable().optional(),
+  description: z.string().nullable().optional(),
+  entityType: z.enum(["asset", "part"]).nullable().optional(),
+  barcode: z.string().nullable().optional(),
+});
+
+// Surface-switched: matchmaker (item+menu → candidates), barcode-identify
+// (upc+titles → identity), photo-identify (image → identity). Each runs the
+// surface's core function on explicit input — no DB writes.
+const ScanEvalBody = z.discriminatedUnion("surface", [
+  z.object({
+    surface: z.literal("matchmaker"),
+    item: ScanEvalItem,
+    menu: z.array(ScanEvalMenuEntry).min(1),
+    org: z.string().optional(),
+  }),
+  z.object({
+    surface: z.literal("barcode-identify"),
+    upc: z.string().min(1).max(64),
+    // The DDG result titles the model identifies from — fixtured so the eval is
+    // deterministic-input (avoids live-search variance; only model variance).
+    titles: z.array(z.string().max(400)).min(1).max(40),
+    org: z.string().optional(),
+  }),
+  z.object({
+    surface: z.literal("photo-identify"),
+    image_b64: z.string().min(1),
+    image_media_type: z.string().min(1).max(80),
+    org: z.string().optional(),
+  }),
+]);
+
+superAdminRouter.post("/scan-eval", async (req, res, next) => {
+  try {
+    const parsed = ScanEvalBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Bad scan-eval request", details: parsed.error.issues } });
+      return;
+    }
+    const userId = req.session?.id;
+    if (!userId) {
+      res.status(401).json({ error: { code: "unauthenticated", message: "No session." } });
+      return;
+    }
+
+    // Resolve the org whose AI config backs the model call (shared by surfaces).
+    let orgId: string | null = null;
+    if (parsed.data.org) {
+      const o = await meta.selectFrom("orgs").select("id").where("slug", "=", parsed.data.org).executeTakeFirst();
+      if (!o) {
+        res.status(404).json({ error: { code: "org_not_found", message: `No workspace with slug '${parsed.data.org}'.` } });
+        return;
+      }
+      orgId = o.id;
+    } else {
+      const m = await meta
+        .selectFrom("org_memberships")
+        .select("org_id")
+        .where("user_id", "=", userId)
+        .orderBy("joined_at", "asc")
+        .executeTakeFirst();
+      orgId = m?.org_id ?? null;
+    }
+    if (!orgId) {
+      res.status(409).json({ error: { code: "no_workspace", message: "Caller has no workspace; pass `org` to choose one for the AI invoke." } });
+      return;
+    }
+
+    if (parsed.data.surface === "matchmaker") {
+      const menu: ScanMenuEntry[] = parsed.data.menu.map((m) => ({
+        module: m.module,
+        instance: m.instance,
+        kind: m.kind ?? (m.instance ? `${m.instance}:item` : `${m.module}:item`),
+        noun: m.noun,
+        label: m.label,
+        fields: m.fields,
+      }));
+      const item: PerceivedItem = {
+        name: parsed.data.item.name,
+        manufacturer: parsed.data.item.manufacturer ?? null,
+        category: parsed.data.item.category ?? null,
+        description: parsed.data.item.description ?? null,
+        entityType: parsed.data.item.entityType ?? null,
+        barcode: parsed.data.item.barcode ?? null,
+      };
+      res.json({ candidates: await runMatchmaker(orgId, item, menu) });
+      return;
+    }
+
+    if (parsed.data.surface === "barcode-identify") {
+      res.json({ identity: await llmIdentify(orgId, parsed.data.upc, parsed.data.titles) });
+      return;
+    }
+
+    // photo-identify
+    res.json({ identity: await identifyImage(orgId, parsed.data.image_b64, parsed.data.image_media_type) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─────────────────── scan eval cases — captured from real triage ──────────────
+// P2 of the eval harness: platform admins flag a corrected scan commit as a
+// golden case (core_scan_eval_cases, per-tenant). Aggregate them across
+// workspaces here (same cross-tenant raw-SQL pattern as /ai-activity), so the
+// e2e import script can pull + materialise them into e2e/fixtures/scan-eval/.
+interface ScanEvalCaseRow {
+  id: string;
+  inbox_item_id: string | null;
+  surface: string;
+  perceived_input: unknown;
+  scan_menu: unknown;
+  candidates: unknown;
+  expected: unknown;
+  note: string | null;
+  created_by_user_id: string | null;
+  created_at: Date;
+}
+
+// GET /super-admin/scan-eval-cases — every captured case across all workspaces.
+superAdminRouter.get("/scan-eval-cases", async (req, res, next) => {
+  try {
+    const limit = Math.min(parseInt(String(req.query.limit ?? "500"), 10) || 500, 1000);
+    const orgs = await meta.selectFrom("orgs").select(["id", "name", "slug"]).execute();
+    const rows: Array<ScanEvalCaseRow & { org_id: string; org_name: string; org_slug: string }> = [];
+    for (const org of orgs) {
+      try {
+        const tdb = await getTenantDb(org.id);
+        const r = await sql<ScanEvalCaseRow>`
+          select id, inbox_item_id, surface, perceived_input, scan_menu, candidates,
+                 expected, note, created_by_user_id, created_at
+          from core_scan_eval_cases order by created_at desc limit ${limit}`.execute(tdb);
+        for (const row of r.rows) rows.push({ ...row, org_id: org.id, org_name: org.name, org_slug: org.slug });
+      } catch {
+        // Tenant DB without core_scan_eval_cases (module never enabled) — skip it.
+      }
+    }
+    rows.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    res.json({ items: rows.slice(0, limit) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /super-admin/scan-eval-cases/:orgId/:id — prune one captured case.
+superAdminRouter.delete("/scan-eval-cases/:orgId/:id", async (req, res, next) => {
+  try {
+    const org = await meta.selectFrom("orgs").select("id").where("id", "=", req.params.orgId!).executeTakeFirst();
+    if (!org) {
+      res.status(404).json({ error: { code: "not_found", message: "Workspace not found." } });
+      return;
+    }
+    const tdb = await getTenantDb(org.id);
+    const r = await sql`delete from core_scan_eval_cases where id = ${req.params.id}`.execute(tdb);
+    if (Number(r.numAffectedRows ?? 0) === 0) {
+      res.status(404).json({ error: { code: "not_found", message: "Eval case not found." } });
+      return;
+    }
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─────────────────── AI prompt-eval — bundle authoring (surface 4) ────────────
+// The decoupled eval seam for the AI bundle builder (core-authoring): describe →
+// working bundle. Mirrors the draft-build pipeline (assembleContext → compilePrompt
+// → ai.invoke → unwrapBuild → validateBundle) on an EXPLICIT intent, one shot, no
+// draft row / no DB writes — so the harness can score the compiled bundle against a
+// fixture. `validateBundle` (the kernel's single-truth gate, also used at draft +
+// install) IS the structural scorer. Runnable with an `authoring:eval` token.
+const AuthoringEvalBody = z.object({
+  intent: z.string().min(1).max(4000),
+  task: z.enum(["create-bundle", "customize-template", "design-workspace"]).default("create-bundle"),
+  selected_kinds: z.array(z.string().max(120)).max(20).optional(),
+  base_template_id: z.string().max(120).optional(),
+  org: z.string().optional(),
+});
+
+superAdminRouter.post("/authoring-eval", async (req, res, next) => {
+  try {
+    const parsed = AuthoringEvalBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Bad authoring-eval request", details: parsed.error.issues } });
+      return;
+    }
+    const userId = req.session?.id;
+    if (!userId) {
+      res.status(401).json({ error: { code: "unauthenticated", message: "No session." } });
+      return;
+    }
+
+    // The org whose catalog (entity kinds/actions) + AI config back the build.
+    let orgId: string | null = null;
+    if (parsed.data.org) {
+      const o = await meta.selectFrom("orgs").select("id").where("slug", "=", parsed.data.org).executeTakeFirst();
+      if (!o) {
+        res.status(404).json({ error: { code: "org_not_found", message: `No workspace with slug '${parsed.data.org}'.` } });
+        return;
+      }
+      orgId = o.id;
+    } else {
+      const m = await meta.selectFrom("org_memberships").select("org_id").where("user_id", "=", userId).orderBy("joined_at", "asc").executeTakeFirst();
+      orgId = m?.org_id ?? null;
+    }
+    if (!orgId) {
+      res.status(409).json({ error: { code: "no_workspace", message: "Caller has no workspace; pass `org`." } });
+      return;
+    }
+
+    const ctx = await assembleContext(orgId, parsed.data.selected_kinds, parsed.data.task, parsed.data.base_template_id);
+    const prompt = compilePrompt(ctx, parsed.data.intent);
+    let text = "";
+    try {
+      const r = await platform().ai.invoke({
+        orgId,
+        capability: "chat",
+        input: { messages: [{ role: "user", content: prompt }] },
+        source: { kind: "core-authoring:eval", id: parsed.data.intent.slice(0, 60) },
+        userId,
+      });
+      const result = r.result as { content?: string; text?: string } | string;
+      text = typeof result === "string" ? result : result?.content ?? result?.text ?? "";
+    } catch (err) {
+      res.json({ interpretation: null, bundle: null, seed: [], validation: { valid: false, preview: null, errors: [{ path: "", code: "ai_error", message: (err as Error).message }] }, warnings: ctx.warnings });
+      return;
+    }
+
+    const unwrapped = unwrapBuild(parseJsonObject(text));
+    const bundle = unwrapped.bundle;
+    const validation = bundle && typeof bundle === "object"
+      ? await validateBundle(orgId, bundle, { autoEnable: true })
+      : { valid: false, preview: null, errors: [{ path: "", code: "not_json", message: "Model output did not unwrap to a bundle object." }] };
+    res.json({ interpretation: unwrapped.interpretation, bundle, seed: unwrapped.seed, validation, warnings: ctx.warnings });
+  } catch (err) {
     next(err);
   }
 });

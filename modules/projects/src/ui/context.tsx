@@ -6,6 +6,11 @@ interface Ctx {
   getToken: () => string | null;
   api: ProjectsApi;
   instance?: string;
+  /** The instance's display label ("Outfits") + singular noun ("outfit") so the
+   *  list reads as the user's thing, not "Projects" / "New project". Unset on
+   *  the default /projects page. */
+  displayName?: string;
+  itemNoun?: string;
 }
 
 const Ctx = createContext<Ctx | null>(null);
@@ -14,11 +19,15 @@ export function ProjectsProvider({
   orgSlug,
   getToken,
   instance,
+  displayName,
+  itemNoun,
   children,
 }: {
   orgSlug: string;
   getToken: () => string | null;
   instance?: string;
+  displayName?: string;
+  itemNoun?: string;
   children: ReactNode;
 }) {
   const api = useMemo(
@@ -26,7 +35,7 @@ export function ProjectsProvider({
     [orgSlug, getToken, instance],
   );
   return (
-    <Ctx.Provider value={{ orgSlug, getToken, api, instance }}>
+    <Ctx.Provider value={{ orgSlug, getToken, api, instance, displayName, itemNoun }}>
       {children}
     </Ctx.Provider>
   );

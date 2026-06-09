@@ -276,7 +276,10 @@ export function ChatWidget() {
               }}
               rows={1}
               placeholder="Ask or tell me to do something… (Shift+Enter for a new line)"
-              className="flex-1 resize-none px-3 py-2 text-sm rounded-lg border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 text-content dark:text-mortar-200 leading-relaxed"
+              // text-base (16px) on mobile so iOS Safari doesn't auto-zoom the
+              // page on focus (any input <16px triggers the zoom, which then
+              // strands you zoomed-in + cut off). sm:text-sm keeps the desktop look.
+              className="flex-1 resize-none px-3 py-2 text-base sm:text-sm rounded-lg border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 text-content dark:text-mortar-200 leading-relaxed"
             />
             <button
               type="button"

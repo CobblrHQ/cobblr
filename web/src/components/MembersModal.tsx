@@ -19,8 +19,8 @@ interface Props {
   slug: string;
 }
 
-const ROLES: OrgMembership["role"][] = ["owner", "admin", "member", "guest"];
-const INVITE_ROLES: OrgMembership["role"][] = ["admin", "member", "guest"];
+const ROLES: OrgMembership["role"][] = ["owner", "admin", "editor", "member", "guest"];
+const INVITE_ROLES: OrgMembership["role"][] = ["admin", "editor", "member", "guest"];
 
 export function MembersModal({ open, onClose, slug }: Props) {
   const qc = useQueryClient();
@@ -52,11 +52,16 @@ export function MembersModal({ open, onClose, slug }: Props) {
         role: inviteRole,
       }),
     onSuccess: (inv) => {
-      toast.success("Invite created. Copy the link to share.");
+      const sentTo = inviteEmail.trim();
       void qc.invalidateQueries({ queryKey: ["invites", slug] });
       setInviteEmail("");
-      // Auto-copy the new link for convenience.
-      void copyInviteLink(inv);
+      // Auto-copy the new link (silently — we surface one combined toast below).
+      void copyInviteLink(inv, true);
+      toast.success(
+        sentTo
+          ? `Invite sent to ${sentTo} — link copied too.`
+          : "Invite link copied — share it however you like.",
+      );
     },
     onError: (e: unknown) => {
       toast.error(e instanceof ApiError ? e.message : "Couldn't create invite.");
@@ -97,11 +102,11 @@ export function MembersModal({ open, onClose, slug }: Props) {
     },
   });
 
-  async function copyInviteLink(inv: WorkspaceInvite) {
+  async function copyInviteLink(inv: WorkspaceInvite, silent = false) {
     const url = `${window.location.origin}/invite/${inv.token}`;
     try {
       await navigator.clipboard.writeText(url);
-      toast.success("Invite link copied.");
+      if (!silent) toast.success("Invite link copied.");
     } catch {
       // Clipboard may be denied. Fall back to a prompt-style toast.
       toast.info(url, { duration: 12_000 });
@@ -264,8 +269,8 @@ export function MembersModal({ open, onClose, slug }: Props) {
             <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
               // invite someone
             </div>
-            <div className="flex items-end gap-2">
-              <label className="flex-1 block">
+            <div className="flex flex-col sm:flex-row sm:items-end gap-2">
+              <label className="flex-1 block min-w-0">
                 <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                   Email hint (optional)
                 </span>
@@ -302,9 +307,9 @@ export function MembersModal({ open, onClose, slug }: Props) {
               </button>
             </div>
             <p className="text-[10px] font-mono text-faint dark:text-slate-500">
-              No email is sent — we don't have SMTP wired yet. Cobblr
-              copies the link to your clipboard so you can send it
-              however you want.
+              Add an email and Cobblr sends the invite — plus an in-app
+              notification if they already have a Cobblr account. The link is
+              also copied to your clipboard so you can share it directly.
             </p>
           </form>
         )}

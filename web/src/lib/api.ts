@@ -94,7 +94,10 @@ export interface OrgMembership {
   id: string;
   name: string;
   slug: string;
-  role: "owner" | "admin" | "member" | "guest";
+  role: "owner" | "admin" | "editor" | "member" | "guest";
+  /** Display name of the workspace's owner — for the switcher's "Owner: …" on
+   *  workspaces you don't own. Null if unresolved. */
+  owner_name?: string | null;
 }
 
 export interface AuthResponse {
@@ -122,6 +125,22 @@ export interface FeedbackItem {
   context: Record<string, unknown>;
   status: string;
   admin_notes: string | null;
+  // Where it came from + how to reply. 'discord' tickets have no user_email/name
+  // — the reporter is origin_ref.username, and replies go to the thread.
+  origin: "in-app" | "discord";
+  origin_ref: { channel_id: string; thread_id: string; username?: string } | null;
+  // Reporter follow-up replies in the ticket thread (conversational tickets).
+  followups: Array<{ at: string; from: string; text: string; images?: Array<{ url: string; name?: string }> }>;
+  // Reporter-attached screenshots (refs into their workspace core-files).
+  attachments: Array<{ file_id: string; name?: string; content_type?: string }>;
+  // AI triage verdict (null until the analyzer judges it).
+  triage_priority: "urgent" | "high" | "medium" | "low" | null;
+  triage_valid: boolean | null;
+  triage_viable: boolean | null;
+  triage_summary: string | null;
+  triage_action: string | null;
+  triaged_at: string | null;
+  triage_model: string | null;
   created_at: string;
   updated_at: string;
   user_email: string | null;
@@ -137,6 +156,7 @@ export interface AnnounceSetting {
   enabled: boolean;
   webhook_url: string | null;
   default_channel_set: boolean;
+  composable: boolean;
 }
 
 export interface MeResponse {
@@ -314,12 +334,22 @@ export const api = {
     message: string;
     workspace_slug?: string;
     context?: Record<string, unknown>;
+    attachments?: Array<{ file_id: string; name?: string; content_type?: string }>;
   }) => request<{ id: string; created_at: string }>("POST", "/feedback", body),
-  listFeedback: (status?: string) =>
-    request<{ items: FeedbackItem[] }>(
+  // Raw URL for a feedback screenshot (super-admin only). Goes through useImageSrc
+  // (Bearer → blob) like other authed images.
+  feedbackAttachmentRawUrl: (feedbackId: string, fileId: string, variant?: "thumb" | "medium") =>
+    `/api/v1/super-admin/feedback/${feedbackId}/attachments/${fileId}/raw${variant ? `?variant=${variant}` : ""}`,
+  listFeedback: (status?: string, sort?: "priority" | "recent") => {
+    const qs = new URLSearchParams();
+    if (status) qs.set("status", status);
+    if (sort === "priority") qs.set("sort", "priority");
+    const q = qs.toString();
+    return request<{ items: FeedbackItem[] }>(
       "GET",
-      `/super-admin/feedback${status ? `?status=${encodeURIComponent(status)}` : ""}`,
-    ),
+      `/super-admin/feedback${q ? `?${q}` : ""}`,
+    );
+  },
   listAnnounceSettings: () =>
     request<{ items: AnnounceSetting[] }>("GET", "/super-admin/announce-settings"),
   setAnnounceSetting: (
@@ -331,6 +361,8 @@ export const api = {
       `/super-admin/announce-settings/${encodeURIComponent(category)}`,
       body,
     ),
+  postAnnouncement: (body: { category: string; title: string; body?: string }) =>
+    request<{ ok: boolean }>("POST", "/super-admin/announce", body),
   updateFeedback: (
     id: string,
     body: {
@@ -338,9 +370,10 @@ export const api = {
       admin_notes?: string | null;
       notify_reporter?: boolean;
       reply_message?: string;
+      public_summary?: string;
     },
   ) =>
-    request<{ id: string; status: string; admin_notes: string | null; updated_at: string; notified?: boolean }>(
+    request<{ id: string; status: string; admin_notes: string | null; updated_at: string; notified?: boolean; emailed?: boolean }>(
       "PATCH",
       `/super-admin/feedback/${id}`,
       body,
@@ -498,6 +531,18 @@ export const api = {
     }>("POST", "/me/api-tokens", body),
   revokeApiToken: (id: string) =>
     request<void>("DELETE", `/me/api-tokens/${id}`),
+
+  // Personal (user-scoped) connections — BYO AI creds routed to your workspaces.
+  listConnections: () =>
+    request<{ items: UserConnection[] }>("GET", "/me/connections"),
+  connectionCatalogue: () =>
+    request<{ items: AiProviderDef[] }>("GET", "/me/connections/catalogue"),
+  addConnection: (body: UserConnectionInput) =>
+    request<{ id: string }>("POST", "/me/connections", body),
+  updateConnection: (id: string, body: Partial<UserConnectionInput>) =>
+    request<void>("PATCH", `/me/connections/${id}`, body),
+  deleteConnection: (id: string) =>
+    request<void>("DELETE", `/me/connections/${id}`),
   orgActivity: (slug: string, limit = 25) =>
     request<{ items: ActivityEntry[] }>("GET", `/orgs/${slug}/activity?limit=${limit}`),
   // Cross-workspace activity feed: every action attributed to any
@@ -1209,7 +1254,7 @@ export const api = {
     target_org_id: string;
     kinds: string[];
     expires_at?: string | null;
-    min_target_role?: "owner" | "admin" | "member" | "guest" | null;
+    min_target_role?: "owner" | "admin" | "editor" | "member" | "guest" | null;
   }) => request<WorkspaceLinkItem>("POST", "/me/links", body),
   acceptWorkspaceLink: (id: string) =>
     request<WorkspaceLinkItem>("POST", `/me/links/${id}/accept`),
@@ -1219,7 +1264,7 @@ export const api = {
     id: string,
     body: {
       expires_at?: string | null;
-      min_target_role?: "owner" | "admin" | "member" | "guest" | null;
+      min_target_role?: "owner" | "admin" | "editor" | "member" | "guest" | null;
     },
   ) => request<WorkspaceLinkItem>("PATCH", `/me/links/${id}`, body),
 
@@ -1453,6 +1498,9 @@ export const api = {
   },
   getScanItem: (slug: string, id: string) =>
     request<ScanInboxItem>("GET", `/orgs/${slug}/modules/core-scan/inbox/${id}`),
+  /** Light in-the-moment edits the camera modal makes — quantity, name. */
+  updateScanItem: (slug: string, id: string, body: { quantity?: number; name?: string }) =>
+    request<ScanInboxItem>("PATCH", `/orgs/${slug}/modules/core-scan/inbox/${id}`, body),
   confirmScanItem: (
     slug: string,
     id: string,
@@ -1467,6 +1515,10 @@ export const api = {
       location_id?: string;
       quantity?: number;
       extras?: Record<string, unknown>;
+      /** Platform-admin only: also record this commit as a matchmaker eval
+       *  case (the corrected answer = ground truth). Ignored for non-admins. */
+      save_eval_case?: boolean;
+      eval_note?: string;
     },
   ) =>
     request<{ item: ScanInboxItem; created: { id: string } }>(
@@ -1474,6 +1526,11 @@ export const api = {
       `/orgs/${slug}/modules/core-scan/inbox/${id}/confirm`,
       body,
     ),
+  // Super-admin: captured matchmaker eval cases (P2 of the eval harness).
+  listScanEvalCases: () =>
+    request<{ items: ScanEvalCase[] }>("GET", "/super-admin/scan-eval-cases"),
+  deleteScanEvalCase: (orgId: string, id: string) =>
+    request<void>("DELETE", `/super-admin/scan-eval-cases/${orgId}/${id}`),
   discardScanItem: (slug: string, id: string) =>
     request<ScanInboxItem>(
       "POST",
@@ -1614,11 +1671,12 @@ export const api = {
   aiActivityDetail: (slug: string, id: string) =>
     request<AiActivityDetail>("GET", `/orgs/${slug}/modules/core-ai/activity/${id}`),
   // Super-admin: cross-workspace AI log.
-  superAdminAiActivity: (q: { capability?: string; org?: string; user?: string; limit?: number } = {}) => {
+  superAdminAiActivity: (q: { capability?: string; org?: string; user?: string; source?: string; limit?: number } = {}) => {
     const qs = new URLSearchParams();
     if (q.capability) qs.set("capability", q.capability);
     if (q.org) qs.set("org", q.org);
     if (q.user) qs.set("user", q.user);
+    if (q.source) qs.set("source", q.source);
     if (q.limit) qs.set("limit", String(q.limit));
     return request<{ items: SuperAdminAiActivityItem[] }>("GET", `/super-admin/ai-activity?${qs.toString()}`);
   },
@@ -1830,7 +1888,7 @@ export const api = {
   // regen later.
   adminCreateUser: (
     slug: string,
-    body: { email: string; display_name: string; role: "owner" | "admin" | "member" | "guest" },
+    body: { email: string; display_name: string; role: "owner" | "admin" | "editor" | "member" | "guest" },
   ) =>
     request<{
       user: { id: string; email: string; display_name: string; role: string; must_reset_password: boolean };
@@ -2035,6 +2093,34 @@ export interface AiProviderDef {
   capabilities: Record<string, { models: string[]; defaultModel?: string }>;
 }
 
+export type ConnRouteMode = "my-calls" | "workspace-default";
+export type ConnRouteScope = "sole_member" | "owner" | "all_mine" | "explicit";
+
+/** A personal credential the user configured once + routed to workspaces. */
+export interface UserConnection {
+  id: string;
+  provider_id: string;
+  label: string;
+  route_mode: ConnRouteMode;
+  route_scope: ConnRouteScope;
+  auto_enable_new: boolean;
+  org_ids: string[];
+  /** Which credential keys are set (names only — never the secret values). */
+  credential_keys: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UserConnectionInput {
+  provider_id: string;
+  label?: string;
+  credentials?: Record<string, unknown>;
+  route_mode?: ConnRouteMode;
+  route_scope?: ConnRouteScope;
+  auto_enable_new?: boolean;
+  org_ids?: string[];
+}
+
 export interface AiCapabilityDefault {
   capability: string;
   provider_id: string;
@@ -2187,6 +2273,23 @@ export interface ScanCandidate {
   confidence: number;
   name: string;
   fields: Record<string, string | number | boolean>;
+}
+
+/** A captured matchmaker eval case (P2). The expected answer = the admin's
+ *  corrected scan commit; mirrors the e2e fixture's `expect` shape. */
+export interface ScanEvalCase {
+  id: string;
+  org_id: string;
+  org_name: string;
+  org_slug: string;
+  inbox_item_id: string | null;
+  surface: string;
+  perceived_input: { name?: string; manufacturer?: string | null; category?: string | null; barcode?: string | null } & Record<string, unknown>;
+  scan_menu: unknown[];
+  candidates: unknown[];
+  expected: { route: { module: string; instance: string | null }; fields: Record<string, unknown>; name?: string };
+  note: string | null;
+  created_at: string;
 }
 
 export interface ScanInboxItem {
@@ -2348,7 +2451,7 @@ export interface PermissionsMember {
   id: string;
   email: string;
   display_name: string;
-  role: "owner" | "admin" | "member" | "guest";
+  role: "owner" | "admin" | "editor" | "member" | "guest";
   grants: string[];
   /** Custom-role assignments — array of workspace_roles.id values. */
   custom_role_ids: string[];
@@ -2426,7 +2529,7 @@ export interface WorkspaceLinkItem {
   accepted_at: string | null;
   revoked_at: string | null;
   expires_at: string | null;
-  min_target_role: "owner" | "admin" | "member" | "guest" | null;
+  min_target_role: "owner" | "admin" | "editor" | "member" | "guest" | null;
   source_org_id: string;
   source_org_name: string;
   source_org_slug: string;

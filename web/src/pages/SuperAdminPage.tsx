@@ -18,6 +18,7 @@ import {
   Boxes,
   CheckCircle,
   Download,
+  FlaskConical,
   HeartPulse,
   Sparkles,
   LayoutGrid,
@@ -31,13 +32,14 @@ import {
   MessageSquare,
   Megaphone,
 } from "lucide-react";
-import { useConfirm, usePageTitle, useToast, Modal } from "@cobblr/platform-web";
+import { useConfirm, usePageTitle, useToast, Modal, useImageSrc } from "@cobblr/platform-web";
 import {
   ApiError,
   api,
   type SignupInvite,
   type SuperAdminAiActivityItem,
   type FeedbackItem,
+  type ScanEvalCase,
 } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 
@@ -52,6 +54,7 @@ type Tab =
   | "marketplace"
   | "activity"
   | "ai"
+  | "scaneval"
   | "health";
 
 const TABS: Array<{ id: Tab; label: string; icon: typeof Server }> = [
@@ -65,6 +68,7 @@ const TABS: Array<{ id: Tab; label: string; icon: typeof Server }> = [
   { id: "marketplace", label: "Marketplace", icon: ShoppingBag },
   { id: "activity", label: "Activity", icon: Activity },
   { id: "ai", label: "AI", icon: Sparkles },
+  { id: "scaneval", label: "Scan Eval", icon: FlaskConical },
   { id: "health", label: "Health", icon: HeartPulse },
 ];
 
@@ -132,6 +136,7 @@ export function SuperAdminPage() {
       {tab === "marketplace" && <MarketplaceTab />}
       {tab === "activity" && <ActivityTab />}
       {tab === "ai" && <AiActivityTab />}
+      {tab === "scaneval" && <ScanEvalTab />}
       {tab === "health" && <HealthTab />}
     </div>
   );
@@ -896,7 +901,8 @@ function AiActivityTab() {
   const [org, setOrg] = useState("");
   const [userQ, setUserQ] = useState("");
   const [capability, setCapability] = useState("");
-  const [filters, setFilters] = useState<{ org?: string; user?: string; capability?: string }>({});
+  const [source, setSource] = useState("");
+  const [filters, setFilters] = useState<{ org?: string; user?: string; capability?: string; source?: string }>({});
   const [detail, setDetail] = useState<SuperAdminAiActivityItem | null>(null);
 
   const q = useQuery({
@@ -906,7 +912,12 @@ function AiActivityTab() {
   const items = q.data?.items ?? [];
 
   const apply = () =>
-    setFilters({ org: org.trim() || undefined, user: userQ.trim() || undefined, capability: capability.trim() || undefined });
+    setFilters({
+      org: org.trim() || undefined,
+      user: userQ.trim() || undefined,
+      capability: capability.trim() || undefined,
+      source: source.trim() || undefined,
+    });
 
   return (
     <div className="space-y-4">
@@ -917,11 +928,12 @@ function AiActivityTab() {
         <FilterInput label="Workspace (slug)" value={org} onChange={setOrg} placeholder="workshop-2e2d" />
         <FilterInput label="User (email contains)" value={userQ} onChange={setUserQ} placeholder="grace@" />
         <FilterInput label="Capability" value={capability} onChange={setCapability} placeholder="chat" />
+        <FilterInput label="Source (kind contains)" value={source} onChange={setSource} placeholder="matchmaker" />
         <button onClick={apply} className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition">
           Filter
         </button>
-        {(filters.org || filters.user || filters.capability) && (
-          <button onClick={() => { setOrg(""); setUserQ(""); setCapability(""); setFilters({}); }} className="text-xs text-faint hover:text-accent">
+        {(filters.org || filters.user || filters.capability || filters.source) && (
+          <button onClick={() => { setOrg(""); setUserQ(""); setCapability(""); setSource(""); setFilters({}); }} className="text-xs text-faint hover:text-accent">
             clear
           </button>
         )}
@@ -1007,6 +1019,103 @@ function AiActivityDetailModal({ item, onClose }: { item: SuperAdminAiActivityIt
   );
 }
 
+// Scan Eval — captured matchmaker eval cases (P2 of the prompt-eval harness).
+// Each row is a platform admin's corrected scan commit (input + menu the model
+// saw + the route/fields they committed). The e2e import script pulls these into
+// e2e/fixtures/scan-eval/ as golden cases. See docs/operations/ai-prompt-eval-harness.md.
+function ScanEvalTab() {
+  const qc = useQueryClient();
+  const confirm = useConfirm();
+  const toast = useToast();
+  const [detail, setDetail] = useState<ScanEvalCase | null>(null);
+
+  const q = useQuery({ queryKey: ["sa-scan-eval-cases"], queryFn: () => api.listScanEvalCases() });
+  const items = q.data?.items ?? [];
+
+  const del = useMutation({
+    mutationFn: (c: ScanEvalCase) => api.deleteScanEvalCase(c.org_id, c.id),
+    onSuccess: () => {
+      toast.success("Eval case deleted");
+      void qc.invalidateQueries({ queryKey: ["sa-scan-eval-cases"] });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+
+  const routeStr = (c: ScanEvalCase) =>
+    `${c.expected.route.module}${c.expected.route.instance ? `/${c.expected.route.instance}` : " (default)"}`;
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-content dark:text-mortar-200">
+        Captured matchmaker eval cases — a corrected scan commit recorded as a golden answer.
+        Pull them into the harness fixtures with{" "}
+        <code className="font-mono text-xs">node e2e/scan-eval-import.mjs</code>.
+      </p>
+      <div className="rounded-xl border border-line dark:border-slate-700 overflow-hidden overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-line dark:border-slate-700 bg-subtle/60 dark:bg-slate-800/40 text-left">
+              {["When", "Workspace", "Item", "Route", "Fields", "Note", ""].map((h) => (
+                <th key={h} className="px-3 py-1.5 font-mono text-[10px] uppercase text-muted tracking-wider whitespace-nowrap">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((c) => (
+              <tr key={`${c.org_id}:${c.id}`} className="border-b border-line dark:border-slate-800 last:border-0 hover:bg-subtle/40 dark:hover:bg-slate-800/30">
+                <td className="px-3 py-1.5 text-muted whitespace-nowrap cursor-pointer" onClick={() => setDetail(c)}>{new Date(c.created_at).toLocaleString()}</td>
+                <td className="px-3 py-1.5 text-content dark:text-mortar-200 whitespace-nowrap cursor-pointer" onClick={() => setDetail(c)}>{c.org_slug}</td>
+                <td className="px-3 py-1.5 text-content dark:text-mortar-200 cursor-pointer" onClick={() => setDetail(c)}>{c.expected.name ?? c.perceived_input.name ?? "—"}</td>
+                <td className="px-3 py-1.5 font-mono text-[11px] whitespace-nowrap cursor-pointer" onClick={() => setDetail(c)}>{routeStr(c)}</td>
+                <td className="px-3 py-1.5 text-muted whitespace-nowrap cursor-pointer" onClick={() => setDetail(c)}>{Object.keys(c.expected.fields ?? {}).length}</td>
+                <td className="px-3 py-1.5 text-faint whitespace-nowrap cursor-pointer" onClick={() => setDetail(c)}>{c.note ?? ""}</td>
+                <td className="px-3 py-1.5 text-right whitespace-nowrap">
+                  <button
+                    onClick={async () => {
+                      if (await confirm({ title: "Delete eval case?", message: "This removes the captured case. It does not affect the committed entity.", destructive: true })) del.mutate(c);
+                    }}
+                    className="text-faint hover:text-red-500"
+                    title="Delete"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {items.length === 0 && (
+              <tr><td colSpan={7} className="px-3 py-4 text-center text-faint italic">{q.isLoading ? "Loading…" : "No eval cases captured yet — tick “Save as eval case” on a scan commit."}</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      {detail && <ScanEvalDetailModal c={detail} onClose={() => setDetail(null)} />}
+    </div>
+  );
+}
+
+function ScanEvalDetailModal({ c, onClose }: { c: ScanEvalCase; onClose: () => void }) {
+  const block = (label: string, value: unknown) => (
+    <div>
+      <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-1">{label}</div>
+      <pre className="text-xs whitespace-pre-wrap bg-subtle dark:bg-slate-800 border border-line dark:border-slate-700 rounded p-3 max-h-56 overflow-auto text-content dark:text-mortar-200">{JSON.stringify(value, null, 2)}</pre>
+    </div>
+  );
+  return (
+    <Modal open onClose={onClose} title={`Eval case · ${c.expected.name ?? c.perceived_input.name ?? "scan"}`} size="lg">
+      <div className="space-y-3 text-sm">
+        <div className="text-xs text-muted">
+          <span className="text-faint">Workspace:</span> {c.org_name} ({c.org_slug}) · <span className="text-faint">captured</span> {new Date(c.created_at).toLocaleString()}
+          {c.note ? <> · <span className="text-faint">note:</span> {c.note}</> : null}
+        </div>
+        {block("Perceived input (what the scanner saw)", c.perceived_input)}
+        {block("Expected (the corrected commit = ground truth)", c.expected)}
+        {block("Candidates the model proposed", c.candidates)}
+        {block("Scan menu (the tables the model chose among)", c.scan_menu)}
+      </div>
+    </Modal>
+  );
+}
+
 // Announcements → Discord. Per-category toggles so noteworthy platform events
 // (new/resolved feedback, bundle releases, feature updates) post to a channel —
 // each silenceable (e.g. to avoid doubling a separate commit feed).
@@ -1025,6 +1134,23 @@ function AnnouncementsTab() {
   });
   const items = q.data?.items ?? [];
   const noDefault = items.length > 0 && !items[0]!.default_channel_set;
+  const composable = items.filter((a) => a.composable);
+
+  const [postCat, setPostCat] = useState("");
+  const [postTitle, setPostTitle] = useState("");
+  const [postBody, setPostBody] = useState("");
+  const post = useMutation({
+    mutationFn: () => api.postAnnouncement({ category: postCat, title: postTitle.trim(), body: postBody.trim() || undefined }),
+    onSuccess: () => {
+      toast.success("Posted to Discord.");
+      setPostTitle("");
+      setPostBody("");
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't post."),
+  });
+  // Default the composer category to the first composable one.
+  if (!postCat && composable.length > 0) setPostCat(composable[0]!.key);
+
   return (
     <div className="space-y-3">
       <p className="text-sm text-content dark:text-mortar-200">
@@ -1033,6 +1159,52 @@ function AnnouncementsTab() {
         with no channel override uses the default{" "}
         <code className="font-mono text-xs">COBBLR_FEEDBACK_DISCORD_WEBHOOK</code>.
       </p>
+
+      {/* Curated composer — post a bundle release / feature note on demand. */}
+      {composable.length > 0 && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (postTitle.trim()) post.mutate();
+          }}
+          className="rounded-xl border border-line dark:border-slate-700 bg-subtle/50 dark:bg-slate-800/40 p-3 space-y-2"
+        >
+          <div className="text-[10px] font-mono uppercase tracking-widest text-accent">post an update</div>
+          <div className="flex gap-2">
+            <select
+              value={postCat}
+              onChange={(e) => setPostCat(e.target.value)}
+              className="text-sm rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2 py-1.5"
+            >
+              {composable.map((a) => (
+                <option key={a.key} value={a.key}>{a.label}</option>
+              ))}
+            </select>
+            <input
+              value={postTitle}
+              onChange={(e) => setPostTitle(e.target.value)}
+              placeholder="Title — e.g. “📦 New: Yarn bundle v0.4”"
+              className="flex-1 text-sm rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2 py-1.5"
+            />
+          </div>
+          <textarea
+            value={postBody}
+            onChange={(e) => setPostBody(e.target.value)}
+            rows={2}
+            placeholder="Optional details…"
+            className="w-full text-sm rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2 py-1.5"
+          />
+          <div className="flex justify-end">
+            <button
+              type="submit"
+              disabled={!postTitle.trim() || post.isPending}
+              className="text-xs px-3 py-1.5 rounded bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50"
+            >
+              {post.isPending ? "Posting…" : "Post to channel"}
+            </button>
+          </div>
+        </form>
+      )}
       {noDefault && (
         <div className="text-xs text-ember-500">
           No default Discord channel is set (COBBLR_FEEDBACK_DISCORD_WEBHOOK). Set
@@ -1086,9 +1258,10 @@ function FeedbackTab() {
   const qc = useQueryClient();
   const toast = useToast();
   const [filter, setFilter] = useState<string>("new");
+  const [sort, setSort] = useState<"priority" | "recent">("priority");
   const q = useQuery({
-    queryKey: ["sa-feedback", filter],
-    queryFn: () => api.listFeedback(filter === "all" ? undefined : filter),
+    queryKey: ["sa-feedback", filter, sort],
+    queryFn: () => api.listFeedback(filter === "all" ? undefined : filter, sort),
   });
   const update = useMutation({
     mutationFn: ({
@@ -1101,13 +1274,18 @@ function FeedbackTab() {
         admin_notes?: string | null;
         notify_reporter?: boolean;
         reply_message?: string;
+        public_summary?: string;
       };
     }) => api.updateFeedback(id, body),
     onSuccess: (res, vars) => {
       void qc.invalidateQueries({ queryKey: ["sa-feedback"] });
       if (vars.body.notify_reporter) {
         toast[res.notified ? "success" : "error"](
-          res.notified ? "Reporter notified." : "Couldn't notify — reporter has no workspace.",
+          res.notified
+            ? res.emailed
+              ? "Reporter notified + emailed."
+              : "Reporter notified."
+            : "Couldn't notify — reporter has no workspace.",
         );
       }
     },
@@ -1116,7 +1294,7 @@ function FeedbackTab() {
   const items = q.data?.items ?? [];
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-1 text-xs font-mono">
+      <div className="flex items-center gap-1 text-xs font-mono flex-wrap">
         {(["all", ...FEEDBACK_STATUSES] as const).map((s) => (
           <button
             key={s}
@@ -1125,6 +1303,23 @@ function FeedbackTab() {
             className={
               "px-2 py-1 rounded transition " +
               (filter === s
+                ? "bg-cobble-100 text-accent dark:bg-cobble-700 dark:text-mortar-100"
+                : "text-faint hover:text-accent")
+            }
+          >
+            {s}
+          </button>
+        ))}
+        <div className="flex-1" />
+        <span className="text-faint dark:text-slate-500">sort</span>
+        {(["priority", "recent"] as const).map((s) => (
+          <button
+            key={s}
+            type="button"
+            onClick={() => setSort(s)}
+            className={
+              "px-2 py-1 rounded transition " +
+              (sort === s
                 ? "bg-cobble-100 text-accent dark:bg-cobble-700 dark:text-mortar-100"
                 : "text-faint hover:text-accent")
             }
@@ -1148,6 +1343,66 @@ function FeedbackTab() {
   );
 }
 
+const PRIORITY_CHIP: Record<string, string> = {
+  urgent: "bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300",
+  high: "bg-orange-100 text-orange-700 dark:bg-orange-900/50 dark:text-orange-300",
+  medium: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
+  low: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400",
+};
+
+function PriorityChip({ priority }: { priority: "urgent" | "high" | "medium" | "low" }) {
+  return (
+    <span
+      className={
+        "px-1.5 py-0.5 rounded font-mono uppercase text-[10px] font-semibold " +
+        (PRIORITY_CHIP[priority] ?? PRIORITY_CHIP.low)
+      }
+    >
+      {priority}
+    </span>
+  );
+}
+
+function ValidViableChip({ ok, label }: { ok: boolean | null; label: string }) {
+  if (ok === null) return null;
+  return (
+    <span className={ok ? "text-moss-600 dark:text-moss-400" : "text-red-500 dark:text-red-400"}>
+      {ok ? "✓" : "✕"} {label}
+    </span>
+  );
+}
+
+// A reporter-attached screenshot: thumbnail in the card, click to enlarge. The
+// image routes through useImageSrc (Bearer → blob) since the raw endpoint is
+// auth-gated; one `medium` fetch serves both the thumb and the lightbox.
+function FeedbackShot({ feedbackId, fileId, name }: { feedbackId: string; fileId: string; name?: string }) {
+  const [zoom, setZoom] = useState(false);
+  const src = useImageSrc(api.feedbackAttachmentRawUrl(feedbackId, fileId, "medium"));
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setZoom(true)}
+        title={name || "screenshot"}
+        className="w-16 h-16 rounded-md overflow-hidden border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800"
+      >
+        {src ? (
+          <img src={src} alt={name || "screenshot"} className="w-full h-full object-cover" />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center text-[10px] text-faint">…</div>
+        )}
+      </button>
+      <Modal open={zoom} onClose={() => setZoom(false)} title={name || "Screenshot"} size="lg">
+        {src ? (
+          <img src={src} alt={name || "screenshot"} className="max-h-[70vh] w-auto mx-auto rounded" />
+        ) : (
+          <div className="text-xs text-faint p-8 text-center">loading…</div>
+        )}
+      </Modal>
+    </>
+  );
+}
+
 function FeedbackCard({
   f,
   onUpdate,
@@ -1158,10 +1413,13 @@ function FeedbackCard({
     admin_notes?: string | null;
     notify_reporter?: boolean;
     reply_message?: string;
+    public_summary?: string;
   }) => void;
 }) {
   const [notes, setNotes] = useState(f.admin_notes ?? "");
   const [reply, setReply] = useState("");
+  // Third-person "what we fixed" note for the Discord feedback-resolved post.
+  const [publicSummary, setPublicSummary] = useState("");
   const ctx = (f.context ?? {}) as { url?: string; route?: string };
   const emoji = f.type === "bug" ? "🐛" : f.type === "confusing" ? "😕" : f.type === "idea" ? "💡" : "•";
   return (
@@ -1170,7 +1428,15 @@ function FeedbackCard({
         <span>
           {emoji} <span className="font-mono uppercase text-accent">{f.type}</span>
         </span>
-        <span className="text-faint dark:text-slate-500">{f.user_name || f.user_email || "?"}</span>
+        {f.triage_priority && <PriorityChip priority={f.triage_priority} />}
+        {f.origin === "discord" && (
+          <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300">
+            discord
+          </span>
+        )}
+        <span className="text-faint dark:text-slate-500">
+          {f.user_name || f.user_email || f.origin_ref?.username || "?"}
+        </span>
         {f.workspace_slug && (
           <span className="text-faint dark:text-slate-500">· {f.workspace_name || f.workspace_slug}</span>
         )}
@@ -1178,7 +1444,15 @@ function FeedbackCard({
         <div className="flex-1" />
         <select
           value={f.status}
-          onChange={(e) => onUpdate({ status: e.target.value })}
+          onChange={(e) =>
+            onUpdate({
+              status: e.target.value,
+              // On resolve, carry the "what we fixed" note into the Discord post.
+              ...(e.target.value === "resolved" && publicSummary.trim()
+                ? { public_summary: publicSummary.trim() }
+                : {}),
+            })
+          }
           className="text-xs rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-1 py-0.5"
         >
           {FEEDBACK_STATUSES.map((s) => (
@@ -1191,6 +1465,56 @@ function FeedbackCard({
       <div className="text-content dark:text-mortar-100 whitespace-pre-wrap">{f.message}</div>
       {ctx.route && (
         <div className="text-[10px] font-mono text-faint dark:text-slate-500 break-all">@ {ctx.route}</div>
+      )}
+      {f.attachments?.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {f.attachments.map((a) => (
+            <FeedbackShot key={a.file_id} feedbackId={f.id} fileId={a.file_id} name={a.name} />
+          ))}
+        </div>
+      )}
+      {f.followups?.length > 0 && (
+        <div className="border-l-2 border-indigo-300 dark:border-indigo-700 pl-2.5 space-y-1.5">
+          <div className="text-[10px] font-mono uppercase tracking-wide text-faint dark:text-slate-500">
+            💬 {f.followups.length} follow-up{f.followups.length === 1 ? "" : "s"}
+          </div>
+          {f.followups.map((fu, i) => (
+            <div key={i} className="text-xs">
+              <span className="text-faint dark:text-slate-500">{fu.from}: </span>
+              <span className="text-content dark:text-mortar-200 whitespace-pre-wrap">{fu.text}</span>
+              {fu.images?.map((img, j) => (
+                <a
+                  key={j}
+                  href={img.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="ml-1.5 text-accent hover:underline"
+                >
+                  🖼 {img.name || "image"}
+                </a>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+      {f.triaged_at && (
+        <div className="rounded-lg border border-line/70 dark:border-slate-800 bg-subtle/60 dark:bg-slate-800/40 p-2.5 space-y-1.5">
+          <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-wide text-faint dark:text-slate-500">
+            <span>🤖 AI triage</span>
+            <ValidViableChip ok={f.triage_valid} label="valid" />
+            <ValidViableChip ok={f.triage_viable} label="viable" />
+            {f.triage_model && <span className="text-faint/70">· {f.triage_model}</span>}
+          </div>
+          {f.triage_summary && (
+            <div className="text-xs text-content dark:text-mortar-200">{f.triage_summary}</div>
+          )}
+          {f.triage_action && (
+            <div className="text-xs text-faint dark:text-slate-400">
+              <span className="font-medium text-accent">→ </span>
+              {f.triage_action}
+            </div>
+          )}
+        </div>
       )}
       <div className="flex items-end gap-2">
         <textarea
@@ -1215,7 +1539,7 @@ function FeedbackCard({
         <input
           value={reply}
           onChange={(e) => setReply(e.target.value)}
-          placeholder={`reply to ${f.user_name || f.user_email || "the reporter"} (in-app)…`}
+          placeholder={`reply to ${f.user_name || f.user_email || f.origin_ref?.username || "the reporter"} ${f.origin === "discord" ? "(in Discord thread)" : "(in-app)"}…`}
           className="flex-1 text-xs rounded border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800/70 px-2 py-1 text-content dark:text-mortar-200"
         />
         <button
@@ -1234,6 +1558,14 @@ function FeedbackCard({
           notify reporter
         </button>
       </div>
+      {/* Public "what we fixed" note — third-person; posted to the Discord
+          feedback channel when you set status → resolved. Not sent to the reporter. */}
+      <input
+        value={publicSummary}
+        onChange={(e) => setPublicSummary(e.target.value)}
+        placeholder="what we fixed (third-person — posts to Discord on resolve)…"
+        className="w-full text-xs rounded border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800/70 px-2 py-1 text-content dark:text-mortar-200"
+      />
     </li>
   );
 }

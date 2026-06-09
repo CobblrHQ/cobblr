@@ -20,7 +20,7 @@
 import { Fragment, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpCircle, Compass, Eye, EyeOff, GripVertical, LayoutList, Maximize2, Minimize2, Plus, Sliders, Sparkles, X } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpCircle, Compass, Eye, EyeOff, GripVertical, LayoutList, Maximize2, Minimize2, Plus, ScanLine, Sliders, Sparkles, X } from "lucide-react";
 import { useBundleUpdates } from "../lib/useBundleUpdates";
 import { useSetupCards, dismissSetup } from "../lib/setupCards";
 import { EntityThumb,
@@ -81,8 +81,9 @@ export function Dashboard() {
         userName={user?.display_name ?? user?.email ?? ""}
       />
 
-      <BundleUpdatesBanner slug={activeSlug} />
       <SetupCardsPanel slug={activeSlug} />
+
+      {enabled.has("core-scan") && <ScanInboxBanner slug={activeSlug} />}
 
       <GettingStartedPanel
         slug={activeSlug}
@@ -97,33 +98,34 @@ export function Dashboard() {
   );
 }
 
-// Update nudge — surfaces installed-bundle updates on the dashboard so the user
-// doesn't have to hunt the marketplace (the author's #2). Auto-clears once everything's
-// up to date; the "Review" button drops them on the marketplace where the
-// per-bundle "Update" button lives.
-function BundleUpdatesBanner({ slug }: { slug: string }) {
-  const updates = useBundleUpdates(slug);
-  const navigate = useNavigate();
-  if (updates.length === 0) return null;
+// The scan inbox has no nav noun (core-scan is a capability), so a workspace
+// with items waiting to be filed had no on-dashboard signal. Show a slim,
+// clickable banner only when something's actually pending.
+function ScanInboxBanner({ slug }: { slug: string }) {
+  const inbox = useQuery({
+    queryKey: ["scan-inbox", slug, "pending"],
+    queryFn: () => api.listScanInbox(slug, { status: "pending" }),
+    enabled: !!slug,
+    refetchInterval: 30_000,
+  });
+  const n = inbox.data?.items.length ?? 0;
+  if (n === 0) return null;
   return (
-    <div className="rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 p-4 flex items-center gap-3">
-      <ArrowUpCircle size={20} className="text-amber-600 dark:text-amber-400 shrink-0" />
+    <Link
+      to="/scan"
+      className="flex items-center gap-3 rounded-xl border border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20 px-4 py-3 hover:border-cobble-400 dark:hover:border-cobble-600 transition group"
+    >
+      <ScanLine size={18} className="text-accent shrink-0" />
       <div className="flex-1 min-w-0">
-        <div className="font-medium text-content dark:text-mortar-100">
-          {updates.length} bundle update{updates.length === 1 ? "" : "s"} available
+        <div className="text-sm font-medium text-content dark:text-mortar-100">
+          {n} scanned {n === 1 ? "item" : "items"} waiting in your inbox
         </div>
-        <div className="text-sm text-muted dark:text-slate-400 truncate">
-          {updates.map((u) => `${u.glyph} ${u.name} v${u.installedV} → v${u.latestV}`).join(" · ")}
+        <div className="text-xs text-faint dark:text-slate-400">
+          Review + file them into your tables.
         </div>
       </div>
-      <button
-        type="button"
-        onClick={() => navigate("/bundles")}
-        className="shrink-0 rounded-md bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium px-3 py-1.5 transition"
-      >
-        Review
-      </button>
-    </div>
+      <ArrowRight size={16} className="text-faint group-hover:text-accent transition shrink-0" />
+    </Link>
   );
 }
 
@@ -452,6 +454,8 @@ function WorkspaceHeader({
   role: string;
   userName: string;
 }) {
+  const updates = useBundleUpdates(slug);
+  const navigate = useNavigate();
   return (
     <header className="rounded-xl border border-line dark:border-slate-700 bg-gradient-to-br from-cobble-50/40 to-white dark:from-slate-900 dark:to-slate-900/40 p-5">
       <div className="flex items-baseline gap-3 flex-wrap">
@@ -479,6 +483,31 @@ function WorkspaceHeader({
       <div className="text-xs text-muted dark:text-slate-400 mt-2">
         welcome back, {userName.split(" ")[0]}
       </div>
+      {/* Compact message strip — one line + action per message. Bundle-update
+          nudges live here now (the standalone banner was too noisy). Room for
+          other one-line messages later. */}
+      {updates.length > 0 && (
+        <div className="mt-3 space-y-1 border-t border-line/60 dark:border-slate-800 pt-2">
+          {updates.map((u) => (
+            <div key={u.name} className="flex items-center gap-2 text-xs">
+              <ArrowUpCircle size={13} className="text-amber-500 dark:text-amber-400 shrink-0" />
+              <span className="flex-1 min-w-0 truncate text-content dark:text-mortar-200">
+                {u.glyph} <strong>{u.name}</strong>{" "}
+                <span className="text-faint dark:text-slate-500">
+                  v{u.installedV} → v{u.latestV}
+                </span>
+              </span>
+              <button
+                type="button"
+                onClick={() => navigate(`/bundles?open=${encodeURIComponent(u.externalId)}`)}
+                className="shrink-0 text-accent hover:underline font-medium"
+              >
+                Update
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </header>
   );
 }

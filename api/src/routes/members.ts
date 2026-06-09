@@ -6,13 +6,15 @@
 // signed in can accept. (No SMTP yet — we don't need email-based
 // flow until later.)
 
-import { Router } from "express";
+import { Router, type Request } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import * as activity from "../platform/activity.js";
+import * as notifications from "../platform/notifications.js";
+import { sendAuthEmail, hasAuthEmailSender } from "../platform/hosted-seams.js";
 import type { OrgRole } from "../db/schema.js";
 import { hashPassword } from "../auth/password.js";
 import { buildAuthResponse } from "./auth.js";
@@ -69,7 +71,7 @@ membersRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
 
 // PATCH /:slug/members/:userId  { role }
 const RolePatch = z.object({
-  role: z.enum(["owner", "admin", "member", "guest"]),
+  role: z.enum(["owner", "admin", "editor", "member", "guest"]),
 });
 membersRouter.patch("/:userId", requireAuth, withTenant, async (req, res, next) => {
   try {
@@ -183,9 +185,77 @@ membersRouter.delete("/:userId", requireAuth, withTenant, async (req, res, next)
 
 // ── Invites ──────────────────────────────────────────────────────
 
+// Deliver a freshly-minted invite to the invitee: an in-app notification when
+// they already have a Cobblr account (so it lands in their bell — the most
+// natural surface for an existing user), and an email when an address was given
+// (mirrors the notification, and is the only reach for a brand-new person). The
+// link is still copied to the inviter's clipboard regardless. Best-effort — never
+// fails the mint.
+async function deliverInvite(opts: {
+  req: Request;
+  email: string;
+  token: string;
+  role: string;
+  orgName: string;
+  inviterId: string;
+  inviteId: string;
+  expiresAt: Date;
+}): Promise<void> {
+  const { req, email, token, role, orgName, inviterId, inviteId, expiresAt } = opts;
+  const inviteUrl = `${req.protocol}://${req.get("host") ?? ""}/invite/${token}`;
+  const inviter = await meta
+    .selectFrom("users")
+    .select(["display_name", "email"])
+    .where("id", "=", inviterId)
+    .executeTakeFirst();
+  const inviterName = inviter?.display_name || inviter?.email || "Someone";
+
+  // In-app notification for an existing user. Scoped to one of THEIR own
+  // workspaces, because the cross-workspace inbox only surfaces orgs the user is
+  // a member of — and they're not in the target workspace yet.
+  const invitee = await meta
+    .selectFrom("users")
+    .select(["id"])
+    .where("email", "=", email)
+    .executeTakeFirst();
+  if (invitee) {
+    const home = await meta
+      .selectFrom("org_memberships")
+      .select("org_id")
+      .where("user_id", "=", invitee.id)
+      .orderBy("joined_at", "asc")
+      .limit(1)
+      .executeTakeFirst();
+    if (home) {
+      await notifications.dispatch({
+        orgId: home.org_id,
+        userId: invitee.id,
+        eventType: "workspace.invited",
+        message: `${inviterName} invited you to join "${orgName}".`,
+        link_url: `/invite/${token}`,
+        entityType: "invite",
+        entityId: inviteId,
+      });
+    }
+  }
+
+  // Email — mirrors the notification; the only path for someone with no account.
+  if (hasAuthEmailSender()) {
+    await sendAuthEmail({
+      to: email,
+      subject: `${inviterName} invited you to "${orgName}" on Cobblr`,
+      text:
+        `${inviterName} invited you to join the "${orgName}" workspace on Cobblr as ${role}.\n\n` +
+        `Accept the invite:\n  ${inviteUrl}\n\n` +
+        `This link expires ${expiresAt.toDateString()}. If you weren't expecting this, you can ignore it.`,
+      kind: "notification",
+    });
+  }
+}
+
 const InviteCreate = z.object({
   email: z.string().email().max(255).optional(),
-  role: z.enum(["admin", "member", "guest"]).default("member"),
+  role: z.enum(["admin", "editor", "member", "guest"]).default("member"),
   /** ISO timestamp; defaults to 14 days from now. */
   expires_at: z.string().datetime().optional(),
 });
@@ -223,6 +293,19 @@ membersRouter.post("/invites", requireAuth, withTenant, async (req, res, next) =
       ref: { module: null, entityType: "invite", entityId: inserted.id },
       diff: { role: parsed.data.role, email: parsed.data.email ?? null },
     });
+    // Notify/email the invitee (fire-and-forget — don't block or fail the mint).
+    if (parsed.data.email) {
+      void deliverInvite({
+        req,
+        email: parsed.data.email,
+        token,
+        role: parsed.data.role,
+        orgName: req.tenant!.org.name,
+        inviterId: req.session!.id,
+        inviteId: inserted.id,
+        expiresAt,
+      }).catch((e) => console.error("[invites] deliver failed:", (e as Error).message));
+    }
     res.status(201).json(inserted);
   } catch (err) {
     next(err);

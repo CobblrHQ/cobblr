@@ -104,22 +104,33 @@ export function BundleDetailModal(props: Props) {
     () => new Set((props.mode === "featured" ? props.manifest.features : undefined)?.filter((f) => f.default).map((f) => f.key) ?? []),
   );
 
-  // Installed-only: fetch the actually-installed wires + field defs + the
-  // stored manifest (with features) + enabled_features (for "Manage features").
-  const installedBundleId = props.mode === "installed" ? props.bundle.id : null;
+  // Fetch the actually-installed wires + field defs + the stored manifest (with
+  // features) + enabled_features. Needed for the installed modal AND the
+  // marketplace "Update" modal (featured mode on a bundle that's already
+  // installed) — both want to reflect what's really installed, not defaults.
+  const installedBundleId =
+    props.mode === "installed"
+      ? props.bundle.id
+      : props.mode === "featured"
+        ? (props.installedBundleId ?? null)
+        : null;
   const detail = useQuery({
     queryKey: ["bundle-detail", slug, installedBundleId],
     queryFn: () => api.getBundle(slug, installedBundleId!),
     enabled: open && !!installedBundleId,
   });
 
-  // Installed mode: once the detail loads, seed the feature checkboxes from the
-  // bundle's stored enabled_features so the manage UI reflects reality.
+  // Seed the feature checkboxes from the bundle's stored enabled_features so the
+  // checkboxes reflect what was ACTUALLY installed — for the installed modal and
+  // the "Update" modal alike. Without this an already-installed bundle shows the
+  // manifest defaults, which reads like a fresh install (the author: "the check boxes
+  // should be checked to reflect what was actually installed").
+  const alreadyInstalled = props.mode === "featured" && props.alreadyInstalled === true;
   useEffect(() => {
-    if (props.mode === "installed" && detail.data) {
+    if (detail.data && (props.mode === "installed" || alreadyInstalled)) {
       setSelectedFeatures(new Set(detail.data.bundle.enabled_features ?? []));
     }
-  }, [props.mode, detail.data]);
+  }, [props.mode, alreadyInstalled, detail.data]);
 
   // The bundle to uninstall: the installed bundle in installed mode, or a
   // marketplace bundle the user already has installed (featured mode) so
@@ -152,7 +163,9 @@ export function BundleDetailModal(props: Props) {
       api.installBundle(slug, vars.manifest, vars.confirm, vars.enabledFeatures),
     onSuccess: (r) => {
       toast.success(
-        `Installed ${r.bundle.name} v${r.bundle.version} — ${r.applied.wires} wire(s), ${r.applied.field_defs} field def(s).`,
+        isUpdate
+          ? `Updated ${r.bundle.name} to v${r.bundle.version}.`
+          : `Installed ${r.bundle.name} v${r.bundle.version} — ${r.applied.wires} wire(s), ${r.applied.field_defs} field def(s).`,
       );
       void qc.invalidateQueries({ queryKey: ["bundles", slug] });
       void qc.invalidateQueries({ queryKey: ["bindings", slug] });
@@ -167,7 +180,10 @@ export function BundleDetailModal(props: Props) {
       void qc.invalidateQueries({ queryKey: ["entity-kind-overrides", slug] });
       // Persist a "where to start" card to the dashboard so it's re-findable
       // after the user navigates away (the author: "I could never find it again").
-      if (props.mode === "featured" && props.manifest) {
+      // Skip on an UPDATE — the user already onboarded; re-pinning the card +
+      // showing the "where to start" panel again is noise (the author: "update is
+      // done, just move on").
+      if (props.mode === "featured" && props.manifest && !isUpdate) {
         recordSetup(slug, {
           externalId: r.bundle.external_id,
           name: r.bundle.name,
@@ -175,9 +191,16 @@ export function BundleDetailModal(props: Props) {
           nextSteps: deriveNextSteps(props.manifest, props.nextSteps, selectedFeatures),
         });
       }
-      // Wizard mode lands straight in the module (handled in handleInstall);
-      // marketplace mode keeps the modal open on the guided "what's next" panel.
-      if (!autoLand) setJustInstalled(r.applied);
+      // Wizard mode lands straight in the module (handled in handleInstall).
+      // An update just closes — no "where to start". A fresh marketplace install
+      // keeps the modal open on the guided "what's next" panel.
+      if (autoLand) {
+        /* landAfterInstall navigates */
+      } else if (isUpdate) {
+        onClose();
+      } else {
+        setJustInstalled(r.applied);
+      }
     },
     onError: (e: unknown) => {
       // `needs_enable` + `field_def_collision` are handled by handleInstall's

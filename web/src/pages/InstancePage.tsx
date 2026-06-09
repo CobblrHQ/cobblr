@@ -73,19 +73,16 @@ export function InstancePage() {
     );
   }
   if (inst.module_name === "projects") {
+    // ProjectsUI owns its own heading from displayName (like InventoryUI) — no
+    // outer wrapper heading, or the page reads "Outfits" then "Projects".
     return (
-      <div className="space-y-4">
-        <div className="border-b border-line dark:border-slate-700 pb-3">
-          <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
-            {displayName}
-          </h1>
-        </div>
-        <ProjectsUI
-          orgSlug={activeSlug}
-          getToken={getToken}
-          instance={inst.instance_name}
-        />
-      </div>
+      <ProjectsUI
+        orgSlug={activeSlug}
+        getToken={getToken}
+        instance={inst.instance_name}
+        displayName={displayName}
+        itemNoun={cfg.item_noun}
+      />
     );
   }
   // Host-page modules (machines, assets) don't expose a packaged UI to
