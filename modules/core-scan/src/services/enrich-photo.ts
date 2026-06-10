@@ -88,6 +88,48 @@ async function patchNote(ctx: PhotoEnrichContext, note: string): Promise<void> {
     .execute();
 }
 
+/**
+ * Factual vision OBSERVATIONS of the scanned photo — for corroborating the
+ * barcode/catalog data in the matchmaker (is this ONE unit or a sealed
+ * multipack? what does the label actually say?). Distinct from
+ * `identifyImage` (which names an unknown item): this describes what is
+ * physically present, 2-3 plain sentences, no speculation. Returns null on
+ * no provider / no bytes / failure — corroboration is best-effort.
+ */
+export async function observeScanPhoto(
+  orgId: string,
+  imageFileId: string,
+  sourceId?: string,
+): Promise<string | null> {
+  const file =
+    (await platform().files.read(orgId, imageFileId, "medium")) ??
+    (await platform().files.read(orgId, imageFileId, "original"));
+  if (!file) return null;
+  const imageB64 = Buffer.from(file.bytes).toString("base64");
+  try {
+    const r = await platform().ai.invoke({
+      orgId,
+      capability: "classify-image",
+      input: {
+        image_b64: imageB64,
+        image_media_type: file.mimeType,
+        prompt:
+          "Describe ONLY what is physically present in this photo, in 2-3 short " +
+          "factual sentences: how many retail units are visible (one loose unit, " +
+          "a sealed multipack of N, a shelf of several); the packaging state; any " +
+          "label text you can read (QTY, pack size, model/SKU, size). " +
+          "No speculation, no marketing language. Reply with plain text only.",
+      },
+      source: { kind: "core-scan:photo-observe", id: sourceId ?? "" },
+    });
+    const res = r.result as { text?: string; content?: string };
+    const out = (res.text ?? res.content ?? "").trim();
+    return out ? out.slice(0, 1500) : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function enrichPhotoItem(ctx: PhotoEnrichContext): Promise<void> {
   // Read the photo bytes via the platform files seam. Prefer the medium
   // variant — resized JPEG, smaller payload + a cheaper vision call —

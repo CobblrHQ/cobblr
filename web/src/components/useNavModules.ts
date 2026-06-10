@@ -185,6 +185,28 @@ export function useNavModules(activeSlug: string): NavModules {
     }
   }
 
+  // core-scan is a capability (no nav noun by the core-* rule above), but the
+  // scan INBOX page needs a discoverable home — the header camera icon now
+  // jumps straight to the live scanner, so without this entry there'd be no
+  // labelled path to /scan at all. Synthetic top named "scan" → both navs
+  // route it to /scan; per-device hide/reorder works because those key on the
+  // entry name like any other.
+  if (enabledNames.has("core-scan")) {
+    rawTops.push({
+      name: "scan",
+      version: "0.1.0",
+      displayName: "Scan Inbox",
+      description: "Scan Inbox — review + file barcode/photo intake",
+      icon: "scan-line",
+      headerAction: null,
+      dependencies: [],
+      contributes: { fieldDefs: 0, wires: 0 },
+      enabled: true,
+      enabled_version: "0.1.0",
+      enabled_at: "",
+    });
+  }
+
   // A non-default instance is a SEPARATE TOP-LEVEL domain by default — per
   // instances.md it's "a new top-level thing to the user, never mixed." So it
   // gets its OWN top-level nav heading ("Pantry"), no dropdown, no trace of the

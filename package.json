@@ -17,6 +17,7 @@
   },
   "scripts": {
     "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint:isolation": "tsx scripts/lint-module-isolation.ts",
     "build": "npm run build --workspaces --if-present",
     "dev:api": "npm run dev -w api",
     "dev:web": "npm run dev -w web",

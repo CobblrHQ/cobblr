@@ -21,7 +21,7 @@ import { platform } from "@cobblr/platform-contract";
 import { bearer, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { enrichBarcodeItem } from "../services/enrich.js";
-import { enrichPhotoItem } from "../services/enrich-photo.js";
+import { enrichPhotoItem, observeScanPhoto } from "../services/enrich-photo.js";
 import { assembleScanMenu, runMatchmaker } from "../services/matchmaker.js";
 
 export const inboxRouter = Router({ mergeParams: true });
@@ -150,7 +150,14 @@ inboxRouter.post(
     // seeded on enable) — fired detached via the emit above, so intake
     // stays instant and the user can edit / disable it on /bindings.
 
-    const fresh = await db
+    // Re-acquire the tenant DB for the read-back. A slow inline enrichment
+    // (go-upc's website fetch, the web-search/vision floor) leaves the pool
+    // idle long enough that the idle reaper (`releaseIdleTenantPool`) can
+    // `pool.end()` the handle captured at the top of this request — reusing it
+    // then throws "Cannot use a pool after calling end on the pool". getDb
+    // returns the live cached pool, or transparently re-opens an evicted one.
+    const freshDb = (await platform().tenants.getDb(ctx.org.id)) as unknown as typeof db;
+    const fresh = await freshDb
       .selectFrom("core_scan_inbox_items")
       .selectAll()
       .where("id", "=", inserted.id)
@@ -438,8 +445,14 @@ inboxRouter.post(
             role: "gallery",
           }),
         });
-        // Optionally also point image_path at the catalog photo.
-        await fetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/${createPath}/${created.id}`, {
+        // Optionally also point image_path at the catalog photo. An
+        // instance-scoped entity is invisible to the bare module route
+        // (its CRUD filters to the default instance), so the patch must
+        // ride the same instance path the create used.
+        const patchUrl = parsed.data.instance
+          ? `${baseUrl}/api/v1/orgs/${ctx.org.slug}/instances/${parsed.data.instance}/items/${created.id}`
+          : `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/${createPath}/${created.id}`;
+        await fetch(patchUrl, {
           method: "PATCH",
           headers: {
             Authorization: `Bearer ${token}`,
@@ -615,6 +628,10 @@ inboxRouter.post(
       bearer: token,
       baseUrl,
       upc: row.barcode_text,
+      // Rerun means RE-ASK: skip the tenant AND shared caches (deleting
+      // only the tenant row left the shared cache answering with the
+      // stale result — the box resolver was never consulted again).
+      force: true,
     });
 
     const fresh = await db
@@ -658,7 +675,36 @@ inboxRouter.post(
     }
 
     const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
-    const meta = (row.suggested_metadata ?? {}) as { category?: string; entity_type?: "asset" | "part"; description?: string };
+    const meta = (row.suggested_metadata ?? {}) as { category?: string; entity_type?: "asset" | "part"; description?: string; photo_observations?: string };
+
+    // Vision corroboration: when the scan carries the user's own photo,
+    // a factual read of it ("one loose skein in hand", "sealed 10-pack,
+    // label says QTY 10") joins the matchmaker context and OUTRANKS
+    // listing-derived counts — this is what catches the unit-barcode-on-
+    // a-9-pack-listing trap. Cached in suggested_metadata so re-matches
+    // don't re-pay the vision call (a rerun rewrites the metadata, so a
+    // fresh enrichment re-observes). Best-effort with a hang guard.
+    let photoObservations = meta.photo_observations ?? null;
+    if (!photoObservations && row.image_file_id) {
+      photoObservations = await Promise.race([
+        observeScanPhoto(ctx.org.id, row.image_file_id, id),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 15_000)),
+      ]);
+      if (photoObservations) {
+        await db
+          .updateTable("core_scan_inbox_items")
+          .set({
+            suggested_metadata: JSON.stringify({
+              ...((row.suggested_metadata ?? {}) as Record<string, unknown>),
+              photo_observations: photoObservations,
+            }) as never,
+            updated_at: new Date(),
+          })
+          .where("id", "=", id)
+          .execute();
+      }
+    }
+
     const menu = await assembleScanMenu(baseUrl, ctx.org.slug, token);
     const candidates = await runMatchmaker(
       ctx.org.id,
@@ -669,14 +715,35 @@ inboxRouter.post(
         description: meta.description ?? null,
         entityType: meta.entity_type ?? null,
         barcode: row.barcode_text,
+        sku: row.suggested_sku,
+        notes: row.ai_notes,
+        scanArea: row.scan_area,
+        // The full lookup metadata — pack sizes, weights, colours the
+        // catalog/web search surfaced. Extraction fodder the model was
+        // previously blind to (the author: "the AI should be getting all the
+        // fields needed in her yarn instance").
+        metadata: row.suggested_metadata ?? null,
+        photoObservations,
       },
       menu,
       id, // inbox item UUID → links the AI-log row to this scan
     );
 
+    // The top candidate's reconciliation (terse, data-complete — what the
+    // barcode DB / attributes / title each said, pack reasoning) REPLACES the
+    // provenance one-liner in ai_notes: it's the substantive read the AI box
+    // shows. Only when the model produced one — a failed match never wipes
+    // the existing note.
+    const top = candidates[0];
     await db
       .updateTable("core_scan_inbox_items")
-      .set({ suggested_candidates: JSON.stringify(candidates) as never, updated_at: new Date() })
+      .set({
+        suggested_candidates: JSON.stringify(candidates) as never,
+        ...(top?.notes
+          ? { ai_notes: top.notes, ai_confidence: String(top.confidence) }
+          : {}),
+        updated_at: new Date(),
+      })
       .where("id", "=", id)
       .execute();
 
@@ -698,5 +765,28 @@ inboxRouter.post(
       .returningAll()
       .executeTakeFirstOrThrow();
     res.status(201).json(row);
+  }),
+);
+
+// ──────────────────────── GET /menu ─────────────────────────────────
+// The workspace "scan menu" — every routable table (enabled instances,
+// incl. each module's default) with its field defs. The SAME menu the
+// matchmaker prompts with, exposed so the UI's target picker reflects
+// the workspace's actual tables ("Yarn", not a hardcoded
+// inventory/assets/machines list the web has no business knowing).
+
+inboxRouter.get(
+  "/menu",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const token = bearer(req);
+    if (!token) {
+      res.status(401).json({ error: { code: "unauthenticated", message: "missing bearer" } });
+      return;
+    }
+    const ctx = tenantContext(req);
+    const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+    const items = await assembleScanMenu(baseUrl, ctx.org.slug, token);
+    res.json({ items });
   }),
 );

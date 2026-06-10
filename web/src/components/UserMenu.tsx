@@ -141,12 +141,12 @@ export function UserMenu({ themed }: { themed: boolean }) {
                 <ShieldCheck size={11} /> Platform
               </div>
               <Link
-                to="/super-admin"
+                to="/admin"
                 onClick={() => setOpen(false)}
                 className={itemCls}
                 role="menuitem"
               >
-                <Server size={14} className="text-faint dark:text-slate-400" /> Super-admin
+                <Server size={14} className="text-faint dark:text-slate-400" /> Operator console
               </Link>
             </>
           )}

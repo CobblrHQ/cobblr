@@ -21,6 +21,27 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
+    <!-- Staging/dev get a PURPLE app icon + manifest + tab so the PWA and the
+         browser tab are unmistakably NOT public prod (Grace: tell staging apart
+         from cobblr.me at a glance). Prod = cobblr.me + its subdomains; every
+         other host (the staging .ts.net URL, localhost) flips to the purple set. -->
+    <script>
+      (function () {
+        try {
+          if (/(^|\.)cobblr\.me$/i.test(location.hostname)) return;
+          var set = function (sel, attr, val) {
+            var el = document.querySelector(sel);
+            if (el) el.setAttribute(attr, val);
+          };
+          set('meta[name="theme-color"]', "content", "#6D28D9");
+          set('link[rel="icon"]', "href", "/favicon-staging.svg");
+          set('link[rel="apple-touch-icon"]', "href", "/apple-touch-icon-staging.png");
+          set('link[rel="manifest"]', "href", "/manifest-staging.webmanifest");
+          set('meta[name="apple-mobile-web-app-title"]', "content", "Cobblr · staging");
+          set('meta[name="application-name"]', "content", "Cobblr · staging");
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

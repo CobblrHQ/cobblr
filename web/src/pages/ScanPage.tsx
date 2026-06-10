@@ -1,60 +1,131 @@
-// /scan — barcode entry + inbox review queue.
+// /scan — the inbox review queue, companion app-Photo-Inbox-grade.
 //
-// v0.1 keeps it simple: a single page with two stacked sections.
-// Top: barcode entry (manual type or paste — camera capture in a
-// follow-up). Bottom: inbox queue with one row per pending item,
-// suggested-name + catalog image + a "Confirm" affordance that
-// opens a modal to pick target kind + location and commit.
+// Layout (the author's spec, from the companion app gold standard):
+//   · ONE narrow header row — title + count + the intake buttons
+//     (UPC / Upload / Camera). No dead space, no explainer paragraph;
+//     typed-UPC and photo-upload intake live in a modal, the camera is
+//     its own full-screen route.
+//   · Straight to the matches: each inbox item is an ACCORDION card —
+//     the collapsed row is the at-a-glance match (photo, name, one-tap
+//     table chips); expanding reveals the full triage surface: catalog
+//     photo vs YOUR photo side by side, the AI's reasoning + confidence,
+//     sanity-check web links, and the inline confirm form (kind, name,
+//     brand, instance fields, qty, location) — no modal hop.
+//
+// URL intake is deliberately absent: the API stores source_url but
+// nothing enriches it yet — a dead control is worse than none.
 
 import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Camera,
-  Check,
   CheckCircle,
+  ChevronDown,
+  ExternalLink,
+  MapPin,
   RotateCcw,
   ScanLine,
   Sparkles,
+  Upload,
   X,
 } from "lucide-react";
-import { Modal, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
+import { Modal, useConfirm, useImageSrc, useToast, usePageTitle } from "@cobblr/platform-web";
 import {
+  type AiStatus,
   ApiError,
   api,
   type Location,
-  type PlatformFieldDef,
   type ScanInboxItem,
   type ScanCandidate,
+  type ScanMenuEntry,
 } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useAuth } from "../auth/AuthContext";
 
-const TARGET_KINDS = [
-  { module: "inventory", kind: "part", label: "Inventory part" },
-  { module: "assets", kind: "asset", label: "Asset" },
-  { module: "machines", kind: "machine", label: "Machine" },
-] as const;
+/** Base-kind fallback for when the scan menu can't load — the menu
+ *  (GET /modules/core-scan/menu) is the real source of truth and lists
+ *  the workspace's ACTUAL tables ("Yarn"), not module names. */
+const FALLBACK_MENU: ScanMenuEntry[] = [
+  { module: "inventory", instance: null, kind: "inventory:part", noun: "part", label: "Inventory part", fields: [] },
+  { module: "assets", instance: null, kind: "assets:asset", noun: "asset", label: "Asset", fields: [] },
+  { module: "machines", instance: null, kind: "machines:machine", noun: "machine", label: "Machine", fields: [] },
+];
+
+/** The confirm endpoint's target_kind is the module's BASE kind. */
+function baseKind(module: string): string {
+  return module === "assets" ? "asset" : module === "machines" ? "machine" : "part";
+}
+
+/** Selection key for a menu entry. */
+function entryKey(module: string, instance: string | null): string {
+  return `${module}::${instance ?? ""}`;
+}
+
+/** Is AI usable for this workspace/user? Cached well beyond a scan
+ *  session — availability only changes when someone reconfigures. */
+export function useAiStatus(): AiStatus | null {
+  const { activeSlug } = useActiveOrg();
+  const q = useQuery({
+    queryKey: ["ai-status", activeSlug],
+    queryFn: () => api.getAiStatus(activeSlug),
+    enabled: !!activeSlug,
+    staleTime: 5 * 60_000,
+  });
+  return q.data ?? null;
+}
+
+/** The up-front "scans run in basic mode" strip for AI-less instances —
+ *  the author's rule: tell the user the experience is degraded BEFORE they hit
+ *  it, not after a nameless miss confuses them. */
+export function AiOffNotice({ status }: { status: AiStatus | null }) {
+  if (!status || status.available) return null;
+  return (
+    <div className="rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 text-sm text-content dark:text-mortar-100 flex items-start gap-2">
+      <Sparkles size={15} className="text-amber-500 shrink-0 mt-0.5" />
+      <div>
+        <strong>AI isn't connected — scans run in basic mode.</strong> Known
+        barcodes still get a catalog name + photo, but unknown ones won't be
+        auto-named, brands won't fill in, and photo-only items won't be
+        identified — you'll fill those fields in yourself.{" "}
+        {status.reason === "operator_disabled" ? (
+          <span className="text-muted dark:text-slate-400">
+            (AI is switched off for this whole server.)
+          </span>
+        ) : (
+          <Link to="/configuration/ai" className="text-accent hover:underline">
+            Set up a provider →
+          </Link>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** The at-the-moment-of-pain variant: a nameless miss in the confirm flow. */
+export function AiOffMissHint({ status }: { status: AiStatus | null }) {
+  if (!status || status.available) return null;
+  return (
+    <p className="text-xs text-amber-600 dark:text-amber-400">
+      No catalog match — and no AI is set up to identify it, so name it
+      yourself.{" "}
+      {status.reason !== "operator_disabled" && (
+        <Link to="/configuration/ai" className="underline">
+          Set up AI
+        </Link>
+      )}{" "}
+      {status.reason !== "operator_disabled" && "to have these filled automatically."}
+    </p>
+  );
+}
 
 /** Where scans confirm into — a module instance (e.g. the "yarn" inventory
  *  instance), passed via the URL when you scan from an instance's table. */
 export type ScanTarget = { instance: string; module: string; kind: string; label: string };
 
-/** A matchmaker candidate → a confirm target. Instance candidates route into
- *  that table (with its fields); a generic candidate (instance null) returns
- *  null so the modal falls back to its base-module picker. The target's `kind`
- *  is the base kind (drives qty-field mapping), NOT the field-def entity kind. */
-function candidateToTarget(c: ScanCandidate): ScanTarget | null {
-  if (!c.instance) return null;
-  const kind = c.module === "assets" ? "asset" : c.module === "machines" ? "machine" : "part";
-  return { instance: c.instance, module: c.module, kind, label: c.label };
-}
-
 export function ScanPage() {
   usePageTitle("Scan");
   const { activeSlug } = useActiveOrg();
-  const qc = useQueryClient();
-  const toast = useToast();
   const [params] = useSearchParams();
   const into = params.get("into");
   const target: ScanTarget | null = into
@@ -65,61 +136,144 @@ export function ScanPage() {
         label: params.get("label") ?? into,
       }
     : null;
-  const [barcode, setBarcode] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [confirming, setConfirming] = useState<{
-    item: ScanInboxItem;
-    target: ScanTarget | null;
-    prefill: Record<string, unknown>;
-  } | null>(null);
 
+  const qc = useQueryClient();
+  const toast = useToast();
+  // UPC entry is the only intake that needs a modal (it needs a keyboard
+  // anyway); Upload triggers the hidden file input DIRECTLY — no modal hop.
+  const [upcOpen, setUpcOpen] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+
+  async function uploadPhoto(file: File) {
+    setUploading(true);
+    try {
+      const rec = await api.uploadFile(activeSlug, file);
+      await api.scanBarcode(activeSlug, { source_kind: "photo", image_file_id: rec.id });
+      toast.success("Photo added — AI is identifying it");
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  // ?batch=<id> scopes the inbox to one scanner session — the camera's
+  // "Done" lands here so you review exactly what you just walked around
+  // scanning, not everything ever pending.
+  const batchId = params.get("batch");
   const list = useQuery({
-    queryKey: ["scan-inbox", activeSlug],
-    queryFn: () => api.listScanInbox(activeSlug, { status: "pending" }),
+    queryKey: ["scan-inbox", activeSlug, batchId],
+    queryFn: () =>
+      api.listScanInbox(activeSlug, {
+        status: "pending",
+        batch_id: batchId ?? undefined,
+      }),
     enabled: !!activeSlug,
     refetchInterval: 8_000,
   });
 
-  const scan = useMutation({
-    mutationFn: (value: string) =>
-      api.scanBarcode(activeSlug, { barcode: value.trim() }),
-    onSuccess: (item) => {
-      const label = item.suggested_name ?? `Barcode ${item.barcode_text}`;
-      toast.success(`Scanned: ${label}`);
-      setBarcode("");
-      inputRef.current?.focus();
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-    },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
-  });
-
-  // Auto-focus the barcode input. Most physical scanners type a UPC
-  // followed by Enter — so the form submits the moment the scanner
-  // finishes. The autoFocus prop + manual onSubmit is enough.
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
-
+  const aiStatus = useAiStatus();
   const items = list.data?.items ?? [];
 
+  // The workspace scan MENU — the same instances-with-fields catalog the
+  // matchmaker prompts with. Drives the confirm form's target picker, so
+  // the UI never hardcodes module names (core tenet: modules don't know
+  // about each other; "Yarn" might be the only table this workspace has).
+  const menuQ = useQuery({
+    queryKey: ["scan-menu", activeSlug],
+    queryFn: () => api.scanMenu(activeSlug),
+    enabled: !!activeSlug,
+    staleTime: 60_000,
+  });
+  const menu = menuQ.data?.items ?? null;
+
+  // Location is core-locations' noun, and that capability auto-enables
+  // everywhere — so "module enabled" gates nothing. the author's rule: the field
+  // exists only when the workspace actually HAS locations (rows).
+  const modulesQ = useQuery({
+    queryKey: ["org-modules", activeSlug],
+    queryFn: () => api.orgModules(activeSlug),
+    enabled: !!activeSlug,
+    staleTime: 30_000,
+  });
+  const locsEnabled = (modulesQ.data?.items ?? []).some(
+    (m) => m.name === "core-locations" && m.enabled,
+  );
+  const locsQ = useQuery({
+    queryKey: ["core-locations", activeSlug],
+    queryFn: () => api.listLocations(activeSlug),
+    enabled: !!activeSlug && locsEnabled,
+    staleTime: 60_000,
+  });
+  const hasLocations = locsEnabled && (locsQ.data?.items.length ?? 0) > 0;
+
+  const headerBtn =
+    "inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-700 text-sm text-content hover:bg-subtle dark:hover:bg-slate-800/70 px-2.5 py-1.5 transition shrink-0";
+
   return (
-    <div className="space-y-5 max-w-4xl">
-      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100 flex items-center gap-2">
-          <ScanLine size={20} className="text-accent" />
+    <div className="space-y-4 max-w-4xl">
+      {/* ── the ONE header row: identity + intake. Short word labels;
+            compact paddings keep it one row on phones. ──────────────── */}
+      <div className="flex items-center gap-2 border-b border-line dark:border-slate-700 pb-2.5 min-w-0">
+        <h1 className="text-lg font-semibold text-content dark:text-mortar-100 flex items-center gap-2 shrink-0">
+          <ScanLine size={18} className="text-accent" />
           Scan
         </h1>
-        <span className="text-sm text-muted dark:text-slate-400">
-          {items.length} pending
+        <span className="text-sm text-muted dark:text-slate-400 shrink-0">
+          {items.length}
+          <span className="hidden sm:inline"> pending</span>
         </span>
+        {batchId && (
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20 px-2.5 py-0.5 text-xs text-content dark:text-mortar-100 min-w-0">
+            <span className="truncate">
+              <span className="hidden sm:inline">this scan </span>session
+            </span>
+            <Link to="/scan" title="Show everything pending" className="text-faint hover:text-accent shrink-0">
+              <X size={12} />
+            </Link>
+          </span>
+        )}
         <div className="flex-1" />
+        <button
+          type="button"
+          onClick={() => setUpcOpen(true)}
+          title="Type or scan-gun a UPC"
+          className={headerBtn}
+        >
+          <ScanLine size={15} /> UPC
+        </button>
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          disabled={uploading}
+          title="Upload a photo from this device"
+          className={headerBtn + (uploading ? " opacity-50" : "")}
+        >
+          <Upload size={15} /> Upload
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) void uploadPhoto(f);
+          }}
+        />
         <Link
           to={`/scan/camera${params.toString() ? `?${params}` : ""}`}
-          className="inline-flex items-center gap-2 rounded border border-line dark:border-slate-700 text-sm text-content hover:bg-subtle dark:hover:bg-slate-800/70 px-3 py-1.5 transition"
+          title="Open the full-screen scanner"
+          className="inline-flex items-center gap-1.5 rounded bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-2.5 py-1.5 transition shrink-0"
         >
-          <Camera size={14} /> Use camera
+          <Camera size={15} /> Camera
         </Link>
       </div>
+
+      <AiOffNotice status={aiStatus} />
 
       {/* When you arrived here from an instance's table ("Scan" on the Yarn
           page), confirms default into that instance. */}
@@ -130,90 +284,146 @@ export function ScanPage() {
         </div>
       )}
 
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (!barcode.trim()) return;
-          scan.mutate(barcode.trim());
-        }}
-        className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 flex gap-2 items-center"
-      >
-        <ScanLine size={18} className="text-faint" />
-        <input
-          ref={inputRef}
-          type="text"
-          value={barcode}
-          onChange={(e) => setBarcode(e.target.value)}
-          placeholder="Type or scan a UPC / EAN / GTIN, then Enter"
-          className="flex-1 px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900 font-mono"
-          inputMode="numeric"
-          autoComplete="off"
-        />
-        <button
-          type="submit"
-          disabled={!barcode.trim() || scan.isPending}
-          className="rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm font-medium disabled:opacity-50"
-        >
-          {scan.isPending ? "Looking up…" : "Scan"}
-        </button>
-      </form>
-
-      <p className="text-xs text-muted dark:text-slate-400">
-        Lookups hit Open Products Facts + upcitemdb in parallel, with a
-        web-search + AI fallback when the catalogs miss. Hits land here with a
-        suggested name + brand + catalog photo; the best-fitting tables show as
-        one-tap chips. Use the camera for the fast blocking scan flow.
-      </p>
-
       {list.isLoading && <div className="text-sm text-faint">loading…</div>}
       {!list.isLoading && items.length === 0 && (
         <div className="rounded-md border border-dashed border-line dark:border-slate-700 p-8 text-center">
           <ScanLine size={28} className="mx-auto text-faint dark:text-slate-600 mb-2" />
           <div className="text-sm text-muted dark:text-slate-400">
-            Nothing pending. Scan a barcode above to start.
+            Nothing pending. Open the camera or add a UPC / photo above.
           </div>
         </div>
       )}
 
       <div className="space-y-2">
         {items.map((item) => (
-          <InboxRow
+          <InboxCard
             key={item.id}
             item={item}
-            onConfirm={(cand) =>
-              setConfirming(
-                cand
-                  ? { item, target: candidateToTarget(cand), prefill: cand.fields }
-                  : { item, target, prefill: {} },
-              )
-            }
+            pageTarget={target}
+            menu={menu}
+            hasLocations={hasLocations}
           />
         ))}
       </div>
 
-      {confirming && (
-        <ConfirmModal
-          item={confirming.item}
-          target={confirming.target}
-          prefill={confirming.prefill}
-          onClose={() => setConfirming(null)}
-        />
-      )}
+      {upcOpen && <UpcModal onClose={() => setUpcOpen(false)} />}
     </div>
   );
 }
 
-function InboxRow({
+// ── the UPC entry modal — deliberately tiny ───────────────────────────
+// One input row + one hint line. Stays open after each add for rapid
+// fire (a physical scan gun types a code + Enter; the input refocuses
+// after every submit). Upload and Camera act directly from the header —
+// this modal exists only because typing needs a keyboard.
+function UpcModal({ onClose }: { onClose: () => void }) {
+  const { activeSlug } = useActiveOrg();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [barcode, setBarcode] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  const scan = useMutation({
+    mutationFn: (value: string) => api.scanBarcode(activeSlug, { barcode: value.trim() }),
+    onSuccess: (item) => {
+      toast.success(`Scanned: ${item.suggested_name ?? `Barcode ${item.barcode_text}`}`);
+      setBarcode("");
+      inputRef.current?.focus();
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+
+  return (
+    <Modal open onClose={onClose} title="Scan a UPC" size="sm">
+      <div className="space-y-2">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!barcode.trim()) return;
+            scan.mutate(barcode.trim());
+          }}
+          className="flex gap-2 items-center"
+        >
+          <input
+            ref={inputRef}
+            type="text"
+            value={barcode}
+            onChange={(e) => setBarcode(e.target.value)}
+            placeholder="UPC / EAN / GTIN, then Enter"
+            className="flex-1 min-w-0 px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900 font-mono"
+            inputMode="numeric"
+            autoComplete="off"
+          />
+          <button
+            type="submit"
+            disabled={!barcode.trim() || scan.isPending}
+            className="rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm font-medium disabled:opacity-50 shrink-0"
+          >
+            {scan.isPending ? "…" : "Scan"}
+          </button>
+        </form>
+        <p className="text-xs text-faint dark:text-slate-500">
+          Stays open — keep scanning. A scan gun's Enter submits each code.
+        </p>
+      </div>
+    </Modal>
+  );
+}
+
+// ── one inbox item: an accordion triage card ──────────────────────────
+// Collapsed: the at-a-glance match (thumb, name, one-tap table chips).
+// Expanded: catalog vs YOUR photo, the AI's reasoning + confidence,
+// sanity-check links, and the inline confirm form. A matchmaker chip
+// expands straight into that table's form, fields pre-filled.
+function InboxCard({
   item,
-  onConfirm,
+  pageTarget,
+  menu,
+  hasLocations,
 }: {
   item: ScanInboxItem;
-  onConfirm: (candidate?: ScanCandidate) => void;
+  pageTarget: ScanTarget | null;
+  menu: ScanMenuEntry[] | null;
+  hasLocations: boolean;
 }) {
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
+
+  // The expansion's confirm context: which table/instance the form commits
+  // into + the matchmaker's pre-filled fields. Keyed into ConfirmForm so
+  // switching chips remounts (and so re-seeds) the form.
+  const [expanded, setExpanded] = useState(false);
+  const [formCtx, setFormCtx] = useState<{
+    selKey: string | null;
+    prefill: Record<string, unknown>;
+  }>({
+    selKey: pageTarget ? entryKey(pageTarget.module, pageTarget.instance) : null,
+    prefill: {},
+  });
+
+  function openForm(cand?: ScanCandidate) {
+    // No explicit chip and no ?into= target → default to the matchmaker's
+    // TOP candidate, fields pre-filled. Expanding a card should land on the
+    // AI's best read, not a blank form (the chip tap is a shortcut, not a
+    // requirement).
+    const pick = cand ?? (pageTarget ? null : (topCand ?? null));
+    setFormCtx(
+      pick
+        ? { selKey: entryKey(pick.module, pick.instance), prefill: pick.fields }
+        : {
+            selKey: pageTarget ? entryKey(pageTarget.module, pageTarget.instance) : null,
+            prefill: {},
+          },
+    );
+    setExpanded(true);
+  }
 
   // Matchmaker: once an item is identified, find the best table(s) for it +
   // fill their fields. Fire once per item (guarded) — the list polls every 8s,
@@ -236,6 +446,7 @@ function InboxRow({
   }, [item.suggested_name, item.suggested_candidates, match]);
 
   const candidates = (item.suggested_candidates ?? []).slice(0, 3);
+  const topCand = candidates[0] ?? null;
 
   const discard = useMutation({
     mutationFn: () => api.discardScanItem(activeSlug, item.id),
@@ -244,135 +455,308 @@ function InboxRow({
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
     },
   });
+  // The rerun endpoint AWAITS the full re-enrichment and returns the fresh
+  // row — so the spinner below is honest "working" state, not a queue. On
+  // success we ALSO re-rank the matchmaker (its candidates were computed
+  // against the OLD identification) before declaring victory.
   const rerun = useMutation({
     mutationFn: () => api.rerunScanAi(activeSlug, item.id),
-    onSuccess: () => {
-      toast.success("Re-ran lookup.");
+    onSuccess: (fresh) => {
+      toast.success(
+        fresh.suggested_name
+          ? `Lookup updated: ${fresh.suggested_name}`
+          : "Re-ran — still no match. Fill it in manually.",
+      );
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      match.mutate();
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
+  const rerunning = rerun.isPending;
 
-  const catalogImg =
-    item.catalog_image_file_id
-      ? `/api/v1/orgs/${activeSlug}/modules/core-files/files/${item.catalog_image_file_id}/raw?variant=thumb`
-      : item.catalog_image_url
-        ? item.catalog_image_url
-        : // Photo scans have no catalog image — show the user's own photo.
-          item.image_file_id
-          ? `/api/v1/orgs/${activeSlug}/modules/core-files/files/${item.image_file_id}/raw?variant=thumb`
-          : null;
+  // Internal /api/v1 file URLs need the Bearer token a bare <img> can't
+  // send — useImageSrc blob-loads those; external URLs pass through.
+  const catalogUrl = item.catalog_image_file_id
+    ? `/api/v1/orgs/${activeSlug}/modules/core-files/files/${item.catalog_image_file_id}/raw?variant=med`
+    : (item.catalog_image_url ?? null);
+  const yoursUrl = item.image_file_id
+    ? `/api/v1/orgs/${activeSlug}/modules/core-files/files/${item.image_file_id}/raw?variant=med`
+    : null;
+  const catalogImg = useImageSrc(catalogUrl);
+  const yoursImg = useImageSrc(yoursUrl);
+  const thumb = catalogImg ?? yoursImg;
+
+  const ddg = (q: string) => `https://duckduckgo.com/?q=${encodeURIComponent(q)}`;
 
   return (
-    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 flex items-start gap-3">
-      <div className="w-16 h-16 shrink-0 rounded-md overflow-hidden border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 flex items-center justify-center">
-        {catalogImg ? (
-          /* Catalog image; remote URL during enrichment, local file once downloaded */
-          <img
-            src={catalogImg}
-            alt={item.suggested_name ?? item.barcode_text ?? ""}
-            className="w-full h-full object-cover"
-            loading="lazy"
-          />
-        ) : (
-          <ScanLine size={24} className="text-faint dark:text-slate-600" />
-        )}
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="font-medium text-content dark:text-mortar-100 truncate">
-          {item.suggested_name ?? (
-            <span className="text-faint italic">Awaiting lookup…</span>
+    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden">
+      {/* ── collapsed header row (click = expand) ───────────────────── */}
+      <div
+        className="p-3 flex items-start gap-3 cursor-pointer"
+        onClick={() => (expanded ? setExpanded(false) : openForm())}
+      >
+        <div className="w-14 h-14 shrink-0 rounded-md overflow-hidden border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 flex items-center justify-center">
+          {thumb ? (
+            <img
+              src={thumb}
+              alt={item.suggested_name ?? item.barcode_text ?? ""}
+              className="w-full h-full object-cover"
+              loading="lazy"
+            />
+          ) : (
+            <ScanLine size={22} className="text-faint dark:text-slate-600" />
           )}
         </div>
-        <div className="text-[11px] font-mono text-faint dark:text-slate-500 truncate">
-          {item.barcode_text}
-          {item.suggested_manufacturer && ` · ${item.suggested_manufacturer}`}
-          {item.suggested_sku && ` · ${item.suggested_sku}`}
-        </div>
-        {item.ai_notes && (
-          <div className="text-[11px] text-muted mt-0.5">{item.ai_notes}</div>
-        )}
-        {/* Matchmaker chips — the best-fitting tables, with their fields
-            pre-filled. Tap one to confirm straight into that table. */}
-        {candidates.length > 0 ? (
-          <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-            {candidates.map((c, i) => (
-              <button
-                key={`${c.module}:${c.instance ?? ""}:${i}`}
-                type="button"
-                onClick={() => onConfirm(c)}
-                title={
-                  Object.keys(c.fields).length
-                    ? `Fills: ${Object.entries(c.fields).map(([k, v]) => `${k}=${v}`).join(", ")}`
-                    : `Add to ${c.label}`
-                }
-                className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition border ${
-                  i === 0
-                    ? "bg-cobble-600 hover:bg-cobble-700 text-white border-cobble-600"
-                    : "bg-subtle dark:bg-slate-800 hover:bg-line dark:hover:bg-slate-700 text-content dark:text-mortar-200 border-line dark:border-slate-700"
-                }`}
-              >
-                <Sparkles size={11} />
-                {c.label}
-                {Object.keys(c.fields).length > 0 && (
-                  <span className="opacity-70">· {Object.keys(c.fields).length} fields</span>
-                )}
-              </button>
-            ))}
+        <div className="flex-1 min-w-0">
+          <div className="font-medium text-content dark:text-mortar-100 truncate">
+            {rerunning ? (
+              <span className="text-accent animate-pulse">Re-running the lookup…</span>
+            ) : (
+              item.suggested_name ?? <span className="text-faint italic">Awaiting lookup…</span>
+            )}
           </div>
-        ) : match.isPending ? (
-          <div className="text-[11px] text-faint italic mt-1">finding the best table…</div>
-        ) : null}
+          <div className="text-[11px] font-mono text-faint dark:text-slate-500 truncate">
+            {item.barcode_text}
+            {item.suggested_manufacturer && ` · ${item.suggested_manufacturer}`}
+            {item.suggested_sku && ` · ${item.suggested_sku}`}
+            {item.scan_area && ` · 📍${item.scan_area}`}
+          </div>
+          {!expanded && item.ai_notes && (
+            <div className="text-[11px] text-muted mt-0.5 line-clamp-1">{item.ai_notes}</div>
+          )}
+          {/* Matchmaker chips — the best-fitting tables, their fields
+              pre-filled. Tap one to expand straight into that table's form. */}
+          {candidates.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+              {candidates.map((c, i) => (
+                <button
+                  key={`${c.module}:${c.instance ?? ""}:${i}`}
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openForm(c);
+                  }}
+                  title={
+                    Object.keys(c.fields).length
+                      ? `Fills: ${Object.entries(c.fields).map(([k, v]) => `${k}=${v}`).join(", ")}`
+                      : `Add to ${c.label}`
+                  }
+                  className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition border ${
+                    i === 0
+                      ? "bg-cobble-600 hover:bg-cobble-700 text-white border-cobble-600"
+                      : "bg-subtle dark:bg-slate-800 hover:bg-line dark:hover:bg-slate-700 text-content dark:text-mortar-200 border-line dark:border-slate-700"
+                  }`}
+                >
+                  <Sparkles size={11} />
+                  {c.label}
+                  {Object.keys(c.fields).length > 0 && (
+                    <span className="opacity-70">· {Object.keys(c.fields).length} fields</span>
+                  )}
+                </button>
+              ))}
+            </div>
+          ) : match.isPending ? (
+            <div className="text-[11px] text-faint italic mt-1">finding the best table…</div>
+          ) : null}
+        </div>
+        <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            onClick={() => rerun.mutate()}
+            disabled={rerunning || (!item.barcode_text && !item.image_file_id)}
+            className="text-faint hover:text-accent p-1.5 disabled:opacity-30"
+            title={rerunning ? "Re-running the lookup…" : "Rerun lookup"}
+          >
+            <RotateCcw size={14} className={rerunning ? "animate-spin text-accent" : ""} />
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              const ok = await confirm({
+                title: "Discard this scan?",
+                message: `${item.suggested_name ?? item.barcode_text ?? "Unknown"} will be removed from the inbox.`,
+                confirmLabel: "Discard",
+                destructive: true,
+              });
+              if (ok) discard.mutate();
+            }}
+            className="text-faint hover:text-ember-500 p-1.5"
+            title="Discard"
+          >
+            <X size={14} />
+          </button>
+          <button
+            type="button"
+            onClick={() => (expanded ? setExpanded(false) : openForm())}
+            aria-label={expanded ? "Collapse" : "Expand"}
+            aria-expanded={expanded}
+            className="text-faint hover:text-accent p-1.5"
+          >
+            <ChevronDown
+              size={16}
+              className={`transition-transform ${expanded ? "rotate-180" : ""}`}
+            />
+          </button>
+        </div>
       </div>
-      <div className="flex items-center gap-1 shrink-0">
-        <button
-          type="button"
-          onClick={() => rerun.mutate()}
-          disabled={rerun.isPending || !item.barcode_text}
-          className="text-faint hover:text-accent p-1.5 disabled:opacity-30"
-          title="Rerun lookup"
-        >
-          <RotateCcw size={14} />
-        </button>
-        <button
-          type="button"
-          onClick={async () => {
-            const ok = await confirm({
-              title: "Discard this scan?",
-              message: `${item.suggested_name ?? item.barcode_text ?? "Unknown"} will be removed from the inbox.`,
-              confirmLabel: "Discard",
-              destructive: true,
-            });
-            if (ok) discard.mutate();
-          }}
-          className="text-faint hover:text-ember-500 p-1.5"
-          title="Discard"
-        >
-          <X size={14} />
-        </button>
-        <button
-          type="button"
-          onClick={() => onConfirm()}
-          className="inline-flex items-center gap-1 bg-cobble-600 hover:bg-cobble-700 text-white text-xs font-medium rounded px-3 py-1.5 transition"
-          title="Confirm manually (pick the table yourself)"
-        >
-          <Check size={13} /> Confirm
-        </button>
-      </div>
+
+      {/* ── expanded triage surface ─────────────────────────────────── */}
+      {expanded && (
+        <div className="border-t border-line dark:border-slate-800 p-3 space-y-3 bg-subtle/40 dark:bg-slate-950/40">
+          {/* Catalog vs YOUR photo, side by side (whichever exist). */}
+          {(catalogImg || yoursImg) && (
+            <div className="flex gap-2 max-w-lg">
+              {catalogImg && (
+                <figure className="flex-1 min-w-0">
+                  <div className="rounded-md overflow-hidden border border-line dark:border-slate-700 bg-white dark:bg-slate-800 aspect-square flex items-center justify-center">
+                    <img src={catalogImg} alt="catalog" className="w-full h-full object-contain" />
+                  </div>
+                  <figcaption className="text-[10px] font-mono uppercase tracking-widest text-accent mt-1">
+                    ✦ catalog
+                  </figcaption>
+                </figure>
+              )}
+              {yoursImg && yoursImg !== catalogImg && (
+                <figure className="flex-1 min-w-0">
+                  <div className="rounded-md overflow-hidden border border-line dark:border-slate-700 bg-black aspect-square flex items-center justify-center">
+                    <img src={yoursImg} alt="your photo" className="w-full h-full object-contain" />
+                  </div>
+                  <figcaption className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mt-1">
+                    yours
+                  </figcaption>
+                </figure>
+              )}
+            </div>
+          )}
+
+          {/* The AI's read — confidence + notes, AND how it interpreted each
+              of the best table's fields (the author: the suggestion box must carry
+              substance, not just provenance). Chips are the AI's values; the
+              editable form below is where you correct them. */}
+          {(item.ai_notes || item.ai_confidence || topCand) && (
+            <div className="rounded-md border border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20 px-3 py-2">
+              <div className="text-xs font-medium text-content dark:text-mortar-100 flex items-center gap-1.5">
+                <Sparkles size={12} className="text-accent" />
+                AI suggestion
+                {item.ai_confidence && <span className="text-muted">· {item.ai_confidence}</span>}
+              </div>
+              {item.ai_notes && (
+                <p className="text-xs text-muted dark:text-slate-400 mt-1">{item.ai_notes}</p>
+              )}
+              {topCand && Object.keys(topCand.fields).length > 0 && (
+                <div className="flex flex-wrap items-center gap-1 mt-1.5">
+                  <span className="text-[11px] text-muted dark:text-slate-400">
+                    → {topCand.label}:
+                  </span>
+                  {Object.entries(topCand.fields).map(([k, v]) => (
+                    <span
+                      key={k}
+                      className="inline-flex items-center gap-1 rounded-full bg-surface dark:bg-slate-800 border border-line dark:border-slate-700 px-2 py-0.5 text-[11px] text-content dark:text-mortar-200"
+                    >
+                      <span className="text-faint">{menuFieldLabel(menu, topCand, k)}</span>
+                      {String(v)}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Identity row: barcode + area + sanity-check links. */}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+            {item.barcode_text && (
+              <span className="font-mono text-content dark:text-mortar-200 bg-subtle dark:bg-slate-800 rounded px-2 py-0.5">
+                ▌▌{item.barcode_text}
+              </span>
+            )}
+            {item.scan_area && (
+              <span className="inline-flex items-center gap-1 text-muted dark:text-slate-400">
+                <MapPin size={11} className="text-accent" /> {item.scan_area}
+              </span>
+            )}
+            <span className="text-faint">Sanity-check on the web:</span>
+            {item.barcode_text && (
+              <a
+                href={ddg(item.barcode_text)}
+                target="_blank"
+                rel="noreferrer"
+                className="text-accent hover:underline inline-flex items-center gap-0.5"
+              >
+                barcode <ExternalLink size={10} />
+              </a>
+            )}
+            {item.suggested_name && (
+              <a
+                href={`${ddg(item.suggested_name)}&iax=images&ia=images`}
+                target="_blank"
+                rel="noreferrer"
+                className="text-accent hover:underline inline-flex items-center gap-0.5"
+              >
+                name (images) <ExternalLink size={10} />
+              </a>
+            )}
+          </div>
+
+          {/* The inline confirm form — keyed so chip switches re-seed it. */}
+          <ConfirmForm
+            key={`${item.id}:${formCtx.selKey ?? "auto"}:${item.suggested_name ?? ""}:${item.suggested_manufacturer ?? ""}:${topCand ? topCand.label + JSON.stringify(topCand.fields) + (topCand.quantity ?? "") : "none"}`}
+            item={item}
+            menu={menu}
+            candidates={candidates}
+            hasLocations={hasLocations}
+            initialKey={formCtx.selKey}
+            prefill={formCtx.prefill}
+            onDone={() => setExpanded(false)}
+            onCancel={() => setExpanded(false)}
+          />
+        </div>
+      )}
     </div>
   );
 }
 
-function ConfirmModal({
+// ── helpers for the AI chips + the menu-driven form ──────────────────
+
+/** Pretty label for a candidate's extracted field — resolved from the
+ *  menu entry's field defs, falling back to the raw field name. */
+function menuFieldLabel(
+  menu: ScanMenuEntry[] | null,
+  cand: ScanCandidate,
+  fieldName: string,
+): string {
+  const entry = (menu ?? []).find(
+    (m) => m.module === cand.module && (m.instance ?? null) === (cand.instance ?? null),
+  );
+  return entry?.fields.find((f) => f.name === fieldName)?.label ?? fieldName;
+}
+
+// ── the inline confirm form — driven by the workspace scan MENU ───────
+// The target picker lists the workspace's ACTUAL tables (instances like
+// "Yarn" + each enabled module's default), straight from the same menu
+// the matchmaker prompts with — the web hardcodes no module names (core
+// tenet). Picking a table renders THAT table's fields, pre-seeded from
+// the matchmaker's extraction when a chip routed here.
+function ConfirmForm({
   item,
-  target,
+  menu,
+  candidates,
+  hasLocations,
+  initialKey,
   prefill,
-  onClose,
+  onDone,
+  onCancel,
 }: {
   item: ScanInboxItem;
-  target: ScanTarget | null;
+  menu: ScanMenuEntry[] | null;
+  /** The matchmaker's ranked candidates — switching the Add-to picker to a
+   *  table the model already extracted for reseeds its field values. */
+  candidates: ScanCandidate[];
+  hasLocations: boolean;
+  /** Pre-selected menu entry (a matchmaker chip or the ?into= target). */
+  initialKey: string | null;
   prefill?: Record<string, unknown>;
-  onClose: () => void;
+  onDone: () => void;
+  onCancel: () => void;
 }) {
   const { activeSlug } = useActiveOrg();
   const { user } = useAuth();
@@ -382,84 +766,106 @@ function ConfirmModal({
   // Platform-admin only: capture this corrected commit as a matchmaker eval case.
   const [saveEvalCase, setSaveEvalCase] = useState(false);
   const [evalNote, setEvalNote] = useState("");
-  // Default the kind: a preset instance target wins; else the identify's
-  // asset/part hint (asset → assets:asset, else inventory:part).
-  const hintedKey = target
-    ? `${target.module}:${target.kind}`
-    : (item.suggested_metadata as { entity_type?: string } | null)?.entity_type === "asset"
-      ? "assets:asset"
-      : `${TARGET_KINDS[0]!.module}:${TARGET_KINDS[0]!.kind}`;
-  const [targetKey, setTargetKey] = useState<string>(hintedKey);
-  const [name, setName] = useState(item.suggested_name ?? "");
-  const [quantity, setQuantity] = useState<number>(item.quantity ?? 1);
+
+  const entries = menu && menu.length > 0 ? menu : FALLBACK_MENU;
+  // Initial pick: the routed entry if it's on the menu; else the identify's
+  // asset/part hint; else the first table.
+  const hintedKey = (() => {
+    if (initialKey && entries.some((m) => entryKey(m.module, m.instance) === initialKey)) {
+      return initialKey;
+    }
+    const hint =
+      (item.suggested_metadata as { entity_type?: string } | null)?.entity_type === "asset"
+        ? entries.find((m) => m.module === "assets" && !m.instance)
+        : null;
+    return entryKey((hint ?? entries[0]!).module, (hint ?? entries[0]!).instance);
+  })();
+  const [selKey, setSelKey] = useState<string>(hintedKey);
+  const entry =
+    entries.find((m) => entryKey(m.module, m.instance) === selKey) ?? entries[0]!;
+
+  // The matchmaker candidate for the initial selection: its extraction seeds
+  // the fields and its cleaned `name` (retailer noise stripped) beats the raw
+  // lookup title.
+  const initialCand =
+    candidates.find((c) => entryKey(c.module, c.instance) === hintedKey) ?? null;
+
+  const [name, setName] = useState(initialCand?.name ?? item.suggested_name ?? "");
+  const aiStatus = useAiStatus();
+  // Quantity: the matchmaker's pack-count read ("1 Pack Of 9 Skein" -> 9)
+  // beats the row's default 1; an explicitly-set row quantity beats both.
+  const initialQty = (() => {
+    const cand = candidates.find((c) => entryKey(c.module, c.instance) === hintedKey);
+    if ((item.quantity ?? 1) > 1) return item.quantity;
+    return cand?.quantity ?? item.quantity ?? 1;
+  })();
+  const [quantity, setQuantity] = useState<number>(initialQty);
   const [locationId, setLocationId] = useState<string>("");
-  // Pre-fill the looked-up brand onto the instance's Brand field; the rest of
-  // the instance's fields (colour, fibre…) are shown for the user to fill.
+  // Pre-fill the looked-up brand; the table's own fields (colour, fibre…)
+  // seed from the lookup metadata, then the matchmaker's extraction wins.
   const [manufacturer, setManufacturer] = useState(item.suggested_manufacturer ?? "");
   const [customValues, setCustomValues] = useState<Record<string, unknown>>(() => {
-    // Seed any custom field whose name matches a key the lookup returned…
     const meta = (item.suggested_metadata as Record<string, unknown> | null) ?? {};
     const seed: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(meta)) {
       if (v != null && v !== "" && typeof v !== "object") seed[k] = v;
     }
-    // …then let the matchmaker's table-specific field values win (colorway,
-    // fibre, weight…) — these are the companion app-grade extraction.
-    return { ...seed, ...(prefill ?? {}) };
+    // Layering: raw lookup seed < the matchmaker's extraction for this
+    // table < an explicit chip prefill (which IS that extraction when the
+    // chip routed here).
+    return { ...seed, ...(initialCand?.fields ?? {}), ...(prefill ?? {}) };
   });
-
-  // When scanning INTO an instance, fetch its fields so the confirm form shows
-  // them (Brand pre-filled from the lookup; the rest editable) — companion app-grade.
-  const instanceKind = target ? `${target.instance}:item` : "";
-  const fieldDefs = useQuery({
-    queryKey: ["platform-field-defs", activeSlug, instanceKind],
-    queryFn: () => api.listFieldDefs(activeSlug, instanceKind),
-    enabled: !!target,
-    staleTime: 60_000,
-  });
-  const customFields = (fieldDefs.data?.items ?? []).filter((d) => d.type !== "computed");
 
   const locs = useQuery({
     queryKey: ["locations", activeSlug],
     queryFn: () => api.listLocations(activeSlug),
-    enabled: !!activeSlug,
+    enabled: !!activeSlug && hasLocations,
   });
+
+  // Pre-fill the location from the item's scan_area (the camera stamps the
+  // location's NAME — match it back to a row). Only while untouched, so a
+  // user's explicit pick is never overwritten when the list loads late.
+  const [locTouched, setLocTouched] = useState(false);
+  useEffect(() => {
+    if (locTouched || locationId || !item.scan_area) return;
+    const want = item.scan_area.trim().toLowerCase();
+    const hit = (locs.data?.items ?? []).find(
+      (l) =>
+        l.name.trim().toLowerCase() === want ||
+        (l.short_name ?? "").trim().toLowerCase() === want,
+    );
+    if (hit) setLocationId(hit.id);
+  }, [locs.data, item.scan_area, locationId, locTouched]);
 
   const confirmMut = useMutation({
     mutationFn: () => {
-      const [target_module, target_kind] = targetKey.split(":");
-      if (!target_module || !target_kind) {
-        throw new ApiError(400, "invalid_target", "Pick a target");
-      }
-      // When committing into an instance, carry the edited Brand + the
-      // instance's custom fields. extras.metadata is deep-merged server-side
-      // (keeps the scan's barcode/sku); manufacturer overrides the lookup's.
+      // `extras.metadata` (the table's fields the user filled — colorway,
+      // fibre, …) is deep-merged server-side (keeps the scan's barcode/sku);
+      // manufacturer overrides the lookup's.
       const cleanMeta = Object.fromEntries(
         Object.entries(customValues).filter(([, v]) => v != null && v !== ""),
       );
-      const extras = target
-        ? {
-            ...(manufacturer.trim() ? { manufacturer: manufacturer.trim() } : {}),
-            ...(Object.keys(cleanMeta).length ? { metadata: cleanMeta } : {}),
-          }
-        : undefined;
+      const extras = {
+        ...(manufacturer.trim() ? { manufacturer: manufacturer.trim() } : {}),
+        ...(Object.keys(cleanMeta).length ? { metadata: cleanMeta } : {}),
+      };
       return api.confirmScanItem(activeSlug, item.id, {
-        target_module,
-        target_kind,
-        instance: target?.instance,
+        target_module: entry.module,
+        target_kind: baseKind(entry.module),
+        instance: entry.instance ?? undefined,
         name: name.trim() || (item.suggested_name ?? "Untitled"),
         quantity: Number.isFinite(quantity) && quantity > 0 ? quantity : undefined,
         location_id: locationId || undefined,
-        extras: extras && Object.keys(extras).length ? extras : undefined,
+        extras: Object.keys(extras).length ? extras : undefined,
         ...(isAdmin && saveEvalCase
           ? { save_eval_case: true, eval_note: evalNote.trim() || undefined }
           : {}),
       });
     },
     onSuccess: (r) => {
-      // Link into the instance when scanned into one, else the base module.
-      const dest = target
-        ? `/instances/${target.instance}/parts/${r.created.id}`
+      // Link into the instance when committed into one, else the base module.
+      const dest = entry.instance
+        ? `/instances/${entry.instance}/parts/${r.created.id}`
         : `/${r.item.target_module === "inventory" ? "inventory/parts" : r.item.target_module + "s"}/${r.created.id}`;
       // NB: toasts render through ToastProvider, which sits ABOVE <BrowserRouter>
       // in App.tsx — so a react-router <Link> here throws ("Cannot destructure
@@ -468,186 +874,187 @@ function ConfirmModal({
       toast.success(
         <span>
           Created — open{" "}
-          <a href={`/w/${activeSlug}${dest}`} className="underline" onClick={onClose}>
+          <a href={`/w/${activeSlug}${dest}`} className="underline">
             {r.item.suggested_name ?? "the new entity"}
           </a>
         </span> as never,
       );
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-      onClose();
+      onDone();
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
 
+  const inputCls =
+    "w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900";
+  const labelCls =
+    "text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-1";
+
   return (
-    <Modal open onClose={onClose} title="Confirm scan" size="md">
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (!name.trim() && !item.suggested_name) return;
-          confirmMut.mutate();
-        }}
-        className="space-y-3"
-      >
-        {item.catalog_image_url && (
-          <div className="flex items-center justify-center">
-            <img
-              src={item.catalog_image_url}
-              alt={item.suggested_name ?? ""}
-              className="max-h-32 rounded border border-line dark:border-slate-700"
-            />
-          </div>
-        )}
-        <div>
-          <div className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-1">
-            barcode
-          </div>
-          <div className="font-mono text-sm text-content dark:text-mortar-100">
-            {item.barcode_text ?? "—"}
-          </div>
-        </div>
-        {target ? (
-          <div>
-            <div className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-1">
-              Adding to
-            </div>
-            <div className="text-sm text-content dark:text-mortar-100 font-medium">→ {target.label}</div>
-          </div>
-        ) : (
-          <label className="block">
-            <div className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-1">
-              Target kind
-            </div>
-            <select
-              value={targetKey}
-              onChange={(e) => setTargetKey(e.target.value)}
-              className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-            >
-              {TARGET_KINDS.map((k) => (
-                <option key={`${k.module}:${k.kind}`} value={`${k.module}:${k.kind}`}>
-                  {k.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        <label className="block">
-          <div className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-1">
-            Name
-          </div>
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!name.trim() && !item.suggested_name) return;
+        confirmMut.mutate();
+      }}
+      className="space-y-3"
+    >
+      <label className="block">
+        <div className={labelCls}>Add to</div>
+        <select
+          value={selKey}
+          onChange={(e) => {
+            const k = e.target.value;
+            setSelKey(k);
+            // Switching to a table the matchmaker already extracted for →
+            // merge its field values in (typed values keep winning where
+            // the user edited a key the candidate also fills).
+            const cand = candidates.find((c) => entryKey(c.module, c.instance) === k);
+            if (cand && Object.keys(cand.fields).length) {
+              setCustomValues((prev) => ({ ...cand.fields, ...prev }));
+            }
+          }}
+          className={inputCls}
+        >
+          {entries.map((m) => (
+            <option key={entryKey(m.module, m.instance)} value={entryKey(m.module, m.instance)}>
+              {m.label}
+              {m.instance ? "" : ` (${m.noun})`}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div className="grid sm:grid-cols-2 gap-3">
+        <label className="block sm:col-span-2">
+          <div className={labelCls}>Name</div>
           <input
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder={item.suggested_name ?? "(name required)"}
-            className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+            className={inputCls}
             required
-            autoFocus
+          />
+          {!item.suggested_name && <AiOffMissHint status={aiStatus} />}
+        </label>
+
+        <label className="block">
+          <div className={labelCls}>Brand</div>
+          <input
+            type="text"
+            value={manufacturer}
+            onChange={(e) => setManufacturer(e.target.value)}
+            placeholder={item.suggested_manufacturer ?? "—"}
+            className={inputCls}
           />
         </label>
 
-        {/* Scanning into an instance → show its fields. Brand pre-fills from the
-            lookup; the rest (colour, fibre…) are yours to fill before commit. */}
-        {target && (
-          <>
-            <label className="block">
-              <div className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-1">
-                Brand
-              </div>
-              <input
-                type="text"
-                value={manufacturer}
-                onChange={(e) => setManufacturer(e.target.value)}
-                placeholder={item.suggested_manufacturer ?? "—"}
-                className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-              />
-            </label>
-            {customFields.map((f) => (
-              <ScanFieldInput
-                key={f.id}
-                def={f}
-                value={customValues[f.name]}
-                onChange={(v) => setCustomValues((m) => ({ ...m, [f.name]: v }))}
-              />
-            ))}
-          </>
-        )}
+        {/* The selected TABLE's own fields (from the scan menu — the same
+            defs the matchmaker extracts into). Values seed from the lookup
+            + the matchmaker; everything stays editable before commit. */}
+        {entry.fields.map((f) => (
+          <ScanFieldInput
+            key={`${entryKey(entry.module, entry.instance)}:${f.name}`}
+            def={{
+              name: f.name,
+              display_label: f.label,
+              type: f.type,
+              help: f.help ?? null,
+              choices: f.choices ?? null,
+            }}
+            value={customValues[f.name]}
+            onChange={(v) => setCustomValues((m) => ({ ...m, [f.name]: v }))}
+          />
+        ))}
 
         <label className="block">
-          <div className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-1">
-            Quantity
-          </div>
+          <div className={labelCls}>Quantity</div>
           <input
             type="number"
             min={1}
             value={quantity}
             onChange={(e) => setQuantity(Number(e.target.value))}
-            className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+            className={inputCls}
           />
         </label>
-        <label className="block">
-          <div className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-1">
-            Location (optional)
-          </div>
-          <select
-            value={locationId}
-            onChange={(e) => setLocationId(e.target.value)}
-            className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-          >
-            <option value="">— none —</option>
-            {(locs.data?.items ?? []).map((l: Location) => (
-              <option key={l.id} value={l.id}>
-                {"  ".repeat(l.depth)}
-                {l.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        {isAdmin && (
-          <div className="rounded border border-dashed border-line dark:border-slate-700 p-2 space-y-2">
-            <label className="flex items-center gap-2 text-sm text-content cursor-pointer">
-              <input
-                type="checkbox"
-                checked={saveEvalCase}
-                onChange={(e) => setSaveEvalCase(e.target.checked)}
-              />
-              Save as matchmaker eval case
-            </label>
-            {saveEvalCase && (
-              <input
-                type="text"
-                value={evalNote}
-                onChange={(e) => setEvalNote(e.target.value)}
-                placeholder="Note / hard-case label (optional)"
-                className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-              />
-            )}
-            <p className="text-[10px] text-muted dark:text-slate-400">
-              Records this corrected commit (input + menu + your route/fields) as a golden case
-              for the prompt-eval harness.
-            </p>
-          </div>
+        {/* Location is core-locations' noun — hidden unless that module is
+            actually enabled here (modules never assume each other). */}
+        {hasLocations && (
+          <label className="block">
+            <div className={labelCls}>Location (optional)</div>
+            <select
+              value={locationId}
+              onChange={(e) => {
+                setLocTouched(true);
+                setLocationId(e.target.value);
+              }}
+              className={inputCls}
+            >
+              <option value="">— none —</option>
+              {(locs.data?.items ?? []).map((l: Location) => (
+                <option key={l.id} value={l.id}>
+                  {"  ".repeat(l.depth)}
+                  {l.name}
+                </option>
+              ))}
+            </select>
+          </label>
         )}
-        <div className="flex justify-end gap-2 pt-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={confirmMut.isPending || (!name.trim() && !item.suggested_name)}
-            className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 text-white disabled:opacity-50 inline-flex items-center gap-1"
-          >
-            <CheckCircle size={14} />
-            {confirmMut.isPending ? "Creating…" : "Confirm"}
-          </button>
+      </div>
+      {isAdmin && (
+        <div className="rounded border border-dashed border-line dark:border-slate-700 p-2 space-y-2">
+          <label className="flex items-center gap-2 text-sm text-content cursor-pointer">
+            <input
+              type="checkbox"
+              checked={saveEvalCase}
+              onChange={(e) => setSaveEvalCase(e.target.checked)}
+            />
+            Save as matchmaker eval case
+          </label>
+          {saveEvalCase && (
+            <input
+              type="text"
+              value={evalNote}
+              onChange={(e) => setEvalNote(e.target.value)}
+              placeholder="Note / hard-case label (optional)"
+              className={inputCls}
+            />
+          )}
+          <p className="text-[10px] text-muted dark:text-slate-400">
+            Records this corrected commit (input + menu + your route/fields) as a golden case
+            for the prompt-eval harness.
+          </p>
         </div>
-      </form>
-    </Modal>
+      )}
+      <div className="flex justify-end gap-2 pt-1">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
+        >
+          Cancel
+        </button>
+        <button
+          type="submit"
+          disabled={confirmMut.isPending || (!name.trim() && !item.suggested_name)}
+          className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 text-white disabled:opacity-50 inline-flex items-center gap-1"
+        >
+          <CheckCircle size={14} />
+          {confirmMut.isPending ? "Creating…" : "Confirm"}
+        </button>
+      </div>
+    </form>
   );
+}
+
+/** The minimal field-def shape the input renderer needs — satisfied by
+ *  both platform field defs and the scan menu's trimmed fields. */
+interface FieldDefLike {
+  name: string;
+  display_label: string;
+  type: string;
+  help?: string | null;
+  choices?: string[] | null;
 }
 
 /** One custom-field input on the scan-confirm form, by the field def's type
@@ -657,7 +1064,7 @@ function ScanFieldInput({
   value,
   onChange,
 }: {
-  def: PlatformFieldDef;
+  def: FieldDefLike;
   value: unknown;
   onChange: (v: unknown) => void;
 }) {

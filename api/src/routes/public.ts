@@ -162,7 +162,7 @@ publicRouter.get("/:token", (req, res, next) => {
       const lastSep = surface.scope_id.lastIndexOf(":");
       const kind = surface.scope_id.slice(0, lastSep);
       const entityId = surface.scope_id.slice(lastSep + 1);
-      const entity = await platform().entities.lookup(tok.orgId,kind, entityId);
+      const entity = await platform().entities.lookup(tok.orgId, kind, entityId, { publicRead: true });
       payload.entity = curateItem(entity, token!);
     } else if (surface.scope_type === "view") {
       // scope_id is a core_views_views row id. Read the view, then
@@ -181,7 +181,7 @@ publicRouter.get("/:token", (req, res, next) => {
         filter: (cfg.filter as Record<string, unknown> | undefined) ?? undefined,
         sort: (cfg.sort as string[] | undefined) ?? undefined,
         limit: 50,
-      });
+      }, { publicRead: true });
       payload.view = {
         name: view.name,
         entity_kind: view.entity_kind,
@@ -202,7 +202,7 @@ publicRouter.get("/:token", (req, res, next) => {
         where: (query.where as never) ?? undefined,
         sort: (query.sort as string[] | undefined) ?? undefined,
         limit: Math.min(Number(query.limit) || 50, 200),
-      });
+      }, { publicRead: true });
       payload.collection = {
         kind,
         query,
@@ -232,7 +232,7 @@ publicRouter.get("/:token", (req, res, next) => {
           filter: (vcfg.filter as Record<string, unknown> | undefined) ?? undefined,
           sort: (vcfg.sort as string[] | undefined) ?? undefined,
           limit: perColumn,
-        });
+        }, { publicRead: true });
         resolved.push({
           title: typeof s.title === "string" && s.title ? s.title : view.name,
           entity_kind: view.entity_kind,
@@ -291,7 +291,7 @@ publicRouter.get("/:token", (req, res, next) => {
           filter: (vcfg.filter as Record<string, unknown> | undefined) ?? undefined,
           sort: (vcfg.sort as string[] | undefined) ?? undefined,
           limit: 200,
-        });
+        }, { publicRead: true });
         viewsById[vid] = curateItems(result.items, token!) as unknown[];
       }
       // Precompute every stat block's number (count / sum of a field).

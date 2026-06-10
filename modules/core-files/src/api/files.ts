@@ -15,6 +15,19 @@ export const filesRouter = Router({ mergeParams: true });
 // a cloud-storage backend.
 const MAX_BYTES = 25 * 1024 * 1024;
 
+// Mime types safe to serve inline from our own origin. Non-scriptable raster
+// images only — SVG is deliberately excluded (it can carry <script>), as is
+// every document/text type. Anything not on this list downloads as an
+// attachment so a malicious upload can't execute same-origin. See
+// docs/history/2026-06-10-prelaunch-audit.md #4.
+const INLINE_SAFE_MIME = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "image/gif",
+  "image/webp",
+]);
+
 // In-memory buffer (multer.memoryStorage) — we re-encode + write
 // derived variants anyway, so streaming straight to disk wouldn't
 // save much, and keeping the buffer in hand simplifies sharp.
@@ -290,9 +303,19 @@ filesRouter.get(
       return;
     }
     // Variants are always JPEG for images; original keeps its source mime.
-    const variantMime =
-      served === "original" ? row.mime_type || "application/octet-stream" : "image/jpeg";
+    const rawMime = served === "original" ? row.mime_type || "application/octet-stream" : "image/jpeg";
+    // Stored mime_type is attacker-controlled (taken from the upload's
+    // Content-Type). Serving an SVG/HTML original inline runs it same-origin →
+    // reads the localStorage JWT. Only render a short allowlist of non-scriptable
+    // raster types inline; force everything else to download as octet-stream.
+    const inline = INLINE_SAFE_MIME.has(rawMime.toLowerCase());
+    const variantMime = inline ? rawMime : "application/octet-stream";
     res.type(variantMime);
+    if (!inline) {
+      const safeName = String(row.filename || "download").replace(/[^A-Za-z0-9._-]/g, "_");
+      res.setHeader("Content-Disposition", `attachment; filename="${safeName}"`);
+    }
+    res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Cache-Control", "private, max-age=3600");
     if (resolved.localPath) {
       res.sendFile(resolved.localPath); // local driver — fast path

@@ -72,9 +72,21 @@ export default defineModule({
       "digifab.print.completed",
       "digifab.print.failed",
       "digifab.driver.installed",
+      "digifab.command.sent",
     ],
     api: [],
-    actions: [],
+    actions: [
+      {
+        id: "digifab:run-command",
+        label: "Run a device command",
+        description:
+          "Fire a parameterized command-and-forget at a connected actuator/controller — open a valve for N seconds, call a Home Assistant service, flip a relay. Wire-invokable: an entity's schedule (e.g. each plant's water_rrule) commands a device with THAT entity's own params (zone, seconds). `connection` + `command` are fixed wire args; the rest are passed through as the command's params.",
+        appliesTo: { any: true },
+        invokeHandler: "digifab.run-command",
+        // Wire-driven (the actuator shape) — not a per-row button.
+        userInvokable: false,
+      },
+    ],
   },
 
   subscribes: [],

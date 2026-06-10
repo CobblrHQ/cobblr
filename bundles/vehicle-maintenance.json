@@ -2,28 +2,118 @@
   "manifest": {
     "id": "cobblr.flagship.vehicle-maintenance",
     "name": "Vehicle Maintenance",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "description": "Turn your assets into a garage. Track each vehicle's make/model/year/mileage/plate, log every service you do (oil change, tires, brakes) with its cost, and set the next-due date so you get reminded before it lapses. Replaces a glovebox folder of receipts + a sticky note on the windshield.",
     "author": "Cobblr",
     "requires": [
-      { "module": "assets" },
-      { "module": "core-maintenance" }
+      {
+        "module": "assets"
+      },
+      {
+        "module": "core-maintenance"
+      }
     ],
     "field_defs": [
-      { "entity_kind": "assets:asset", "name": "year", "display_label": "Year", "type": "number", "position": 1 },
-      { "entity_kind": "assets:asset", "name": "license_plate", "display_label": "License plate", "type": "text", "position": 2 },
-      { "entity_kind": "assets:asset", "name": "mileage", "display_label": "Mileage", "type": "number", "position": 3 },
-      { "entity_kind": "assets:asset", "name": "fuel_type", "display_label": "Fuel", "type": "text", "position": 4, "choices": ["Gas", "Diesel", "Hybrid", "Electric"] },
-      { "entity_kind": "assets:asset", "name": "color", "display_label": "Color", "type": "text", "position": 5 }
+      {
+        "entity_kind": "assets:asset",
+        "name": "year",
+        "display_label": "Year",
+        "type": "number",
+        "position": 1
+      },
+      {
+        "entity_kind": "assets:asset",
+        "name": "license_plate",
+        "display_label": "License plate",
+        "type": "text",
+        "position": 2
+      },
+      {
+        "entity_kind": "assets:asset",
+        "name": "mileage",
+        "display_label": "Mileage",
+        "type": "number",
+        "position": 3
+      },
+      {
+        "entity_kind": "assets:asset",
+        "name": "fuel_type",
+        "display_label": "Fuel",
+        "type": "text",
+        "position": 4,
+        "choices": [
+          "Gas",
+          "Diesel",
+          "Hybrid",
+          "Electric"
+        ]
+      },
+      {
+        "entity_kind": "assets:asset",
+        "name": "color",
+        "display_label": "Color",
+        "type": "text",
+        "position": 5
+      }
     ],
     "field_overrides": [
-      { "entity_kind": "assets:asset", "name": "manufacturer", "display_label": "Make" },
-      { "entity_kind": "assets:asset", "name": "serial_number", "display_label": "VIN" },
-      { "entity_kind": "assets:asset", "name": "short_name", "hidden": true },
-      { "entity_kind": "assets:asset", "name": "type", "hidden": true },
-      { "entity_kind": "assets:asset", "name": "quantity", "hidden": true },
-      { "entity_kind": "assets:asset", "name": "excitement", "hidden": true },
-      { "entity_kind": "assets:asset", "name": "last_service_at", "hidden": true }
+      {
+        "entity_kind": "assets:asset",
+        "name": "manufacturer",
+        "display_label": "Make"
+      },
+      {
+        "entity_kind": "assets:asset",
+        "name": "serial_number",
+        "display_label": "VIN"
+      },
+      {
+        "entity_kind": "assets:asset",
+        "name": "short_name",
+        "hidden": true
+      },
+      {
+        "entity_kind": "assets:asset",
+        "name": "type",
+        "hidden": true
+      },
+      {
+        "entity_kind": "assets:asset",
+        "name": "quantity",
+        "hidden": true
+      },
+      {
+        "entity_kind": "assets:asset",
+        "name": "excitement",
+        "hidden": true
+      },
+      {
+        "entity_kind": "assets:asset",
+        "name": "last_service_at",
+        "hidden": true
+      }
+    ],
+    "features": [
+      {
+        "key": "connected-car",
+        "name": "Connected car (auto-mileage)",
+        "question": "Does a device report your mileage?",
+        "description": "Let the car update its own odometer. Point anything that can POST JSON — an OBD reader via a phone app, a WiFi OBD device through Home Assistant, or a telematics service webhook — at a Cobblr inbound webhook (Configuration → Integrations → Inbound tokens) with a body like {\"vehicle\": \"Honda Civic\", \"odometer\": 48650}. The shipped wire matches the vehicle by name and writes the mileage; service schedules and the calendar react to the new reading. Add more keys to the payload and the wire to sync other fields (fuel level, battery health, …).",
+        "default": false,
+        "wires": [
+          {
+            "source_kind": "assets:asset",
+            "action_id": "assets:update-fields",
+            "trigger_type": "event",
+            "trigger_event": "core-integrations.inbound.received",
+            "target": "none",
+            "args": {
+              "asset": "{{event.body.vehicle}}",
+              "mileage": "{{event.body.odometer}}"
+            }
+          }
+        ]
+      }
     ]
   },
   "confirm": true

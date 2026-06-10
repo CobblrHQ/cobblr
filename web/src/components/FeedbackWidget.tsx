@@ -3,7 +3,7 @@
 // + browser, and lets them attach screenshot(s) of the issue, so triage
 // (super-admin → Feedback) has context. POSTs to /feedback.
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Modal, useToast } from "@cobblr/platform-web";
 import { MessageSquare, ImagePlus, X } from "lucide-react";
 import { api } from "../lib/api";
@@ -49,8 +49,40 @@ export function FeedbackWidget() {
       }
       next.push({ file, url: URL.createObjectURL(file) });
     }
-    setPicks((cur) => [...cur, ...next].slice(0, MAX_SHOTS));
+    setPicks((cur) => {
+      const merged = [...cur, ...next];
+      if (merged.length > MAX_SHOTS) {
+        // Say so — silently dropping is exactly the "did my paste work?"
+        // confusion this widget is supposed to prevent.
+        merged.slice(MAX_SHOTS).forEach((p) => URL.revokeObjectURL(p.url));
+        setError(`Up to ${MAX_SHOTS} screenshots — extra ${merged.length - MAX_SHOTS === 1 ? "one was" : "ones were"} skipped.`);
+      }
+      return merged.slice(0, MAX_SHOTS);
+    });
   }
+
+  // Cmd/Ctrl+V while the modal is open attaches a copied screenshot — the most
+  // natural way to drop one in. Window-level (capture) because the focused
+  // element is usually the textarea; image items attach, plain text still
+  // pastes into the textarea untouched. Thumbnails in the preview strip are
+  // the confirmation that the paste landed (feedback 7298ad1c).
+  useEffect(() => {
+    if (!open || !slug) return;
+    function onPaste(e: ClipboardEvent) {
+      const files = Array.from(e.clipboardData?.items ?? [])
+        .filter((it) => it.kind === "file" && it.type.startsWith("image/"))
+        .map((it) => it.getAsFile())
+        .filter((f): f is File => !!f);
+      if (!files.length) return;
+      e.preventDefault(); // image paste is ours; text paste falls through
+      const dt = new DataTransfer();
+      files.forEach((f) => dt.items.add(f));
+      addFiles(dt.files);
+    }
+    window.addEventListener("paste", onPaste, true);
+    return () => window.removeEventListener("paste", onPaste, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, slug]);
 
   function removePick(i: number) {
     setPicks((cur) => {
@@ -183,7 +215,8 @@ export function FeedbackWidget() {
                   className="flex items-center gap-1.5 text-xs text-muted hover:text-accent border border-dashed border-line dark:border-slate-700 hover:border-cobble-400 rounded-md px-2.5 py-1.5 transition"
                 >
                   <ImagePlus size={14} />
-                  Attach screenshot{picks.length ? "s" : ""} <span className="text-faint">(up to {MAX_SHOTS})</span>
+                  Attach screenshot{picks.length ? "s" : ""}{" "}
+                  <span className="text-faint">— or paste one (up to {MAX_SHOTS})</span>
                 </button>
               )}
               <input

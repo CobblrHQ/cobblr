@@ -1,0 +1,14 @@
+{
+  "name": "Cobblr (staging)",
+  "short_name": "Cobblr · staging",
+  "description": "Cobble together the app you need. (staging)",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#6D28D9",
+  "theme_color": "#6D28D9",
+  "icons": [
+    { "src": "/icon-192-staging.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512-staging.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

@@ -10,6 +10,7 @@
 // resolvePlacement reads that; submitJob({deviceId}|{tag}) overrides it.
 
 import type {
+  CommandResult,
   ConnectionResult,
   MachineDriver,
   JobStatus,
@@ -19,6 +20,11 @@ import type {
   SubmitResult,
   UploadResult,
 } from "./types.js";
+
+/** Commands the mock has been asked to run — so a test can assert that the
+ *  right command + params (per-entity zone/seconds) reached the driver, with no
+ *  real device. Module-level so a test can read it without the driver handle. */
+export const MOCK_COMMAND_LOG: Array<{ command: string; params: Record<string, unknown> }> = [];
 
 interface MockPrinter extends RemoteDevice {}
 interface MockJob {
@@ -131,6 +137,13 @@ export class MockDriver implements MachineDriver {
   failJob(jobId: string): void {
     const j = this.jobs.get(jobId);
     if (j) j.fail = true;
+  }
+
+  /** ActuatorDriver: record the command + params so a test can assert the right
+   *  zone/seconds reached the driver — no real valve. Always acks ok. */
+  async runCommand(command: string, params: Record<string, unknown>): Promise<CommandResult> {
+    MOCK_COMMAND_LOG.push({ command, params });
+    return { ok: true, ref: `mock:${command}` };
   }
 }
 

@@ -29,6 +29,7 @@ import { Dashboard } from "./pages/Dashboard";
 import { InviteAcceptPage } from "./pages/InviteAcceptPage";
 import { JoinPage } from "./pages/JoinPage";
 import { PublicSurfacePage } from "./pages/PublicSurfacePage";
+import { QrResolvePage } from "./pages/QrResolvePage";
 import { ResetPasswordPage } from "./pages/ResetPasswordPage";
 import { VerifyEmailPage } from "./pages/VerifyEmailPage";
 // Eager: nav-linked pages users hit from the dashboard frequently.
@@ -88,9 +89,10 @@ const AppRecordPage = lazy(() => import("./pages/AppPlayerPage").then((m) => ({ 
 const BrickLinkPage = lazy(() => import("./pages/BrickLinkPage").then((m) => ({ default: m.BrickLinkPage })));
 import { ForcePasswordResetPage } from "./pages/ForcePasswordResetPage";
 const UsersPage = lazy(() => import("./pages/UsersPage").then((m) => ({ default: m.UsersPage })));
-const SuperAdminPage = lazy(() => import("./pages/SuperAdminPage").then((m) => ({ default: m.SuperAdminPage })));
+const AdminConsole = lazy(() => import("./pages/AdminConsole").then((m) => ({ default: m.AdminConsole })));
 const RolesPage = lazy(() => import("./pages/RolesPage").then((m) => ({ default: m.RolesPage })));
 import { AppLayout } from "./components/AppLayout";
+import { AdminLayout } from "./components/AdminLayout";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { PortalLayout } from "./components/PortalLayout";
 import { ToastProvider, ConfirmProvider } from "@cobblr/platform-web";
@@ -164,6 +166,10 @@ function PublicRoutes() {
       {/* /p/:token is the un-auth'd public surface render. Reachable
           signed-in or signed-out — the token is the secret. */}
       <Route path="/p/:token" element={<PublicSurfacePage />} />
+      {/* /qr/:token — printed QR-label resolve (phone-camera scans land
+          here bare, signed-in or signed-out). Navigate-mode forwards to
+          /w/<org>/<detail>; the workspace shell handles login from there. */}
+      <Route path="/qr/:token" element={<QrResolvePage />} />
       {/* Legacy un-prefixed member-portal links → workspace-scoped portal. */}
       <Route path="/portal/:slug/*" element={<PortalSlugRedirect />} />
       <Route path="*" element={<LandingRedirect />} />
@@ -335,6 +341,10 @@ function ActiveOrgScopedRoutes() {
           <Route path="/configuration/templates" element={<TemplatesPage />} />
           <Route path="/scan" element={<ScanPage />} />
           <Route path="/scan/camera" element={<ScanCameraPage />} />
+          {/* QR-label resolve inside the workspace: the in-app scanner
+              navigates here on a label hit, and LandingRedirect rewrites
+              bare /qr/<token> URLs into /w/<default>/qr/<token>. */}
+          <Route path="/qr/:token" element={<QrResolvePage />} />
           <Route path="/configuration/presentation" element={<PresentationPage />} />
           <Route path="/configuration/integrations" element={<IntegrationsPage />} />
           <Route path="/configuration/ai" element={<AiPage />} />
@@ -349,7 +359,6 @@ function ActiveOrgScopedRoutes() {
           <Route path="/configuration/permissions" element={<PermissionsPage />} />
           <Route path="/configuration/users" element={<UsersPage />} />
           <Route path="/configuration/roles" element={<RolesPage />} />
-          <Route path="/super-admin" element={<SuperAdminPage />} />
           <Route path="/configuration/openapi" element={<OpenApiPage />} />
           <Route path="/configuration/queue" element={<QueuePage />} />
           <Route path="/configuration/links" element={<LinksPage />} />
@@ -385,6 +394,14 @@ function ActiveOrgScopedRoutes() {
           <Route path="app/:appSlug" element={<AppPlayerPage />} />
           <Route path="app/:appSlug/r/:kind/:id" element={<AppRecordPage />} />
         </Route>
+        {/* Platform-operator console — sibling route, NOT nested under
+            AppLayout. Its own shell (AdminLayout), gated by is_platform_admin,
+            no workspace chrome. /super-admin bookmarks redirect in. */}
+        <Route path="/admin" element={<AdminLayout />}>
+          <Route index element={<Navigate to="/admin/overview" replace />} />
+          <Route path=":section" element={<AdminConsole />} />
+        </Route>
+        <Route path="/super-admin" element={<Navigate to="/admin" replace />} />
       </Routes>
       </Suspense>
       <LabelsBasket orgSlug={activeSlug} getToken={getToken} />

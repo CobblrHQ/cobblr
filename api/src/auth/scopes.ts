@@ -56,12 +56,22 @@ export const TOKEN_SCOPES: TokenScopeDef[] = [
     label: "Feedback ingest (Discord bot)",
     description:
       "Submit a feedback ticket + append follow-up messages from an external " +
-      "channel (the Discord support bot). Can ONLY create/append — never read, " +
-      "triage, or resolve.",
+      "channel (the Discord support bot), and resolve a ticket when the reporter " +
+      "clicks the bot's 'close' button. Can ONLY create/append/close-own — never " +
+      "read or triage.",
     allow: [
       ["POST", /^\/super-admin\/feedback\/ingest$/],
       ["POST", /^\/super-admin\/feedback\/append$/],
+      ["POST", /^\/super-admin\/feedback\/resolve-by-thread$/],
     ],
+  },
+  {
+    key: "waitlist:ingest",
+    label: "Waitlist ingest (marketing site)",
+    description:
+      "Submit a waitlist signup from the marketing site's form (the cobblr.xyz " +
+      "Pages Function). Can ONLY create signups — never read, approve, or dismiss.",
+    allow: [["POST", /^\/super-admin\/waitlist\/ingest$/]],
   },
   {
     key: "announce:post",

@@ -52,6 +52,15 @@ services:
       # returns 403); flip via .env to open self-service signup.
       # Dev default: unset → falls back to NODE_ENV check (open in dev).
       PUBLIC_SIGNUP_ENABLED: ${PUBLIC_SIGNUP_ENABLED:-}
+      # Self-serve "invite a friend to their own Cobblr" (owners minting
+      # own-workspace signup invites). The uncontrolled-growth lever, so it's
+      # OFF in prod by default (unset → NODE_ENV check). Set "true" to open it.
+      COBBLR_SELF_SERVE_INVITES: ${COBBLR_SELF_SERVE_INVITES:-}
+      # Box-level barcode resolver (one shared cache + provider chain for
+      # every product on the host; see companion app/scripts/barcode-resolver/).
+      # Empty = core-scan resolves directly as before.
+      COBBLR_BARCODE_RESOLVER_URL: ${COBBLR_BARCODE_RESOLVER_URL:-}
+      COBBLR_BARCODE_RESOLVER_TOKEN: ${COBBLR_BARCODE_RESOLVER_TOKEN:-}
       # Instance kill-switch for ALL built-in LLM features. Default
       # "true". Set "false" for a guaranteed no-outbound-LLM deploy —
       # platform().ai.invoke() then refuses every call and AI features

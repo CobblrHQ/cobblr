@@ -27,10 +27,12 @@ export default defineModule({
   // The scan/camera button earns a permanent icon slot in the navbar's
   // right cluster — it's the most-used action for camera-first intake
   // (companion app hits it constantly). Shows only while core-scan is on.
+  // One tap → the full-screen scanner with a LIVE camera (companion app parity);
+  // the inbox stays reachable via the "Scan" nav entry.
   headerAction: {
-    icon: "scan-line",
+    icon: "camera", // a camera, like companion app — it opens a live viewfinder
     label: "Scan",
-    route: "/scan",
+    route: "/scan/camera",
   },
 
   schema: {

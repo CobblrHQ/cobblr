@@ -124,3 +124,15 @@
 html.dark .dark\:text-slate-500 { color: #9CA2AC; }
 html.dark .dark\:text-slate-400 { color: #B4BAC2; }
 html.dark .dark\:text-slate-600 { color: #6B7280; }
+
+/* ── iOS focus-zoom guard ────────────────────────────────────────
+   Mobile Safari auto-zooms the page when a focused form control's
+   font-size is under 16px — most of our inputs are text-sm (14px),
+   so every tap into a field zoomed + cropped the layout (recurring
+   complaint across projects). On touch devices, render controls at
+   ≥16px; max(16px, 1em) keeps anything intentionally larger. */
+@media (pointer: coarse) {
+  input, select, textarea {
+    font-size: max(16px, 1em) !important;
+  }
+}

@@ -7,8 +7,10 @@ import { jobsRouter } from "./jobs.js";
 import { linksRouter } from "./links.js";
 import { driversRouter } from "./drivers.js";
 import { registerFarmResolvers } from "./resolvers.js";
+import { registerActionHandlers } from "./action-handlers.js";
 
 registerFarmResolvers();
+registerActionHandlers(); // the digifab:run-command actuator action surface
 
 const router = Router({ mergeParams: true });
 router.use("/connections", connectionsRouter);

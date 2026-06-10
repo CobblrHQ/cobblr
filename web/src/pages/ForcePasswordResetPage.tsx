@@ -10,7 +10,7 @@ import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { LogOut, ShieldAlert } from "lucide-react";
 import { usePageTitle } from "@cobblr/platform-web";
-import { ApiError, api } from "../lib/api";
+import { ApiError, api, setToken } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 
 export function ForcePasswordResetPage() {
@@ -36,10 +36,13 @@ export function ForcePasswordResetPage() {
     }
     setBusy(true);
     try {
-      await api.request("POST", "/me/password", {
+      const res = await api.request<{ token: string }>("POST", "/me/password", {
         current_password: current,
         new_password: next,
       });
+      // The change revoked the temp-password token; persist the re-minted one
+      // so the next request isn't 401'd back to the login screen.
+      if (res?.token) setToken(res.token);
       // Refresh /me so the UI sees must_reset_password=false and the
       // redirect guard releases.
       await refreshMe();

@@ -107,6 +107,23 @@ export async function upsertOverride(args: OverrideUpsertArgs): Promise<EntityKi
     .executeTakeFirstOrThrow()) as EntityKindOverride;
 }
 
+/** One override row's config blob (e.g. an instance's item_noun/qty_unit,
+ *  written by bundle install) — {} when no override exists. */
+export async function getOverrideConfig(
+  orgId: string,
+  targetKind: OverrideTarget,
+  targetId: string,
+): Promise<Record<string, unknown>> {
+  const row = (await meta
+    .selectFrom("entity_kind_overrides")
+    .select("config")
+    .where("org_id", "=", orgId)
+    .where("target_kind", "=", targetKind)
+    .where("target_id", "=", targetId)
+    .executeTakeFirst()) as { config: Record<string, unknown> | null } | undefined;
+  return row?.config ?? {};
+}
+
 /** List every override row for a workspace. */
 export async function listOverrides(orgId: string): Promise<EntityKindOverride[]> {
   return (await meta

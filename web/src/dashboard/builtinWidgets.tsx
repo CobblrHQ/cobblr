@@ -47,32 +47,51 @@ function MachinesWidget({ slug }: { slug: string }) {
 }
 
 function AssetsWidget({ slug }: { slug: string }) {
+  // Base assets + every assets INSTANCE (Plant Care, Documents, Warranties…),
+  // whose items live under /instances/<name>/items — counting only the base
+  // list showed "0" on those workspaces.
   const q = useQuery({
     queryKey: ["dash-assets", slug],
+    queryFn: () => api.request<{ items: Array<{ state: string }> }>("GET", `/orgs/${slug}/modules/assets/assets?limit=200`).catch(() => ({ items: [] })),
+    staleTime: 30_000,
+  });
+  const insts = useQuery({
+    queryKey: ["dash-assets-insts", slug],
+    queryFn: () => api.listInstances(slug, "assets").catch(() => ({ items: [] })),
+    staleTime: 30_000,
+  });
+  const instList = insts.data?.items ?? [];
+  const instData = useQuery({
+    queryKey: ["dash-assets-instdata", slug, instList.map((i) => i.instance_name).sort().join(",")],
     queryFn: () =>
-      api.request<{ items: Array<{ state: string }> }>(
-        "GET",
-        `/orgs/${slug}/modules/assets/assets?limit=200`,
+      Promise.all(
+        instList.map((i) =>
+          api.request<{ items: unknown[] }>("GET", `/orgs/${slug}/instances/${encodeURIComponent(i.instance_name)}/items?limit=200`)
+            .then((r) => ({ name: i.instance_name, label: i.display_name, total: r.items.length }))
+            .catch(() => ({ name: i.instance_name, label: i.display_name, total: 0 })),
+        ),
       ),
+    enabled: instList.length > 0,
     staleTime: 30_000,
   });
   const items = q.data?.items ?? [];
+  const rows = instData.data ?? [];
+  const total = items.length + rows.reduce((a, b) => a + b.total, 0);
   const states = items.reduce<Record<string, number>>((acc, m) => {
     const k = m.state ?? "—";
     acc[k] = (acc[k] ?? 0) + 1;
     return acc;
   }, {});
-  const top = Object.entries(states)
-    .slice(0, 2)
-    .map(([s, n]) => `${n} ${s}`)
-    .join(" · ");
+  const top = Object.entries(states).slice(0, 2).map(([s, n]) => `${n} ${s}`).join(" · ");
+  const biggest = [...rows].sort((a, b) => b.total - a.total)[0];
+  const to = items.length > 0 || !biggest ? "/assets" : `/instances/${biggest.name}`;
   return (
     <DashboardTile
-      to="/assets"
+      to={to}
       icon={Sprout}
       label="assets"
-      primary={items.length}
-      secondary={top || "none yet"}
+      primary={total}
+      secondary={rows.length > 0 ? rows.map((r) => r.label).join(" · ") : top || "none yet"}
     />
   );
 }

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Staging variant — purple background so the staging PWA icon is visually
+       distinct from public-prod (cobblr.me) at a glance. See index.html host gate. -->
+  <rect width="512" height="512" fill="#6D28D9"/>
+  <g transform="translate(76,76) scale(3.6)">
+    <polygon points="8,12 38,8 44,38 30,46 10,40" fill="#E8E2D5"/>
+    <polygon points="52,10 88,16 92,40 70,46 50,32" fill="#C4B5FD"/>
+    <polygon points="10,52 32,50 36,82 18,90 6,76" fill="#A78BFA"/>
+    <polygon points="46,56 78,52 92,72 84,90 54,86" fill="#DDD6FE"/>
+  </g>
+</svg>

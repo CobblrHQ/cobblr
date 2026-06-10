@@ -40,10 +40,12 @@ import * as health from "./platform/health.js";
 import * as recurrenceRegistry from "./platform/recurrence-registry.js";
 import * as calendarRegistry from "./platform/calendar-registry.js";
 import { registerDateFieldCalendarSources } from "./platform/date-field-calendar.js";
+import { registerDefaultRequestGuard } from "./platform/default-request-guard.js";
 import * as computedFields from "./platform/computed-fields.js";
 import * as createDefaults from "./platform/create-defaults.js";
 import * as instancesImpl from "./platform/instances.js";
 import * as queue from "./platform/queue.js";
+import * as sharedCache from "./platform/shared-cache.js";
 import * as notificationsImpl from "./platform/notifications.js";
 import * as integrationsImpl from "./platform/integrations.js";
 import * as aiImpl from "./platform/ai.js";
@@ -129,6 +131,10 @@ async function boot() {
       enqueue: queue.enqueue,
       registerWorker: queue.registerWorker,
       hasPendingJob: queue.hasPendingJob,
+    },
+    sharedCache: {
+      get: sharedCache.get,
+      put: sharedCache.put,
     },
     notifications: {
       dispatch: notificationsImpl.dispatch,
@@ -526,6 +532,15 @@ async function boot() {
   // chance too. Errors per-module are logged + skipped so a stuck
   // hook can't block boot.
   await runOnBoot();
+
+  // Abuse rate-limiting. Registered AFTER onBoot so a hosted overlay that
+  // registers its own (distributed) guard takes precedence; this in-core
+  // in-memory limiter only kicks in when nothing else did — so a public
+  // deploy without the overlay still has brute-force protection on auth /
+  // anonymous / feedback surfaces. See 2026-06-10 pre-launch audit #1.
+  if (registerDefaultRequestGuard()) {
+    console.log("[cobblr-api] in-core rate-limit guard active (auth/anon/feedback)");
+  }
 
   // Platform-owned calendar source: any date custom-field on the core
   // entity kinds shows up on the workspace calendar automatically.

@@ -27,8 +27,8 @@ type Handler = (req: { method: string; path: string; body: unknown; headers: Rec
 
 // Install an in-memory fetch that routes to `routes` keyed by "METHOD /path"
 // (path without query). Records calls for assertions.
-function installFakeFetch(routes: Record<string, Handler>): { calls: { method: string; url: string; rawBody: boolean; auth?: string }[]; restore: () => void } {
-  const calls: { method: string; url: string; rawBody: boolean; auth?: string }[] = [];
+function installFakeFetch(routes: Record<string, Handler>): { calls: { method: string; url: string; rawBody: boolean; auth?: string; authz?: string }[]; restore: () => void } {
+  const calls: { method: string; url: string; rawBody: boolean; auth?: string; authz?: string }[] = [];
   const orig = globalThis.fetch;
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
@@ -36,7 +36,7 @@ function installFakeFetch(routes: Record<string, Handler>): { calls: { method: s
     const method = (init?.method ?? "GET").toUpperCase();
     const headers = (init?.headers ?? {}) as Record<string, string>;
     const isRaw = init?.body instanceof Uint8Array;
-    calls.push({ method, url, rawBody: isRaw, auth: headers["X-Api-Key"] });
+    calls.push({ method, url, rawBody: isRaw, auth: headers["X-Api-Key"], authz: headers["Authorization"] });
     const key = `${method} ${u.pathname}`;
     const h = routes[key];
     if (!h) return new Response(`no route ${key}`, { status: 404 });
@@ -188,6 +188,31 @@ const FILE = new Uint8Array([1, 2, 3, 4]);
     const st = await d.getJobStatus("cut.gcode");
     note("fluidnc text status Run→printing + SD progress 42.5→0.425", st.state === "printing" && st.progress === 0.425);
   } finally { f2.restore(); }
+}
+
+// ── Home Assistant (ACTUATOR — command-and-forget; the Bearer-prefix + body-fill path) ──
+{
+  const m = load("home-assistant.json");
+  let serviceBody: Record<string, unknown> | null = null;
+  const f = installFakeFetch({
+    "GET /api/": () => ({ json: { message: "API running." } }),
+    "POST /api/services/script/turn_on": (req) => { serviceBody = req.body as Record<string, unknown>; return { json: [] }; },
+  });
+  try {
+    const d = new DeclarativeDriver(m, { baseUrl: "http://192.168.50.20", apiKey: "ha-token" });
+    note("home-assistant testConnection ok", (await d.testConnection()).ok);
+    const res = await d.runCommand("run-zone", { zone: "3", seconds: "45" });
+    note("home-assistant run-zone acks ok", res.ok);
+    const call = f.calls.find((c) => c.url.endsWith("/api/services/script/turn_on"))!;
+    note("home-assistant sends Authorization: Bearer <token> (the auth prefix)", call?.authz === "Bearer ha-token");
+    const vars = (serviceBody as { variables?: Record<string, unknown>; entity_id?: string } | null);
+    note(
+      "home-assistant fills {zone}/{seconds} into the HA service body",
+      !!vars && vars.entity_id === "script.water_zone" && vars.variables?.zone === "3" && vars.variables?.seconds === "45",
+    );
+    const unknown = await d.runCommand("nope", {});
+    note("home-assistant unknown command → ok:false, no throw", unknown.ok === false);
+  } finally { f.restore(); }
 }
 
 const fail = checks.filter((c) => !c.ok);

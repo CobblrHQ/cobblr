@@ -24,3 +24,4 @@ data/
 docker-compose.override.yml
 .agents/
 data-iso/
+kiosk/out/

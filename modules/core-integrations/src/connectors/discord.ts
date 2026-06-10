@@ -27,6 +27,11 @@ export function register(): void {
       }
       const url = String(ctx.credentials.webhook_url ?? "");
       if (!url) throw new Error("discord: no webhook URL configured");
+      // Host-lock to the official Discord webhook endpoint — see slack.ts /
+      // 2026-06-10 pre-launch audit #2 (otherwise this is an SSRF primitive).
+      if (!url.startsWith("https://discord.com/api/webhooks/") &&
+          !url.startsWith("https://discordapp.com/api/webhooks/"))
+        throw new Error("discord: webhook URL must be a https://discord.com/api/webhooks/ address");
       const content = ctx.rendered ?? String(ctx.args.content ?? "");
       if (!content) throw new Error("discord: empty message");
       const body: Record<string, unknown> = { content };

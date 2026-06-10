@@ -8,10 +8,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, CheckCircle, Minus, Plus, ScanLine, Sparkles, Trash2 } from "lucide-react";
+import { Check, CheckCircle, MapPin, Minus, Plus, ScanLine, Sparkles, Trash2 } from "lucide-react";
 import { Modal, useToast } from "@cobblr/platform-web";
 import { ApiError, api, type ScanCandidate, type ScanInboxItem } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { AiOffMissHint, useAiStatus } from "./ScanPage";
 
 export interface CameraScanTarget {
   into: string | null;
@@ -26,26 +27,49 @@ function candidateKind(c: ScanCandidate): string {
 
 export function ScanResultModal({
   barcode,
+  scanArea,
+  scanAreaId,
+  ensureBatchId,
   scanTarget,
   onSaved,
   onClose,
 }: {
   barcode: string;
+  /** The scanner session's area (a location name) — stamped on the item as
+   *  `scan_area` at ingest, shown back in the card. */
+  scanArea?: string | null;
+  /** The area's location id — passed to confirm as `location_id` so a
+   *  one-tap commit files the entity where you were standing. */
+  scanAreaId?: string | null;
+  /** Lazily mints the scanner session's shared scan_batch_id (single-flight
+   *  in the caller). Omitted → un-batched. */
+  ensureBatchId?: () => Promise<string | null>;
   scanTarget: CameraScanTarget;
   onSaved: (item: ScanInboxItem) => void;
   onClose: () => void;
 }) {
   const { activeSlug } = useActiveOrg();
+  const aiStatus = useAiStatus();
   const qc = useQueryClient();
   const toast = useToast();
 
   const [item, setItem] = useState<ScanInboxItem | null>(null);
   const [qty, setQty] = useState(1);
+  // URLs that 404'd/hotlink-blocked — each candidate gets one try, then we
+  // fall to the next rung (a URL that failed once will fail again).
+  const [brokenSrcs, setBrokenSrcs] = useState<ReadonlySet<string>>(new Set());
   const started = useRef(false);
 
   // Ingest the barcode on mount → the enriched row comes back (≤12s budget).
   const scan = useMutation({
-    mutationFn: () => api.scanBarcode(activeSlug, { barcode }),
+    mutationFn: async () => {
+      const batchId = ensureBatchId ? await ensureBatchId() : null;
+      return api.scanBarcode(activeSlug, {
+        barcode,
+        scan_area: scanArea ?? undefined,
+        scan_batch_id: batchId ?? undefined,
+      });
+    },
     onSuccess: (it) => {
       setItem(it);
       setQty(it.quantity > 0 ? it.quantity : 1);
@@ -59,6 +83,29 @@ export function ScanResultModal({
     started.current = true;
     scan.mutate();
   }, [scan]);
+
+  // LIVE-LOAD the enrichment: a slow lookup detaches past the ingest budget
+  // and finishes in the background — keep polling the row while the card is
+  // up so the name/photo pop in a second later instead of never (companion app does
+  // the same lazy fill). Stops once the row looks final or after ~24s.
+  const stillEnriching =
+    !!item &&
+    !item.ai_suggested_at &&
+    (!item.suggested_name || (!item.catalog_image_file_id && !item.catalog_image_url));
+  const live = useQuery({
+    queryKey: ["scan-item-live", activeSlug, item?.id],
+    queryFn: () => api.getScanItem(activeSlug, item!.id),
+    enabled: !!item?.id && stillEnriching,
+    // 2s cadence, capped — an item that will never enrich (no AI provider,
+    // no catalog hit) shouldn't poll for as long as the card stays open.
+    refetchInterval: (query) => (query.state.dataUpdateCount >= 12 ? false : 2_000),
+    gcTime: 0,
+  });
+  useEffect(() => {
+    const fresh = live.data;
+    if (!fresh || !item) return;
+    if (fresh.updated_at !== item.updated_at) setItem(fresh);
+  }, [live.data, item]);
 
   // Once identified, ask the matchmaker which table(s) fit — shown as tap chips.
   const match = useQuery({
@@ -99,6 +146,9 @@ export function ScanResultModal({
         instance: opts.instance,
         name: item.suggested_name ?? `Barcode ${barcode}`,
         quantity: qty > 0 ? qty : 1,
+        // The scan area doubles as the putaway location on a one-tap
+        // commit — you're filing the thing where you're standing.
+        location_id: scanAreaId ?? undefined,
         extras: Object.keys(extras).length ? extras : undefined,
       });
     },
@@ -134,20 +184,41 @@ export function ScanResultModal({
   });
 
   const looking = scan.isPending || (!!item && !item.suggested_name && !match.isFetched);
-  const catalogImg = item?.catalog_image_file_id
-    ? `/api/v1/orgs/${activeSlug}/modules/core-files/files/${item.catalog_image_file_id}/raw?variant=thumb`
-    : item?.catalog_image_url ?? null;
+  // Catalog image first; the user's own photo as the fallback (photo scans
+  // and barcode items that resolved without catalog art still get a face).
+  // External catalog_image_url can 404/hotlink-block (the broken-? the author hit)
+  // — onError marks that URL broken and we drop to the next rung; the live
+  // poll above may then land the server-cached catalog_image_file_id.
+  const catalogImg =
+    [
+      item?.catalog_image_file_id
+        ? `/api/v1/orgs/${activeSlug}/modules/core-files/files/${item.catalog_image_file_id}/raw?variant=med`
+        : null,
+      item?.catalog_image_url ?? null,
+      item?.image_file_id
+        ? `/api/v1/orgs/${activeSlug}/modules/core-files/files/${item.image_file_id}/raw?variant=med`
+        : null,
+    ].find((u): u is string => !!u && !brokenSrcs.has(u)) ?? null;
+  const areaLabel = item?.scan_area ?? scanArea ?? null;
   const busy = commit.isPending || save.isPending || discard.isPending;
 
   return (
     <Modal open onClose={onClose} title="Scanned" size="sm">
       <div className="space-y-4">
         <div className="flex items-center gap-3">
-          <div className="w-16 h-16 shrink-0 rounded-md overflow-hidden border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 flex items-center justify-center">
+          <div className="w-24 h-24 shrink-0 rounded-md overflow-hidden border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 flex items-center justify-center">
             {catalogImg ? (
-              <img src={catalogImg} alt="" className="w-full h-full object-cover" />
+              <img
+                src={catalogImg}
+                alt=""
+                onError={() => setBrokenSrcs((prev) => new Set(prev).add(catalogImg))}
+                className="w-full h-full object-cover"
+              />
             ) : (
-              <ScanLine size={24} className="text-faint" />
+              <ScanLine
+                size={24}
+                className={stillEnriching ? "text-faint animate-pulse" : "text-faint"}
+              />
             )}
           </div>
           <div className="min-w-0 flex-1">
@@ -158,10 +229,18 @@ export function ScanResultModal({
                 {item?.suggested_name ?? <span className="text-faint italic">No catalog match</span>}
               </div>
             )}
+            {!scan.isPending && item && !item.suggested_name && (
+              <AiOffMissHint status={aiStatus} />
+            )}
             <div className="text-[11px] font-mono text-faint truncate">
               {barcode}
               {item?.suggested_manufacturer && ` · ${item.suggested_manufacturer}`}
             </div>
+            {areaLabel && (
+              <div className="mt-1 inline-flex items-center gap-1 text-[11px] text-muted dark:text-slate-400">
+                <MapPin size={11} className="text-accent shrink-0" /> {areaLabel}
+              </div>
+            )}
           </div>
         </div>
 

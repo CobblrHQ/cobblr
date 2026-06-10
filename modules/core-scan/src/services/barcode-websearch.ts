@@ -67,6 +67,13 @@ function tokenize(s: string): string[] {
 // as just the product. Heuristic-floor only; the LLM gets raw titles.
 export function cleanTitle(raw: string, upc: string): string {
   let t = raw.replace(/\s+/g, " ").trim();
+  // A leading storefront prefix — "Amazon.com: …", "Walmart.com - …",
+  // "eBay: …" — is the site talking, not the product: a domain-shaped
+  // token (or a big marketplace by name) followed by a separator.
+  t = t
+    .replace(/^\s*[\w'&. -]{1,30}\.(?:com|net|org|ca|de|co\.uk)\s*[:|–—-]\s+/i, "")
+    .replace(/^\s*(?:amazon|walmart|ebay|etsy|aliexpress)\s*:\s+/i, "")
+    .trim();
   t = t.replace(/\s*[|–—]\s*[^|–—]{1,40}$/, "").trim();
   t = t.split(upc).join(" ");
   t = t.replace(/\b(upc|ean|gtin|barcode|lookup)\b/gi, " ");
@@ -126,18 +133,25 @@ export interface LlmIdentity {
  *  the full `resolveBarcodeViaWebSearch` which also depends on live DDG. */
 export async function llmIdentify(orgId: string, upc: string, titles: string[]): Promise<LlmIdentity | null> {
   const system =
-    "You identify ONE retail product from web-search result titles for its " +
-    "barcode (UPC/EAN). The titles come from retailer and barcode-database " +
-    "pages; when several agree, that agreement is a strong signal. Then give " +
-    "a coarse category and say whether it's an 'asset' (a discrete, " +
-    "individually-tracked whole item — a tool, device, appliance, machine) " +
-    "or a 'part' (a component, consumable, material or supply).\n\n" +
+    "You identify ONE retail product from its barcode (UPC/EAN) and any " +
+    "web-search result titles provided. PREFER the titles when present — they " +
+    "come from retailer and barcode-database pages, and agreement across them " +
+    "is a strong signal. If NO titles are given but you genuinely recognize " +
+    "this specific barcode, you MAY identify it from your own knowledge — but " +
+    "ONLY when you are actually confident. If you would be guessing, or the " +
+    "titles are junk/contradictory/not a real product, reply name null and " +
+    "confidence 0. NEVER fabricate a product. Then give a coarse category and " +
+    "say whether it's an 'asset' (a discrete, individually-tracked whole item " +
+    "— a tool, device, appliance, machine) or a 'part' (a component, " +
+    "consumable, material or supply).\n\n" +
     'Reply with ONLY a JSON object: {"name": <brand + model + what it is, or null>, ' +
     '"brand": <string|null>, "sku": <model/SKU or null>, "category": <one or two ' +
     'words, e.g. "power tool", "fastener", "filament", or null>, "entity_type": ' +
-    '"asset"|"part"|null, "confidence": <0..1, how strongly the titles converge>}. ' +
-    "If the titles are junk, contradictory, or not a real product, reply name null, confidence 0.";
-  const user = `UPC: ${upc}\n\nSearch result titles:\n` + titles.map((t, i) => `${i + 1}. ${t}`).join("\n");
+    '"asset"|"part"|null, "confidence": <0..1 — your genuine certainty>}.';
+  const titleBlock = titles.length
+    ? `Search result titles:\n` + titles.map((t, i) => `${i + 1}. ${t}`).join("\n")
+    : "(no web-search titles were available — identify from the barcode only if you are confident)";
+  const user = `UPC: ${upc}\n\n${titleBlock}`;
 
   const call = platform()
     .ai.invoke({
@@ -185,28 +199,46 @@ export async function resolveBarcodeViaWebSearch(orgId: string, upc: string): Pr
   const code = upc.trim();
   if (!code) return null;
 
-  // Stage 1 — DDG search on the raw UPC (titles + images in one call).
-  let results: DdgImageResult[];
+  // Stage 1 — best-effort grounding titles. NOTE: DDG's image index doesn't
+  // cover bare UPCs (a number isn't an image query) and its text endpoints are
+  // anti-bot-gated on a shared IP, so this usually returns nothing here — and
+  // that's fine. We do NOT bail on empty results: a previous early-return on
+  // zero titles made the LLM identify structurally UNREACHABLE for every
+  // barcode, so the floor never resolved anything. The model can still try
+  // from the UPC itself (conservatively — see the prompt).
+  let results: DdgImageResult[] = [];
   try {
     results = await searchImages(code, 12);
   } catch {
-    return null; // search backend down — caller falls through
+    results = []; // search backend down / blocked — keep going to the LLM
   }
   const titled = results.filter((r) => r.title && r.title.trim());
-  if (titled.length === 0) return null;
-
   const rawTitles = dedupe(
     // DDG truncates long titles with a trailing "…" / "..." — drop it.
     titled.map((r) => r.title.replace(/\s+/g, " ").replace(/\s*(?:\.{2,}|…)\s*$/, "").trim()),
   );
   const cleaned = rawTitles.map((t) => cleanTitle(t, code)).filter(Boolean);
-  const heuristicName = pickHeuristicName(cleaned);
+  const heuristicName = pickHeuristicName(cleaned); // null when there were no titles
 
-  // Stage 2 — folded identify+classify via core-ai; heuristic floor on miss.
+  // Stage 2 — folded identify+classify via core-ai. Reached even with zero
+  // titles; the heuristic floor only applies when titles actually existed.
   const llm = await llmIdentify(orgId, code, rawTitles.slice(0, 12));
 
   const name = llm?.name ?? heuristicName;
-  if (!name) return null;
+  if (!name) return null; // genuinely nothing — caller falls to "fill in manually"
+
+  // Stage 3 — a product photo. DDG image search WORKS for a product name (it
+  // just can't do a bare UPC), so once we have a name, search the NAME. Prefer
+  // an image already returned by the UPC search (rare) before spending a call.
+  let imageUrl = titled.length ? pickImage(titled, name) : null;
+  if (!imageUrl) {
+    try {
+      const byName = await searchImages(name, 6);
+      imageUrl = byName.find((r) => r.url)?.url ?? null;
+    } catch {
+      imageUrl = null; // best-effort; the row is still useful without a photo
+    }
+  }
 
   return {
     name,
@@ -214,11 +246,13 @@ export async function resolveBarcodeViaWebSearch(orgId: string, upc: string): Pr
     sku: llm?.sku ?? null,
     category: llm?.category ?? null,
     entityType: llm?.entityType ?? null,
-    imageUrl: pickImage(titled, name),
+    imageUrl,
     confidence: llm ? llm.confidence : 0.4,
     method: llm ? "llm" : "heuristic",
     evidence: llm
-      ? `Identified by web search of UPC ${code} — ${titled.length} results, AI-confirmed.`
-      : `Identified by web search of UPC ${code} — ${titled.length} results, title heuristic (AI unavailable).`,
+      ? titled.length
+        ? `Identified from a web search of UPC ${code} (${titled.length} results), AI-confirmed.`
+        : `Identified from UPC ${code} by AI product knowledge (no web results on this host).`
+      : `Identified from a web search of UPC ${code} (${titled.length} results), title heuristic.`,
   };
 }

@@ -12,9 +12,29 @@
 import net from "node:net";
 import type { Kysely } from "kysely";
 import { sql } from "kysely";
+import { platform } from "@cobblr/platform-contract";
 import { lookupBarcode, type BarcodeHit } from "./barcode-lookup.js";
 import { resolveBarcodeViaWebSearch } from "./barcode-websearch.js";
 import type { CoreScanDB } from "../db.js";
+
+// Cross-tenant barcode cache namespace + value shape. A UPC means the same
+// product for every workspace, so we resolve each ONCE for the whole host
+// (critical on a shared-egress-IP public deploy where the upcitemdb free-tier
+// quota is shared across all tenants). A genuine MISS is cached with a TTL so a
+// product later added to the catalog gets re-checked; a HIT never expires.
+const BARCODE_NS = "barcode";
+const GLOBAL_MISS_TTL_SEC = 30 * 24 * 60 * 60; // 30 days
+interface BarcodeCacheValue {
+  found: boolean;
+  source: string;
+  title: string | null;
+  brand: string | null;
+  model: string | null;
+  description: string | null;
+  category: string | null;
+  image_url: string | null;
+  raw: Record<string, unknown>;
+}
 
 // The catalog-image upload re-uses the caller's bearer token, so it MUST
 // target our own API — never a caller-influenced base URL, or the token
@@ -64,19 +84,56 @@ interface EnrichContext {
   baseUrl: string;
   /** UPC to resolve. */
   upc: string;
+  /** Skip BOTH cache tiers (tenant + cross-tenant shared) and re-resolve
+   *  live. Rerun-AI sets this: deleting only the tenant row left the
+   *  shared cache to answer with the stale pre-resolver result, so the
+   *  box resolver was never asked again. The fresh result re-puts both
+   *  caches below, healing the stale entry for every tenant. */
+  force?: boolean;
 }
 
 export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
-  // 1. Cache lookup first — workspace-scoped UPC cache.
-  const cached = await ctx.db
-    .selectFrom("core_scan_barcode_cache")
-    .selectAll()
-    .where("upc", "=", ctx.upc)
-    .executeTakeFirst();
+  // 1a. Per-tenant cache first (local, fastest). force → skip straight to
+  // a live lookup (rerun must actually re-ask the providers).
+  const tenantRow = ctx.force
+    ? undefined
+    : await ctx.db
+        .selectFrom("core_scan_barcode_cache")
+        .selectAll()
+        .where("upc", "=", ctx.upc)
+        .executeTakeFirst();
+
+  let cacheVal: BarcodeCacheValue | null = tenantRow
+    ? {
+        found: tenantRow.found,
+        source: tenantRow.source,
+        title: tenantRow.title,
+        brand: tenantRow.brand,
+        model: tenantRow.model,
+        description: tenantRow.description,
+        category: tenantRow.category,
+        image_url: tenantRow.image_url,
+        raw: tenantRow.raw as Record<string, unknown>,
+      }
+    : null;
+
+  // 1b. Cross-tenant cache — if THIS tenant hasn't seen the UPC but another
+  // tenant already resolved it, reuse that (zero API quota) and mirror it down
+  // into the tenant cache so future local scans skip the meta round-trip.
+  if (!cacheVal && !ctx.force) {
+    const global = await platform()
+      .sharedCache.get<BarcodeCacheValue>(BARCODE_NS, ctx.upc)
+      .catch(() => null);
+    if (global) {
+      cacheVal = global;
+      await writeTenantCache(ctx, global).catch(() => {});
+    }
+  }
 
   let hit: BarcodeHit | null = null;
-  if (cached) {
-    if (!cached.found) {
+  let rateLimited = false;
+  if (cacheVal) {
+    if (!cacheVal.found) {
       // Cached definitive miss — nothing to do.
       await ctx.db
         .updateTable("core_scan_inbox_items")
@@ -86,40 +143,44 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
       return;
     }
     hit = {
-      source: cached.source as BarcodeHit["source"],
-      title: cached.title ?? "",
-      brand: cached.brand,
-      model: cached.model,
-      description: cached.description,
-      category: cached.category,
-      image_url: cached.image_url,
-      raw: cached.raw,
+      source: cacheVal.source as BarcodeHit["source"],
+      title: cacheVal.title ?? "",
+      brand: cacheVal.brand,
+      model: cacheVal.model,
+      description: cacheVal.description,
+      category: cacheVal.category,
+      image_url: cacheVal.image_url,
+      raw: cacheVal.raw,
     };
   } else {
-    hit = await lookupBarcode(ctx.upc);
-    // Cache both hits AND definitive misses. Rate-limit failures
-    // (today: surface as null from lookupBarcode) would re-fetch
-    // on next attempt — that's the right behaviour. v0.2 will
-    // differentiate.
-    try {
-      await ctx.db
-        .insertInto("core_scan_barcode_cache")
-        .values({
-          upc: ctx.upc,
-          found: !!hit,
-          source: hit?.source ?? "miss",
-          title: hit?.title ?? null,
-          brand: hit?.brand ?? null,
-          model: hit?.model ?? null,
-          description: hit?.description ?? null,
-          category: hit?.category ?? null,
-          image_url: hit?.image_url ?? null,
-          raw: sql`${JSON.stringify(hit?.raw ?? {})}::jsonb` as never,
-        })
-        .onConflict((c) => c.column("upc").doNothing())
-        .execute();
-    } catch (err) {
-      console.error("[core-scan] cache write failed:", (err as Error).message);
+    const result = await lookupBarcode(ctx.upc);
+    if (result.outcome === "hit") hit = result.hit;
+    if (result.outcome === "rate_limited") rateLimited = true;
+    // Cache a HIT or a DEFINITIVE MISS — both durable — to BOTH the tenant and
+    // the cross-tenant cache. CRUCIALLY do NOT cache a `rate_limited` outcome:
+    // the product is unresolved, not absent, so a later scan must retry. (That
+    // mis-cache was the bug that made real products — yarn — permanently
+    // un-findable once the shared upcitemdb trial throttled us.)
+    if (result.outcome !== "rate_limited") {
+      const value: BarcodeCacheValue = {
+        found: !!hit,
+        source: hit?.source ?? "miss",
+        title: hit?.title ?? null,
+        brand: hit?.brand ?? null,
+        model: hit?.model ?? null,
+        description: hit?.description ?? null,
+        category: hit?.category ?? null,
+        image_url: hit?.image_url ?? null,
+        raw: hit?.raw ?? {},
+      };
+      await writeTenantCache(ctx, value).catch((err) =>
+        console.error("[core-scan] tenant cache write failed:", (err as Error).message),
+      );
+      // A HIT is stable → no expiry; a MISS gets a TTL so a product later added
+      // to the catalog is re-checked instead of being a permanent global "no".
+      await platform()
+        .sharedCache.put(BARCODE_NS, ctx.upc, value, value.found ? undefined : GLOBAL_MISS_TTL_SEC)
+        .catch((err) => console.error("[core-scan] shared cache write failed:", (err as Error).message));
     }
   }
 
@@ -148,21 +209,42 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
         })
         .where("id", "=", ctx.itemId)
         .execute();
-      // Promote the cached miss to a hit so re-scans skip the search.
-      await ctx.db
-        .updateTable("core_scan_barcode_cache")
-        .set({ found: true, source: "web-search", title: web.name, brand: web.brand, model: web.sku, category: web.category, image_url: web.imageUrl })
-        .where("upc", "=", ctx.upc)
-        .execute();
+      // Promote both caches to the web-search resolution. Use an upsert (not a
+      // bare UPDATE) because on a rate-limited path no tenant row exists yet.
+      // Cache the LLM resolution cross-tenant too (with a TTL) so the next
+      // workspace to scan this UPC reuses it instead of paying for another
+      // web-search — but it can still be superseded by a real catalog hit later.
+      const webValue: BarcodeCacheValue = {
+        found: true,
+        source: "web-search",
+        title: web.name,
+        brand: web.brand,
+        model: web.sku,
+        description: null,
+        category: web.category,
+        image_url: web.imageUrl,
+        raw: {},
+      };
+      await writeTenantCache(ctx, webValue).catch(() => {});
+      await platform()
+        .sharedCache.put(BARCODE_NS, ctx.upc, webValue, GLOBAL_MISS_TTL_SEC)
+        .catch(() => {});
       if (web.imageUrl) await downloadCatalogImage(ctx, web.imageUrl);
       return;
     }
-    // Definitive miss — leave the inbox row barcode-only.
+    // Nothing resolved. Distinguish a genuine miss (catalogs + web search all
+    // came up empty — fill in manually) from a transient rate-limit (the
+    // catalog was throttled and web search didn't save us — a re-scan should
+    // retry, and we deliberately left the cache untouched so it can).
     await ctx.db
       .updateTable("core_scan_inbox_items")
       .set({
-        ai_notes: "No catalog hit for this barcode, and web search turned up nothing. Fill in manually.",
-        ai_suggested_at: new Date(),
+        ai_notes: rateLimited
+          ? "The barcode service is briefly rate-limited — re-scan in a moment to retry the lookup."
+          : "No catalog hit for this barcode, and web search turned up nothing. Fill in manually.",
+        // On a rate-limit, leave ai_suggested_at NULL so the autonomous sort can
+        // pick the item back up and retry rather than treating it as finished.
+        ...(rateLimited ? {} : { ai_suggested_at: new Date() }),
         updated_at: new Date(),
       })
       .where("id", "=", ctx.itemId)
@@ -197,6 +279,28 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
 
   // 3. Download the catalog image into core-files (best-effort).
   if (hit.image_url) await downloadCatalogImage(ctx, hit.image_url);
+}
+
+/** Upsert the per-tenant barcode cache row for this UPC. Upsert (not
+ *  insert-or-nothing) so mirroring a cross-tenant value or promoting a
+ *  web-search resolution updates an existing row instead of being dropped. */
+async function writeTenantCache(ctx: EnrichContext, v: BarcodeCacheValue): Promise<void> {
+  const fields = {
+    found: v.found,
+    source: v.source,
+    title: v.title,
+    brand: v.brand,
+    model: v.model,
+    description: v.description,
+    category: v.category,
+    image_url: v.image_url,
+    raw: sql`${JSON.stringify(v.raw ?? {})}::jsonb` as never,
+  };
+  await ctx.db
+    .insertInto("core_scan_barcode_cache")
+    .values({ upc: ctx.upc, ...fields })
+    .onConflict((c) => c.column("upc").doUpdateSet(fields))
+    .execute();
 }
 
 /** Best-effort: pull an externally-sourced catalog/web-search image into

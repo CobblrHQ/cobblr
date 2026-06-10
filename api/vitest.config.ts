@@ -26,9 +26,16 @@ export default defineConfig({
     // tenant DBs, each is a DROP DATABASE which can take seconds
     // when other connections need to drain first.
     hookTimeout: 120_000,
+    // Run files across forks instead of one serial fork — the suite is ~2min
+    // serial and the A6 runner has 12 cores. 8 forks ≤ 12 cores, so each fork
+    // owns a full core: no oversubscription, tests finish faster, and the
+    // Postgres CREATE/DROP DATABASE template-lock window each signup holds is
+    // SHORTER — which is why 8-on-12 is both faster and no flakier than the
+    // proven 6-on-8 baseline. retry:1 above absorbs any transient. Each fork is
+    // its own process, so module mocks + process.env never bleed across files.
     pool: "forks",
     poolOptions: {
-      forks: { singleFork: true },
+      forks: { singleFork: false, maxForks: 8, minForks: 2 },
     },
   },
 });

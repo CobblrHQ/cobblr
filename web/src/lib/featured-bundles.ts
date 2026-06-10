@@ -970,13 +970,13 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.plant-care",
-      version: "0.2.1",
+      version: "0.3.0",
       name: "Plant Care",
       description: "Your houseplants as their own table — species, light, watering interval + pot size, grouped by light.",
       author: "Cobblr",
-      released_at: "2026-06-08",
+      released_at: "2026-06-10",
       changelog:
-        "Dropped the computed “Care” summary line (clutter on the form). — Now its OWN table (an assets instance), not generic Assets with extra columns — its own nav entry, a “New plant” button, only plant fields (the make/model/serial cruft is hidden). Plain-language hints + a pinned “By light” view.",
+        "Turn on Smart irrigation to let each plant water itself — its watering interval fires a Home Assistant service (or any controller) for that plant's zone + seconds, hands-free. — Now its OWN table (an assets instance), not generic Assets with extra columns — its own nav entry, a “New plant” button, only plant fields (the make/model/serial cruft is hidden). Plain-language hints + a pinned “By light” view.",
       requires: [{ module: "assets" }],
       provides_instances: [
         {
@@ -1001,6 +1001,56 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           ],
           saved_views: [
             { entity_kind: "assets:asset", name: "By light", view_type: "table", pinned: true, config: { group_by: "light", visible_fields: ["title", "species", "water_every_days", "last_watered", "pot_size"] } },
+          ],
+        },
+      ],
+      features: [
+        {
+          // Opt-in: turning a passive log into an actuator. Off by default so the
+          // base bundle stays a simple plant table; enabling it pulls in digifab
+          // (the device-command path) and wires each plant's watering interval to
+          // a controller. Coordinate-not-control: Cobblr calls a Home Assistant
+          // service over HTTP, it never drives a valve directly.
+          key: "irrigation",
+          name: "Smart irrigation",
+          question: "Let plants water themselves?",
+          description:
+            "Each plant's watering interval fires a command at your irrigation controller for THAT plant's zone + duration — hands-free. Ships pointed at a Home Assistant `script.water_zone` service; connect Home Assistant (label it “Irrigation”) and it just works. Works with any HTTP controller via a driver manifest.",
+          default: false,
+          requires: [{ module: "digifab" }],
+          next_steps: [
+            { label: "Connect your controller", module: "digifab", path: "/configuration/farm", hint: "Install the Home Assistant driver, add a connection labelled “Irrigation”, paste a long-lived token." },
+            { label: "Set each plant's zone + seconds", module: "assets", path: "/instances/plants", hint: "Which valve/zone waters it, and for how long." },
+          ],
+          // Add the two actuator fields to the SAME plants instance.
+          provides_instances: [
+            {
+              module: "assets",
+              instance_name: "plants",
+              display_name: "Plant Care",
+              field_defs: [
+                { entity_kind: "assets:asset", name: "zone", display_label: "Irrigation zone", type: "text", position: 7, help: "Which valve/zone waters this plant — passed to the controller (e.g. “3”)." },
+                { entity_kind: "assets:asset", name: "water_seconds", display_label: "Water (seconds)", type: "number", position: 8, help: "How long to run the zone each watering — in seconds." },
+              ],
+            },
+          ],
+          // The actuator wire: each plant's watering interval (water_every_days,
+          // synthesised into a recurrence by the assets scanner) fires
+          // assets.asset.recurred → run-command at the “Irrigation” connection
+          // with THIS plant's own zone + seconds.
+          wires: [
+            {
+              source_kind: "assets:asset",
+              action_id: "digifab:run-command",
+              trigger_type: "event",
+              trigger_event: "assets.asset.recurred",
+              args: {
+                connection: "Irrigation",
+                command: "run-zone",
+                zone: "{{metadata.zone}}",
+                seconds: "{{metadata.water_seconds}}",
+              },
+            },
           ],
         },
       ],

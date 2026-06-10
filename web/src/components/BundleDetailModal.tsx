@@ -11,7 +11,7 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowRight, CheckCircle2, ChevronDown, ChevronRight, Compass, Download, Package, Trash2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import {
@@ -74,6 +74,7 @@ export function BundleDetailModal(props: Props) {
   const toast = useToast();
   const confirm = useConfirm();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   // First-run wizard: land the user inside the bundle on install instead of
   // showing the "what's next" panel (which is the right call from the
   // marketplace, but leaves a brand-new user a click short of their data).
@@ -197,7 +198,11 @@ export function BundleDetailModal(props: Props) {
       if (autoLand) {
         /* landAfterInstall navigates */
       } else if (isUpdate) {
-        onClose();
+        // Return the user to where they launched the update from (e.g. the
+        // workspace home), not stranded on /bundles. Dashboard passes ?returnTo.
+        const returnTo = searchParams.get("returnTo");
+        if (returnTo) navigate(returnTo);
+        else onClose();
       } else {
         setJustInstalled(r.applied);
       }
@@ -274,7 +279,15 @@ export function BundleDetailModal(props: Props) {
       ? resolveBundleManifest(manifest, selectedFeatures)
       : manifest;
 
+  // In the marketplace/update modal on an ALREADY-INSTALLED bundle, the feature
+  // checkboxes are locked: unchecking one there would turn "Update" into a
+  // partial uninstall without saying so (feedback cbca6973 — "that's no longer
+  // an update, that's a modify"). Changing features is its own intentional flow:
+  // the installed bundle's modal (features + "Save feature changes").
+  const featuresLocked = props.mode === "featured" && alreadyInstalled;
+
   function toggleFeature(key: string) {
+    if (featuresLocked) return;
     setSelectedFeatures((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
@@ -378,7 +391,13 @@ export function BundleDetailModal(props: Props) {
 
   async function handleInstall() {
     if (!manifest) return;
-    const enabledFeatures = [...selectedFeatures];
+    // Locked (update on an installed bundle): send the STORED enabled set, not
+    // the checkbox state — if the user clicks Update before the bundle-detail
+    // query lands, selectedFeatures still holds manifest defaults, and sending
+    // those would silently change the installation mid-update.
+    const enabledFeatures = featuresLocked
+      ? (detail.data?.bundle.enabled_features ?? [...selectedFeatures])
+      : [...selectedFeatures];
     let confirmEnable = false;
     // Up to a few passes: enable-modules confirm, then collision-supersede,
     // then the clean install. Each handled error sets up the next retry.
@@ -644,11 +663,13 @@ export function BundleDetailModal(props: Props) {
         )}
 
         {features && features.length > 0 && (
-          <Section title={props.mode === "installed" ? "features" : "optional features"}>
+          <Section title={props.mode === "installed" ? "features" : featuresLocked ? "your features" : "optional features"}>
             <p className="text-xs text-faint dark:text-slate-400 mb-2">
               {props.mode === "installed"
                 ? "Turn capabilities on or off, then save. Re-applies the bundle with your choice — your entities (parts, designs, …) stay; only the bundle's fields/views/automations change."
-                : "The basics are always included. Turn on what you want — the fields, views, and modules below update to match. (Changeable anytime after install.)"}
+                : featuresLocked
+                  ? "Updating keeps this setup exactly as it is — an update never adds or removes capabilities. To change what's installed, open this bundle from the Bundles page and edit its features there."
+                  : "The basics are always included. Turn on what you want — the fields, views, and modules below update to match. (Changeable anytime after install.)"}
             </p>
             <ul className="space-y-1.5">
               {features.map((f) => {
@@ -657,17 +678,20 @@ export function BundleDetailModal(props: Props) {
                   <li key={f.key}>
                     <label
                       className={
-                        "flex items-start gap-3 rounded-md border p-3 cursor-pointer transition " +
+                        "flex items-start gap-3 rounded-md border p-3 transition " +
+                        (featuresLocked ? "cursor-default opacity-60 " : "cursor-pointer ") +
                         (on
                           ? "border-cobble-500 dark:border-cobble-500 bg-cobble-50 dark:bg-cobble-900/30"
-                          : "border-line dark:border-slate-700 bg-surface dark:bg-slate-900 hover:border-cobble-300 dark:hover:border-cobble-700")
+                          : "border-line dark:border-slate-700 bg-surface dark:bg-slate-900" +
+                            (featuresLocked ? "" : " hover:border-cobble-300 dark:hover:border-cobble-700"))
                       }
                     >
                       <input
                         type="checkbox"
                         checked={on}
+                        disabled={featuresLocked}
                         onChange={() => toggleFeature(f.key)}
-                        className="mt-0.5 h-4 w-4 shrink-0 accent-cobble-600"
+                        className="mt-0.5 h-4 w-4 shrink-0 accent-cobble-600 disabled:cursor-default"
                       />
                       <div className="flex-1 min-w-0">
                         <div className="text-sm font-medium text-content dark:text-mortar-100">{f.question ?? f.name}</div>

@@ -519,6 +519,184 @@ superAdminRouter.post("/signup-invites/:id/revoke", async (req, res, next) => {
   }
 });
 
+// ──────────────────────────── waitlist ────────────────────────────
+// Signups from the marketing site (cobblr.xyz). The Pages Function POSTs each
+// form submission to /ingest (scoped waitlist:ingest token, create-only);
+// admins review in the Waitlist tab and approve (mints a signup_invite,
+// emailed when a sender is registered) or dismiss.
+
+const IngestWaitlist = z.object({
+  email: z.string().email().max(255),
+  source: z.string().max(60).optional(),
+  user_agent: z.string().max(500).optional(),
+  signed_up_at: z.string().datetime().optional(),
+});
+
+// POST /super-admin/waitlist/ingest — idempotent on the pending row: a repeat
+// signup for an email that's already pending (or already invited) is a 200
+// no-op, so the marketing form can't create duplicates.
+superAdminRouter.post("/waitlist/ingest", async (req, res, next) => {
+  try {
+    const parsed = IngestWaitlist.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Bad signup", details: parsed.error.issues } });
+      return;
+    }
+    const email = parsed.data.email.toLowerCase().trim();
+    const existing = await meta
+      .selectFrom("waitlist")
+      .select(["id", "status"])
+      .where(sql`lower(email)`, "=", email)
+      .where("status", "in", ["pending", "invited"])
+      .orderBy("created_at", "desc")
+      .executeTakeFirst();
+    if (existing) {
+      res.json({ id: existing.id, status: existing.status, duplicate: true });
+      return;
+    }
+    const row = await meta
+      .insertInto("waitlist")
+      .values({
+        email,
+        source: parsed.data.source ?? "marketing-site",
+        user_agent: parsed.data.user_agent ?? null,
+        signed_up_at: parsed.data.signed_up_at ? new Date(parsed.data.signed_up_at) : new Date(),
+      })
+      .returning(["id", "created_at"])
+      .executeTakeFirstOrThrow();
+    void announce("waitlist.new", {
+      title: "📋 New waitlist signup",
+      body: email,
+      color: 0x6b8e4e,
+    });
+    res.status(201).json({ id: row.id, status: "pending", duplicate: false });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /super-admin/waitlist — newest first, with the linked invite's state.
+superAdminRouter.get("/waitlist", async (_req, res, next) => {
+  try {
+    const rows = await meta
+      .selectFrom("waitlist as w")
+      .leftJoin("signup_invites as i", "i.id", "w.invite_id")
+      .leftJoin("users as d", "d.id", "w.decided_by")
+      .select([
+        "w.id",
+        "w.email",
+        "w.source",
+        "w.signed_up_at",
+        "w.status",
+        "w.decided_at",
+        "w.created_at",
+        "d.email as decided_by_email",
+        "i.consumed_at as invite_consumed_at",
+        "i.revoked_at as invite_revoked_at",
+        "i.expires_at as invite_expires_at",
+      ])
+      .orderBy("w.created_at", "desc")
+      .limit(500)
+      .execute();
+    res.json({
+      items: rows.map((r) => ({
+        ...r,
+        invite_status: r.status === "invited"
+          ? inviteStatus({ consumed_at: r.invite_consumed_at, revoked_at: r.invite_revoked_at, expires_at: r.invite_expires_at })
+          : null,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const ApproveWaitlist = z.object({
+  note: z.string().max(200).optional(),
+  expires_in_days: z.number().int().min(1).max(365).optional(),
+});
+
+// POST /super-admin/waitlist/:id/approve — mint a signup_invite locked to the
+// signup's email (emailed automatically when a sender is registered) and mark
+// the row invited. Same invite mechanics as /signup-invites.
+superAdminRouter.post("/waitlist/:id/approve", async (req, res, next) => {
+  try {
+    const parsed = ApproveWaitlist.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Bad approval", details: parsed.error.issues } });
+      return;
+    }
+    const entry = await meta
+      .selectFrom("waitlist")
+      .select(["id", "email", "status"])
+      .where("id", "=", req.params.id)
+      .executeTakeFirst();
+    if (!entry || entry.status !== "pending") {
+      res.status(409).json({ error: { code: "not_pending", message: "Signup not found or already decided." } });
+      return;
+    }
+    const userId = (req as unknown as { session?: { id: string } }).session?.id;
+    const token = randomBytes(24).toString("base64url");
+    const expires_at = parsed.data.expires_in_days
+      ? new Date(Date.now() + parsed.data.expires_in_days * 86_400_000)
+      : new Date(Date.now() + 14 * 86_400_000); // waitlist invites default to 14d
+    const invite = await meta
+      .insertInto("signup_invites")
+      .values({
+        token,
+        created_by: userId!,
+        invited_email: entry.email,
+        note: parsed.data.note ?? "waitlist",
+        expires_at,
+      })
+      .returning(["id", "token", "invited_email", "expires_at", "created_at"])
+      .executeTakeFirstOrThrow();
+    let emailed = false;
+    if (hasAuthEmailSender()) {
+      const link = `${req.protocol}://${req.get("host") ?? ""}/join/${invite.token}`;
+      emailed = await sendAuthEmail({
+        to: entry.email,
+        subject: "You're off the Cobblr waitlist 🎉",
+        text:
+          `Good news — a spot opened up.\n\n` +
+          `Open this link to create your Cobblr workspace:\n${link}` +
+          `\n\nThis invite expires ${new Date(invite.expires_at!).toUTCString()}.` +
+          `\n\nIf you weren't expecting this, you can ignore this email.`,
+        kind: "invite",
+      });
+    }
+    await meta
+      .updateTable("waitlist")
+      .set({ status: "invited", invite_id: invite.id, decided_at: new Date(), decided_by: userId ?? null })
+      .where("id", "=", entry.id)
+      .execute();
+    res.status(201).json({ id: entry.id, status: "invited", invite: { ...invite, emailed } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /super-admin/waitlist/:id/dismiss — decline without inviting.
+superAdminRouter.post("/waitlist/:id/dismiss", async (req, res, next) => {
+  try {
+    const userId = (req as unknown as { session?: { id: string } }).session?.id;
+    const updated = await meta
+      .updateTable("waitlist")
+      .set({ status: "dismissed", decided_at: new Date(), decided_by: userId ?? null })
+      .where("id", "=", req.params.id)
+      .where("status", "=", "pending")
+      .returning("id")
+      .executeTakeFirst();
+    if (!updated) {
+      res.status(409).json({ error: { code: "not_pending", message: "Signup not found or already decided." } });
+      return;
+    }
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ─────────────────────── AI activity — cross-workspace ───────────────────────
 // Aggregates each tenant's core_ai_calls into one platform-wide AI log. core_ai_calls
 // is a module table (not in the core tenant type), so we query it with raw SQL
@@ -619,6 +797,120 @@ superAdminRouter.get("/ai-activity/:orgId/:id", async (req, res, next) => {
       ? await meta.selectFrom("users").select(["email", "display_name"]).where("id", "=", row.user_id).executeTakeFirst()
       : null;
     res.json({ ...row, org: { id: org.id, name: org.name, slug: org.slug }, user_email: u?.email ?? null, user_name: u?.display_name ?? null });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ───────────────────────────── barcode cache ─────────────────────────────────
+// The per-UPC lookup cache core-scan builds as people scan (go-upc primary,
+// upcitemdb/OPF fallback). It's a per-TENANT table (core_scan_barcode_cache —
+// the same UPC may resolve differently per workspace), so like /ai-activity
+// this aggregates with raw SQL across every tenant DB. Read-only viewer for
+// the operator console's "Barcodes" section.
+interface BarcodeCacheRow {
+  upc: string;
+  found: boolean;
+  source: string;
+  title: string | null;
+  brand: string | null;
+  model: string | null;
+  description: string | null;
+  category: string | null;
+  image_url: string | null;
+  raw: unknown;
+  fetched_at: Date;
+}
+
+superAdminRouter.get("/barcode-cache", async (req, res, next) => {
+  try {
+    const q = typeof req.query.q === "string" && req.query.q.trim() ? req.query.q.trim() : null;
+    const orgSlug = typeof req.query.org === "string" && req.query.org ? req.query.org : null;
+    const source = typeof req.query.source === "string" && req.query.source ? req.query.source : null;
+    const found =
+      req.query.found === "true" ? true : req.query.found === "false" ? false : null;
+    const limit = Math.min(parseInt(String(req.query.limit ?? "200"), 10) || 200, 500);
+    const perOrg = Math.min(limit, 200);
+
+    // layer=shared → the DEDUPED instance-wide platform.sharedCache layer
+    // (namespace 'barcode' in cobblr_meta.shared_cache) — the authoritative
+    // "a UPC resolves once per instance" store. The default (workspaces)
+    // view reads the per-tenant mirrors, which adds who-scanned-where.
+    if (req.query.layer === "shared") {
+      const conds = [sql`namespace = ${"barcode"}`];
+      if (q) {
+        conds.push(
+          sql`(key ilike ${"%" + q + "%"} or value->>'title' ilike ${"%" + q + "%"} or value->>'brand' ilike ${"%" + q + "%"})`,
+        );
+      }
+      if (source) conds.push(sql`value->>'source' = ${source}`);
+      if (found !== null) conds.push(sql`(value->>'found')::boolean = ${found}`);
+      const r = await sql<{
+        key: string;
+        value: {
+          found: boolean;
+          source: string;
+          title: string | null;
+          brand: string | null;
+          model: string | null;
+          description: string | null;
+          category: string | null;
+          image_url: string | null;
+          raw: unknown;
+        };
+        expires_at: Date | null;
+        updated_at: Date;
+      }>`
+        select key, value, expires_at, updated_at from shared_cache
+        where ${sql.join(conds, sql` and `)}
+        order by updated_at desc limit ${limit}`.execute(meta);
+      res.json({
+        items: r.rows.map((row) => ({
+          upc: row.key,
+          found: !!row.value.found,
+          source: row.value.source ?? "miss",
+          title: row.value.title ?? null,
+          brand: row.value.brand ?? null,
+          model: row.value.model ?? null,
+          description: row.value.description ?? null,
+          category: row.value.category ?? null,
+          image_url: row.value.image_url ?? null,
+          raw: row.value.raw ?? {},
+          fetched_at: row.updated_at,
+          expires_at: row.expires_at,
+          org_id: null,
+          org_name: null,
+          org_slug: null,
+        })),
+      });
+      return;
+    }
+
+    let orgsQ = meta.selectFrom("orgs").select(["id", "name", "slug"]);
+    if (orgSlug) orgsQ = orgsQ.where("slug", "=", orgSlug);
+    const orgs = await orgsQ.execute();
+
+    const rows: Array<BarcodeCacheRow & { org_id: string; org_name: string; org_slug: string }> = [];
+    for (const org of orgs) {
+      try {
+        const tdb = await getTenantDb(org.id);
+        const conds = [];
+        if (q) conds.push(sql`(upc ilike ${"%" + q + "%"} or title ilike ${"%" + q + "%"} or brand ilike ${"%" + q + "%"})`);
+        if (source) conds.push(sql`source = ${source}`);
+        if (found !== null) conds.push(sql`found = ${found}`);
+        const whereClause = conds.length ? sql`where ${sql.join(conds, sql` and `)}` : sql``;
+        const r = await sql<BarcodeCacheRow>`
+          select upc, found, source, title, brand, model, description, category, image_url, raw, fetched_at
+          from core_scan_barcode_cache ${whereClause}
+          order by fetched_at desc limit ${perOrg}`.execute(tdb);
+        for (const row of r.rows) rows.push({ ...row, org_id: org.id, org_name: org.name, org_slug: org.slug });
+      } catch {
+        // Tenant DB may not have core_scan_barcode_cache (module never enabled) — skip.
+      }
+    }
+
+    rows.sort((a, b) => new Date(b.fetched_at).getTime() - new Date(a.fetched_at).getTime());
+    res.json({ items: rows.slice(0, limit) });
   } catch (err) {
     next(err);
   }
@@ -826,6 +1118,43 @@ superAdminRouter.post("/feedback/append", async (req, res, next) => {
   }
 });
 
+// POST /super-admin/feedback/resolve-by-thread — the reporter clicked the Discord
+// support bot's "✅ That solved it — close" button. Resolve the matching ticket.
+// Lean on purpose: status only, NO public "resolved" card and NO bot re-poke (the
+// bot already archived the thread on the click). Gated by the same feedback:ingest
+// scope the bot already holds.
+const ResolveByThread = z.object({ thread_id: z.string().min(1), by: z.string().max(120).optional() });
+superAdminRouter.post("/feedback/resolve-by-thread", async (req, res, next) => {
+  try {
+    const parsed = ResolveByThread.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Bad body", details: parsed.error.issues } });
+      return;
+    }
+    const fb = await meta
+      .selectFrom("feedback")
+      .select(["id"])
+      .where(sql`origin_ref ->> 'thread_id'`, "=", parsed.data.thread_id)
+      .executeTakeFirst();
+    if (!fb) {
+      res.status(404).json({ error: { code: "not_found", message: "No ticket for that thread." } });
+      return;
+    }
+    await meta
+      .updateTable("feedback")
+      .set({
+        status: "resolved" as never,
+        admin_notes: sql`coalesce(admin_notes, '') || ${`\n[closed via Discord button by ${parsed.data.by ?? "user"}]`}`,
+        updated_at: new Date(),
+      })
+      .where("id", "=", fb.id)
+      .execute();
+    res.json({ id: fb.id, status: "resolved" });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // PATCH /super-admin/feedback/:id — set status / admin notes during triage.
 superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
   try {
@@ -943,11 +1272,14 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
     if (parsed.data.status === "resolved") {
       const ctx = (row.context ?? {}) as { route?: string };
       const reported = (row.message ?? "").slice(0, 1200);
-      const fixed = parsed.data.public_summary?.trim();
+      // Prefer an explicit third-person changelog note; otherwise fall back to
+      // the reply we sent the requester so the public card ALWAYS says what we
+      // did — never just re-echoes the complaint with a green check.
+      const fixed = parsed.data.public_summary?.trim() || parsed.data.reply_message?.trim();
       void announce("feedback.resolved", {
         title: "✅ Feedback resolved",
-        // When a "what we fixed" summary is provided, the post reads as a public
-        // changelog entry (reported → fixed); otherwise just the original report.
+        // When we have a "what we did" line, the post reads as a public changelog
+        // entry (reported → fixed); otherwise just the original report.
         body: fixed ? `**Reported:** ${reported}\n\n**Fixed:** ${fixed.slice(0, 2400)}` : reported,
         color: 0x2e7d32,
         fields: typeof ctx.route === "string" && ctx.route ? [{ name: "page", value: ctx.route, inline: true }] : undefined,
@@ -1235,7 +1567,10 @@ const ScanEvalBody = z.discriminatedUnion("surface", [
     upc: z.string().min(1).max(64),
     // The DDG result titles the model identifies from — fixtured so the eval is
     // deterministic-input (avoids live-search variance; only model variance).
-    titles: z.array(z.string().max(400)).min(1).max(40),
+    // An EMPTY array is allowed: it exercises the no-titles path (identify from
+    // the UPC alone, conservatively), which on a shared public IP is the common
+    // real case since DDG can't search a bare UPC.
+    titles: z.array(z.string().max(400)).max(40),
     org: z.string().optional(),
   }),
   z.object({

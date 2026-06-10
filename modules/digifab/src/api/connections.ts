@@ -127,7 +127,7 @@ connectionsRouter.post(
     // Only police http(s) here; non-http sentinels (mock://) never get fetched.
     if (/^https?:\/\//i.test(parsed.data.base_url)) {
       try {
-        assertSafeMachineUrl(parsed.data.base_url);
+        await assertSafeMachineUrl(parsed.data.base_url);
       } catch (e) {
         return void res.status(400).json({ error: { code: "unsafe_url", message: (e as Error).message } });
       }
@@ -177,7 +177,7 @@ connectionsRouter.patch(
     if (parsed.data.base_url !== undefined) {
       if (/^https?:\/\//i.test(parsed.data.base_url)) {
         try {
-          assertSafeMachineUrl(parsed.data.base_url);
+          await assertSafeMachineUrl(parsed.data.base_url);
         } catch (e) {
           return void res.status(400).json({ error: { code: "unsafe_url", message: (e as Error).message } });
         }

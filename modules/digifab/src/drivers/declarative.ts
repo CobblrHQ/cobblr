@@ -5,6 +5,7 @@
 // auth → the edge-adapter form instead.)
 
 import type {
+  CommandResult,
   ConnectionResult,
   ManagerConfig,
   MachineDriver,
@@ -34,7 +35,7 @@ export class DeclarativeDriver implements MachineDriver {
     const a = this.manifest.auth;
     if (!a) return {};
     const v = a.from === "apiKey" ? this.cfg.apiKey : a.from === "username" ? this.cfg.username : this.cfg.password;
-    return v ? { [a.header]: String(v) } : {};
+    return v ? { [a.header]: `${a.prefix ?? ""}${String(v)}` } : {};
   }
 
   /** Substitute {fileId}/{jobId}/… in a path from the call vars. */
@@ -72,7 +73,7 @@ export class DeclarativeDriver implements MachineDriver {
   }
 
   private async req(method: string, path: string, init: RequestInit = {}): Promise<Response> {
-    assertSafeMachineUrl(path);
+    await assertSafeMachineUrl(path);
     return fetch(path, {
       ...init,
       method,
@@ -126,6 +127,7 @@ export class DeclarativeDriver implements MachineDriver {
 
   async uploadFile(file: Uint8Array, filename: string): Promise<UploadResult> {
     const m = this.manifest.upload;
+    if (!m) throw new Error("this driver has no upload step (actuator-only manifest)");
     const url = this.path(m.path, { filename });
     let data: unknown;
     if (m.body === "raw") {
@@ -150,6 +152,7 @@ export class DeclarativeDriver implements MachineDriver {
 
   async submitJob(args: SubmitArgs): Promise<SubmitResult> {
     const m = this.manifest.submit;
+    if (!m) throw new Error("this driver has no submit step (actuator-only manifest)");
     // For raw-upload managers the "fileId" IS the filename, so expose both.
     const vars = { fileId: args.fileId, filename: args.fileId, deviceId: args.deviceId ?? "", tag: args.tag ?? "" };
     const data = await this.json(m.method, this.path(m.path, vars), {
@@ -163,6 +166,7 @@ export class DeclarativeDriver implements MachineDriver {
 
   async getJobStatus(jobId: string): Promise<JobStatus> {
     const m = this.manifest.status;
+    if (!m) throw new Error("this driver has no status step (actuator-only manifest)");
     const url = this.path(m.path, { jobId });
     let upstream: string;
     let progressStr: string | null = null;
@@ -189,6 +193,29 @@ export class DeclarativeDriver implements MachineDriver {
       if (Number.isFinite(p)) progress = p > 1 ? p / 100 : p;
     }
     return { jobId, state, progress, deviceId: null, raw };
+  }
+
+  // ── ActuatorDriver (the command-and-forget shape) ────────────────────────
+  /** Fire a parameterized command from the manifest's `commands[name]`:
+   *  `{param}` placeholders in the path + body string-values are filled from
+   *  the command's params (the wire's per-entity args). No file, no job. */
+  async runCommand(command: string, params: Record<string, unknown>): Promise<CommandResult> {
+    const c = this.manifest.commands?.[command];
+    if (!c) return { ok: false, detail: `unknown command "${command}"` };
+    const vars: Record<string, string> = {};
+    for (const [k, v] of Object.entries(params)) vars[k] = v == null ? "" : String(v);
+    const url = this.path(c.path, vars);
+    try {
+      const res = await this.req(c.method, url, {
+        headers: c.body ? { "content-type": "application/json" } : {},
+        body: c.body ? JSON.stringify(this.fillBody(c.body, vars)) : undefined,
+      });
+      return res.ok
+        ? { ok: true, ref: `${c.method} ${url}` }
+        : { ok: false, detail: `status ${res.status}` };
+    } catch (e) {
+      return { ok: false, detail: (e as Error).message };
+    }
   }
 }
 

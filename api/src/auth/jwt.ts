@@ -68,7 +68,9 @@ export async function signAppToken(
 }
 
 export async function verifySession(token: string): Promise<SessionClaims> {
-  const { payload } = await jwtVerify(token, secretKey(), { issuer: ISSUER });
+  // Pin the algorithm allowlist explicitly — don't rely solely on the
+  // symmetric key type to reject RS256/none confusion.
+  const { payload } = await jwtVerify(token, secretKey(), { issuer: ISSUER, algorithms: [ALG] });
   if (typeof payload.sub !== "string") {
     throw new Error("Invalid token: missing sub");
   }

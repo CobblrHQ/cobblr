@@ -29,6 +29,12 @@ export function register(): void {
       }
       const url = String(ctx.credentials.webhook_url ?? "");
       if (!url) throw new Error("slack: no webhook URL configured");
+      // Host-lock to the official Slack webhook endpoint — a stored
+      // webhook_url is credential-controlled, so without this it's an SSRF
+      // primitive (post to internal hosts, read up to 200 chars of the
+      // response back via the error). See 2026-06-10 pre-launch audit #2.
+      if (!url.startsWith("https://hooks.slack.com/"))
+        throw new Error("slack: webhook URL must be a https://hooks.slack.com/ address");
       const text = ctx.rendered ?? String(ctx.args.text ?? "");
       if (!text) throw new Error("slack: empty message");
       const res = await fetch(url, {

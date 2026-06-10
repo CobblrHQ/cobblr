@@ -40,10 +40,24 @@ export function MembersModal({ open, onClose, slug }: Props) {
 
   const isAdminish =
     members.data?.self.role === "owner" || members.data?.self.role === "admin";
+  // Only an OWNER can invite a brand-new person who gets their OWN workspace
+  // (the platform-signup path); admins can still invite into THIS workspace.
+  const isOwner = members.data?.self.role === "owner";
+  // The "start their own Cobblr" path is the uncontrolled-growth lever, so it's
+  // off by default during alpha (server flag). Hide the option unless it's open.
+  const config = useQuery({
+    queryKey: ["auth-config"],
+    queryFn: () => api.authConfig(),
+    staleTime: 5 * 60_000,
+  });
+  const canInviteToPlatform = isOwner && config.data?.self_serve_invites === true;
 
   // ── invite create form ────────────────────────────────────────
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<OrgMembership["role"]>("member");
+  // "workspace" = join THIS workspace as a member; "platform" = start their own
+  // Cobblr (their own fresh workspace). The two are genuinely different invites.
+  const [inviteKind, setInviteKind] = useState<"workspace" | "platform">("workspace");
 
   const createInvite = useMutation({
     mutationFn: () =>
@@ -61,6 +75,26 @@ export function MembersModal({ open, onClose, slug }: Props) {
         sentTo
           ? `Invite sent to ${sentTo} — link copied too.`
           : "Invite link copied — share it however you like.",
+      );
+    },
+    onError: (e: unknown) => {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't create invite.");
+    },
+  });
+
+  // Platform invite: mint a "start your own Cobblr" link (their own workspace),
+  // attributed to this owner. Copies the /join link to the clipboard.
+  const createSignupInvite = useMutation({
+    mutationFn: () => api.mintMySignupInvite({ email: inviteEmail.trim() || undefined }),
+    onSuccess: (inv) => {
+      const sentTo = inviteEmail.trim();
+      setInviteEmail("");
+      const url = `${window.location.origin}/join/${inv.token}`;
+      void navigator.clipboard?.writeText(url).catch(() => {});
+      toast.success(
+        sentTo && inv.emailed
+          ? `Invite to start their own Cobblr sent to ${sentTo} — link copied too.`
+          : "“Start their own Cobblr” link copied — share it however you like.",
       );
     },
     onError: (e: unknown) => {
@@ -125,7 +159,8 @@ export function MembersModal({ open, onClose, slug }: Props) {
 
   function submitInvite(e: FormEvent) {
     e.preventDefault();
-    createInvite.mutate();
+    if (inviteKind === "platform") createSignupInvite.mutate();
+    else createInvite.mutate();
   }
 
   return (
@@ -269,10 +304,36 @@ export function MembersModal({ open, onClose, slug }: Props) {
             <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
               // invite someone
             </div>
+
+            {/* Two genuinely different invites. Owners get both (when self-serve
+                invites are open); admins can only add people to THIS workspace. */}
+            {canInviteToPlatform && (
+              <div className="inline-flex rounded-lg border border-line dark:border-slate-700 p-0.5 text-xs">
+                {([
+                  ["workspace", "Join this workspace"],
+                  ["platform", "Start their own Cobblr"],
+                ] as const).map(([k, label]) => (
+                  <button
+                    key={k}
+                    type="button"
+                    onClick={() => setInviteKind(k)}
+                    className={
+                      "px-3 py-1.5 rounded-md font-medium transition " +
+                      (inviteKind === k
+                        ? "bg-cobble-600 text-white"
+                        : "text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800")
+                    }
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+
             <div className="flex flex-col sm:flex-row sm:items-end gap-2">
               <label className="flex-1 block min-w-0">
                 <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-                  Email hint (optional)
+                  Email {inviteKind === "platform" ? "(optional)" : "hint (optional)"}
                 </span>
                 <input
                   type="email"
@@ -282,35 +343,49 @@ export function MembersModal({ open, onClose, slug }: Props) {
                   className="input"
                 />
               </label>
-              <label className="block">
-                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-                  Role
-                </span>
-                <select
-                  value={inviteRole}
-                  onChange={(e) => setInviteRole(e.target.value as OrgMembership["role"])}
-                  className="input !w-auto"
-                >
-                  {INVITE_ROLES.map((r) => (
-                    <option key={r} value={r}>
-                      {r}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              {inviteKind === "workspace" && (
+                <label className="block">
+                  <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+                    Role
+                  </span>
+                  <select
+                    value={inviteRole}
+                    onChange={(e) => setInviteRole(e.target.value as OrgMembership["role"])}
+                    className="input !w-auto"
+                  >
+                    {INVITE_ROLES.map((r) => (
+                      <option key={r} value={r}>
+                        {r}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <button
                 type="submit"
-                disabled={createInvite.isPending}
+                disabled={createInvite.isPending || createSignupInvite.isPending}
                 className="px-3 py-1.5 rounded-md text-sm font-medium bg-slate-700 hover:bg-slate-600 text-mortar-50 transition disabled:opacity-50 flex items-center gap-1"
               >
-                <Plus size={13} /> Mint invite
+                <Plus size={13} /> {inviteKind === "platform" ? "Invite to Cobblr" : "Mint invite"}
               </button>
             </div>
-            <p className="text-[10px] font-mono text-faint dark:text-slate-500">
-              Add an email and Cobblr sends the invite — plus an in-app
-              notification if they already have a Cobblr account. The link is
-              also copied to your clipboard so you can share it directly.
-            </p>
+
+            {/* What this invite actually does — the part that was confusing. */}
+            {inviteKind === "workspace" ? (
+              <p className="text-[11px] text-faint dark:text-slate-500 leading-relaxed">
+                They join <span className="font-semibold text-muted dark:text-slate-400">{displaySlug(slug)}</span> as a{" "}
+                <span className="font-semibold text-muted dark:text-slate-400">{inviteRole}</span>. New to Cobblr?
+                Accepting creates their account — they become a member <span className="font-semibold">here</span>,
+                they don't get a workspace of their own. We email the link if you add an address (and notify them
+                in-app if they already have an account); it's copied to your clipboard either way.
+              </p>
+            ) : (
+              <p className="text-[11px] text-faint dark:text-slate-500 leading-relaxed">
+                They get their <span className="font-semibold">own</span> brand-new Cobblr workspace — they are{" "}
+                <span className="font-semibold">not</span> added to {displaySlug(slug)}. Best for inviting a friend to
+                try Cobblr. We email the join link if you add an address; it's copied to your clipboard too.
+              </p>
+            )}
           </form>
         )}
 

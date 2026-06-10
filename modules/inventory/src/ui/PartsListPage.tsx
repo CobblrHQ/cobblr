@@ -31,6 +31,7 @@ import {
   type FieldRendererId,
 } from "@cobblr/platform-web";
 import { useInventory } from "./context";
+import { useFieldPresentation } from "./useFieldPresentation";
 import { NewPartDialog } from "./NewPartDialog";
 import { ImportDialog } from "./ImportDialog";
 import { PartDetailModal } from "./PartDetailPage";
@@ -440,15 +441,36 @@ export function PartsListPage() {
       {parts.error && (
         <div className="text-sm text-ember-500">{(parts.error as Error).message}</div>
       )}
-      {parts.data && partItems.length === 0 && (
-        <div className="border-2 border-dashed border-line dark:border-slate-700 rounded-xl p-12 text-center text-faint dark:text-slate-500">
-          {activeView
-            ? `Nothing in “${activeView.name}” yet — add your first with New ${itemNoun}.`
-            : instance
-              ? `No ${itemNoun === "part" ? "parts" : itemNoun} yet — add your first with New ${itemNoun}.`
-              : "No parts match. Try widening the filter or add the first one."}
-        </div>
-      )}
+      {parts.data && partItems.length === 0 && (() => {
+        // A first-time user on an empty instance (Grace's empty "Yarn"/"Hooks")
+        // needs the add action right here, not a grey note pointing at a button
+        // lost in the toolbar. Show a real "New <item>" button — unless the
+        // emptiness is just a filter/search hiding rows (then guide to widen it).
+        const hasFilters = !!(
+          search || categoryId || locationId || lowOnly || insuredOnly ||
+          lifecycle || warrantyFilter !== "all" || archivedFilter !== "hide"
+        );
+        const plural = itemNoun === "part" ? "parts" : itemNoun;
+        return (
+          <div className="border-2 border-dashed border-line dark:border-slate-700 rounded-xl p-10 text-center space-y-3">
+            <p className="text-sm text-muted dark:text-slate-400">
+              {activeView
+                ? `Nothing in “${activeView.name}” yet.`
+                : hasFilters
+                  ? "No matches — try widening the filter."
+                  : `No ${plural} here yet. Add your first ${itemNoun} to get started.`}
+            </p>
+            {!hasFilters && (
+              <button
+                onClick={() => setAdding(true)}
+                className="inline-flex items-center gap-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-4 py-2 transition"
+              >
+                <Plus size={15} /> New {itemNoun}
+              </button>
+            )}
+          </div>
+        );
+      })()}
       {/* Grouped (a view with group_by) → one section per group; else flat. */}
       {partItems.length > 0 && groupBy
         ? groupItems(partItems, groupBy).map((g) => (
@@ -646,7 +668,16 @@ function PartsTable({
   onSelectAll: (checked: boolean) => void;
 }) {
   const navigate = useNavigate();
-  const anySupplier = items.some((p) => !!p.supplier_url);
+  // Honor the workspace's native-field overrides the way the create/detail
+  // modals already do — a yarn instance that hides Category/Location/Min
+  // shouldn't see them as table columns either. Overrides are scoped to the
+  // instance kind ("yarn:item"), so read it from context like NewPartDialog.
+  const { entityKind } = useInventory();
+  const fp = useFieldPresentation(entityKind);
+  const anySupplier = items.some((p) => !!p.supplier_url) && !fp.hidden("supplier_url");
+  const showCategory = !fp.hidden("category");
+  const showLocation = !fp.hidden("location");
+  const showMin = !fp.hidden("min_qty");
   return (
     <>
       {/* Desktop: the full table. Mobile: a stacked-card list (D7) —
@@ -667,14 +698,14 @@ function PartsTable({
             </th>
             <Th>#ID</Th>
             <Th>Name</Th>
-            <Th>Category</Th>
-            <Th>Location</Th>
+            {showCategory && <Th>{fp.label("category", "Category")}</Th>}
+            {showLocation && <Th>{fp.label("location", "Location")}</Th>}
             {customCols.map((c) => (
               <Th key={c.id}>{c.display_label}</Th>
             ))}
             <Th className="text-right">Qty</Th>
             <Th className="text-right">Available</Th>
-            <Th className="text-right">Min</Th>
+            {showMin && <Th className="text-right">{fp.label("min_qty", "Min")}</Th>}
             {anySupplier && <Th>Supplier</Th>}
             <Th />
           </tr>
@@ -713,18 +744,23 @@ function PartsTable({
                     {p.manufacturer && (
                       <span className="ml-2 text-[11px] text-faint dark:text-slate-500">{p.manufacturer}</span>
                     )}
-                    {(p.serial_number || p.model_number) && (
+                    {((p.serial_number && !fp.hidden("serial_number")) ||
+                      (p.model_number && !fp.hidden("model_number"))) && (
                       <div className="text-[10px] font-mono text-faint dark:text-slate-500 mt-0.5">
-                        {p.model_number && <span>m/n {p.model_number}</span>}
-                        {p.model_number && p.serial_number && <span> · </span>}
-                        {p.serial_number && <span>s/n {p.serial_number}</span>}
+                        {p.model_number && !fp.hidden("model_number") && <span>m/n {p.model_number}</span>}
+                        {p.model_number && !fp.hidden("model_number") && p.serial_number && !fp.hidden("serial_number") && <span> · </span>}
+                        {p.serial_number && !fp.hidden("serial_number") && <span>s/n {p.serial_number}</span>}
                       </div>
                     )}
                   </div>
                 </div>
               </td>
-              <td className="px-3 py-2 text-muted dark:text-slate-400">{p.category_name ?? "—"}</td>
-              <td className="px-3 py-2 text-muted dark:text-slate-400">{p.location_name ?? "—"}</td>
+              {showCategory && (
+                <td className="px-3 py-2 text-muted dark:text-slate-400">{p.category_name ?? "—"}</td>
+              )}
+              {showLocation && (
+                <td className="px-3 py-2 text-muted dark:text-slate-400">{p.location_name ?? "—"}</td>
+              )}
               {customCols.map((c) => (
                 <td key={c.id} className="px-3 py-2 text-muted dark:text-slate-400">
                   <FieldRenderer
@@ -736,14 +772,16 @@ function PartsTable({
               ))}
               <td className="px-3 py-2 text-right font-mono">{fmt(p.qty)} {p.unit}</td>
               <td className="px-3 py-2 text-right font-mono">{fmt(p.available_qty)}</td>
-              <td className="px-3 py-2 text-right font-mono text-faint dark:text-slate-500">
-                {p.min_qty == null ? "—" : fmt(p.min_qty)}
-              </td>
+              {showMin && (
+                <td className="px-3 py-2 text-right font-mono text-faint dark:text-slate-500">
+                  {p.min_qty == null ? "—" : fmt(p.min_qty)}
+                </td>
+              )}
               {anySupplier && (
                 <td className="px-3 py-2">
                   {p.supplier_url ? (
                     <a
-                      href={p.supplier_url}
+                      href={/^https?:\/\//i.test(p.supplier_url) ? p.supplier_url : undefined}
                       target="_blank"
                       rel="noopener noreferrer"
                       onClick={(e) => e.stopPropagation()}
@@ -823,9 +861,9 @@ function PartsTable({
                     qty {fmt(p.qty)} {p.unit}
                   </span>
                   <span>avail {fmt(p.available_qty)}</span>
-                  {p.min_qty != null && <span>min {fmt(p.min_qty)}</span>}
-                  {p.category_name && <span>{p.category_name}</span>}
-                  {p.location_name && <span>@ {p.location_name}</span>}
+                  {showMin && p.min_qty != null && <span>min {fmt(p.min_qty)}</span>}
+                  {showCategory && p.category_name && <span>{p.category_name}</span>}
+                  {showLocation && p.location_name && <span>@ {p.location_name}</span>}
                 </div>
                 <div className="mt-1 flex flex-wrap gap-1">
                   {p.low_stock && (

@@ -84,6 +84,19 @@ export async function effectiveAppliesTo(
   return { effective: defaultPredicate, default: defaultPredicate, overridden: false };
 }
 
+// NOTE ON AUTHORIZATION (2026-06-10 audit #3): this programmatic entry point
+// is intentionally NOT capability-gated. The HTTP route POST /actions/invoke
+// gates the *caller* with requireCapability; this function is the path wires
+// (automation) and recurrence use, where the action must run with the
+// authority the wire's AUTHOR configured — an admin-authored "on part create,
+// adjust stock" wire legitimately fires when a low-privilege member creates a
+// part. The escalation that capability-gating-here would guard against (a
+// member wiring up a privileged action they can't invoke) is closed at the
+// SOURCE instead: creating wires/bindings + installing bundles now requires
+// owner/admin (see routes/platform.ts bindings CRUD + routes/bundles.ts). Do
+// not add a triggering-user capability check here — it breaks legitimate
+// automation. If finer control is wanted, gate wire CREATION by the target
+// action's capability, not wire FIRING.
 export async function invoke(
   actionId: string,
   ctx: ActionInvokeContext,

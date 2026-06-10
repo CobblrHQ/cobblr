@@ -9,7 +9,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
-import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
+import { instanceOf, instanceQtyUnit, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireCapability, requireRole } from "./util.js";
 import { routeUnknownToMetadata } from "./route-helpers.js";
 
@@ -532,7 +532,10 @@ partsRouter.post(
         category_id: parsed.data.category_id ?? null,
         location_id: parsed.data.location_id ?? null,
         qty: String(parsed.data.qty ?? 0),
-        unit: parsed.data.unit ?? "each",
+        // The instance's qty_unit (a yarn instance tracks skeins) beats the
+        // generic "each" when the caller doesn't say — so API creates (scan
+        // confirm, CSV import) match what the New-<noun> modal would do.
+        unit: parsed.data.unit ?? instanceQtyUnit(req) ?? "each",
         cost: parsed.data.cost != null ? String(parsed.data.cost) : null,
         min_qty: parsed.data.min_qty != null ? String(parsed.data.min_qty) : null,
         manufacturer: parsed.data.manufacturer ?? null,

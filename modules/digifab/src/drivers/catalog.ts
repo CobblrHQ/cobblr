@@ -15,6 +15,7 @@ import klipper from "../../drivers-catalog/klipper-moonraker.json" with { type: 
 import duet from "../../drivers-catalog/duet-rrf.json" with { type: "json" };
 import prusalink from "../../drivers-catalog/prusalink.json" with { type: "json" };
 import fluidnc from "../../drivers-catalog/fluidnc.json" with { type: "json" };
+import homeAssistant from "../../drivers-catalog/home-assistant.json" with { type: "json" };
 
 export interface CatalogEntry {
   id: string;
@@ -41,6 +42,7 @@ export const DRIVER_CATALOG: CatalogEntry[] = [
   entry(duet, "RepRapFirmware (Duet Web Control). Raw gcode upload + M32 print start.", "none (or DWC password)"),
   entry(prusalink, "Prusa printers via PrusaLink. Raw PUT upload + print.", "API key (PrusaLink Settings)"),
   entry(fluidnc, "GRBL lasers/CNC on FluidNC. Upload to SD + $SD/Run; plain-text GRBL status.", "none (or device password)"),
+  entry(homeAssistant, "An ACTUATOR (no fabrication): wire an entity's schedule to a Home Assistant service — run an irrigation zone, flip a relay, call any service.call. `run-zone` fires script.water_zone with {zone}/{seconds}.", "long-lived access token (Profile → Security)"),
 ];
 
 // Bambu is intentionally NOT here: it speaks MQTT + FTPS, not REST, so it

@@ -22,9 +22,17 @@ export const DriverManifest = z.object({
   id: z.string().min(1).max(64).regex(/^[a-z0-9_-]+$/),
   name: z.string().min(1).max(120),
   version: z.string().max(32).optional(),
-  /** Header auth: send `header: <connection field `from`>`. */
+  /** Header auth: send `header: <prefix?><connection field `from`>`. The
+   *  optional `prefix` is prepended to the stored value — e.g. "Bearer " so a
+   *  Home Assistant long-lived token goes out as `Authorization: Bearer <tok>`
+   *  while the user only pastes the raw token. */
   auth: z
-    .object({ kind: z.literal("header"), header: z.string(), from: z.enum(["apiKey", "username", "password"]) })
+    .object({
+      kind: z.literal("header"),
+      header: z.string(),
+      from: z.enum(["apiKey", "username", "password"]),
+      prefix: z.string().optional(),
+    })
     .nullable()
     .optional(),
   /** Whether this manager supports print-file routing (most don't). */
@@ -51,13 +59,13 @@ export const DriverManifest = z.object({
     /** Content-Type for body="raw" (default application/octet-stream). */
     contentType: z.string().optional(),
     result: z.object({ fileId: Extract }),
-  }),
+  }).optional(),
   submit: z.object({
     method: Method,
     path: z.string(),
     body: z.record(z.unknown()).optional(),
     result: z.object({ jobId: Extract, queued: Extract.optional() }),
-  }),
+  }).optional(),
   status: z.object({
     method: Method,
     path: z.string(),
@@ -70,7 +78,21 @@ export const DriverManifest = z.object({
       state: z.object({ from: Extract, map: z.record(z.string()) }),
       progress: Extract.optional(),
     }),
-  }),
+  }).optional(),
+  /** OPTIONAL — the ACTUATOR shape. Maps a command NAME to an outbound HTTP
+   *  request. `{param}` placeholders in `path` + in `body` string-values are
+   *  filled from the command's params (the wire's per-entity args). No file, no
+   *  job — fire and ack. A manifest may carry commands ALONGSIDE the fabrication
+   *  sections, or commands-only (omit upload/submit/status) for a pure actuator. */
+  commands: z
+    .record(
+      z.object({
+        method: Method,
+        path: z.string(),
+        body: z.record(z.unknown()).optional(),
+      }),
+    )
+    .optional(),
 });
 
 export type DriverManifest = z.infer<typeof DriverManifest>;

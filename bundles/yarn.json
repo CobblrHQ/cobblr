@@ -1,29 +1,451 @@
 {
   "manifest": {
     "id": "cobblr.flagship.yarn",
-    "version": "0.2.0",
+    "version": "0.4.0",
     "name": "Yarn",
-    "description": "A yarn stash by brand, colorway, fibre, and weight, tracked by skein·metre·gram, with a grouped 'My yarn stash' view.",
+    "description": "Yarn as its own inventory instance \u2014 skein-tracked, yarn-only fields, grouped by weight. Optional Hooks + Designs tables.",
     "author": "Cobblr",
-    "requires": [{ "module": "inventory" }],
-    "field_defs": [
-      { "entity_kind": "inventory:part", "name": "color", "display_label": "Color", "type": "text", "position": 1, "renderer": "color-hex" },
-      { "entity_kind": "inventory:part", "name": "colorway", "display_label": "Colorway", "type": "text", "position": 2 },
-      { "entity_kind": "inventory:part", "name": "fiber", "display_label": "Fibre", "type": "text", "position": 3, "choices": ["Wool", "Merino", "Cotton", "Acrylic", "Nylon", "Chenille", "Alpaca", "Silk", "Linen", "Bamboo", "Cashmere", "Blend"] },
-      { "entity_kind": "inventory:part", "name": "weight_class", "display_label": "Weight", "type": "text", "position": 4, "choices": ["0 – Lace", "1 – Fingering", "2 – Sport", "3 – DK", "4 – Worsted", "4 – Aran", "5 – Bulky", "6 – Super Bulky"], "help": "Craft Yarn Council standard weight — 0 (Lace, thinnest) to 6 (Super Bulky, thickest)." },
-      { "entity_kind": "inventory:part", "name": "vendor", "display_label": "Vendor", "type": "text", "position": 5, "choices": ["Michaels", "Hobby Lobby", "Walmart", "Joann", "Amazon", "Etsy", "Local yarn shop"] },
-      { "entity_kind": "inventory:part", "name": "length_per_skein", "display_label": "Length / skein (m)", "type": "number", "position": 6 },
-      { "entity_kind": "inventory:part", "name": "dye_lot", "display_label": "Dye lot", "type": "text", "position": 7 },
-      { "entity_kind": "inventory:part", "name": "stash_summary", "display_label": "Summary", "type": "computed", "position": 10, "template": "{{weight_class}} {{fiber}} · {{length_per_skein | default: \"?\"}} m/skein" }
+    "released_at": "2026-06-08",
+    "changelog": "Real yarn-user polish: the Color field is a swatch picker (type a hex or pick one), Brand + Price now show right on the \u201cNew yarn\u201d modal, and a \u201cSuggested needle size\u201d field was added. Dropdowns (vendor, fibre\u2026) let you add a new option on the fly that sticks for next time. Dropped the confusing \u201cSummary\u201d computed field. \u2014 Yarn is its OWN table (a Yarn instance), not a skin over generic inventory: only yarn fields show, the button reads \u201cNew yarn\u201d, quantities are in skeins. Hooks and Designs become their own tables too. The generic inventory cruft (warranty, insured, lifecycle\u2026) is hidden, and the pinned view is named for its lens (\u201cBy weight\u201d).",
+    "requires": [
+      {
+        "module": "inventory"
+      }
     ],
-    "field_overrides": [
-      { "entity_kind": "inventory:part", "name": "manufacturer", "display_label": "Brand" },
-      { "entity_kind": "inventory:part", "name": "cost", "display_label": "Price / skein" },
-      { "entity_kind": "inventory:part", "name": "serial_number", "hidden": true },
-      { "entity_kind": "inventory:part", "name": "model_number", "hidden": true }
+    "provides_instances": [
+      {
+        "module": "inventory",
+        "instance_name": "yarn",
+        "display_name": "Yarn",
+        "glyph": "\ud83e\uddf6",
+        "item_noun": "yarn",
+        "qty_unit": "skein",
+        "field_defs": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "color",
+            "display_label": "Color",
+            "type": "text",
+            "position": 1,
+            "renderer": "color-hex",
+            "help": "The basic shade \u2014 pick a hex/colour for the swatch."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "colorway",
+            "display_label": "Colorway",
+            "type": "text",
+            "position": 2,
+            "help": "The maker's named shade \u2014 e.g. \u201cPeacock Heather\u201d (printed on the yarn label)."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "fiber",
+            "display_label": "Fibre",
+            "type": "text",
+            "position": 3,
+            "choices": [
+              "Wool",
+              "Merino",
+              "Cotton",
+              "Acrylic",
+              "Nylon",
+              "Chenille",
+              "Alpaca",
+              "Silk",
+              "Linen",
+              "Bamboo",
+              "Cashmere",
+              "Blend"
+            ],
+            "help": "What the yarn is made of."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "weight_class",
+            "display_label": "Weight",
+            "type": "text",
+            "position": 4,
+            "choices": [
+              "0 \u2013 Lace",
+              "1 \u2013 Fingering",
+              "2 \u2013 Sport",
+              "3 \u2013 DK",
+              "4 \u2013 Worsted",
+              "4 \u2013 Aran",
+              "5 \u2013 Bulky",
+              "6 \u2013 Super Bulky"
+            ],
+            "help": "Craft Yarn Council standard weight \u2014 0 (Lace, thinnest) to 6 (Super Bulky, thickest)."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "vendor",
+            "display_label": "Vendor",
+            "type": "text",
+            "position": 5,
+            "choices": [
+              "Michaels",
+              "Hobby Lobby",
+              "Walmart",
+              "Joann",
+              "Amazon",
+              "Etsy",
+              "Local yarn shop"
+            ],
+            "help": "Where you bought it."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "length_per_skein",
+            "display_label": "Length / skein (m)",
+            "type": "number",
+            "position": 6,
+            "help": "Metres per skein, from the label \u2014 used to estimate if you have enough for a project."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "dye_lot",
+            "display_label": "Dye lot",
+            "type": "text",
+            "position": 7,
+            "help": "The batch code on the label \u2014 buy the same lot so colours match across skeins."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "needle_size",
+            "display_label": "Suggested needle size",
+            "type": "text",
+            "position": 8,
+            "choices": [
+              "2.0 mm",
+              "2.5 mm",
+              "3.0 mm",
+              "3.5 mm",
+              "4.0 mm",
+              "4.5 mm",
+              "5.0 mm",
+              "5.5 mm",
+              "6.0 mm",
+              "6.5 mm",
+              "7.0 mm",
+              "8.0 mm",
+              "9.0 mm",
+              "10.0 mm",
+              "12.0 mm"
+            ],
+            "help": "The needle/hook size the label recommends for this yarn (in mm)."
+          }
+        ],
+        "field_overrides": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "manufacturer",
+            "display_label": "Brand"
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "cost",
+            "display_label": "Price / skein"
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "category",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "location",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "warranty",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "min_qty",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "supplier_url",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "serial_number",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "model_number",
+            "hidden": true
+          }
+        ],
+        "saved_views": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "By weight",
+            "view_type": "table",
+            "pinned": true,
+            "config": {
+              "group_by": "weight_class",
+              "visible_fields": [
+                "title",
+                "color",
+                "colorway",
+                "fiber",
+                "vendor",
+                "qty",
+                "unit",
+                "length_per_skein"
+              ]
+            }
+          }
+        ]
+      }
     ],
-    "saved_views": [
-      { "entity_kind": "inventory:part", "name": "My yarn stash", "view_type": "table", "pinned": true, "config": { "group_by": "weight_class", "visible_fields": ["title", "color", "colorway", "fiber", "vendor", "qty", "unit", "length_per_skein"] } }
+    "features": [
+      {
+        "key": "designs",
+        "name": "Designs",
+        "question": "Want to track your designs & patterns too?",
+        "description": "A 'Designs' table (a projects instance) \u2014 each design with its pattern (file/link) + category, and the yarn it needs allocated to it.",
+        "default": false,
+        "requires": [
+          {
+            "module": "projects"
+          }
+        ],
+        "next_steps": [
+          {
+            "label": "Open your Designs table",
+            "module": "projects",
+            "path": "/instances/designs",
+            "hint": "Each design with its pattern link + the yarn it needs."
+          }
+        ],
+        "provides_instances": [
+          {
+            "module": "projects",
+            "instance_name": "designs",
+            "display_name": "Designs",
+            "glyph": "\ud83e\uddf5",
+            "item_noun": "design",
+            "field_defs": [
+              {
+                "entity_kind": "projects:project",
+                "name": "pattern_url",
+                "display_label": "Pattern link",
+                "type": "url",
+                "position": 1,
+                "renderer": "url-link",
+                "help": "Link to the pattern (Ravelry, a PDF, a blog post\u2026)."
+              },
+              {
+                "entity_kind": "projects:project",
+                "name": "pattern_category",
+                "display_label": "Category",
+                "type": "text",
+                "position": 2,
+                "choices": [
+                  "Wearables",
+                  "Toys",
+                  "Home-wear",
+                  "Blankets"
+                ],
+                "help": "What kind of make this is."
+              }
+            ],
+            "saved_views": [
+              {
+                "entity_kind": "projects:project",
+                "name": "By category",
+                "view_type": "table",
+                "pinned": true,
+                "config": {
+                  "group_by": "pattern_category",
+                  "visible_fields": [
+                    "title",
+                    "pattern_category",
+                    "status",
+                    "pattern_url"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "key": "hooks",
+        "name": "Hooks & needles",
+        "question": "Keep track of your hooks & needles?",
+        "description": "A separate 'Hooks' table (an inventory instance) \u2014 your crochet hooks / knitting needles by gauge + material.",
+        "default": false,
+        "next_steps": [
+          {
+            "label": "Open your Hooks table",
+            "module": "inventory",
+            "path": "/instances/hooks",
+            "hint": "Crochet hooks / knitting needles by gauge + material."
+          }
+        ],
+        "provides_instances": [
+          {
+            "module": "inventory",
+            "instance_name": "hooks",
+            "display_name": "Hooks",
+            "glyph": "\ud83e\udea1",
+            "item_noun": "hook",
+            "qty_unit": "each",
+            "field_defs": [
+              {
+                "entity_kind": "inventory:part",
+                "name": "hook_gauge",
+                "display_label": "Hook gauge",
+                "type": "text",
+                "position": 1,
+                "choices": [
+                  "1.0 mm",
+                  "1.5 mm",
+                  "2.0 mm",
+                  "2.5 mm",
+                  "3.0 mm",
+                  "3.5 mm",
+                  "4.0 mm",
+                  "4.5 mm",
+                  "5.0 mm",
+                  "5.5 mm",
+                  "6.0 mm",
+                  "6.5 mm",
+                  "7.0 mm",
+                  "8.0 mm",
+                  "9.0 mm",
+                  "10.0 mm"
+                ],
+                "help": "Hook/needle size in mm (the number stamped on it)."
+              },
+              {
+                "entity_kind": "inventory:part",
+                "name": "hook_material",
+                "display_label": "Hook material",
+                "type": "text",
+                "position": 2,
+                "choices": [
+                  "All-metal",
+                  "Metal + silicone grip",
+                  "Wood",
+                  "Bamboo",
+                  "Plastic"
+                ],
+                "help": "What the hook is made of \u2014 affects grip + glide."
+              }
+            ],
+            "field_overrides": [
+              {
+                "entity_kind": "inventory:part",
+                "name": "category",
+                "hidden": true
+              },
+              {
+                "entity_kind": "inventory:part",
+                "name": "location",
+                "hidden": true
+              },
+              {
+                "entity_kind": "inventory:part",
+                "name": "warranty",
+                "hidden": true
+              },
+              {
+                "entity_kind": "inventory:part",
+                "name": "min_qty",
+                "hidden": true
+              },
+              {
+                "entity_kind": "inventory:part",
+                "name": "supplier_url",
+                "hidden": true
+              },
+              {
+                "entity_kind": "inventory:part",
+                "name": "serial_number",
+                "hidden": true
+              },
+              {
+                "entity_kind": "inventory:part",
+                "name": "model_number",
+                "hidden": true
+              }
+            ],
+            "saved_views": [
+              {
+                "entity_kind": "inventory:part",
+                "name": "By material",
+                "view_type": "table",
+                "pinned": true,
+                "config": {
+                  "group_by": "hook_material",
+                  "visible_fields": [
+                    "title",
+                    "hook_gauge",
+                    "hook_material",
+                    "qty"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "key": "shopping-list",
+        "name": "Shopping list",
+        "question": "Auto-build a shopping list when yarn runs low?",
+        "description": "When yarn runs low it auto-lands on a 'Shopping list' so you know what to restock.",
+        "default": false,
+        "requires": [
+          {
+            "module": "lists"
+          }
+        ],
+        "provides_instances": [
+          {
+            "module": "inventory",
+            "instance_name": "yarn",
+            "display_name": "Yarn",
+            "wires": [
+              {
+                "source_kind": "inventory:part",
+                "action_id": "lists:add-item",
+                "trigger_type": "event",
+                "trigger_event": "inventory.stock.low",
+                "args": {
+                  "listTitle": "Shopping list"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "key": "scan",
+        "name": "Scan to add",
+        "question": "Add yarn by scanning a barcode or receipt?",
+        "description": "Snap a barcode, skein label, or receipt to stock yarn fast (and log the purchase).",
+        "default": false,
+        "requires": [
+          {
+            "module": "core-scan"
+          },
+          {
+            "module": "purchases"
+          }
+        ]
+      }
     ]
   }
 }

@@ -122,3 +122,13 @@ export function sessionUser(req: Request): { id: string; email: string; display_
 export function instanceOf(req: Request): string {
   return (req as unknown as { instance?: string }).instance ?? "inventory";
 }
+
+/** The instance's default quantity unit (a "yarn" instance tracks skeins),
+ *  from the config blob resolveInstance stamps on the request. Null on
+ *  legacy /modules routes or when the instance sets none — callers fall
+ *  back to "each". */
+export function instanceQtyUnit(req: Request): string | null {
+  const cfg = (req as unknown as { instanceConfig?: Record<string, unknown> }).instanceConfig;
+  const unit = cfg?.qty_unit;
+  return typeof unit === "string" && unit.trim() ? unit : null;
+}

@@ -97,6 +97,21 @@ export interface MachineDriver {
   submitJob(args: SubmitArgs): Promise<SubmitResult>;
   /** Poll a job's status. Read-only. */
   getJobStatus(jobId: string): Promise<JobStatus>;
+  /** OPTIONAL — the ACTUATOR shape: fire a parameterized command-and-forget
+   *  (open a valve for N seconds, call a service, flip a relay). No file, no
+   *  long-lived job — fire and ack. Drivers that only fabricate (file → job)
+   *  leave this undefined; a wire reaches it through the digifab:run-command
+   *  action. See docs/BACKLOG.md "Outbound device COMMANDS". */
+  runCommand?(command: string, params: Record<string, unknown>): Promise<CommandResult>;
+}
+
+/** Ack of a command-and-forget actuator call. No job to poll. */
+export interface CommandResult {
+  ok: boolean;
+  /** Optional upstream reference / ack id. */
+  ref?: string;
+  /** Optional detail (e.g. an error reason). */
+  detail?: string;
 }
 
 /** Config a driver is constructed from (creds decrypted by the caller).

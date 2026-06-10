@@ -66,6 +66,10 @@ export function register(): void {
     // Credential-less: routing is by the connected edge, keyed on the user who
     // owns the personal Connection (injected by the resolver as __connection_user_id).
     describeCredentials: () => ({}),
+    // NOT a zero-config default: it only works once an edge agent is connected
+    // and routed via a personal Connection. Excluding it from auto-select keeps a
+    // no-provider workspace's degrade path a clean no_ai_provider.
+    autoSelectable: false,
     capabilities: SUPPORTED,
     invoke: async (ctx) => {
       const channelKey = channelKeyOf(ctx.credentials);

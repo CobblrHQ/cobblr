@@ -127,7 +127,7 @@ router.post(
     }
     if (body.driver === "cups") {
       try {
-        assertSafePrinterUrl(body.base_url);
+        await assertSafePrinterUrl(body.base_url);
       } catch (e) {
         res.status(400).json({ error: { code: "bad_url", message: (e as Error).message } });
         return;
@@ -182,7 +182,7 @@ router.patch(
     }
     if (body.base_url !== undefined) {
       try {
-        assertSafePrinterUrl(body.base_url);
+        await assertSafePrinterUrl(body.base_url);
       } catch (e) {
         res.status(400).json({ error: { code: "bad_url", message: (e as Error).message } });
         return;

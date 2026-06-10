@@ -18,7 +18,7 @@ import { provisionTenantDb } from "../db/provision.js";
 import { hashPassword, verifyPassword } from "../auth/password.js";
 import { signSession } from "../auth/jwt.js";
 import { isPlatformAdmin } from "../auth/middleware.js";
-import { publicSignupEnabled } from "../auth/signup-gate.js";
+import { publicSignupEnabled, selfServeInvitesEnabled } from "../auth/signup-gate.js";
 import { dispatch } from "../platform/notifications.js";
 import * as activity from "../platform/activity.js";
 import { fireSignup, sendAuthEmail } from "../platform/hosted-seams.js";
@@ -266,6 +266,7 @@ export async function buildAuthResponse(userId: string): Promise<AuthResponse> {
 authRouter.get("/config", (_req, res) => {
   res.json({
     signup_enabled: publicSignupEnabled(),
+    self_serve_invites: selfServeInvitesEnabled(),
   });
 });
 
@@ -867,7 +868,9 @@ authRouter.post("/password/reset", async (req, res, next) => {
     await meta.updateTable("auth_password_reset_tokens").set({ consumed_at: new Date() }).where("id", "=", row.id).execute();
     await meta
       .updateTable("users")
-      .set({ password_hash: newHash, must_reset_password: false })
+      // tokens_valid_from = now() revokes every existing session/app JWT — a
+      // password reset is exactly when a stolen token must die. Audit #6.
+      .set({ password_hash: newHash, must_reset_password: false, tokens_valid_from: new Date() })
       .where("id", "=", row.user_id)
       .execute();
 

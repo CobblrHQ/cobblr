@@ -118,6 +118,18 @@ export interface SignupInvite {
   status: "open" | "consumed" | "expired" | "revoked";
 }
 
+export interface WaitlistEntry {
+  id: string;
+  email: string;
+  source: string;
+  signed_up_at: string | null;
+  status: "pending" | "invited" | "dismissed";
+  decided_at: string | null;
+  created_at: string;
+  decided_by_email?: string | null;
+  invite_status?: "open" | "consumed" | "expired" | "revoked" | null;
+}
+
 export interface FeedbackItem {
   id: string;
   type: string;
@@ -307,7 +319,7 @@ export const api = {
     request<T>(method, path, body),
   healthz: () => request<Healthz>("GET", "/healthz"),
   authConfig: () =>
-    request<{ signup_enabled: boolean }>("GET", "/auth/config"),
+    request<{ signup_enabled: boolean; self_serve_invites?: boolean }>("GET", "/auth/config"),
   signup: (body: {
     email: string;
     password: string;
@@ -328,6 +340,24 @@ export const api = {
     request<{ items: SignupInvite[] }>("GET", "/super-admin/signup-invites"),
   revokeSignupInvite: (id: string) =>
     request<void>("POST", `/super-admin/signup-invites/${id}/revoke`),
+  // Superadmin: marketing-site waitlist — list, approve (mints an invite), dismiss.
+  listWaitlist: () => request<{ items: WaitlistEntry[] }>("GET", "/super-admin/waitlist"),
+  approveWaitlist: (id: string, body?: { note?: string; expires_in_days?: number }) =>
+    request<{ id: string; status: "invited"; invite: { token: string; invited_email: string | null; expires_at: string | null; emailed: boolean } }>(
+      "POST",
+      `/super-admin/waitlist/${id}/approve`,
+      body ?? {},
+    ),
+  dismissWaitlist: (id: string) => request<void>("POST", `/super-admin/waitlist/${id}/dismiss`),
+  // Any workspace OWNER: invite a friend to Cobblr who gets their OWN
+  // workspace (distinct from a workspace-member invite). Reuses the
+  // signup-invite machinery, attributed to the caller.
+  mintMySignupInvite: (body: { email?: string; note?: string; expires_in_days?: number }) =>
+    request<SignupInvite & { token: string; emailed: boolean }>("POST", "/me/signup-invites", body),
+  listMySignupInvites: () =>
+    request<{ items: SignupInvite[] }>("GET", "/me/signup-invites"),
+  revokeMySignupInvite: (id: string) =>
+    request<void>("POST", `/me/signup-invites/${id}/revoke`),
   // Feedback: any authed user submits; super-admin lists / triages.
   submitFeedback: (body: {
     type: "bug" | "confusing" | "idea" | "other";
@@ -824,8 +854,14 @@ export const api = {
   // /me/profile (display_name + password change).
   updateMe: (body: { display_name?: string }) =>
     request<{ user: SessionUser }>("PATCH", "/me", body),
-  changeMyPassword: (body: { current_password: string; new_password: string }) =>
-    request<void>("POST", "/me/password", body),
+  // Changing the password revokes all prior tokens server-side; the response
+  // carries a freshly-minted one for THIS session, which we persist so the
+  // user stays logged in on this device.
+  changeMyPassword: async (body: { current_password: string; new_password: string }) => {
+    const res = await request<{ token: string }>("POST", "/me/password", body);
+    if (res?.token) setToken(res.token);
+    return res;
+  },
 
   meNotifications: (limit = 25) =>
     request<{ items: CrossOrgNotificationEntry[] }>(
@@ -1555,6 +1591,20 @@ export const api = {
       `/orgs/${slug}/modules/core-scan/inbox/${id}/match`,
       {},
     ),
+  // The workspace "scan menu" — every routable table (instances + module
+  // defaults) with its field defs. The SAME menu the matchmaker prompts
+  // with; drives the confirm form's target picker so the UI reflects the
+  // workspace's actual tables instead of hardcoding module names.
+  scanMenu: (slug: string) =>
+    request<{ items: ScanMenuEntry[] }>(
+      "GET",
+      `/orgs/${slug}/modules/core-scan/menu`,
+    ),
+  // Would an AI call work right now (kill-switch → personal connection →
+  // workspace/managed provider → entitlement)? Member-accessible, so
+  // AI-consuming UI can warn about the degraded no-AI experience up front.
+  getAiStatus: (slug: string) =>
+    request<AiStatus>("GET", `/orgs/${slug}/ai-status`),
 
   // core-ai — provider config + capability defaults + usage. See
   // docs/modules/core-ai.md.
@@ -1685,6 +1735,17 @@ export const api = {
       "GET",
       `/super-admin/ai-activity/${orgId}/${id}`,
     ),
+  // Super-admin: cross-workspace barcode-lookup cache (read-only viewer).
+  superAdminBarcodeCache: (q: { q?: string; org?: string; source?: string; found?: boolean; limit?: number; layer?: "shared" | "workspaces" } = {}) => {
+    const qs = new URLSearchParams();
+    if (q.q) qs.set("q", q.q);
+    if (q.org) qs.set("org", q.org);
+    if (q.source) qs.set("source", q.source);
+    if (q.found !== undefined) qs.set("found", String(q.found));
+    if (q.limit) qs.set("limit", String(q.limit));
+    if (q.layer === "shared") qs.set("layer", "shared");
+    return request<{ items: SuperAdminBarcodeCacheItem[] }>("GET", `/super-admin/barcode-cache?${qs.toString()}`);
+  },
   getAiUsageSummary: (slug: string) =>
     request<{ since: string; items: AiUsageSummaryRow[] }>(
       "GET",
@@ -2075,6 +2136,11 @@ export const api = {
     ),
 };
 
+export interface AiStatus {
+  available: boolean;
+  reason: "ok" | "operator_disabled" | "not_entitled" | "no_provider";
+}
+
 export interface AiProvider {
   id: string;
   provider_id: string;
@@ -2273,6 +2339,31 @@ export interface ScanCandidate {
   confidence: number;
   name: string;
   fields: Record<string, string | number | boolean>;
+  /** Top candidate only: terse reconciliation of all the item data. */
+  notes?: string;
+  /** Unit count when the item data implies one ("1 Pack Of 9 Skein"). */
+  quantity?: number;
+}
+
+/** One field on a scan-menu table (a trimmed field def). */
+export interface ScanMenuField {
+  name: string;
+  label: string;
+  type: string;
+  help?: string;
+  choices?: string[];
+}
+
+/** One routable destination in the workspace scan menu — an enabled
+ *  instance ("Yarn") or a module's default table. Mirrors core-scan's
+ *  ScanMenuEntry (services/matchmaker.ts). */
+export interface ScanMenuEntry {
+  module: string;
+  instance: string | null;
+  kind: string;
+  noun: string;
+  label: string;
+  fields: ScanMenuField[];
 }
 
 /** A captured matchmaker eval case (P2). The expected answer = the admin's
@@ -2698,6 +2789,27 @@ export interface SuperAdminAiActivityItem extends AiActivityItem {
   org_slug: string;
   user_email: string | null;
   user_name: string | null;
+}
+
+/** One row of a workspace's per-UPC barcode-lookup cache (operator viewer). */
+export interface SuperAdminBarcodeCacheItem {
+  upc: string;
+  found: boolean;
+  source: string;
+  title: string | null;
+  brand: string | null;
+  model: string | null;
+  description: string | null;
+  category: string | null;
+  image_url: string | null;
+  raw: unknown;
+  fetched_at: string;
+  /** Shared-layer misses carry a TTL (re-checked later); null = permanent. */
+  expires_at?: string | null;
+  /** Null in the instance-wide (shared-layer) view — it's deduped across workspaces. */
+  org_id: string | null;
+  org_name: string | null;
+  org_slug: string | null;
 }
 
 /** A write the agentic chat proposes; the user confirms before it runs. */

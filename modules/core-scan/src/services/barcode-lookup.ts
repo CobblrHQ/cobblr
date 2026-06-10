@@ -1,16 +1,24 @@
-// Barcode lookup against two free providers, fired concurrently.
-// Inspired by companion app/api/src/services/barcode-lookup.ts but
-// streamlined for v0.1: no rate-limit typed-error rerouting yet,
-// no web-search fallback. Both providers are keyless; the
-// upcitemdb free tier rate-limits aggressively (100/day) so we
-// degrade gracefully to Open Products Facts.
+// Barcode lookup: go-upc.com first (authoritative — curated data, never
+// a wrong-product answer; see tryGoUpc for the politeness contract),
+// then two free API providers fired concurrently as the fallback.
 //
-// Output: a normalized `BarcodeHit | null`. The caller decides
-// what to do on a miss (today: leave the inbox row barcode-only,
-// user fills in manually).
+// The hard-won lesson (ported properly from companion app this time): the
+// upcitemdb FREE TRIAL endpoint is a single global bucket shared by every
+// trial user on the internet, so it returns its rate-limit codes (`TOO_FAST`
+// burst, `EXCEED_LIMIT` daily) *constantly* — often on the very first call.
+// A rate-limit is NOT a "this product doesn't exist" miss: it's "ask again
+// later." Conflating the two is fatal, because the orchestrator caches misses
+// — so a rate-limited scan would poison the cache with a PERMANENT miss for a
+// real product (the classic "scanned my yarn, got nothing, re-scan still
+// nothing" bug). So this returns a discriminated outcome and the caller must
+// NOT cache `rate_limited`.
+//
+// Provider preference: go-upc (curated) > upcitemdb (crowdsourced; decent
+// retail/craft coverage but can return junk or wrong listings) > Open Products
+// Facts (food/household-leaning, almost no craft coverage).
 
 export interface BarcodeHit {
-  source: "upcitemdb" | "openproductsfacts";
+  source: "upcitemdb" | "openproductsfacts" | "go-upc" | string;
   title: string;
   brand: string | null;
   model: string | null;
@@ -20,101 +28,355 @@ export interface BarcodeHit {
   raw: Record<string, unknown>;
 }
 
-const TIMEOUT_MS = 6_000;
+export type BarcodeOutcome =
+  | { outcome: "hit"; hit: BarcodeHit }
+  | { outcome: "miss" }
+  // A provider was reachable but throttled and no other provider had the
+  // product. The UPC is UNRESOLVED, not absent — the caller must leave the
+  // cache untouched so a later scan retries.
+  | { outcome: "rate_limited"; scope: "burst" | "daily" };
 
-async function fetchJson(url: string, headers: Record<string, string> = {}): Promise<unknown> {
+// upcitemdb's trial can be slow under load; give it room. OPF is snappy.
+const UPCITEMDB_TIMEOUT_MS = 12_000;
+const OPF_TIMEOUT_MS = 10_000;
+
+type ProviderResult =
+  | { kind: "hit"; hit: BarcodeHit }
+  | { kind: "miss" }
+  | { kind: "rate_limited"; scope: "burst" | "daily" };
+
+async function fetchJson(
+  url: string,
+  timeoutMs: number,
+  headers: Record<string, string> = {},
+): Promise<{ status: number; body: unknown }> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url, {
-      headers: { "user-agent": "cobblr-core-scan/0.1", ...headers },
+      headers: { "user-agent": "cobblr-core-scan/0.2", accept: "application/json", ...headers },
       signal: controller.signal,
     });
-    if (!res.ok) {
-      return { __status: res.status };
-    }
-    return res.json();
+    const body = res.ok ? await res.json().catch(() => null) : null;
+    return { status: res.status, body };
   } finally {
     clearTimeout(timer);
   }
 }
 
-async function tryUpcitemdb(upc: string): Promise<BarcodeHit | null> {
-  // Free trial tier: https://www.upcitemdb.com/wp/docs/main/development/free-tier/
-  // 100/day, 15/30s burst. Returns 429 on rate limit — we treat
-  // that as "miss" and lean on the other provider. Future v0.2:
-  // typed `BarcodeRateLimitError` so the caller can NOT cache the
-  // miss (per the companion app impl).
-  const data = await fetchJson(
+async function tryUpcitemdb(upc: string): Promise<ProviderResult> {
+  const { status, body } = await fetchJson(
     `https://api.upcitemdb.com/prod/trial/lookup?upc=${encodeURIComponent(upc)}`,
-  ) as { items?: Array<Record<string, unknown>>; __status?: number };
-  if (!data || data.__status || !Array.isArray(data.items) || data.items.length === 0) {
-    return null;
-  }
+    UPCITEMDB_TIMEOUT_MS,
+  );
+  // HTTP 429 = daily quota spent.
+  if (status === 429) return { kind: "rate_limited", scope: "daily" };
+  const data = body as { code?: string; total?: number; items?: Array<Record<string, unknown>> } | null;
+  // The trial signals throttling in the 200-body too: TOO_FAST = the 15/30s
+  // burst cap, EXCEED_LIMIT = the daily quota. Treat BOTH as retryable, never
+  // as a miss — this is the whole point of the rewrite.
+  if (data?.code === "TOO_FAST") return { kind: "rate_limited", scope: "burst" };
+  if (data?.code === "EXCEED_LIMIT") return { kind: "rate_limited", scope: "daily" };
+  if (!data || !Array.isArray(data.items) || data.items.length === 0) return { kind: "miss" };
   const item = data.items[0]!;
+  const title = String(item.title ?? "").trim();
+  if (!title) return { kind: "miss" }; // a row with no name is no better than a miss
   const images = Array.isArray(item.images) ? (item.images as string[]) : [];
   return {
-    source: "upcitemdb",
-    title: String(item.title ?? "").trim(),
-    brand: typeof item.brand === "string" ? item.brand : null,
-    model: typeof item.model === "string" ? item.model : null,
-    description: typeof item.description === "string" ? item.description : null,
-    category: typeof item.category === "string" ? item.category : null,
-    image_url: images[0] ?? null,
-    raw: item as Record<string, unknown>,
+    kind: "hit",
+    hit: {
+      source: "upcitemdb",
+      title,
+      brand: typeof item.brand === "string" ? item.brand : null,
+      model: typeof item.model === "string" ? item.model : null,
+      description: typeof item.description === "string" ? item.description : null,
+      category: typeof item.category === "string" ? item.category : null,
+      image_url: images.find((u) => typeof u === "string" && u.length > 0) ?? null,
+      raw: item,
+    },
   };
 }
 
-async function tryOpenProductsFacts(upc: string): Promise<BarcodeHit | null> {
-  // OPF is part of the OFF family. The v2 API returns 200 with
-  // `status: 0` on a miss; 200 with `status: 1` on a hit.
-  const data = await fetchJson(
+async function tryOpenProductsFacts(upc: string): Promise<ProviderResult> {
+  const { body } = await fetchJson(
     `https://world.openproductsfacts.org/api/v2/product/${encodeURIComponent(upc)}.json`,
-  ) as {
-    status?: number;
-    product?: Record<string, unknown>;
-    __status?: number;
-  };
-  if (!data || data.__status || data.status !== 1 || !data.product) return null;
+    OPF_TIMEOUT_MS,
+  );
+  const data = body as { status?: number; product?: Record<string, unknown> } | null;
+  if (!data || data.status !== 1 || !data.product) return { kind: "miss" };
   const p = data.product;
   const name =
     (typeof p.product_name === "string" && p.product_name) ||
     (typeof p.generic_name === "string" && p.generic_name) ||
     "";
-  if (!name) return null;
+  if (!name) return { kind: "miss" };
   return {
-    source: "openproductsfacts",
-    title: name.trim(),
-    brand: typeof p.brands === "string" ? p.brands.split(",")[0]?.trim() ?? null : null,
-    model: null,
-    description: typeof p.generic_name === "string" ? p.generic_name : null,
-    category: typeof p.categories === "string" ? p.categories.split(",")[0]?.trim() ?? null : null,
-    image_url:
-      (typeof p.image_front_url === "string" && p.image_front_url) ||
-      (typeof p.image_url === "string" && p.image_url) ||
-      null,
-    raw: p,
+    kind: "hit",
+    hit: {
+      source: "openproductsfacts",
+      title: name.trim(),
+      brand: typeof p.brands === "string" ? p.brands.split(",")[0]?.trim() ?? null : null,
+      model: null,
+      description: typeof p.generic_name === "string" ? p.generic_name : null,
+      category: typeof p.categories === "string" ? p.categories.split(",")[0]?.trim() ?? null : null,
+      image_url:
+        (typeof p.image_front_url === "string" && p.image_front_url) ||
+        (typeof p.image_url === "string" && p.image_url) ||
+        null,
+      raw: p,
+    },
   };
 }
 
-/** Concurrent race — return the first non-null hit. If both
- *  return null we return null. If both throw, we return null
- *  silently (the inbox row stays barcode-only and the user can
- *  fill in manually). */
-export async function lookupBarcode(upc: string): Promise<BarcodeHit | null> {
-  const norm = upc.trim();
-  if (!norm) return null;
+// ── go-upc.com — the "use the website" tier ──────────────────────────
+// Go-UPC is the PRIMARY/authoritative provider (the author, 2026-06-10): its
+// data is curated where the API providers are crowdsourced and can
+// return outright WRONG products — and a wrong auto-fill is worse than
+// a miss, because it gets trusted and cached. It also has the best
+// hardware/craft coverage we've seen (it resolved a Southwire
+// electrical box both free APIs missed). Its public /search page serves
+// the data as plain, stable HTML; their robots.txt explicitly ALLOWS
+// /search (only /api/v1/code/ is disallowed) with `Crawl-delay: 10`,
+// so this scrapes politely:
+//   • ≥10s between requests (the crawl-delay) — and the gate NEVER
+//     QUEUES: if the slot isn't nearly free, the lookup SKIPS go-upc
+//     and the APIs answer instead. An unbounded in-process queue
+//     stacked 10s×N under CI's concurrent scans, stalled enrichments
+//     past their orgs' teardown, and 500'd on dead tenant pools.
+//     Human-paced scanning virtually never trips the skip.
+//   • the orchestrator caches every outcome cross-tenant, so a UPC hits
+//     their site at most once, ever — that invariant, not call order,
+//     is what keeps the volume tiny,
+//   • honest User-Agent (their pages 200 fine without impersonation).
+// If scan volume outgrows the alpha, switch this tier to their paid API
+// — same parse target, official transport.
 
-  const settled = await Promise.allSettled([
-    tryOpenProductsFacts(norm),
-    tryUpcitemdb(norm),
-  ]);
-  // Prefer OPF when both hit — it tends to have richer metadata
-  // for grocery / household items, and upcitemdb's free-tier
-  // results are often spam-flagged. Both are valid hits; this is
-  // just a tie-breaker.
-  for (const r of settled) {
-    if (r.status === "fulfilled" && r.value) return r.value;
+const GO_UPC_SPACING_MS = 10_000;
+// How long a lookup is willing to wait for the crawl-delay slot before
+// skipping go-upc for this scan. Small on purpose: the skip path is the
+// burst-pressure release valve.
+const GO_UPC_MAX_WAIT_MS = 1_500;
+let goUpcLastAt = 0;
+
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;/g, "'")
+    .replace(/&nbsp;/g, " ");
+}
+
+// Exported for the smoke script (scripts/test-barcode-goupc.ts).
+// HTTP 400 ("Invalid Barcode") and the "Product Not Found" page are
+// definitive misses. Transport errors AND a busy crawl-delay slot
+// throw — the call site degrades them to "go-upc had no answer" and
+// falls to the API providers.
+export async function tryGoUpc(upc: string): Promise<ProviderResult> {
+  // Honor the crawl-delay — but NEVER queue behind it (see the header
+  // comment: a queue here stalls scans under concurrency). Slot busy →
+  // skip; the APIs answer this scan.
+  const wait = goUpcLastAt + GO_UPC_SPACING_MS - Date.now();
+  if (wait > GO_UPC_MAX_WAIT_MS) throw new Error("go-upc slot busy — skipped for this scan");
+  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  goUpcLastAt = Date.now();
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12_000);
+  try {
+    const res = await fetch(`https://go-upc.com/search?q=${encodeURIComponent(upc)}`, {
+      headers: {
+        accept: "text/html",
+        "user-agent": "cobblr-core-scan/0.2 (respects Crawl-delay)",
+      },
+      signal: controller.signal,
+    });
+    if (res.status === 400) return { kind: "miss" }; // checksum-invalid code
+    if (!res.ok) throw new Error(`go-upc HTTP ${res.status}`);
+    const html = await res.text();
+    if (/<title>\s*Product Not Found/i.test(html)) return { kind: "miss" };
+
+    const h1 = html.match(/<h1[^>]*class="product-name"[^>]*>([\s\S]*?)<\/h1>/i);
+    const title = h1 ? decodeEntities(h1[1]!.replace(/<[^>]+>/g, "").trim()) : "";
+    if (!title) return { kind: "miss" };
+
+    // ALL images go into raw (cache every field); the structured
+    // image_url column gets the first.
+    const figureImgs = [
+      ...html.matchAll(/class="product-image[^"]*"[^>]*>[\s\S]*?<img[^>]+src="([^"]+)"/gi),
+    ].map((m) => m[1]!);
+    const s3Imgs = [...html.matchAll(/https:\/\/go-upc\.s3[^"'\s]+/gi)].map((m) => m[0]);
+    const images = [...new Set([...figureImgs, ...s3Imgs])];
+    const img = images[0] ?? null;
+
+    // The metadata table: <td class="metadata-label">Brand</td><td>…</td>
+    const meta: Record<string, string> = {};
+    for (const m of html.matchAll(
+      /<td[^>]*class="metadata-label"[^>]*>([^<]+)<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/gi,
+    )) {
+      meta[m[1]!.trim().replace(/:$/, "").toLowerCase()] = decodeEntities(
+        m[2]!.replace(/<[^>]+>/g, "").trim(),
+      );
+    }
+    // "Additional Attributes" — <li><span class="metadata-label">Key:</span>
+    // Value</li>. Spec gold (Material / Color / Size…): exactly the
+    // field-fill fodder the matchmaker extracts into table fields.
+    const attributes: Record<string, string> = {};
+    for (const m of html.matchAll(
+      /<li[^>]*>\s*<span[^>]*class="metadata-label"[^>]*>([^<]+)<\/span>([\s\S]*?)<\/li>/gi,
+    )) {
+      const k = m[1]!.trim().replace(/:$/, "").toLowerCase();
+      const v = decodeEntities(m[2]!.replace(/<[^>]+>/g, "").trim());
+      if (k && v) attributes[k] = v;
+    }
+    // Description: the old product-description div, or the current
+    // "Description</h2><span>…</span>" shape.
+    const desc =
+      html.match(/class="product-description[^"]*"[^>]*>([\s\S]*?)<\/div>/i) ??
+      html.match(/Description\s*<\/h2>\s*<span[^>]*>([\s\S]*?)<\/span>/i);
+    const description = desc
+      ? decodeEntities(desc[1]!.replace(/<[^>]+>/g, "").trim()) || null
+      : null;
+
+    return {
+      kind: "hit",
+      hit: {
+        source: "go-upc",
+        title,
+        brand: meta["brand"] || null,
+        model: null,
+        description,
+        category: meta["category"] || null,
+        image_url: img,
+        // EVERYTHING the page gave us — the full metadata table, the
+        // attributes list, every image, the description — so the cache
+        // row loses nothing even where the structured columns flatten.
+        raw: { title, meta, attributes, images, description },
+      },
+    };
+  } finally {
+    clearTimeout(timer);
   }
-  return null;
+}
+
+// ── box-level resolver tier ───────────────────────────────────────────
+// When COBBLR_BARCODE_RESOLVER_URL is set, the shared resolver on the
+// host owns the whole provider chain — one go-upc politeness gate, one
+// upcitemdb daily budget, one cache for EVERY product on the box (companion app +
+// every Cobblr instance). A UPC scanned anywhere warms everyone. The
+// resolver is a READ-ONLY proxy: this client can't write into it, so a
+// compromised instance can't poison results others render. See
+// companion app/scripts/barcode-resolver/. Throws on transport failure so
+// lookupBarcode falls back to resolving locally.
+async function tryResolver(upc: string): Promise<ProviderResult> {
+  const base = (process.env.COBBLR_BARCODE_RESOLVER_URL ?? "").replace(/\/+$/, "");
+  const controller = new AbortController();
+  // Generous hang-guard: a live go-upc read behind the resolver queue can
+  // take ~20s; the scan route's own inline deadline owns responsiveness.
+  const timer = setTimeout(() => controller.abort(), 25_000);
+  try {
+    const res = await fetch(`${base}/lookup?upc=${encodeURIComponent(upc)}`, {
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${process.env.COBBLR_BARCODE_RESOLVER_TOKEN ?? ""}`,
+      },
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`resolver HTTP ${res.status}`);
+    const d = (await res.json()) as {
+      found: boolean;
+      source: string;
+      cache: "hit" | "live";
+      took_ms: number;
+      resolved_at: string;
+      rate_limited?: boolean;
+      product: {
+        title: string;
+        brand: string | null;
+        model: string | null;
+        description: string | null;
+        category: string | null;
+        image_url: string | null;
+        raw?: unknown;
+      } | null;
+    };
+    if (d.found && d.product?.title) {
+      return {
+        kind: "hit",
+        hit: {
+          source: d.source,
+          title: d.product.title,
+          brand: d.product.brand,
+          model: d.product.model,
+          description: d.product.description,
+          category: d.product.category,
+          image_url: d.product.image_url,
+          // Provenance both ways: the provider payload + what THIS
+          // request cost (cache hit vs live read) for the viewers.
+          raw: {
+            ...(typeof d.product.raw === "object" && d.product.raw ? (d.product.raw as object) : {}),
+            resolver: { cache: d.cache, took_ms: d.took_ms, resolved_at: d.resolved_at },
+          } as Record<string, unknown>,
+        },
+      };
+    }
+    if (d.rate_limited) return { kind: "rate_limited", scope: "daily" };
+    return { kind: "miss" };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Resolve a UPC: go-upc first (authoritative), then both API providers
+ * concurrently as the fallback.
+ *
+ * - go-upc HIT wins outright — curated data, never a wrong-product answer,
+ *   and a hit spends none of upcitemdb's 100/day quota.
+ * - else (go-upc miss, busy-skip, or transport error) → upcitemdb ‖ OPF;
+ *   upcitemdb HIT preferred over OPF.
+ * - else if upcitemdb was rate-limited → `rate_limited` (caller must NOT cache;
+ *   the product is unresolved, not absent — retry later or fall to web search).
+ * - else `miss` (a genuine "no catalog has this", safe to cache).
+ *
+ * A thrown/transport error from any provider degrades to a miss for THAT
+ * provider, never crashes the lookup.
+ */
+export async function lookupBarcode(upc: string): Promise<BarcodeOutcome> {
+  const norm = upc.trim();
+  if (!norm) return { outcome: "miss" };
+
+  // Box-level resolver first (when configured): the host-wide chain —
+  // one cache, one go-upc gate, one quota budget. Its answer (hit, miss,
+  // or rate_limited) is DEFINITIVE; only a transport failure falls
+  // through to resolving locally.
+  if (process.env.COBBLR_BARCODE_RESOLVER_URL) {
+    try {
+      const r = await tryResolver(norm);
+      if (r.kind === "hit") return { outcome: "hit", hit: r.hit };
+      if (r.kind === "rate_limited") return { outcome: "rate_limited", scope: r.scope };
+      return { outcome: "miss" };
+    } catch (e) {
+      console.error(`[core-scan] barcode resolver unreachable (${(e as Error).message}) — falling back to local chain`);
+    }
+  }
+
+  // The authoritative tier. A busy crawl-delay slot or transport error
+  // throws → degrades to "no answer from go-upc" and the APIs decide.
+  const goRes = await tryGoUpc(norm).catch((): ProviderResult => ({ kind: "miss" }));
+  if (goRes.kind === "hit") return { outcome: "hit", hit: goRes.hit };
+
+  const [upcRes, opfRes] = await Promise.all([
+    tryUpcitemdb(norm).catch((): ProviderResult => ({ kind: "miss" })),
+    tryOpenProductsFacts(norm).catch((): ProviderResult => ({ kind: "miss" })),
+  ]);
+
+  if (upcRes.kind === "hit") return { outcome: "hit", hit: upcRes.hit };
+  if (opfRes.kind === "hit") return { outcome: "hit", hit: opfRes.hit };
+
+  // No catalog hit. If upcitemdb was throttled, the answer is
+  // "unknown, retry" — not "doesn't exist".
+  if (upcRes.kind === "rate_limited") return { outcome: "rate_limited", scope: upcRes.scope };
+  return { outcome: "miss" };
 }

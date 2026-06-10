@@ -8,6 +8,7 @@
 // See docs/architecture/instances.md §5.
 
 import type { NextFunction, Request, Response } from "express";
+import { getOverrideConfig } from "../platform/entity-kind-overrides.js";
 import { getInstance } from "../platform/instances.js";
 
 declare module "express-serve-static-core" {
@@ -19,6 +20,10 @@ declare module "express-serve-static-core" {
     instance?: string;
     /** The module that owns the resolved instance (e.g. "inventory"). */
     instanceModule?: string;
+    /** The instance's config blob (item_noun, qty_unit, …) so module CRUD
+     *  can apply instance defaults (a "yarn" instance creates parts in
+     *  skeins) without reading kernel tables. */
+    instanceConfig?: Record<string, unknown>;
   }
 }
 
@@ -51,6 +56,15 @@ export async function resolveInstance(
     }
     req.instance = inst.instance_name;
     req.instanceModule = inst.module_name;
+    // Instance presentation/config (item_noun, qty_unit, …) lives on the
+    // entity-kind-override row bundle install writes (target "instance"),
+    // not the instance row itself — merge both so module CRUD sees one blob.
+    const overrideCfg = await getOverrideConfig(
+      orgId,
+      "instance",
+      `${inst.module_name}:${inst.instance_name}`,
+    );
+    req.instanceConfig = { ...inst.config, ...overrideCfg };
     next();
   } catch (err) {
     next(err);

@@ -29,7 +29,7 @@ export class CupsDriver implements PrintDriver {
 
   async test(): Promise<{ ok: boolean; error?: string }> {
     try {
-      assertSafePrinterUrl(this.cfg.baseUrl);
+      await assertSafePrinterUrl(this.cfg.baseUrl);
     } catch (e) {
       return { ok: false, error: (e as Error).message };
     }
@@ -53,7 +53,7 @@ export class CupsDriver implements PrintDriver {
   }
 
   async print(doc: PrintDoc, opts?: { copies?: number; jobName?: string }): Promise<PrintJobResult> {
-    assertSafePrinterUrl(this.cfg.baseUrl);
+    await assertSafePrinterUrl(this.cfg.baseUrl);
     const printer = new ipp.Printer(this.printerUri());
     const msg: Record<string, unknown> = {
       "operation-attributes-tag": {

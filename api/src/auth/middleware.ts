@@ -119,6 +119,7 @@ export async function requireAuth(
     let apiTokenId: string | null = null;
     let appScope: string | null = null;
     let tokenScopes: string[] | null = null;
+    let tokenIssuedAt: number | null = null; // JWT iat (seconds), session/app only
     if (token.startsWith("cbt_")) {
       const resolved = await resolveApiToken(token);
       if (resolved) {
@@ -130,6 +131,7 @@ export async function requireAuth(
     } else {
       const claims = await verifySession(token);
       userId = claims.sub;
+      tokenIssuedAt = typeof claims.iat === "number" ? claims.iat : null;
       if (typeof claims.aud === "string" && claims.aud.startsWith("app:")) {
         appScope = claims.aud.slice("app:".length);
       }
@@ -142,7 +144,7 @@ export async function requireAuth(
     }
     const user = await meta
       .selectFrom("users")
-      .select(["id", "email", "display_name", "active"])
+      .select(["id", "email", "display_name", "active", "tokens_valid_from"])
       .where("id", "=", userId)
       .executeTakeFirst();
     if (!user || !user.active) {
@@ -150,6 +152,21 @@ export async function requireAuth(
         error: { code: "unauthenticated", message: "User not found or inactive" },
       });
       return;
+    }
+    // Session revocation: reject a session/app JWT issued before the user's
+    // last password change. API tokens (cbt_) have their own revoked_at and
+    // carry no iat, so they're exempt here. Compared at second granularity
+    // because JWT `iat` is whole seconds — so a token re-minted in the same
+    // second as the cutoff (the self-service change re-mint) stays valid.
+    // See 2026-06-10 audit #6.
+    if (tokenIssuedAt !== null && user.tokens_valid_from) {
+      const cutoffSec = Math.floor(new Date(user.tokens_valid_from).getTime() / 1000);
+      if (tokenIssuedAt < cutoffSec) {
+        res.status(401).json({
+          error: { code: "session_revoked", message: "Session expired — please sign in again." },
+        });
+        return;
+      }
     }
     // H1 Tier B — an app token is clamped to the Tier-B allowlist before
     // it can touch any handler. Server-side twin of the Player's

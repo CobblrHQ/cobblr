@@ -87,6 +87,12 @@ async function resolveTargets(
   // null/undefined/string → "self" semantics. Empty payload (no source
   // entity at all — e.g. an event without a typical *Id) gets handled
   // by the caller; here we just trust sourceId is present.
+  if (target === "none") {
+    // Fire once with NO entity context — for trigger events that don't
+    // originate from an entity (inbound webhooks). The action receives
+    // an empty entity and locates its own target from its args.
+    return [{ kind: sourceKind, id: "" }];
+  }
   if (target === null || target === undefined || target === "self") {
     return sourceId ? [{ kind: sourceKind, id: sourceId }] : [];
   }
@@ -162,7 +168,9 @@ export async function fireEvent(
         // source — that's what the action operates on. Plus a namespaced
         // event.* block so templates can reference event-payload fields
         // ({{event.delta}}, {{event.reason}}, {{event.actor.display_name}}).
-        const ent = await lookup(orgId, t.kind, t.id);
+        // target "none" fires with an empty id — never probe a resolver
+        // with "" (uuid columns throw 22P02 on it).
+        const ent = t.id ? await lookup(orgId, t.kind, t.id) : null;
         const entityFields = ent?.fields ?? {};
         // Build the template-data view. Payload fields flatten onto
         // `event.*` so the spec's `{{event.delta}}` example works

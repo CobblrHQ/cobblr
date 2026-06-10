@@ -57,7 +57,7 @@ export class EdgeAdapterDriver implements MachineDriver {
   }
 
   private async json(method: string, path: string, init: RequestInit = {}): Promise<unknown> {
-    assertSafeMachineUrl(this.base + path);
+    await assertSafeMachineUrl(this.base + path);
     const res = await fetch(this.base + path, {
       ...init,
       method,

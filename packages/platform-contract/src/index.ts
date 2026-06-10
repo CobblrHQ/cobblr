@@ -335,6 +335,11 @@ const EntityKind = z
 // See docs/architecture/wires-and-bundles.md (Q1, resolved).
 export const WireTarget = z.union([
   z.literal("self"),
+  // "none": the wire fires with NO entity context — for trigger events
+  // that don't originate from an entity (e.g. an inbound webhook). The
+  // action locates its own target from its (template-rendered) args;
+  // templates see only the event.* block. See wires-and-bundles.md.
+  z.literal("none"),
   z.object({
     rel: z.string().min(1),
     dir: z.enum(["in", "out"]).optional(),
@@ -954,7 +959,7 @@ export interface PlatformEntities {
     orgId: string,
     kind: string,
     id: string,
-    viewer?: { userId?: string },
+    viewer?: { userId?: string; publicRead?: boolean },
   ): Promise<ResolvedEntity | null>;
   /** List entities of a kind. Returns { items: [] } when no list
    *  resolver is registered. Each item is projected through the
@@ -975,7 +980,7 @@ export interface PlatformEntities {
     orgId: string,
     kind: string,
     query?: EntityListQuery,
-    viewer?: { userId?: string; role?: string },
+    viewer?: { userId?: string; role?: string; publicRead?: boolean },
   ): Promise<EntityListResult>;
   /** Batched lookup — resolve N (kind, id) refs in one call. Foreign
    *  callers that need joined data should use this instead of N
@@ -1434,6 +1439,14 @@ export interface AiProviderDef {
   describeCredentials: () => Record<string, { label: string; secret: boolean }>;
   /** Map capability → models the provider supports for it. */
   capabilities: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>>;
+  /** Whether a workspace that has configured NO provider may have this one
+   *  auto-selected by the zero-config fallback. Default true — a managed,
+   *  credential-less provider (instance key) is ready to use. A provider that
+   *  needs per-user setup before it works — e.g. the edge bridge needs a
+   *  connected agent + a personal Connection — sets `false`, so it's used only
+   *  when explicitly chosen/routed and a missing-provider case stays a clean
+   *  "no provider configured" rather than an error from the unset provider. */
+  autoSelectable?: boolean;
   /** Run a single inference. The platform handles caching + audit
    *  before/after. */
   invoke: (ctx: {
@@ -1570,6 +1583,20 @@ export interface PlatformEdge {
   hasChannel(orgId: string): boolean;
   /** Send a request to the workspace's edge; rejects if none is connected. */
   send(orgId: string, req: EdgeRequest): Promise<EdgeResponse>;
+}
+
+/** Cross-tenant key/value cache in cobblr_meta. For data that is the SAME for
+ *  every workspace and is NOT tenant-private — public catalog lookups are the
+ *  motivating case: a UPC resolves to the same product for everyone, so on a
+ *  multi-tenant host you want to resolve each barcode ONCE globally instead of
+ *  re-spending a shared rate-limited API quota per tenant. Never put
+ *  tenant-identifying or tenant-private data here. */
+export interface PlatformSharedCache {
+  /** The stored JSON value, or null if absent or expired. */
+  get<T = unknown>(namespace: string, key: string): Promise<T | null>;
+  /** Upsert a value. `ttlSeconds` omitted ⇒ never expires (stable reference
+   *  data like a resolved product). */
+  put(namespace: string, key: string, value: unknown, ttlSeconds?: number): Promise<void>;
 }
 
 export interface PlatformQueue {
@@ -1911,6 +1938,7 @@ export interface Platform {
   recurrence: PlatformRecurrence;
   calendar: PlatformCalendar;
   queue: PlatformQueue;
+  sharedCache: PlatformSharedCache;
   notifications: PlatformNotifications;
   integrations: PlatformIntegrations;
   ai: PlatformAi;

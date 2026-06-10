@@ -1,0 +1,28 @@
+{
+  "id": "home-assistant",
+  "name": "Home Assistant",
+  "version": "1.0.0",
+  "auth": { "kind": "header", "header": "Authorization", "from": "apiKey", "prefix": "Bearer " },
+  "test": { "method": "GET", "path": "/api/" },
+  "listDevices": {
+    "method": "GET",
+    "path": "/api/",
+    "result": "single",
+    "map": { "id": "='home-assistant'", "name": "='Home Assistant'" }
+  },
+  "commands": {
+    "run-zone": {
+      "method": "POST",
+      "path": "/api/services/script/turn_on",
+      "body": {
+        "entity_id": "script.water_zone",
+        "variables": { "zone": "{zone}", "seconds": "{seconds}" }
+      }
+    },
+    "call-service": {
+      "method": "POST",
+      "path": "/api/services/{domain}/{service}",
+      "body": { "entity_id": "{entity_id}" }
+    }
+  }
+}

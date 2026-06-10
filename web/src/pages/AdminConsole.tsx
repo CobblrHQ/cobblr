@@ -1,143 +1,67 @@
-// /super-admin — platform-operator dashboards. Gated by
-// SUPERADMIN_EMAILS (server) + user.is_platform_admin (client).
+// The platform-operator console content — the routed sections of the SEPARATE
+// operator interface at /admin/:section. The shell (components/AdminLayout.tsx)
+// owns the operator chrome, the section nav, and the is_platform_admin gate;
+// AdminConsole here just dispatches the active section to its tab component, and
+// the rest of the file holds those section components (Overview, Workspaces,
+// Users, Invites, Feedback, Announcements, Modules, Marketplace, Activity, AI,
+// Scan Eval, Health). Section list: lib/adminSections.ts.
 //
-// One page, six tabs:
-//   1. Overview        — at-a-glance counts.
-//   2. Workspaces      — every tenant + owner + activity recency.
-//   3. Users           — cross-workspace user list with memberships.
-//   4. Modules         — which workspaces have which modules enabled.
-//   5. Activity        — global activity feed (filterable).
-//   6. Health          — db + recent activity + backup status note.
-//
-// See docs/operations/PRODUCTION_DEPLOY.md for the operator's launch flow.
+// Access is gated server-side by SUPERADMIN_EMAILS (every /super-admin/* API)
+// and client-side by AdminLayout. See docs/operations/PRODUCTION_DEPLOY.md.
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Activity,
-  Boxes,
   CheckCircle,
   Download,
-  FlaskConical,
-  HeartPulse,
-  Sparkles,
-  LayoutGrid,
   ShieldCheck,
-  Server,
-  ShoppingBag,
-  Users,
   UserPlus,
   Copy,
   Trash2,
-  MessageSquare,
-  Megaphone,
+  X,
 } from "lucide-react";
+import { useParams } from "react-router-dom";
 import { useConfirm, usePageTitle, useToast, Modal, useImageSrc } from "@cobblr/platform-web";
 import {
   ApiError,
   api,
   type SignupInvite,
+  type WaitlistEntry,
   type SuperAdminAiActivityItem,
+  type SuperAdminBarcodeCacheItem,
   type FeedbackItem,
   type ScanEvalCase,
 } from "../lib/api";
-import { useAuth } from "../auth/AuthContext";
+import { ADMIN_SECTIONS, isAdminSection, type AdminSectionId } from "../lib/adminSections";
+import { TokenManager } from "../components/TokenManager";
 
-type Tab =
-  | "overview"
-  | "workspaces"
-  | "users"
-  | "invites"
-  | "feedback"
-  | "announce"
-  | "modules"
-  | "marketplace"
-  | "activity"
-  | "ai"
-  | "scaneval"
-  | "health";
-
-const TABS: Array<{ id: Tab; label: string; icon: typeof Server }> = [
-  { id: "overview", label: "Overview", icon: Server },
-  { id: "workspaces", label: "Workspaces", icon: LayoutGrid },
-  { id: "users", label: "Users", icon: Users },
-  { id: "invites", label: "Invites", icon: UserPlus },
-  { id: "feedback", label: "Feedback", icon: MessageSquare },
-  { id: "announce", label: "Announcements", icon: Megaphone },
-  { id: "modules", label: "Modules", icon: Boxes },
-  { id: "marketplace", label: "Marketplace", icon: ShoppingBag },
-  { id: "activity", label: "Activity", icon: Activity },
-  { id: "ai", label: "AI", icon: Sparkles },
-  { id: "scaneval", label: "Scan Eval", icon: FlaskConical },
-  { id: "health", label: "Health", icon: HeartPulse },
-];
-
-export function SuperAdminPage() {
-  usePageTitle("Super-admin");
-  const { user, loading } = useAuth();
-  const [tab, setTab] = useState<Tab>("overview");
-
-  // Wait for /me hydration before judging access — otherwise a direct
-  // load / fresh login flashes the "denied" box until auth resolves.
-  if (loading) {
-    return <div className="text-xs text-faint">Loading…</div>;
-  }
-  if (!user?.is_platform_admin) {
-    return (
-      <div className="rounded-xl border border-ember-200 dark:border-ember-700 bg-ember-50 dark:bg-ember-900/20 p-5 text-sm text-ember-700 dark:text-ember-300">
-        Platform-admin only. Set <code className="font-mono text-xs">SUPERADMIN_EMAILS</code> to include
-        your email + restart the api to unlock this page.
-      </div>
-    );
-  }
+// The console content — one routed section at a time. The shell (AdminLayout)
+// owns the operator chrome + the section nav; this just dispatches /admin/:section
+// to the matching tab component. Access is gated by AdminLayout (is_platform_admin),
+// so no gate here.
+export function AdminConsole() {
+  const { section } = useParams<{ section: string }>();
+  const active: AdminSectionId = isAdminSection(section) ? section : "overview";
+  const label = ADMIN_SECTIONS.find((s) => s.id === active)?.label ?? "Overview";
+  usePageTitle(`Operator · ${label}`);
 
   return (
-    <div className="space-y-5 max-w-6xl">
-      <div className="border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100">
-          Super-admin
-        </h1>
-        <p className="page-subtitle">
-          Cross-workspace dashboards for the platform operator. Workspace
-          owners + admins can't reach this — separate tier.
-        </p>
-      </div>
-
-      <div className="flex flex-wrap gap-1 border-b border-line dark:border-slate-700">
-        {TABS.map((t) => {
-          const Icon = t.icon;
-          const active = tab === t.id;
-          return (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => setTab(t.id)}
-              className={
-                "inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition border-b-2 " +
-                (active
-                  ? "border-cobble-500 text-accent dark:text-cobble-300"
-                  : "border-transparent text-muted hover:text-accent")
-              }
-            >
-              <Icon size={12} />
-              {t.label}
-            </button>
-          );
-        })}
-      </div>
-
-      {tab === "overview" && <OverviewTab />}
-      {tab === "workspaces" && <WorkspacesTab />}
-      {tab === "users" && <UsersTab />}
-      {tab === "invites" && <InvitesTab />}
-      {tab === "feedback" && <FeedbackTab />}
-      {tab === "announce" && <AnnouncementsTab />}
-      {tab === "modules" && <ModulesTab />}
-      {tab === "marketplace" && <MarketplaceTab />}
-      {tab === "activity" && <ActivityTab />}
-      {tab === "ai" && <AiActivityTab />}
-      {tab === "scaneval" && <ScanEvalTab />}
-      {tab === "health" && <HealthTab />}
+    <div className="space-y-5">
+      {active === "overview" && <OverviewTab />}
+      {active === "workspaces" && <WorkspacesTab />}
+      {active === "users" && <UsersTab />}
+      {active === "invites" && <InvitesTab />}
+      {active === "waitlist" && <WaitlistTab />}
+      {active === "feedback" && <FeedbackTab />}
+      {active === "announce" && <AnnouncementsTab />}
+      {active === "modules" && <ModulesTab />}
+      {active === "marketplace" && <MarketplaceTab />}
+      {active === "activity" && <ActivityTab />}
+      {active === "ai" && <AiActivityTab />}
+      {active === "barcodes" && <BarcodeCacheTab />}
+      {active === "tokens" && <TokenManager variant="operator" />}
+      {active === "scaneval" && <ScanEvalTab />}
+      {active === "health" && <HealthTab />}
     </div>
   );
 }
@@ -634,7 +558,7 @@ function MarketplaceTab() {
                       <>
                         {" · "}
                         <a
-                          href={m.homepage}
+                          href={m.homepage && /^https?:\/\//i.test(m.homepage) ? m.homepage : undefined}
                           target="_blank"
                           rel="noreferrer"
                           className="text-accent hover:underline"
@@ -886,12 +810,105 @@ function InvitesTab() {
   );
 }
 
+function WaitlistTab() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const confirm = useConfirm();
+  const list = useQuery({ queryKey: ["waitlist"], queryFn: () => api.listWaitlist() });
+  const [freshLink, setFreshLink] = useState<string | null>(null);
+  const [emailedTo, setEmailedTo] = useState<string | null>(null);
+
+  const approve = useMutation({
+    mutationFn: (id: string) => api.approveWaitlist(id),
+    onSuccess: (r) => {
+      setFreshLink(`${window.location.origin}/join/${r.invite.token}`);
+      setEmailedTo(r.invite.emailed ? r.invite.invited_email : null);
+      void qc.invalidateQueries({ queryKey: ["waitlist"] });
+      void qc.invalidateQueries({ queryKey: ["signup-invites"] });
+      toast.success(r.invite.emailed ? `Invite emailed to ${r.invite.invited_email}.` : "Invite minted — copy the link below.");
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't approve"),
+  });
+  const dismiss = useMutation({
+    mutationFn: (id: string) => api.dismissWaitlist(id),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ["waitlist"] }); toast.success("Dismissed."); },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't dismiss"),
+  });
+
+  const pending = (list.data?.items ?? []).filter((w) => w.status === "pending").length;
+
+  return (
+    <div className="space-y-5">
+      <p className="text-sm text-content dark:text-mortar-200">
+        Signups from the <strong>marketing site's waitlist</strong> (cobblr.xyz), forwarded as they
+        happen. <strong>Approve</strong> mints a single-use invite locked to that email — and emails
+        them the join link when the managed sender is configured (14-day expiry by default).
+        {pending > 0 && <span className="text-accent font-medium"> {pending} waiting.</span>}
+      </p>
+
+      {freshLink && (
+        <div className="rounded-lg border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 p-3 space-y-1.5">
+          <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
+            {emailedTo ? `// emailed to ${emailedTo} — link also shown here` : "// copy this now — shown once"}
+          </div>
+          <div className="flex items-center gap-2">
+            <input readOnly value={freshLink} onFocus={(e) => e.currentTarget.select()} className="input flex-1 font-mono text-xs" />
+            <button onClick={() => { void navigator.clipboard?.writeText(freshLink); toast.success("Copied."); }} className="p-2 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 transition" title="Copy"><Copy size={14} /></button>
+          </div>
+        </div>
+      )}
+
+      <div className="rounded-xl border border-line dark:border-slate-700 overflow-hidden">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-line dark:border-slate-700 bg-subtle/60 dark:bg-slate-800/40 text-left">
+              <th className="px-3 py-1.5 font-mono text-[10px] uppercase text-muted tracking-wider">Status</th>
+              <th className="px-3 py-1.5 font-mono text-[10px] uppercase text-muted tracking-wider">Email</th>
+              <th className="px-3 py-1.5 font-mono text-[10px] uppercase text-muted tracking-wider">Signed up</th>
+              <th className="px-3 py-1.5 font-mono text-[10px] uppercase text-muted tracking-wider">Invite</th>
+              <th className="px-3 py-1.5"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {(list.data?.items ?? []).map((w: WaitlistEntry) => (
+              <tr key={w.id} className="border-b border-line dark:border-slate-800 last:border-0">
+                <td className="px-3 py-1.5"><StatusPill status={w.status} /></td>
+                <td className="px-3 py-1.5 text-content dark:text-mortar-200 font-medium">{w.email}<span className="text-faint font-normal"> · {w.source}</span></td>
+                <td className="px-3 py-1.5 text-muted">{new Date(w.signed_up_at ?? w.created_at).toLocaleString()}</td>
+                <td className="px-3 py-1.5 text-muted">{w.status === "invited" ? (w.invite_status ?? "—") : "—"}</td>
+                <td className="px-3 py-1.5 text-right whitespace-nowrap">
+                  {w.status === "pending" && (
+                    <>
+                      <button onClick={() => approve.mutate(w.id)} disabled={approve.isPending} className="inline-flex items-center gap-1 rounded bg-emerald-700 hover:bg-emerald-600 text-white px-2 py-1 text-[11px] font-medium transition disabled:opacity-50" title="Mint + email an invite">
+                        <UserPlus size={12} /> Approve
+                      </button>
+                      <button onClick={async () => { if (await confirm({ title: "Dismiss signup?", message: `${w.email} won't be invited (they can sign up again later).`, destructive: true })) dismiss.mutate(w.id); }} className="ml-2 text-faint hover:text-ember-500 transition" title="Dismiss">
+                        <X size={13} />
+                      </button>
+                    </>
+                  )}
+                </td>
+              </tr>
+            ))}
+            {(list.data?.items.length ?? 0) === 0 && (
+              <tr><td colSpan={5} className="px-3 py-4 text-center text-faint italic">No signups yet — they appear here the moment someone joins the waitlist on cobblr.xyz.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function StatusPill({ status }: { status: string }) {
   const map: Record<string, string> = {
     open: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
     consumed: "bg-cobble-100 text-accent dark:bg-cobble-900/40 dark:text-cobble-300",
     expired: "bg-mortar-100 text-muted dark:bg-slate-800 dark:text-slate-400",
     revoked: "bg-ember-100 text-ember-700 dark:bg-ember-900/40 dark:text-ember-300",
+    pending: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
+    invited: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
+    dismissed: "bg-mortar-100 text-muted dark:bg-slate-800 dark:text-slate-400",
   };
   return <span className={"inline-block rounded px-1.5 py-0.5 text-[10px] font-mono uppercase " + (map[status] ?? map.expired)}>{status}</span>;
 }
@@ -1023,6 +1040,175 @@ function AiActivityDetailModal({ item, onClose }: { item: SuperAdminAiActivityIt
 // Each row is a platform admin's corrected scan commit (input + menu the model
 // saw + the route/fields they committed). The e2e import script pulls these into
 // e2e/fixtures/scan-eval/ as golden cases. See docs/operations/ai-prompt-eval-harness.md.
+function BarcodeCacheTab() {
+  const [layer, setLayer] = useState<"shared" | "workspaces">("shared");
+  const [qText, setQText] = useState("");
+  const [org, setOrg] = useState("");
+  const [source, setSource] = useState("");
+  const [foundSel, setFoundSel] = useState<"" | "true" | "false">("");
+  const [filters, setFilters] = useState<{ q?: string; org?: string; source?: string; found?: boolean }>({});
+  const [detail, setDetail] = useState<SuperAdminBarcodeCacheItem | null>(null);
+
+  const q = useQuery({
+    queryKey: ["sa-barcode-cache", layer, filters],
+    queryFn: () => api.superAdminBarcodeCache({ ...filters, layer, limit: 300 }),
+  });
+  const items = q.data?.items ?? [];
+
+  const apply = () =>
+    setFilters({
+      q: qText.trim() || undefined,
+      org: org.trim() || undefined,
+      source: source.trim() || undefined,
+      found: foundSel === "" ? undefined : foundSel === "true",
+    });
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-content dark:text-mortar-200">
+        The per-UPC lookup cache scans build up. <b>Instance-wide</b> is the deduped shared layer —
+        each barcode is resolved once for the whole platform (go-upc first, then
+        upcitemdb/Open&nbsp;Products&nbsp;Facts) and served from here to every workspace after.
+        <b> Per-workspace</b> shows the local mirrors: who scanned what, where. Click a row for every
+        field we captured, including the raw provider payload.
+      </p>
+      <div className="inline-flex rounded-lg border border-line dark:border-slate-700 overflow-hidden text-xs">
+        {([["shared", "Instance-wide (deduped)"], ["workspaces", "Per-workspace mirrors"]] as const).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setLayer(id)}
+            className={
+              "px-3 py-1.5 font-medium transition " +
+              (layer === id
+                ? "bg-cobble-600 text-white"
+                : "bg-surface dark:bg-slate-900 text-muted hover:text-accent")
+            }
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-end gap-2">
+        <FilterInput label="Search (UPC / title / brand)" value={qText} onChange={setQText} placeholder="784297 or southwire" />
+        {layer === "workspaces" && (
+          <FilterInput label="Workspace (slug)" value={org} onChange={setOrg} placeholder="log-it-or-frog-it" />
+        )}
+        <FilterInput label="Source" value={source} onChange={setSource} placeholder="go-upc" />
+        <label className="flex flex-col gap-1 text-[10px] font-mono uppercase tracking-wider text-muted">
+          Result
+          <select
+            value={foundSel}
+            onChange={(e) => setFoundSel(e.target.value as "" | "true" | "false")}
+            className="rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2 py-2 text-sm text-content dark:text-mortar-100"
+          >
+            <option value="">all</option>
+            <option value="true">hits</option>
+            <option value="false">misses</option>
+          </select>
+        </label>
+        <button onClick={apply} className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition">
+          Filter
+        </button>
+        {(filters.q || filters.org || filters.source || filters.found !== undefined) && (
+          <button onClick={() => { setQText(""); setOrg(""); setSource(""); setFoundSel(""); setFilters({}); }} className="text-xs text-faint hover:text-accent">
+            clear
+          </button>
+        )}
+      </div>
+
+      <div className="rounded-xl border border-line dark:border-slate-700 overflow-hidden overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-line dark:border-slate-700 bg-subtle/60 dark:bg-slate-800/40 text-left">
+              {["", "UPC", "Product", "Brand", "Category", "Source", ...(layer === "workspaces" ? ["Workspace"] : []), "Result", "When"].map((h, i) => (
+                <th key={i} className="px-3 py-1.5 font-mono text-[10px] uppercase text-muted tracking-wider whitespace-nowrap">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((c) => (
+              <tr
+                key={`${c.org_id}:${c.upc}`}
+                className="border-b border-line dark:border-slate-800 last:border-0 hover:bg-subtle/40 dark:hover:bg-slate-800/30 cursor-pointer"
+                onClick={() => setDetail(c)}
+              >
+                <td className="px-3 py-1.5">
+                  {c.image_url ? (
+                    <img src={c.image_url} alt="" className="w-8 h-8 rounded object-cover border border-line dark:border-slate-700" loading="lazy" />
+                  ) : (
+                    <div className="w-8 h-8 rounded bg-subtle dark:bg-slate-800" />
+                  )}
+                </td>
+                <td className="px-3 py-1.5 font-mono text-content dark:text-mortar-200 whitespace-nowrap">{c.upc}</td>
+                <td className="px-3 py-1.5 text-content dark:text-mortar-100 max-w-[28rem] truncate">{c.title ?? <span className="text-faint">—</span>}</td>
+                <td className="px-3 py-1.5 text-muted whitespace-nowrap">{c.brand ?? "—"}</td>
+                <td className="px-3 py-1.5 text-muted max-w-[12rem] truncate">{c.category ?? "—"}</td>
+                <td className="px-3 py-1.5 whitespace-nowrap">
+                  <span className="rounded-full border border-line dark:border-slate-700 px-1.5 py-0.5 font-mono text-[10px] text-muted">{c.source}</span>
+                </td>
+                {layer === "workspaces" && (
+                  <td className="px-3 py-1.5 text-muted whitespace-nowrap">{c.org_slug}</td>
+                )}
+                <td className="px-3 py-1.5 whitespace-nowrap">
+                  {c.found ? (
+                    <span className="text-moss-600 dark:text-moss-400 font-medium">hit</span>
+                  ) : (
+                    <span className="text-faint">miss</span>
+                  )}
+                </td>
+                <td className="px-3 py-1.5 text-muted whitespace-nowrap">{new Date(c.fetched_at).toLocaleString()}</td>
+              </tr>
+            ))}
+            {!q.isLoading && items.length === 0 && (
+              <tr><td colSpan={layer === "workspaces" ? 9 : 8} className="px-3 py-6 text-center text-faint">Nothing cached yet — scan something.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <Modal open={!!detail} onClose={() => setDetail(null)} title={detail?.title ?? detail?.upc ?? ""} size="lg">
+        {detail && (
+          <div className="space-y-3 text-sm">
+            <div className="flex gap-4">
+              {detail.image_url && (
+                <img src={detail.image_url} alt="" className="w-28 h-28 rounded-lg object-cover border border-line dark:border-slate-700 shrink-0" />
+              )}
+              <div className="space-y-1 min-w-0">
+                {([
+                  ["UPC", detail.upc],
+                  ["Brand", detail.brand],
+                  ["Model", detail.model],
+                  ["Category", detail.category],
+                  ["Source", detail.source],
+                  ...(detail.org_slug ? ([["Workspace", `${detail.org_name} (${detail.org_slug})`]] as Array<[string, string | null]>) : []),
+                  ["Result", detail.found ? "hit" : "miss"],
+                  ["Fetched", new Date(detail.fetched_at).toLocaleString()],
+                  ...(detail.expires_at ? ([["Re-check after", new Date(detail.expires_at).toLocaleString()]] as Array<[string, string | null]>) : []),
+                ] as Array<[string, string | null]>).map(([k, v]) => (
+                  <div key={k} className="flex gap-2">
+                    <span className="w-24 shrink-0 font-mono text-[10px] uppercase tracking-wider text-muted pt-0.5">{k}</span>
+                    <span className="text-content dark:text-mortar-100 break-all">{v ?? "—"}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            {detail.description && (
+              <p className="text-muted dark:text-slate-300">{detail.description}</p>
+            )}
+            <div>
+              <div className="font-mono text-[10px] uppercase tracking-wider text-muted mb-1">Raw provider payload (everything captured)</div>
+              <pre className="rounded-md border border-line dark:border-slate-700 bg-subtle/60 dark:bg-slate-900 p-3 text-[11px] overflow-auto max-h-72 whitespace-pre-wrap break-all">
+                {JSON.stringify(detail.raw, null, 2)}
+              </pre>
+            </div>
+          </div>
+        )}
+      </Modal>
+    </div>
+  );
+}
+
 function ScanEvalTab() {
   const qc = useQueryClient();
   const confirm = useConfirm();
@@ -1485,7 +1671,7 @@ function FeedbackCard({
               {fu.images?.map((img, j) => (
                 <a
                   key={j}
-                  href={img.url}
+                  href={img.url && /^https?:\/\//i.test(img.url) ? img.url : undefined}
                   target="_blank"
                   rel="noreferrer"
                   className="ml-1.5 text-accent hover:underline"

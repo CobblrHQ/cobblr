@@ -14,6 +14,8 @@ import { withTenant } from "../middleware/tenant.js";
 import { meta } from "../db/meta.js";
 import { listEntries } from "../modules/registry.js";
 import * as activity from "../platform/activity.js";
+import { checkAvailability as checkAiAvailability } from "../platform/ai.js";
+import { AiCapabilities, type AiCapability } from "@cobblr/platform-contract";
 import { clearComputedDefsCache } from "../platform/computed-fields.js";
 import { effectiveAppliesTo, matchAction } from "../platform/actions.js";
 import type { ActionAppliesToDecl } from "@cobblr/platform-contract";
@@ -354,6 +356,9 @@ platformOrgRouter.post(
 // the manifest contract (different concerns, same shape).
 const BindingTarget = z.union([
   z.literal("self"),
+  // No entity context — the action self-targets from its args (inbound-
+  // webhook-style wires). See WireTarget in platform-contract.
+  z.literal("none"),
   z.object({
     rel: z.string().min(1),
     dir: z.enum(["in", "out"]).optional(),
@@ -478,6 +483,9 @@ platformOrgRouter.post(
   withTenant,
   async (req, res, next) => {
     try {
+      // Wires drive automation (incl. privileged actions). Creating one is
+      // an admin operation — not for read-only guests/members. Audit #3.
+      if (!requireRole(req, res, "owner", "admin")) return;
       const parsed = BindingCreate.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({
@@ -532,6 +540,7 @@ platformOrgRouter.patch(
   withTenant,
   async (req, res, next) => {
     try {
+      if (!requireRole(req, res, "owner", "admin")) return;
       const id = req.params.id;
       if (!id) {
         res.status(400).json({ error: { code: "missing_id", message: "id required" } });
@@ -606,6 +615,7 @@ platformOrgRouter.delete(
   withTenant,
   async (req, res, next) => {
     try {
+      if (!requireRole(req, res, "owner", "admin")) return;
       const id = req.params.id;
       if (!id) {
         res.status(400).json({ error: { code: "missing_id", message: "id required" } });
@@ -693,6 +703,33 @@ platformOrgRouter.get(
       if (kind) q = q.where("entity_kind", "=", kind);
       const items = await q.execute();
       res.json({ items });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// Would an AI call work right now? Member-accessible (the providers list is
+// admin-only — this leaks nothing but a boolean + why), so AI-consuming UI
+// (the scan inbox) can warn about the degraded no-AI experience up front
+// instead of failing quietly. Mirrors invoke()'s gauntlet: kill-switch →
+// personal connection → workspace/managed provider → entitlement guard.
+platformOrgRouter.get(
+  "/:slug/ai-status",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      const q = typeof req.query.capability === "string" ? req.query.capability : null;
+      const capability = (AiCapabilities as readonly string[]).includes(q ?? "")
+        ? (q as AiCapability)
+        : undefined;
+      const status = await checkAiAvailability(
+        req.tenant!.org.id,
+        req.session?.id ?? null,
+        capability,
+      );
+      res.json(status);
     } catch (err) {
       next(err);
     }

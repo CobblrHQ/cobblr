@@ -175,6 +175,7 @@ function applyExposableProjection(
   whitelist: string[] | null,
   fieldReadScopes?: Record<string, string> | null,
   readScope?: ViewerReadScope,
+  publicRead?: boolean,
 ): ResolvedEntity {
   let fields: Record<string, unknown>;
   if (whitelist === null) {
@@ -187,7 +188,19 @@ function applyExposableProjection(
           `See docs/architecture/entity-resolver.md.`,
       );
     }
-    fields = { ...resolved.fields };
+    // FAIL CLOSED on the anonymous public path: a kind with no declared
+    // exposableFields (e.g. a custom/authoring kind) must NOT dump every
+    // field — emails, costs, notes — to an unauthenticated reader. Internal
+    // cross-module reads still get the legacy passthrough. See
+    // docs/history/2026-06-10-prelaunch-audit.md #5.
+    if (publicRead) {
+      fields = {};
+      for (const [name, value] of Object.entries(resolved.fields)) {
+        if (IMPLICIT_EXPOSABLE_PROPS.has(name)) fields[name] = value;
+      }
+    } else {
+      fields = { ...resolved.fields };
+    }
   } else {
     const allowed = new Set(whitelist);
     fields = {};
@@ -325,10 +338,11 @@ export async function lookup(
   orgId: string,
   kind: string,
   id: string,
-  viewer?: { userId?: string },
+  viewer?: { userId?: string; publicRead?: boolean },
 ): Promise<ResolvedEntity | null> {
   const resolver = resolvers.get(kind);
   if (!resolver) return null;
+  const publicRead = viewer?.publicRead === true;
   const whitelist = await getExposableFields(kind);
   // Single-hop / cross-module lookups carry no resolved capability set,
   // so read-scope gating here is fail-closed: gated fields are withheld
@@ -348,7 +362,7 @@ export async function lookup(
       // public read instead of baking the gated value into a string that
       // survives the trust boundary. Custom-field tier-1 still works because
       // inventory:part / assets:asset expose `metadata`.
-      const projected = applyExposableProjection(resolved, whitelist, fieldReadScopes);
+      const projected = applyExposableProjection(resolved, whitelist, fieldReadScopes, undefined, publicRead);
       return applyComputedFields(orgId, projected);
     }
   } catch (err) {
@@ -365,7 +379,7 @@ export async function lookup(
     try {
       const resolved = await resolver(src.id, id);
       if (!resolved) continue;
-      const projected = applyExposableProjection(resolved, whitelist, fieldReadScopes);
+      const projected = applyExposableProjection(resolved, whitelist, fieldReadScopes, undefined, publicRead);
       return {
         ...projected,
         fields: {
@@ -585,11 +599,12 @@ export async function list(
   orgId: string,
   kind: string,
   query: EntityListQuery = {},
-  viewer?: { userId?: string; role?: string },
+  viewer?: { userId?: string; role?: string; publicRead?: boolean },
 ): Promise<EntityListResult> {
   if (query.sort !== undefined) {
     query = { ...query, sort: normalizeEntitySort(query.sort) };
   }
+  const publicRead = viewer?.publicRead === true;
   const resolver = listResolvers.get(kind) ?? (await instanceFallbackResolver(orgId, kind));
   if (!resolver) return { items: [] };
   const whitelist = await getExposableFields(kind);
@@ -616,7 +631,7 @@ export async function list(
       result.items.map(async (r) =>
         applyComputedFields(
           orgId,
-          applyExposableProjection(r, whitelist, fieldReadScopes, readScope),
+          applyExposableProjection(r, whitelist, fieldReadScopes, readScope, publicRead),
         ),
       ),
     );
@@ -643,6 +658,7 @@ export async function list(
           whitelist,
           fieldReadScopes,
           readScope,
+          publicRead,
         );
         items.push({
           ...projected,

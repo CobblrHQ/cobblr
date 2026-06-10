@@ -7,6 +7,7 @@ import { z } from "zod";
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { requireAuth } from "../auth/middleware.js";
+import { requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
 import { meta } from "../db/meta.js";
 import { getTenantDb } from "../db/tenant.js";
@@ -87,6 +88,7 @@ const WireEntry = z
     target: z
       .union([
         z.literal("self"),
+        z.literal("none"),
         z.object({ rel: z.string().min(1), dir: z.enum(["in", "out"]).optional(), kind: z.string().optional() }),
       ])
       .optional(),
@@ -870,6 +872,10 @@ bundlesRouter.post(
   withTenant,
   async (req, res, next) => {
     try {
+      // Installing a bundle changes workspace composition — enables
+      // modules, adds field defs + automation wires. Owner/admin only; a
+      // read-only guest / plain member must not. See 2026-06-10 audit #3.
+      if (!requireRole(req, res, "owner", "admin")) return;
       // Q5 (wires-and-bundles.md): `requires` is now an "install" not
       // a "check." If the bundle needs modules the workspace doesn't
       // have enabled, return 409 with `needs_enable` instead of
@@ -1411,6 +1417,7 @@ bundlesRouter.delete(
   withTenant,
   async (req, res, next) => {
     try {
+      if (!requireRole(req, res, "owner", "admin")) return;
       const id = req.params.id;
       if (!id) {
         res.status(400).json({ error: { code: "missing_id", message: "id required" } });

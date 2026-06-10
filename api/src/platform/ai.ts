@@ -171,6 +171,11 @@ async function resolveProviderAndModel(
     // overlay it makes managed AI AUTO-ON for entitled workspaces: a paying
     // subscriber gets AI with zero setup instead of having to add a provider.
     for (const [id, def] of providers) {
+      // Skip providers that opt out of zero-config auto-selection — they need
+      // per-user setup before they work (e.g. the edge bridge needs a connected
+      // agent), so auto-picking one turns a "no provider" case into a runtime
+      // error from the unset provider instead of a clean no_ai_provider.
+      if (def.autoSelectable === false) continue;
       if (def.capabilities[capability] && Object.keys(def.describeCredentials()).length === 0) {
         providerId = id;
         model = model ?? def.capabilities[capability]?.defaultModel ??
@@ -230,6 +235,40 @@ function fullText(obj: unknown, cap = 20_000): string {
   });
   if (!json) return "";
   return json.length <= cap ? json : json.slice(0, cap) + "…[truncated]";
+}
+
+/** Would an AI call work for this workspace/user right now? The cheap,
+ *  read-only twin of invoke()'s gauntlet — kill-switch → personal
+ *  connection → workspace/managed provider → entitlement guard — so the
+ *  UI can warn *before* a feature silently degrades (the scan inbox's
+ *  "no AI is hooked up" notice). Never throws; never calls a provider. */
+export async function checkAvailability(
+  orgId: string,
+  userId: string | null,
+  capability: AiCapability = "chat",
+): Promise<{ available: boolean; reason: "ok" | "operator_disabled" | "not_entitled" | "no_provider" }> {
+  if (!env.COBBLR_AI_ENABLED) return { available: false, reason: "operator_disabled" };
+  const personal = await resolvePersonalProvider(
+    orgId,
+    userId,
+    (pid) => !!providers.get(pid)?.capabilities[capability],
+  ).catch(() => null);
+  if (personal) return { available: true, reason: "ok" };
+  try {
+    const { row, model } = await resolveProviderAndModel(orgId, capability);
+    if (entitlementGuard) {
+      const verdict = await entitlementGuard({
+        orgId,
+        capability,
+        providerId: row.provider_id,
+        model,
+      });
+      if (!verdict.allow) return { available: false, reason: "not_entitled" };
+    }
+    return { available: true, reason: "ok" };
+  } catch {
+    return { available: false, reason: "no_provider" };
+  }
 }
 
 export const invoke: PlatformAi["invoke"] = async (req) => {

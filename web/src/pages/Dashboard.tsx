@@ -20,7 +20,7 @@
 import { Fragment, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpCircle, Compass, Eye, EyeOff, GripVertical, LayoutList, Maximize2, Minimize2, Plus, ScanLine, Sliders, Sparkles, X } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpCircle, Camera, Compass, Eye, EyeOff, GripVertical, LayoutList, Maximize2, Minimize2, Plus, ScanLine, Sliders, Sparkles, X } from "lucide-react";
 import { useBundleUpdates } from "../lib/useBundleUpdates";
 import { useSetupCards, dismissSetup } from "../lib/setupCards";
 import { EntityThumb,
@@ -83,7 +83,7 @@ export function Dashboard() {
 
       <SetupCardsPanel slug={activeSlug} />
 
-      {enabled.has("core-scan") && <ScanInboxBanner slug={activeSlug} />}
+      {enabled.has("core-scan") && <ScanCard slug={activeSlug} />}
 
       <GettingStartedPanel
         slug={activeSlug}
@@ -98,10 +98,12 @@ export function Dashboard() {
   );
 }
 
-// The scan inbox has no nav noun (core-scan is a capability), so a workspace
-// with items waiting to be filed had no on-dashboard signal. Show a slim,
-// clickable banner only when something's actually pending.
-function ScanInboxBanner({ slug }: { slug: string }) {
+// "Scan something" — the dashboard's camera-first intake CTA (companion app parity:
+// the scanner is the workshop's most-used action, so it gets a standing,
+// labelled entry point, not just the header icon). One tap → the full-screen
+// scanner with a live camera. When scanned items are waiting to be filed, a
+// second row links to the inbox with the count.
+function ScanCard({ slug }: { slug: string }) {
   const inbox = useQuery({
     queryKey: ["scan-inbox", slug, "pending"],
     queryFn: () => api.listScanInbox(slug, { status: "pending" }),
@@ -109,23 +111,41 @@ function ScanInboxBanner({ slug }: { slug: string }) {
     refetchInterval: 30_000,
   });
   const n = inbox.data?.items.length ?? 0;
-  if (n === 0) return null;
   return (
-    <Link
-      to="/scan"
-      className="flex items-center gap-3 rounded-xl border border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20 px-4 py-3 hover:border-cobble-400 dark:hover:border-cobble-600 transition group"
-    >
-      <ScanLine size={18} className="text-accent shrink-0" />
-      <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium text-content dark:text-mortar-100">
-          {n} scanned {n === 1 ? "item" : "items"} waiting in your inbox
+    <div className="rounded-xl border border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20 overflow-hidden">
+      <Link
+        to="/scan/camera"
+        className="flex items-center gap-3 px-4 py-3 hover:bg-cobble-100/60 dark:hover:bg-cobble-900/40 transition group"
+      >
+        <span className="w-9 h-9 rounded-full bg-cobble-600 text-white flex items-center justify-center shrink-0">
+          <Camera size={18} />
+        </span>
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-medium text-content dark:text-mortar-100">
+            Scan something
+          </div>
+          <div className="text-xs text-faint dark:text-slate-400">
+            Point your camera at a product barcode — it lands here ready to file.
+          </div>
         </div>
-        <div className="text-xs text-faint dark:text-slate-400">
-          Review + file them into your tables.
-        </div>
-      </div>
-      <ArrowRight size={16} className="text-faint group-hover:text-accent transition shrink-0" />
-    </Link>
+        <ArrowRight size={16} className="text-faint group-hover:text-accent transition shrink-0" />
+      </Link>
+      {n > 0 && (
+        <Link
+          to="/scan"
+          className="flex items-center gap-3 px-4 py-2.5 border-t border-cobble-200 dark:border-cobble-800 hover:bg-cobble-100/60 dark:hover:bg-cobble-900/40 transition group"
+        >
+          <ScanLine size={16} className="text-accent shrink-0" />
+          <div className="flex-1 min-w-0 text-xs text-content dark:text-mortar-100">
+            <span className="font-medium">
+              {n} scanned {n === 1 ? "item" : "items"}
+            </span>{" "}
+            waiting in your inbox — review + file them.
+          </div>
+          <ArrowRight size={14} className="text-faint group-hover:text-accent transition shrink-0" />
+        </Link>
+      )}
+    </div>
   );
 }
 
@@ -272,6 +292,16 @@ function GettingStartedPanel({
         probes.push(wrap("/modules/projects/projects?limit=1"));
       if (enabled.has("purchases"))
         probes.push(wrap("/modules/purchases/orders?limit=1"));
+      // Module INSTANCES (Yarn, Wardrobe, Outfits…) hold their items under
+      // /instances/<name>/items, NOT the base module list — so a workspace whose
+      // data lives entirely in instances (most flagship bundles) looked empty
+      // here and the first-run wizard never went away. Count instance items too.
+      const instances = await api
+        .listInstances(slug)
+        .then((r) => r.items)
+        .catch(() => []);
+      for (const inst of instances)
+        probes.push(wrap(`/instances/${encodeURIComponent(inst.instance_name)}/items?limit=1`));
       const counts = await Promise.all(probes);
       return counts.reduce((a, b) => a + b, 0);
     },
@@ -499,7 +529,11 @@ function WorkspaceHeader({
               </span>
               <button
                 type="button"
-                onClick={() => navigate(`/bundles?open=${encodeURIComponent(u.externalId)}`)}
+                onClick={() =>
+                  navigate(
+                    `/bundles?open=${encodeURIComponent(u.externalId)}&returnTo=${encodeURIComponent(window.location.pathname + window.location.search)}`,
+                  )
+                }
                 className="shrink-0 text-accent hover:underline font-medium"
               >
                 Update

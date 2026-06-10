@@ -3,8 +3,10 @@ import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { assetsRouter } from "./assets.js";
 import { registerAssetsResolvers } from "./resolvers.js";
+import { registerActionHandlers } from "./action-handlers.js";
 
 registerAssetsResolvers();
+registerActionHandlers();
 
 // Per-instance item count — lets the nav hide an empty auto-created default
 // instance once the workspace has named ones.

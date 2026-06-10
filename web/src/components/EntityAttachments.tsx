@@ -6,7 +6,7 @@
 // source_id) polymorphic shape on both core-tags_assignments and
 // core_files_attachments; this is the matching UI primitive.
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Eye, ImageIcon, Link, Plus, Tag as TagIcon, Trash2, Upload, X } from "lucide-react";
 import { ApiError, api, type PairingItem, type TagRecord } from "../lib/api";
@@ -369,17 +369,46 @@ function FilesSection({
     },
   });
 
-  async function handleFiles(files: FileList | null) {
-    if (!files) return;
-    for (const f of Array.from(files)) {
+  async function uploadFiles(files: File[]) {
+    for (const f of files) {
       try {
         await uploadAndAttach.mutateAsync(f);
       } catch {
         /* toast already fired */
       }
     }
+  }
+  async function handleFiles(files: FileList | null) {
+    if (!files) return;
+    await uploadFiles(Array.from(files));
     if (fileInput.current) fileInput.current.value = "";
   }
+
+  // Clipboard paste: take a screenshot (Print Screen / Cmd-Shift-4) and Ctrl/Cmd-V
+  // anywhere on the page to attach it — no need to save it to a file first. We
+  // listen on the window so the user doesn't have to focus the panel, but bail
+  // when they're typing in a text field so a normal text paste isn't hijacked.
+  // `pasteUploadRef` keeps the once-bound listener calling the latest uploader.
+  const pasteUploadRef = useRef<(files: File[]) => void>(() => {});
+  pasteUploadRef.current = (files) => void uploadFiles(files);
+  useEffect(() => {
+    function onPaste(e: ClipboardEvent) {
+      const ae = document.activeElement as HTMLElement | null;
+      if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable)) return;
+      const imgs: File[] = [];
+      for (const it of Array.from(e.clipboardData?.items ?? [])) {
+        if (it.kind === "file" && it.type.startsWith("image/")) {
+          const f = it.getAsFile();
+          if (f) imgs.push(f);
+        }
+      }
+      if (imgs.length === 0) return;
+      e.preventDefault();
+      pasteUploadRef.current(imgs);
+    }
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, []);
 
   const items = list.data?.items ?? [];
   // Re-evaluate canPreviewFile when the host gate toggles renderers

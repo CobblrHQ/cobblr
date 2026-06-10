@@ -27,6 +27,10 @@ export interface UsersTable {
   email_verified_at: Date | null;
   created_at: Generated<Date>;
   last_login_at: Date | null;
+  /** Session-revocation cutoff. A session/app JWT whose `iat` is before this
+   *  is rejected by requireAuth. Set to now() on password change/reset. NULL =
+   *  no tokens invalidated yet. */
+  tokens_valid_from: Date | null;
 }
 
 export interface OrgsTable {
@@ -212,6 +216,22 @@ export interface SignupInvitesTable {
   consumed_at: Date | null;
   consumed_by_user: string | null;
   revoked_at: Date | null;
+  created_at: Generated<Date>;
+}
+
+/** Marketing-site waitlist signup, forwarded by the cobblr.xyz Pages Function
+ *  (scoped waitlist:ingest token). Reviewed in the super-admin Waitlist tab;
+ *  approving mints a signup_invite (linked via invite_id). */
+export interface WaitlistTable {
+  id: Generated<string>;
+  email: string;
+  source: Generated<string>;
+  user_agent: string | null;
+  signed_up_at: Date | null;
+  status: Generated<string>; // pending | invited | dismissed
+  invite_id: string | null;
+  decided_at: Date | null;
+  decided_by: string | null;
   created_at: Generated<Date>;
 }
 
@@ -640,6 +660,7 @@ export interface MetaDB {
   org_modules: OrgModulesTable;
   workspace_invites: WorkspaceInvitesTable;
   signup_invites: SignupInvitesTable;
+  waitlist: WaitlistTable;
   api_tokens: ApiTokensTable;
   user_credentials: UserCredentialsTable;
   user_credential_orgs: UserCredentialOrgsTable;
@@ -663,6 +684,7 @@ export interface MetaDB {
   calendar_feeds: CalendarFeedsTable;
   public_surface_tokens: PublicSurfaceTokensTable;
   core_queue_jobs: CoreQueueJobsTable;
+  shared_cache: SharedCacheTable;
   auth_magic_tokens: AuthMagicTokensTable;
   auth_password_reset_tokens: AuthPasswordResetTokensTable;
   auth_email_verify_tokens: AuthEmailVerifyTokensTable;
@@ -782,4 +804,13 @@ export interface CoreQueueJobsTable {
   failed_at: Date | null;
   error: string | null;
   created_at: Generated<Date>;
+}
+
+export interface SharedCacheTable {
+  namespace: string;
+  key: string;
+  value: unknown;
+  expires_at: Date | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
 }

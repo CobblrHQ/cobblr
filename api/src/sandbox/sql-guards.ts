@@ -19,6 +19,73 @@ export function unquoteIdent(raw: string): string {
   return raw.toLowerCase();
 }
 
+// Clause keywords that end a FROM clause's table list. Anything from a top-
+// level FROM up to (but not including) one of these is the table region.
+const FROM_BOUNDARY =
+  /^(where|group|having|order|limit|offset|union|except|intersect|window|returning|fetch|for|on|join|inner|left|right|full|cross|natural)\b/i;
+
+/** Return the FROM clause's table-list text starting at `start` (just past the
+ *  `from` keyword), up to the next clause boundary keyword or an unbalanced
+ *  closing paren / semicolon, at paren depth 0. Used to enumerate
+ *  comma-separated tables that the single-table FROM/JOIN regex misses. */
+export function readFromClause(s: string, start: number): string {
+  let depth = 0;
+  let i = start;
+  for (; i < s.length; i++) {
+    const ch = s[i]!;
+    if (ch === "(") depth++;
+    else if (ch === ")") {
+      if (depth === 0) break;
+      depth--;
+    } else if (depth === 0 && ch === ";") break;
+    else if (depth === 0 && (i === start || /\W/.test(s[i - 1]!))) {
+      // A boundary keyword starting here (and at a word start) ends the list.
+      if (FROM_BOUNDARY.test(s.slice(i))) break;
+    }
+  }
+  return s.slice(start, i);
+}
+
+/** Split on commas that sit at paren depth 0 (so commas inside a function call
+ *  or sub-select don't split a table-list entry). */
+export function splitTopLevelCommas(s: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of s) {
+    if (ch === "(") depth++;
+    else if (ch === ")") depth = Math.max(0, depth - 1);
+    if (ch === "," && depth === 0) {
+      out.push(cur);
+      cur = "";
+    } else {
+      cur += ch;
+    }
+  }
+  out.push(cur);
+  return out;
+}
+
+/** Extract the SECOND-and-later tables of every comma-separated FROM list in
+ *  a (comment-stripped) statement — the implicit cross-join tables the
+ *  single-table FROM/JOIN regex misses. The first table of each FROM is left
+ *  to that regex; this returns only the comma siblings, so callers add these
+ *  on top. Each result is the leading identifier of a table-list entry, with
+ *  schema-qualified entries flagged (they're rejected downstream). */
+export function commaListTables(stripped: string): Array<{ raw: string; qualified: boolean }> {
+  const out: Array<{ raw: string; qualified: boolean }> = [];
+  for (const fm of stripped.matchAll(/\bfrom\b/gi)) {
+    const clause = readFromClause(stripped, fm.index! + fm[0].length);
+    for (const entry of splitTopLevelCommas(clause).slice(1)) {
+      const idm = /^\s*("?[A-Za-z_][A-Za-z0-9_]*"?)(\s*\.\s*("?[A-Za-z_][A-Za-z0-9_]*"?))?/.exec(entry);
+      if (!idm) continue;
+      if (idm[3]) out.push({ raw: `${unquoteIdent(idm[1]!)}.${unquoteIdent(idm[3])}`, qualified: true });
+      else out.push({ raw: unquoteIdent(idm[1]!), qualified: false });
+    }
+  }
+  return out;
+}
+
 /** Detect a second statement after the first semicolon. Walks
  *  outside string literals + dollar-quoted blocks so a `;` inside
  *  a TEXT value or a $tag$ block isn't counted. */

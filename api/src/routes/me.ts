@@ -2,14 +2,18 @@
 // the shape /auth/login returns so the web can reuse the same hook.
 
 import { Router } from "express";
+import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { meta } from "../db/meta.js";
 import { requireAuth } from "../auth/middleware.js";
 import { mintTokenString } from "../auth/api-tokens.js";
 import { listScopeChoices, sanitizeScopes } from "../auth/scopes.js";
 import { hashPassword, verifyPassword } from "../auth/password.js";
+import { signSession } from "../auth/jwt.js";
 import * as notifications from "../platform/notifications.js";
 import * as activity from "../platform/activity.js";
+import { hasAuthEmailSender, sendAuthEmail } from "../platform/hosted-seams.js";
+import { selfServeInvitesEnabled } from "../auth/signup-gate.js";
 import { issueAndSendVerifyEmail } from "./auth.js";
 
 export const meRouter = Router();
@@ -131,11 +135,16 @@ meRouter.post("/me/password", requireAuth, async (req, res, next) => {
       return;
     }
     const newHash = await hashPassword(parsed.data.new_password);
+    // Revoke all existing session/app JWTs (other devices, any stolen token)
+    // by stamping the cutoff, then re-mint a fresh token for THIS device so
+    // the user isn't logged out by their own password change. Audit #6.
+    const changedAt = new Date();
     await meta
       .updateTable("users")
-      .set({ password_hash: newHash, must_reset_password: false })
+      .set({ password_hash: newHash, must_reset_password: false, tokens_valid_from: changedAt })
       .where("id", "=", req.session!.id)
       .execute();
+    const freshToken = await signSession(req.session!.id);
     // Activity-log to whichever workspace the user is a member of
     // (security-relevant action — was missing per 2026-05-25 audit).
     // Picking the first owned org is best-effort; a per-user audit
@@ -156,7 +165,10 @@ meRouter.post("/me/password", requireAuth, async (req, res, next) => {
         })
         .catch((err) => console.error("[me/password] activity log failed:", err));
     }
-    res.status(204).end();
+    // Return the re-minted token so the client can keep THIS session alive
+    // (all prior tokens were just revoked). Clients that ignore it simply get
+    // logged out on their next request — also safe.
+    res.status(200).json({ token: freshToken });
   } catch (err) {
     next(err);
   }
@@ -839,7 +851,10 @@ meRouter.post("/me/links", requireAuth, async (req, res, next) => {
               eventType: "workspace_links.pending",
               message: `${sourceOrg.name} wants to share ${kinds.length} entity kind${kinds.length === 1 ? "" : "s"} with this workspace.`,
               link_url: "/configuration/links",
-              module: "core-notifications",
+              // Workspace-link is a KERNEL feature, not the notifications
+              // module — don't misattribute the audit row. Matches the sibling
+              // dispatch at :1068. (Regression of the 2026-05-26 fix #4.)
+              module: undefined,
               entityType: "workspace_link",
               entityId: row.id,
             }),
@@ -1100,6 +1115,165 @@ meRouter.post("/me/links/:id/revoke", requireAuth, async (req, res, next) => {
       .set({ status: "revoked", revoked_at: new Date() })
       .where("id", "=", id)
       .execute();
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ───────────── Invite a friend to Cobblr (their OWN workspace) ─────────────
+// The growth path that used to be super-admin-only: any user who OWNS a
+// workspace can mint a single-use link that lets a NEW person sign up past the
+// closed public-signup gate and get their OWN fresh workspace — distinct from a
+// workspace invite (POST /orgs/:slug/members/invites), which instead drops the
+// person into the inviter's workspace as a member. Reuses signup_invites (the
+// `/join/:token` accept flow already provisions a fresh workspace); attributed
+// via created_by and capped so one account can't mint unbounded signups while
+// the platform is invite-only.
+
+const FriendInvite = z.object({
+  email: z.string().email().max(255).optional(),
+  note: z.string().max(200).optional(),
+  expires_in_days: z.number().int().min(1).max(365).optional(),
+});
+// Deliberately low for alpha — the on/off switch (selfServeInvitesEnabled) is
+// the primary control; this caps the rate per owner once it's open.
+const OPEN_FRIEND_INVITE_CAP = 5;
+
+function signupInviteStatus(r: {
+  consumed_at: Date | null;
+  revoked_at: Date | null;
+  expires_at: Date | null;
+}): "consumed" | "revoked" | "expired" | "open" {
+  if (r.consumed_at) return "consumed";
+  if (r.revoked_at) return "revoked";
+  if (r.expires_at && new Date(r.expires_at) < new Date()) return "expired";
+  return "open";
+}
+
+async function ownsAnyWorkspace(userId: string): Promise<boolean> {
+  const r = await meta
+    .selectFrom("org_memberships")
+    .select("user_id")
+    .where("user_id", "=", userId)
+    .where("role", "=", "owner")
+    .executeTakeFirst();
+  return !!r;
+}
+
+meRouter.post("/me/signup-invites", requireAuth, async (req, res, next) => {
+  try {
+    // Off by default in prod — keeps the alpha from growing uncontrollably.
+    if (!selfServeInvitesEnabled()) {
+      res.status(403).json({
+        error: { code: "not_enabled", message: "Inviting new people to Cobblr is turned off right now." },
+      });
+      return;
+    }
+    const userId = req.session!.id;
+    if (!(await ownsAnyWorkspace(userId))) {
+      res.status(403).json({
+        error: { code: "forbidden", message: "Only workspace owners can invite new people to Cobblr." },
+      });
+      return;
+    }
+    const parsed = FriendInvite.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Bad invite", details: parsed.error.issues } });
+      return;
+    }
+    // Cap unused invites per user so an account can't mint unbounded signups.
+    const open = await meta
+      .selectFrom("signup_invites")
+      .select((eb) => eb.fn.countAll<number>().as("n"))
+      .where("created_by", "=", userId)
+      .where("consumed_at", "is", null)
+      .where("revoked_at", "is", null)
+      .executeTakeFirst();
+    if (Number(open?.n ?? 0) >= OPEN_FRIEND_INVITE_CAP) {
+      res.status(429).json({
+        error: {
+          code: "invite_cap",
+          message: `You already have ${OPEN_FRIEND_INVITE_CAP} unused invites — revoke some before minting more.`,
+        },
+      });
+      return;
+    }
+    const token = randomBytes(24).toString("base64url");
+    const expires_at = parsed.data.expires_in_days
+      ? new Date(Date.now() + parsed.data.expires_in_days * 86_400_000)
+      : null;
+    const row = await meta
+      .insertInto("signup_invites")
+      .values({
+        token,
+        created_by: userId,
+        invited_email: parsed.data.email?.toLowerCase().trim() ?? null,
+        note: parsed.data.note ?? null,
+        expires_at,
+      })
+      .returning(["id", "token", "invited_email", "note", "expires_at", "created_at"])
+      .executeTakeFirstOrThrow();
+
+    // If we have an address + a registered sender, email the join link straight
+    // to the invitee; otherwise the owner copies the link by hand.
+    let emailed = false;
+    if (row.invited_email && hasAuthEmailSender()) {
+      const link = `${req.protocol}://${req.get("host") ?? ""}/join/${row.token}`;
+      const expiryLine = row.expires_at
+        ? `\n\nThis invite expires ${new Date(row.expires_at).toUTCString()}.`
+        : "";
+      emailed = await sendAuthEmail({
+        to: row.invited_email,
+        subject: "You're invited to Cobblr",
+        text:
+          `You've been invited to create your own Cobblr workspace.\n\n` +
+          `Open this link to get started:\n${link}` +
+          expiryLine +
+          `\n\nIf you weren't expecting this, you can ignore this email.`,
+        kind: "invite",
+      });
+    }
+    res.status(201).json({ ...row, status: "open", emailed });
+  } catch (err) {
+    next(err);
+  }
+});
+
+meRouter.get("/me/signup-invites", requireAuth, async (req, res, next) => {
+  try {
+    const rows = await meta
+      .selectFrom("signup_invites")
+      .select(["id", "token", "invited_email", "note", "expires_at", "consumed_at", "revoked_at", "created_at"])
+      .where("created_by", "=", req.session!.id)
+      .orderBy("created_at", "desc")
+      .execute();
+    res.json({ items: rows.map((r) => ({ ...r, status: signupInviteStatus(r) })) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+meRouter.post("/me/signup-invites/:id/revoke", requireAuth, async (req, res, next) => {
+  try {
+    const id = req.params.id;
+    if (!id) {
+      res.status(400).json({ error: { code: "missing_id", message: "id required" } });
+      return;
+    }
+    const updated = await meta
+      .updateTable("signup_invites")
+      .set({ revoked_at: new Date() })
+      .where("id", "=", id)
+      .where("created_by", "=", req.session!.id)
+      .where("consumed_at", "is", null)
+      .where("revoked_at", "is", null)
+      .returning("id")
+      .executeTakeFirst();
+    if (!updated) {
+      res.status(404).json({ error: { code: "not_found", message: "Invite not found or already used/revoked." } });
+      return;
+    }
     res.status(204).end();
   } catch (err) {
     next(err);

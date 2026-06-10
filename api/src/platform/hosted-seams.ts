@@ -157,6 +157,9 @@ let requestGuard: RequestGuard | null = null;
 export function registerRequestGuard(g: RequestGuard): void {
   requestGuard = g;
 }
+export function hasRequestGuard(): boolean {
+  return requestGuard !== null;
+}
 async function checkRequest(ctx: RequestGuardCtx) {
   if (!requestGuard) return { allow: true as const };
   try {

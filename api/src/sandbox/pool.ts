@@ -25,7 +25,14 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { getTenantPool } from "../db/tenant.js";
-import { containsMultipleStatements, unquoteIdent } from "./sql-guards.js";
+import {
+  commaListTables,
+  containsMultipleStatements,
+  unquoteIdent,
+} from "./sql-guards.js";
+import { isPrivateIp } from "./ssrf.js";
+import { lookup as dnsLookup } from "node:dns/promises";
+import { isIP } from "node:net";
 import { platform } from "@cobblr/platform-contract";
 import {
   OP,
@@ -898,6 +905,11 @@ async function runTenantQuery(
       refs.push({ raw: unquoteIdent(m[1]!), qualified: false });
     }
   }
+  // Comma-separated table lists (implicit cross join). The regex above only
+  // captures the FIRST table after FROM/JOIN, so `FROM mymod_x, inventory_parts`
+  // left the second table UNCHECKED — a cross-module read bypass that defeated
+  // the `reads` allowlist. (2026-06-10 pre-launch audit.)
+  refs.push(...commaListTables(stripped));
   const allowed = ctx.allowedReadTables ?? new Set<string>();
   for (const ref of refs) {
     if (ref.qualified) {
@@ -1089,6 +1101,23 @@ async function runHostFetch(
   });
   if (!allowed) {
     return { error: `host ${parsed.hostname} not in allowlist` };
+  }
+  // SSRF: the allowlist gates by HOSTNAME, but an allowed host can resolve to a
+  // private/loopback/metadata IP (or rebind to one). Third-party wasm has no
+  // business reaching the host's own network, so block private egress always
+  // (strict), DNS-resolved. (2026-06-10 audit — HOST_FETCH had no IP guard.)
+  const fetchHost = parsed.hostname.replace(/^\[|\]$/g, "");
+  if (isIP(fetchHost)) {
+    if (isPrivateIp(fetchHost)) return { error: `host ${fetchHost} is a blocked (private/loopback) address` };
+  } else {
+    try {
+      const recs = await dnsLookup(fetchHost, { all: true });
+      if (recs.length === 0 || recs.some((r) => isPrivateIp(r.address))) {
+        return { error: `host ${fetchHost} resolves to a blocked (private/loopback) address` };
+      }
+    } catch {
+      return { error: `host ${fetchHost} did not resolve` };
+    }
   }
   // 5 MiB cap on response body — keeps the SAB-bounded transfer
   // possible without truncating mid-byte. Modules that need larger

@@ -47,6 +47,18 @@ export interface PerceivedItem {
   description?: string | null;
   entityType?: "asset" | "part" | null;
   barcode?: string | null;
+  sku?: string | null;
+  /** The enrichment's provenance/reasoning notes — often carries product
+   *  detail (specs read off the package) the bare name doesn't. */
+  notes?: string | null;
+  /** Where the user was standing when they scanned (a location name). */
+  scanArea?: string | null;
+  /** The full lookup metadata blob (weights, pack sizes, colours…) —
+   *  raw extraction fodder for field-fill. */
+  metadata?: Record<string, unknown> | null;
+  /** Vision read of the user's OWN photo of the scanned item — what is
+   *  physically present. Outranks listing-derived assumptions. */
+  photoObservations?: string | null;
 }
 
 /** A ranked routing suggestion with field-fill. */
@@ -63,6 +75,13 @@ export interface MatchCandidate {
   /** Field values keyed by the table's field-def `name`. Only fields the model
    *  was confident about; everything else omitted. */
   fields: Record<string, string | number | boolean>;
+  /** TOP candidate only: 2–4 terse sentences reconciling ALL the item data
+   *  (title vs attributes vs barcode DB vs photo hints) — what matched, what
+   *  was inferred, pack-size reasoning. No filler (companion app prompt style). */
+  notes?: string;
+  /** When the item data implies a count ("1 Pack Of 9 Skein", "10 Pack"),
+   *  the unit quantity to pre-fill. Omitted when nothing implies one. */
+  quantity?: number;
 }
 
 function clamp01(n: number): number {
@@ -90,12 +109,30 @@ export async function assembleScanMenu(
     machines: "machines:machine",
   };
 
-  let instances: Array<{ module_name: string; instance_name: string; display_name: string; is_default: boolean; config?: Record<string, unknown> }> = [];
+  let instances: Array<{ module_name: string; instance_name: string; display_name: string; is_default: boolean; item_count?: number | null; config?: Record<string, unknown> }> = [];
   try {
     const res = await fetch(`${baseUrl}/api/v1/orgs/${slug}/instances`, { headers: auth });
     if (res.ok) instances = ((await res.json()) as { items?: typeof instances }).items ?? [];
   } catch {
     return [];
+  }
+
+  // Mirror the nav's rule (useNavModules.defaultModuleEntriesToHide): once a
+  // module has NAMED instances, its auto-created EMPTY default is clutter the
+  // user never sees — don't offer "Inventory (part)" as a scan target when
+  // the workspace only ever uses "Yarn"/"Hooks". count null or >0 → keep
+  // (never hide live data).
+  const byModule = new Map<string, typeof instances>();
+  for (const inst of instances) {
+    const arr = byModule.get(inst.module_name) ?? [];
+    arr.push(inst);
+    byModule.set(inst.module_name, arr);
+  }
+  const hideDefaults = new Set<string>();
+  for (const [moduleName, insts] of byModule) {
+    const def = insts.find((i) => i.is_default);
+    const hasNamed = insts.some((i) => !i.is_default);
+    if (hasNamed && def && def.item_count === 0) hideDefaults.add(moduleName);
   }
 
   const overridesByTarget = new Map<string, { item_noun?: string }>();
@@ -114,6 +151,7 @@ export async function assembleScanMenu(
   const entries: ScanMenuEntry[] = [];
   for (const inst of instances) {
     if (!SCANNABLE.has(inst.module_name)) continue;
+    if (inst.is_default && hideDefaults.has(inst.module_name)) continue;
     const kind = inst.is_default
       ? DEFAULT_KIND[inst.module_name] ?? `${inst.module_name}:item`
       : `${inst.instance_name}:item`;
@@ -169,19 +207,43 @@ export async function runMatchmaker(
 
   const system =
     "You sort a scanned physical item into the user's catalog of tables and " +
-    "extract its fields. You are given the ITEM (what a scanner/vision read) " +
-    "and the user's TABLES (each: a module, an optional instance slug, a noun, " +
-    "and fields with labels/help/allowed choices). Do two things:\n" +
+    "extract its fields. You are given the ITEM (what a scanner/vision read, " +
+    "including lookup_metadata — the raw catalog/web data: attributes, " +
+    "descriptions, pack info) and the user's TABLES (each: a module, an " +
+    "optional instance slug, a noun, and fields with labels/help/allowed " +
+    "choices). Do three things:\n" +
     "1. Pick the best-fitting tables for this item, RANKED, at most 3. A table " +
     "fits when the item is the kind of thing that table holds (a skein of yarn " +
     "-> a 'yarn' table; a drill -> 'tools'/'assets'). If nothing fits well, " +
     "return the generic default table (instance null) for the closest module.\n" +
-    "2. For EACH picked table, fill in field values you can confidently read " +
-    "from the item — match the table's field names. For a field with `choices`, " +
-    "use one of the listed choices (closest match) or omit. Omit any field you " +
-    "are unsure about; never invent. Use the table's noun for a clean `name`.\n\n" +
+    "2. For EACH picked table, fill in field values — MINE EVERY ITEM FIELD: " +
+    "the title, lookup_metadata attributes (material/color/size), the " +
+    "description, lookup_notes. Map them onto the table's field names (e.g. " +
+    "attribute 'color: Country Blue' -> a 'colorway' field; 'material: " +
+    "Acrylic' -> a 'fibre' field; 'Worsted' in a yarn title -> a weight " +
+    "field). For a field with `choices`, use the closest listed choice or " +
+    "omit. Omit only what nothing in the data supports; never invent. Strip " +
+    "retailer noise from `name` ('Amazon.com:', '1 Pack Of 9 Skein' suffixes " +
+    "-> a clean product name).\n" +
+    "3. On the FIRST candidate only, add `notes`: 2-4 smooth, natural " +
+    "sentences reconciling the data — what the barcode DB, attributes, and " +
+    "title each contributed, what you inferred, and anything that disagrees " +
+    "or is missing. Pleasant, complete prose (not telegraphic fragments), " +
+    "but every sentence must carry information — no filler, praise, or " +
+    "hedging boilerplate. Be careful with counts: a 'Pack of N' in a " +
+    "retailer-style TITLE describes that retailer's LISTING, not " +
+    "necessarily the scanned unit — unit barcodes appear on multipack " +
+    "listings constantly. Set `quantity` (integer) only when " +
+    "packaging-level data confirms it (an explicit pack/size attribute, " +
+    "'QTY N' on the label, the description); otherwise leave quantity " +
+    "unset and mention the listing count in notes as unconfirmed. " +
+    "photo_observations (when present) describe the user's OWN photo of " +
+    "the physical item at scan time — for quantity, packaging state, and " +
+    "identity disagreements they OUTRANK every listing-derived source. " +
+    "Always strip pack suffixes from `name` regardless.\n\n" +
     'Reply with ONLY JSON: {"candidates":[{"module":<string>,"instance":<string|null>,' +
-    '"confidence":<0..1>,"name":<string>,"fields":{<field_name>:<value>}}]}. ' +
+    '"confidence":<0..1>,"name":<string>,"fields":{<field_name>:<value>},' +
+    '"notes":<string, first candidate only>,"quantity":<int, optional>}]}. ' +
     "Order candidates best-first. confidence is how well the table fits the item.";
 
   const compactMenu = menu.map((m) => ({
@@ -207,6 +269,14 @@ export async function runMatchmaker(
         description: item.description ?? null,
         kind_hint: item.entityType ?? null,
         barcode: item.barcode ?? null,
+        sku: item.sku ?? null,
+        lookup_notes: item.notes ?? null,
+        scanned_in_area: item.scanArea ?? null,
+        // Everything the catalog/web lookup returned — mine it for field
+        // values (weights, lengths, colours, counts) before giving up on
+        // a field. Keys are the lookup's, not the table's.
+        lookup_metadata: item.metadata ?? null,
+        photo_observations: item.photoObservations ?? null,
       },
       null,
       0,
@@ -260,6 +330,7 @@ export async function runMatchmaker(
         if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") fields[k] = v;
       }
     }
+    const qty = Number(cand.quantity);
     out.push({
       module: entry.module,
       instance: entry.instance,
@@ -268,6 +339,10 @@ export async function runMatchmaker(
       confidence: clamp01(typeof cand.confidence === "number" ? cand.confidence : 0.5),
       name: typeof cand.name === "string" && cand.name.trim() ? cand.name.trim() : item.name,
       fields,
+      ...(typeof cand.notes === "string" && cand.notes.trim()
+        ? { notes: cand.notes.trim().slice(0, 2000) }
+        : {}),
+      ...(Number.isInteger(qty) && qty > 0 && qty <= 10_000 ? { quantity: qty } : {}),
     });
     if (out.length >= 3) break;
   }
