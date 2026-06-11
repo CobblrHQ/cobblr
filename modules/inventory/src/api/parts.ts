@@ -139,10 +139,16 @@ partsRouter.get(
       // Stable order: name, then id as tiebreaker (names aren't
       // unique) — required for correct cursor pagination.
       .orderBy("p.name")
-      .orderBy("p.id")
-      // Scope to the request's instance (default "inventory" on legacy
-      // /modules/inventory/parts; the instance slug on /instances/:n/items).
-      .where("p.instance", "=", instanceOf(req));
+      .orderBy("p.id");
+    // Scope to the request's instance (default "inventory" on legacy
+    // /modules/inventory/parts; the instance slug on /instances/:n/items).
+    // ?all_instances=1 reads the WHOLE stash across instances — the
+    // cross-module consumers (a design's Materials picker, pattern→stash
+    // matching) need yarn that lives in a "yarn" instance, hooks in
+    // "hooks", etc. Read-only widening; writes stay instance-scoped.
+    if (req.query.all_instances !== "1") {
+      query = query.where("p.instance", "=", instanceOf(req));
+    }
 
     if (filter.search) {
       const raw = filter.search.trim();

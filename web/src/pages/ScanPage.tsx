@@ -218,23 +218,22 @@ export function ScanPage() {
       {/* ── the ONE header row: identity + intake. Short word labels;
             compact paddings keep it one row on phones. ──────────────── */}
       <div className="flex items-center gap-2 border-b border-line dark:border-slate-700 pb-2.5 min-w-0">
-        <h1 className="text-lg font-semibold text-content dark:text-mortar-100 flex items-center gap-2 shrink-0">
-          <ScanLine size={18} className="text-accent" />
-          Scan
+        <h1 className="text-lg font-semibold text-content dark:text-mortar-100 shrink-0">
+          Inbox
         </h1>
         <span className="text-sm text-muted dark:text-slate-400 shrink-0">
           {items.length}
           <span className="hidden sm:inline"> pending</span>
         </span>
         {batchId && (
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20 px-2.5 py-0.5 text-xs text-content dark:text-mortar-100 min-w-0">
-            <span className="truncate">
-              <span className="hidden sm:inline">this scan </span>session
-            </span>
-            <Link to="/scan" title="Show everything pending" className="text-faint hover:text-accent shrink-0">
-              <X size={12} />
-            </Link>
-          </span>
+          <Link
+            to="/scan"
+            title="Filtered to this scan session — tap to show everything pending"
+            className="inline-flex items-center gap-1 rounded-full border border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20 px-2.5 py-0.5 text-xs text-content dark:text-mortar-100 shrink-0 hover:border-cobble-400"
+          >
+            session
+            <X size={12} className="text-faint" />
+          </Link>
         )}
         <div className="flex-1" />
         <button
@@ -267,9 +266,10 @@ export function ScanPage() {
         <Link
           to={`/scan/camera${params.toString() ? `?${params}` : ""}`}
           title="Open the full-screen scanner"
-          className="inline-flex items-center gap-1.5 rounded bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-2.5 py-1.5 transition shrink-0"
+          aria-label="Open the camera scanner"
+          className="inline-flex items-center rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2.5 py-1.5 transition shrink-0"
         >
-          <Camera size={15} /> Camera
+          <Camera size={16} />
         </Link>
       </div>
 
@@ -400,6 +400,8 @@ function InboxCard({
   // into + the matchmaker's pre-filled fields. Keyed into ConfirmForm so
   // switching chips remounts (and so re-seeds) the form.
   const [expanded, setExpanded] = useState(false);
+  // The AI box's disclosure — collapsed by default (companion app).
+  const [aiOpen, setAiOpen] = useState(false);
   const [formCtx, setFormCtx] = useState<{
     selKey: string | null;
     prefill: Record<string, unknown>;
@@ -425,28 +427,18 @@ function InboxCard({
     setExpanded(true);
   }
 
-  // Matchmaker: once an item is identified, find the best table(s) for it +
-  // fill their fields. Fire once per item (guarded) — the list polls every 8s,
-  // so without the guard this would re-run forever.
-  const matchTried = useRef(false);
-  const match = useMutation({
-    mutationFn: () => api.matchScanItem(activeSlug, item.id),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] }),
-  });
-  useEffect(() => {
-    if (
-      !matchTried.current &&
-      item.suggested_name &&
-      (item.suggested_candidates?.length ?? 0) === 0 &&
-      !match.isPending
-    ) {
-      matchTried.current = true;
-      match.mutate();
-    }
-  }, [item.suggested_name, item.suggested_candidates, match]);
-
+  // The matchmaker is SERVER-OWNED: it runs once at intake (detached) and
+  // inline during a rerun. The web never auto-triggers it — a page load
+  // costs zero model runs. While the server hasn't stamped matched_at yet,
+  // the card shows a passive "AI is reading…" pulse that the 8s list poll
+  // resolves on its own.
   const candidates = (item.suggested_candidates ?? []).slice(0, 3);
   const topCand = candidates[0] ?? null;
+  const serverMatching =
+    item.status === "pending" &&
+    !!(item.suggested_name || item.ai_suggested_at) &&
+    candidates.length === 0 &&
+    !(item.suggested_metadata as { matched_at?: string } | null)?.matched_at;
 
   const discard = useMutation({
     mutationFn: () => api.discardScanItem(activeSlug, item.id),
@@ -455,24 +447,22 @@ function InboxCard({
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
     },
   });
-  // The rerun endpoint AWAITS the full re-enrichment and returns the fresh
-  // row — so the spinner below is honest "working" state, not a queue. On
-  // success we ALSO re-rank the matchmaker (its candidates were computed
-  // against the OLD identification) before declaring victory.
+  // The rerun endpoint runs the WHOLE chain server-side (re-enrich +
+  // re-match) before responding — one await, one honest spinner, one toast.
   const rerun = useMutation({
-    mutationFn: () => api.rerunScanAi(activeSlug, item.id),
+    mutationFn: (hint?: string) => api.rerunScanAi(activeSlug, item.id, hint),
     onSuccess: (fresh) => {
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
       toast.success(
         fresh.suggested_name
           ? `Lookup updated: ${fresh.suggested_name}`
           : "Re-ran — still no match. Fill it in manually.",
       );
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-      match.mutate();
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
   const rerunning = rerun.isPending;
+  const aiWorking = rerun.isPending || serverMatching;
 
   // Internal /api/v1 file URLs need the Bearer token a bare <img> can't
   // send — useImageSrc blob-loads those; external URLs pass through.
@@ -508,11 +498,26 @@ function InboxCard({
           )}
         </div>
         <div className="flex-1 min-w-0">
-          <div className="font-medium text-content dark:text-mortar-100 truncate">
-            {rerunning ? (
+          {/* The scan usually KNOWS the name before the matchmaker finishes —
+              never replace a known title with a status line. Status renders as
+              a subtle chip beside it; the pulse only owns the title slot when
+              there's genuinely nothing to show yet. */}
+          <div className="font-medium text-content dark:text-mortar-100 truncate flex items-center gap-2 min-w-0">
+            {item.suggested_name ? (
+              <>
+                <span className="truncate">{item.suggested_name}</span>
+                {(rerunning || serverMatching) && (
+                  <span className="shrink-0 inline-flex items-center gap-1 rounded-full border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 px-2 py-0.5 text-[10px] font-mono uppercase tracking-widest text-accent animate-pulse">
+                    {rerunning ? "re-running" : "AI reading…"}
+                  </span>
+                )}
+              </>
+            ) : rerunning ? (
               <span className="text-accent animate-pulse">Re-running the lookup…</span>
+            ) : serverMatching ? (
+              <span className="text-accent animate-pulse">AI is reading the details…</span>
             ) : (
-              item.suggested_name ?? <span className="text-faint italic">Awaiting lookup…</span>
+              <span className="text-faint italic">Awaiting lookup…</span>
             )}
           </div>
           <div className="text-[11px] font-mono text-faint dark:text-slate-500 truncate">
@@ -555,19 +560,19 @@ function InboxCard({
                 </button>
               ))}
             </div>
-          ) : match.isPending ? (
+          ) : serverMatching ? (
             <div className="text-[11px] text-faint italic mt-1">finding the best table…</div>
           ) : null}
         </div>
         <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
           <button
             type="button"
-            onClick={() => rerun.mutate()}
-            disabled={rerunning || (!item.barcode_text && !item.image_file_id)}
+            onClick={() => rerun.mutate(undefined)}
+            disabled={aiWorking || (!item.barcode_text && !item.image_file_id)}
             className="text-faint hover:text-accent p-1.5 disabled:opacity-30"
-            title={rerunning ? "Re-running the lookup…" : "Rerun lookup"}
+            title={aiWorking ? "AI is working…" : "Rerun lookup"}
           >
-            <RotateCcw size={14} className={rerunning ? "animate-spin text-accent" : ""} />
+            <RotateCcw size={14} className={aiWorking ? "animate-spin text-accent" : ""} />
           </button>
           <button
             type="button"
@@ -600,12 +605,14 @@ function InboxCard({
         </div>
       </div>
 
-      {/* ── expanded triage surface ─────────────────────────────────── */}
+      {/* ── expanded triage surface — photos left, intel right (lg+) ── */}
       {expanded && (
         <div className="border-t border-line dark:border-slate-800 p-3 space-y-3 bg-subtle/40 dark:bg-slate-950/40">
+          <div className="grid lg:grid-cols-2 gap-3 items-start">
+          <div className="space-y-2">
           {/* Catalog vs YOUR photo, side by side (whichever exist). */}
           {(catalogImg || yoursImg) && (
-            <div className="flex gap-2 max-w-lg">
+            <div className="flex gap-2">
               {catalogImg && (
                 <figure className="flex-1 min-w-0">
                   <div className="rounded-md overflow-hidden border border-line dark:border-slate-700 bg-white dark:bg-slate-800 aspect-square flex items-center justify-center">
@@ -628,18 +635,38 @@ function InboxCard({
               )}
             </div>
           )}
+          <PhotoOptions item={item} />
+          </div>
+          <div className="space-y-3">
 
-          {/* The AI's read — confidence + notes, AND how it interpreted each
-              of the best table's fields (the author: the suggestion box must carry
-              substance, not just provenance). Chips are the AI's values; the
-              editable form below is where you correct them. */}
-          {(item.ai_notes || item.ai_confidence || topCand) && (
+          {/* The AI's read — collapsed to its one-line header by default
+              (companion app); tap to reveal the reconciliation paragraph + per-field
+              chips. The working pulse lives in the always-visible header. */}
+          {(item.ai_notes || item.ai_confidence || topCand || aiWorking) && (
             <div className="rounded-md border border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20 px-3 py-2">
-              <div className="text-xs font-medium text-content dark:text-mortar-100 flex items-center gap-1.5">
-                <Sparkles size={12} className="text-accent" />
-                AI suggestion
-                {item.ai_confidence && <span className="text-muted">· {item.ai_confidence}</span>}
-              </div>
+              <button
+                type="button"
+                onClick={() => setAiOpen((o) => !o)}
+                aria-expanded={aiOpen}
+                className="w-full text-left text-xs font-medium text-content dark:text-mortar-100 flex items-center gap-1.5"
+              >
+                <Sparkles size={12} className={aiWorking ? "text-accent animate-pulse" : "text-accent"} />
+                {aiWorking ? (
+                  <span className="animate-pulse">
+                    {rerun.isPending ? "Re-running the lookup…" : "AI is reading the details…"}
+                  </span>
+                ) : (
+                  "AI suggestion"
+                )}
+                {!aiWorking && item.ai_confidence && (
+                  <span className="text-muted">· {item.ai_confidence}</span>
+                )}
+                <ChevronDown
+                  size={13}
+                  className={`ml-auto text-faint transition-transform ${aiOpen ? "rotate-180" : ""}`}
+                />
+              </button>
+              {aiOpen && (<>
               {item.ai_notes && (
                 <p className="text-xs text-muted dark:text-slate-400 mt-1">{item.ai_notes}</p>
               )}
@@ -659,6 +686,7 @@ function InboxCard({
                   ))}
                 </div>
               )}
+              </>)}
             </div>
           )}
 
@@ -697,7 +725,13 @@ function InboxCard({
             )}
           </div>
 
-          {/* The inline confirm form — keyed so chip switches re-seed it. */}
+          {/* Research hint — correct the AI and re-run with it. */}
+          <HintBox onSubmit={(h) => rerun.mutate(h)} busy={aiWorking} />
+          </div>
+          </div>
+
+          {/* The inline confirm form — full width below (the right-rail
+              attempt collided labels at every width; reverted per the author). */}
           <ConfirmForm
             key={`${item.id}:${formCtx.selKey ?? "auto"}:${item.suggested_name ?? ""}:${item.suggested_manufacturer ?? ""}:${topCand ? topCand.label + JSON.stringify(topCand.fields) + (topCand.quantity ?? "") : "none"}`}
             item={item}
@@ -712,6 +746,93 @@ function InboxCard({
         </div>
       )}
     </div>
+  );
+}
+
+// ── photo options: DDG alternatives for the catalog image ────────────
+// The companion app "OTHER PHOTO OPTIONS" strip. Lazy — only fetches once a card
+// is expanded; picking one downloads it into core-files as the catalog
+// image (SSRF-guarded server-side).
+function PhotoOptions({ item }: { item: ScanInboxItem }) {
+  const { activeSlug } = useActiveOrg();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const options = useQuery({
+    queryKey: ["scan-photo-options", activeSlug, item.id],
+    queryFn: () => api.scanPhotoOptions(activeSlug, item.id),
+    enabled: !!item.suggested_name || !!item.barcode_text,
+    staleTime: 5 * 60_000,
+  });
+  const pick = useMutation({
+    mutationFn: (url: string) => api.setScanCatalogImage(activeSlug, item.id, url),
+    onSuccess: () => {
+      toast.success("Catalog photo updated");
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+  const items = options.data?.items ?? [];
+  if (options.isLoading) {
+    return <div className="text-[11px] text-faint animate-pulse">finding photo options…</div>;
+  }
+  if (items.length === 0) return null;
+  return (
+    <div>
+      <div className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-1">
+        other photo options <span className="text-faint normal-case">· DuckDuckGo</span>
+      </div>
+      <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
+        {items.map((o) => (
+          <button
+            key={o.url}
+            type="button"
+            disabled={pick.isPending}
+            onClick={() => pick.mutate(o.url)}
+            title={`${o.title} — ${o.source}`}
+            className="w-14 h-14 shrink-0 rounded border border-line dark:border-slate-700 overflow-hidden bg-white hover:border-cobble-400 transition disabled:opacity-50"
+          >
+            <img src={o.thumb} alt={o.title} className="w-full h-full object-cover" loading="lazy" />
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── research hint: tell the AI what it got wrong, re-run with it ─────
+function HintBox({ onSubmit, busy }: { onSubmit: (hint: string) => void; busy: boolean }) {
+  const [hint, setHint] = useState("");
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        const h = hint.trim();
+        if (!h) return;
+        onSubmit(h);
+        setHint("");
+      }}
+      className="rounded-md border border-dashed border-line dark:border-slate-700 p-2"
+    >
+      <div className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-1 flex items-center gap-1">
+        <Sparkles size={10} className="text-accent" /> research hint
+      </div>
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={hint}
+          onChange={(e) => setHint(e.target.value)}
+          placeholder="Anything that helps — a model number, a better name, a correction…"
+          className="flex-1 min-w-0 px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-800"
+        />
+        <button
+          type="submit"
+          disabled={!hint.trim() || busy}
+          className="rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm font-medium disabled:opacity-50 shrink-0 inline-flex items-center gap-1.5"
+        >
+          <RotateCcw size={13} className={busy ? "animate-spin" : ""} /> Re-run AI
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -885,8 +1006,10 @@ function ConfirmForm({
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
 
+  // dark: fields sit one step LIGHTER (slate-800) than the slate-900 card +
+  // a visible border — they were blending into the background (the author).
   const inputCls =
-    "w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900";
+    "w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-800";
   const labelCls =
     "text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-1";
 
@@ -1057,6 +1180,19 @@ interface FieldDefLike {
   choices?: string[] | null;
 }
 
+/** Does this field want a colour swatch? The platform has no dedicated
+ *  color TYPE — bundles ship them as text whose help says "pick a
+ *  hex/colour for the swatch" (yarn's `color`). Render those with a
+ *  native picker + the text in sync; the matchmaker is prompted to fill
+ *  them with CSS hex codes. */
+function wantsSwatch(def: FieldDefLike): boolean {
+  return (
+    def.type === "text" &&
+    (/hex|swatch/i.test(def.help ?? "") || def.name === "color" || def.name === "colour")
+  );
+}
+const HEX_RE = /^#[0-9a-f]{6}$/i;
+
 /** One custom-field input on the scan-confirm form, by the field def's type
  *  (dropdown for choices, checkbox/number/date/text otherwise) + its help. */
 function ScanFieldInput({
@@ -1069,6 +1205,35 @@ function ScanFieldInput({
   onChange: (v: unknown) => void;
 }) {
   const s = value == null ? "" : String(value);
+  if (wantsSwatch(def)) {
+    const hex = HEX_RE.test(s.trim()) ? s.trim() : null;
+    return (
+      <label className="block">
+        <div className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-1">
+          {def.display_label}
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            type="color"
+            value={hex ?? "#888888"}
+            onChange={(e) => onChange(e.target.value)}
+            title={hex ?? "pick a colour"}
+            className="h-8 w-10 shrink-0 rounded border border-line dark:border-slate-600 bg-transparent p-0.5 cursor-pointer"
+          />
+          <input
+            type="text"
+            value={s}
+            onChange={(e) => onChange(e.target.value === "" ? null : e.target.value)}
+            placeholder="#6F8FAF"
+            className="flex-1 min-w-0 px-2 py-1.5 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-800"
+          />
+        </div>
+        {def.help ? (
+          <p className="text-[11px] text-faint dark:text-slate-500 leading-snug mt-1">{def.help}</p>
+        ) : null}
+      </label>
+    );
+  }
   const help = def.help ? (
     <p className="text-[11px] text-faint dark:text-slate-500 leading-snug mt-1">{def.help}</p>
   ) : null;
@@ -1097,7 +1262,7 @@ function ScanFieldInput({
         <select
           value={s}
           onChange={(e) => onChange(e.target.value || null)}
-          className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+          className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-800"
         >
           <option value="">— none —</option>
           {def.choices.map((c) => (
@@ -1112,7 +1277,7 @@ function ScanFieldInput({
           step={def.type === "number" ? "any" : undefined}
           value={s}
           onChange={(e) => onChange(e.target.value === "" ? null : e.target.value)}
-          className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+          className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-800"
         />
       )}
       {help}

@@ -239,7 +239,19 @@ sandboxInstallRouter.get("/registry", async (req, res, next) => {
   try {
     const registryUrl =
       (typeof req.query.url === "string" ? req.query.url : undefined) ?? DEFAULT_REGISTRY;
-    const registry = (await fetchGithubJson(registryUrl)) as { modules: Array<{ name: string }> };
+    let registry: { modules: Array<{ name: string }> };
+    try {
+      registry = (await fetchGithubJson(registryUrl)) as { modules: Array<{ name: string }> };
+    } catch (e) {
+      // An unreachable/misconfigured registry is an EXPECTED condition on
+      // self-hosted/dev instances — answer 503 with a clear code instead of
+      // bubbling an unhandled 500 (console audit, 2026-06-11). The web's
+      // Marketplace section already renders a friendly banner off this.
+      res.status(503).json({
+        error: { code: "registry_unreachable", message: `Couldn't reach the module registry: ${(e as Error).message}` },
+      });
+      return;
+    }
     const installedRows = await meta
       .selectFrom("installed_modules")
       .select(["name", "version", "source"])

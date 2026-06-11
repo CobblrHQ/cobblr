@@ -140,14 +140,16 @@ export function UserMenu({ themed }: { themed: boolean }) {
               <div className="px-3 py-1 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-400 flex items-center gap-1.5">
                 <ShieldCheck size={11} /> Platform
               </div>
-              <Link
-                to="/admin"
+              {/* Plain anchor: the console is a top-level mount OUTSIDE this
+                  workspace router — a <Link> would resolve under /w/:slug. */}
+              <a
+                href="/admin"
                 onClick={() => setOpen(false)}
                 className={itemCls}
                 role="menuitem"
               >
                 <Server size={14} className="text-faint dark:text-slate-400" /> Operator console
-              </Link>
+              </a>
             </>
           )}
 

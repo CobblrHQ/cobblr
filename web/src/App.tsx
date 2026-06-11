@@ -7,7 +7,7 @@
 // imports its UI from "@cobblr/<name>/ui"; the host wires it under
 // /<module>/* and the module's own internal routes take over.
 
-import { lazy, Suspense } from "react";
+import { lazy, Suspense , useEffect } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { PlatformWebProvider } from "@cobblr/platform-web";
 import { InventoryUI } from "@cobblr/inventory/ui";
@@ -125,6 +125,19 @@ function Shell() {
   const { loading } = useAuth();
   if (loading) return <BootScrim />;
 
+  // The operator console is INSTANCE-wide, not workspace-scoped — it gets
+  // its own top-level mount at /admin (no /w/:slug prefix, no tenant
+  // context, reachable by a platform admin with ZERO workspaces). Console
+  // audit 2026-06-11: the old workspace-nested mount made every console URL
+  // contradict the cross-tenant story it tells.
+  if (window.location.pathname === "/admin" || window.location.pathname.startsWith("/admin/")) {
+    return (
+      <BrowserRouter>
+        <OperatorRoutes />
+      </BrowserRouter>
+    );
+  }
+
   // The active workspace lives in the URL: /w/:slug/… . We read it from the
   // raw path (it isn't a route param — it's the router *basename*) and mount
   // the authed app under that basename, so every flat route and absolute link
@@ -143,6 +156,24 @@ function Shell() {
     <BrowserRouter>
       <PublicRoutes />
     </BrowserRouter>
+  );
+}
+
+// The operator console's own router branch — top-level /admin/*, no
+// workspace basename. Unauthed/non-admin exits happen via full page
+// navigations (window.location) in AdminLayout: an in-router <Navigate to="/">
+// would loop back into the catch-all here.
+function OperatorRoutes() {
+  return (
+    <Suspense fallback={<RouteFallback />}>
+      <Routes>
+        <Route path="/admin" element={<AdminLayout />}>
+          <Route index element={<Navigate to="/admin/overview" replace />} />
+          <Route path=":section" element={<AdminConsole />} />
+        </Route>
+        <Route path="*" element={<Navigate to="/admin/overview" replace />} />
+      </Routes>
+    </Suspense>
   );
 }
 
@@ -177,6 +208,18 @@ function PublicRoutes() {
   );
 }
 
+// Escape hatch from the workspace router to the top-level operator console.
+// Inside the basename router location.pathname is already basename-stripped
+// ("/admin/overview"), so replacing with it lands on the top-level mount.
+function ConsoleEscape() {
+  const loc = useLocation();
+  useEffect(() => {
+    const path = loc.pathname.startsWith("/admin") ? loc.pathname : "/admin";
+    window.location.replace(path + loc.search + loc.hash);
+  }, [loc]);
+  return <BootScrim />;
+}
+
 // A bare URL (no /w/:slug): once authed, redirect into the user's default
 // workspace, preserving any deep path so old bookmarks keep working.
 function LandingRedirect() {
@@ -185,10 +228,16 @@ function LandingRedirect() {
   if (user.must_reset_password) return <ForcePasswordResetPage />;
   const org = pickDefaultOrg(orgs);
   if (!org) {
-    // No workspace yet (admin-minted account with no org). Nothing to route to.
+    // No workspace yet (admin-minted account with no org). A platform admin
+    // can still operate — the console is instance-wide, not workspace-bound.
     return (
-      <div className="min-h-full flex items-center justify-center text-faint font-mono text-xs">
-        no workspace yet — ask an admin to add you to one.
+      <div className="min-h-full flex flex-col items-center justify-center gap-3 text-faint font-mono text-xs">
+        <span>no workspace yet — ask an admin to add you to one.</span>
+        {user.is_platform_admin && (
+          <a href="/admin" className="text-accent underline">
+            open the operator console
+          </a>
+        )}
       </div>
     );
   }
@@ -244,6 +293,12 @@ function ActiveOrgScopedRoutes() {
   // basename-relative (react-router strips the /w/:slug base) — NOT
   // window.location.pathname, which still carries the base.
   const onPortal = location.pathname.startsWith("/portal/");
+  // The operator console is a separate shell — workspace chrome (the
+  // feedback bubble, the label-print basket + its module polling) must not
+  // leak into it. Audit 2026-06-11: LabelsBasket polled /modules/labels/queue
+  // (409 noise on every /admin page) and the operator got a "send feedback"
+  // bubble pointed at themselves.
+  const onAdmin = location.pathname === "/admin" || location.pathname.startsWith("/admin/");
   const shouldRedirectToPortal =
     activeSlug &&
     role &&
@@ -274,8 +329,9 @@ function ActiveOrgScopedRoutes() {
           domain-agnostic; this is the integrator wiring (see the file). */}
       <FilePreviewGate />
       <InstalledRenderers />
-      {/* Always-on feedback button for every signed-in user. */}
-      <FeedbackWidget />
+      {/* Always-on feedback button for every signed-in user — except the
+          operator console, where the operator IS the recipient. */}
+      {!onAdmin && <FeedbackWidget />}
       {shouldRedirectToPortal && <Navigate to={`/portal/${activeSlug}`} replace />}
       <Routes>
         <Route element={<AppLayout activeSlug={activeSlug} />}>
@@ -394,17 +450,15 @@ function ActiveOrgScopedRoutes() {
           <Route path="app/:appSlug" element={<AppPlayerPage />} />
           <Route path="app/:appSlug/r/:kind/:id" element={<AppRecordPage />} />
         </Route>
-        {/* Platform-operator console — sibling route, NOT nested under
-            AppLayout. Its own shell (AdminLayout), gated by is_platform_admin,
-            no workspace chrome. /super-admin bookmarks redirect in. */}
-        <Route path="/admin" element={<AdminLayout />}>
-          <Route index element={<Navigate to="/admin/overview" replace />} />
-          <Route path=":section" element={<AdminConsole />} />
-        </Route>
-        <Route path="/super-admin" element={<Navigate to="/admin" replace />} />
+        {/* The operator console now lives at TOP-LEVEL /admin (instance-wide,
+            no workspace prefix — see Shell). Old workspace-nested URLs
+            (/w/:slug/admin/…, /w/:slug/super-admin) escape with a full
+            navigation so bookmarks keep working. */}
+        <Route path="/admin/*" element={<ConsoleEscape />} />
+        <Route path="/super-admin" element={<ConsoleEscape />} />
       </Routes>
       </Suspense>
-      <LabelsBasket orgSlug={activeSlug} getToken={getToken} />
+      {!onAdmin && <LabelsBasket orgSlug={activeSlug} getToken={getToken} />}
     </PlatformWebProvider>
   );
 }

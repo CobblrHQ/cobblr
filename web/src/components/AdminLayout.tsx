@@ -9,8 +9,7 @@
 // content area (the Outlet) renders in the normal theme so the tables stay
 // readable. See docs/modules/member-portal-and-permissions.md.
 
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
-import { Navigate } from "react-router-dom";
+import { NavLink, Outlet } from "react-router-dom";
 import { ArrowLeft, LogOut, Moon, ShieldCheck, Sun } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
@@ -19,7 +18,6 @@ import { ADMIN_SECTIONS } from "../lib/adminSections";
 export function AdminLayout() {
   const { user, loading, logout } = useAuth();
   const { theme, toggle } = useTheme();
-  const navigate = useNavigate();
 
   // Wait for /me hydration before judging access — a direct load / fresh login
   // otherwise flashes "denied"/redirect until auth resolves.
@@ -31,22 +29,28 @@ export function AdminLayout() {
     );
   }
   // Platform-operator only. The API already 403s non-admins on /super-admin/*;
-  // this keeps them out of the shell entirely.
+  // this keeps them out of the shell entirely. FULL navigation, not an
+  // in-router <Navigate>: the console is its own top-level router whose
+  // catch-all is /admin/overview — an SPA redirect to "/" would loop.
   if (!user?.is_platform_admin) {
-    return <Navigate to="/" replace />;
+    window.location.replace("/");
+    return null;
   }
 
   return (
     <div className="min-h-screen grid grid-rows-[auto_1fr] grid-cols-1 bg-canvas dark:bg-slate-950">
       <header className="bg-slate-900 text-mortar-100 border-b border-slate-700">
-        <div className="max-w-6xl mx-auto px-5 py-3 flex items-center gap-3 min-w-0">
-          <div className="flex items-center gap-2 shrink-0">
+        {/* flex-wrap + the hidden-on-xs middle keep this row inside a phone
+            viewport — the audit caught the control cluster pushing the page
+            to 552px wide at 390px. */}
+        <div className="max-w-6xl mx-auto px-5 py-3 flex flex-wrap items-center gap-3 min-w-0">
+          <div className="flex items-center gap-2 shrink-0 min-w-0">
             <ShieldCheck size={18} className="text-cobble-300" />
             <span className="font-display font-extrabold tracking-tight">
               Cobblr
             </span>
-            <span className="text-slate-500">·</span>
-            <span className="text-mortar-200 font-medium">Operator Console</span>
+            <span className="text-slate-500 hidden sm:inline">·</span>
+            <span className="text-mortar-200 font-medium hidden sm:inline">Operator Console</span>
             <span className="ml-1 inline-flex items-center gap-1 rounded-full border border-cobble-400/40 bg-cobble-400/10 px-2 py-0.5 text-[10px] font-mono uppercase tracking-widest text-cobble-300">
               super-admin
             </span>
@@ -55,14 +59,16 @@ export function AdminLayout() {
           <div className="flex-1" />
 
           <div className="flex items-center gap-1 shrink-0">
-            <button
-              onClick={() => navigate("/")}
+            {/* Full navigation: "/" re-enters the workspace shell via the
+                landing redirect (this router has no workspace routes). */}
+            <a
+              href="/"
               className="inline-flex items-center gap-1.5 text-[11px] font-mono uppercase tracking-widest text-slate-400 hover:text-mortar-100 transition px-2 py-1"
               title="Back to your workspace"
             >
               <ArrowLeft size={12} />
               Workspace
-            </button>
+            </a>
             <span className="text-xs text-slate-400 hidden md:inline px-1">
               {user.display_name}
             </span>
@@ -84,7 +90,9 @@ export function AdminLayout() {
         </div>
 
         {/* Section nav — deep-linked /admin/<id>. */}
-        <nav className="max-w-6xl mx-auto px-5 flex flex-wrap gap-0.5">
+        {/* Mobile: one scrollable row (15 sections were eating half the
+            screen as wrapped rows); desktop wraps as before. */}
+        <nav className="max-w-6xl mx-auto px-5 flex flex-nowrap overflow-x-auto md:flex-wrap md:overflow-visible gap-0.5">
           {ADMIN_SECTIONS.map((s) => {
             const Icon = s.icon;
             return (

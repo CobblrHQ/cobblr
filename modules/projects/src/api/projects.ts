@@ -192,6 +192,91 @@ projectsRouter.delete(
 // configured, so the UI can prompt the user instead of erroring.
 const ExtractBody = z.object({ text: z.string().min(1).max(20_000) });
 
+/** The materials-extraction prompt + call, shared by the paste-text and
+ *  attached-PDF paths. Returns the {ai, yarn, hooks} shape both render. */
+async function extractMaterials(orgId: string, designId: string, text: string) {
+  const system =
+    "You read a crochet/knitting pattern and extract ONLY the materials it " +
+    "calls for. Reply with ONLY a JSON object, no prose:\n" +
+    '{"yarn":[{"fiber":<string|null>,"weight":<string|null, e.g. "Worsted",' +
+    '"DK","Aran">,"color":<string|null>,"length_m":<number|null total metres>,' +
+    '"skeins":<number|null>}],"hooks":[{"gauge":<string, e.g. "4.0 mm">}]}\n' +
+    "Use null when the pattern doesn't state something. If it lists no yarn or " +
+    "no hooks, use an empty array. Convert yards to metres (×0.9144).";
+  const r = await platform().ai.invoke({
+    orgId,
+    capability: "chat",
+    input: {
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: text.slice(0, 20_000) },
+      ],
+    },
+    source: { kind: "projects:pattern-extract", id: designId },
+  });
+  const content = (r.result as { content?: string })?.content ?? "";
+  const m = content.match(/\{[\s\S]*\}/);
+  const obj = m ? (JSON.parse(m[0]) as Record<string, unknown>) : null;
+  if (!obj) return null;
+  return {
+    ai: true as const,
+    yarn: Array.isArray(obj.yarn) ? obj.yarn : [],
+    hooks: Array.isArray(obj.hooks) ? obj.hooks : [],
+  };
+}
+
+const ExtractFileBody = z.object({ file_id: z.string().uuid() });
+
+// The "store the pattern, let the AI read it" path: a pattern PDF attached
+// to the design (core-files) → text via pdf-parse → the same materials
+// extraction as paste-text. The webapp matches the result against stock
+// (hooks by gauge, yarn by weight/fiber) — the design becomes the bridge
+// between the pattern and the yarn/hooks actually on the shelf.
+projectsRouter.post(
+  "/:id/extract-pattern-file",
+  asyncHandler(async (req, res) => {
+    const parsed = ExtractFileBody.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const ctx = tenantContext(req);
+    const bytes = await platform().files.read(ctx.org.id, parsed.data.file_id, "original");
+    if (!bytes) {
+      res.status(404).json({ error: { code: "file_not_found", message: "pattern file not found" } });
+      return;
+    }
+    let text = "";
+    try {
+      const { PDFParse } = await import("pdf-parse");
+      const parser = new PDFParse({ data: new Uint8Array(bytes.bytes) });
+      text = (await parser.getText()).text ?? "";
+    } catch {
+      res.json({ ai: false, reason: "Couldn't read that PDF.", yarn: [], hooks: [] });
+      return;
+    }
+    if (!text.trim()) {
+      res.json({ ai: false, reason: "That PDF has no extractable text (a scan?).", yarn: [], hooks: [] });
+      return;
+    }
+    try {
+      const out = await extractMaterials(ctx.org.id, req.params.id ?? "", text);
+      if (!out) {
+        res.json({ ai: false, reason: "Couldn't read that pattern.", yarn: [], hooks: [] });
+        return;
+      }
+      res.json(out);
+    } catch (e) {
+      res.json({
+        ai: false,
+        reason:
+          e instanceof Error && /provider|capability|budget/i.test(e.message)
+            ? "No AI provider is set up for this workspace yet (Configuration → AI)."
+            : "AI is unavailable right now.",
+        yarn: [],
+        hooks: [],
+      });
+    }
+  }),
+);
+
 projectsRouter.post(
   "/:id/extract-pattern",
   asyncHandler(async (req, res) => {

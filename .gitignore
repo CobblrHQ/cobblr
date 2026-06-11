@@ -25,3 +25,4 @@ docker-compose.override.yml
 .agents/
 data-iso/
 kiosk/out/
+kiosk/assets/*.y4m

@@ -12,7 +12,13 @@
 
 import { platform } from "@cobblr/platform-contract";
 
-const MATCH_DEADLINE_MS = 20_000;
+// A HANG GUARD, not a latency knob (the companion app scan lesson): the matchmaker
+// runs detached server-side — nobody is blocked on it — and a queued
+// claude-bridge call routinely takes 25-60s. At 20s every bridge call lost
+// the race, returned [] and stamped matched_at with ZERO candidates (the
+// completed call then populated the core-ai cache, which is why a manual
+// re-run later looked fine). Be generous; the in-flight guard prevents pileups.
+const MATCH_DEADLINE_MS = 120_000;
 
 /** One field the model can extract a value for. */
 interface MenuField {
@@ -222,7 +228,11 @@ export async function runMatchmaker(
     "attribute 'color: Country Blue' -> a 'colorway' field; 'material: " +
     "Acrylic' -> a 'fibre' field; 'Worsted' in a yarn title -> a weight " +
     "field). For a field with `choices`, use the closest listed choice or " +
-    "omit. Omit only what nothing in the data supports; never invent. Strip " +
+    "omit. When a field's label/help asks for a hex or colour swatch, " +
+    "output a CSS hex code for the named colour (e.g. '#6F8FAF' for " +
+    "Country Blue), not a word. If lookup_metadata.user_hint is present it " +
+    "is the user's own correction — treat it as authoritative over every " +
+    "other source. Omit only what nothing in the data supports; never invent. Strip " +
     "retailer noise from `name` ('Amazon.com:', '1 Pack Of 9 Skein' suffixes " +
     "-> a clean product name).\n" +
     "3. On the FIRST candidate only, add `notes`: 2-4 smooth, natural " +
@@ -244,6 +254,8 @@ export async function runMatchmaker(
     'Reply with ONLY JSON: {"candidates":[{"module":<string>,"instance":<string|null>,' +
     '"confidence":<0..1>,"name":<string>,"fields":{<field_name>:<value>},' +
     '"notes":<string, first candidate only>,"quantity":<int, optional>}]}. ' +
+    "Inside string values NEVER use the double-quote character — quote words " +
+    "with single quotes ('medium weight') — or the JSON will not parse. " +
     "Order candidates best-first. confidence is how well the table fits the item.";
 
   const compactMenu = menu.map((m) => ({
@@ -254,6 +266,7 @@ export async function runMatchmaker(
     fields: m.fields.map((f) => ({
       name: f.name,
       label: f.label,
+      type: f.type,
       ...(f.help ? { help: f.help } : {}),
       ...(f.choices ? { choices: f.choices } : {}),
     })),
@@ -301,11 +314,23 @@ export async function runMatchmaker(
   if (!res?.content) return [];
 
   let parsed: { candidates?: unknown };
+  const rawJson = (res.content.match(/\{[\s\S]*\}/) ?? [res.content])[0]!;
   try {
-    const m = res.content.match(/\{[\s\S]*\}/);
-    parsed = JSON.parse(m ? m[0] : res.content);
+    parsed = JSON.parse(rawJson);
   } catch {
-    return [];
+    // Salvage: the model sometimes drops UNESCAPED double quotes into the
+    // notes prose ('calls this a "medium weight"'), invalidating the whole
+    // payload — which silently zeroed every candidate (the Red Heart bug).
+    // The structured fields all precede notes, so truncate at `,"notes":`
+    // and close the shapes; we lose notes/quantity for this response but
+    // keep the routing + field extraction.
+    const cut = rawJson.search(/,\s*"notes"\s*:/);
+    if (cut === -1) return [];
+    try {
+      parsed = JSON.parse(rawJson.slice(0, cut) + "}]}");
+    } catch {
+      return [];
+    }
   }
   const rawList = Array.isArray(parsed.candidates) ? parsed.candidates : [];
 

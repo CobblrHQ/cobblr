@@ -62,6 +62,7 @@ export async function withTenant(
       "o.name as org_name",
       "o.slug as org_slug",
       "o.db_credentials_encrypted",
+      "o.plan",
       "m.role",
     ])
     .where("m.user_id", "=", req.session.id)
@@ -70,6 +71,19 @@ export async function withTenant(
 
   if (!row) {
     res.status(404).json({ error: { code: "org_not_found", message: "Org not found" } });
+    return;
+  }
+  // Operator-disabled workspace: every tenant-scoped call is refused (the
+  // console's disable toggle is only honest because of this check). The
+  // meta-level session/login still works — the user sees a clear error
+  // instead of a silent void, and re-enabling restores everything.
+  if (row.plan === "disabled") {
+    res.status(403).json({
+      error: {
+        code: "workspace_disabled",
+        message: "This workspace has been disabled by the platform operator.",
+      },
+    });
     return;
   }
   if (!row.db_credentials_encrypted) {

@@ -1572,10 +1572,24 @@ export const api = {
       "POST",
       `/orgs/${slug}/modules/core-scan/inbox/${id}/discard`,
     ),
-  rerunScanAi: (slug: string, id: string) =>
+  rerunScanAi: (slug: string, id: string, hint?: string) =>
     request<ScanInboxItem>(
       "POST",
       `/orgs/${slug}/modules/core-scan/inbox/${id}/rerun-ai`,
+      hint ? { hint } : {},
+    ),
+  // Alternative catalog photos (DDG image search on the resolved name) +
+  // pick-one-as-catalog. The companion app "OTHER PHOTO OPTIONS" strip.
+  scanPhotoOptions: (slug: string, id: string) =>
+    request<{ items: Array<{ url: string; thumb: string; title: string; source: string }> }>(
+      "GET",
+      `/orgs/${slug}/modules/core-scan/inbox/${id}/photo-options`,
+    ),
+  setScanCatalogImage: (slug: string, id: string, url: string) =>
+    request<ScanInboxItem>(
+      "POST",
+      `/orgs/${slug}/modules/core-scan/inbox/${id}/catalog-image`,
+      { url },
     ),
   createScanBatch: (slug: string) =>
     request<{ id: string }>(
@@ -1998,7 +2012,33 @@ export const api = {
       activity_24h: number;
       capability_grants: number;
       bundles_installed: number;
+      feedback_open: number;
+      waitlist_pending: number;
+      barcode_cache_upcs: number;
+      build_sha: string | null;
     }>("GET", `/super-admin/overview`),
+  superAdminDeleteWorkspace: (id: string) =>
+    request<void>("DELETE", `/super-admin/workspaces/${id}`),
+  superAdminSetWorkspacePlan: (id: string, plan: "free" | "paid" | "disabled") =>
+    request<{ id: string; slug: string; plan: string }>("PATCH", `/super-admin/workspaces/${id}`, { plan }),
+  superAdminAiSummary: () =>
+    request<{ calls_24h: number; cost_cents_24h: number }>("GET", `/super-admin/ai-summary`),
+  superAdminInstanceConfig: () =>
+    request<{
+      node_env: string;
+      build_sha: string | null;
+      public_signup: boolean;
+      self_serve_invites: boolean;
+      ai_enabled: boolean;
+      sandbox_registry_configured: boolean;
+      barcode_resolver_configured: boolean;
+    }>("GET", `/super-admin/instance-config`),
+  superAdminResolverStats: () =>
+    request<{
+      cached_upcs: number;
+      hits: number;
+      upcitemdb_today: { date: string; used: number; budget: number; blocked_until: number | null };
+    }>("GET", `/super-admin/barcode-resolver-stats`),
   superAdminWorkspaces: () =>
     request<{ items: SuperAdminWorkspace[] }>(
       "GET",

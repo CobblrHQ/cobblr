@@ -17,6 +17,7 @@ import { randomBytes } from "node:crypto";
 import { requireAuth, requirePlatformAdmin } from "../auth/middleware.js";
 import { meta } from "../db/meta.js";
 import { getTenantDb } from "../db/tenant.js";
+import { hardDeleteOrg } from "../platform/delete-org.js";
 import { getCpuStats, getInvocationStats } from "../sandbox/pool.js";
 import { hasAuthEmailSender, sendAuthEmail } from "../platform/hosted-seams.js";
 import { dispatch } from "../platform/notifications.js";
@@ -44,7 +45,7 @@ superAdminRouter.use(requireAuth, requirePlatformAdmin);
 // at-a-glance numbers. Cheap; safe to poll.
 superAdminRouter.get("/overview", async (_req, res, next) => {
   try {
-    const [orgsCount, usersCount, activeUsers, activityToday, totalGrants, totalBundles] =
+    const [orgsCount, usersCount, activeUsers, activityToday, totalGrants, totalBundles, feedbackNew, waitlistPending, barcodeUpcs] =
       await Promise.all([
         meta
           .selectFrom("orgs")
@@ -73,6 +74,22 @@ superAdminRouter.get("/overview", async (_req, res, next) => {
           .selectFrom("bundles")
           .select(meta.fn.count<number>("id").as("c"))
           .executeTakeFirst(),
+        // "Needs attention" numbers — the reason an operator opens this page.
+        meta
+          .selectFrom("feedback")
+          .select(meta.fn.count<number>("id").as("c"))
+          .where("status", "in", ["new", "triaged"])
+          .executeTakeFirst(),
+        meta
+          .selectFrom("waitlist")
+          .select(meta.fn.count<number>("id").as("c"))
+          .where("status", "=", "pending")
+          .executeTakeFirst(),
+        meta
+          .selectFrom("shared_cache")
+          .select(meta.fn.count<number>("key").as("c"))
+          .where("namespace", "=", "barcode")
+          .executeTakeFirst(),
       ]);
     res.json({
       orgs_count: Number(orgsCount?.c ?? 0),
@@ -81,9 +98,134 @@ superAdminRouter.get("/overview", async (_req, res, next) => {
       activity_24h: Number(activityToday?.c ?? 0),
       capability_grants: Number(totalGrants?.c ?? 0),
       bundles_installed: Number(totalBundles?.c ?? 0),
+      feedback_open: Number(feedbackNew?.c ?? 0),
+      waitlist_pending: Number(waitlistPending?.c ?? 0),
+      barcode_cache_upcs: Number(barcodeUpcs?.c ?? 0),
+      build_sha: process.env.COBBLR_BUILD_SHA || null,
     });
   } catch (err) {
     next(err);
+  }
+});
+
+// PATCH /super-admin/workspaces/:id — operator plan control. plan:"disabled"
+// is a real switch: withTenant refuses every tenant-scoped call for a
+// disabled workspace (login stays; re-enable restores). Also how a plan is
+// flipped free↔paid for the entitlement guard.
+const PatchWorkspace = z.object({ plan: z.enum(["free", "paid", "disabled"]) });
+superAdminRouter.patch("/workspaces/:id", async (req, res, next) => {
+  try {
+    const parsed = PatchWorkspace.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "plan must be free | paid | disabled" } });
+      return;
+    }
+    const updated = await meta
+      .updateTable("orgs")
+      .set({ plan: parsed.data.plan })
+      .where("id", "=", req.params.id!)
+      .returning(["id", "slug", "plan"])
+      .executeTakeFirst();
+    if (!updated) {
+      res.status(404).json({ error: { code: "not_found", message: "Workspace not found." } });
+      return;
+    }
+    res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /super-admin/ai-summary — 24h AI usage roll-up for the Overview card.
+// Loops tenant DBs (same pattern as /ai-activity) but count+sum only; keep
+// it on its own endpoint so /overview stays meta-cheap.
+superAdminRouter.get("/ai-summary", async (_req, res, next) => {
+  try {
+    const orgs = await meta.selectFrom("orgs").select(["id"]).execute();
+    let calls = 0;
+    let costCents = 0;
+    for (const org of orgs) {
+      try {
+        const tdb = await getTenantDb(org.id);
+        const r = await sql<{ c: number; cost: number | null }>`
+          select count(*)::int as c, coalesce(sum(cost_cents), 0)::float as cost
+          from core_ai_calls where invoked_at > now() - interval '24 hours'`.execute(tdb);
+        calls += Number(r.rows[0]?.c ?? 0);
+        costCents += Number(r.rows[0]?.cost ?? 0);
+      } catch {
+        // Tenant without core_ai_calls (module never enabled) — skip.
+      }
+    }
+    res.json({ calls_24h: calls, cost_cents_24h: Math.round(costCents) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /super-admin/workspaces/:id — operator hard-delete (the same
+// machinery as the owner-facing DELETE /orgs/:slug). Exists for cleaning up
+// e2e/test detritus from the console; the UI double-confirms with the slug.
+superAdminRouter.delete("/workspaces/:id", async (req, res, next) => {
+  try {
+    const org = await meta
+      .selectFrom("orgs")
+      .select(["id", "slug", "name"])
+      .where("id", "=", req.params.id!)
+      .executeTakeFirst();
+    if (!org) {
+      res.status(404).json({ error: { code: "not_found", message: "Workspace not found." } });
+      return;
+    }
+    await hardDeleteOrg(org.id);
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /super-admin/instance-config — which operator-level switches are live
+// on THIS instance. Read-only, booleans + non-secret identifiers only (never
+// echoes tokens/keys). The console's Health section renders these so "what
+// mode is this instance in" stops requiring a box ssh.
+superAdminRouter.get("/instance-config", async (_req, res, next) => {
+  try {
+    const { publicSignupEnabled, selfServeInvitesEnabled } = await import("../auth/signup-gate.js");
+    res.json({
+      node_env: process.env.NODE_ENV || "development",
+      build_sha: process.env.COBBLR_BUILD_SHA || null,
+      public_signup: publicSignupEnabled(),
+      self_serve_invites: selfServeInvitesEnabled(),
+      ai_enabled: (process.env.COBBLR_AI_ENABLED ?? "true").toLowerCase() !== "false",
+      sandbox_registry_configured: !!process.env.COBBLR_REGISTRY_URL || true, // default GitHub registry counts as configured
+      barcode_resolver_configured: !!process.env.COBBLR_BARCODE_RESOLVER_URL,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /super-admin/barcode-resolver-stats — proxy the box-level barcode
+// resolver's /stats (cache size, today's upcitemdb budget) so the operator
+// sees the shared cache's health without shelling into the host. 503 with
+// not_configured when the instance doesn't use a resolver.
+superAdminRouter.get("/barcode-resolver-stats", async (_req, res) => {
+  try {
+    const base = (process.env.COBBLR_BARCODE_RESOLVER_URL ?? "").replace(/\/+$/, "");
+    if (!base) {
+      res.status(503).json({ error: { code: "not_configured", message: "No barcode resolver on this instance." } });
+      return;
+    }
+    const r = await fetch(`${base}/stats`, {
+      headers: { authorization: `Bearer ${process.env.COBBLR_BARCODE_RESOLVER_TOKEN ?? ""}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!r.ok) {
+      res.status(502).json({ error: { code: "resolver_error", message: `Resolver answered HTTP ${r.status}.` } });
+      return;
+    }
+    res.json(await r.json());
+  } catch (err) {
+    res.status(502).json({ error: { code: "resolver_unreachable", message: (err as Error).message } });
   }
 });
 

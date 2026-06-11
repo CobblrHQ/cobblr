@@ -195,10 +195,29 @@ async function tickEntityRecurrence(
     orgs = Array.from(orgIds).map((id) => ({ id }));
   }
 
+  // Only run a kind's scanner where its owning module is actually enabled —
+  // a scanner against an org that never enabled the module probes tables
+  // that don't exist (relation "assets_assets" does not exist) and spammed
+  // the log once per org per tick (console audit, 2026-06-11). One query
+  // for the whole sweep.
+  const enabledRows = (await meta
+    .selectFrom("org_modules")
+    .select(["org_id", "module_name"])
+    .execute()) as unknown as Array<{ org_id: string; module_name: string }>;
+  const enabledByOrg = new Map<string, Set<string>>();
+  for (const r of enabledRows) {
+    let set = enabledByOrg.get(r.org_id);
+    if (!set) enabledByOrg.set(r.org_id, (set = new Set()));
+    set.add(r.module_name);
+  }
+
   let fired = 0;
   for (const org of orgs) {
     try {
     for (const { kind, scanner } of scanners) {
+      // "assets:asset" → owning module "assets".
+      const owningModule = kind.split(":")[0] ?? "";
+      if (!enabledByOrg.get(org.id)?.has(owningModule)) continue;
       let rows;
       try {
         rows = await scanner(org.id);

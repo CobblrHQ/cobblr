@@ -174,6 +174,10 @@ RUN npm run build
 
 # ─── runtime ─────────────────────────────────────────────────────────
 FROM node:22-alpine AS runtime
+# Build provenance — the operator console's Health section shows which commit
+# this image came from. Passed by docker-build.yml (--build-arg GIT_SHA=…).
+ARG GIT_SHA=""
+ENV COBBLR_BUILD_SHA=$GIT_SHA
 
 WORKDIR /app
 

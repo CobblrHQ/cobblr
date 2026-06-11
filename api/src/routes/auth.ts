@@ -20,10 +20,13 @@ import { signSession } from "../auth/jwt.js";
 import { isPlatformAdmin } from "../auth/middleware.js";
 import { publicSignupEnabled, selfServeInvitesEnabled } from "../auth/signup-gate.js";
 import { dispatch } from "../platform/notifications.js";
+import { isUndeliverableTestAddress } from "../platform/email-send.js";
 import * as activity from "../platform/activity.js";
 import { fireSignup, sendAuthEmail } from "../platform/hosted-seams.js";
 import { enableDefaultModulesForOrg } from "../modules/enable.js";
 import type { OrgRole } from "../db/schema.js";
+
+class SkipNotify extends Error {}
 
 export const authRouter = Router();
 
@@ -374,7 +377,10 @@ authRouter.post("/signup", async (req, res, next) => {
       // org-scoped, so fire it in the inviter's first org → it fans out to their
       // channels (in-app always; Discord/email/etc. if they've added those in
       // notification settings). Best-effort — never block the signup.
+      // Reserved/test addresses (…@x.local — demo + e2e accounts) are noise,
+      // not news: skip the ping entirely.
       try {
+        if (isUndeliverableTestAddress(email)) throw new SkipNotify();
         const inviterOrg = await meta
           .selectFrom("org_memberships")
           .select("org_id")
@@ -390,7 +396,7 @@ authRouter.post("/signup", async (req, res, next) => {
           });
         }
       } catch (err) {
-        console.error("[signup] invite-accepted notification failed:", err);
+        if (!(err instanceof SkipNotify)) console.error("[signup] invite-accepted notification failed:", err);
       }
     }
 

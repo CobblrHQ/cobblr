@@ -121,6 +121,11 @@ export function ScanCameraPage() {
   const [recent, setRecent] = useState<ScanInboxItem[]>([]);
   const [manual, setManual] = useState("");
   const [pendingBarcode, setPendingBarcode] = useState<string | null>(null);
+  // The viewfinder frame captured at the instant of the last barcode hit.
+  // A PROMISE: canvas.toBlob is async, and the result modal fires its scan
+  // within milliseconds of the hit — reading a plain ref lost the race and
+  // items landed photo-less. The modal awaits this instead.
+  const frameBlobRef = useRef<Promise<Blob | null> | null>(null);
   const [hasTorch, setHasTorch] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
 
@@ -271,6 +276,19 @@ export function ScanCameraPage() {
       if (last && last.value === raw && Date.now() - last.at < 2_000) return;
       lastSeenRef.current = { value: raw, at: Date.now() };
       if (typeof navigator.vibrate === "function") navigator.vibrate(70);
+      // companion app parity: capture the frame AT the scan moment — it rides the
+      // inbox item as YOUR photo next to the catalog image. The video
+      // pauses on result, so this exact frame is also what stays on screen.
+      const video = videoRef.current;
+      if (video && video.readyState >= 2) {
+        const c = document.createElement("canvas");
+        c.width = video.videoWidth;
+        c.height = video.videoHeight;
+        c.getContext("2d")?.drawImage(video, 0, 0);
+        frameBlobRef.current = new Promise<Blob | null>((resolve) =>
+          c.toBlob((blob) => resolve(blob), "image/jpeg", 0.85),
+        );
+      }
       const qrLabel = /^https?:\/\/[^/]+\/qr\/([A-Za-z0-9_-]{16,})$/.exec(raw);
       if (qrLabel) {
         setPhase("idle"); // release the camera before leaving
@@ -716,6 +734,7 @@ export function ScanCameraPage() {
           scanArea={areaName}
           scanAreaId={areaId}
           ensureBatchId={ensureBatchId}
+          getFrameBlob={() => frameBlobRef.current}
           scanTarget={{
             into: params.get("into"),
             module: params.get("module"),

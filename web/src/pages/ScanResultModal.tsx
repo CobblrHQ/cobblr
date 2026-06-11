@@ -30,6 +30,7 @@ export function ScanResultModal({
   scanArea,
   scanAreaId,
   ensureBatchId,
+  getFrameBlob,
   scanTarget,
   onSaved,
   onClose,
@@ -44,6 +45,10 @@ export function ScanResultModal({
   /** Lazily mints the scanner session's shared scan_batch_id (single-flight
    *  in the caller). Omitted → un-batched. */
   ensureBatchId?: () => Promise<string | null>;
+  /** The viewfinder frame captured at the scan moment — uploaded as the
+   *  item's own photo (shown beside the catalog image at triage). A promise
+   *  because canvas.toBlob is async (reading a plain value lost the race). */
+  getFrameBlob?: () => Promise<Blob | null> | null;
   scanTarget: CameraScanTarget;
   onSaved: (item: ScanInboxItem) => void;
   onClose: () => void;
@@ -63,11 +68,24 @@ export function ScanResultModal({
   // Ingest the barcode on mount → the enriched row comes back (≤12s budget).
   const scan = useMutation({
     mutationFn: async () => {
-      const batchId = ensureBatchId ? await ensureBatchId() : null;
+      const frame = await (getFrameBlob?.() ?? null);
+      const [batchId, frameFileId] = await Promise.all([
+        ensureBatchId ? ensureBatchId() : Promise.resolve(null),
+        frame
+          ? api
+              .uploadFile(
+                activeSlug,
+                new File([frame], `scan-${barcode}.jpg`, { type: "image/jpeg" }),
+              )
+              .then((f) => f.id)
+              .catch(() => null)
+          : Promise.resolve(null),
+      ]);
       return api.scanBarcode(activeSlug, {
         barcode,
         scan_area: scanArea ?? undefined,
         scan_batch_id: batchId ?? undefined,
+        image_file_id: frameFileId ?? undefined,
       });
     },
     onSuccess: (it) => {

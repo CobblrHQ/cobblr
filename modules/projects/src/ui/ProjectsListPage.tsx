@@ -25,7 +25,11 @@ const STATUS_LABEL: Record<string, string> = {
 const STATUS_ORDER = ["planning", "active", "blocked", "done", "abandoned"];
 
 export function ProjectsListPage() {
-  const { api, orgSlug, getToken, displayName, itemNoun } = useProjects();
+  const { api, orgSlug, getToken, displayName, itemNoun, instance } = useProjects();
+  // An instance's rows must stay INSIDE the instance — the bare /projects
+  // detail route filters to the default instance and 404s on instance rows
+  // ("Project not found" on every Designs/Outfits click).
+  const basePath = instance ? `/instances/${instance}` : "/projects";
   // Instance skin: an "Outfits" instance reads "Outfits" / "New outfit", not
   // "projects" / "New project". Falls back to the plain module wording.
   const heading = displayName ?? "projects";
@@ -238,7 +242,7 @@ export function ProjectsListPage() {
                     />
                   </label>
                   <Link
-                    to={`/projects/${p.id}`}
+                    to={`${basePath}/${p.id}`}
                     className="flex-1 px-2 py-3 hover:bg-subtle dark:hover:bg-slate-800/70 transition"
                   >
                     <div className="flex items-baseline gap-3">
@@ -358,6 +362,8 @@ function ProjectsViewTable({
   fields?: string[];
   fieldDefs: FieldDefLite[];
 }) {
+  const { instance } = useProjects();
+  const basePath = instance ? `/instances/${instance}` : "/projects";
   const cols = (fields && fields.length ? fields : ["title", "status"]).filter(
     (f) => f !== "title" && f !== "name",
   );
@@ -388,7 +394,7 @@ function ProjectsViewTable({
                 {g.rows.map((p) => (
                   <tr key={p.id} className="hover:bg-subtle dark:hover:bg-slate-800/40 transition">
                     <td className="px-3 py-2">
-                      <Link to={`/projects/${p.id}`} className="font-medium text-content dark:text-mortar-100 hover:text-accent">
+                      <Link to={`${basePath}/${p.id}`} className="font-medium text-content dark:text-mortar-100 hover:text-accent">
                         {p.name}
                       </Link>
                     </td>

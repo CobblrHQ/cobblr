@@ -6,6 +6,9 @@
 
 # ─── builder ─────────────────────────────────────────────────────────
 FROM node:22-alpine AS builder
+# Accepted for parity with api.Dockerfile (docker-build.yml passes it to both
+# matrix legs); the web image doesn't use it.
+ARG GIT_SHA=""
 
 WORKDIR /app
 

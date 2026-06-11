@@ -459,7 +459,11 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
   // Cache write (only on success + not bypassed).
   if (!req.bypass_cache) {
     try {
-      await tdb
+      // Re-acquire the tenant pool: the provider call above can run for
+      // minutes (a queued claude bridge), past the idle reaper — writing
+      // on the pre-call handle throws "pool after end".
+      const tdbAfter = (await getTenantDb(req.orgId)) as unknown as typeof tdb;
+      await tdbAfter
         .insertInto("core_ai_cache")
         .values({
           cache_key: cacheKey,

@@ -136,6 +136,22 @@ const SENDERS: Record<EmailProvider, (cfg: ValidConfig, subject: string, text: s
 };
 
 /** Deliver one plain-text email through the config's provider. Throws on failure. */
+/** Reserved/test TLDs can't receive mail by definition (RFC 2606/6761) —
+ *  demo and e2e accounts sign up as `…@x.local` / `…@club.local`, and
+ *  actually handing those to a real SMTP relay just burns the sender's
+ *  reputation on guaranteed bounces. */
+export function isUndeliverableTestAddress(email: string): boolean {
+  const domain = email.split("@")[1]?.toLowerCase() ?? "";
+  if (!domain) return true;
+  if (/\.(local|test|invalid|example|localhost)$/.test(domain)) return true;
+  if (domain === "localhost" || domain === "example.com" || domain === "example.org") return true;
+  return false;
+}
+
 export async function sendEmailVia(cfg: ValidConfig, subject: string, text: string): Promise<void> {
+  if (cfg.to && isUndeliverableTestAddress(cfg.to)) {
+    console.log(`[email] skipping send to reserved/test address ${cfg.to}`);
+    return;
+  }
   await SENDERS[cfg.provider](cfg, subject, text);
 }

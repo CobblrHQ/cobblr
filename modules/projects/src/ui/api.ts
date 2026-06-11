@@ -129,6 +129,11 @@ export class ProjectsApi {
   extractPattern = (designId: string, text: string) =>
     this.request<PatternExtract>("POST", `/projects/${designId}/extract-pattern`, { text });
 
+  /** The attached-PDF path: pattern file already in core-files → server
+   *  parses the PDF text + runs the same materials extraction. */
+  extractPatternFile = (designId: string, fileId: string) =>
+    this.request<PatternExtract>("POST", `/projects/${designId}/extract-pattern-file`, { file_id: fileId });
+
   // ── Cross-module: yarn allocation (inventory) for a design ──────────
   // The inventory module owns the allocation engine; we call it directly
   // (same org + auth). Reserve yarn against this project (target_entity_id),
@@ -138,7 +143,9 @@ export class ProjectsApi {
     return `/api/v1/orgs/${this.slug}/modules/inventory`;
   }
   listInventoryParts = () =>
-    this.requestUrl<{ items: InvPart[] }>("GET", `${this.invBase()}/parts?limit=200`);
+    // all_instances: the stash lives in instances (yarn/hooks tables) —
+    // a design's materials picker + pattern matching must see them all.
+    this.requestUrl<{ items: InvPart[] }>("GET", `${this.invBase()}/parts?limit=200&all_instances=1`);
   listDesignAllocations = (designId: string) =>
     this.requestUrl<{ items: DesignAllocation[] }>(
       "GET",

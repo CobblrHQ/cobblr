@@ -308,7 +308,12 @@ async function writeTenantCache(ctx: EnrichContext, v: BarcodeCacheValue): Promi
  *  failures aren't fatal — the URL is already on the row for the UI to
  *  fetch directly. SSRF-guarded + size/time-bounded; uses the caller's
  *  bearer against our own API so the upload runs through normal auth. */
-async function downloadCatalogImage(ctx: EnrichContext, imageUrl: string): Promise<void> {
+/** Download an external image into core-files and stamp it as the item's
+ *  catalog image. Exported for the photo-options picker (set-as-catalog). */
+export async function downloadCatalogImage(
+  ctx: Pick<EnrichContext, "db" | "orgSlug" | "bearer" | "itemId">,
+  imageUrl: string,
+): Promise<void> {
   try {
     assertSafeOutboundUrl(imageUrl);
     const dlRes = await fetch(imageUrl, {

@@ -20,7 +20,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { useConfirm, usePageTitle, useToast, Modal, useImageSrc } from "@cobblr/platform-web";
 import {
   ApiError,
@@ -72,40 +72,210 @@ function OverviewTab() {
     queryFn: () => api.superAdminOverview(),
     refetchInterval: 30_000,
   });
+  // Separate queries: the AI roll-up loops tenant DBs and health pings the
+  // db — neither belongs inside the meta-cheap /overview poll.
+  const ai = useQuery({
+    queryKey: ["super-admin-ai-summary"],
+    queryFn: () => api.superAdminAiSummary(),
+    staleTime: 120_000,
+  });
+  const health = useQuery({
+    queryKey: ["super-admin-health-mini"],
+    queryFn: () => api.superAdminHealth(),
+    refetchInterval: 60_000,
+  });
   if (q.isLoading) return <div className="text-xs text-faint">Loading…</div>;
   if (!q.data) return null;
+  const d = q.data;
+  const attention = d.feedback_open + d.waitlist_pending;
   return (
-    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-      <Stat label="Workspaces" value={q.data.orgs_count} />
-      <Stat label="Users" value={q.data.users_count} />
-      <Stat label="Active users (7d)" value={q.data.active_users_7d} />
-      <Stat label="Activity (24h)" value={q.data.activity_24h} />
-      <Stat label="Capability grants" value={q.data.capability_grants} />
-      <Stat label="Bundles installed" value={q.data.bundles_installed} />
+    <div className="space-y-6">
+      {/* The reason an operator opens this page: does anything need me? */}
+      <div>
+        <h2 className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-2">
+          Needs attention{attention === 0 ? " — all clear" : ""}
+        </h2>
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+          <Stat label="Open feedback" value={d.feedback_open} to="/admin/feedback" alert={d.feedback_open > 0} />
+          <Stat label="Waitlist pending" value={d.waitlist_pending} to="/admin/waitlist" alert={d.waitlist_pending > 0} />
+          <Stat label="Activity (24h)" value={d.activity_24h} to="/admin/activity" />
+          {health.data && (
+            <StatText
+              label="Health"
+              value={health.data.db.ok ? "OK" : "DEGRADED"}
+              to="/admin/health"
+              alert={!health.data.db.ok}
+            />
+          )}
+          {ai.data && (
+            <StatText
+              label="AI (24h)"
+              value={`${ai.data.calls_24h} calls${ai.data.cost_cents_24h ? ` · $${(ai.data.cost_cents_24h / 100).toFixed(2)}` : ""}`}
+              to="/admin/ai"
+            />
+          )}
+        </div>
+      </div>
+
+      <div>
+        <h2 className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-2">
+          Platform
+        </h2>
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+          <Stat label="Workspaces" value={d.orgs_count} to="/admin/workspaces" />
+          <Stat label="Users" value={d.users_count} to="/admin/users" />
+          <Stat label="Active users (7d)" value={d.active_users_7d} to="/admin/users" />
+          <Stat label="Barcode cache (UPCs)" value={d.barcode_cache_upcs} to="/admin/barcodes" />
+          <Stat label="Capability grants" value={d.capability_grants} />
+          <Stat label="Bundles installed" value={d.bundles_installed} />
+        </div>
+      </div>
+
+      {d.build_sha && (
+        <div className="text-[10px] font-mono text-faint dark:text-slate-500">
+          build {d.build_sha.slice(0, 10)}
+        </div>
+      )}
     </div>
   );
 }
 
-function Stat({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
+function StatText({ label, value, to, alert }: { label: string; value: string; to?: string; alert?: boolean }) {
+  const inner = (
+    <>
+      <div className="text-[10px] font-mono uppercase tracking-widest text-faint">{label}</div>
+      <div
+        className={
+          "font-display text-2xl font-bold mt-1.5 " +
+          (alert ? "text-ember-600 dark:text-ember-400" : "text-content dark:text-mortar-100")
+        }
+      >
+        {value}
+      </div>
+    </>
+  );
+  const cls =
+    "rounded-xl border bg-surface dark:bg-slate-900 p-4 block " +
+    (alert ? "border-ember-300 dark:border-ember-700" : "border-line dark:border-slate-700");
+  return to ? (
+    <Link to={to} className={cls + " hover:border-cobble-400 dark:hover:border-cobble-500 transition"}>
+      {inner}
+    </Link>
+  ) : (
+    <div className={cls}>{inner}</div>
+  );
+}
+
+function Stat({ label, value, to, alert }: { label: string; value: number; to?: string; alert?: boolean }) {
+  const inner = (
+    <>
       <div className="text-[10px] font-mono uppercase tracking-widest text-faint">
         {label}
       </div>
-      <div className="font-display text-3xl font-bold text-content dark:text-mortar-100 mt-1">
+      <div
+        className={
+          "font-display text-3xl font-bold mt-1 " +
+          (alert ? "text-ember-600 dark:text-ember-400" : "text-content dark:text-mortar-100")
+        }
+      >
         {value.toLocaleString()}
       </div>
-    </div>
+    </>
+  );
+  const cls =
+    "rounded-xl border bg-surface dark:bg-slate-900 p-4 block " +
+    (alert
+      ? "border-ember-300 dark:border-ember-700"
+      : "border-line dark:border-slate-700");
+  // Every number should answer "where do I act on this?" — link when a
+  // section exists for it.
+  return to ? (
+    <Link to={to} className={cls + " hover:border-cobble-400 dark:hover:border-cobble-500 transition"}>
+      {inner}
+    </Link>
+  ) : (
+    <div className={cls}>{inner}</div>
   );
 }
 
 function WorkspacesTab() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const confirm = useConfirm();
+  const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState<"activity" | "name" | "members">("activity");
   const q = useQuery({
     queryKey: ["super-admin-workspaces"],
     queryFn: () => api.superAdminWorkspaces(),
   });
+  const setPlan = useMutation({
+    mutationFn: (v: { id: string; plan: "free" | "paid" | "disabled" }) =>
+      api.superAdminSetWorkspacePlan(v.id, v.plan),
+    onSuccess: (r) => {
+      toast.success(r.plan === "disabled" ? "Workspace disabled." : `Plan set to ${r.plan}.`);
+      void qc.invalidateQueries({ queryKey: ["super-admin-workspaces"] });
+    },
+    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't update."),
+  });
+  const del = useMutation({
+    mutationFn: (id: string) => api.superAdminDeleteWorkspace(id),
+    onSuccess: () => {
+      toast.success("Workspace deleted.");
+      void qc.invalidateQueries({ queryKey: ["super-admin-workspaces"] });
+      void qc.invalidateQueries({ queryKey: ["super-admin-overview"] });
+    },
+    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't delete."),
+  });
+  async function handleDelete(w: { id: string; name: string; slug: string; member_count: number }) {
+    const ok = await confirm({
+      title: `Delete "${w.name}"?`,
+      message: `Hard-deletes workspace ${w.slug} (${w.member_count} member${w.member_count === 1 ? "" : "s"}): its tenant database is DROPPED and every entity in it is gone. This cannot be undone. Built for clearing e2e/test detritus — be sure.`,
+      confirmLabel: "Delete workspace",
+      destructive: true,
+    });
+    if (ok) del.mutate(w.id);
+  }
+  const needle = search.trim().toLowerCase();
+  const items = (q.data?.items ?? [])
+    .filter(
+      (w) =>
+        !needle ||
+        w.name.toLowerCase().includes(needle) ||
+        w.slug.toLowerCase().includes(needle) ||
+        (w.owner?.email ?? "").toLowerCase().includes(needle) ||
+        (w.owner?.display_name ?? "").toLowerCase().includes(needle),
+    )
+    .sort((a, b) =>
+      sortBy === "name"
+        ? a.name.localeCompare(b.name)
+        : sortBy === "members"
+          ? b.member_count - a.member_count
+          : new Date(b.last_activity_at ?? 0).getTime() - new Date(a.last_activity_at ?? 0).getTime(),
+    );
   return (
-    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden">
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search name, slug, or owner…"
+          className="input max-w-sm"
+        />
+        <select
+          value={sortBy}
+          onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+          className="input w-auto"
+          title="Sort"
+        >
+          <option value="activity">recent activity</option>
+          <option value="name">name</option>
+          <option value="members">members</option>
+        </select>
+        <span className="text-xs text-faint font-mono">
+          {items.length}/{q.data?.items.length ?? 0}
+        </span>
+      </div>
+    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden overflow-x-auto">
       <table className="w-full text-sm">
         <thead className="bg-subtle/50 dark:bg-slate-800/40">
           <tr>
@@ -114,10 +284,11 @@ function WorkspacesTab() {
             <Th right>Members</Th>
             <Th>Last activity</Th>
             <Th>Plan</Th>
+            <Th right> </Th>
           </tr>
         </thead>
         <tbody className="divide-y divide-line dark:divide-slate-800">
-          {(q.data?.items ?? []).map((w) => (
+          {items.map((w) => (
             <tr key={w.id}>
               <td className="px-3 py-2">
                 <div className="text-sm text-content dark:text-mortar-100">{w.name}</div>
@@ -137,24 +308,75 @@ function WorkspacesTab() {
               <td className="px-3 py-2 text-xs text-muted">
                 {w.last_activity_at ? new Date(w.last_activity_at).toLocaleString() : "—"}
               </td>
-              <td className="px-3 py-2 text-[10px] font-mono uppercase tracking-widest text-accent">
-                {w.plan}
+              <td className="px-3 py-2">
+                {/* The plan IS the disable switch — withTenant 403s every
+                    tenant call for plan=disabled, so this select is honest. */}
+                <select
+                  value={w.plan}
+                  onChange={(e) => setPlan.mutate({ id: w.id, plan: e.target.value as "free" | "paid" | "disabled" })}
+                  disabled={setPlan.isPending}
+                  className={
+                    "rounded-md border bg-surface dark:bg-slate-900 px-1.5 py-1 text-[10px] font-mono uppercase tracking-widest " +
+                    (w.plan === "disabled"
+                      ? "border-ember-400 text-ember-600 dark:text-ember-400"
+                      : "border-line dark:border-slate-700 text-accent")
+                  }
+                >
+                  <option value="free">free</option>
+                  <option value="paid">paid</option>
+                  <option value="disabled">disabled</option>
+                </select>
+              </td>
+              <td className="px-3 py-2 text-right">
+                <button
+                  onClick={() => void handleDelete(w)}
+                  disabled={del.isPending}
+                  className="text-faint hover:text-ember-500 transition p-1"
+                  title="Delete workspace (hard delete — drops its tenant DB)"
+                >
+                  <Trash2 size={14} />
+                </button>
               </td>
             </tr>
           ))}
+          {!q.isLoading && items.length === 0 && (
+            <tr><td colSpan={6} className="px-3 py-6 text-center text-faint text-xs">No workspaces match.</td></tr>
+          )}
         </tbody>
       </table>
+    </div>
     </div>
   );
 }
 
 function UsersTab() {
+  const [search, setSearch] = useState("");
   const q = useQuery({
     queryKey: ["super-admin-users"],
     queryFn: () => api.superAdminUsers(),
   });
+  const needle = search.trim().toLowerCase();
+  const items = (q.data?.items ?? []).filter(
+    (u) =>
+      !needle ||
+      u.display_name.toLowerCase().includes(needle) ||
+      u.email.toLowerCase().includes(needle) ||
+      u.orgs.some((o) => o.org_name.toLowerCase().includes(needle)),
+  );
   return (
-    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden">
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search name, email, or workspace…"
+          className="input max-w-sm"
+        />
+        <span className="text-xs text-faint font-mono">
+          {items.length}/{q.data?.items.length ?? 0}
+        </span>
+      </div>
+    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden overflow-x-auto">
       <table className="w-full text-sm">
         <thead className="bg-subtle/50 dark:bg-slate-800/40">
           <tr>
@@ -165,7 +387,7 @@ function UsersTab() {
           </tr>
         </thead>
         <tbody className="divide-y divide-line dark:divide-slate-800">
-          {(q.data?.items ?? []).map((u) => (
+          {items.map((u) => (
             <tr key={u.id}>
               <td className="px-3 py-2">
                 <div className="text-sm text-content dark:text-mortar-100">{u.display_name}</div>
@@ -205,8 +427,12 @@ function UsersTab() {
               </td>
             </tr>
           ))}
+          {!q.isLoading && items.length === 0 && (
+            <tr><td colSpan={4} className="px-3 py-6 text-center text-faint text-xs">No users match.</td></tr>
+          )}
         </tbody>
       </table>
+    </div>
     </div>
   );
 }
@@ -301,6 +527,21 @@ function HealthTab() {
     queryFn: () => api.superAdminHealth(),
     refetchInterval: 10_000,
   });
+  const cfg = useQuery({
+    queryKey: ["super-admin-instance-config"],
+    queryFn: () => api.superAdminInstanceConfig(),
+    staleTime: 60_000,
+  });
+  const resolver = useQuery({
+    queryKey: ["super-admin-resolver-stats"],
+    queryFn: () => api.superAdminResolverStats(),
+    refetchInterval: 30_000,
+    retry: false,
+    // Only ask once the config CONFIRMS a resolver exists — firing before
+    // config loads produced a guaranteed 503 on every Health visit for
+    // resolver-less instances (post-fix verification, 2026-06-11).
+    enabled: cfg.data?.barcode_resolver_configured === true,
+  });
   const cpu = useQuery({
     queryKey: ["super-admin-sandbox-cpu"],
     queryFn: () => api.superAdminSandboxCpu(),
@@ -333,6 +574,77 @@ function HealthTab() {
           detail={new Date(q.data.timestamp).toLocaleString()}
         />
       </div>
+
+      {/* Which mode is this instance in — stops "what's the signup gate set
+          to?" requiring a box ssh. Read-only booleans; secrets never leave
+          the api. */}
+      {cfg.data && (
+        <div>
+          <h2 className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-2">
+            Instance configuration
+          </h2>
+          <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-2 text-sm">
+            {([
+              ["Environment", cfg.data.node_env, null],
+              ["Build", cfg.data.build_sha ? cfg.data.build_sha.slice(0, 10) : "unknown", null],
+              ["Public signup", cfg.data.public_signup ? "open" : "closed", cfg.data.public_signup],
+              ["Self-serve invites", cfg.data.self_serve_invites ? "on" : "off", cfg.data.self_serve_invites],
+              ["AI (instance switch)", cfg.data.ai_enabled ? "enabled" : "KILLED", cfg.data.ai_enabled],
+              ["Barcode resolver", cfg.data.barcode_resolver_configured ? "configured" : "not configured", cfg.data.barcode_resolver_configured],
+            ] as Array<[string, string, boolean | null]>).map(([k, v, on]) => (
+              <div key={k} className="flex items-baseline justify-between gap-2 min-w-0">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-faint shrink-0">{k}</span>
+                <span
+                  className={
+                    "font-mono text-xs truncate " +
+                    (on === null
+                      ? "text-content dark:text-mortar-100"
+                      : on
+                        ? "text-moss-600 dark:text-moss-400"
+                        : "text-muted dark:text-slate-400")
+                  }
+                >
+                  {v}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* The box-level barcode resolver (shared cache + provider chain for
+          every product on the host). */}
+      {cfg.data?.barcode_resolver_configured && (
+        <div>
+          <h2 className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-2">
+            Barcode resolver
+          </h2>
+          {resolver.data ? (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <HealthCard label="Cached UPCs" ok={true} detail={String(resolver.data.cached_upcs)} />
+              <HealthCard label="Hits" ok={true} detail={String(resolver.data.hits)} />
+              <HealthCard
+                label="upcitemdb today"
+                ok={resolver.data.upcitemdb_today.used < resolver.data.upcitemdb_today.budget}
+                detail={`${resolver.data.upcitemdb_today.used} / ${resolver.data.upcitemdb_today.budget}`}
+              />
+              <HealthCard
+                label="upcitemdb state"
+                ok={!resolver.data.upcitemdb_today.blocked_until || resolver.data.upcitemdb_today.blocked_until < Date.now()}
+                detail={
+                  resolver.data.upcitemdb_today.blocked_until && resolver.data.upcitemdb_today.blocked_until > Date.now()
+                    ? `throttled until ${new Date(resolver.data.upcitemdb_today.blocked_until).toLocaleTimeString()}`
+                    : "available"
+                }
+              />
+            </div>
+          ) : (
+            <div className="text-xs text-faint italic">
+              {resolver.isLoading ? "Asking the resolver…" : "Resolver unreachable from the api right now."}
+            </div>
+          )}
+        </div>
+      )}
 
       <div>
         <h2 className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-2">
