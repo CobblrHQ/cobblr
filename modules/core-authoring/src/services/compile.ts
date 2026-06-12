@@ -34,6 +34,12 @@ export interface AuthoringContext {
   outputContract: string;
   /** Present only for task "customize-template": the manifest to start from. */
   baseTemplate?: { id: string; name: string; manifest: Record<string, unknown> };
+  /** The requesting user's workspace role — part of the read-only context block
+   *  (spec §Feature 2). Surfaced so the user/preview can see that e.g. only an
+   *  owner/admin can apply a bundle that enables new modules. Kept OUT of the
+   *  generation prompt wording on purpose: the prompt is eval-tuned (authoring-
+   *  eval baseline) and must not drift without an eval run. */
+  requesterRole?: string;
   warnings: string[];
 }
 
@@ -62,6 +68,7 @@ export async function assembleContext(
   selectedKinds?: string[],
   task = "create-bundle",
   baseTemplateId?: string,
+  requesterRole?: string,
 ): Promise<AuthoringContext> {
   const warnings: string[] = [];
 
@@ -79,6 +86,10 @@ export async function assembleContext(
     if (!selectedKinds || selectedKinds.length === 0) selectedKinds = template.kinds;
   }
 
+  // design-workspace (whole-app bundle) and design-app (a worker app over the
+  // existing kinds) both legitimately want the FULL catalog; the tighter tasks
+  // want a 1-3 kind scope for small-model accuracy.
+  const fullCatalogTask = task === "design-workspace" || task === "design-app" || task === "design-app-custom";
   const all = await platform().entities.listKinds();
   let chosen: EntityKindRecord[];
   if (selectedKinds && selectedKinds.length > 0) {
@@ -91,15 +102,13 @@ export async function assembleContext(
     }
   } else {
     chosen = all;
-    // design-workspace deliberately uses the FULL catalog (it designs an app
-    // from scratch and may enable any module); other tasks want a tight scope.
-    if (task !== "design-workspace") {
+    if (!fullCatalogTask) {
       warnings.push(
         "No kinds selected — using all declared kinds. Pick 1-3 for the best result; a small model wires to the wrong kind when given too many.",
       );
     }
   }
-  if (task !== "design-workspace" && chosen.length > MAX_KINDS) {
+  if (!fullCatalogTask && chosen.length > MAX_KINDS) {
     warnings.push(
       `${chosen.length} kinds in scope — capped to ${MAX_KINDS}. More kinds = lower small-model success rate. Narrow the selection.`,
     );
@@ -123,7 +132,7 @@ export async function assembleContext(
     ? { id: template.id, name: template.name, manifest: template.manifest }
     : undefined;
 
-  return { task, kinds, actions, outputContract: OUTPUT_CONTRACT, baseTemplate, warnings };
+  return { task, kinds, actions, outputContract: OUTPUT_CONTRACT, baseTemplate, requesterRole, warnings };
 }
 
 // The compact output contract — field_defs + wires ONLY (v1 scope guard).
@@ -295,9 +304,122 @@ RULES:
 - Be comprehensive: model every "thing they track" as a kind + its fields, and every automation they describe as a wire. This is a whole app, not one tweak.
 - seed: ONLY records the user EXPLICITLY enumerated as a fixed starter set — e.g. "hooks from 1mm to 10mm" → one record per size; "rooms: kitchen, garage" → one per room. Each record's "kind" must be one you listed in requires/field_defs; its keys are field names from that kind (native like "name", plus the custom field_defs you added — extra keys are stored as custom-field values). Always include a human "name". Do NOT invent data the user didn't describe (no fake yarn colours, no sample parts). If they enumerated nothing concrete, use "seed": [].
 - "interpretation" MUST (a) summarise the workspace + what you seeded, and (b) honestly name any remaining follow-ups you could NOT do — e.g. tuning scan/receipt capture rules, or creating extra named module instances/collections. Don't claim more than you built.
-- id = "cobblr.user.<kebab-slug>"; version = "0.1.0".`;
+- id = "cobblr.user.<kebab-slug>"; version = "0.1.0".${roleNote(ctx)}`;
+  },
+
+  // design-app: build a worker APP — a member-facing page of structured blocks
+  // (markdown / create-form / action button / scan) the App Player renders.
+  // Unlike a bundle (schema), this is a UI; it binds to EXISTING kinds + actions,
+  // so every block is referentially checkable by /apps/validate. v1 sticks to the
+  // blocks that render from scratch (no saved-view / record blocks that need data
+  // or pre-existing views, no custom HTML).
+  "design-app": (ctx, intent) => {
+    const kinds = ctx.kinds.map((k) => `- ${k.id} (${k.displayName})`).join("\n");
+    const actions = ctx.actions.length
+      ? ctx.actions.map((a) => `- ${a.id} — ${a.label}: ${a.description}`).join("\n")
+      : "(none — you can still use markdown + scan blocks)";
+    return `You are designing a Cobblr "app": a member-facing page built from STRUCTURED BLOCKS (not code), rendered by the App Player. Output ONLY one JSON object — your "interpretation" plus the "app" — nothing else.
+
+ENTITY KINDS you may bind forms/actions to (use these ids exactly; do not invent):
+${kinds}
+
+ACTIONS you may add as buttons (use these ids exactly; each needs its kind):
+${actions}
+
+THE USER WANTS AN APP THAT:
+"${intent}"
+
+OUTPUT — one JSON object, this exact shape:
+{
+  "interpretation": "<1-2 sentences: what the app does + any follow-ups>",
+  "app": {
+    "slug": "<kebab-case>",
+    "name": "<short name>",
+    "pages": [
+      { "slug": "<kebab>", "title": "<Page Title>", "blocks": [ <blocks> ] }
+    ]
+  }
+}
+
+BLOCK TYPES you may use (these render from scratch — pick from these only):
+- { "type": "markdown", "body": "<text with headings / lists>" } — intro / instructions.
+- { "type": "form", "kind": "<kind id>", "mode": "create", "fields": ["<field>", ...] } — a create form for a kind (omit "fields" to show all).
+- { "type": "action", "action_id": "<action id>", "kind": "<kind id>", "label": "<button text>" } — an action button (action_id MUST apply to that kind).
+- { "type": "scan" } — the barcode / photo scanner.
+
+RULES:
+- slug + every page.slug must be kebab-case (^[a-z0-9-]+$).
+- form.kind / action.kind must be one of the kind ids above; action.action_id must be one of the action ids above AND apply to its kind. Never reference an id not listed.
+- Keep it to 1-3 pages. Build something usable: typically a markdown intro + a create form + the relevant action buttons (+ a scan block if they capture physical items).
+- Do NOT use saved-view, record, stat, or custom-HTML blocks — they need existing data/views and are out of scope here. If the user asked for something only those could do, say so plainly in "interpretation" and build what you can.`;
+  },
+
+  // design-app-custom: the spec's "generate an app (HTML)" path. The app is ONE
+  // custom block — a self-contained HTML+JS fragment the App Player renders in a
+  // SANDBOXED iframe. The fragment never holds a token or hits the API directly;
+  // it reads/writes through the mediated `window.cobblr` bridge, which is bounded
+  // by the viewer's capabilities + field-read-scope (so untrusted generated code
+  // can never exceed the member). Same validate → repair → apply loop; the kernel
+  // validates the app definition (custom block ≤ 200k) before anything is created.
+  "design-app-custom": (ctx, intent) => {
+    const kinds = ctx.kinds.map((k) => `- ${k.id} (${k.displayName})`).join("\n");
+    const actions = ctx.actions.length
+      ? ctx.actions.map((a) => `- ${a.id} — ${a.label}: ${a.description}`).join("\n")
+      : "(none)";
+    return `You are writing a Cobblr CUSTOM APP: a single self-contained HTML+JS fragment the App Player renders in a sandboxed iframe. It reads and writes the workspace ONLY through the injected \`window.cobblr\` bridge — never fetch(), never a token, never the network. Output ONLY one JSON object — your "interpretation" plus the "app" — nothing else.
+
+ENTITY KINDS available (use these ids exactly):
+${kinds}
+
+ACTIONS available (use these ids exactly):
+${actions}
+
+THE \`window.cobblr\` BRIDGE your code may call (all return Promises):
+- cobblr.viewData(viewId, { limit }) — rows of a saved view (read-scoped) → []
+- cobblr.entity(kind, id) — one entity (read-scoped)
+- cobblr.get(path) — a raw allowlisted GET (advanced)
+- cobblr.me() — { role, grants } for the current viewer
+- cobblr.can(actionId) — boolean: may the viewer run this action
+- cobblr.invoke(actionId, { entityKind, entityId, args }) — run an action (a write)
+- cobblr.appLoad(key) / cobblr.appSave(key, value) — this app's OWN private key/value store (use this for the app's saved state; it can't touch real entities)
+- cobblr.mount(el, loader, render) — optional helper: shows loading/error around an async loader
+
+THE USER WANTS AN APP THAT:
+"${intent}"
+
+OUTPUT — one JSON object, this exact shape:
+{
+  "interpretation": "<1-2 sentences: what the app does + any follow-ups>",
+  "app": {
+    "slug": "<kebab-case>",
+    "name": "<short name>",
+    "pages": [
+      { "slug": "main", "title": "<Page Title>", "blocks": [
+        { "type": "custom", "html": "<the full HTML+CSS+JS fragment of the app>" }
+      ] }
+    ]
+  }
+}
+
+RULES:
+- ONE page with ONE custom block. slug + page.slug must be kebab-case.
+- The "html" is a self-contained fragment: inline <style> for CSS and <script> for JS; no external <script src>, no CDNs, no fetch(), no top-level network. Keep it under ~12,000 characters.
+- Touch data ONLY via window.cobblr.*. For the app's own saved state use appLoad/appSave (a private bag — NOT real entities). Reference kinds/actions/views by the ids listed above.
+- Make it actually work end-to-end for the described use — render real data with viewData/entity where relevant, and wire buttons to invoke/appSave. Guard every bridge call with try/catch and show a friendly message on error.
+- If the ask truly needs structured blocks (a plain create form, the scanner) instead of custom code, say so in "interpretation" — but otherwise build the working custom app.`;
   },
 };
+
+/** A permission-level note appended to the generation prompt ONLY for non-admin
+ *  requesters — so a design that enables modules a member can't enable gets
+ *  flagged (in interpretation), not silently rejected at apply. Returns "" for
+ *  owner/admin, which keeps the authoring-eval baseline (run as an admin token)
+ *  byte-for-byte unchanged. */
+function roleNote(ctx: AuthoringContext): string {
+  const r = ctx.requesterRole;
+  if (!r || r === "owner" || r === "admin") return "";
+  return `\n- NOTE: your workspace role is "${r}". You may not be able to ENABLE new modules — prefer kinds whose modules are already on, and in "interpretation" call out any module an owner/admin will need to turn on for this to apply.`;
+}
 
 export function compilePrompt(context: AuthoringContext, intent: string): string {
   const builder = TASK_TEMPLATES[context.task];
@@ -330,11 +452,32 @@ export function parseJsonObject(raw: string): unknown {
   const start = raw.indexOf("{");
   const end = raw.lastIndexOf("}");
   if (start === -1 || end === -1 || end < start) return null;
+  const slice = raw.slice(start, end + 1);
   try {
-    return JSON.parse(raw.slice(start, end + 1));
+    return JSON.parse(slice);
   } catch {
-    return null;
+    // Silent trivial repair (the spec's "auto-fix the trailing comma / smart
+    // quote" — fix it locally instead of burning a whole AI repair round-trip
+    // on cosmetic noise). Conservative on purpose: only the two highest-
+    // frequency, lowest-risk LLM JSON defects. A REAL error (bad field/module
+    // ref, schema violation) survives this untouched and is caught by the
+    // kernel validator + the repair loop. The output is re-validated regardless,
+    // so a bad repair is never worse than today's outright null.
+    try {
+      return JSON.parse(repairTrivialJson(slice));
+    } catch {
+      return null;
+    }
   }
+}
+
+/** Fix only cosmetic JSON noise a model commonly emits: curly double-quotes
+ *  used as delimiters, and trailing commas before a closing }/]. Anything
+ *  structural is left alone for the validator. */
+export function repairTrivialJson(s: string): string {
+  return s
+    .replace(/[“”]/g, '"') // “ ” → "
+    .replace(/,(\s*[}\]])/g, "$1"); // trailing comma before } or ]
 }
 
 /** Split a parsed build reply into its interpretation + the bundle manifest.
@@ -379,4 +522,20 @@ export function unwrapBuild(parsed: unknown): {
     }
   }
   return { interpretation: null, bundle: parsed, seed: [] };
+}
+
+/** Split a parsed design-app reply into interpretation + the app definition.
+ *  Contract: `{ "interpretation": "...", "app": {...} }`; tolerate a bare app
+ *  (a model that skipped the wrapper). */
+export function unwrapApp(parsed: unknown): { interpretation: string | null; app: unknown } {
+  if (parsed && typeof parsed === "object") {
+    const p = parsed as { app?: unknown; interpretation?: unknown };
+    if (p.app && typeof p.app === "object") {
+      return {
+        interpretation: typeof p.interpretation === "string" ? p.interpretation.trim() : null,
+        app: p.app,
+      };
+    }
+  }
+  return { interpretation: null, app: parsed };
 }

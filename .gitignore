@@ -21,6 +21,7 @@ data/
 
 # Claude Code per-user overrides
 .claude/settings.local.json
+.claude/worktrees/
 docker-compose.override.yml
 .agents/
 data-iso/

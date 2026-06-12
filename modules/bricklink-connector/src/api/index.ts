@@ -7,6 +7,10 @@ import { platform } from "@cobblr/platform-contract";
 import { parseWantedList } from "../services/wanted-list.js";
 import { parseOrderCsv } from "../services/order-csv.js";
 import { diffWantedList, type LoadInventoryParts } from "../services/diff.js";
+import { registerBricklinkHandlers } from "./action-handlers.js";
+
+// Register the Lego/BrickLink action handlers (disassemble-kit) at module load.
+registerBricklinkHandlers();
 
 const router = Router({ mergeParams: true });
 

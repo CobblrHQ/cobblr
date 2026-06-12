@@ -185,4 +185,21 @@ export class CobblrClient {
       confirm,
     });
   }
+
+  // ── Browser driving (Feature 3) ──────────────────────────────────
+  driveRequestWindow(slug: string): Promise<unknown> {
+    return this.request("POST", `/orgs/${encodeURIComponent(slug)}/drive/driver/request`, {});
+  }
+  driveNavigate(slug: string, path: string): Promise<unknown> {
+    return this.request("POST", `/orgs/${encodeURIComponent(slug)}/drive/driver/navigate`, { path });
+  }
+  driveStatus(slug: string): Promise<unknown> {
+    return this.request("GET", `/orgs/${encodeURIComponent(slug)}/drive/status`);
+  }
+  drivePresent(slug: string, payload: Record<string, unknown>): Promise<unknown> {
+    return this.request("POST", `/orgs/${encodeURIComponent(slug)}/drive/driver/present`, payload);
+  }
+  driveObserve(slug: string): Promise<unknown> {
+    return this.request("GET", `/orgs/${encodeURIComponent(slug)}/drive/driver/observe`);
+  }
 }

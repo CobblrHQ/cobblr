@@ -20,9 +20,9 @@ import { getTenantDb } from "../db/tenant.js";
 import { hardDeleteOrg } from "../platform/delete-org.js";
 import { getCpuStats, getInvocationStats } from "../sandbox/pool.js";
 import { hasAuthEmailSender, sendAuthEmail } from "../platform/hosted-seams.js";
-import { dispatch } from "../platform/notifications.js";
+import { notifyAccount } from "../platform/notifications.js";
 import { announce, listAnnounceSettings, setAnnounceSetting, isComposable } from "../platform/announce.js";
-import { pokeDiscordResolved } from "../platform/discord-bot-trigger.js";
+import { pokeDiscordResolved, pokeDiscordWaitlistCard } from "../platform/discord-bot-trigger.js";
 import { pokeTriage } from "../platform/triage-trigger.js";
 import {
   runMatchmaker,
@@ -711,6 +711,16 @@ superAdminRouter.post("/waitlist/ingest", async (req, res, next) => {
       body: email,
       color: 0x6b8e4e,
     });
+    // Post an actionable card (embed + Approve button) to the Discord admin
+    // channel so the author can approve from his phone without the web dashboard. The
+    // button calls this same /approve endpoint. No-op when the bot isn't wired.
+    pokeDiscordWaitlistCard({
+      waitlist_id: row.id,
+      email,
+      source: parsed.data.source ?? "marketing-site",
+      signed_up_at: (parsed.data.signed_up_at ? new Date(parsed.data.signed_up_at) : row.created_at).toISOString(),
+      user_agent: parsed.data.user_agent ?? null,
+    });
     res.status(201).json({ id: row.id, status: "pending", duplicate: false });
   } catch (err) {
     next(err);
@@ -1363,46 +1373,46 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
         }
         if (orgId) {
           const ctx = (row.context ?? {}) as { route?: string };
-          const defaultMsg =
-            parsed.data.status === "resolved"
-              ? "The issue you reported has been fixed — it's live now."
-              : parsed.data.status === "wontfix"
-                ? "We reviewed your feedback — thanks for flagging it."
-                : "We're looking into the feedback you sent.";
-          await dispatch({
-            orgId,
-            userId: row.user_id,
-            eventType: "platform.feedback.replied",
-            message: parsed.data.reply_message?.trim() || defaultMsg,
-            link_url: typeof ctx.route === "string" ? ctx.route : undefined,
-          });
-          notified = true;
-        }
-        // When the reported thing actually SHIPPED (resolved), also EMAIL the
-        // reporter — "your request is live" — not just an in-app note (the author:
-        // "give the requesting user a notification and even an email ... when
-        // it's live in prod"). Reuses the platform's registered sender (the
-        // overlay's managed mailer in prod); no-op if none is configured.
-        if (parsed.data.status === "resolved" && hasAuthEmailSender()) {
-          const u = await meta
-            .selectFrom("users")
-            .select(["email", "display_name"])
-            .where("id", "=", row.user_id)
-            .executeTakeFirst();
-          if (u?.email) {
-            const note =
-              parsed.data.reply_message?.trim() || "The thing you reported is fixed — it's live now.";
-            const hi = u.display_name ? `Hi ${u.display_name},` : "Hi,";
-            emailed = await sendAuthEmail({
-              to: u.email,
-              subject: "Your Cobblr request is live",
-              text:
-                `${hi}\n\n${note}\n\n` +
-                `You'd sent us:\n  "${(row.message ?? "").slice(0, 500)}"\n\n` +
-                `Thanks for helping make Cobblr better.\n— The Cobblr team`,
-              kind: "notification",
-            });
+          const isResolved = parsed.data.status === "resolved";
+          const defaultMsg = isResolved
+            ? "The issue you reported has been fixed — it's live now."
+            : parsed.data.status === "wontfix"
+              ? "We reviewed your feedback — thanks for flagging it."
+              : "We're looking into the feedback you sent.";
+          const message = parsed.data.reply_message?.trim() || defaultMsg;
+          // Build the "your request is live" email ONLY on resolved — replies
+          // always notify in-app/Discord, but we only EMAIL on ship (the author: "give
+          // the requesting user a notification and even an email ... when it's
+          // live in prod"). notifyAccount honors the user's Communication
+          // Preferences matrix per channel + DMs them if Discord is verified.
+          let email: { subject: string; text: string } | undefined;
+          if (isResolved && hasAuthEmailSender()) {
+            const u = await meta
+              .selectFrom("users")
+              .select(["email", "display_name"])
+              .where("id", "=", row.user_id)
+              .executeTakeFirst();
+            if (u?.email) {
+              const hi = u.display_name ? `Hi ${u.display_name},` : "Hi,";
+              email = {
+                subject: "Your Cobblr request is live",
+                text:
+                  `${hi}\n\n${message}\n\n` +
+                  `You'd sent us:\n  "${(row.message ?? "").slice(0, 500)}"\n\n` +
+                  `Thanks for helping make Cobblr better.\n— The Cobblr team`,
+              };
+            }
           }
+          const { deliveredVia } = await notifyAccount({
+            userId: row.user_id,
+            representativeOrgId: orgId,
+            notificationType: "platform.feedback.replied",
+            message,
+            link_url: typeof ctx.route === "string" ? ctx.route : undefined,
+            email,
+          });
+          notified = deliveredVia.length > 0 || notified;
+          emailed = deliveredVia.includes("email");
         }
       } catch (err) {
         console.error("[super-admin] feedback-reply notification failed:", err);

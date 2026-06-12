@@ -1,21 +1,17 @@
-// Action handlers — the wire-engine-callable side of inventory.
-//
-// Today:
-//   - inventory.adjust-stock — direct stock mutation triggered by
-//     wires or HTTP. Reads partId + delta from ctx.event.payload
-//     (or ctx.args), does an UPDATE, re-emits inventory.stock.changed.
-//   - inventory.disassemble-kit — kit → N children. Reads the
-//     Rebrickable BOM catalog, spawns inventory:part rows + writes
-//     matches/derived-from pairings.
+// Action handlers — the wire-engine-callable + Tier-B-invokable side of
+// inventory. All GENERIC inventory capabilities (a use-case lives in a bundle +
+// its app, never here):
+//   - inventory.adjust-stock — wire/HTTP stock mutation; re-emits stock.changed.
+//   - inventory.set-status    — set a part's metadata.status.
+//   - inventory.create-item   — create one item (name + fields + location/…).
+//   - inventory.create-items  — bulk create N items in one INSERT; returns ids.
+//   - inventory.update-item   — set name/brand/location + MERGE metadata fields.
+// (The Lego kit→parts expansion that used to live here moved to the Lego domain
+//  module, bricklink-connector — it drives create-items + update-item.)
 
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { InventoryDB } from "../db.js";
-
-// B1 cleanup (2026-05-25-audit.md): no more direct selectFrom on
-// core_catalogs_* — the disassemble handler now uses the
-// platform().catalogs surface instead. Pairings go through
-// platform().pairings.createMany.
 
 let registered = false;
 
@@ -70,204 +66,6 @@ export function registerInventoryActionHandlers(): void {
     };
   });
 
-  // ─────────────────────── disassemble-kit ─────────────────────────
-  //
-  // ctx.entity is the kit (an inventory:part). We:
-  //   1. Find a `matches → core-catalogs:entry` pairing whose
-  //      catalog is a rebrickable-sets catalog. external_id is the
-  //      Rebrickable set_num (e.g. "75192-1").
-  //   2. Find the BOM catalog (rebrickable-inventory-parts) and
-  //      query its entries where payload->>'set_num' = set_num.
-  //      Requires the BOM was seeded with set_num joined in.
-  //   3. Look up part metadata (name + img_url) from the
-  //      rebrickable-parts catalog for each unique part_num.
-  //   4. INSERT one inventory_parts row per BOM line, carrying the
-  //      Rebrickable img_url, qty, and metadata (color, is_spare,
-  //      derived_from_kit_id, set_num, state=loose).
-  //   5. Write `matches → core-catalogs:entry` for each new part →
-  //      its Rebrickable part entry, plus `derived-from` back to
-  //      the kit.
-  //   6. Update the kit's metadata.state = "parted-out".
-  platform().actions.registerHandler("inventory.disassemble-kit", async (ctx) => {
-    const kitId = ctx.entity.id;
-    const xdb = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
-
-    // 1. Find the matched catalog entry.
-    const matched = await platform().entities.walkPairings(
-      ctx.orgId,
-      { kind: "inventory:part", id: kitId },
-      { rel: "matches", dir: "out", kind: "core-catalogs:entry" },
-    );
-    const match = matched[0];
-    if (!match) {
-      return {
-        ok: false,
-        error: "no_match",
-        message:
-          "This part isn't matched to any catalog. Match it to a Rebrickable set first.",
-      };
-    }
-    const setNum = match.fields.external_id as string | undefined;
-    if (!setNum) {
-      return { ok: false, error: "bad_match", message: "Match is missing external_id." };
-    }
-
-    // 2. Resolve catalogs by semantic type — preferred over coupling
-    // to the bundle's external_id suffix. Workspaces that haven't
-    // re-installed the rebrickable bundle v0.5+ (which sets
-    // semantic_type) get a friendlier name-based fallback.
-    const setsCat = await platform().catalogs.findBySemanticType(ctx.orgId, "lego.set");
-    const bomCat = await platform().catalogs.findBySemanticType(ctx.orgId, "lego.bom");
-    const partsCat = await platform().catalogs.findBySemanticType(ctx.orgId, "lego.part");
-
-    if (!bomCat) {
-      return {
-        ok: false,
-        error: "no_bom_catalog",
-        message:
-          "No catalog declares semantic_type='lego.bom'. Install the rebrickable-catalogs bundle (v0.5+) and run `node scripts/seed-rebrickable.mjs --include-bom`.",
-      };
-    }
-    // setsCat is informational — used only for the user-facing error
-    // when the match isn't to a sets catalog. If the workspace hasn't
-    // declared semantic_type='lego.set' yet, skip the strict check
-    // and just trust the match.
-    if (setsCat && match.fields.catalog_id !== setsCat.id) {
-      return {
-        ok: false,
-        error: "not_a_set",
-        message: "Matched catalog isn't the canonical lego.set catalog. Match this part to a Rebrickable set first.",
-      };
-    }
-
-    // 3. Query BOM entries by set_num. The seeder synthesises set_num
-    // into each row's payload — if rows are missing it, the BOM was
-    // seeded before the set_num enrichment shipped.
-    const bomRows = await platform().catalogs.queryEntries({
-      orgId: ctx.orgId,
-      catalogId: bomCat.id,
-      payloadEq: { set_num: setNum },
-    });
-    if (bomRows.length === 0) {
-      return {
-        ok: false,
-        error: "no_bom_rows",
-        message: `No BOM rows for set ${setNum}. Either the set isn't in the BOM dump or your BOM data predates the set_num enrichment — re-run the seeder.`,
-      };
-    }
-
-    // 4. Look up part metadata from the rebrickable-parts catalog.
-    const partNums = Array.from(
-      new Set(bomRows.map((r) => String(r.payload.part_num ?? "")).filter(Boolean)),
-    );
-    const partEntries = partsCat && partNums.length > 0
-      ? await platform().catalogs.queryEntries({
-          orgId: ctx.orgId,
-          catalogId: partsCat.id,
-          externalIdIn: partNums,
-        })
-      : [];
-    const partByNum = new Map<string, typeof partEntries[number]>(
-      partEntries.map((p) => [p.externalId, p]),
-    );
-
-    // 5. Spawn inventory:part rows + write pairings. Batched —
-    // a typical Rebrickable set has 300-700 BOM rows; row-by-row
-    // INSERT was 2000+ SQL roundtrips. Single bulk INSERT with
-    // RETURNING + two bulk pairing inserts keeps it to 3 queries
-    // total. (Audit item N3.)
-    const insertRows = bomRows.map((row) => {
-      const partNum = String(row.payload.part_num ?? "");
-      const colorId = String(row.payload.color_id ?? "");
-      const isSpare = String(row.payload.is_spare ?? "").toLowerCase() === "true";
-      const qty = Number(row.payload.quantity ?? 1);
-      const imgUrl =
-        typeof row.payload.img_url === "string" && (row.payload.img_url as string).length > 0
-          ? (row.payload.img_url as string)
-          : null;
-      const partEntry = partByNum.get(partNum);
-      const partName =
-        (partEntry?.payload.name as string | undefined) ?? `Part ${partNum}`;
-      return {
-        partEntryId: partEntry?.id ?? null,
-        values: {
-          name: partName,
-          qty: String(qty),
-          unit: "each",
-          image_path: imgUrl,
-          metadata: sql`${JSON.stringify({
-            color_id: colorId,
-            is_spare: isSpare,
-            derived_from_kit_id: kitId,
-            set_num: setNum,
-            part_num: partNum,
-            lifecycle: "loose",
-          })}::jsonb` as never,
-        },
-      };
-    });
-    // Bulk insert into the inventory module's own table — that stays
-    // direct since it's same-module access.
-    const insertedRows = await xdb
-      .insertInto("inventory_parts")
-      .values(insertRows.map((r) => r.values))
-      .returning("id")
-      .execute();
-    const spawned = insertedRows.length;
-    // Pairing writes go through platform().pairings.createMany — no
-    // more touching entity_pairings directly from inventory.
-    const matchesValues = insertedRows
-      .map((r, i) => {
-        const partEntryId = insertRows[i]?.partEntryId;
-        if (!partEntryId) return null;
-        return {
-          orgId: ctx.orgId,
-          sourceKind: "inventory:part",
-          sourceId: r.id,
-          targetKind: "core-catalogs:entry",
-          targetId: partEntryId,
-          relationshipKind: "matches",
-          createdBy: ctx.userId,
-        };
-      })
-      .filter((v): v is NonNullable<typeof v> => v !== null);
-    const derivedFromValues = insertedRows.map((r) => ({
-      orgId: ctx.orgId,
-      sourceKind: "inventory:part",
-      sourceId: r.id,
-      targetKind: "inventory:part",
-      targetId: kitId,
-      relationshipKind: "derived-from",
-      createdBy: ctx.userId,
-    }));
-    await platform().pairings.createMany(matchesValues);
-    await platform().pairings.createMany(derivedFromValues);
-
-    // 6. Mark the kit parted-out.
-    const kit = await xdb
-      .selectFrom("inventory_parts")
-      .select("metadata")
-      .where("id", "=", kitId)
-      .executeTakeFirst();
-    const existingMeta = (kit?.metadata as Record<string, unknown> | null) ?? {};
-    await xdb
-      .updateTable("inventory_parts")
-      .set({
-        metadata: sql`${JSON.stringify({ ...existingMeta, lifecycle: "parted-out" })}::jsonb` as never,
-        updated_at: new Date(),
-      })
-      .where("id", "=", kitId)
-      .execute();
-
-    return {
-      ok: true,
-      kitId,
-      setNum,
-      spawned,
-      message: `Spawned ${spawned} parts from set ${setNum}.`,
-    };
-  });
-
   // ─────────────────────── set-status ──────────────────────────────
   // A small, member-appropriate write: set a part's metadata.status
   // (the Lego set Built/Unbuilt/Missing-pieces field). This is the
@@ -296,6 +94,100 @@ export function registerInventoryActionHandlers(): void {
       .where("id", "=", partId)
       .execute();
     return { ok: true, partId, status };
+  });
+
+  // ─────────────────────── create-item ─────────────────────────────
+  // Generic item creation — the canonical write a custom (Tier B) app block
+  // performs when it needs to ADD an entity (there was no invokable create
+  // action before; apps could only set-status / adjust-stock). Creates an
+  // inventory item in a given instance with a name + custom fields (metadata)
+  // + an optional location/manufacturer/qty. Knows nothing about any specific
+  // use-case — the caller composes the name + fields and decides what to make.
+  // Capability-gated (`inventory:create-item`). Emits inventory.part.created so
+  // wires fire as they would for an HTTP create.
+  platform().actions.registerHandler("inventory.create-item", async (ctx) => {
+    const a = (ctx.args as Record<string, unknown> | null) ?? {};
+    // Empty → undefined so the column DEFAULT ('inventory') applies (see
+    // create-items); "" would hide the row in an unreadable instance.
+    const instance = typeof a.instance === "string" && a.instance.trim() ? a.instance.trim() : undefined;
+    const name = typeof a.name === "string" && a.name.trim() ? a.name.trim().slice(0, 200) : "Untitled";
+    const manufacturer = typeof a.manufacturer === "string" && a.manufacturer.trim() ? a.manufacturer.trim().slice(0, 120) : null;
+    const locationId = typeof a.location_id === "string" && a.location_id ? a.location_id : null;
+    const fields = (a.fields && typeof a.fields === "object" ? a.fields : {}) as Record<string, unknown>;
+    const qty = typeof a.qty === "number" ? String(a.qty) : "1";
+    const unit = typeof a.unit === "string" && a.unit.trim() ? a.unit.trim().slice(0, 30) : "each";
+
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
+    const created = await db
+      .insertInto("inventory_parts")
+      .values({
+        name,
+        qty,
+        unit,
+        instance,
+        location_id: locationId,
+        manufacturer,
+        metadata: sql`${JSON.stringify(fields)}::jsonb` as never,
+      })
+      .returning(["id", "name"])
+      .executeTakeFirst();
+    if (!created) return { ok: false, error: "create_failed" };
+
+    await platform().events.emit("inventory.part.created", { orgId: ctx.orgId, partId: created.id });
+    return { ok: true, item_id: created.id, name: created.name };
+  });
+
+  // ─────────────────────── create-items (bulk) ─────────────────────
+  // Generic bulk create — one INSERT for N items (a kit BOM, a CSV import, a
+  // batch from another module). Returns the new ids in input order so the
+  // caller can wire pairings. Deliberately does NOT fan out per-item
+  // inventory.part.created events (a 700-part expansion shouldn't fire 700
+  // wires); a caller that needs a signal emits its own. Generic — no use-case.
+  platform().actions.registerHandler("inventory.create-items", async (ctx) => {
+    const a = (ctx.args as Record<string, unknown> | null) ?? {};
+    const items = Array.isArray(a.items) ? (a.items as Record<string, unknown>[]) : [];
+    if (items.length === 0) return { ok: true, ids: [] };
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
+    const rows = items.map((o) => ({
+      name: typeof o.name === "string" && o.name.trim() ? o.name.trim().slice(0, 200) : "Untitled",
+      qty: typeof o.qty === "number" ? String(o.qty) : typeof o.qty === "string" && o.qty ? o.qty : "1",
+      unit: typeof o.unit === "string" && o.unit.trim() ? o.unit.trim().slice(0, 30) : "each",
+      // Omit when not given so the column DEFAULT ('inventory') applies —
+      // forcing "" would bury the rows in an empty instance the default
+      // list/detail reads (instanceOf → 'inventory') never return.
+      instance: typeof o.instance === "string" && o.instance.trim() ? o.instance.trim() : undefined,
+      location_id: typeof o.location_id === "string" && o.location_id ? o.location_id : null,
+      manufacturer: typeof o.manufacturer === "string" && o.manufacturer.trim() ? o.manufacturer.trim().slice(0, 120) : null,
+      image_path: typeof o.image_path === "string" && o.image_path ? o.image_path : null,
+      metadata: sql`${JSON.stringify(o.fields && typeof o.fields === "object" ? o.fields : {})}::jsonb` as never,
+    }));
+    const inserted = await db.insertInto("inventory_parts").values(rows).returning(["id"]).execute();
+    return { ok: true, ids: inserted.map((r) => r.id) };
+  });
+
+  // ─────────────────────── update-item ─────────────────────────────
+  // Generic field update — set a part's name / brand / location and/or MERGE
+  // metadata fields (e.g. mark a kit metadata.lifecycle='parted-out'). The
+  // companion to create-item; lets a Tier-B app or another module edit an item
+  // through inventory's public interface instead of touching the table. Generic.
+  platform().actions.registerHandler("inventory.update-item", async (ctx) => {
+    const a = (ctx.args as Record<string, unknown> | null) ?? {};
+    const id = typeof a.id === "string" && a.id ? a.id : (ctx.entity as { id?: string } | null)?.id;
+    if (!id) return { ok: false, error: "missing id" };
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
+    const row = await db.selectFrom("inventory_parts").select("metadata").where("id", "=", id).executeTakeFirst();
+    if (!row) return { ok: false, error: "not_found" };
+    const set: Record<string, unknown> = { updated_at: new Date() };
+    if (typeof a.name === "string" && a.name.trim()) set.name = a.name.trim().slice(0, 200);
+    if (typeof a.manufacturer === "string") set.manufacturer = a.manufacturer.trim().slice(0, 120) || null;
+    if (typeof a.location_id === "string") set.location_id = a.location_id || null;
+    if (a.fields && typeof a.fields === "object") {
+      const existing = (row.metadata as Record<string, unknown> | null) ?? {};
+      set.metadata = sql`${JSON.stringify({ ...existing, ...(a.fields as Record<string, unknown>) })}::jsonb` as never;
+    }
+    await db.updateTable("inventory_parts").set(set as never).where("id", "=", id).execute();
+    await platform().events.emit("inventory.part.updated", { orgId: ctx.orgId, partId: id });
+    return { ok: true, id };
   });
 }
 

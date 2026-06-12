@@ -981,3 +981,38 @@ authRouter.post("/verify-email", async (req, res, next) => {
     next(err);
   }
 });
+
+// ─────────────── POST /auth/discord/verify-dm (Feature 1) ───────────────
+// Public, token-guarded: the Discord bot calls this when a user clicks the
+// "Yes, I got this 👋" button on their test DM. The verify_token IS the secret
+// (single-use, short-lived) — same trust model as a magic link — so no session
+// is needed. Marks the matching discord_connection verified, enabling the
+// discord_dm channel.
+const VerifyDmBody = z.object({ token: z.string().min(10).max(255) });
+
+authRouter.post("/discord/verify-dm", async (req, res, next) => {
+  try {
+    const parsed = VerifyDmBody.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Bad token" } });
+      return;
+    }
+    const row = await meta
+      .selectFrom("discord_connections")
+      .select(["user_id", "verify_expires_at"])
+      .where("verify_token", "=", parsed.data.token)
+      .executeTakeFirst();
+    if (!row || (row.verify_expires_at && row.verify_expires_at.getTime() < Date.now())) {
+      res.status(410).json({ error: { code: "expired", message: "This confirmation expired or was already used." } });
+      return;
+    }
+    await meta
+      .updateTable("discord_connections")
+      .set({ verified: true, verify_token: null, verify_expires_at: null, updated_at: new Date() })
+      .where("verify_token", "=", parsed.data.token)
+      .execute();
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});

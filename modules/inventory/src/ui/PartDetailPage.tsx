@@ -79,7 +79,8 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
   const lifecycle = String(pmeta.lifecycle ?? pmeta.state ?? "");
   const looseOrDone = ["loose", "bulk", "spare", "parted-out"].includes(lifecycle);
   const canDisassemble = !!matched.data && !looseOrDone;
-  const excludeActionIds = canDisassemble ? undefined : ["inventory:disassemble-kit"];
+  // The Lego kit→parts action moved to the bricklink-connector domain module.
+  const excludeActionIds = canDisassemble ? undefined : ["bricklink:disassemble-kit"];
 
   return (
     <div className="space-y-5">

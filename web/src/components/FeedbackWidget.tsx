@@ -7,6 +7,7 @@ import { useState, useRef, useEffect } from "react";
 import { Modal, useToast } from "@cobblr/platform-web";
 import { MessageSquare, ImagePlus, X } from "lucide-react";
 import { api } from "../lib/api";
+import { useAuth } from "../auth/AuthContext";
 
 const TYPES = [
   { id: "bug", label: "🐛 Bug" },
@@ -34,9 +35,19 @@ export function FeedbackWidget() {
   const [error, setError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const toast = useToast();
+  const { orgs } = useAuth();
 
-  // Screenshots upload to the workspace's core-files, so they need a workspace.
-  const slug = window.location.pathname.match(/^\/w\/([^/]+)/)?.[1];
+  // Screenshots upload to a workspace's core-files + the feedback row stores
+  // that same workspace_slug (the super-admin viewer reads the bytes under it),
+  // so an effective slug is required to attach. Derive it from the URL —
+  // matching BOTH the admin shell (/w/:slug) and the member portal
+  // (/portal/:slug) — then fall back to the user's first workspace. Without
+  // this, every slug-less page (portal, /admin, login landing, public
+  // surfaces) hid the attach UI entirely: a user literally "stuck on
+  // uploading a screenshot" (feedback ee0f8b06).
+  const slug =
+    window.location.pathname.match(/^\/(?:w|portal)\/([^/]+)/)?.[1] ??
+    orgs[0]?.slug;
 
   function addFiles(list: FileList | null) {
     if (!list) return;
@@ -231,7 +242,14 @@ export function FeedbackWidget() {
                 }}
               />
             </div>
-          ) : null}
+          ) : (
+            // No workspace at all (e.g. a platform admin with zero workspaces):
+            // there's nowhere to store a screenshot. Say so instead of hiding
+            // the affordance and leaving the reporter guessing.
+            <div className="text-[10px] text-faint dark:text-slate-500">
+              Screenshots attach once you're in a workspace — text feedback works fine from here.
+            </div>
+          )}
 
           <div className="text-[10px] text-faint dark:text-slate-500">
             We attach the page you're on + your browser so we can track it down.

@@ -277,6 +277,7 @@ export type NotificationChannel =
   | "browser_push"
   | "email"
   | "discord"
+  | "discord_dm"
   | "webhook"
   | "slack"
   | "sms";
@@ -297,6 +298,47 @@ export interface NotificationsTable {
   delivered_via: Generated<NotificationChannel[]>;
   read_at: Date | null;
   created_at: Generated<Date>;
+}
+
+/** A user's verified Discord identity (account-level, one per user). Populated
+ *  by the OAuth `identify` flow; `verified` flips true only after a test DM is
+ *  confirmed (button or website fallback), so the discord_dm channel is never
+ *  relied on blind. See routes/discord.ts + channels/discord-dm.ts. */
+export interface DiscordConnectionsTable {
+  user_id: string;
+  discord_user_id: string | null;
+  discord_username: string | null;
+  verified: Generated<boolean>;
+  verify_token: string | null;
+  verify_expires_at: Date | null;
+  connected_at: Date | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+/** Standing permission for an external driver (Claude via MCP) to drive a user's
+ *  open browser tab in one workspace (Feature 3). off = no control; navigate =
+ *  open pages/views only; navigate_observe = also stream the user's actions back.
+ *  Default off; the relay enforces this per message. */
+export type DriveMode = "off" | "navigate" | "navigate_observe";
+export interface BrowserDriveGrantsTable {
+  user_id: string;
+  org_id: string;
+  mode: Generated<DriveMode>;
+  updated_at: Generated<Date>;
+}
+
+/** Account-level Communication Preferences matrix (notification_type × channel).
+ *  Distinct from the per-workspace notification_subscriptions: platform
+ *  notifications (feedback replies, announcements, Claude messages) are
+ *  account-level, so their channel choice lives here. */
+export interface NotificationAccountPrefsTable {
+  id: Generated<string>;
+  user_id: string;
+  notification_type: string;
+  channel: NotificationChannel;
+  enabled: Generated<boolean>;
+  updated_at: Generated<Date>;
 }
 
 export interface NotificationSubscriptionsTable {
@@ -671,6 +713,9 @@ export interface MetaDB {
   activity_log: ActivityLogTable;
   notifications: NotificationsTable;
   notification_subscriptions: NotificationSubscriptionsTable;
+  notification_account_prefs: NotificationAccountPrefsTable;
+  discord_connections: DiscordConnectionsTable;
+  browser_drive_grants: BrowserDriveGrantsTable;
   entity_kinds: EntityKindsTable;
   entity_actions: EntityActionsTable;
   entity_action_org_overrides: EntityActionOrgOverridesTable;

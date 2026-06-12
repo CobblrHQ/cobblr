@@ -1,7 +1,7 @@
 // anthropic — Claude provider. Messages API.
 
 import { platform, type AiCapability } from "@cobblr/platform-contract";
-import { IDENTIFY_PROMPT } from "./identify-prompt.js";
+import { IDENTIFY_PROMPT, measurementContext } from "./identify-prompt.js";
 
 const SUPPORTED: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>> = {
   chat: {
@@ -145,7 +145,7 @@ function buildMessages(
       if (imageB64) {
         content.push({ type: "image", source: { type: "base64", media_type: mediaType, data: imageB64 } });
       }
-      content.push({ type: "text", text: IDENTIFY_PROMPT });
+      content.push({ type: "text", text: IDENTIFY_PROMPT + measurementContext(input) });
       return { messages: [{ role: "user", content }] };
     }
     case "extract-text": {

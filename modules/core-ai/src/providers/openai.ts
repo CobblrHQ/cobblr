@@ -3,7 +3,7 @@
 // static price table (rough, updated on doc-PR cadence).
 
 import { platform, type AiCapability } from "@cobblr/platform-contract";
-import { IDENTIFY_PROMPT } from "./identify-prompt.js";
+import { IDENTIFY_PROMPT, measurementContext } from "./identify-prompt.js";
 
 const SUPPORTED: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>> = {
   chat: { models: ["gpt-4o", "gpt-4o-mini", "o1-mini"], defaultModel: "gpt-4o-mini" },
@@ -169,7 +169,7 @@ function buildMessages(
       const mediaType = String(input.image_media_type ?? "image/jpeg");
       const imageUrl = typeof input.image_url === "string" ? input.image_url : null;
       const imageB64 = typeof input.image_b64 === "string" ? input.image_b64 : null;
-      const content: Array<Record<string, unknown>> = [{ type: "text", text: IDENTIFY_PROMPT }];
+      const content: Array<Record<string, unknown>> = [{ type: "text", text: IDENTIFY_PROMPT + measurementContext(input) }];
       if (imageUrl) content.push({ type: "image_url", image_url: { url: imageUrl } });
       else if (imageB64) {
         content.push({ type: "image_url", image_url: { url: `data:${mediaType};base64,${imageB64}` } });

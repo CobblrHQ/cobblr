@@ -6,7 +6,7 @@
 // The host also reads `navItems` to render the module's nav entries
 // in the platform shell.
 
-import { Routes, Route, NavLink } from "react-router-dom";
+import { Routes, Route, NavLink, useLocation } from "react-router-dom";
 import { Boxes } from "lucide-react";
 // Side-effect: registers the inventory "at a glance" dashboard tile through
 // platform-web's registerDashboardWidget seam when this UI bundle loads.
@@ -71,6 +71,18 @@ export function InventoryUI({ orgSlug, getToken, instance, displayName, itemNoun
 function Header({ title, scoped }: { title: string; scoped: boolean }) {
   const cls = ({ isActive }: { isActive: boolean }) =>
     isActive ? "text-accent font-semibold" : "text-faint dark:text-slate-500 hover:text-accent";
+  // Link the tabs ABSOLUTELY off the instance/module base — everything up
+  // through ".../instances/<name>" (or ".../inventory"). InventoryUI's inner
+  // <Routes> mounts under a splat, so a RELATIVE `to="settings"` resolves
+  // against the *current* path and re-clicking appended forever
+  // (/settings/settings/settings…); `to="."` self-referenced so "list" did
+  // nothing from the settings page. An absolute base fixes both and also
+  // recovers from an already-broken URL.
+  const { pathname } = useLocation();
+  const base =
+    pathname.match(/^.*\/instances\/[^/]+/)?.[0] ??
+    pathname.match(/^.*\/inventory/)?.[0] ??
+    pathname.replace(/\/(settings|items|parts)(\/.*)?$/, "");
   return (
     <div className="flex items-baseline gap-4 border-b border-line dark:border-slate-700 pb-3">
       <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
@@ -81,8 +93,8 @@ function Header({ title, scoped }: { title: string; scoped: boolean }) {
           reachable — it's where you edit a list's dropdown options (otherwise
           there's no findable "config area"). So keep a settings link either way. */}
       <nav className="flex gap-3 text-xs font-mono">
-        <NavLink to="." end className={cls}>{scoped ? "// list" : "// parts"}</NavLink>
-        <NavLink to="settings" className={cls}>// settings</NavLink>
+        <NavLink to={base} end className={cls}>{scoped ? "// list" : "// parts"}</NavLink>
+        <NavLink to={`${base}/settings`} className={cls}>// settings</NavLink>
       </nav>
     </div>
   );

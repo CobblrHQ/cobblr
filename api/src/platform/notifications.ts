@@ -9,18 +9,24 @@ import { meta } from "../db/meta.js";
 import { inAppChannel } from "./channels/in-app.js";
 import { browserPushChannel } from "./channels/browser-push.js";
 import { discordChannel } from "./channels/discord.js";
+import { discordDmChannel } from "./channels/discord-dm.js";
 import { slackChannel } from "./channels/slack.js";
 import { webhookChannel } from "./channels/webhook.js";
 import { emailChannel } from "./channels/email.js";
 import { smsChannel } from "./channels/sms.js";
 import type { Channel } from "./channels/types.js";
 import type { NotificationChannel, NotificationPriority } from "../db/schema.js";
+import { hasAuthEmailSender, sendAuthEmail } from "./hosted-seams.js";
+import { sendDiscordDm } from "./discord-bot-trigger.js";
+import { absoluteAppUrl } from "./public-url.js";
+import { defaultEnabled, type PrefChannel } from "./notification-catalog.js";
 
 const REGISTRY: Record<NotificationChannel, Channel | undefined> = {
   in_app: inAppChannel,
   browser_push: browserPushChannel,
   email: emailChannel,
   discord: discordChannel,
+  discord_dm: discordDmChannel,
   webhook: webhookChannel,
   slack: slackChannel,
   sms: smsChannel,
@@ -220,6 +226,115 @@ export async function testOneBinding(
     deliveredVia: ok ? [row.channel] : [],
     ownerCheck: "ok",
   };
+}
+
+// ─────────── Account-level notifications (Communication Preferences) ─────────
+// Platform notifications (feedback replies, announcements, Claude messages) are
+// account-level, not workspace-scoped, so their channel choice lives in
+// notification_account_prefs — NOT the per-(user,org) notification_subscriptions
+// the per-workspace dispatch() above uses. notifyAccount() is deliberately
+// self-contained (its own channel fan-out) so it can't regress the dispatch path.
+
+/** Resolve a user's effective in_app/discord_dm/email enablement for one
+ *  notification type, applying defaults for any channel with no explicit row. */
+export async function resolveAccountPrefs(
+  userId: string,
+  notificationType: string,
+): Promise<Record<PrefChannel, boolean>> {
+  const rows = await meta
+    .selectFrom("notification_account_prefs")
+    .select(["channel", "enabled"])
+    .where("user_id", "=", userId)
+    .where("notification_type", "=", notificationType)
+    .execute();
+  const byChannel = new Map(rows.map((r) => [r.channel, r.enabled]));
+  const out = {} as Record<PrefChannel, boolean>;
+  for (const ch of ["in_app", "discord_dm", "email"] as PrefChannel[]) {
+    const v = byChannel.get(ch);
+    out[ch] = v === undefined ? defaultEnabled(ch) : v;
+  }
+  return out;
+}
+
+export interface NotifyAccountParams {
+  userId: string;
+  /** Org the in_app row is filed under (the user's filed-from / first workspace).
+   *  Channel ENABLEMENT comes from account prefs, not this org's subscriptions. */
+  representativeOrgId: string;
+  /** A Tier-2 notification type key (see notification-catalog). */
+  notificationType: string;
+  message: string;
+  link_url?: string;
+  module?: string;
+  /** Optional richer email than the generic "<message> <link>" fallback. */
+  email?: { subject: string; text: string };
+}
+
+/** Deliver an account-level (platform) notification across the user's chosen
+ *  channels: in_app (the bell), email (the platform sender), discord_dm (the
+ *  bot — only if connected + verified). Honors the Communication Preferences
+ *  matrix; a disabled channel is simply skipped. */
+export async function notifyAccount(
+  args: NotifyAccountParams,
+): Promise<{ notificationId: string | null; deliveredVia: PrefChannel[] }> {
+  const prefs = await resolveAccountPrefs(args.userId, args.notificationType);
+  const deliveredVia: PrefChannel[] = [];
+  let notificationId: string | null = null;
+
+  // in_app — the row's existence IS the delivery (the bell reads the table).
+  if (prefs.in_app) {
+    const inserted = await meta
+      .insertInto("notifications")
+      .values({
+        org_id: args.representativeOrgId,
+        user_id: args.userId,
+        event_type: args.notificationType,
+        module_name: args.module ?? null,
+        entity_type: null,
+        entity_id: null,
+        message: args.message,
+        link_url: args.link_url ?? null,
+        priority: "normal",
+        delivered_via: ["in_app"],
+      })
+      .returning("id")
+      .executeTakeFirstOrThrow();
+    notificationId = inserted.id;
+    deliveredVia.push("in_app");
+  }
+
+  // email — only when the caller supplies an email payload (so an event that
+  // isn't meant to email never does), gated by the user's pref + the PLATFORM
+  // sender (managed mailer in prod), not per-user BYO SMTP.
+  if (args.email && prefs.email && hasAuthEmailSender()) {
+    const u = await meta
+      .selectFrom("users")
+      .select(["email"])
+      .where("id", "=", args.userId)
+      .executeTakeFirst();
+    if (u?.email) {
+      const ok = await sendAuthEmail({ to: u.email, subject: args.email.subject, text: args.email.text, kind: "notification" });
+      if (ok) deliveredVia.push("email");
+    }
+  }
+
+  // discord_dm — only when the user has connected + verified Discord.
+  if (prefs.discord_dm) {
+    const conn = await meta
+      .selectFrom("discord_connections")
+      .select(["discord_user_id", "verified"])
+      .where("user_id", "=", args.userId)
+      .executeTakeFirst();
+    if (conn?.verified && conn.discord_user_id) {
+      const text = args.link_url
+        ? `${args.message}\n${absoluteAppUrl(args.link_url)}`
+        : args.message;
+      const res = await sendDiscordDm({ discord_user_id: conn.discord_user_id, text });
+      if (res.ok) deliveredVia.push("discord_dm");
+    }
+  }
+
+  return { notificationId, deliveredVia };
 }
 
 export interface NotificationListItem {

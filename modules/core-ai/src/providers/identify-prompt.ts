@@ -15,3 +15,28 @@ export const IDENTIFY_PROMPT =
   '"category": <string|null>, "entity_type": "asset"|"part"|null, ' +
   '"confidence": <0..1, how sure you are>}. If the photo is unclear, empty, or ' +
   "not a single identifiable object, reply name \"\" and confidence 0.";
+
+/** Optional measurement + observation context for the Cataloging Bench. When a
+ *  workspace captures physical measurements (caliper/scale) and visual
+ *  observations at a measuring bench BEFORE identifying, fold them into the
+ *  identify prompt — a photo can't tell you a thing is *exactly* 6.0 mm, but a
+ *  caliper can, so the model disambiguates with hard data instead of guessing.
+ *  Returns "" when neither is present (plain photo-identify stays unchanged). */
+export function measurementContext(input: Record<string, unknown>): string {
+  const parts: string[] = [];
+  const m = input.measurements;
+  const o = input.observations;
+  if (m && typeof m === "object" && Object.keys(m).length) {
+    parts.push("Exact measurements (mm unless noted; weight in g): " + JSON.stringify(m));
+  }
+  if (o && typeof o === "object" && Object.keys(o).length) {
+    parts.push("Visual observations: " + JSON.stringify(o));
+  }
+  if (!parts.length) return "";
+  return (
+    "\n\nThese precise measurements + observations were captured at a measuring " +
+    "bench — treat them as ground truth and use them to identify the item " +
+    "specifically (they override anything ambiguous in the photo):\n" +
+    parts.join("\n")
+  );
+}

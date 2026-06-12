@@ -68,6 +68,15 @@ export default defineModule({
         // Wire-only — the autonomous-sort binding fires it, not a button.
         userInvokable: false,
       },
+      {
+        id: "core-scan:identify",
+        label: "Identify a thing",
+        description:
+          "PURE 'what is this?' — from a photo and/or captured measurements + observations. Returns the suggestion ({ name, brand, category, confidence }); writes nothing. A capture app calls it and decides whether to use the suggestion or keep its own name. User-invokable. Args: { image_file_id?, measurements?, observations? }.",
+        appliesTo: { any: true },
+        invokeHandler: "core-scan.identify",
+        userInvokable: true,
+      },
     ],
   },
 

@@ -74,6 +74,35 @@ export const TOKEN_SCOPES: TokenScopeDef[] = [
     allow: [["POST", /^\/super-admin\/waitlist\/ingest$/]],
   },
   {
+    key: "waitlist:approve",
+    label: "Waitlist approve (Discord admin bot)",
+    description:
+      "Approve or dismiss a waitlist signup from the Discord admin channel's " +
+      "button — minting the signup invite + welcome email exactly like the web " +
+      "Approve. Can ONLY approve / dismiss an existing signup — never read tenant " +
+      "data, mint tokens, or any other admin surface.",
+    allow: [
+      ["POST", /^\/super-admin\/waitlist\/[^/]+\/approve$/],
+      ["POST", /^\/super-admin\/waitlist\/[^/]+\/dismiss$/],
+    ],
+  },
+  {
+    key: "drive:control",
+    label: "Browser driving (Claude / MCP)",
+    description:
+      "Drive the user's own open Cobblr tab — open the driver stream, request a " +
+      "window, and navigate it. Gated further by the user's per-workspace drive " +
+      "grant (off by default). Never reads or writes workspace data.",
+    allow: [
+      ["GET", /^\/orgs\/[^/]+\/drive\/driver\/stream$/],
+      ["POST", /^\/orgs\/[^/]+\/drive\/driver\/request$/],
+      ["POST", /^\/orgs\/[^/]+\/drive\/driver\/navigate$/],
+      ["POST", /^\/orgs\/[^/]+\/drive\/driver\/present$/],
+      ["GET", /^\/orgs\/[^/]+\/drive\/driver\/observe$/],
+      ["GET", /^\/orgs\/[^/]+\/drive\/status$/],
+    ],
+  },
+  {
     key: "announce:post",
     label: "Post announcements",
     description:

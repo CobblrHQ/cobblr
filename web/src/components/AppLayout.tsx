@@ -13,6 +13,7 @@ import { Link, Outlet, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { CobblestoneMark } from "../CobblestoneMark";
 import { NotificationsBell } from "./NotificationsBell";
+import { DriveBanner } from "./DriveBanner";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 import { ModuleNav } from "./ModuleNav";
 import { HeaderActions } from "./HeaderActions";
@@ -185,6 +186,9 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           </ErrorBoundary>
         </div>
       </main>
+      {/* Feature 3: the drive prompt + green/red indicator (renders only when a
+          drive grant is set and a session is live). */}
+      <DriveBanner />
     </div>
   );
 }

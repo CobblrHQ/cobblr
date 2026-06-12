@@ -38,4 +38,56 @@ export function registerScanHandlers(): void {
     void platform().events.emit("core-scan.scan.enriched", { orgId: ctx.orgId, itemId });
     return { ok: true, identified: true };
   });
+
+  // Generic, PURE identify — "what is this?" from any combination of a photo
+  // and/or captured measurements + observations. No reads or writes of other
+  // modules' entities: it takes the inputs, calls the AI, and RETURNS the
+  // suggestion ({ name, brand, category, confidence }). The caller (e.g. a
+  // capture app) decides what to do with it — keep its own deterministic name,
+  // or use this. User-invokable so a Tier-B app can ask. Measurements ride the
+  // identify-image prompt via core-ai's measurementContext (a caliper pins what
+  // a photo can't). Best-effort: no AI provider / unparseable → identified:false.
+  platform().actions.registerHandler("core-scan.identify", async (ctx) => {
+    const a = (ctx.args as Record<string, unknown> | null) ?? {};
+    const input: Record<string, unknown> = {};
+    if (a.measurements && typeof a.measurements === "object") input.measurements = a.measurements;
+    if (a.observations && typeof a.observations === "object") input.observations = a.observations;
+    const fileId = typeof a.image_file_id === "string" && a.image_file_id ? a.image_file_id : null;
+    if (fileId) {
+      const file =
+        (await platform().files.read(ctx.orgId, fileId, "medium")) ??
+        (await platform().files.read(ctx.orgId, fileId, "original"));
+      if (file) {
+        input.image_b64 = Buffer.from(file.bytes).toString("base64");
+        input.image_media_type = file.mimeType;
+      }
+    }
+    if (!input.measurements && !input.observations && !input.image_b64) {
+      return { ok: true, identified: false, reason: "nothing to identify" };
+    }
+    try {
+      const r = await platform().ai.invoke({
+        orgId: ctx.orgId,
+        capability: "identify-image",
+        input,
+        source: { kind: "core-scan:identify", id: fileId ?? "args" },
+      });
+      const res = r.result as { text?: string; content?: string };
+      const raw = res.text ?? res.content ?? "";
+      const m = raw.match(/\{[\s\S]*\}/);
+      const parsed = JSON.parse(m ? m[0] : raw) as { name?: string; brand?: string; category?: string; confidence?: number };
+      const name = typeof parsed?.name === "string" ? parsed.name.trim() : "";
+      if (!name) return { ok: true, identified: false };
+      return {
+        ok: true,
+        identified: true,
+        name,
+        brand: typeof parsed?.brand === "string" ? parsed.brand.trim() || null : null,
+        category: typeof parsed?.category === "string" ? parsed.category.trim() || null : null,
+        confidence: typeof parsed?.confidence === "number" ? parsed.confidence : null,
+      };
+    } catch {
+      return { ok: true, identified: false };
+    }
+  });
 }

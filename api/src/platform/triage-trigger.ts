@@ -1,5 +1,6 @@
 // Fire-and-forget poke to the host-side feedback-triage analyzer. The analyzer
-// (a `claude -p` daemon on the box, see ops/feedback-triage/) exposes a
+// (a `claude -p` daemon on the box; operator infra, source in the private cloud
+// ops repo at ops/feedback-triage/) exposes a
 // /triage-now endpoint; on a new feedback submission we nudge it so triage
 // happens within seconds instead of waiting for its hourly catch-up sweep.
 //

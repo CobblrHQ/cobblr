@@ -10,7 +10,7 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { Bell, History, KeyRound, Plug, UserCog } from "lucide-react";
+import { Bell, History, KeyRound, Monitor, Plug, UserCog } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { api, ApiError } from "../lib/api";
 import { useToast, usePageTitle } from "@cobblr/platform-web";
@@ -55,11 +55,18 @@ export function MeProfilePage() {
           Your activity across all workspaces →
         </Link>
         <Link
+          to="/me/communication"
+          className="inline-flex items-center gap-2 text-sm text-accent hover:text-accent"
+        >
+          <Bell size={14} />
+          Communication preferences (in-app / Discord DM / email) →
+        </Link>
+        <Link
           to="/me/notification-channels"
           className="inline-flex items-center gap-2 text-sm text-accent hover:text-accent"
         >
           <Bell size={14} />
-          Notification channels (Discord / Slack / email / SMS / webhook) →
+          Notification channels (per-workspace Discord / Slack / email / SMS / webhook) →
         </Link>
         <Link
           to="/me/connections"
@@ -67,6 +74,13 @@ export function MeProfilePage() {
         >
           <Plug size={14} />
           Connections — BYO AI keys / edge bridge that follow you to your workspaces →
+        </Link>
+        <Link
+          to="/me/drive"
+          className="inline-flex items-center gap-2 text-sm text-accent hover:text-accent"
+        >
+          <Monitor size={14} />
+          Browser driving — let Claude drive the app you have open (per workspace, off by default) →
         </Link>
       </div>
     </div>

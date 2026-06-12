@@ -35,6 +35,7 @@ import { feedbackRouter } from "./routes/feedback.js";
 import { sandboxInstallRouter } from "./routes/sandbox-install.js";
 import { registryRouter } from "./routes/registry.js";
 import { customRolesRouter } from "./routes/custom-roles.js";
+import { driveRouter } from "./routes/drive.js";
 import { instancesRouter, overridesRouter } from "./routes/instances.js";
 import { navHeadingsRouter } from "./routes/nav-headings.js";
 import { requireAuth } from "./auth/middleware.js";
@@ -142,6 +143,9 @@ export function createApp(): AppHandles {
   v1.use("/orgs", adminUsersRouter);
   // Custom roles (S2): workspace-defined capability bundles.
   v1.use("/orgs", customRolesRouter);
+  // Browser driving (Feature 3): SSE relay so Claude (via MCP) can drive the
+  // user's open tab — gated by a per-workspace grant + a drive:control token.
+  v1.use("/orgs", driveRouter);
   // Super-admin (platform operator) surface — cross-workspace
   // dashboards. Gated by SUPERADMIN_EMAILS env var.
   v1.use("/super-admin", superAdminRouter);

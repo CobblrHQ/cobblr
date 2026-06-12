@@ -346,4 +346,94 @@ export function registerTools(server: McpServer, client: CobblrClient): void {
       }
     },
   );
+
+  // ── Browser driving (Feature 3) — drive the tab the user has open ──
+  // Gated server-side by the user's per-workspace drive grant (off by default);
+  // these tools no-op with a clear error when it's off. Drive is navigate-only —
+  // it never reads or writes workspace data.
+  server.registerTool(
+    "cobblr_drive_request_window",
+    {
+      title: "Ask to drive the user's open window",
+      description:
+        "Ask Cobblr to prompt the user to pick which open browser tab you may drive. Returns { tabs } (how many of the user's tabs got the prompt). The user taps 'use this window' in ONE tab; after that, cobblr_drive_navigate will move that window. If tabs:0 the user has no Cobblr tab open in this workspace, or browser driving is off (turn it on at /me/drive).",
+      inputSchema: { ...workspaceArg },
+    },
+    async ({ workspace }) => {
+      try {
+        const slug = client.resolveSlug(workspace);
+        return ok(await client.driveRequestWindow(slug));
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "cobblr_drive_navigate",
+    {
+      title: "Navigate the user's driven window",
+      description:
+        "Open an app-relative path in the window the user chose (e.g. '/inventory?filter=red', '/build', '/app/intake'). Returns { ok, delivered }; delivered:false means no window is currently bound — call cobblr_drive_request_window first. Path must start with '/'. This is a shared session: the user can still act; just open the page and let them continue.",
+      inputSchema: {
+        ...workspaceArg,
+        path: z
+          .string()
+          .min(1)
+          .max(2000)
+          .describe("App-relative path starting with '/', e.g. '/inventory' or '/app/intake'. Never an absolute URL."),
+      },
+    },
+    async ({ workspace, path }) => {
+      try {
+        const slug = client.resolveSlug(workspace);
+        return ok(await client.driveNavigate(slug, path));
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "cobblr_drive_point",
+    {
+      title: "Point at something in the driven window",
+      description:
+        "Show the user WHERE you're pointing — a cursor (+ optional click ripple + label) on the bound window. Give a CSS selector (preferred — it's scrolled into view) OR x/y viewport coordinates. Returns { ok, delivered }; delivered:false means no window is bound. Use this to say 'I'm clicking here' / 'look at this' as you narrate.",
+      inputSchema: {
+        ...workspaceArg,
+        selector: z.string().max(400).optional().describe("A CSS selector to point at (scrolled into view). Prefer this over x/y."),
+        x: z.number().optional().describe("Viewport X (px) — used when no selector."),
+        y: z.number().optional().describe("Viewport Y (px) — used when no selector."),
+        label: z.string().max(120).optional().describe("A short caption shown next to the cursor, e.g. 'click here'."),
+        ripple: z.boolean().optional().describe("Show a click-ripple animation at the point."),
+      },
+    },
+    async ({ workspace, selector, x, y, label, ripple }) => {
+      try {
+        const slug = client.resolveSlug(workspace);
+        return ok(await client.drivePresent(slug, { selector, x, y, label, ripple }));
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "cobblr_drive_observe",
+    {
+      title: "See what the user just did",
+      description:
+        "Drain the buffered user actions (clicks + page changes) the user took in the driven window since your last call — so you can follow along in a shared session. Returns { events:[…] } (oldest first) and clears the buffer. Requires the user's grant to be 'navigate + observe'; returns an observe_off error otherwise. Poll this between your own moves.",
+      inputSchema: { ...workspaceArg },
+    },
+    async ({ workspace }) => {
+      try {
+        const slug = client.resolveSlug(workspace);
+        return ok(await client.driveObserve(slug));
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
 }

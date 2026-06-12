@@ -293,6 +293,73 @@ appsRouter.put(
   }),
 );
 
+// ── POST /apps/validate — dry-run gate for AI / hand authoring ───
+// Same single source of validation truth as create (the AppCreate schema), with
+// no write. Returns { valid, errors:[{path,code,message}] } — the SHAPE the
+// core-authoring repair loop already speaks, so an AI-authored app definition
+// can be validated → repaired → applied exactly like a bundle. On top of the
+// structural Zod, a referential pass catches the author-time mistakes the App
+// Player can't (a record/form bound to a non-existent kind, an action block
+// naming an action that doesn't apply to its kind). view_id isn't checked —
+// saved views live in core-views and a stale id just renders an empty block.
+interface AppValidationError {
+  path: string;
+  code: string;
+  message: string;
+}
+
+async function appReferentialErrors(orgId: string, pages: z.infer<typeof Pages>): Promise<AppValidationError[]> {
+  const errors: AppValidationError[] = [];
+  const kindIds = new Set((await platform().entities.listKinds()).map((k) => k.id));
+  // Cache applicable-action ids per kind so we don't re-resolve per block.
+  const actionsByKind = new Map<string, Set<string>>();
+  const actionsFor = async (kind: string): Promise<Set<string>> => {
+    let s = actionsByKind.get(kind);
+    if (!s) {
+      s = new Set((await platform().actions.listApplicable(kind, orgId)).map((a) => a.id));
+      actionsByKind.set(kind, s);
+    }
+    return s;
+  };
+  for (let p = 0; p < pages.length; p++) {
+    const blocks = pages[p]!.blocks;
+    for (let b = 0; b < blocks.length; b++) {
+      const block = blocks[b]!;
+      const at = `pages[${p}].blocks[${b}]`;
+      if ((block.type === "record" || block.type === "form") && !kindIds.has(block.kind)) {
+        errors.push({ path: `${at}.kind`, code: "unknown_kind", message: `Entity kind "${block.kind}" doesn't exist. Use one of the kinds listed in the context.` });
+      }
+      if (block.type === "action" && block.kind) {
+        if (!kindIds.has(block.kind)) {
+          errors.push({ path: `${at}.kind`, code: "unknown_kind", message: `Entity kind "${block.kind}" doesn't exist.` });
+        } else if (!(await actionsFor(block.kind)).has(block.action_id)) {
+          errors.push({ path: `${at}.action_id`, code: "unknown_action", message: `Action "${block.action_id}" doesn't apply to ${block.kind}. Use an action listed for that kind.` });
+        }
+      }
+    }
+  }
+  return errors;
+}
+
+appsRouter.post(
+  "/validate",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const parsed = AppCreate.safeParse(req.body);
+    if (!parsed.success) {
+      const errors: AppValidationError[] = parsed.error.issues.map((i) => ({
+        path: i.path.join("."),
+        code: i.code,
+        message: i.message,
+      }));
+      res.json({ valid: false, errors });
+      return;
+    }
+    const refErrors = await appReferentialErrors(tenantContext(req).org.id, parsed.data.pages);
+    res.json({ valid: refErrors.length === 0, errors: refErrors });
+  }),
+);
+
 // POST /apps — author a new app (admin/owner only).
 appsRouter.post(
   "/",

@@ -1682,7 +1682,7 @@ export interface PlatformPairings {
     relationshipKind: string;
     createdBy?: string | null;
   }): Promise<{ id: string }>;
-  /** Insert many pairings at once. Used by inventory.disassemble-kit
+  /** Insert many pairings at once. Used by bricklink.disassemble-kit
    *  to write hundreds of "matches" / "derived-from" rows efficiently. */
   createMany(
     rows: Array<{

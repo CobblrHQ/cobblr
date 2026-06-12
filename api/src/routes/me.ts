@@ -15,6 +15,22 @@ import * as activity from "../platform/activity.js";
 import { hasAuthEmailSender, sendAuthEmail } from "../platform/hosted-seams.js";
 import { selfServeInvitesEnabled } from "../auth/signup-gate.js";
 import { issueAndSendVerifyEmail } from "./auth.js";
+import {
+  discordOAuthConfigured,
+  discordInviteUrl,
+  signOAuthState,
+  verifyOAuthState,
+  discordAuthorizeUrl,
+  exchangeCodeForIdentity,
+} from "../platform/discord-oauth.js";
+import { sendDiscordDm } from "../platform/discord-bot-trigger.js";
+import { publicBaseUrl } from "../platform/public-url.js";
+import {
+  NOTIFICATION_TYPES,
+  PREF_CHANNELS,
+  isTier2,
+  isPrefChannel,
+} from "../platform/notification-catalog.js";
 
 export const meRouter = Router();
 
@@ -1301,6 +1317,227 @@ meRouter.delete("/me/api-tokens/:id", requireAuth, async (req, res, next) => {
       return;
     }
     res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ───────────────────────── Discord connection (Feature 1) ─────────────────────
+// Link a user's Discord identity (OAuth `identify`) so the bot can DM them, and
+// confirm reachability with a VERIFIED test DM before the discord_dm channel is
+// ever relied on. All endpoints no-op gracefully when the Discord app isn't
+// configured (open core / self-host without Discord).
+
+const DISCORD_VERIFY_TTL_MS = 30 * 60 * 1000;
+
+async function fireDiscordTestDm(discordUserId: string, displayName: string | null): Promise<{ deliverable: boolean }> {
+  const token = randomBytes(24).toString("base64url");
+  await meta
+    .updateTable("discord_connections")
+    .set({ verify_token: token, verify_expires_at: new Date(Date.now() + DISCORD_VERIFY_TTL_MS), updated_at: new Date() })
+    .where("discord_user_id", "=", discordUserId)
+    .execute();
+  const hi = displayName ? `Hi ${displayName}! ` : "Hi! ";
+  const res = await sendDiscordDm({
+    discord_user_id: discordUserId,
+    text: `${hi}This is Cobblr confirming we can reach you here. Tap the button below to turn on Discord notifications.`,
+    verify_token: token,
+  });
+  return { deliverable: res.deliverable };
+}
+
+// GET /me/discord — connection + verification status (drives the settings UI).
+meRouter.get("/me/discord", requireAuth, async (req, res, next) => {
+  try {
+    const row = await meta
+      .selectFrom("discord_connections")
+      .select(["discord_user_id", "discord_username", "verified"])
+      .where("user_id", "=", req.session!.id)
+      .executeTakeFirst();
+    res.json({
+      configured: discordOAuthConfigured(),
+      connected: Boolean(row?.discord_user_id),
+      verified: Boolean(row?.verified),
+      username: row?.discord_username ?? null,
+      invite_url: discordInviteUrl() || null,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /me/discord/oauth-start — returns the Discord authorize URL.
+meRouter.post("/me/discord/oauth-start", requireAuth, async (req, res, next) => {
+  try {
+    if (!discordOAuthConfigured()) {
+      res.status(503).json({ error: { code: "not_configured", message: "Discord isn't set up on this server yet." } });
+      return;
+    }
+    const state = await signOAuthState(req.session!.id);
+    res.json({ url: discordAuthorizeUrl(state) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /me/discord/oauth-callback — Discord redirects here. Exchange for the
+// identity, store it UNVERIFIED, fire the test DM, bounce back to settings in a
+// waiting/blocked state. Browser redirect → never 4xx; carry status in a query.
+meRouter.get("/me/discord/oauth-callback", async (req, res, next) => {
+  const settings = `${publicBaseUrl()}/me/communication`;
+  try {
+    const code = typeof req.query.code === "string" ? req.query.code : "";
+    const state = typeof req.query.state === "string" ? req.query.state : "";
+    const userId = state ? await verifyOAuthState(state) : null;
+    if (!code || !userId) {
+      res.redirect(`${settings}?discord=error`);
+      return;
+    }
+    const identity = await exchangeCodeForIdentity(code);
+    if (!identity) {
+      res.redirect(`${settings}?discord=error`);
+      return;
+    }
+    await meta
+      .insertInto("discord_connections")
+      .values({
+        user_id: userId,
+        discord_user_id: identity.id,
+        discord_username: identity.username,
+        verified: false,
+        connected_at: new Date(),
+        updated_at: new Date(),
+      })
+      .onConflict((c) =>
+        c.column("user_id").doUpdateSet({
+          discord_user_id: identity.id,
+          discord_username: identity.username,
+          verified: false,
+          connected_at: new Date(),
+          updated_at: new Date(),
+        }),
+      )
+      .execute();
+    const { deliverable } = await fireDiscordTestDm(identity.id, null);
+    res.redirect(`${settings}?discord=${deliverable ? "pending" : "blocked"}`);
+  } catch (err) {
+    try {
+      res.redirect(`${settings}?discord=error`);
+    } catch {
+      next(err);
+    }
+  }
+});
+
+// POST /me/discord/retry-test — re-send the verification DM (after the user
+// adjusts privacy settings / joins the server).
+meRouter.post("/me/discord/retry-test", requireAuth, async (req, res, next) => {
+  try {
+    const row = await meta
+      .selectFrom("discord_connections")
+      .select(["discord_user_id"])
+      .where("user_id", "=", req.session!.id)
+      .executeTakeFirst();
+    if (!row?.discord_user_id) {
+      res.status(400).json({ error: { code: "not_connected", message: "Connect Discord first." } });
+      return;
+    }
+    const { deliverable } = await fireDiscordTestDm(row.discord_user_id, null);
+    res.json({ deliverable });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /me/discord/confirm — website fallback "Yes, I received it" (the user
+// self-attests; safe because it only verifies their OWN connection).
+meRouter.post("/me/discord/confirm", requireAuth, async (req, res, next) => {
+  try {
+    const updated = await meta
+      .updateTable("discord_connections")
+      .set({ verified: true, verify_token: null, verify_expires_at: null, updated_at: new Date() })
+      .where("user_id", "=", req.session!.id)
+      .where("discord_user_id", "is not", null)
+      .returning("user_id")
+      .executeTakeFirst();
+    if (!updated) {
+      res.status(400).json({ error: { code: "not_connected", message: "Connect Discord first." } });
+      return;
+    }
+    res.json({ ok: true, verified: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /me/discord — disconnect.
+meRouter.delete("/me/discord", requireAuth, async (req, res, next) => {
+  try {
+    await meta.deleteFrom("discord_connections").where("user_id", "=", req.session!.id).execute();
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ───────────────── Communication Preferences matrix (Feature 1) ───────────────
+// GET /me/communication-prefs — notification types (tier 1 locked / tier 2
+// configurable) × channels, with the user's current enablement.
+meRouter.get("/me/communication-prefs", requireAuth, async (req, res, next) => {
+  try {
+    const userId = req.session!.id;
+    const conn = await meta
+      .selectFrom("discord_connections")
+      .select(["verified"])
+      .where("user_id", "=", userId)
+      .executeTakeFirst();
+    const prefs: Record<string, Record<string, boolean>> = {};
+    for (const t of NOTIFICATION_TYPES) {
+      if (t.tier !== 2) continue;
+      prefs[t.key] = await notifications.resolveAccountPrefs(userId, t.key);
+    }
+    res.json({
+      channels: PREF_CHANNELS,
+      discord_verified: Boolean(conn?.verified),
+      types: NOTIFICATION_TYPES.map((t) => ({ key: t.key, label: t.label, description: t.description, tier: t.tier })),
+      prefs,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const PutPrefBody = z.object({
+  notification_type: z.string().min(1).max(100),
+  channel: z.string().min(1).max(20),
+  enabled: z.boolean(),
+});
+
+// PUT /me/communication-prefs — set one matrix cell (tier-2 only).
+meRouter.put("/me/communication-prefs", requireAuth, async (req, res, next) => {
+  try {
+    const parsed = PutPrefBody.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Bad preference", details: parsed.error.issues } });
+      return;
+    }
+    const { notification_type, channel, enabled } = parsed.data;
+    if (!isTier2(notification_type)) {
+      res.status(400).json({ error: { code: "not_configurable", message: "That notification type isn't configurable." } });
+      return;
+    }
+    if (!isPrefChannel(channel)) {
+      res.status(400).json({ error: { code: "bad_channel", message: "Unknown channel." } });
+      return;
+    }
+    await meta
+      .insertInto("notification_account_prefs")
+      .values({ user_id: req.session!.id, notification_type, channel, enabled, updated_at: new Date() })
+      .onConflict((c) =>
+        c.columns(["user_id", "notification_type", "channel"]).doUpdateSet({ enabled, updated_at: new Date() }),
+      )
+      .execute();
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }

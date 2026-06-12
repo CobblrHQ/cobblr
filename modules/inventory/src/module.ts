@@ -140,20 +140,43 @@ export default defineModule({
         },
       },
       {
-        id: "inventory:disassemble-kit",
-        label: "Disassemble into parts",
-        description:
-          "Expand a kit (an inventory:part matched to a Rebrickable set) into its constituent parts. Reads the rebrickable-inventory-parts BOM catalog, spawns one inventory:part per BOM row, writes a `matches` pairing to each Rebrickable part entry + a `derived-from` pairing back to the kit, and flips the kit's metadata.state to 'parted-out'. Requires the BOM catalog to be loaded (node scripts/seed-rebrickable.mjs --include-bom).",
-        appliesTo: { kinds: ["inventory:part"] },
-        invokeHandler: "inventory.disassemble-kit",
-      },
-      {
         id: "inventory:set-status",
         label: "Set status",
         description:
           "Set a part's `metadata.status` (e.g. a Lego set's Built / Unbuilt / Missing pieces). A member-appropriate, user-invokable action: grant it and a worker can update status from their app — the canonical write a custom (Tier B) app block performs. Args: { partId?, status }; partId falls back to the targeted entity.",
         appliesTo: { kinds: ["inventory:part"] },
         invokeHandler: "inventory.set-status",
+        userInvokable: true,
+      },
+      {
+        id: "inventory:create-item",
+        label: "Add an item",
+        description:
+          "Create an inventory item in an instance — name + custom fields (metadata) + an optional location / brand / qty. The canonical CREATE a custom (Tier B) app block performs (there was no invokable create before — only set-status / adjust-stock). Generic: the caller composes the name + fields and decides what to make. User-invokable so a granted worker can run it. Args: { instance, name, fields?, location_id?, manufacturer?, qty?, unit? }.",
+        appliesTo: { kinds: ["inventory:part"] },
+        invokeHandler: "inventory.create-item",
+        userInvokable: true,
+        argsSchema: {
+          instance: { label: "Instance (table) name", type: "text" },
+          name: { label: "Item name", type: "text" },
+        },
+      },
+      {
+        id: "inventory:create-items",
+        label: "Add items (bulk)",
+        description:
+          "Bulk-create N inventory items in one INSERT (a kit BOM, a CSV import, a batch from another module). Returns the new ids in input order so the caller can wire pairings. Does NOT fan out per-item created events. Generic. Args: { items: [{ name, instance?, fields?, qty?, unit?, image_path?, manufacturer?, location_id? }] }.",
+        appliesTo: { kinds: ["inventory:part"] },
+        invokeHandler: "inventory.create-items",
+        userInvokable: true,
+      },
+      {
+        id: "inventory:update-item",
+        label: "Update an item",
+        description:
+          "Set a part's name / brand / location and/or MERGE metadata fields (e.g. mark a kit's metadata.lifecycle='parted-out'). The companion to create-item — lets a Tier-B app or another module edit an item through inventory's public interface. Generic. Args: { id, name?, manufacturer?, location_id?, fields? }.",
+        appliesTo: { kinds: ["inventory:part"] },
+        invokeHandler: "inventory.update-item",
         userInvokable: true,
       },
     ],

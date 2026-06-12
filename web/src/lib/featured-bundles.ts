@@ -8,6 +8,7 @@
 
 import type { PlatformBundleManifest, PlatformBundleFeature } from "./api";
 import { OUTFIT_PLANNER_HTML } from "./outfit-planner-app";
+import { CATALOGING_BENCH_HTML } from "./bench-app";
 
 /** A post-install guided step — the "you can now add some yarn" prompt
  *  that shows after a bundle installs, so the user isn't left staring at
@@ -1491,6 +1492,81 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
                 { entity_kind: "projects:project", name: "By occasion", view_type: "table", pinned: true, config: { group_by: "occasion", visible_fields: ["title", "occasion", "wear_date"] } },
               ],
             },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // The Cataloging Bench (Phase 1). Your CNC tooling as its own table, plus a
+    // guided "Bench" Tier-B app that captures an unknown tool's measurements +
+    // observations + bin and composes its spec — no manual data entry. See
+    // docs/product/cataloging-bench.md. The bench app needs core-apps (the App
+    // Player); the commit goes through inventory's `bench-commit` action.
+    glyph: "🔧",
+    blurb:
+      "Organize your CNC tooling — end mills, drills, taps — without typing. The guided Bench app walks each unknown tool through measure → weigh → observe → photograph → bin, composes its spec, and files it. AI enriches the name when a provider is connected.",
+    next_steps: [
+      { label: "Open the Bench", module: "core-apps", path: "/app/cataloging-bench", hint: "Run an unknown tool through measure → weigh → observe → bin — no typing." },
+      { label: "See your Tooling table", module: "inventory", path: "/instances/tooling", hint: "Every tool by type, with its spec + which bin it's in." },
+    ],
+    manifest: {
+      id: "cobblr.flagship.cnc-tooling",
+      version: "0.2.0",
+      name: "CNC Tooling",
+      description:
+        "Your CNC tooling as its own table — end mills, drills, taps, reamers, inserts — by type/diameter/flutes/material, with the bin each lives in. Ships the guided Cataloging Bench app: capture an unknown tool's measurements + observations and it composes the spec for you (AI-enriched when a provider is connected).",
+      author: "Cobblr",
+      released_at: "2026-06-12",
+      changelog:
+        "The guided Cataloging Bench: measure (caliper) → weigh (scale) → observe → photograph → bin, hands-busy, no typing — with a live edge mode that streams real readings from an on-site agent. The structured spec is composed deterministically; a best-effort multimodal AI identify enriches the name/brand from the measurements when a provider is connected. Built on two GENERIC capabilities the bench app wires together — inventory:create-item + core-scan:identify — not a bench-specific module action. See docs/product/cataloging-bench.md.",
+      requires: [{ module: "inventory" }, { module: "core-apps" }, { module: "core-scan" }],
+      provides_instances: [
+        {
+          module: "inventory",
+          instance_name: "tooling",
+          display_name: "Tooling",
+          glyph: "🔧",
+          item_noun: "tool",
+          qty_unit: "each",
+          field_defs: [
+            { entity_kind: "inventory:part", name: "tool_type", display_label: "Type", type: "text", position: 1, choices: ["End mill", "Drill", "Tap", "Reamer", "Insert", "Collet", "Other"], help: "What kind of tool — the table groups by this." },
+            { entity_kind: "inventory:part", name: "diameter_mm", display_label: "Diameter (mm)", type: "number", position: 2, help: "Cutting diameter, from the calipers." },
+            { entity_kind: "inventory:part", name: "shank_dia_mm", display_label: "Shank (mm)", type: "number", position: 3, help: "Shank diameter — the size your collet/holder needs." },
+            { entity_kind: "inventory:part", name: "overall_length_mm", display_label: "Overall length (mm)", type: "number", position: 4, help: "Tip to end — for reach + holder clearance." },
+            { entity_kind: "inventory:part", name: "flute_length_mm", display_label: "Flute length (mm)", type: "number", position: 5, help: "Length of cut." },
+            { entity_kind: "inventory:part", name: "flute_count", display_label: "Flutes", type: "number", position: 6, help: "Number of flutes / lands." },
+            { entity_kind: "inventory:part", name: "end_type", display_label: "End", type: "text", position: 7, choices: ["Square", "Ball", "Corner-radius", "Chamfer", "Drill point"], help: "Geometry of the cutting end." },
+            { entity_kind: "inventory:part", name: "material", display_label: "Material", type: "text", position: 8, choices: ["Carbide", "HSS", "Cobalt", "Other"], help: "What the tool is made of." },
+            { entity_kind: "inventory:part", name: "coating", display_label: "Coating", type: "text", position: 9, choices: ["Uncoated", "TiN", "TiCN", "TiAlN", "AlTiN", "DLC", "Other"], help: "Surface coating, if any." },
+            { entity_kind: "inventory:part", name: "weight_g", display_label: "Weight (g)", type: "number", position: 10, help: "From the scale — helps the AI tell carbide from HSS." },
+            { entity_kind: "inventory:part", name: "bin", display_label: "Bin", type: "text", position: 11, help: "Where it physically lives — “Bin 1 / Comp 6”. Set at the bench." },
+          ],
+          field_overrides: [
+            { entity_kind: "inventory:part", name: "manufacturer", display_label: "Brand" },
+            { entity_kind: "inventory:part", name: "category", hidden: true },
+            { entity_kind: "inventory:part", name: "location", hidden: true },
+            { entity_kind: "inventory:part", name: "warranty", hidden: true },
+            { entity_kind: "inventory:part", name: "min_qty", hidden: true },
+            { entity_kind: "inventory:part", name: "supplier_url", hidden: true },
+            { entity_kind: "inventory:part", name: "serial_number", hidden: true },
+            { entity_kind: "inventory:part", name: "model_number", hidden: true },
+          ],
+          saved_views: [
+            { entity_kind: "inventory:part", name: "By type", view_type: "table", pinned: true, config: { group_by: "tool_type", visible_fields: ["title", "diameter_mm", "flute_count", "end_type", "material", "bin"] } },
+            { entity_kind: "inventory:part", name: "By bin", view_type: "table", config: { group_by: "bin", visible_fields: ["title", "tool_type", "diameter_mm", "material"] } },
+          ],
+        },
+      ],
+      // The guided capture app — a Tier-B custom block reading nothing and
+      // committing via inventory:bench-commit. See web/src/lib/bench-app.ts.
+      provides_apps: [
+        {
+          slug: "cataloging-bench",
+          name: "Cataloging Bench",
+          icon: "🔧",
+          pages: [
+            { slug: "bench", title: "The bench", blocks: [{ type: "custom", html: CATALOGING_BENCH_HTML, height: 720 }] },
           ],
         },
       ],

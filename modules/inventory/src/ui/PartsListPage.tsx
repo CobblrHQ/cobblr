@@ -417,7 +417,7 @@ export function PartsListPage() {
         )}
         <button
           onClick={() => setAdding(true)}
-          className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
+          className="rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
         >
           <Plus size={14} /> New {itemNoun}
         </button>

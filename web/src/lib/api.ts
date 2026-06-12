@@ -789,7 +789,13 @@ export const api = {
   authoringRepairPrompt: (slug: string, draftId: string) =>
     request<{ prompt: string }>("POST", `/orgs/${slug}/modules/core-authoring/drafts/${draftId}/repair-prompt`),
   authoringApply: (slug: string, draftId: string, confirm = true) =>
-    request<{ applied: boolean; bundle: unknown; seeded?: { created: number; skipped: number } }>(
+    request<{
+      applied: boolean;
+      bundle?: unknown;
+      seeded?: { created: number; skipped: number };
+      // design-app: apply created a WorkspaceApp instead of installing a bundle.
+      app?: { slug: string; name: string };
+    }>(
       "POST",
       `/orgs/${slug}/modules/core-authoring/drafts/${draftId}/apply`,
       { confirm },
@@ -904,6 +910,41 @@ export const api = {
       `/me/notification-channels/${id}/test`,
       body,
     ),
+
+  // ─── Discord connection (Feature 1) ───────────────────────────────
+  meDiscordStatus: () =>
+    request<{ configured: boolean; connected: boolean; verified: boolean; username: string | null; invite_url: string | null }>(
+      "GET",
+      "/me/discord",
+    ),
+  meDiscordOAuthStart: () =>
+    request<{ url: string }>("POST", "/me/discord/oauth-start"),
+  meDiscordRetryTest: () =>
+    request<{ deliverable: boolean }>("POST", "/me/discord/retry-test"),
+  meDiscordConfirm: () =>
+    request<{ ok: boolean; verified: boolean }>("POST", "/me/discord/confirm"),
+  meDiscordDisconnect: () =>
+    request<void>("DELETE", "/me/discord"),
+
+  // ─── Communication Preferences matrix (Feature 1) ─────────────────
+  meCommunicationPrefs: () =>
+    request<CommunicationPrefs>("GET", "/me/communication-prefs"),
+  setMeCommunicationPref: (body: { notification_type: string; channel: string; enabled: boolean }) =>
+    request<{ ok: boolean }>("PUT", "/me/communication-prefs", body),
+
+  // ─── Browser driving (Feature 3) ──────────────────────────────────
+  driveGrant: (slug: string) =>
+    request<{ mode: "off" | "navigate" | "navigate_observe" }>("GET", `/orgs/${slug}/drive/grant`),
+  setDriveGrant: (slug: string, mode: "off" | "navigate" | "navigate_observe") =>
+    request<{ mode: string }>("PUT", `/orgs/${slug}/drive/grant`, { mode }),
+  driveTabTicket: (slug: string) =>
+    request<{ ticket: string }>("POST", `/orgs/${slug}/drive/tab/ticket`),
+  driveTabAccept: (slug: string, browser_id: string) =>
+    request<{ ok: boolean }>("POST", `/orgs/${slug}/drive/tab/accept`, { browser_id }),
+  driveTabRelease: (slug: string, browser_id: string) =>
+    request<{ ok: boolean }>("POST", `/orgs/${slug}/drive/tab/release`, { browser_id }),
+  driveTabTelemetry: (slug: string, browser_id: string, events: unknown[]) =>
+    request<{ ok: boolean }>("POST", `/orgs/${slug}/drive/tab/telemetry`, { browser_id, events }),
 
   // ─── core-files ───────────────────────────────────────────────────
   listFiles: (slug: string, kind?: string) =>
@@ -3047,6 +3088,16 @@ export interface NotificationChannelUpsert {
   enabled?: boolean;
   min_priority?: NotificationPriority;
   config?: Record<string, unknown>;
+}
+
+/** The account-level Communication Preferences matrix (Feature 1), as returned
+ *  by GET /me/communication-prefs. `prefs[type][channel]` is the effective
+ *  enablement (defaults already applied). Tier-1 types are shown locked. */
+export interface CommunicationPrefs {
+  channels: Array<"in_app" | "discord_dm" | "email">;
+  discord_verified: boolean;
+  types: Array<{ key: string; label: string; description: string; tier: 1 | 2 }>;
+  prefs: Record<string, Record<string, boolean>>;
 }
 
 export interface QueueJob {

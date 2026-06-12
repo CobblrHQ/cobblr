@@ -27,3 +27,65 @@ export function pokeDiscordResolved(ref: DiscordResolvePoke): void {
     }
   })();
 }
+
+export interface DiscordDmResult {
+  /** The bot accepted the request and Discord acknowledged the send. */
+  ok: boolean;
+  /** The user is reachable by DM (false = privacy settings blocked it / unknown
+   *  user). This is exactly what the verified test DM detects. */
+  deliverable: boolean;
+}
+
+/** Send a DM to a Discord user via the bot. Awaitable (unlike the fire-and-forget
+ *  pokes) because callers need the deliverability signal — a user whose privacy
+ *  settings block DMs from non-mutual-server members can't be reached, which is
+ *  why the verified test DM exists. `verify_token` attaches a "Yes, I got this 👋"
+ *  button to the message. No bot configured → {ok:false, deliverable:false}. */
+export async function sendDiscordDm(args: {
+  discord_user_id: string;
+  text: string;
+  verify_token?: string;
+}): Promise<DiscordDmResult> {
+  if (!BOT_URL) return { ok: false, deliverable: false };
+  try {
+    const r = await fetch(`${BOT_URL.replace(/\/+$/, "")}/dm`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(args),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!r.ok) return { ok: false, deliverable: false };
+    const d = (await r.json().catch(() => ({}))) as Partial<DiscordDmResult>;
+    return { ok: Boolean(d.ok), deliverable: Boolean(d.deliverable) };
+  } catch {
+    return { ok: false, deliverable: false };
+  }
+}
+
+export interface DiscordWaitlistCardPoke {
+  waitlist_id: string;
+  email: string;
+  source: string | null;
+  signed_up_at: string | null;
+  user_agent: string | null;
+}
+
+/** Post a new-signup card (rich embed + Approve/Dismiss buttons) to the Discord
+ *  admin channel so the author can approve from his phone. Fire-and-forget: the signup
+ *  is already durably in the waitlist table; a missed card never loses it. The
+ *  bot's button calls the same /approve endpoint the web dashboard hits. */
+export function pokeDiscordWaitlistCard(card: DiscordWaitlistCardPoke): void {
+  if (!BOT_URL) return;
+  void (async () => {
+    try {
+      await fetch(`${BOT_URL.replace(/\/+$/, "")}/waitlist-card`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(card),
+        signal: AbortSignal.timeout(4000),
+      });
+    } catch {
+      /* no admin card — the signup is still in the Waitlist tab to approve there. */
+    }
+  })();
+}

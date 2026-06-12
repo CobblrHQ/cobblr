@@ -498,6 +498,11 @@ function WorkspaceHeader({
         <span className="px-1.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider bg-cobble-100 dark:bg-cobble-900/30 text-accent dark:text-cobble-300">
           {role}
         </span>
+        {/* Inline greeting — wraps with the title row (feedback 5816bd0d:
+            no need for its own line). */}
+        <span className="text-xs text-muted dark:text-slate-400">
+          welcome back, {userName.split(" ")[0]}
+        </span>
         <div className="flex-1" />
         {/* Always-available "grow your workspace" path — the empty-state Enable
             cards vanish once you have data, so this is how you keep adding
@@ -509,9 +514,6 @@ function WorkspaceHeader({
         >
           <Sliders size={13} /> Set up workspace
         </Link>
-      </div>
-      <div className="text-xs text-muted dark:text-slate-400 mt-2">
-        welcome back, {userName.split(" ")[0]}
       </div>
       {/* Compact message strip — one line + action per message. Bundle-update
           nudges live here now (the standalone banner was too noisy). Room for

@@ -8,6 +8,7 @@
 // docs/modules/ai-bundle-builder.md.
 
 import { useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Wand2, Copy, Check, AlertTriangle, Sparkles } from "lucide-react";
 import { usePageTitle, useToast } from "@cobblr/platform-web";
@@ -67,7 +68,21 @@ export function BuildPage() {
   // "tweak" = add a field/wire to existing kinds (pick 1-3). "workspace" = the
   // architect: describe a whole app, the AI enables modules + builds the schema
   // from the full catalog (no kind picker, task=design-workspace).
-  const [mode, setMode] = useState<"tweak" | "workspace">("tweak");
+  const [mode, setMode] = useState<"tweak" | "workspace" | "app" | "app-custom">("tweak");
+  const navigate = useNavigate();
+  // The compile/build body per mode: tweak → a bundle scoped to picked kinds;
+  // workspace → a whole-workspace bundle; app → a worker app (structured blocks);
+  // app-custom → a custom HTML app (design-app-custom).
+  const buildArgs = () =>
+    mode === "workspace"
+      ? { intent: intent.trim(), task: "design-workspace" }
+      : mode === "app"
+        ? { intent: intent.trim(), task: "design-app" }
+        : mode === "app-custom"
+          ? { intent: intent.trim(), task: "design-app-custom" }
+          : { intent: intent.trim(), selected_kinds: [...selected] };
+  // Both app tasks create a WorkspaceApp + have no bundle diff/preview.
+  const isAppMode = mode === "app" || mode === "app-custom";
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [intent, setIntent] = useState("");
   const [draftId, setDraftId] = useState<string | null>(null);
@@ -110,12 +125,7 @@ export function BuildPage() {
     setInterpretation(null);
     setSeedCount(0);
     try {
-      const r = await api.authoringBuild(
-        slug,
-        mode === "workspace"
-          ? { intent: intent.trim(), task: "design-workspace" }
-          : { intent: intent.trim(), selected_kinds: [...selected] },
-      );
+      const r = await api.authoringBuild(slug, buildArgs());
       setDraftId(r.draft_id);
 
       const started = Date.now();
@@ -165,12 +175,7 @@ export function BuildPage() {
     setValidation(null);
     setPasteText("");
     try {
-      const r = await api.authoringCompile(
-        slug,
-        mode === "workspace"
-          ? { intent: intent.trim(), task: "design-workspace" }
-          : { intent: intent.trim(), selected_kinds: [...selected] },
-      );
+      const r = await api.authoringCompile(slug, buildArgs());
       setDraftId(r.draft_id);
       setPrompt(r.prompt);
       setWarnings(r.warnings ?? []);
@@ -218,6 +223,12 @@ export function BuildPage() {
     setBusy("apply");
     try {
       const r = await api.authoringApply(slug, draftId);
+      // design-app: a WorkspaceApp was created — open it.
+      if (r.app) {
+        toast.success(`App "${r.app.name}" created.`);
+        navigate(`/app/${r.app.slug}`);
+        return;
+      }
       const created = r.seeded?.created ?? 0;
       toast.success(
         created > 0
@@ -247,7 +258,9 @@ export function BuildPage() {
     preview.fields_added.length + preview.wires_added.length + preview.modules_to_enable.length > 0;
   // Valid but empty = the AI couldn't turn the description into changes. Don't
   // pretend "looks good" — apply would be a no-op.
-  const canApply = !!validation?.valid && addsSomething;
+  // App apply just needs a valid definition (no bundle "preview"/diff exists for
+  // an app). Bundle apply needs the diff to actually add something.
+  const canApply = isAppMode ? !!validation?.valid : (!!validation?.valid && addsSomething);
   const label = useMemo(() => (s: string) => s.split(":")[1] ?? s, []);
 
   return (
@@ -257,7 +270,19 @@ export function BuildPage() {
           <Wand2 size={20} className="text-accent" /> Build
         </h1>
         <p className="text-sm text-muted dark:text-slate-400 mt-1">
-          {mode === "workspace" ? (
+          {mode === "app-custom" ? (
+            <>
+              Describe a <strong>custom app</strong> — the AI writes a small self-contained HTML/JS page that runs in a
+              sandbox and reads/writes your workspace only through Cobblr's mediated bridge (so it can never exceed what
+              you can do). For when the structured blocks aren't enough. We validate it before it goes live.
+            </>
+          ) : mode === "app" ? (
+            <>
+              Describe a <strong>worker app</strong> — a member-facing page of forms, action buttons and a scanner over
+              your existing data. The AI assembles it from safe building blocks (no code), and we check it before it goes
+              live. <strong>Write a prompt instead</strong> hands you one to run yourself if your workspace has no AI.
+            </>
+          ) : mode === "workspace" ? (
             <>
               Describe your <strong>whole workspace</strong> in one go — the AI turns on the modules you need and builds
               the fields and automations for your entire workflow. <strong>Build it for me</strong> runs it and checks
@@ -275,7 +300,7 @@ export function BuildPage() {
 
       {/* Mode — one tweak vs. design the whole workspace */}
       <div className="inline-flex rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-0.5 text-sm">
-        {(["tweak", "workspace"] as const).map((m) => (
+        {(["tweak", "workspace", "app", "app-custom"] as const).map((m) => (
           <button
             key={m}
             type="button"
@@ -287,7 +312,13 @@ export function BuildPage() {
                 : "text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-200")
             }
           >
-            {m === "tweak" ? "Add to my app" : "Design my whole workspace"}
+            {m === "tweak"
+              ? "Add to my app"
+              : m === "workspace"
+                ? "Design my whole workspace"
+                : m === "app"
+                  ? "Build a worker app"
+                  : "Custom app (HTML)"}
           </button>
         ))}
       </div>
@@ -324,16 +355,24 @@ export function BuildPage() {
         )}
         <label className="block">
           <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
-            {mode === "workspace" ? "Describe the workspace you want" : "What do you want to add?"}
+            {mode === "workspace"
+              ? "Describe the workspace you want"
+              : isAppMode
+                ? "Describe the app you want"
+                : "What do you want to add?"}
           </span>
           <textarea
             value={intent}
             onChange={(e) => setIntent(e.target.value)}
-            rows={mode === "workspace" ? 6 : 3}
+            rows={mode === "tweak" ? 3 : 6}
             placeholder={
               mode === "workspace"
                 ? "e.g. A yarn & crochet tracker. I design patterns (wearables, toys, blankets), each links to a PDF or URL and lists the yarn and hook sizes it needs. Track yarn by colour, weight and metres left, and a hooks section with sizes 1–10mm and how many I own."
-                : "e.g. add a 'warranty expires' date to parts, and when one is low on stock, print a reorder label"
+                : mode === "app-custom"
+                  ? "e.g. a colour-coded wall board of my parts grouped by location, with a search box and a low-stock highlight — reading my live inventory."
+                  : mode === "app"
+                    ? "e.g. a quick intake page for the front desk: a short intro, a form to add a new part, a 'print label' button, and the barcode scanner."
+                    : "e.g. add a 'warranty expires' date to parts, and when one is low on stock, print a reorder label"
             }
             className="w-full px-3 py-2 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           />
@@ -473,6 +512,21 @@ export function BuildPage() {
                 className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium px-4 py-2 transition disabled:opacity-50"
               >
                 {busy === "apply" ? "Applying…" : "Apply"}
+              </button>
+            </>
+          ) : isAppMode && validation.valid ? (
+            <>
+              <div className="flex items-center gap-2 text-sm font-medium text-emerald-700 dark:text-emerald-300">
+                <Check size={16} /> Your app is ready
+              </div>
+              <BundleDetails candidate={candidate} label="Show the app definition" />
+              <button
+                type="button"
+                onClick={apply}
+                disabled={!canApply || busy === "apply"}
+                className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium px-4 py-2 transition disabled:opacity-50"
+              >
+                {busy === "apply" ? "Creating…" : "Create app"}
               </button>
             </>
           ) : validation.valid ? (

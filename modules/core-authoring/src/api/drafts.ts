@@ -23,6 +23,7 @@ import {
   repairPrompt,
   parseJsonObject,
   unwrapBuild,
+  unwrapApp,
   type ValidationError,
   type SeedGroup,
 } from "../services/compile.js";
@@ -56,6 +57,48 @@ async function callBundles(
   });
   const respBody = (await r.json().catch(() => ({}))) as Record<string, unknown>;
   return { status: r.status, body: respBody };
+}
+
+// In-process call to core-apps, AS the caller. `path` "validate" → the dry-run
+// gate (same { valid, errors } shape as bundles/validate, so the repair loop is
+// uniform); "" → POST /apps (create the app). Used by the design-app task.
+async function callApps(
+  req: Parameters<typeof tenantContext>[0],
+  path: "validate" | "",
+  body: Record<string, unknown>,
+): Promise<BundlesResponse> {
+  const port = process.env.API_PORT ?? "4000";
+  const slug = tenantContext(req).org.slug;
+  const auth = req.headers.authorization ?? "";
+  const url = `http://127.0.0.1:${port}/api/v1/orgs/${slug}/modules/core-apps/apps${path ? `/${path}` : ""}`;
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: auth },
+    body: JSON.stringify(body),
+  });
+  const respBody = (await r.json().catch(() => ({}))) as Record<string, unknown>;
+  return { status: r.status, body: respBody };
+}
+
+// One validation indirection for both artifact kinds — design-app validates the
+// app definition via /apps/validate; everything else is a bundle manifest via
+// /bundles/validate (autoEnable so a referenced-but-unenabled module surfaces in
+// the preview, not as an error). Returns the shared { valid, errors } shape.
+// Both app tasks (structured blocks + custom HTML) produce a WorkspaceApp and
+// validate/apply via core-apps; everything else is a bundle.
+function isAppTask(task: string): boolean {
+  return task === "design-app" || task === "design-app-custom";
+}
+
+async function validateArtifact(
+  req: Parameters<typeof tenantContext>[0],
+  task: string,
+  candidate: unknown,
+): Promise<BundlesResponse> {
+  if (isAppTask(task)) {
+    return callApps(req, "validate", (candidate ?? {}) as Record<string, unknown>);
+  }
+  return callBundles(req, "validate", { manifest: candidate, autoEnable: true });
 }
 
 const jsonb = (v: unknown) => sql`${JSON.stringify(v ?? null)}::jsonb`;
@@ -170,8 +213,15 @@ draftsRouter.post(
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const parsed = ContextBody.safeParse(req.body ?? {});
     if (!parsed.success) return badBody(res, parsed.error);
-    const ctx = await assembleContext(tenantContext(req).org.id, parsed.data.selected_kinds);
-    res.json({ kinds: ctx.kinds, actions: ctx.actions, output_contract: ctx.outputContract, warnings: ctx.warnings });
+    const tc = tenantContext(req);
+    const ctx = await assembleContext(tc.org.id, parsed.data.selected_kinds, "create-bundle", undefined, tc.role);
+    res.json({
+      kinds: ctx.kinds,
+      actions: ctx.actions,
+      output_contract: ctx.outputContract,
+      requester_role: ctx.requesterRole,
+      warnings: ctx.warnings,
+    });
   }),
 );
 
@@ -188,7 +238,8 @@ draftsRouter.post(
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const parsed = CompileBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
-    const orgId = tenantContext(req).org.id;
+    const tc = tenantContext(req);
+    const orgId = tc.org.id;
     const user = sessionUser(req);
     let ctx;
     try {
@@ -197,6 +248,7 @@ draftsRouter.post(
         parsed.data.selected_kinds,
         parsed.data.task ?? "create-bundle",
         parsed.data.base_template_id,
+        tc.role,
       );
     } catch (e) {
       // Bad task/template selection → a clean 400, not a 500.
@@ -249,6 +301,7 @@ async function runBuild(
   orgId: string,
   basePrompt: string,
   userId: string | null,
+  task: string,
 ): Promise<void> {
   const db = tenantDb(req);
   let prompt = basePrompt;
@@ -286,18 +339,26 @@ async function runBuild(
         return;
       }
 
-      const unwrapped = unwrapBuild(parseJsonObject(text));
-      candidate = unwrapped.bundle;
-      if (unwrapped.interpretation) interpretation = unwrapped.interpretation;
-      if (unwrapped.seed.length > 0) seed = unwrapped.seed;
+      const parsedJson = parseJsonObject(text);
+      if (isAppTask(task)) {
+        const u = unwrapApp(parsedJson);
+        candidate = u.app;
+        if (u.interpretation) interpretation = u.interpretation;
+      } else {
+        const u = unwrapBuild(parsedJson);
+        candidate = u.bundle;
+        if (u.interpretation) interpretation = u.interpretation;
+        if (u.seed.length > 0) seed = u.seed;
+      }
       if (candidate === null || typeof candidate !== "object") {
+        const wrapperKey = isAppTask(task) ? "app" : "bundle";
         prompt = repairPrompt(basePrompt, text, [
-          { path: "", code: "not_json", message: 'Your output was not valid JSON. Return ONLY one JSON object: { "interpretation": "...", "bundle": {...} } — no prose, no fences.' },
+          { path: "", code: "not_json", message: `Your output was not valid JSON. Return ONLY one JSON object: { "interpretation": "...", "${wrapperKey}": {...} } — no prose, no fences.` },
         ]);
         continue;
       }
 
-      const { body: v } = await callBundles(req, "validate", { manifest: candidate, autoEnable: true });
+      const { body: v } = await validateArtifact(req, task, candidate);
       await db
         .updateTable("core_authoring_drafts")
         .set({
@@ -336,7 +397,8 @@ draftsRouter.post(
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const parsed = BuildBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
-    const orgId = tenantContext(req).org.id;
+    const tc = tenantContext(req);
+    const orgId = tc.org.id;
     const user = sessionUser(req);
 
     let ctx;
@@ -346,6 +408,7 @@ draftsRouter.post(
         parsed.data.selected_kinds,
         parsed.data.task ?? "create-bundle",
         parsed.data.base_template_id,
+        tc.role,
       );
     } catch (e) {
       res.status(400).json({ error: { code: "bad_task", message: e instanceof Error ? e.message : String(e) } });
@@ -372,7 +435,7 @@ draftsRouter.post(
     // Fire-and-forget: the loop drives the draft to a terminal status; the
     // client polls GET /drafts/:id. (Single api instance — in-process detach
     // is fine; a crash mid-build just leaves a stale "building" draft.)
-    void runBuild(req, draft.id, orgId, basePrompt, user?.id ?? null);
+    void runBuild(req, draft.id, orgId, basePrompt, user?.id ?? null, ctx.task);
 
     res.status(202).json({ draft_id: draft.id, status: "building" });
   }),
@@ -387,21 +450,21 @@ draftsRouter.post(
     const parsed = CandidateBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
-    const draft = await db.selectFrom("core_authoring_drafts").select("id").where("id", "=", req.params.id!).executeTakeFirst();
+    const draft = await db.selectFrom("core_authoring_drafts").select(["id", "task"]).where("id", "=", req.params.id!).executeTakeFirst();
     if (!draft) {
       res.status(404).json({ error: { code: "not_found", message: "Draft not found." } });
       return;
     }
-    // The pasted reply may be the wrapper `{ interpretation, bundle }` (the
-    // new contract) or a bare bundle — unwrap to the bundle before validating.
-    const { bundle } = unwrapBuild(parsed.data.manifest);
-    // autoEnable:true → a referenced-but-unenabled module shows in
-    // preview.modules_to_enable (apply enables it), not as an error.
-    const { body: v } = await callBundles(req, "validate", { manifest: bundle, autoEnable: true });
+    // Unwrap the pasted reply to the artifact (bundle or app), tolerating either
+    // the `{ interpretation, <key> }` wrapper or a bare object, then validate via
+    // the task's gate (apps → /apps/validate, else /bundles/validate).
+    const candidate =
+      isAppTask(draft.task) ? unwrapApp(parsed.data.manifest).app : unwrapBuild(parsed.data.manifest).bundle;
+    const { body: v } = await validateArtifact(req, draft.task, candidate);
     await db
       .updateTable("core_authoring_drafts")
       .set({
-        candidate: jsonb(bundle) as never,
+        candidate: jsonb(candidate) as never,
         validation: jsonb(v) as never,
         status: v.valid ? "validated" : "candidate",
         updated_at: new Date(),
@@ -448,7 +511,7 @@ draftsRouter.post(
     const db = tenantDb(req);
     const draft = await db
       .selectFrom("core_authoring_drafts")
-      .select(["id", "candidate", "seed_plan"])
+      .select(["id", "candidate", "seed_plan", "task"])
       .where("id", "=", req.params.id!)
       .executeTakeFirst();
     if (!draft) {
@@ -456,12 +519,30 @@ draftsRouter.post(
       return;
     }
     if (!draft.candidate) {
-      res.status(400).json({ error: { code: "no_candidate", message: "Paste a manifest and validate it before applying." } });
+      res.status(400).json({ error: { code: "no_candidate", message: "Validate a candidate before applying." } });
       return;
     }
-    // Forward to install — which RE-VALIDATES (never trust a stale
-    // candidate). confirm defaults true so required modules are enabled
-    // as part of the apply.
+
+    // design-app: apply = create the WorkspaceApp (the create endpoint re-runs
+    // the same AppCreate schema validation, so a stale candidate can't sneak in).
+    if (isAppTask(draft.task)) {
+      const { status, body: ares } = await callApps(req, "", draft.candidate as Record<string, unknown>);
+      if (status >= 400) {
+        res.status(status).json(ares);
+        return;
+      }
+      await db
+        .updateTable("core_authoring_drafts")
+        .set({ status: "applied", updated_at: new Date() })
+        .where("id", "=", req.params.id!)
+        .execute();
+      res.json({ applied: true, app: ares });
+      return;
+    }
+
+    // Bundle: forward to install — which RE-VALIDATES (never trust a stale
+    // candidate). confirm defaults true so required modules are enabled as part
+    // of the apply.
     const { status, body: ires } = await callBundles(req, "install", {
       manifest: draft.candidate,
       confirm: parsed.data.confirm ?? true,

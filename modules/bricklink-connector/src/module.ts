@@ -66,7 +66,17 @@ export default defineModule({
       "bricklink.order.parsed",
     ],
     api: [],
-    actions: [],
+    actions: [
+      {
+        id: "bricklink:disassemble-kit",
+        label: "Disassemble into parts",
+        description:
+          "Expand a Lego kit (an inventory:part matched to a Rebrickable set) into its constituent parts. Reads the lego.bom / lego.part catalogs (semantic types), creates one part per BOM row via inventory:create-items, writes a `matches` pairing to each Rebrickable part entry + a `derived-from` pairing back to the kit, and flips the kit's metadata.lifecycle to 'parted-out' via inventory:update-item. Requires the BOM catalog loaded (node scripts/seed-rebrickable.mjs --include-bom). Lives in the Lego domain module, not generic inventory.",
+        appliesTo: { kinds: ["inventory:part"] },
+        invokeHandler: "bricklink.disassemble-kit",
+        userInvokable: true,
+      },
+    ],
   },
 
   subscribes: [],

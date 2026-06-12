@@ -78,16 +78,19 @@ export function WorkspaceSwitcher() {
     });
   }
 
+  // min-w-0 here AND on the button so the name actually truncates to the space
+  // left after the icons — otherwise on a narrow (mobile) header the full
+  // workspace name renders and the action icons overlap it.
   return (
-    <div className="relative">
+    <div className="relative min-w-0">
       <button
         ref={btnRef}
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-1.5 px-2 py-1 rounded text-sm text-content dark:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 transition"
+        className="flex items-center gap-1.5 px-2 py-1 rounded text-sm text-content dark:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 transition min-w-0 max-w-full"
         title={activeOrg ? `${activeOrg.name} · ${displaySlug(activeOrg.slug)}` : "Pick a workspace"}
       >
         <span className="truncate max-w-[10rem]">{activeOrg?.name ?? "—"}</span>
-        <ChevronDown size={12} className="text-faint" />
+        <ChevronDown size={12} className="text-faint shrink-0" />
       </button>
       {open && pos && createPortal(
         <div
