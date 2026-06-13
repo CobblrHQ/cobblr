@@ -266,8 +266,9 @@ export interface NotifyAccountParams {
   message: string;
   link_url?: string;
   module?: string;
-  /** Optional richer email than the generic "<message> <link>" fallback. */
-  email?: { subject: string; text: string };
+  /** Optional richer email than the generic "<message> <link>" fallback.
+   *  `replyTo` (optional) carries a tokenized reply-by-email address. */
+  email?: { subject: string; text: string; replyTo?: string };
 }
 
 /** Deliver an account-level (platform) notification across the user's chosen
@@ -313,7 +314,7 @@ export async function notifyAccount(
       .where("id", "=", args.userId)
       .executeTakeFirst();
     if (u?.email) {
-      const ok = await sendAuthEmail({ to: u.email, subject: args.email.subject, text: args.email.text, kind: "notification" });
+      const ok = await sendAuthEmail({ to: u.email, subject: args.email.subject, text: args.email.text, kind: "notification", replyTo: args.email.replyTo });
       if (ok) deliveredVia.push("email");
     }
   }

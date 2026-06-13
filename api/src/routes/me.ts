@@ -57,6 +57,9 @@ meRouter.get("/me", requireAuth, async (req, res) => {
       auth_method: req.session!.auth_method,
       api_token_id: req.session!.api_token_id,
       is_platform_admin: req.session!.is_platform_admin,
+      // Community link for the signed-in chrome (account menu, feedback modal);
+      // null unless DISCORD_INVITE_URL is configured.
+      discord_invite_url: discordInviteUrl() || null,
     },
     orgs,
   });

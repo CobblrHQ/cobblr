@@ -23,6 +23,7 @@ import { dispatch } from "../platform/notifications.js";
 import { isUndeliverableTestAddress } from "../platform/email-send.js";
 import * as activity from "../platform/activity.js";
 import { fireSignup, sendAuthEmail } from "../platform/hosted-seams.js";
+import { discordInviteUrl } from "../platform/discord-oauth.js";
 import { enableDefaultModulesForOrg } from "../modules/enable.js";
 import type { OrgRole } from "../db/schema.js";
 
@@ -54,6 +55,12 @@ function slugifyBase(name: string): string {
   return (
     name
       .toLowerCase()
+      // Strip a possessive "'s" entirely (not just the apostrophe), so
+      // "a beta tester's Workspace" → "andrew-workspace". A trailing word boundary
+      // means only the possessive goes — "Tools Workshop" keeps its s.
+      .replace(/['’]s\b/g, "")
+      // …then drop any remaining apostrophes ("O'Brien" → "obrien").
+      .replace(/['’`]/g, "")
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "")
       .slice(0, 40) || "org"
@@ -105,6 +112,8 @@ interface AuthResponseUser {
    *  on the login/signup response too (not just /me) — else the
    *  super-admin UI shows "access denied" until the next /me refresh. */
   is_platform_admin: boolean;
+  /** Community Discord invite (DISCORD_INVITE_URL) or null; signed-in chrome only. */
+  discord_invite_url: string | null;
 }
 
 interface AuthResponseOrg {
@@ -254,6 +263,7 @@ export async function buildAuthResponse(userId: string): Promise<AuthResponse> {
       ...rest,
       email_verified: email_verified_at !== null,
       is_platform_admin: isPlatformAdmin(user.email),
+      discord_invite_url: discordInviteUrl() || null,
     },
     orgs,
   };

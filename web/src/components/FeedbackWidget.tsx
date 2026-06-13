@@ -8,6 +8,7 @@ import { Modal, useToast } from "@cobblr/platform-web";
 import { MessageSquare, ImagePlus, X } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
+import { resolveHandle } from "../auth/ActiveOrgContext";
 
 const TYPES = [
   { id: "bug", label: "🐛 Bug" },
@@ -35,7 +36,7 @@ export function FeedbackWidget() {
   const [error, setError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const toast = useToast();
-  const { orgs } = useAuth();
+  const { orgs, user } = useAuth();
 
   // Screenshots upload to a workspace's core-files + the feedback row stores
   // that same workspace_slug (the super-admin viewer reads the bytes under it),
@@ -45,9 +46,17 @@ export function FeedbackWidget() {
   // this, every slug-less page (portal, /admin, login landing, public
   // surfaces) hid the attach UI entirely: a user literally "stuck on
   // uploading a screenshot" (feedback ee0f8b06).
-  const slug =
-    window.location.pathname.match(/^\/(?:w|portal)\/([^/]+)/)?.[1] ??
-    orgs[0]?.slug;
+  // Map the URL handle to a CURRENT workspace. A tab left open across a
+  // workspace rename has a STALE handle that resolves to nothing — uploading the
+  // screenshot to that dead slug 404s and lost the whole report. So resolve the
+  // handle against the user's live orgs; fall back to their first workspace.
+  // Never rely on the raw URL slug being valid.
+  const urlHandle = window.location.pathname.match(/^\/(?:w|portal)\/([^/]+)/)?.[1];
+  const activeOrg = (urlHandle ? resolveHandle(urlHandle, orgs) : null) ?? orgs[0] ?? null;
+  const slug = activeOrg?.slug;
+  // Best-effort breadcrumb: the slug the URL claimed, when it no longer matches
+  // a live workspace (so the report still records where the user thought it was).
+  const attemptedSlug = urlHandle && !resolveHandle(urlHandle, orgs) ? urlHandle : undefined;
 
   function addFiles(list: FileList | null) {
     if (!list) return;
@@ -123,13 +132,21 @@ export function FeedbackWidget() {
     setBusy(true);
     setError(null);
     try {
-      let attachments: Array<{ file_id: string; name?: string; content_type?: string }> = [];
+      const attachments: Array<{ file_id: string; name?: string; content_type?: string }> = [];
+      let droppedShots = 0;
       if (slug && picks.length) {
         setStage(`Uploading ${picks.length} screenshot${picks.length === 1 ? "" : "s"}…`);
-        attachments = [];
         for (const p of picks) {
-          const rec = await api.uploadFile(slug, p.file);
-          attachments.push({ file_id: rec.id, name: p.file.name, content_type: p.file.type });
+          // A failed screenshot upload must NOT lose the whole report — submit
+          // the text regardless. (Also covers a stale workspace slug in a tab
+          // that was open across a workspace rename: the upload 404s, the
+          // feedback still goes through.)
+          try {
+            const rec = await api.uploadFile(slug, p.file);
+            attachments.push({ file_id: rec.id, name: p.file.name, content_type: p.file.type });
+          } catch {
+            droppedShots += 1;
+          }
         }
       }
       setStage("Sending…");
@@ -143,9 +160,14 @@ export function FeedbackWidget() {
           route: window.location.pathname,
           userAgent: navigator.userAgent,
           viewport: { w: window.innerWidth, h: window.innerHeight },
+          ...(attemptedSlug ? { attempted_slug: attemptedSlug } : {}),
         },
       });
-      toast.info("Thanks — your feedback was sent.");
+      toast.info(
+        droppedShots
+          ? `Thanks — your feedback was sent (couldn't attach ${droppedShots} screenshot${droppedShots === 1 ? "" : "s"}).`
+          : "Thanks — your feedback was sent.",
+      );
       close();
     } catch {
       setError("Couldn't send that. Please try again.");
@@ -263,6 +285,20 @@ export function FeedbackWidget() {
           >
             {busy ? (stage ?? "Sending…") : "Send feedback"}
           </button>
+          {/* Community channel — for questions/chat that aren't a tracked report. */}
+          {user?.discord_invite_url && (
+            <div className="text-center text-xs text-muted">
+              Have a question or want to chat?{" "}
+              <a
+                href={user.discord_invite_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-accent hover:underline"
+              >
+                Join us on Discord →
+              </a>
+            </div>
+          )}
         </div>
       </Modal>
     </>

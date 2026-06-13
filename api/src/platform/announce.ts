@@ -10,6 +10,7 @@
 // never blocked or failed by Discord being down.
 
 import { meta } from "../db/meta.js";
+import { read as readFile } from "./files.js";
 
 /** Known announcement categories + their human labels (for the config UI).
  *  Adding a category here makes it appear in the super-admin toggle list;
@@ -34,6 +35,9 @@ export interface AnnouncePayload {
   body?: string;
   /** Discord embed fields (small key/value pairs, e.g. workspace, page). */
   fields?: Array<{ name: string; value: string; inline?: boolean }>;
+  /** Screenshots to render inline — uploaded to the webhook as file attachments
+   *  (bytes read server-side via platform files; no public URL needed). */
+  images?: Array<{ orgId: string; fileId: string; name?: string }>;
   /** Decimal embed color. */
   color?: number;
 }
@@ -68,19 +72,43 @@ export async function announce(category: string, payload: AnnouncePayload): Prom
     return;
   }
   if (!cfg.enabled || !cfg.webhook) return;
+  const embed = {
+    title: payload.title.slice(0, 256),
+    description: payload.body ? payload.body.slice(0, 4000) : undefined,
+    color: payload.color,
+    fields: payload.fields?.slice(0, 10),
+  };
+
+  // With screenshots: upload the bytes to the webhook as file attachments
+  // (multipart) — Discord renders image attachments inline, and there's no
+  // public URL for the file, so this keeps it server-side. Falls back to a plain
+  // embed if none are readable.
+  if (payload.images?.length) {
+    try {
+      const form = new FormData();
+      let n = 0;
+      for (const img of payload.images.slice(0, 4)) {
+        const f = await readFile(img.orgId, img.fileId, "medium");
+        if (!f) continue;
+        const safe = (img.name || f.filename || `screenshot-${n}.png`).replace(/[^\w.\-]+/g, "_").slice(0, 80);
+        form.append(`files[${n}]`, new Blob([f.bytes], { type: f.mimeType || "image/png" }), safe);
+        n++;
+      }
+      if (n > 0) {
+        form.append("payload_json", JSON.stringify({ embeds: [embed] }));
+        void fetch(cfg.webhook, { method: "POST", body: form }).catch(() => {});
+        return;
+      }
+    } catch (err) {
+      console.error(`[announce] image attach failed for ${category}:`, err);
+      // fall through to a plain (text-only) post
+    }
+  }
+
   void fetch(cfg.webhook, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      embeds: [
-        {
-          title: payload.title.slice(0, 256),
-          description: payload.body ? payload.body.slice(0, 4000) : undefined,
-          color: payload.color,
-          fields: payload.fields?.slice(0, 10),
-        },
-      ],
-    }),
+    body: JSON.stringify({ embeds: [embed] }),
   }).catch(() => {
     /* Discord down / bad webhook — the underlying event already happened; ignore. */
   });

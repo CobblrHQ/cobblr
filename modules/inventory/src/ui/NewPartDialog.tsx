@@ -28,6 +28,16 @@ interface NewPartDialogProps {
   onCreated?: (partId: string) => void;
 }
 
+// Common quantity units, surfaced as type-ahead suggestions on the Unit field
+// (a datalist — still free text, so nothing is constrained). Covers everyday
+// inventory + medication units, since "each" alone was too thin (feedback).
+const UNIT_SUGGESTIONS = [
+  "each", "pcs", "pack", "box", "set", "pair",
+  "tablet", "capsule", "pill", "mL", "L", "drop", "puff", "spray", "patch", "dose", "sachet",
+  "mg", "mcg", "g", "kg", "IU", "unit",
+  "m", "cm", "ft", "roll", "sheet",
+];
+
 export function NewPartDialog({ onClose, onCreated }: NewPartDialogProps) {
   const { api, instance, entityKind, itemNoun, qtyUnit, basePath, orgSlug } = useInventory();
   // Native-field presentation: a bundle/config relabels + hides natives on the
@@ -207,8 +217,14 @@ export function NewPartDialog({ onClose, onCreated }: NewPartDialogProps) {
               <input
                 value={unit}
                 onChange={(e) => setUnit(e.target.value)}
+                list="part-unit-options"
                 className="input"
               />
+              <datalist id="part-unit-options">
+                {UNIT_SUGGESTIONS.map((u) => (
+                  <option key={u} value={u} />
+                ))}
+              </datalist>
             </Field>
           )}
         </div>

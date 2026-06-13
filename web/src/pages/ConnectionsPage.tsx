@@ -16,6 +16,7 @@ import {
   type AiProviderDef,
   type ConnRouteMode,
   type ConnRouteScope,
+  type OrgMembership,
   type UserConnection,
   type UserConnectionInput,
 } from "../lib/api";
@@ -154,7 +155,152 @@ export function ConnectionsPage() {
           <Plus size={15} /> Add a connection
         </button>
       )}
+
+      <RavelryCard orgs={orgs} />
     </div>
+  );
+}
+
+// ─── Ravelry: connect a read-only Ravelry account, then import your stash +
+//     projects into a workspace's Yarn bundle (feedback a713b84c). ───────────
+function RavelryCard({ orgs }: { orgs: OrgMembership[] }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const status = useQuery({ queryKey: ["ravelry-status"], queryFn: api.meRavelryStatus });
+  const [accessKey, setAccessKey] = useState("");
+  const [personalKey, setPersonalKey] = useState("");
+  const [target, setTarget] = useState("");
+
+  const connected = status.data?.connected ?? false;
+
+  const connect = useMutation({
+    mutationFn: () => api.meRavelryConnect({ access_key: accessKey.trim(), personal_key: personalKey.trim() }),
+    onSuccess: (r) => {
+      setAccessKey("");
+      setPersonalKey("");
+      toast.success(`Connected as ${r.username}`);
+      void qc.invalidateQueries({ queryKey: ["ravelry-status"] });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't connect to Ravelry"),
+  });
+
+  const disconnect = useMutation({
+    mutationFn: () => api.meRavelryDisconnect(),
+    onSuccess: () => {
+      toast.success("Ravelry disconnected");
+      void qc.invalidateQueries({ queryKey: ["ravelry-status"] });
+    },
+  });
+
+  const runImport = useMutation({
+    mutationFn: () => api.ravelryImport(target),
+    onSuccess: (r) => {
+      const parts: string[] = [];
+      if (r.stash.created || r.stash.updated)
+        parts.push(`yarn: ${r.stash.created} added${r.stash.updated ? `, ${r.stash.updated} updated` : ""}`);
+      if (r.designs_imported && (r.designs.created || r.designs.updated))
+        parts.push(`designs: ${r.designs.created} added${r.designs.updated ? `, ${r.designs.updated} updated` : ""}`);
+      if (r.errors) parts.push(`${r.errors} skipped`);
+      toast.success(parts.length ? `Imported — ${parts.join(" · ")}` : "Nothing new to import");
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Import failed"),
+  });
+
+  return (
+    <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
+      <div className="flex items-center gap-2">
+        <span className="text-lg">🧶</span>
+        <h2 className="text-sm font-medium text-content dark:text-slate-200 flex-1">Ravelry</h2>
+        {connected && status.data?.username && (
+          <span className="text-[11px] text-muted">
+            connected as <span className="font-medium text-content dark:text-slate-300">{status.data.username}</span>
+          </span>
+        )}
+      </div>
+
+      {!connected ? (
+        <>
+          <p className="text-xs text-muted dark:text-slate-400">
+            Import your Ravelry stash + projects into a Yarn workspace. Create a read-only personal API
+            key at{" "}
+            <a
+              href="https://www.ravelry.com/pro/developer"
+              target="_blank"
+              rel="noreferrer"
+              className="text-accent hover:underline"
+            >
+              ravelry.com/pro/developer
+            </a>{" "}
+            → “Personal” → it gives you a username (access key) + password (personal key). Stored
+            encrypted, used only to read your own data.
+          </p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <input
+              value={accessKey}
+              onChange={(e) => setAccessKey(e.target.value)}
+              placeholder="Access key (username)"
+              autoComplete="off"
+              className="rounded border border-line dark:border-slate-700 bg-canvas dark:bg-slate-950 px-2 py-1.5 text-sm"
+            />
+            <input
+              value={personalKey}
+              onChange={(e) => setPersonalKey(e.target.value)}
+              placeholder="Personal key (password)"
+              type="password"
+              autoComplete="off"
+              className="rounded border border-line dark:border-slate-700 bg-canvas dark:bg-slate-950 px-2 py-1.5 text-sm"
+            />
+          </div>
+          <div className="flex justify-end">
+            <button
+              type="button"
+              disabled={!accessKey.trim() || !personalKey.trim() || connect.isPending}
+              onClick={() => connect.mutate()}
+              className="inline-flex items-center gap-2 rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white text-sm font-medium px-3 py-1.5"
+            >
+              {connect.isPending ? "Connecting…" : "Connect Ravelry"}
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="text-xs text-muted dark:text-slate-400">
+            Import your stash into a workspace’s <span className="font-medium">Yarn</span> table (and
+            your projects into <span className="font-medium">Designs</span>, if that feature is on).
+            Re-running updates what’s already there instead of duplicating.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={target}
+              onChange={(e) => setTarget(e.target.value)}
+              className="rounded border border-line dark:border-slate-700 bg-canvas dark:bg-slate-950 px-2 py-1.5 text-sm"
+            >
+              <option value="">Choose a workspace…</option>
+              {orgs.map((o) => (
+                <option key={o.id} value={o.slug}>
+                  {o.name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              disabled={!target || runImport.isPending}
+              onClick={() => runImport.mutate()}
+              className="inline-flex items-center gap-2 rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white text-sm font-medium px-3 py-1.5"
+            >
+              {runImport.isPending ? "Importing…" : "Import now"}
+            </button>
+            <button
+              type="button"
+              onClick={() => disconnect.mutate()}
+              className="text-[11px] text-faint hover:text-ember-500 ml-auto"
+            >
+              Disconnect
+            </button>
+          </div>
+        </>
+      )}
+    </section>
   );
 }
 

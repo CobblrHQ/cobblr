@@ -22,6 +22,7 @@ export const NOTIFICATION_TYPES: NotificationTypeDef[] = [
   { key: "auth.security", label: "Password & security", description: "Password resets and 2FA changes.", tier: 1 },
   { key: "billing", label: "Subscription & billing", description: "Plan, payment and billing notices.", tier: 1 },
   { key: "account.deletion", label: "Account deletion", description: "Confirmation when an account is deleted.", tier: 1 },
+  { key: "platform.account.notice", label: "Important notices", description: "Breaking changes or actions that affect your access — e.g. a workspace web address change.", tier: 1 },
   // ── Tier 2 — configurable ───────────────────────────────────────────────────
   { key: "platform.feedback.replied", label: "Feedback responses", description: "When we reply to or ship the feedback you sent.", tier: 2 },
   { key: "platform.feature.announced", label: "Feature announcements", description: "New features and bundle releases.", tier: 2 },

@@ -54,6 +54,7 @@ const MeNotificationsPage = lazy(() => import("./pages/MeNotificationsPage").the
 const MeNotificationChannelsPage = lazy(() => import("./pages/MeNotificationChannelsPage").then((m) => ({ default: m.MeNotificationChannelsPage })));
 const MeProfilePage = lazy(() => import("./pages/MeProfilePage").then((m) => ({ default: m.MeProfilePage })));
 const CommunicationPreferencesPage = lazy(() => import("./pages/CommunicationPreferencesPage").then((m) => ({ default: m.CommunicationPreferencesPage })));
+const MyFeedbackPage = lazy(() => import("./pages/MyFeedbackPage").then((m) => ({ default: m.MyFeedbackPage })));
 const DriveSettingsPage = lazy(() => import("./pages/DriveSettingsPage").then((m) => ({ default: m.DriveSettingsPage })));
 const ConnectionsPage = lazy(() => import("./pages/ConnectionsPage").then((m) => ({ default: m.ConnectionsPage })));
 const ApiTokensPage = lazy(() => import("./pages/ApiTokensPage").then((m) => ({ default: m.ApiTokensPage })));
@@ -426,6 +427,7 @@ function ActiveOrgScopedRoutes() {
           <Route path="/me/notifications" element={<MeNotificationsPage />} />
           <Route path="/me/notification-channels" element={<MeNotificationChannelsPage />} />
           <Route path="/me/communication" element={<CommunicationPreferencesPage />} />
+          <Route path="/me/feedback" element={<MyFeedbackPage />} />
           <Route path="/me/drive" element={<DriveSettingsPage />} />
           {/* /me is canonical; /me/profile redirects so old bookmarks keep working. */}
           <Route path="/me/profile" element={<Navigate to="/me" replace />} />

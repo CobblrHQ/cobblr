@@ -31,6 +31,42 @@ export interface TestSession {
   slug: string;
 }
 
+/** Signup is the suite's single point of failure: EVERY test file calls it, and
+ *  it's the heaviest request in the suite — it CREATE DATABASEs a fresh tenant
+ *  (a Postgres template lock that serialises across all concurrent signups),
+ *  runs every module migration, and seeds bindings. Under 8-fork CI contention
+ *  against one shared API container, a signup can transiently 5xx/429 or time
+ *  out while pools warm. A bare throw here leaves the file's shared session
+ *  state undefined and cascades into every sibling test — vitest's per-test
+ *  `retry` can't help, because the failure is in a setup step many other tests
+ *  already consumed. So absorb the transient AT THE SOURCE: retry on a network
+ *  error or a retryable status (5xx/429), with backoff. A real signup bug
+ *  (4xx, bad body) still throws on the first attempt — we only retry transients. */
+async function signupOnce(body: unknown): Promise<Response> {
+  const MAX = 4;
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= MAX; attempt++) {
+    try {
+      const res = await fetch(`${BASE}/api/v1/auth/signup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      // 5xx / 429 = transient (container/DB under load) → retry. Other non-2xx
+      // (e.g. 400/409) is a real failure → return it so the caller throws.
+      if (res.ok || (res.status < 500 && res.status !== 429) || attempt === MAX) return res;
+      lastErr = new Error(`signup ${res.status} (attempt ${attempt}/${MAX})`);
+    } catch (e) {
+      // Network-level failure (ECONNRESET, fetch timeout) → retry.
+      lastErr = e;
+      if (attempt === MAX) throw e;
+    }
+    // Backoff with jitter so 8 forks that collided don't retry in lockstep.
+    await new Promise((r) => setTimeout(r, attempt * 300 + Math.floor(Math.random() * 200)));
+  }
+  throw lastErr instanceof Error ? lastErr : new Error("signup failed after retries");
+}
+
 export async function signupFreshOrg(label: string): Promise<TestSession> {
   // Random suffix per signup so tests can run in parallel.
   const suffix = Math.random().toString(36).slice(2, 8);
@@ -40,11 +76,7 @@ export async function signupFreshOrg(label: string): Promise<TestSession> {
     display_name: label,
     org_name: `${label} ${suffix}`,
   };
-  const res = await fetch(`${BASE}/api/v1/auth/signup`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  const res = await signupOnce(body);
   if (!res.ok) throw new Error(`signup failed: ${res.status} ${await res.text()}`);
   const json = (await res.json()) as {
     token: string;

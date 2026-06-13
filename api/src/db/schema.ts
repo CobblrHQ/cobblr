@@ -316,6 +316,25 @@ export interface DiscordConnectionsTable {
   updated_at: Generated<Date>;
 }
 
+export interface RavelryConnectionsTable {
+  user_id: string;
+  username: string | null;
+  credentials_encrypted: string;
+  verified_at: Date | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+export interface RavelryImportsTable {
+  org_id: string;
+  kind: string;
+  ravelry_id: string;
+  instance: string;
+  entity_id: string;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
 /** Standing permission for an external driver (Claude via MCP) to drive a user's
  *  open browser tab in one workspace (Feature 3). off = no control; navigate =
  *  open pages/views only; navigate_observe = also stream the user's actions back.
@@ -676,7 +695,10 @@ export interface FeedbackTable {
   // Conversation follow-ups (20260609-052). The original report is `message`;
   // each reporter reply in the ticket thread appends here. Re-triage reads both.
   followups: Generated<
-    Array<{ at: string; from: string; text: string; images?: Array<{ url: string; name?: string }> }>
+    // `role` distinguishes the two sides of the conversation in the in-app
+    // thread (and the Discord round-trip). Optional for back-compat: older
+    // entries (Discord #support follow-ups) are all reporter-side ("user").
+    Array<{ at: string; from: string; text: string; role?: "user" | "team"; images?: Array<{ url: string; name?: string }> }>
   >;
   // Reporter-attached screenshots (20260609-050). Refs into the reporter's
   // workspace core-files; bytes read cross-tenant for the super-admin view.
@@ -715,6 +737,8 @@ export interface MetaDB {
   notification_subscriptions: NotificationSubscriptionsTable;
   notification_account_prefs: NotificationAccountPrefsTable;
   discord_connections: DiscordConnectionsTable;
+  ravelry_connections: RavelryConnectionsTable;
+  ravelry_imports: RavelryImportsTable;
   browser_drive_grants: BrowserDriveGrantsTable;
   entity_kinds: EntityKindsTable;
   entity_actions: EntityActionsTable;

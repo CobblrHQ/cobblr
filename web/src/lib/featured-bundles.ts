@@ -919,13 +919,13 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.medications",
-      version: "0.2.0",
+      version: "0.3.0",
       name: "Medications & Refills",
-      description: "Your medications as their own table — dose, schedule, prescriber/pharmacy, refills left + a refill-by date. Caregiver-friendly.",
+      description: "Your medications as their own table — dose, schedule, instructions, prescriber/pharmacy, refills left + a refill-by date. Caregiver-friendly.",
       author: "Cobblr",
       released_at: "2026-06-08",
       changelog:
-        "Now its OWN table (an inventory instance), not generic Inventory with extra columns — its own nav entry, a “New medication” button, only med fields (parts/warranty/supplier cruft hidden). Plain-language hints + a pinned “Current meds” view.",
+        "Richer prescription fields: Instructions + Important information (how to take it, warnings), a Time of day field (Morning/Midday/Evening/Bedtime), interval schedules (Every 4/6/8/12 hours) with a First-dose-at time, and a unit picker on the quantity. — Its OWN table (an inventory instance), not generic Inventory with extra columns: its own nav entry, a “New medication” button, only med fields (parts/warranty/supplier cruft hidden), plain-language hints + a pinned “Current meds” view.",
       requires: [{ module: "inventory" }],
       provides_instances: [
         {
@@ -937,13 +937,17 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           qty_unit: "each",
           field_defs: [
             { entity_kind: "inventory:part", name: "dose", display_label: "Dose", type: "text", position: 1, help: "How much per take — e.g. “10 mg”, “1 tablet”, “5 mL”." },
-            { entity_kind: "inventory:part", name: "schedule", display_label: "Schedule", type: "text", position: 2, choices: ["Once daily", "Twice daily", "Three times daily", "Every morning", "Every night", "As needed", "Weekly"] },
-            { entity_kind: "inventory:part", name: "form", display_label: "Form", type: "text", position: 3, choices: ["Tablet", "Capsule", "Liquid", "Injection", "Inhaler", "Topical", "Drops"] },
-            { entity_kind: "inventory:part", name: "prescriber", display_label: "Prescriber", type: "text", position: 4 },
-            { entity_kind: "inventory:part", name: "pharmacy", display_label: "Pharmacy", type: "text", position: 5 },
-            { entity_kind: "inventory:part", name: "rx_number", display_label: "Rx number", type: "text", position: 6, help: "The prescription number on the label — quote it to the pharmacy for a refill." },
-            { entity_kind: "inventory:part", name: "refills_left", display_label: "Refills left", type: "number", position: 7, help: "Refills remaining before you need a new prescription." },
-            { entity_kind: "inventory:part", name: "refill_by", display_label: "Refill by", type: "date", position: 8, help: "Order a refill by this date so you don't run out." },
+            { entity_kind: "inventory:part", name: "schedule", display_label: "Schedule", type: "text", position: 2, choices: ["Once daily", "Twice daily", "Three times daily", "Every morning", "Every night", "As needed", "Weekly", "Every 4 hours", "Every 6 hours", "Every 8 hours", "Every 12 hours"] },
+            { entity_kind: "inventory:part", name: "time_of_day", display_label: "Time of day", type: "text", position: 3, choices: ["Morning", "Midday", "Evening", "Bedtime", "Other / see directions"], help: "When in the day to take it — pick the closest, or type your own (e.g. “Morning, Evening”)." },
+            { entity_kind: "inventory:part", name: "first_dose_at", display_label: "First dose at", type: "text", position: 4, help: "For interval schedules (e.g. every 8 hours), the time of the first dose — e.g. “8:00 AM”." },
+            { entity_kind: "inventory:part", name: "instructions", display_label: "Instructions", type: "text", position: 5, help: "How to take it — e.g. “Take 1 capsule by mouth every 8 hours.”" },
+            { entity_kind: "inventory:part", name: "important_information", display_label: "Important information", type: "text", position: 6, help: "Warnings or must-knows — e.g. “Take with food”, “Finish all of this medication.”" },
+            { entity_kind: "inventory:part", name: "form", display_label: "Form", type: "text", position: 7, choices: ["Tablet", "Capsule", "Liquid", "Injection", "Inhaler", "Topical", "Drops"] },
+            { entity_kind: "inventory:part", name: "prescriber", display_label: "Prescriber", type: "text", position: 8 },
+            { entity_kind: "inventory:part", name: "pharmacy", display_label: "Pharmacy", type: "text", position: 9 },
+            { entity_kind: "inventory:part", name: "rx_number", display_label: "Rx number", type: "text", position: 10, help: "The prescription number on the label — quote it to the pharmacy for a refill." },
+            { entity_kind: "inventory:part", name: "refills_left", display_label: "Refills left", type: "number", position: 11, help: "Refills remaining before you need a new prescription." },
+            { entity_kind: "inventory:part", name: "refill_by", display_label: "Refill by", type: "date", position: 12, help: "Order a refill by this date so you don't run out." },
           ],
           field_overrides: [
             { entity_kind: "inventory:part", name: "manufacturer", display_label: "Maker" },

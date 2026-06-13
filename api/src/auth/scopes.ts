@@ -29,6 +29,8 @@ export const TOKEN_SCOPES: TokenScopeDef[] = [
     allow: [
       ["GET", /^\/super-admin\/feedback(\/.*)?$/],
       ["PATCH", /^\/super-admin\/feedback\/[^/]+$/],
+      // Close several items at once with ONE combined reporter email/notif.
+      ["POST", /^\/super-admin\/feedback\/batch-resolve$/],
     ],
   },
   {
@@ -62,6 +64,7 @@ export const TOKEN_SCOPES: TokenScopeDef[] = [
     allow: [
       ["POST", /^\/super-admin\/feedback\/ingest$/],
       ["POST", /^\/super-admin\/feedback\/append$/],
+      ["POST", /^\/super-admin\/feedback\/append-dm$/],
       ["POST", /^\/super-admin\/feedback\/resolve-by-thread$/],
     ],
   },
@@ -104,12 +107,14 @@ export const TOKEN_SCOPES: TokenScopeDef[] = [
   },
   {
     key: "announce:post",
-    label: "Post announcements",
+    label: "Post announcements & notices",
     description:
-      "Post bundle / feature updates to the announcement channels. Read-only on the settings; can't reconfigure channels.",
+      "Post bundle / feature updates to the public announcement channels, and send targeted breaking-change notices to affected workspace members. Read-only on the settings; can't reconfigure channels.",
     allow: [
       ["GET", /^\/super-admin\/announce-settings$/],
       ["POST", /^\/super-admin\/announce$/],
+      // Targeted "advise affected users of a breaking change" notices.
+      ["POST", /^\/super-admin\/notices$/],
     ],
   },
 ];

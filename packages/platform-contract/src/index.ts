@@ -1922,6 +1922,9 @@ export interface AuthEmailMessage {
   // "the feedback you reported is live"). Distinct from the pre-workspace auth
   // kinds; reuses the same registered sender (the overlay's managed mailer).
   kind: "magic_link" | "verify_email" | "password_reset" | "invite" | "notification";
+  /** Optional Reply-To. Used for reply-by-email (a tokenized feedback address)
+   *  so a recipient's reply can be routed back inbound instead of lost. */
+  replyTo?: string;
 }
 export type AuthEmailSender = (msg: AuthEmailMessage) => Promise<void>;
 

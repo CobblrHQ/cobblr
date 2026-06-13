@@ -7,6 +7,7 @@ import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-quer
 import {
   AlertTriangle,
   Archive,
+  Download,
   ExternalLink,
   FileDown,
   FileUp,
@@ -68,6 +69,7 @@ export function PartsListPage() {
   const [adding, setAdding] = useState(false);
   const [importing, setImporting] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [ravImporting, setRavImporting] = useState(false);
   const [viewMode, setViewMode] = useViewMode("parts", "list");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const toast = useToast();
@@ -176,6 +178,45 @@ export function PartsListPage() {
       setExporting(false);
     }
   }
+
+  // Import a Ravelry stash into this Yarn instance (a713b84c). The connection is
+  // user-scoped (Profile → Connections); if it isn't set up yet, route there.
+  // The import endpoint also pulls projects → the Designs instance when present.
+  async function importRavelry() {
+    setRavImporting(true);
+    try {
+      const token = getToken();
+      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+      const statusRes = await fetch(`/api/v1/me/ravelry`, { headers });
+      const status = (await statusRes.json().catch(() => null)) as { connected?: boolean } | null;
+      if (!status?.connected) {
+        toast.info("Connect your Ravelry account first — opening Connections.");
+        navigate("/me/connections");
+        return;
+      }
+      const res = await fetch(`/api/v1/orgs/${orgSlug}/ravelry/import`, { method: "POST", headers });
+      if (!res.ok) throw new Error((await res.text()) || `import failed (${res.status})`);
+      const r = (await res.json()) as {
+        designs_imported: boolean;
+        stash: { created: number; updated: number };
+        designs: { created: number; updated: number };
+        errors: number;
+      };
+      const summary: string[] = [];
+      if (r.stash.created || r.stash.updated)
+        summary.push(`yarn: ${r.stash.created} added${r.stash.updated ? `, ${r.stash.updated} updated` : ""}`);
+      if (r.designs_imported && (r.designs.created || r.designs.updated))
+        summary.push(`designs: ${r.designs.created} added${r.designs.updated ? `, ${r.designs.updated} updated` : ""}`);
+      if (r.errors) summary.push(`${r.errors} skipped`);
+      toast.success(summary.length ? `Imported from Ravelry — ${summary.join(" · ")}` : "Ravelry: nothing new to import");
+      await parts.refetch();
+    } catch (err) {
+      toast.error(`Ravelry import failed: ${(err as Error).message}`);
+    } finally {
+      setRavImporting(false);
+    }
+  }
+
   const partItems = parts.data?.pages.flatMap((p) => p.items) ?? [];
 
   function toggleRow(id: string, checked: boolean) {
@@ -402,6 +443,19 @@ export function PartsListPage() {
         >
           <FileUp size={14} /> Import CSV
         </button>
+        {/* Import a Ravelry stash straight into the Yarn table (a713b84c). Only
+            the yarn instance — the bundle names it "yarn" — since the importer
+            maps to yarn fields + the Designs table. */}
+        {instance === "yarn" && (
+          <button
+            onClick={() => void importRavelry()}
+            disabled={ravImporting}
+            className="rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800/70 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5 disabled:opacity-50"
+            title="Import your Ravelry stash + projects"
+          >
+            <Download size={14} /> {ravImporting ? "importing…" : "Import from Ravelry"}
+          </button>
+        )}
         {/* Scan into THIS instance — lands the scanned item in the yarn table
             (core-scan is always on). The /scan page reads the target params. */}
         {instance && (

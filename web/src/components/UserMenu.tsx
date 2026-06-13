@@ -13,6 +13,8 @@ import {
   CalendarDays,
   ChevronDown,
   LogOut,
+  MessageSquare,
+  MessagesSquare,
   Moon,
   Server,
   ShieldCheck,
@@ -119,6 +121,9 @@ export function UserMenu({ themed }: { themed: boolean }) {
           <Link to="/me" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
             <UserCog size={14} className="text-faint dark:text-slate-400" /> Your profile
           </Link>
+          <Link to="/me/feedback" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
+            <MessageSquare size={14} className="text-faint dark:text-slate-400" /> Your feedback
+          </Link>
           <Link to="/calendar" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
             <CalendarDays size={14} className="text-faint dark:text-slate-400" /> Calendar
           </Link>
@@ -132,6 +137,19 @@ export function UserMenu({ themed }: { themed: boolean }) {
             {/* Bundles + their updates live under Configuration. */}
             <UpdateBadge slug={activeSlug} variant="count" className="ml-auto" />
           </Link>
+          {/* Community — only when an invite is configured (DISCORD_INVITE_URL). */}
+          {user.discord_invite_url && (
+            <a
+              href={user.discord_invite_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => setOpen(false)}
+              className={itemCls}
+              role="menuitem"
+            >
+              <MessagesSquare size={14} className="text-faint dark:text-slate-400" /> Community on Discord
+            </a>
+          )}
 
           {/* Platform-operator section — only for super-admins. */}
           {isAdmin && (

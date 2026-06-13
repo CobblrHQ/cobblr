@@ -88,6 +88,9 @@ export interface SessionUser {
   /** True when this user's email is in the platform's
    *  SUPERADMIN_EMAILS env var. Unlocks the /super-admin/* shell. */
   is_platform_admin?: boolean;
+  /** The community Discord invite (DISCORD_INVITE_URL), or null when unset.
+   *  Signed-in only; rendered in the account menu + feedback modal. */
+  discord_invite_url?: string | null;
 }
 
 export interface OrgMembership {
@@ -98,6 +101,19 @@ export interface OrgMembership {
   /** Display name of the workspace's owner — for the switcher's "Owner: …" on
    *  workspaces you don't own. Null if unresolved. */
   owner_name?: string | null;
+}
+
+/** A feedback item as the REPORTER sees it (no internal triage fields). */
+export interface MyFeedbackItem {
+  id: string;
+  type: "bug" | "confusing" | "idea" | "other";
+  message: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  followups: Array<{ at: string; from: string; text: string; role?: "user" | "team"; images?: Array<{ url: string; name?: string }> }>;
+  attachments: Array<{ file_id: string; name?: string; content_type?: string }>;
+  context: Record<string, unknown>;
 }
 
 export interface AuthResponse {
@@ -366,6 +382,11 @@ export const api = {
     context?: Record<string, unknown>;
     attachments?: Array<{ file_id: string; name?: string; content_type?: string }>;
   }) => request<{ id: string; created_at: string }>("POST", "/feedback", body),
+  // The signed-in user's OWN feedback + their two-way threads (/me/feedback).
+  listMyFeedback: () => request<{ items: MyFeedbackItem[] }>("GET", "/feedback/mine"),
+  // The reporter replies to their own item (answers a clarifying question).
+  replyToFeedback: (id: string, text: string) =>
+    request<{ ok: boolean; reopened: boolean }>("POST", `/feedback/${encodeURIComponent(id)}/reply`, { text }),
   // Raw URL for a feedback screenshot (super-admin only). Goes through useImageSrc
   // (Bearer → blob) like other authed images.
   feedbackAttachmentRawUrl: (feedbackId: string, fileId: string, variant?: "thumb" | "medium") =>
@@ -925,6 +946,24 @@ export const api = {
     request<{ ok: boolean; verified: boolean }>("POST", "/me/discord/confirm"),
   meDiscordDisconnect: () =>
     request<void>("DELETE", "/me/discord"),
+
+  // ─── Ravelry connection + import (feedback a713b84c) ───────────────
+  meRavelryStatus: () =>
+    request<{ connected: boolean; username: string | null; verified_at: string | null }>(
+      "GET",
+      "/me/ravelry",
+    ),
+  meRavelryConnect: (body: { access_key: string; personal_key: string }) =>
+    request<{ connected: boolean; username: string }>("POST", "/me/ravelry/connect", body),
+  meRavelryDisconnect: () => request<{ connected: boolean }>("DELETE", "/me/ravelry"),
+  ravelryImport: (slug: string) =>
+    request<{
+      ok: boolean;
+      designs_imported: boolean;
+      stash: { created: number; updated: number };
+      designs: { created: number; updated: number };
+      errors: number;
+    }>("POST", `/orgs/${slug}/ravelry/import`),
 
   // ─── Communication Preferences matrix (Feature 1) ─────────────────
   meCommunicationPrefs: () =>

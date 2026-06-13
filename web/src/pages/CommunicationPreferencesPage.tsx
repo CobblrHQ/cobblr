@@ -269,6 +269,22 @@ function DiscordCard(props: {
         )}
       </div>
 
+      {/* Once connected, point them at the community server — it's where the
+          live update stream + back-and-forth support (the AI + the team) lives. */}
+      {verified && inviteUrl && (
+        <div className="text-sm text-content dark:text-mortar-200 rounded-md bg-subtle dark:bg-slate-800/50 p-3 flex items-center justify-between gap-3 flex-wrap">
+          <span>You're set for DMs. For live updates + back-and-forth with the team, join the community:</span>
+          <a
+            href={inviteUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1.5 rounded bg-[#5865F2] hover:brightness-110 text-white text-xs font-medium px-3 py-1.5 shrink-0"
+          >
+            <MessageCircle size={13} /> Join the community
+          </a>
+        </div>
+      )}
+
       {/* Verification states after OAuth. */}
       {!verified && connected && (discordParam === "pending" || discordParam === null) && (
         <div className="text-sm text-content dark:text-mortar-200 space-y-2">

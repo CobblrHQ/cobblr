@@ -24,6 +24,8 @@ import { notifyAccount } from "../platform/notifications.js";
 import { announce, listAnnounceSettings, setAnnounceSetting, isComposable } from "../platform/announce.js";
 import { pokeDiscordResolved, pokeDiscordWaitlistCard } from "../platform/discord-bot-trigger.js";
 import { pokeTriage } from "../platform/triage-trigger.js";
+import { absoluteAppUrl } from "../platform/public-url.js";
+import { feedbackReplyAddress } from "../platform/feedback-reply.js";
 import {
   runMatchmaker,
   type PerceivedItem,
@@ -1270,6 +1272,63 @@ superAdminRouter.post("/feedback/append", async (req, res, next) => {
   }
 });
 
+// POST /super-admin/feedback/append-dm — a user replied to the support bot in a
+// DIRECT MESSAGE (the Discord round-trip on an in-app feedback item). Unlike
+// /append (keyed by a #support thread), this resolves the reporter from their
+// VERIFIED Discord connection, then appends to their most-recently-touched
+// feedback item — which is the one we just messaged them about (sending a
+// clarifying question bumps updated_at). Same feedback:ingest scope as /append.
+const AppendDm = z.object({
+  discord_user_id: z.string().min(1).max(40),
+  text: z.string().trim().max(5000).default(""),
+  from: z.string().max(120).optional(),
+});
+superAdminRouter.post("/feedback/append-dm", async (req, res, next) => {
+  try {
+    const parsed = AppendDm.safeParse(req.body);
+    if (!parsed.success || !parsed.data.text) {
+      res.status(400).json({ error: { code: "empty", message: "Nothing to append." } });
+      return;
+    }
+    const conn = await meta
+      .selectFrom("discord_connections")
+      .select(["user_id"])
+      .where("discord_user_id", "=", parsed.data.discord_user_id)
+      .where("verified", "=", true)
+      .executeTakeFirst();
+    if (!conn) {
+      res.status(404).json({ error: { code: "no_connection", message: "No verified Discord connection for that user." } });
+      return;
+    }
+    const fb = await meta
+      .selectFrom("feedback")
+      .select(["id", "status"])
+      .where("user_id", "=", conn.user_id)
+      .orderBy("updated_at", "desc")
+      .limit(1)
+      .executeTakeFirst();
+    if (!fb) {
+      res.status(404).json({ error: { code: "no_item", message: "No feedback item to reply to." } });
+      return;
+    }
+    const entry = { at: new Date().toISOString(), from: parsed.data.from ?? "reporter", text: parsed.data.text, role: "user" as const };
+    const reopened = fb.status === "resolved" || fb.status === "wontfix";
+    await meta
+      .updateTable("feedback")
+      .set({
+        followups: sql`coalesce(followups, '[]'::jsonb) || ${JSON.stringify([entry])}::jsonb`,
+        ...(reopened ? { status: "in_progress" as never } : {}),
+        triaged_at: null,
+      })
+      .where("id", "=", fb.id)
+      .execute();
+    pokeTriage(fb.id);
+    res.json({ ok: true, feedback_id: fb.id, reopened });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /super-admin/feedback/resolve-by-thread — the reporter clicked the Discord
 // support bot's "✅ That solved it — close" button. Resolve the matching ticket.
 // Lean on purpose: status only, NO public "resolved" card and NO bot re-poke (the
@@ -1343,6 +1402,16 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
     // fixed". Best-effort: a failed notification must not fail the triage update.
     let notified = false;
     let emailed = false;
+    // Record our reply on the item itself so it shows in the reporter's in-app
+    // thread (/me/feedback) — the notification channels are just the ping.
+    if (parsed.data.notify_reporter && parsed.data.reply_message?.trim()) {
+      const teamEntry = { at: new Date().toISOString(), from: "Cobblr", text: parsed.data.reply_message.trim(), role: "team" as const };
+      await meta
+        .updateTable("feedback")
+        .set({ followups: sql`coalesce(followups, '[]'::jsonb) || ${JSON.stringify([teamEntry])}::jsonb` })
+        .where("id", "=", row.id)
+        .execute();
+    }
     // A discord-origin ticket has no platform user — its reply goes back into
     // the Discord thread via the support bot (the API never touches Discord).
     if (parsed.data.notify_reporter && row.origin === "discord") {
@@ -1372,7 +1441,6 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
           orgId = m?.org_id ?? null;
         }
         if (orgId) {
-          const ctx = (row.context ?? {}) as { route?: string };
           const isResolved = parsed.data.status === "resolved";
           const defaultMsg = isResolved
             ? "The issue you reported has been fixed — it's live now."
@@ -1380,13 +1448,14 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
               ? "We reviewed your feedback — thanks for flagging it."
               : "We're looking into the feedback you sent.";
           const message = parsed.data.reply_message?.trim() || defaultMsg;
-          // Build the "your request is live" email ONLY on resolved — replies
-          // always notify in-app/Discord, but we only EMAIL on ship (the author: "give
-          // the requesting user a notification and even an email ... when it's
-          // live in prod"). notifyAccount honors the user's Communication
-          // Preferences matrix per channel + DMs them if Discord is verified.
-          let email: { subject: string; text: string } | undefined;
-          if (isResolved && hasAuthEmailSender()) {
+          // Email both ways now that feedback is a conversation: "your request is
+          // live" on resolve, and "we replied / have a question" on an OPEN item
+          // when there's an explicit reply_message (so a clarifying question
+          // actually reaches the reporter — not just the in-app bell). The latter
+          // links them to their thread to answer. notifyAccount also honors the
+          // matrix per channel + DMs them if Discord is verified.
+          let email: { subject: string; text: string; replyTo?: string } | undefined;
+          if (hasAuthEmailSender()) {
             const u = await meta
               .selectFrom("users")
               .select(["email", "display_name"])
@@ -1394,13 +1463,27 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
               .executeTakeFirst();
             if (u?.email) {
               const hi = u.display_name ? `Hi ${u.display_name},` : "Hi,";
-              email = {
-                subject: "Your Cobblr request is live",
-                text:
-                  `${hi}\n\n${message}\n\n` +
-                  `You'd sent us:\n  "${(row.message ?? "").slice(0, 500)}"\n\n` +
-                  `Thanks for helping make Cobblr better.\n— The Cobblr team`,
-              };
+              const reported = `You'd sent us:\n  "${(row.message ?? "").slice(0, 500)}"`;
+              // Reply-by-email when wired (a tokenized Reply-To routes replies
+              // back inbound); otherwise be explicit that email replies aren't
+              // seen and point to the in-app thread.
+              const replyAddr = feedbackReplyAddress(row.id);
+              const replyHere = replyAddr
+                ? `Just reply to this email and it'll land on your report — or use your feedback page:\n  ${absoluteAppUrl("/me/feedback")}`
+                : `To reply, use your feedback page — replies to this email aren't monitored yet:\n  ${absoluteAppUrl("/me/feedback")}`;
+              if (isResolved) {
+                email = {
+                  subject: "Your Cobblr request is live",
+                  text: `${hi}\n\n${message}\n\n${reported}\n\nStill off? ${replyHere}\n\nThanks for helping make Cobblr better.\n— The Cobblr team`,
+                  replyTo: replyAddr ?? undefined,
+                };
+              } else if (parsed.data.reply_message?.trim()) {
+                email = {
+                  subject: "We replied to your Cobblr feedback",
+                  text: `${hi}\n\n${message}\n\n${replyHere}\n\n${reported}\n\n— The Cobblr team`,
+                  replyTo: replyAddr ?? undefined,
+                };
+              }
             }
           }
           const { deliveredVia } = await notifyAccount({
@@ -1408,7 +1491,8 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
             representativeOrgId: orgId,
             notificationType: "platform.feedback.replied",
             message,
-            link_url: typeof ctx.route === "string" ? ctx.route : undefined,
+            // Land them on their feedback thread to read our reply + respond.
+            link_url: "/me/feedback",
             email,
           });
           notified = deliveredVia.length > 0 || notified;
@@ -1439,6 +1523,171 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
     }
 
     res.json({ ...row, notified, emailed });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /super-admin/feedback/batch-resolve — close several items at once with
+// ONE reporter-facing email/notification per reporter. Each item still resolves
+// individually (its own status + its own public changelog entry); the reporter
+// just isn't pinged N times. This is the proper form of "fix these three and
+// email the person once" — vs. faking it with a single "carrier" item, which
+// mis-quoted the original report and doubled the greeting.
+//
+// `reply_message` is the ONE combined body — do NOT include a greeting; the
+// email prepends "Hi <name>,". The public changelog only re-posts on a genuine
+// resolve TRANSITION, so re-running this on already-resolved items (e.g. to
+// re-send a corrected email) emails without duplicating changelog entries.
+const BatchResolveBody = z.object({
+  status: z.enum(["resolved", "wontfix"]).optional().default("resolved"),
+  items: z
+    .array(
+      z.object({
+        id: z.string().uuid(),
+        // Third-person changelog line for the PUBLIC Discord post.
+        public_summary: z.string().max(2000).optional(),
+        // Reporter-facing "we fixed it by …" line for THIS item, shown next to
+        // its quoted report in the combined email. Falls back to public_summary.
+        fix_note: z.string().max(2000).optional(),
+      }),
+    )
+    .min(1)
+    .max(50),
+  // Optional intro/summary shown once at the top (above the per-item breakdown).
+  reply_message: z.string().max(4000).optional(),
+  notify_reporter: z.boolean().optional(),
+});
+
+superAdminRouter.post("/feedback/batch-resolve", async (req, res, next) => {
+  try {
+    const parsed = BatchResolveBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Bad batch", details: parsed.error.issues } });
+      return;
+    }
+    const { status, items, reply_message, notify_reporter } = parsed.data;
+    const order = items.map((i) => i.id);
+    const summaryById = new Map(items.map((i) => [i.id, i.public_summary]));
+    const fixNoteById = new Map(items.map((i) => [i.id, i.fix_note]));
+
+    const rows = await meta
+      .selectFrom("feedback")
+      .select(["id", "status", "user_id", "org_id", "message", "context", "origin", "origin_ref"])
+      .where("id", "in", order)
+      .execute();
+    const found = new Set(rows.map((r) => r.id));
+    if (rows.length === 0) {
+      res.status(404).json({ error: { code: "not_found", message: "No matching feedback." } });
+      return;
+    }
+
+    // 1) Resolve each item; post its OWN public changelog only on a fresh
+    //    resolved transition (so a re-send doesn't double-post).
+    await meta.updateTable("feedback").set({ status, updated_at: new Date() }).where("id", "in", [...found]).execute();
+    for (const row of rows) {
+      const isResolved = status === "resolved";
+      const freshlyResolved = isResolved && row.status !== "resolved";
+      if (notify_reporter && row.origin === "discord") {
+        const ref = (row.origin_ref ?? {}) as { thread_id?: string };
+        if (ref.thread_id) {
+          const dmsg = isResolved
+            ? "The issue you reported has been fixed — it's live now."
+            : "We reviewed your feedback — thanks for flagging it.";
+          void pokeDiscordResolved({ thread_id: ref.thread_id, text: dmsg });
+        }
+      }
+      // Record our per-item reply on the thread so it shows in /me/feedback.
+      if (notify_reporter) {
+        const teamText = (fixNoteById.get(row.id) || reply_message || "").trim();
+        if (teamText) {
+          const teamEntry = { at: new Date().toISOString(), from: "Cobblr", text: teamText, role: "team" as const };
+          await meta
+            .updateTable("feedback")
+            .set({ followups: sql`coalesce(followups, '[]'::jsonb) || ${JSON.stringify([teamEntry])}::jsonb` })
+            .where("id", "=", row.id)
+            .execute();
+        }
+      }
+      if (freshlyResolved) {
+        const ctx = (row.context ?? {}) as { route?: string };
+        const fixed = (summaryById.get(row.id) || reply_message || "").trim();
+        const reported = (row.message ?? "").slice(0, 1200);
+        void announce("feedback.resolved", {
+          title: "✅ Feedback resolved",
+          body: fixed ? `**Reported:** ${reported}\n\n**Fixed:** ${fixed.slice(0, 2400)}` : reported,
+          color: 0x2e7d32,
+          fields: typeof ctx.route === "string" && ctx.route ? [{ name: "page", value: ctx.route, inline: true }] : undefined,
+        });
+      }
+    }
+
+    // 2) ONE combined reporter notification per distinct reporter.
+    const notifiedReporters: string[] = [];
+    if (notify_reporter && reply_message?.trim()) {
+      const byUser = new Map<string, typeof rows>();
+      for (const row of rows) {
+        if (!row.user_id) continue;
+        const list = byUser.get(row.user_id) ?? [];
+        list.push(row);
+        byUser.set(row.user_id, list);
+      }
+      for (const [userId, userRowsRaw] of byUser) {
+        const userRows = [...userRowsRaw].sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+        let orgId = userRows.find((r) => r.org_id)?.org_id ?? null;
+        if (!orgId) {
+          const m = await meta
+            .selectFrom("org_memberships")
+            .select("org_id")
+            .where("user_id", "=", userId)
+            .orderBy("joined_at", "asc")
+            .executeTakeFirst();
+          orgId = m?.org_id ?? null;
+        }
+        if (!orgId) continue;
+        let email: { subject: string; text: string } | undefined;
+        if (status === "resolved") {
+          const u = await meta.selectFrom("users").select(["display_name"]).where("id", "=", userId).executeTakeFirst();
+          const hi = u?.display_name ? `Hi ${u.display_name},` : "Hi,";
+          const plural = userRows.length > 1;
+          // Per-item "you reported X → we fixed it by Y" blocks, after the
+          // optional intro/summary. Each pairs the reporter's own words with the
+          // specific fix, so the email is both a scannable summary AND a record.
+          const blocks = userRows
+            .map((r) => {
+              const reported = (r.message ?? "").trim().slice(0, 600);
+              const fix = (fixNoteById.get(r.id) || summaryById.get(r.id) || "").trim();
+              const head = `You reported:\n  "${reported}"`;
+              return fix ? `${head}\n\n${fix}` : head;
+            })
+            .join("\n\n");
+          const intro = reply_message.trim();
+          email = {
+            subject: plural ? "Your Cobblr requests are live" : "Your Cobblr request is live",
+            text:
+              `${hi}\n\n` +
+              (intro ? `${intro}\n\n` : "") +
+              `${blocks}\n\n` +
+              `Thanks for helping make Cobblr better.\n— The Cobblr team`,
+          };
+        }
+        const { deliveredVia } = await notifyAccount({
+          userId,
+          representativeOrgId: orgId,
+          notificationType: "platform.feedback.replied",
+          message: reply_message.trim(),
+          link_url: "/me/feedback",
+          email,
+        });
+        if (deliveredVia.length) notifiedReporters.push(userId);
+      }
+    }
+
+    res.json({
+      resolved: [...found],
+      missing: order.filter((id) => !found.has(id)),
+      notified_reporters: notifiedReporters.length,
+    });
   } catch (err) {
     next(err);
   }
@@ -1660,6 +1909,88 @@ superAdminRouter.post("/announce", async (req, res, next) => {
       color,
     });
     res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /super-admin/notices — advise the members of affected workspace(s) (and/or
+// explicit users) of a breaking change that affects THEM — e.g. a workspace web
+// address change. Unlike /announce (a public Discord broadcast), this is a
+// TARGETED, per-recipient notice that rides the locked auth-email path (always
+// emails, like a security notice — not subject to the opt-out matrix) PLUS drops
+// an in-app bell. Reusable: any "we changed something that affects your access"
+// event. event_type platform.account.notice (Tier 1, see notification-catalog).
+const NoticeBody = z.object({
+  org_ids: z.array(z.string().uuid()).optional(),
+  user_ids: z.array(z.string().uuid()).optional(),
+  subject: z.string().min(1).max(200),
+  message: z.string().min(1).max(4000),
+  link_url: z.string().max(500).optional(),
+});
+
+superAdminRouter.post("/notices", async (req, res, next) => {
+  try {
+    const parsed = NoticeBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Bad notice", details: parsed.error.issues } });
+      return;
+    }
+    const { org_ids = [], user_ids = [], subject, message, link_url } = parsed.data;
+    // Recipients = members of org_ids ∪ explicit user_ids, deduped. Keep one
+    // representative org per user for the in-app row's org_id.
+    const recipientOrg = new Map<string, string>();
+    if (org_ids.length) {
+      const members = await meta
+        .selectFrom("org_memberships")
+        .select(["user_id", "org_id"])
+        .where("org_id", "in", org_ids)
+        .execute();
+      for (const m of members) if (!recipientOrg.has(m.user_id)) recipientOrg.set(m.user_id, m.org_id);
+    }
+    for (const uid of user_ids) {
+      if (recipientOrg.has(uid)) continue;
+      const m = await meta
+        .selectFrom("org_memberships")
+        .select("org_id")
+        .where("user_id", "=", uid)
+        .orderBy("joined_at", "asc")
+        .executeTakeFirst();
+      if (m?.org_id) recipientOrg.set(uid, m.org_id);
+    }
+    if (recipientOrg.size === 0) {
+      res.status(404).json({ error: { code: "no_recipients", message: "No matching recipients." } });
+      return;
+    }
+
+    const text = link_url ? `${message}\n\n${link_url}` : message;
+    const userIds = [...recipientOrg.keys()];
+    const users = await meta.selectFrom("users").select(["id", "email"]).where("id", "in", userIds).execute();
+    const emailById = new Map(users.map((u) => [u.id, u.email]));
+    let emailed = 0;
+    for (const [uid, orgId] of recipientOrg) {
+      await meta
+        .insertInto("notifications")
+        .values({
+          org_id: orgId,
+          user_id: uid,
+          event_type: "platform.account.notice",
+          module_name: null,
+          entity_type: null,
+          entity_id: null,
+          message,
+          link_url: link_url ?? null,
+          priority: "high",
+          delivered_via: ["in_app"],
+        })
+        .execute();
+      const to = emailById.get(uid);
+      if (to && hasAuthEmailSender()) {
+        const ok = await sendAuthEmail({ to, subject, text, kind: "notification" });
+        if (ok) emailed++;
+      }
+    }
+    res.json({ recipients: recipientOrg.size, emailed });
   } catch (err) {
     next(err);
   }

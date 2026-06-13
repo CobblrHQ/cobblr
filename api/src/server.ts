@@ -31,7 +31,9 @@ import { portalRouter } from "./routes/portal.js";
 import { dashboardRouter } from "./routes/dashboard.js";
 import { adminUsersRouter } from "./routes/admin-users.js";
 import { superAdminRouter } from "./routes/super-admin.js";
-import { feedbackRouter } from "./routes/feedback.js";
+import { feedbackRouter, feedbackInboundRouter } from "./routes/feedback.js";
+import { ravelryRouter } from "./routes/ravelry.js";
+import { ravelryImportRouter } from "./routes/ravelry-import.js";
 import { sandboxInstallRouter } from "./routes/sandbox-install.js";
 import { registryRouter } from "./routes/registry.js";
 import { customRolesRouter } from "./routes/custom-roles.js";
@@ -113,6 +115,7 @@ export function createApp(): AppHandles {
   v1.use("/auth", authRouter);
   v1.use(meRouter);
   v1.use(connectionsRouter);
+  v1.use(ravelryRouter);
   // Public read endpoint for core-public-surfaces. No auth required;
   // token in the URL is the secret. Mounted on /api/v1/public/* —
   // outside /orgs because the URL carries no slug.
@@ -128,6 +131,9 @@ export function createApp(): AppHandles {
   // the token in the URL is the secret. See
   // modules/core-integrations.
   v1.use("/integrations", integrationsInboundRouter);
+  // Inbound feedback email (reply-by-email). Unauthenticated at the router level;
+  // the Cloudflare Email Worker authenticates with COBBLR_INBOUND_EMAIL_SECRET.
+  v1.use(feedbackInboundRouter);
   v1.use("/orgs", orgsRouter);
   // platformOrgRouter mounts /:slug/entity-kinds, /:slug/entities/:kind/:id,
   // /:slug/actions, /:slug/bindings, /:slug/field-defs, etc. Composed
@@ -162,6 +168,9 @@ export function createApp(): AppHandles {
   v1.use("/orgs/:slug/bundles", bundlesRouter);
   v1.use("/orgs/:slug/members", membersRouter);
   v1.use("/orgs/:slug/pairings", pairingsRouter);
+  // Ravelry import — pull the user's stash + projects into this workspace's
+  // Yarn bundle. Auth + tenant applied inside the router (per-route).
+  v1.use("/orgs/:slug", ravelryImportRouter);
   v1.use("/orgs/:slug/instances", instancesRouter);
   // Instance-scoped item CRUD — resolves :instanceName → (module,
   // instance) then dispatches to the owning module's primary router
