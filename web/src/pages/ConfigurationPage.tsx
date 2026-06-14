@@ -46,7 +46,9 @@ import { NewThingFunnelModal } from "../components/NewThingFunnelModal";
 import { NavCustomizeMenu } from "../components/NavCustomizeMenu";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { displaySlug } from "../lib/workspaceSlug";
-import { usePageTitle } from "@cobblr/platform-web";
+import { usePageTitle, useToast } from "@cobblr/platform-web";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { api } from "../lib/api";
 
 interface Tile {
   icon: typeof Wrench;
@@ -381,6 +383,8 @@ export function ConfigurationPage() {
         need it.
       </p>
 
+      {activeOrg?.role === "owner" && <WorkspaceAiSharing slug={activeSlug} />}
+
       {/* Nav-customize control — relocated out of the navbar (it's a
           per-device preference, not a nav heading). */}
       <div className="flex items-center gap-3 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-4 py-3">
@@ -464,5 +468,119 @@ export function ConfigurationPage() {
         onClose={() => setNewThingOpen(false)}
       />
     </div>
+  );
+}
+
+// ─────────────── Owner: review members' AI-share offers ───────────────
+// A member can OFFER their personal AI to this workspace (so everyone here can
+// use it). The owner approves, picks which is the active workspace AI, or
+// declines. Renders nothing until there's at least one offer.
+function WorkspaceAiSharing({ slug }: { slug: string }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const shares = useQuery({
+    queryKey: ["ai-shares", slug],
+    queryFn: () => api.listAiShares(slug),
+    enabled: !!slug,
+  });
+  const items = shares.data?.items ?? [];
+  const onItems = (r: { items: import("../lib/api").WorkspaceAiOffer[] }) =>
+    qc.setQueryData(["ai-shares", slug], r);
+
+  const approve = useMutation({
+    mutationFn: (cid: string) => api.approveAiShare(slug, cid),
+    onSuccess: (r) => {
+      onItems(r);
+      toast.success("Approved — this AI is now available in the workspace.");
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
+  const reject = useMutation({
+    mutationFn: (cid: string) => api.rejectAiShare(slug, cid),
+    onSuccess: (r) => {
+      onItems(r);
+      toast.success("Offer declined.");
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
+  const activate = useMutation({
+    mutationFn: (cid: string | null) => api.setActiveAiShare(slug, cid),
+    onSuccess: (r) => onItems(r),
+    onError: (e) => toast.error((e as Error).message),
+  });
+
+  if (items.length === 0) return null;
+  const pending = items.filter((i) => i.status === "pending");
+  const approved = items.filter((i) => i.status === "approved");
+
+  return (
+    <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-3">
+      <div className="text-sm font-medium text-content dark:text-mortar-100">AI sharing</div>
+
+      {pending.length > 0 && (
+        <div className="space-y-2">
+          <div className="text-[11px] font-mono uppercase tracking-widest text-amber-600 dark:text-amber-500">
+            Pending offers
+          </div>
+          {pending.map((o) => (
+            <div key={o.credential_id} className="flex items-center gap-2 text-sm">
+              <div className="flex-1 min-w-0">
+                <span className="text-content dark:text-mortar-200">{o.offered_by_name}</span>
+                <span className="text-faint"> wants to share their AI ({o.label || o.provider_id})</span>
+              </div>
+              <button
+                type="button"
+                disabled={approve.isPending}
+                onClick={() => approve.mutate(o.credential_id)}
+                className="rounded bg-cobble-600 hover:bg-cobble-700 text-white text-xs font-medium px-2.5 py-1 disabled:opacity-50"
+              >
+                Approve
+              </button>
+              <button
+                type="button"
+                disabled={reject.isPending}
+                onClick={() => reject.mutate(o.credential_id)}
+                className="rounded border border-line dark:border-slate-600 text-muted hover:text-ember-500 text-xs font-medium px-2.5 py-1"
+              >
+                Decline
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {approved.length > 0 && (
+        <div className="space-y-1.5">
+          <div className="text-[11px] font-mono uppercase tracking-widest text-faint">
+            Workspace AI {approved.length > 1 && "— pick the active one"}
+          </div>
+          {approved.map((o) => (
+            <label key={o.credential_id} className="flex items-center gap-2 text-sm cursor-pointer">
+              <input
+                type="radio"
+                name={`active-ai-${slug}`}
+                checked={o.active}
+                onChange={() => activate.mutate(o.credential_id)}
+                className="accent-cobble-600"
+              />
+              <span className="text-content dark:text-mortar-200">{o.label || o.provider_id}</span>
+              <span className="text-[10px] text-faint">
+                {o.is_own ? "yours" : `shared by ${o.offered_by_name}`}
+              </span>
+              {o.active && <span className="text-[10px] text-accent">active</span>}
+            </label>
+          ))}
+          {approved.some((o) => o.active) && (
+            <button
+              type="button"
+              onClick={() => activate.mutate(null)}
+              className="text-[11px] text-faint hover:text-ember-500"
+            >
+              Turn off the shared workspace AI
+            </button>
+          )}
+        </div>
+      )}
+    </section>
   );
 }

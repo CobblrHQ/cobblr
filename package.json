@@ -18,10 +18,12 @@
   "scripts": {
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint:isolation": "tsx scripts/lint-module-isolation.ts",
+    "lint:dockerfile-modules": "tsx scripts/lint-dockerfile-modules.ts",
     "build": "npm run build --workspaces --if-present",
     "dev:api": "npm run dev -w api",
     "dev:web": "npm run dev -w web",
-    "test": "npm test --workspaces --if-present"
+    "test": "npm test --workspaces --if-present",
+    "prepare": "git config core.hooksPath scripts/git-hooks 2>/dev/null || true"
   },
   "devDependencies": {
     "playwright": "^1.60.0"

@@ -1193,10 +1193,18 @@ superAdminRouter.post("/feedback/ingest", async (req, res, next) => {
       .returning(["id", "created_at"])
       .executeTakeFirstOrThrow();
     pokeTriage(row.id);
-    const emoji =
-      parsed.data.type === "bug" ? "🐛" : parsed.data.type === "confusing" ? "😕" : parsed.data.type === "idea" ? "💡" : "•";
+    // Humanised card: "💬 New feedback" / "🐛 New bug report" — not the raw enum
+    // ("New other ticket (Discord)"). The "from" field already shows it came via
+    // a Discord user, so the redundant "(Discord)" suffix is dropped.
+    const TICKET_LABEL: Record<string, { emoji: string; label: string }> = {
+      bug: { emoji: "🐛", label: "bug report" },
+      confusing: { emoji: "😕", label: "confusing-UX report" },
+      idea: { emoji: "💡", label: "idea" },
+      other: { emoji: "💬", label: "feedback" },
+    };
+    const t = TICKET_LABEL[parsed.data.type] ?? { emoji: "💬", label: "feedback" };
     void announce("feedback.new", {
-      title: `${emoji} New ${parsed.data.type} ticket (Discord)`,
+      title: `${t.emoji} New ${t.label}`,
       body: parsed.data.message.slice(0, 1500),
       color: 0x5865f2,
       fields: parsed.data.origin_ref.username ? [{ name: "from", value: parsed.data.origin_ref.username, inline: true }] : undefined,

@@ -44,6 +44,7 @@ import { registerDefaultRequestGuard } from "./platform/default-request-guard.js
 import * as computedFields from "./platform/computed-fields.js";
 import * as createDefaults from "./platform/create-defaults.js";
 import * as instancesImpl from "./platform/instances.js";
+import * as scanResolvers from "./platform/scan-resolvers.js";
 import * as queue from "./platform/queue.js";
 import * as sharedCache from "./platform/shared-cache.js";
 import * as notificationsImpl from "./platform/notifications.js";
@@ -96,6 +97,7 @@ async function boot() {
       registerResolver: entities.registerResolver,
       registerListResolver: entities.registerListResolver,
       registerInstanceListResolver: entities.registerInstanceListResolver,
+      registerInstanceResolver: entities.registerInstanceResolver,
       registerComputedContext: computedFields.registerComputedContext,
       registerCreateDefaults: createDefaults.registerCreateDefaults,
       unregisterCreateDefaults: createDefaults.unregisterCreateDefaults,
@@ -220,6 +222,10 @@ async function boot() {
     },
     instances: {
       registerItemCounter: instancesImpl.registerItemCounter,
+    },
+    scan: {
+      registerUrlResolver: scanResolvers.registerScanUrlResolver,
+      resolveUrl: scanResolvers.resolveScanUrl,
     },
     // Hosted-overlay extension seams — no-op / allow-all in open core.
     entitlements: {

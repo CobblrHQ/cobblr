@@ -147,8 +147,8 @@ export function CommunicationPreferencesPage() {
 
       {/* ── Post-verify routing prompt ──────────────────────────────────── */}
       {verified && !promptDismissed && (
-        <div className="rounded-lg border border-line bg-subtle p-4 text-sm space-y-3">
-          <div className="font-medium text-content">
+        <div className="rounded-lg border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800/50 p-4 text-sm space-y-3">
+          <div className="font-medium text-content dark:text-mortar-100">
             Want your non-critical notifications on Discord?
           </div>
           <div className="flex flex-wrap gap-2">
@@ -157,7 +157,7 @@ export function CommunicationPreferencesPage() {
               Discord only
             </button>
             <button type="button" onClick={() => applyDiscordRouting("both")}
-              className="inline-flex items-center gap-1.5 rounded border border-line hover:bg-subtle text-content text-xs font-medium px-3 py-1.5">
+              className="inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-600 hover:bg-subtle dark:hover:bg-slate-800 text-content dark:text-mortar-200 text-xs font-medium px-3 py-1.5">
               Both Discord + email
             </button>
             <button type="button" onClick={() => setPromptDismissed(true)}

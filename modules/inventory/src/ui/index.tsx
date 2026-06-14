@@ -11,7 +11,7 @@ import { Boxes } from "lucide-react";
 // Side-effect: registers the inventory "at a glance" dashboard tile through
 // platform-web's registerDashboardWidget seam when this UI bundle loads.
 import "./DashboardWidget";
-import { InventoryProvider } from "./context";
+import { InventoryProvider, type ParentConfig } from "./context";
 import { PartsListPage } from "./PartsListPage";
 import { SettingsPage } from "./SettingsPage";
 
@@ -39,11 +39,14 @@ interface InventoryUIProps {
   itemNoun?: string;
   /** Default unit for new items (e.g. "skein"). */
   qtyUnit?: string;
+  /** When items belong to a parent "type" in another instance (Spool → Filament
+   *  type), the forms show a parent picker + write an `instance-of` pairing. */
+  parent?: ParentConfig;
 }
 
-export function InventoryUI({ orgSlug, getToken, instance, displayName, itemNoun, qtyUnit }: InventoryUIProps) {
+export function InventoryUI({ orgSlug, getToken, instance, displayName, itemNoun, qtyUnit, parent }: InventoryUIProps) {
   return (
-    <InventoryProvider orgSlug={orgSlug} getToken={getToken} instance={instance} itemNoun={itemNoun} qtyUnit={qtyUnit}>
+    <InventoryProvider orgSlug={orgSlug} getToken={getToken} instance={instance} itemNoun={itemNoun} qtyUnit={qtyUnit} parent={parent}>
       <div className="space-y-4">
         <Header title={displayName ?? "inventory"} scoped={!!instance} />
         <Routes>

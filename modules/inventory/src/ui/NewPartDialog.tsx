@@ -7,16 +7,21 @@
 // `matches → core-catalogs:entry` pairing is written after create so
 // the rest of the app can hydrate matched-entry data into the row.
 
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CatalogTypeahead,
   Modal,
+  fieldControl,
+  useUnits,
   type CatalogTypeaheadHit,
+  type FieldType,
+  type FieldRendererId,
 } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { useFieldPresentation } from "./useFieldPresentation";
+import { ParentPicker, type ParentRef } from "./ParentPicker";
 import { InventoryApiError, type InvFieldDef } from "./api";
 
 interface NewPartDialogProps {
@@ -26,6 +31,20 @@ interface NewPartDialogProps {
    *  refresh its view in place rather than send the user to the
    *  admin shell's detail page. */
   onCreated?: (partId: string) => void;
+  /** Pre-fill the form from an existing item (Duplicate). The user
+   *  still reviews + saves, so it's a new row, not a silent clone.
+   *  `fields` seeds the custom metadata. */
+  seed?: {
+    name?: string;
+    qty?: number | string | null;
+    unit?: string | null;
+    manufacturer?: string | null;
+    cost?: number | string | null;
+    category_id?: string | null;
+    location_id?: string | null;
+    fields?: Record<string, unknown> | null;
+    parent?: ParentRef | null;
+  };
 }
 
 // Common quantity units, surfaced as type-ahead suggestions on the Unit field
@@ -38,8 +57,8 @@ const UNIT_SUGGESTIONS = [
   "m", "cm", "ft", "roll", "sheet",
 ];
 
-export function NewPartDialog({ onClose, onCreated }: NewPartDialogProps) {
-  const { api, instance, entityKind, itemNoun, qtyUnit, basePath, orgSlug } = useInventory();
+export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) {
+  const { api, instance, entityKind, itemNoun, qtyUnit, parent, basePath, orgSlug } = useInventory();
   // Native-field presentation: a bundle/config relabels + hides natives on the
   // create form too (the Yarn instance hides category/location/etc.). Scoped to
   // the instance kind so each instance's create form shows only its fields.
@@ -59,14 +78,19 @@ export function NewPartDialog({ onClose, onCreated }: NewPartDialogProps) {
     .sort((a, b) => a.position - b.position);
 
   const [matched, setMatched] = useState<CatalogTypeaheadHit | null>(null);
-  const [name, setName] = useState("");
-  const [qty, setQty] = useState("1");
-  const [unit, setUnit] = useState(qtyUnit ?? "each");
-  const [categoryId, setCategoryId] = useState("");
-  const [locationId, setLocationId] = useState("");
-  const [manufacturer, setManufacturer] = useState("");
-  const [cost, setCost] = useState("");
-  const [meta, setMeta] = useState<Record<string, unknown>>({});
+  const [name, setName] = useState(seed?.name ?? "");
+  const [qty, setQty] = useState(seed?.qty != null ? String(seed.qty) : "1");
+  const [unit, setUnit] = useState(seed?.unit ?? qtyUnit ?? "each");
+  const units = useUnits();
+  // The unit when the field was focused — so changing g→kg converts the qty
+  // once on blur (not on every keystroke while typing "kg"). (e55169b1)
+  const unitAtFocus = useRef(unit);
+  const [categoryId, setCategoryId] = useState(seed?.category_id ?? "");
+  const [locationId, setLocationId] = useState(seed?.location_id ?? "");
+  const [manufacturer, setManufacturer] = useState(seed?.manufacturer ?? "");
+  const [cost, setCost] = useState(seed?.cost != null ? String(seed.cost) : "");
+  const [meta, setMeta] = useState<Record<string, unknown>>(seed?.fields ?? {});
+  const [parentRef, setParentRef] = useState<ParentRef | null>(seed?.parent ?? null);
   const [printLabel, setPrintLabel] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -150,6 +174,15 @@ export function NewPartDialog({ onClose, onCreated }: NewPartDialogProps) {
           console.error("[NewPartDialog] match pairing failed", e);
         }
       }
+      // Link this unit to its parent "type" (the `instance-of` pairing) — same
+      // post-create timing as the catalog match, and equally non-fatal.
+      if (parent && parentRef) {
+        try {
+          await api.createParentPairing(part.id, parentRef.id);
+        } catch (e) {
+          console.error("[NewPartDialog] parent pairing failed", e);
+        }
+      }
       if (printLabel) {
         try {
           const displayName =
@@ -217,6 +250,14 @@ export function NewPartDialog({ onClose, onCreated }: NewPartDialogProps) {
               <input
                 value={unit}
                 onChange={(e) => setUnit(e.target.value)}
+                onFocus={() => {
+                  unitAtFocus.current = unit;
+                }}
+                onBlur={() => {
+                  const n = Number(qty);
+                  const c = Number.isFinite(n) ? units.convert(n, unitAtFocus.current, unit) : null;
+                  if (c != null) setQty(String(c));
+                }}
                 list="part-unit-options"
                 className="input"
               />
@@ -228,6 +269,19 @@ export function NewPartDialog({ onClose, onCreated }: NewPartDialogProps) {
             </Field>
           )}
         </div>
+        {/* Parent / "type" link — when this instance's items belong to a type
+            in another instance (Spool → Filament type), pick it here; the
+            `instance-of` pairing is written after create. */}
+        {parent && (
+          <Field label={parent.label ?? "Type"}>
+            <ParentPicker
+              instance={parent.instance}
+              value={parentRef}
+              onChange={setParentRef}
+              placeholder={`Search ${parent.label?.toLowerCase() ?? "type"}…`}
+            />
+          </Field>
+        )}
         {/* The instance's own fields, promoted into create (the whole point of a
             skinned instance — fill yarn fields here, not after). */}
         {customFields.map((f) => (
@@ -356,8 +410,16 @@ function CustomFieldInput({
     <p className="text-[11px] text-faint dark:text-slate-500 leading-snug mt-1">{def.help}</p>
   ) : null;
 
+  // Shared control decision (see fieldControl) so this create form and the
+  // detail-page edit panel can't pick different controls for the same field.
+  const control = fieldControl({
+    type: def.type as FieldType,
+    renderer: def.renderer as FieldRendererId | null,
+    choices: def.choices,
+  });
+
   // Colour: a real swatch picker (type a hex/name OR pick from the OS picker).
-  if (def.renderer === "color-hex") {
+  if (control === "color") {
     const t = s.trim();
     const swatch = /^#?[0-9a-fA-F]{6}$/.test(t) ? (t[0] === "#" ? t : `#${t}`) : "#cccccc";
     return (
@@ -383,16 +445,16 @@ function CustomFieldInput({
     );
   }
 
-  if (def.choices && def.choices.length > 0) {
+  if (control === "choice") {
     return <ChoiceInput def={def} value={s} onChange={onChange} entityKind={entityKind} help={help} />;
   }
-  if (def.type === "boolean") {
+  if (control === "checkbox") {
     return (
       <div>
         <label className="flex items-center gap-2 text-sm text-content dark:text-mortar-200 cursor-pointer">
           <input
             type="checkbox"
-            checked={value === true}
+            checked={value === true || value === "true"}
             onChange={(e) => onChange(e.target.checked)}
             className="accent-cobble-500"
           />
@@ -402,12 +464,13 @@ function CustomFieldInput({
       </div>
     );
   }
-  const inputType = def.type === "number" ? "number" : def.type === "date" ? "date" : def.type === "url" ? "url" : "text";
+  // number / date / url / text (computed fields are filtered out upstream)
+  const inputType = control === "number" ? "number" : control === "date" ? "date" : control === "url" ? "url" : "text";
   return (
     <Field label={def.display_label}>
       <input
         type={inputType}
-        step={def.type === "number" ? "any" : undefined}
+        step={control === "number" ? "any" : undefined}
         value={s}
         onChange={(e) => onChange(e.target.value === "" ? null : e.target.value)}
         className="input"

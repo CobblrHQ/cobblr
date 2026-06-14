@@ -22,22 +22,46 @@ interface Props {
   value: unknown;
   /** Optional renderer override. Unknown ids fall through to "text". */
   renderer?: FieldRendererId | null;
+  /** The field's storage type. A `boolean` field with no explicit renderer
+   *  displays via the boolean renderer (a labelled yes/no), not the raw
+   *  "true"/"false" the text default would show. */
+  type?: string | null;
+  /** For a boolean field, custom state labels as `[falseLabel, trueLabel]`
+   *  (the same `choices` array the field-def carries) — so "Needs drying" can
+   *  read "Yes/No", "Dry/Wet", or whatever the author/user set. Defaults no/yes. */
+  choices?: string[] | null;
   /** Inline (single-line summary) vs block (large preview). The
    *  catalog list uses inline; the detail page can use block for
    *  the hero image / color swatch. */
   size?: "inline" | "block";
 }
 
+/** A boolean field's display labels, from its `choices` ([falseLabel,
+ *  trueLabel]); falls back to no/yes. Exported so non-renderer surfaces (a
+ *  template, an export) can express a boolean the same way. */
+export function boolLabel(value: unknown, choices?: string[] | null): string {
+  const truthy =
+    value === true || value === 1 ||
+    (typeof value === "string" && /^(true|yes|y|1)$/i.test(value));
+  const t = choices?.[1]?.trim() || "Yes";
+  const f = choices?.[0]?.trim() || "No";
+  return truthy ? t : f;
+}
+
 export function FieldRenderer({
   fieldName,
   value,
   renderer,
+  type,
+  choices,
   size = "inline",
 }: Props) {
   if (value === null || value === undefined || value === "") {
     return <span className="text-faint dark:text-slate-600">—</span>;
   }
-  const r = renderer ?? "text";
+  // A boolean field renders as a labelled yes/no even without an explicit
+  // renderer — the text default would show the raw "true"/"false".
+  const r = renderer ?? (type === "boolean" ? "boolean" : "text");
 
   switch (r) {
     case "color-hex":
@@ -53,7 +77,7 @@ export function FieldRenderer({
         </span>
       );
     case "boolean":
-      return <BooleanTick value={value} />;
+      return <BooleanTick value={value} choices={choices} />;
     case "code":
       return (
         <code className="font-mono text-[11px] bg-mortar-100 dark:bg-slate-800 rounded px-1.5 py-0.5">
@@ -168,18 +192,19 @@ function UrlLink({ value }: { value: unknown }) {
   );
 }
 
-function BooleanTick({ value }: { value: unknown }) {
+function BooleanTick({ value, choices }: { value: unknown; choices?: string[] | null }) {
   const truthy =
     value === true ||
     value === 1 ||
     (typeof value === "string" && /^(true|yes|y|1)$/i.test(value));
+  const label = boolLabel(value, choices);
   return truthy ? (
     <span className="inline-flex items-center gap-1 text-moss-600">
-      <Check size={13} /> yes
+      <Check size={13} /> {label}
     </span>
   ) : (
     <span className="inline-flex items-center gap-1 text-faint">
-      <X size={13} /> no
+      <X size={13} /> {label}
     </span>
   );
 }

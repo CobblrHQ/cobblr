@@ -55,6 +55,7 @@ COPY modules/tracking/package.json ./modules/tracking/
 COPY modules/digifab/package.json ./modules/digifab/
 COPY modules/core-file-preview/package.json ./modules/core-file-preview/
 COPY modules/bricklink-connector/package.json ./modules/bricklink-connector/
+COPY modules/maker-scan/package.json ./modules/maker-scan/
 COPY modules/core-print/package.json ./modules/core-print/
 # v0.3 sandbox SDK + AS sample module. Workspace-resolved so the
 # AS author repo (sandboxed-modules/hello-as) sees the SDK at build
@@ -130,6 +131,8 @@ COPY modules/core-file-preview ./modules/core-file-preview
 RUN npm run --if-present build -w @cobblr/core-file-preview
 COPY modules/bricklink-connector ./modules/bricklink-connector
 RUN npm run --if-present build -w @cobblr/bricklink-connector
+COPY modules/maker-scan ./modules/maker-scan
+RUN npm run --if-present build -w @cobblr/maker-scan
 COPY modules/core-print ./modules/core-print
 RUN npm run --if-present build -w @cobblr/core-print
 # ── actively-developed (hot) modules last — their edits rebuild fewest layers ──

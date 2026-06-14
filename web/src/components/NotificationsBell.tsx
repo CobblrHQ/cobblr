@@ -7,7 +7,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, X } from "lucide-react";
+import { Bell, Check } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, type CrossOrgNotificationEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -171,17 +171,19 @@ export function NotificationsBell() {
                     <span>{new Date(n.created_at).toLocaleString()}</span>
                   </div>
                 </button>
-                {/* Explicit dismiss — mark read WITHOUT navigating, so clicking a
-                    notification (go) vs dismissing the count is no longer ambiguous. */}
+                {/* Mark read WITHOUT navigating. A checkmark (not an ×) so it
+                    reads as "acknowledge / clear the unread dot" — the
+                    notification STAYS in the list — instead of "delete it"
+                    (reported: the × looked like it deleted the notification). */}
                 {!n.read_at && (
                   <button
                     onClick={() => markRead.mutate(n.id)}
                     disabled={markRead.isPending}
-                    title="Dismiss"
-                    aria-label="Dismiss notification"
+                    title="Mark as read"
+                    aria-label="Mark notification as read"
                     className="shrink-0 px-2 text-faint hover:text-accent dark:text-slate-500 dark:hover:text-cobble-300 transition"
                   >
-                    <X size={14} />
+                    <Check size={14} />
                   </button>
                 )}
               </li>

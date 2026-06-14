@@ -4,9 +4,11 @@
 
 import { useState, type FocusEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, Library, Printer, ShieldCheck, Trash2 } from "lucide-react";
+import { Archive, Copy, Library, Printer, ShieldCheck, Trash2 } from "lucide-react";
 import { CustomFieldsPanel, EntityActionsBar, EntityThumb, Modal, UnitInput, useConfirm, usePageTitle, useToast, useUnits } from "@cobblr/platform-web";
 import { useInventory } from "./context";
+import { NewPartDialog } from "./NewPartDialog";
+import { ParentPicker } from "./ParentPicker";
 import { useMatchedCatalogEntry } from "./useMatchedCatalogEntry";
 import { AllocationsPanel } from "./AllocationsPanel";
 import { StockAdjustButton } from "./StockAdjustButton";
@@ -19,7 +21,7 @@ import { useFieldPresentation } from "./useFieldPresentation";
 // not a separate full page. Takes the part id + an onClose from the
 // list route, instead of reading the route param itself.
 export function PartDetailPage({ id, onClose }: { id: string; onClose: () => void }) {
-  const { api, orgSlug, getToken, entityKind } = useInventory();
+  const { api, orgSlug, getToken, entityKind, parent } = useInventory();
   const fp = useFieldPresentation(entityKind);
   const units = useUnits();
   const qc = useQueryClient();
@@ -36,6 +38,34 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
 
   const toast = useToast();
   const confirm = useConfirm();
+  const [dup, setDup] = useState(false);
+
+  // The current parent "type" of this unit (the `instance-of` pairing target),
+  // resolved to {id, name}. Only fetched on instances that declare a parent.
+  // Re-linking deletes the old pairing(s) and writes a new one.
+  const parentQ = useQuery({
+    queryKey: ["inventory-parent", id],
+    enabled: !!id && !!parent,
+    queryFn: async () => {
+      const rows = (await api.listParentPairings(id!)).items;
+      const first = rows[0];
+      if (!first) return null;
+      const target = await api.getPart(first.target_id);
+      return { id: first.target_id, name: target.name };
+    },
+  });
+  const setParent = useMutation({
+    mutationFn: async (next: { id: string; name: string } | null) => {
+      const rows = (await api.listParentPairings(id!)).items;
+      for (const r of rows) await api.deletePairing(r.id);
+      if (next) await api.createParentPairing(id!, next.id);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["inventory-parent", id] });
+      void qc.invalidateQueries({ queryKey: ["inventory-part", id] });
+    },
+    onError: (e: unknown) => toast.error((e as Error).message),
+  });
 
   const update = useMutation({
     mutationFn: (patch: Record<string, unknown>) => api.updatePart(id!, patch),
@@ -79,8 +109,20 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
   const lifecycle = String(pmeta.lifecycle ?? pmeta.state ?? "");
   const looseOrDone = ["loose", "bulk", "spare", "parted-out"].includes(lifecycle);
   const canDisassemble = !!matched.data && !looseOrDone;
-  // The Lego kit→parts action moved to the bricklink-connector domain module.
-  const excludeActionIds = canDisassemble ? undefined : ["bricklink:disassemble-kit"];
+  // Keep the detail-page action bar to actions that act ON this item. The
+  // generic CRUD actions stay user-invokable (Tier-B apps / wires need them) but
+  // don't belong here: create-item / create-items make NEW items (nonsensical on
+  // an existing item), and update-item duplicates the inline editing right here.
+  // (The Lego kit→parts action also moved to the bricklink-connector module.)
+  const excludeActionIds = [
+    "inventory:create-item",
+    "inventory:create-items",
+    "inventory:update-item",
+    ...(canDisassemble ? [] : ["bricklink:disassemble-kit"]),
+    // "Split one off" only makes sense for a lot (qty > 1) — hide it on a
+    // single item (splitting would have to leave 0).
+    ...(Number(p.qty) > 1 ? [] : ["inventory:split-lot"]),
+  ];
 
   return (
     <div className="space-y-5">
@@ -94,8 +136,8 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
             color={(p.metadata as Record<string, unknown> | null)?.color as string | undefined}
             className="ring-1 ring-line dark:ring-slate-700"
           />
-          <div className="flex flex-col sm:flex-row items-start gap-3 flex-1 min-w-0">
-            <div className="flex-1 min-w-0">
+          <div className="flex-1 min-w-0">
+            <div className="min-w-0">
               <EditableTitle
                 value={p.name}
                 onCommit={(v) => update.mutate({ name: v })}
@@ -134,14 +176,15 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
                 )}
               </div>
             </div>
-            <EntityActionsBar
-              entityKind="inventory:part"
-              entityId={p.id}
-              excludeActionIds={excludeActionIds}
-              className="mt-1"
-            />
           </div>
         </div>
+        {/* Actions on their own full-width row so a long button row never
+            crushes the title (the bar wraps internally). */}
+        <EntityActionsBar
+          entityKind="inventory:part"
+          entityId={p.id}
+          excludeActionIds={excludeActionIds}
+        />
         <div className="grid grid-cols-2 gap-3">
           <Field label="Qty">
             <div className="flex items-center gap-2">
@@ -153,7 +196,17 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
           </Field>
           {!fp.hidden("unit") && (
           <Field label={fp.label("unit", "Unit")}>
-            <UnitInput value={p.unit} onCommit={(v) => update.mutate({ unit: v })} />
+            {/* Changing the unit auto-converts the quantity when the two are
+                interconvertible (1000 g → kg = 1); otherwise just the unit
+                changes. (e55169b1) */}
+            <UnitInput
+              value={p.unit}
+              onCommit={(v) => {
+                const n = Number(p.qty);
+                const c = Number.isFinite(n) ? units.convert(n, p.unit, v) : null;
+                update.mutate(c != null ? { unit: v, qty: c } : { unit: v });
+              }}
+            />
           </Field>
           )}
           {!fp.hidden("min_qty") && (
@@ -254,6 +307,22 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
         </Field>
       </div>
 
+      {/* Parent / "type" link — the unit's type lives in another instance
+          (Spool → Filament type). Editable: re-picking re-links the pairing. */}
+      {parent && (
+        <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
+          <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1.5">
+            {parent.label ?? "Type"}
+          </div>
+          <ParentPicker
+            instance={parent.instance}
+            value={parentQ.data ?? null}
+            onChange={(v) => setParent.mutate(v)}
+            placeholder={`Search ${parent.label?.toLowerCase() ?? "type"}…`}
+          />
+        </div>
+      )}
+
       {/* The instance's own fields, promoted to the top (right under the
           identity card) — the point of a skinned instance is that THESE are
           the fields that matter, not the generic inventory ones below. */}
@@ -348,7 +417,13 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
 
       <AllocationsPanel partId={p.id} />
 
-      <div className="text-center pt-4">
+      <div className="flex items-center justify-center gap-4 pt-4">
+        <button
+          onClick={() => setDup(true)}
+          className="text-xs text-faint dark:text-slate-500 hover:text-accent inline-flex items-center gap-1.5"
+        >
+          <Copy size={12} /> Duplicate
+        </button>
         <button
           onClick={async () => {
             const ok = await confirm({
@@ -364,6 +439,30 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
           <Trash2 size={12} /> Delete this part
         </button>
       </div>
+
+      {dup && (
+        // Seed a fresh create form from this item — the user reviews + saves,
+        // so it's a new row, not a silent clone. Custom fields carry over.
+        <NewPartDialog
+          seed={{
+            name: `${p.name} (copy)`,
+            qty: p.qty,
+            unit: p.unit,
+            manufacturer: p.manufacturer,
+            cost: p.cost,
+            category_id: p.category_id,
+            location_id: p.location_id,
+            fields: (p.metadata as Record<string, unknown> | null) ?? undefined,
+            parent: parentQ.data ?? undefined,
+          }}
+          onClose={() => setDup(false)}
+          onCreated={() => {
+            setDup(false);
+            toast.success(`Duplicated "${p.name}".`);
+            void qc.invalidateQueries({ queryKey: ["inventory-parts"] });
+          }}
+        />
+      )}
     </div>
   );
 }

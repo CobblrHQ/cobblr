@@ -27,6 +27,7 @@ export const NOTIFICATION_TYPES: NotificationTypeDef[] = [
   { key: "platform.feedback.replied", label: "Feedback responses", description: "When we reply to or ship the feedback you sent.", tier: 2 },
   { key: "platform.feature.announced", label: "Feature announcements", description: "New features and bundle releases.", tier: 2 },
   { key: "platform.workspace.update", label: "Workspace updates", description: "Notable changes in your workspaces.", tier: 2 },
+  { key: "platform.ai.share_offered", label: "AI-sharing offers", description: "When a member offers to share their AI with a workspace you own.", tier: 2 },
   { key: "platform.claude.message", label: "Messages from Claude", description: "Personalized notes from your Cobblr assistant.", tier: 2 },
 ];
 

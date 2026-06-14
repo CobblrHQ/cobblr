@@ -152,6 +152,25 @@ const InstanceEntry = z.object({
   glyph: z.string().optional(),
   item_noun: z.string().optional(),
   qty_unit: z.string().optional(),
+  /** When this instance's items belong to a parent "type" in another instance
+   *  (e.g. Spools → Filament types), the create/edit forms show a parent picker
+   *  and write an `instance-of` pairing. `instance` is the parent instance name.
+   *
+   *  `key_fields` (+ optional `copy_fields`) turn this into an AUTO-lift: when an
+   *  item is created carrying those fields (a scan/import that filled them — not
+   *  a manual parent-picker create that leaves them empty), the kernel
+   *  find-or-creates the parent type by those keys and links it, so a scanned
+   *  spool lands in the type→spool model instead of as a flat row. Same params
+   *  the `inventory:lift-to-type` migration uses. */
+  parent: z
+    .object({
+      instance: z.string().min(1),
+      label: z.string().optional(),
+      relationship_kind: z.string().optional(),
+      key_fields: z.array(z.string()).optional(),
+      copy_fields: z.array(z.string()).optional(),
+    })
+    .optional(),
   field_defs: z.array(FieldDefEntry).default([]),
   field_overrides: z.array(FieldOverrideEntry).default([]),
   saved_views: z.array(SavedViewEntry).default([]),
@@ -176,6 +195,19 @@ const AppEntry = z.object({
   pages: z.array(AppPageEntry).max(30).default([]),
   theme: z.record(z.unknown()).nullable().optional(),
 });
+
+/** Compare dotted numeric versions ("0.3.2" vs "0.4.0"). <0 if a<b, 0 if equal,
+ *  >0 if a>b. Non-numeric/absent segments sort as 0. Good enough for bundle
+ *  version gating (semver-lite — no pre-release tags in bundle versions). */
+function cmpVersion(a: string, b: string): number {
+  const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
+  const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
 
 export const BundleManifest = z.object({
   id: z.string().min(1),
@@ -235,6 +267,21 @@ export const BundleManifest = z.object({
   /** Module instances this bundle creates on install (skinned copies of a
    *  multi-instance module — see InstanceEntry). Features can declare their own. */
   provides_instances: z.array(InstanceEntry).default([]),
+  /** Data migrations the bundle OWNS. When the user upgrades from a version
+   *  below `to_version` to this manifest's version (or higher), each migration's
+   *  `action` runs automatically + idempotently against their data — so a
+   *  structural bundle change (e.g. flat → type→instances) carries its own data
+   *  move, no manual script. First-party bundles invoke registered generic
+   *  actions (e.g. inventory:lift-to-type); never arbitrary code. */
+  migrations: z
+    .array(
+      z.object({
+        to_version: z.string().min(1),
+        action: z.string().min(1),
+        args: z.record(z.unknown()).default({}),
+      }),
+    )
+    .default([]),
   /** WorkspaceApps this bundle seeds on install (e.g. the Outfit Planner). */
   provides_apps: z.array(AppEntry).default([]),
   /** Bundles can ship catalog SHELLS — name + schema config, no
@@ -969,6 +1016,12 @@ bundlesRouter.post(
         .where("org_id", "=", req.tenant!.org.id)
         .where("external_id", "=", m.id)
         .execute();
+      // The highest previously-installed version = the migration's FROM. Null on
+      // a fresh install (no data to migrate → migrations skipped below).
+      const priorVersion =
+        existing.length > 0
+          ? existing.map((e) => e.version).sort(cmpVersion).at(-1) ?? null
+          : null;
       for (const old of existing) {
         await uninstallBundleId(old.id);
       }
@@ -989,15 +1042,28 @@ bundlesRouter.post(
             isDefault: false,
           });
         }
+        const instConfig = { item_noun: inst.item_noun ?? null, qty_unit: inst.qty_unit ?? null, parent: inst.parent ?? null };
         await upsertOverride({
           orgId: req.tenant!.org.id,
           targetKind: "instance",
           targetId: `${inst.module}:${inst.instance_name}`,
           displayLabel: inst.display_name,
           icon: inst.glyph ?? null,
-          config: { item_noun: inst.item_noun ?? null, qty_unit: inst.qty_unit ?? null },
+          config: instConfig,
           insertOnly: true,
         });
+        // `config` is bundle-OWNED (item_noun / qty_unit / parent) — not a
+        // user-edited field like display_label. insertOnly above preserves a
+        // user's rename, but the config must still UPDATE on upgrade so a new
+        // version's additions (e.g. the parent picker introduced in 0.4.0) land
+        // on an already-installed instance.
+        await meta
+          .updateTable("entity_kind_overrides")
+          .set({ config: sql`${JSON.stringify(instConfig)}::jsonb` as never, updated_at: new Date() })
+          .where("org_id", "=", req.tenant!.org.id)
+          .where("target_kind", "=", "instance")
+          .where("target_id", "=", `${inst.module}:${inst.instance_name}`)
+          .execute();
       }
 
       // (Field-def collisions are checked inside validateBundle above.)
@@ -1395,6 +1461,38 @@ bundlesRouter.post(
           catalogs: catalogsInstalled,
         },
       });
+      // Run the bundle's OWN data migrations whose to_version we just crossed —
+      // only on an UPGRADE (priorVersion set + below to_version). A fresh install
+      // runs none (no data to move). Idempotent: the migration actions skip
+      // already-migrated rows, so a re-upgrade is safe. Non-fatal: a failed
+      // migration logs + the install still succeeds (re-install retries).
+      const migrationsRun: Array<{ to_version: string; action: string; result: unknown }> = [];
+      if (priorVersion && m.migrations.length > 0) {
+        const actor = {
+          user_id: req.session!.id,
+          display_name: req.session!.display_name ?? null,
+          auth_method: req.session!.auth_method,
+          api_token_id: req.session!.api_token_id ?? null,
+          api_token_name: null,
+        };
+        for (const mig of m.migrations) {
+          if (cmpVersion(priorVersion, mig.to_version) >= 0) continue; // already past it
+          try {
+            const result = await platform().actions.invoke(mig.action, {
+              orgId: req.tenant!.org.id,
+              userId: req.session!.id,
+              entity: { kind: "inventory:part", id: "" },
+              event: { name: "bundle.upgraded", payload: {}, actor, timestamp: new Date().toISOString(), trigger_type: "event" },
+              args: mig.args,
+              entityKind: "inventory:part",
+              entityId: "",
+            });
+            migrationsRun.push({ to_version: mig.to_version, action: mig.action, result });
+          } catch (err) {
+            console.error(`[bundle-install] migration ${mig.action} (→${mig.to_version}) failed for ${inserted.id}:`, (err as Error).message);
+          }
+        }
+      }
       res.status(201).json({
         bundle: inserted,
         applied: {
@@ -1403,6 +1501,7 @@ bundlesRouter.post(
           field_overrides: m.field_overrides.length,
           catalogs: catalogsInstalled,
           auto_enabled_modules: autoEnabled,
+          migrations: migrationsRun,
         },
       });
     } catch (err) {

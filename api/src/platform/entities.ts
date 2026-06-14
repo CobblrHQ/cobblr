@@ -18,6 +18,7 @@ import { sql } from "kysely";
 import type {
   EntityKindRecord,
   EntityInstanceListResolver,
+  EntityInstanceResolver,
   EntityListQuery,
   EntityListResolver,
   EntityListResult,
@@ -42,6 +43,42 @@ export function registerInstanceListResolver(
   resolver: EntityInstanceListResolver,
 ): void {
   instanceListResolvers.set(moduleName, resolver);
+}
+
+// Single-entity twin of instanceListResolvers — lets a `<name>:item` LOOKUP
+// resolve (and get computed fields) through the owning module, the same way
+// list() does. Without this, instance detail/lookup returned null and computed
+// fields never surfaced on instance pages.
+const instanceResolvers = new Map<string, EntityInstanceResolver>();
+
+export function registerInstanceResolver(
+  moduleName: string,
+  resolver: EntityInstanceResolver,
+): void {
+  instanceResolvers.set(moduleName, resolver);
+}
+
+/** For a `<name>:item` kind with no exact single-entity resolver, find the
+ *  instance's owning module + its registered instance resolver, bound to the
+ *  instance name. Returns a plain EntityResolver, or null. Mirrors
+ *  instanceFallbackResolver (the list twin). */
+async function instanceFallbackEntityResolver(
+  orgId: string,
+  kind: string,
+): Promise<EntityResolver | null> {
+  const m = /^([a-z0-9][a-z0-9-]*):item$/.exec(kind);
+  if (!m) return null;
+  const instanceName = m[1]!;
+  const row = await meta
+    .selectFrom("workspace_module_instances")
+    .select(["module_name"])
+    .where("org_id", "=", orgId)
+    .where("instance_name", "=", instanceName)
+    .executeTakeFirst();
+  if (!row) return null;
+  const fn = instanceResolvers.get(row.module_name);
+  if (!fn) return null;
+  return (oid, id) => fn(oid, instanceName, id);
 }
 
 /** For a `<name>:item` kind with no exact list resolver, find the instance's
@@ -340,7 +377,7 @@ export async function lookup(
   id: string,
   viewer?: { userId?: string; publicRead?: boolean },
 ): Promise<ResolvedEntity | null> {
-  const resolver = resolvers.get(kind);
+  const resolver = resolvers.get(kind) ?? (await instanceFallbackEntityResolver(orgId, kind));
   if (!resolver) return null;
   const publicRead = viewer?.publicRead === true;
   const whitelist = await getExposableFields(kind);
@@ -362,7 +399,13 @@ export async function lookup(
       // public read instead of baking the gated value into a string that
       // survives the trust boundary. Custom-field tier-1 still works because
       // inventory:part / assets:asset expose `metadata`.
-      const projected = applyExposableProjection(resolved, whitelist, fieldReadScopes, undefined, publicRead);
+      // Present the entity as the REQUESTED kind (the caller asked for
+      // `<instance>:item`; a module resolver may return the base kind on the
+      // row). Computed-field defs are keyed by the requested kind — without this
+      // override, computed fields on an instance never resolve. The exposable
+      // whitelist above was already computed from the requested kind, so this is
+      // consistent.
+      const projected = { ...applyExposableProjection(resolved, whitelist, fieldReadScopes, undefined, publicRead), kind };
       return applyComputedFields(orgId, projected);
     }
   } catch (err) {
@@ -631,7 +674,10 @@ export async function list(
       result.items.map(async (r) =>
         applyComputedFields(
           orgId,
-          applyExposableProjection(r, whitelist, fieldReadScopes, readScope, publicRead),
+          // Present each row as the REQUESTED kind so computed defs keyed by an
+          // instance kind (`<name>:item`) resolve — same override + reasoning as
+          // lookup(). No-op for base kinds (resolver already returns them).
+          { ...applyExposableProjection(r, whitelist, fieldReadScopes, readScope, publicRead), kind },
         ),
       ),
     );

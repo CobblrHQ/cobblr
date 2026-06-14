@@ -594,6 +594,17 @@ export const api = {
     request<void>("PATCH", `/me/connections/${id}`, body),
   deleteConnection: (id: string) =>
     request<void>("DELETE", `/me/connections/${id}`),
+
+  // Workspace owner: review + approve members' AI-share offers.
+  listAiShares: (slug: string) =>
+    request<{ items: WorkspaceAiOffer[] }>("GET", `/orgs/${slug}/ai-shares`),
+  approveAiShare: (slug: string, credentialId: string, active = false) =>
+    request<{ items: WorkspaceAiOffer[] }>("POST", `/orgs/${slug}/ai-shares/${credentialId}/approve`, { active }),
+  rejectAiShare: (slug: string, credentialId: string) =>
+    request<{ items: WorkspaceAiOffer[] }>("POST", `/orgs/${slug}/ai-shares/${credentialId}/reject`),
+  setActiveAiShare: (slug: string, credentialId: string | null) =>
+    request<{ items: WorkspaceAiOffer[] }>("POST", `/orgs/${slug}/ai-shares/active`, { credential_id: credentialId }),
+
   orgActivity: (slug: string, limit = 25) =>
     request<{ items: ActivityEntry[] }>("GET", `/orgs/${slug}/activity?limit=${limit}`),
   // Cross-workspace activity feed: every action attributed to any
@@ -2282,6 +2293,13 @@ export interface AiProviderDef {
 export type ConnRouteMode = "my-calls" | "workspace-default";
 export type ConnRouteScope = "sole_member" | "owner" | "all_mine" | "explicit";
 
+/** Per-workspace routing for a connection: which workspace + its mode. A
+ *  workspace with no route is "Off". */
+export interface ConnRoute {
+  org_id: string;
+  mode: ConnRouteMode;
+}
+
 /** A personal credential the user configured once + routed to workspaces. */
 export interface UserConnection {
   id: string;
@@ -2291,6 +2309,8 @@ export interface UserConnection {
   route_scope: ConnRouteScope;
   auto_enable_new: boolean;
   org_ids: string[];
+  /** Per-workspace routing (workspace + mode). */
+  routes: ConnRoute[];
   /** Which credential keys are set (names only — never the secret values). */
   credential_keys: string[];
   created_at: string;
@@ -2305,6 +2325,20 @@ export interface UserConnectionInput {
   route_scope?: ConnRouteScope;
   auto_enable_new?: boolean;
   org_ids?: string[];
+  /** Per-workspace routing (preferred over org_ids). */
+  routes?: ConnRoute[];
+}
+
+/** An AI-share offer as the workspace OWNER sees it. */
+export interface WorkspaceAiOffer {
+  credential_id: string;
+  provider_id: string;
+  label: string;
+  offered_by_user_id: string;
+  offered_by_name: string;
+  status: "pending" | "approved";
+  active: boolean;
+  is_own: boolean;
 }
 
 export interface AiCapabilityDefault {
@@ -3535,6 +3569,10 @@ export interface PlatformBundleManifest {
   provides_instances?: PlatformBundleInstance[];
   /** WorkspaceApps this bundle seeds on install (e.g. the Outfit Planner). */
   provides_apps?: PlatformBundleApp[];
+  /** Data migrations the bundle owns — run automatically + idempotently when the
+   *  user upgrades from a version below `to_version`. Each invokes a registered
+   *  generic action (e.g. inventory:lift-to-type) against their data. */
+  migrations?: Array<{ to_version: string; action: string; args?: Record<string, unknown> }>;
 }
 
 /** A WorkspaceApp a bundle seeds — pages → blocks (a custom block carries its
@@ -3559,6 +3597,18 @@ export interface PlatformBundleInstance {
   item_noun?: string;
   /** Default unit for new items (e.g. "skein"). */
   qty_unit?: string;
+  /** When items belong to a parent "type" in another instance (Spool →
+   *  Filament type), the forms show a parent picker + write an `instance-of`
+   *  pairing. `instance` is the parent instance name. */
+  parent?: {
+    instance: string;
+    label?: string;
+    relationship_kind?: string;
+    // Auto-lift keys: a created item carrying these find-or-creates its parent
+    // type (scan path); copy_fields carry the type-defining attrs up.
+    key_fields?: string[];
+    copy_fields?: string[];
+  };
   field_defs?: PlatformBundleManifest["field_defs"];
   field_overrides?: PlatformBundleManifest["field_overrides"];
   saved_views?: PlatformBundleManifest["saved_views"];

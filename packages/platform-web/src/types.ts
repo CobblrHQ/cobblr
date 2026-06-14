@@ -45,12 +45,18 @@ export type FieldRendererId =
   | "boolean"
   | "code";
 
+/** The storage type of a field-def. Every renderer that turns a field into an
+ *  input MUST handle each member — see `fieldControl()`, whose exhaustive switch
+ *  makes a forgotten type a COMPILE error rather than a silent text-box (the bug
+ *  where a `boolean` field rendered as a text input showing "false"). */
+export type FieldType = "text" | "number" | "boolean" | "date" | "url" | "computed";
+
 export interface PlatformFieldDef {
   id: string;
   entity_kind: string;
   name: string;
   display_label: string;
-  type: "text" | "number" | "boolean" | "date" | "url" | "computed";
+  type: FieldType;
   required: boolean;
   position: number;
   bundle_id: string | null;
@@ -111,6 +117,9 @@ export interface PlatformUnitDef {
   name: string;
   plural: string;
   category: string;
+  /** Base-units-per-unit within the category (g for mass, m for length…). Two
+   *  same-category units that both have a factor are interconvertible. */
+  factor?: number;
 }
 
 export interface PlatformUnitInput {

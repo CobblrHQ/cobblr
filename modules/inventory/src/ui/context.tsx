@@ -23,10 +23,23 @@ interface InventoryCtx {
   itemNoun: string;
   /** Default unit for new items in this instance (e.g. "skein"). */
   qtyUnit?: string;
+  /** When this instance's items belong to a parent "type" in another instance
+   *  (e.g. a Spool → its Filament type), the create/edit forms show a parent
+   *  picker and write an `instance-of` pairing. Seeded by the bundle. */
+  parent?: ParentConfig;
   /** Route base for this UI — `/instances/<instance>` when scoped, else
    *  "/inventory". Row links + detail-close + create-navigate use it so the
    *  detail modal opens within the instance (and shows its fields). */
   basePath: string;
+}
+
+export interface ParentConfig {
+  /** The instance the parent/type lives in (e.g. "filament-types"). */
+  instance: string;
+  /** Field label on the form, e.g. "Type". Defaults to "Type". */
+  label?: string;
+  /** Relationship kind for the pairing. Defaults to "instance-of". */
+  relationship_kind?: string;
 }
 
 const Ctx = createContext<InventoryCtx | null>(null);
@@ -37,6 +50,7 @@ export function InventoryProvider({
   instance,
   itemNoun,
   qtyUnit,
+  parent,
   children,
 }: {
   orgSlug: string;
@@ -44,6 +58,7 @@ export function InventoryProvider({
   instance?: string;
   itemNoun?: string;
   qtyUnit?: string;
+  parent?: ParentConfig;
   children: ReactNode;
 }) {
   const api = useMemo(
@@ -54,7 +69,7 @@ export function InventoryProvider({
   const basePath = instance ? `/instances/${instance}` : "/inventory";
   return (
     <Ctx.Provider
-      value={{ orgSlug, getToken, api, instance, entityKind, itemNoun: itemNoun ?? "part", qtyUnit, basePath }}
+      value={{ orgSlug, getToken, api, instance, entityKind, itemNoun: itemNoun ?? "part", qtyUnit, parent, basePath }}
     >
       {children}
     </Ctx.Provider>

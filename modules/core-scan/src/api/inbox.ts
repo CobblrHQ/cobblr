@@ -425,6 +425,11 @@ inboxRouter.post(
         sku: row.suggested_sku ?? undefined,
         category: (meta as { category?: string }).category ?? undefined,
         scan_source: (meta as { source?: string }).source ?? undefined,
+        // Fields a scan-URL resolver seeded (e.g. a Polar spool's size /
+        // batch_code). Generic: the kernel doesn't know the vendor — it
+        // just carries whatever `fields` the resolver stamped. Matchmaker
+        // candidate + user-typed values still win per-key below.
+        ...((meta as { fields?: Record<string, unknown> }).fields ?? {}),
         ...candidateFields,
         ...typedMetadata,
       },

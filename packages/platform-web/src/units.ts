@@ -24,6 +24,27 @@ export function resolveUnit(
   );
 }
 
+/** Convert a numeric value between two raw unit strings when they resolve to
+ *  the same category and both carry a factor (e.g. "1000" g → kg = 1). Returns
+ *  null when not convertible (different categories, count/free-text units, or
+ *  an unknown unit) — the caller keeps the value as-is. */
+export function convertQuantity(
+  value: number,
+  fromRaw: string | null | undefined,
+  toRaw: string | null | undefined,
+  units: PlatformUnitDef[],
+): number | null {
+  if (!Number.isFinite(value)) return null;
+  const from = resolveUnit(fromRaw, units);
+  const to = resolveUnit(toRaw, units);
+  if (!from || !to || from.code === to.code) return null;
+  if (from.category !== to.category) return null;
+  if (from.factor == null || to.factor == null) return null;
+  const converted = (value * from.factor) / to.factor;
+  // Trim FP noise (1000 * 0.001 / 1 = 1, but 1/3-style ratios shouldn't sprawl).
+  return parseFloat(converted.toPrecision(12));
+}
+
 /** Render a quantity + unit per the display mode, pluralising the full
  *  word by quantity ("1 gram" / "340 grams"). Unknown units fall back to
  *  the raw string. `qty` may be null to label a unit without a number. */

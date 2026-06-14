@@ -411,6 +411,42 @@ export class InventoryApi {
       },
     );
 
+  /** Search items in a SPECIFIC instance — for the parent/"type" picker,
+   *  which searches a different instance (e.g. the Spools form searching the
+   *  Filament-types instance). Independent of this client's bound instance. */
+  searchInstanceParts = (instance: string, q: string, limit = 8) =>
+    this.requestAbs<{ items: Array<{ id: string; name: string; image_path: string | null; metadata?: Record<string, unknown> | null }> }>(
+      "GET",
+      `/api/v1/orgs/${this.slug}/instances/${encodeURIComponent(instance)}/items?search=${encodeURIComponent(q)}&limit=${limit}`,
+    );
+
+  /** The `instance-of` pairing: a unit (child) points at its "type" (parent),
+   *  both inventory:part. Mirrors createMatchPairing but for a parent part. */
+  createParentPairing = (child_id: string, parent_id: string) =>
+    this.requestAbs<unknown>(
+      "POST",
+      `/api/v1/orgs/${this.slug}/pairings`,
+      {
+        source_kind: "inventory:part",
+        source_id: child_id,
+        target_kind: "inventory:part",
+        target_id: parent_id,
+        relationship_kind: "instance-of",
+      },
+    );
+
+  /** This unit's current parent pairing(s), if any (newest first). Each row
+   *  carries the pairing `id` (to delete) and `target_id` (the parent part). */
+  listParentPairings = (child_id: string) =>
+    this.requestAbs<{ items: Array<{ id: string; target_id: string }> }>(
+      "GET",
+      `/api/v1/orgs/${this.slug}/pairings?source_kind=inventory:part&source_id=${encodeURIComponent(child_id)}&relationship_kind=instance-of`,
+    );
+
+  /** Delete a pairing by id (used to re-link / unlink a unit's parent). */
+  deletePairing = (pairing_id: string) =>
+    this.requestAbs<unknown>("DELETE", `/api/v1/orgs/${this.slug}/pairings/${encodeURIComponent(pairing_id)}`);
+
   /** Mint a QR navigate-token for an entity. Used by NewPartDialog's
    *  "queue a label after create" flow. Cross-module call into
    *  core-labels-qr — kept here so callers don't reach for raw fetch. */

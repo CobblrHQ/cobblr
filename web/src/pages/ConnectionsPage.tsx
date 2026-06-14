@@ -93,11 +93,13 @@ export function ConnectionsPage() {
                 <span className="ml-2 text-[11px] font-mono text-faint">{c.provider_id}</span>
               </div>
               <div className="text-[11px] text-muted mt-0.5">
-                {MODE_LABEL[c.route_mode]} · {SCOPE_LABEL[c.route_scope]}
-                {c.route_scope === "explicit" &&
-                  c.org_ids.length > 0 &&
-                  `: ${c.org_ids.map(orgName).join(", ")}`}
-                {c.route_scope === "explicit" && c.auto_enable_new && " · auto-adds new workspaces"}
+                {c.routes.length === 0
+                  ? c.route_scope === "explicit"
+                    ? "Not used in any workspace"
+                    : `${MODE_LABEL[c.route_mode]} · ${SCOPE_LABEL[c.route_scope]}`
+                  : c.routes
+                      .map((r) => `${orgName(r.org_id)} (${r.mode === "workspace-default" ? "shared" : "just me"})`)
+                      .join(" · ")}
               </div>
               {c.credential_keys.length > 0 && (
                 <div className="text-[11px] text-faint mt-0.5">
@@ -322,10 +324,20 @@ function ConnectionForm({
   const [providerId, setProviderId] = useState(existing?.provider_id ?? providers[0]?.id ?? "");
   const [label, setLabel] = useState(existing?.label ?? "");
   const [creds, setCreds] = useState<Record<string, string>>({});
-  const [mode, setMode] = useState<ConnRouteMode>(existing?.route_mode ?? "my-calls");
-  const [scope, setScope] = useState<ConnRouteScope>(existing?.route_scope ?? "sole_member");
-  const [autoNew, setAutoNew] = useState(existing?.auto_enable_new ?? false);
-  const [orgIds, setOrgIds] = useState<string[]>(existing?.org_ids ?? []);
+  // Per-workspace routing: org_id → mode. Absence = "Off". Seeded from the
+  // connection's saved routes; a dynamic-scope (legacy) connection seeds from
+  // its global mode applied to whichever workspaces it currently reaches.
+  const [perWs, setPerWs] = useState<Record<string, ConnRouteMode>>(() => {
+    if (existing?.routes?.length) return Object.fromEntries(existing.routes.map((r) => [r.org_id, r.mode]));
+    if (!existing) return {};
+    // Legacy dynamic-scope connection: reconstruct which workspaces it currently
+    // reaches from its scope, so editing doesn't silently drop the routing.
+    const m = existing.route_mode;
+    if (existing.route_scope === "all_mine") return Object.fromEntries(orgs.map((o) => [o.id, m]));
+    if (existing.route_scope === "owner")
+      return Object.fromEntries(orgs.filter((o) => o.role === "owner").map((o) => [o.id, m]));
+    return Object.fromEntries(existing.org_ids.map((id) => [id, m]));
+  });
 
   const provider = useMemo(() => providers.find((p) => p.id === providerId), [providers, providerId]);
   const credFields = Object.entries(provider?.credentials ?? {});
@@ -334,18 +346,13 @@ function ConnectionForm({
     mutationFn: async () => {
       const cleanCreds: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(creds)) if (v.trim() !== "") cleanCreds[k] = v;
-      const routing = {
-        route_mode: mode,
-        route_scope: scope,
-        auto_enable_new: scope === "explicit" ? autoNew : false,
-        org_ids: scope === "explicit" ? orgIds : [],
-      };
+      const routes = Object.entries(perWs).map(([org_id, mode]) => ({ org_id, mode }));
       if (isEdit) {
         // On edit, only send credentials the user actually re-entered (blank = keep).
         await api.updateConnection(existing!.id, {
           label: label.trim(),
           ...(Object.keys(cleanCreds).length ? { credentials: cleanCreds } : {}),
-          ...routing,
+          routes,
         });
         return;
       }
@@ -353,8 +360,7 @@ function ConnectionForm({
         provider_id: providerId,
         label: label.trim() || undefined,
         credentials: cleanCreds,
-        ...routing,
-        org_ids: scope === "explicit" ? orgIds : undefined,
+        routes,
       };
       await api.addConnection(body);
     },
@@ -430,60 +436,63 @@ function ConnectionForm({
         </div>
       )}
 
-      <label className="block">
-        <div className="text-xs text-muted mb-1">Used for</div>
-        <select
-          value={mode}
-          onChange={(e) => setMode(e.target.value as ConnRouteMode)}
-          className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-        >
-          <option value="my-calls">{MODE_LABEL["my-calls"]} (safe — never shared)</option>
-          <option value="workspace-default">{MODE_LABEL["workspace-default"]} (shares with co-members)</option>
-        </select>
-      </label>
-
-      <label className="block">
-        <div className="text-xs text-muted mb-1">In which workspaces</div>
-        <select
-          value={scope}
-          onChange={(e) => setScope(e.target.value as ConnRouteScope)}
-          className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-        >
-          <option value="sole_member">{SCOPE_LABEL["sole_member"]}</option>
-          <option value="owner">{SCOPE_LABEL["owner"]}</option>
-          <option value="all_mine">{SCOPE_LABEL["all_mine"]}</option>
-          <option value="explicit">{SCOPE_LABEL["explicit"]}</option>
-        </select>
-      </label>
-
-      {scope === "explicit" && (
-        <div className="rounded border border-line dark:border-slate-700 p-2 space-y-1">
-          {orgs.length === 0 && <div className="text-[11px] text-faint">No workspaces.</div>}
-          {orgs.map((o) => (
-            <label key={o.id} className="flex items-center gap-2 text-sm text-content dark:text-mortar-200">
-              <input
-                type="checkbox"
-                checked={orgIds.includes(o.id)}
-                onChange={(e) =>
-                  setOrgIds((ids) => (e.target.checked ? [...ids, o.id] : ids.filter((x) => x !== o.id)))
-                }
-                className="accent-cobble-500"
-              />
-              {o.name}
-              <span className="text-[10px] text-faint">{o.role}</span>
-            </label>
-          ))}
-          <label className="flex items-center gap-2 text-sm text-content dark:text-mortar-200 pt-1 border-t border-line dark:border-slate-700 mt-1">
-            <input
-              type="checkbox"
-              checked={autoNew}
-              onChange={(e) => setAutoNew(e.target.checked)}
-              className="accent-cobble-500"
-            />
-            Auto-add new workspaces I create
-          </label>
+      <div>
+        <div className="text-xs text-muted mb-1">Use this AI in each workspace</div>
+        <div className="rounded border border-line dark:border-slate-700 divide-y divide-line dark:divide-slate-700">
+          {orgs.length === 0 && <div className="text-[11px] text-faint p-2">No workspaces.</div>}
+          {orgs.map((o) => {
+            const cur = perWs[o.id]; // undefined = off
+            const owns = o.role === "owner";
+            const set = (m: ConnRouteMode | null) =>
+              setPerWs((prev) => {
+                const next = { ...prev };
+                if (m === null) delete next[o.id];
+                else next[o.id] = m;
+                return next;
+              });
+            return (
+              <div key={o.id} className="flex items-center gap-2 p-2">
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm text-content dark:text-mortar-200 truncate">{o.name}</div>
+                  {cur === "workspace-default" && !owns && (
+                    <div className="text-[10px] text-amber-600 dark:text-amber-500">
+                      Shared — the owner approves before others can use it. Your own calls work right away.
+                    </div>
+                  )}
+                </div>
+                <div className="flex shrink-0 rounded-md border border-line dark:border-slate-600 overflow-hidden text-[11px] font-medium">
+                  {([
+                    [null, "Off"],
+                    ["my-calls", "Just me"],
+                    ["workspace-default", "Share"],
+                  ] as Array<[ConnRouteMode | null, string]>).map(([val, lbl]) => {
+                    const activeSeg = (val ?? "off") === (cur ?? "off");
+                    return (
+                      <button
+                        key={lbl}
+                        type="button"
+                        onClick={() => set(val)}
+                        className={
+                          "px-2.5 py-1 transition " +
+                          (activeSeg
+                            ? "bg-cobble-600 text-white"
+                            : "bg-surface dark:bg-slate-900 text-muted hover:bg-subtle dark:hover:bg-slate-800")
+                        }
+                      >
+                        {lbl}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
         </div>
-      )}
+        <p className="text-[11px] text-faint mt-1">
+          <span className="font-medium">Just me</span> = only your own AI calls here use it.{" "}
+          <span className="font-medium">Share</span> = offer it to everyone in the workspace (the owner approves).
+        </p>
+      </div>
 
       <div className="flex justify-end gap-2 pt-1">
         <button type="button" onClick={onCancel} className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800">

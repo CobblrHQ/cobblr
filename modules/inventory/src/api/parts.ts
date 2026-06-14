@@ -575,6 +575,54 @@ partsRouter.post(
       partId: inserted.id,
     });
 
+    // Auto-lift to a parent type. If this instance's items belong to a parent
+    // TYPE derived from the item's OWN fields (the instance's parent config
+    // carries `key_fields`) and this create carried those fields — a scan /
+    // import that filled e.g. material/colour/diameter, NOT a manual create
+    // that picks the parent via the picker (which leaves them empty and links
+    // its own parent) — find-or-create the type and link this item, so a
+    // scanned spool lands in the type→spool model instead of as a flat row.
+    // Best-effort; a failure never blocks the create.
+    const parentCfg = (req as unknown as { instanceConfig?: Record<string, unknown> }).instanceConfig
+      ?.parent as
+      | { instance?: string; relationship_kind?: string; key_fields?: string[]; copy_fields?: string[] }
+      | undefined;
+    const liftKeys = Array.isArray(parentCfg?.key_fields)
+      ? parentCfg!.key_fields.filter((f) => !["name", "manufacturer", "qty", "unit"].includes(f))
+      : [];
+    if (parentCfg?.instance && liftKeys.length > 0) {
+      const md = (parsed.data.metadata ?? {}) as Record<string, unknown>;
+      // Only when the (metadata) key fields are actually present — a manual
+      // parent-picker create leaves them empty and links its own parent.
+      const hasKeys = liftKeys.every((f) => md[f] != null && String(md[f]).trim() !== "");
+      if (hasKeys) {
+        await platform()
+          .actions.invoke("inventory:lift-to-type", {
+            orgId: ctx.org.id,
+            userId: session.id,
+            entity: { kind: "inventory:part", id: inserted.id },
+            event: {
+              name: "inventory.part.created",
+              payload: {},
+              actor: { user_id: session.id, display_name: null, auth_method: "session" },
+              timestamp: new Date().toISOString(),
+              trigger_type: "on-create",
+            },
+            args: {
+              source_instance: instanceOf(req),
+              type_instance: parentCfg.instance,
+              key_fields: parentCfg.key_fields,
+              copy_fields: parentCfg.copy_fields ?? [],
+              relationship_kind: parentCfg.relationship_kind ?? "instance-of",
+              source_ids: [inserted.id],
+            },
+            entityKind: "inventory:part",
+            entityId: inserted.id,
+          })
+          .catch((err) => console.error("[inventory] auto-lift to type failed:", (err as Error).message));
+      }
+    }
+
     res.status(201).json(inserted);
   }),
 );

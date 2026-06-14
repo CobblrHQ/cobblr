@@ -13,7 +13,8 @@ import { useMemo, useState, type FocusEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { usePlatformWeb } from "./context";
 import type { PlatformFieldDef } from "./types";
-import { FieldRenderer } from "./FieldRenderer";
+import { fieldControl } from "./fieldControl";
+import { FieldRenderer, boolLabel } from "./FieldRenderer";
 
 interface Props {
   entityKind: string;
@@ -151,18 +152,25 @@ function FieldRow({
   fallbackLabel?: string;
   onCommit: (v: unknown) => void;
 }) {
-  // Computed branch — read-only, value derived server-side at resolve
-  // time. Show it (the user configured it) but never let them edit it.
+  // One shared decision (see fieldControl) so this panel and the create
+  // modal can't disagree on a field's control — the bug where a boolean
+  // fell through to a text box showing "false".
+  const control = fieldControl(def);
   const inner =
-    def.type === "computed" ? (
+    control === "computed" ? (
+      // Read-only, value derived server-side at resolve time.
       <ComputedRow def={def} value={value} fallbackValue={fallbackValue} />
-    ) : def.renderer === "color-hex" ? (
+    ) : control === "color" ? (
       // Colour branch — a real swatch picker (type a hex/name OR pick).
       <ColorRow def={def} value={value} onCommit={onCommit} />
-    ) : def.type === "text" && def.choices && def.choices.length > 0 ? (
-      // Dropdown branch — type='text' with choices.
+    ) : control === "choice" ? (
+      // Dropdown branch — a `choices` list.
       <ChoiceRow def={def} value={value} onCommit={onCommit} />
+    ) : control === "checkbox" ? (
+      // Boolean — a real checkbox, not a text box.
+      <BoolRow def={def} value={value} onCommit={onCommit} />
     ) : (
+      // number / date / url / text
       <PlainRow
         def={def}
         value={value}
@@ -281,6 +289,41 @@ function ComputedRow({
       <div className="input flex-1 bg-mortar-50/60 dark:bg-slate-800/60 text-content dark:text-mortar-100 cursor-default select-text">
         {str || <span className="text-faint dark:text-slate-600">—</span>}
       </div>
+    </label>
+  );
+}
+
+/** A boolean field — a real checkbox. Tolerant of legacy string values
+ *  ("true"/"false") that the old text-box bug may have stored; toggling
+ *  commits a proper boolean, so the row self-heals on next edit. */
+function BoolRow({
+  def,
+  value,
+  onCommit,
+}: {
+  def: PlatformFieldDef;
+  value: unknown;
+  onCommit: (v: unknown) => void;
+}) {
+  const checked = value === true || value === "true";
+  return (
+    <label className="flex items-center gap-2 cursor-pointer select-none pt-5">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onCommit(e.target.checked)}
+        className="accent-cobble-500 h-4 w-4"
+      />
+      <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
+        {def.display_label}
+        {def.required ? <span className="text-ember-500"> *</span> : null}
+      </span>
+      {/* The current state in the field's own words (Yes/No, or the bundle/
+          user's `choices` labels) so the value reads the same here as it does
+          in the table — never raw true/false. */}
+      <span className={"text-[11px] " + (checked ? "text-moss-600" : "text-faint dark:text-slate-500")}>
+        {boolLabel(checked, def.choices)}
+      </span>
     </label>
   );
 }

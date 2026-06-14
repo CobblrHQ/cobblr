@@ -6,6 +6,11 @@ interface Ctx {
   getToken: () => string | null;
   api: ProjectsApi;
   instance?: string;
+  /** Presentation entity kind: `<instance>:item` when scoped (e.g. a Designs
+   *  instance stores its custom fields under `designs:item`), else the base
+   *  `projects:project`. Field defs / overrides / custom fields key off this —
+   *  using the base kind for an instance silently shows none of its fields. */
+  entityKind: string;
   /** The instance's display label ("Outfits") + singular noun ("outfit") so the
    *  list reads as the user's thing, not "Projects" / "New project". Unset on
    *  the default /projects page. */
@@ -34,8 +39,9 @@ export function ProjectsProvider({
     () => new ProjectsApi(orgSlug, { getToken, instance }),
     [orgSlug, getToken, instance],
   );
+  const entityKind = instance ? `${instance}:item` : "projects:project";
   return (
-    <Ctx.Provider value={{ orgSlug, getToken, api, instance, displayName, itemNoun }}>
+    <Ctx.Provider value={{ orgSlug, getToken, api, instance, entityKind, displayName, itemNoun }}>
       {children}
     </Ctx.Provider>
   );

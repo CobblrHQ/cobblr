@@ -820,6 +820,8 @@ function PartsTable({
                   <FieldRenderer
                     value={(p.metadata as Record<string, unknown> | null)?.[c.name]}
                     renderer={(c.renderer ?? null) as FieldRendererId | null}
+                    type={c.type}
+                    choices={c.choices}
                     fieldName={c.display_label}
                   />
                 </td>

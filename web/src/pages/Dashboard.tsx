@@ -37,6 +37,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useAuth } from "../auth/AuthContext";
 import { FirstRunWizard } from "../components/FirstRunWizard";
 import { displaySlug } from "../lib/workspaceSlug";
+import { liveNextStepLabel } from "../lib/featured-bundles";
 import {
   api,
   getToken,
@@ -188,7 +189,7 @@ function SetupCardsPanel({ slug }: { slug: string }) {
                 className="text-left rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 flex items-center gap-2 hover:border-cobble-400 dark:hover:border-cobble-600 transition group"
               >
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-content dark:text-mortar-100">{s.label}</div>
+                  <div className="text-sm font-medium text-content dark:text-mortar-100">{liveNextStepLabel(s.path) ?? s.label}</div>
                   {s.hint && <div className="text-xs text-faint dark:text-slate-400 mt-0.5">{s.hint}</div>}
                 </div>
                 <ArrowRight size={15} className="text-faint group-hover:text-accent transition shrink-0" />
@@ -992,7 +993,7 @@ function PinnedView({
       <div className="flex items-baseline gap-2 mb-2">
         <LayoutList size={13} className="text-accent" />
         <Link
-          to="/views"
+          to={`/views?view=${view.id}`}
           className="font-medium text-content dark:text-mortar-100 hover:text-accent"
         >
           {view.name}

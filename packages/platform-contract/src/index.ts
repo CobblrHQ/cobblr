@@ -854,6 +854,18 @@ export type EntityInstanceListResolver = (
   query: EntityListQuery,
 ) => Promise<EntityListResult>;
 
+/** Single-entity resolver for the items of ANY of a module's instances. The
+ *  platform calls it for a `<instance_name>:item` LOOKUP when no exact resolver
+ *  is registered (resolving instance→module), so a detail/lookup of an instance
+ *  item resolves + gets computed fields the same as the base kind. Modules
+ *  register once (not per instance). The single-entity twin of
+ *  EntityInstanceListResolver. */
+export type EntityInstanceResolver = (
+  orgId: string,
+  instance: string,
+  id: string,
+) => Promise<ResolvedEntity | null>;
+
 /** Tier-2 context provider for computed fields. Given an entity, returns
  *  a namespaced bag of related/aggregated data referenced in a computed
  *  template as {{<namespace>.<key>}}. Best-effort: a throw renders the
@@ -905,6 +917,14 @@ export interface PlatformEntities {
   registerInstanceListResolver(
     moduleName: string,
     resolver: EntityInstanceListResolver,
+  ): void;
+  /** Register a single-entity resolver for the items of any instance of a
+   *  multi-instance module (keyed by module name). The platform invokes it for a
+   *  `<instance_name>:item` LOOKUP when no exact resolver matches, so an instance
+   *  item's detail/lookup resolves + computes fields like the base kind. */
+  registerInstanceResolver(
+    moduleName: string,
+    resolver: EntityInstanceResolver,
   ): void;
   /** Register a tier-2 context provider for COMPUTED fields, under a
    *  namespace. A computed field def (type='computed') references it in
@@ -1928,6 +1948,51 @@ export interface AuthEmailMessage {
 }
 export type AuthEmailSender = (msg: AuthEmailMessage) => Promise<void>;
 
+// ── Scan-URL resolvers ──────────────────────────────────────────────────
+// A scanned QR is often a URL on a maker's site that encodes a SPECIFIC
+// product (a Polar Filament spool → `3dqr.co/?i=<serial>`). Treated as a
+// barcode it triggers the generic web-search path, which finds the maker's
+// *marketing* page, not the product. So the platform exposes a registry: a
+// connector module (maker-scan) registers one matcher+resolver per vendor via
+// platform().scan.registerUrlResolver, and the scan pipeline asks
+// platform().scan.resolveUrl(value). The kernel/core-scan never imports a
+// vendor — the same modular seam as registerComputedContext / registerHandler.
+
+export interface ScanUrlResolution {
+  /** Provenance for the inbox row + cache, e.g. "polar-3dqr". */
+  source: string;
+  /** Product name, e.g. "Royal Blue PLA". */
+  name: string;
+  brand: string | null;
+  /** Domain category, e.g. "filament" — routes the inbox item on commit. */
+  category: string | null;
+  /** Entity kind to create: "part" | "asset" | … */
+  entityType: string | null;
+  /** Custom fields seeded onto the created entity's metadata (e.g. a filament
+   *  spool's size / batch_code). Unknown keys ride along harmlessly. */
+  fields: Record<string, unknown>;
+  imageUrl?: string | null;
+}
+
+export interface ScanUrlResolver {
+  /** Stable id for de-dup + provenance, e.g. "polar-3dqr". */
+  name: string;
+  /** Cheap + synchronous: does this resolver claim the scanned value? */
+  matches: (value: string) => boolean;
+  /** Fetch + parse the value into a product, or null on any miss / parse
+   *  failure (the caller then falls back to its generic barcode path). */
+  resolve: (value: string) => Promise<ScanUrlResolution | null>;
+}
+
+export interface PlatformScan {
+  /** Register a vendor scan-URL resolver. Called from a connector module's
+   *  api/index.ts at module-load. Idempotent per `name`. */
+  registerUrlResolver(resolver: ScanUrlResolver): void;
+  /** Resolve a scanned value through the registered vendor resolvers, in
+   *  registration order. Returns the first hit, or null if none claim it. */
+  resolveUrl(value: string): Promise<ScanUrlResolution | null>;
+}
+
 export interface Platform {
   activity: PlatformActivity;
   events: PlatformEvents;
@@ -1951,6 +2016,7 @@ export interface Platform {
   catalogs: PlatformCatalogs;
   files: PlatformFiles;
   instances: PlatformInstances;
+  scan: PlatformScan;
   // Hosted-overlay seams (no-op / allow-all in open core):
   entitlements: PlatformEntitlements;
   metering: PlatformMetering;

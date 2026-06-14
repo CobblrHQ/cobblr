@@ -93,6 +93,39 @@ interface EnrichContext {
 }
 
 export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
+  // 0. Vendor scan-URL fast path. A scanned QR is often a maker's product
+  // URL (a Polar spool → 3dqr.co/?i=…); a registered resolver fetches the
+  // real product page instead of letting the generic barcode/web-search path
+  // find the maker's marketing page. Nothing vendor-specific lives here — the
+  // kernel just asks the registry (the maker-scan connector registers the
+  // vendors). A miss falls straight through to the barcode path below.
+  const vendor = await platform().scan.resolveUrl(ctx.upc).catch(() => null);
+  if (vendor) {
+    await ctx.db
+      .updateTable("core_scan_inbox_items")
+      .set({
+        suggested_name: vendor.name,
+        suggested_manufacturer: vendor.brand,
+        catalog_image_url: vendor.imageUrl ?? null,
+        // `fields` ride in suggested_metadata so the commit can land them on
+        // the created entity's metadata (size / batch_code for a spool, …).
+        suggested_metadata: sql`${JSON.stringify({
+          source: vendor.source,
+          category: vendor.category,
+          entity_type: vendor.entityType,
+          fields: vendor.fields,
+        })}::jsonb` as never,
+        ai_confidence: "0.9",
+        ai_notes: `Resolved via ${vendor.source}.`,
+        ai_suggested_at: new Date(),
+        updated_at: new Date(),
+      })
+      .where("id", "=", ctx.itemId)
+      .execute();
+    if (vendor.imageUrl) await downloadCatalogImage(ctx, vendor.imageUrl).catch(() => {});
+    return;
+  }
+
   // 1a. Per-tenant cache first (local, fastest). force → skip straight to
   // a live lookup (rerun must actually re-ask the providers).
   const tenantRow = ctx.force

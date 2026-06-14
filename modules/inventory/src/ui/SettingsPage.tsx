@@ -89,7 +89,30 @@ function FieldRow({ def }: { def: InvFieldDef }) {
   return (
     <li>
       <div className="text-sm text-content dark:text-mortar-100 font-medium">{def.display_label}</div>
-      {!hasChoices ? (
+      {def.type === "boolean" ? (
+        // A yes/no field: edit the two state labels (shown instead of true/false
+        // everywhere). Stored as `choices` = [off-label, on-label]; blank → Yes/No.
+        <div className="mt-1.5">
+          <div className="text-[11px] text-faint dark:text-slate-500 mb-1">Labels shown instead of true/false:</div>
+          <div className="flex items-center gap-2">
+            <input
+              defaultValue={def.choices?.[0] ?? ""}
+              placeholder="No"
+              aria-label={`${def.display_label} — label when off`}
+              onBlur={(e) => save.mutate([e.target.value.trim() || "No", (def.choices?.[1] ?? "").trim() || "Yes"])}
+              className="input text-sm w-28"
+            />
+            <span className="text-faint">/</span>
+            <input
+              defaultValue={def.choices?.[1] ?? ""}
+              placeholder="Yes"
+              aria-label={`${def.display_label} — label when on`}
+              onBlur={(e) => save.mutate([(def.choices?.[0] ?? "").trim() || "No", e.target.value.trim() || "Yes"])}
+              className="input text-sm w-28"
+            />
+          </div>
+        </div>
+      ) : !hasChoices ? (
         <div className="text-[11px] text-faint dark:text-slate-500 italic">
           {def.renderer === "color-hex" ? "colour" : def.type} field — no dropdown options
         </div>

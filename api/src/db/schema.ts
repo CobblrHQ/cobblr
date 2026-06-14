@@ -175,10 +175,19 @@ export interface UserCredentialsTable {
 }
 
 /** Explicit-scope routing: which workspaces an 'explicit'-scoped personal
- *  credential reaches. */
+ *  credential reaches, plus the PER-WORKSPACE mode (Just me vs Share with
+ *  members). Row present = routed to this org; absent = Off. */
 export interface UserCredentialOrgsTable {
   credential_id: string;
   org_id: string;
+  mode: Generated<"my-calls" | "workspace-default">;
+  /** For a 'workspace-default' offer: when the workspace owner approved it
+   *  (null = a pending offer). 'my-calls' routes ignore this. */
+  approved_at: Date | null;
+  approved_by: string | null;
+  /** The one approved workspace-default AI the owner chose as the workspace
+   *  default (at most one active per org). */
+  active: Generated<boolean>;
 }
 
 export interface PlatformAnnounceSettingsTable {

@@ -16,9 +16,11 @@ import { allocationsRouter } from "./allocations.js";
 import { importRouter } from "./import.js";
 import { registerInventoryResolvers } from "./resolvers.js";
 import { registerInventoryActionHandlers } from "./action-handlers.js";
+import { registerInventoryComputedContext } from "./computed-context.js";
 
 registerInventoryResolvers();
 registerInventoryActionHandlers();
+registerInventoryComputedContext();
 
 // Per-instance item count — lets the nav hide an empty auto-created default
 // instance once the workspace has named ones (parts are the primary entity).

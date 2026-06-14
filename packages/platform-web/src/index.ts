@@ -9,7 +9,8 @@ export { ViewModeToggle, useViewMode, type ViewMode } from "./ViewModeToggle";
 export { useImageSrc } from "./useImageSrc";
 export { BulkActionBar } from "./BulkActionBar";
 export { CustomFieldsPanel } from "./CustomFieldsPanel";
-export { FieldRenderer, NoImage } from "./FieldRenderer";
+export { fieldControl, type FieldControl } from "./fieldControl";
+export { FieldRenderer, boolLabel, NoImage } from "./FieldRenderer";
 export {
   FilePreview,
   registerFilePreviewRenderer,
@@ -35,9 +36,10 @@ export { ToastProvider, useToast } from "./ToastContext";
 export { ConfirmProvider, useConfirm } from "./ConfirmContext";
 export { UnitInput } from "./UnitInput";
 export { useUnits, type UseUnits } from "./useUnits";
-export { formatQuantity, formatUnit, resolveUnit } from "./units";
+export { formatQuantity, formatUnit, resolveUnit, convertQuantity } from "./units";
 export type {
   FieldRendererId,
+  FieldType,
   PlatformAction,
   PlatformActionBinding,
   PlatformFieldDef,

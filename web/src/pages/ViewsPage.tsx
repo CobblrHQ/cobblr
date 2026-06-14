@@ -5,7 +5,8 @@
 // v0.1 renders the 'list' view_type. Future kanban/calendar/table
 // renderers swap in here as they ship.
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, LayoutList, Pencil, Pin, PinOff, Plus, Trash2 } from "lucide-react";
 import { WEEKDAYS, MONTHS, isoLocal, buildMonthGrid, shiftMonth } from "../lib/month-grid";
@@ -40,6 +41,17 @@ export function ViewsPage() {
   });
 
   const items = list.data?.items ?? [];
+
+  // Deep-link: /views?view=<id> opens that view directly, so a "By category"
+  // link elsewhere (e.g. the dashboard widget) lands ON the view instead of the
+  // list where you'd have to click it a second time (reported double-hop).
+  const [params] = useSearchParams();
+  const viewParam = params.get("view");
+  useEffect(() => {
+    if (!viewParam || active) return;
+    const match = items.find((v) => v.id === viewParam);
+    if (match) setActive(match);
+  }, [viewParam, items, active]);
 
   return (
     <div className="space-y-4">
@@ -916,7 +928,14 @@ function EditViewModal({
   const [startField, setStartField] = useState((cfg.start_field as string) ?? "start_date");
   const [endField, setEndField] = useState((cfg.end_field as string) ?? "target_date");
   const [filterRaw, setFilterRaw] = useState(
-    formatFilterPairs((cfg.filter as Record<string, unknown>) ?? {}),
+    [
+      formatFilterPairs((cfg.filter as Record<string, unknown>) ?? {}),
+      ...((cfg.where as Array<{ col: string; op: string; value: unknown }> | undefined) ?? [])
+        .filter((w) => w && !("ref_col" in w && (w as { ref_col?: unknown }).ref_col))
+        .map((w) => `${w.col}${w.op}${w.value}`),
+    ]
+      .filter(Boolean)
+      .join(", "),
   );
   const [shared, setShared] = useState(view.owner_user_id === null);
   const [busy, setBusy] = useState(false);
@@ -955,15 +974,35 @@ function EditViewModal({
             delete config.start_field;
             delete config.end_field;
           }
-          // Re-build the filter blob from the comma-separated key=value
-          // input. Empty input → no filter.
+          // Re-build the filter from the comma-separated input. `key=value`
+          // stays a simple equality `filter`; a comparison (`key>=value`,
+          // `key<=value`, `key>value`, `key<value`, `key!=value`) becomes a
+          // `where` predicate (numeric value cast where the field is numeric).
+          // Empty input → neither.
           const newFilter: Record<string, string> = {};
-          for (const piece of filterRaw.split(",")) {
-            const [k, v] = piece.split("=").map((s) => s.trim());
-            if (k && v) newFilter[k] = v;
+          const newWhere: Array<{ col: string; op: string; value: string | number }> = [];
+          // 2-char ops first so `>=` isn't read as `>` / `=`.
+          const OPS = ["<=", ">=", "!=", "<", ">", "="];
+          for (const rawPiece of filterRaw.split(",")) {
+            const piece = rawPiece.trim();
+            if (!piece) continue;
+            const op = OPS.find((o) => piece.includes(o));
+            if (!op) continue;
+            const idx = piece.indexOf(op);
+            const k = piece.slice(0, idx).trim();
+            const vRaw = piece.slice(idx + op.length).trim();
+            if (!k || !vRaw) continue;
+            if (op === "=") {
+              newFilter[k] = vRaw;
+            } else {
+              const isNum = /^-?[0-9]+(\.[0-9]+)?$/.test(vRaw);
+              newWhere.push({ col: k, op, value: isNum ? Number(vRaw) : vRaw });
+            }
           }
           if (Object.keys(newFilter).length > 0) config.filter = newFilter;
           else delete config.filter;
+          if (newWhere.length > 0) config.where = newWhere;
+          else delete config.where;
 
           try {
             await api.updateSavedView(slug, view.id, {
@@ -1085,18 +1124,21 @@ function EditViewModal({
         )}
         <label className="block">
           <div className="text-xs text-muted mb-1">
-            Filter (comma-separated <code>key=value</code>)
+            Filter (comma-separated <code>key=value</code> or <code>key≥value</code>)
           </div>
           <input
             type="text"
             value={filterRaw}
             onChange={(e) => setFilterRaw(e.target.value)}
-            placeholder="status=active, _tag=urgent"
+            placeholder="status=active, qty>=0.3"
             className="w-full px-2 py-1 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           />
           <div className="text-[11px] text-faint mt-1">
-            Native cols, metadata fields, and <code>_tag</code> are all
-            supported per the resolver's filter rules.
+            <code>=</code> matches exactly (native cols, metadata fields,{" "}
+            <code>_tag</code>). For numbers, compare with{" "}
+            <code>&gt;=</code> <code>&lt;=</code> <code>&gt;</code>{" "}
+            <code>&lt;</code> <code>!=</code> — e.g.{" "}
+            <code>qty&gt;=0.3</code> for spools with ≥ 300&nbsp;g left.
           </div>
         </label>
         <label className="flex items-center gap-2 text-sm">

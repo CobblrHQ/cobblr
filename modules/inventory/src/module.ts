@@ -179,6 +179,28 @@ export default defineModule({
         invokeHandler: "inventory.update-item",
         userInvokable: true,
       },
+      {
+        id: "inventory:lift-to-type",
+        label: "Lift items into types",
+        description:
+          "Bundle-migration engine: lift each item in a SOURCE instance into a TYPE in another instance — deduped by key fields, copying the type-defining fields up, linked via a pairing, optionally converting the qty unit. How a flat single-instance bundle upgrades into a type→instances model on a version bump. Idempotent (skips already-linked items). Generic — the bundle's migration declares the params. Args: { source_instance, type_instance, key_fields[], copy_fields?[], relationship_kind?, convert_qty?: { from_unit, to_unit, factor } }.",
+        appliesTo: { kinds: ["inventory:part"] },
+        invokeHandler: "inventory.lift-to-type",
+        // Migration-only: run by the bundle-upgrade flow, never a detail button.
+        userInvokable: false,
+      },
+      {
+        id: "inventory:split-lot",
+        label: "Split one off",
+        description:
+          "Split units off a lot's quantity into a NEW separate item (default 1 — the 'I entered 5 spools as one lot and just opened one' move). The new item inherits the lot's instance, fields, manufacturer, location, image, and parent pairing(s) so type rollups still count it; the lot's qty drops by the split amount. Generic — works on any inventory item with a numeric qty, in any instance. The lot must keep ≥1. Args: { quantity?: number (default 1) }.",
+        appliesTo: { kinds: ["inventory:part"] },
+        invokeHandler: "inventory.split-lot",
+        userInvokable: true,
+        argsSchema: {
+          quantity: { label: "How many to split off", type: "number" },
+        },
+      },
     ],
   },
 

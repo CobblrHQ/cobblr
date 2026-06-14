@@ -55,7 +55,11 @@ export function InstancePage() {
   const displayName = override?.display_label ?? inst.display_name;
   // The bundle that created this instance seeds item_noun / qty_unit in the
   // override config ("yarn" → "New yarn", default unit "skein").
-  const cfg = (override?.config ?? {}) as { item_noun?: string; qty_unit?: string };
+  const cfg = (override?.config ?? {}) as {
+    item_noun?: string;
+    qty_unit?: string;
+    parent?: { instance: string; label?: string; relationship_kind?: string };
+  };
 
   // Per-module UI dispatch. Inventory + projects render their packaged
   // list UIs scoped to the instance; host-page modules (machines /
@@ -69,6 +73,7 @@ export function InstancePage() {
         displayName={displayName}
         itemNoun={cfg.item_noun}
         qtyUnit={cfg.qty_unit}
+        parent={cfg.parent}
       />
     );
   }

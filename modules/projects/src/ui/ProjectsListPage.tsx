@@ -4,7 +4,7 @@ import { useMemo, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Search, Trash2 } from "lucide-react";
-import { BulkActionBar, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { BulkActionBar, CustomFieldsPanel, Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 import { useProjects } from "./context";
 import type { Project } from "./api";
 
@@ -25,7 +25,7 @@ const STATUS_LABEL: Record<string, string> = {
 const STATUS_ORDER = ["planning", "active", "blocked", "done", "abandoned"];
 
 export function ProjectsListPage() {
-  const { api, orgSlug, getToken, displayName, itemNoun, instance } = useProjects();
+  const { api, orgSlug, getToken, displayName, itemNoun, instance, entityKind } = useProjects();
   // An instance's rows must stay INSIDE the instance — the bare /projects
   // detail route filters to the default instance and 404s on instance rows
   // ("Project not found" on every Designs/Outfits click).
@@ -39,7 +39,14 @@ export function ProjectsListPage() {
   const qc = useQueryClient();
   const list = useQuery({ queryKey: ["projects-list"], queryFn: () => api.listProjects() });
   const [name, setName] = useState("");
+  // Create modal: name + the instance's custom fields (e.g. a Design's pattern
+  // link + category) promoted into creation — so "New design" can capture the
+  // PATTERN, not just a name (a713 / f65ba15b: "cannot add patterns to Designs").
+  const [creating, setCreating] = useState(false);
+  const [newMeta, setNewMeta] = useState<Record<string, unknown>>({});
   const [query, setQuery] = useState("");
+  const toast = useToast();
+  const confirm = useConfirm();
 
   // Saved views for projects:project — the Yarn "Designs" feature ships one
   // pinned. `?view=<id>` renders the list AS that view (its group_by groups,
@@ -49,11 +56,11 @@ export function ProjectsListPage() {
   const [params, setParams] = useSearchParams();
   const viewId = params.get("view");
   const savedViews = useQuery({
-    queryKey: ["proj-saved-views", orgSlug],
+    queryKey: ["proj-saved-views", orgSlug, entityKind],
     queryFn: async (): Promise<{ items: SavedViewLite[] }> => {
       const token = getToken();
       const res = await fetch(
-        `/api/v1/orgs/${orgSlug}/modules/core-views/views?kind=${encodeURIComponent("projects:project")}`,
+        `/api/v1/orgs/${orgSlug}/modules/core-views/views?kind=${encodeURIComponent(entityKind)}`,
         { headers: token ? { Authorization: `Bearer ${token}` } : {} },
       );
       return res.ok ? res.json() : { items: [] };
@@ -61,11 +68,11 @@ export function ProjectsListPage() {
     staleTime: 60_000,
   });
   const projFieldDefs = useQuery({
-    queryKey: ["proj-field-defs", orgSlug],
+    queryKey: ["proj-field-defs", orgSlug, entityKind],
     queryFn: async (): Promise<{ items: FieldDefLite[] }> => {
       const token = getToken();
       const res = await fetch(
-        `/api/v1/orgs/${orgSlug}/field-defs?kind=${encodeURIComponent("projects:project")}`,
+        `/api/v1/orgs/${orgSlug}/field-defs?kind=${encodeURIComponent(entityKind)}`,
         { headers: token ? { Authorization: `Bearer ${token}` } : {} },
       );
       return res.ok ? res.json() : { items: [] };
@@ -89,11 +96,18 @@ export function ProjectsListPage() {
   }
 
   const create = useMutation({
-    mutationFn: () => api.createProject({ name: name.trim() }),
+    mutationFn: () =>
+      api.createProject({
+        name: name.trim(),
+        metadata: Object.keys(newMeta).length ? newMeta : undefined,
+      }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["projects-list"] });
       setName("");
+      setNewMeta({});
+      setCreating(false);
     },
+    onError: (e) => toast.error((e as Error).message),
   });
 
   function submit(e: FormEvent) {
@@ -124,8 +138,6 @@ export function ProjectsListPage() {
   }, [filtered]);
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const toast = useToast();
-  const confirm = useConfirm();
   const bulkDelete = useMutation({
     mutationFn: async (ids: string[]) => {
       for (const id of ids) {
@@ -167,21 +179,70 @@ export function ProjectsListPage() {
         </div>
       </div>
 
-      <form onSubmit={submit} className="flex gap-2">
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder={`new ${noun} name…`}
-          className="input flex-1"
-        />
+      <div className="flex">
         <button
-          type="submit"
-          disabled={create.isPending || !name.trim()}
-          className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5 disabled:opacity-50"
+          type="button"
+          onClick={() => setCreating(true)}
+          className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
         >
           <Plus size={14} /> New {noun}
         </button>
-      </form>
+      </div>
+
+      {/* Create modal — name + the instance's custom fields (a Design's pattern
+          link + category) so you capture the pattern at creation, not just a
+          name. Mirrors inventory's "New yarn" field-promoting create. */}
+      <Modal
+        open={creating}
+        onClose={() => {
+          setCreating(false);
+          setName("");
+          setNewMeta({});
+        }}
+        title={`New ${noun}`}
+        size="md"
+      >
+        <form onSubmit={submit} className="space-y-4 p-1">
+          <div>
+            <label className="block text-xs font-medium text-muted dark:text-slate-400 mb-1">Name</label>
+            <input
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={`${noun} name…`}
+              className="input w-full"
+            />
+          </div>
+          {/* The instance's custom fields (Designs: pattern link + category).
+              Keyed off the INSTANCE kind (designs:item) — using projects:project
+              would fetch the base kind's defs and show none of them. */}
+          <CustomFieldsPanel
+            entityKind={entityKind}
+            values={newMeta}
+            onCommit={(field, value) => setNewMeta((m) => ({ ...m, [field]: value }))}
+          />
+          <div className="flex justify-end gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => {
+                setCreating(false);
+                setName("");
+                setNewMeta({});
+              }}
+              className="rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800/70 text-sm font-medium px-3 py-2 transition"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={create.isPending || !name.trim()}
+              className="rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-3 py-2 transition flex items-center gap-1.5 disabled:opacity-50"
+            >
+              <Plus size={14} /> {create.isPending ? "Creating…" : `Create ${noun}`}
+            </button>
+          </div>
+        </form>
+      </Modal>
 
       {/* Saved-view chips — bundles (Yarn → Designs) ship pinned ones. */}
       {views.length > 0 && (

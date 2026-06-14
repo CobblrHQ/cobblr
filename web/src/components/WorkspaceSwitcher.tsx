@@ -15,7 +15,7 @@ import { Modal, useToast } from "@cobblr/platform-web";
 import { MembersModal } from "./MembersModal";
 
 export function WorkspaceSwitcher() {
-  const { orgs, setOrgs } = useAuth();
+  const { orgs } = useAuth();
   const { activeOrg, activeSlug, setActiveSlug } = useActiveOrg();
   const [open, setOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
@@ -71,11 +71,12 @@ export function WorkspaceSwitcher() {
 
   function handleCreated(slug: string) {
     setCreateOpen(false);
-    // Refresh org list from server + flip to the new one.
-    void api.listOrgs().then((r) => {
-      setOrgs(r.items);
-      setActiveSlug(slug);
-    });
+    // Navigate straight into the new workspace. We can't use setActiveSlug here:
+    // it looks the slug up in useAuth().orgs, which hasn't refreshed with the
+    // just-created workspace yet, so it silently no-ops and you're stranded on
+    // the old workspace (the reported bug). The full slug resolves as a URL
+    // handle on the fresh load, where auth re-fetches orgs incl. the new one.
+    window.location.assign(`/w/${slug}/dashboard`);
   }
 
   // min-w-0 here AND on the button so the name actually truncates to the space

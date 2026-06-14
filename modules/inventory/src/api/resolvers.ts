@@ -86,21 +86,38 @@ export function registerInventoryResolvers(): void {
         q = q.where(sql<boolean>`metadata ->> ${key} = ${String(val)}`);
       }
     }
-    // D10: comparison predicates. Native columns only (numeric +
-    // date). Unknown col / unsupported (col, op) silently skipped.
+    // D10: comparison predicates. Native numeric/date columns, OR a custom
+    // numeric metadata field (a yarn instance's "remaining", a spool's qty) via
+    // a guarded cast. Unknown col / unsupported (col, op) silently skipped.
     if (query.where) {
       const COMPARABLE = new Set(["qty", "min_qty", "cost", "created_at", "updated_at"]);
       for (const p of query.where) {
-        if (!COMPARABLE.has(p.col)) continue;
         if (!["<", "<=", ">", ">=", "=", "!="].includes(p.op)) continue;
+        const nativeCol = COMPARABLE.has(p.col);
         if (p.ref_col) {
-          if (!COMPARABLE.has(p.ref_col)) continue;
+          // Column-to-column comparisons stay native-only.
+          if (!nativeCol || !COMPARABLE.has(p.ref_col)) continue;
           q = q.where(
             sql<boolean>`${sql.ref(p.col)} ${sql.raw(p.op)} ${sql.ref(p.ref_col)}`,
           );
         } else if (p.value !== undefined) {
-          const v = p.value === "now" ? sql<unknown>`now()` : sql<unknown>`${p.value}`;
-          q = q.where(sql<boolean>`${sql.ref(p.col)} ${sql.raw(p.op)} ${v}`);
+          if (nativeCol) {
+            const v = p.value === "now" ? sql<unknown>`now()` : sql<unknown>`${p.value}`;
+            q = q.where(sql<boolean>`${sql.ref(p.col)} ${sql.raw(p.op)} ${v}`);
+          } else if (
+            typeof p.value === "number" ||
+            (typeof p.value === "string" && /^-?[0-9]+(\.[0-9]+)?$/.test(p.value))
+          ) {
+            // Custom numeric metadata field. Guard the cast so a row whose
+            // value isn't a plain number (e.g. "1 kg") is excluded, not an
+            // error. p.col is bound as a parameter (no injection); the op is
+            // whitelisted above.
+            const num = Number(p.value);
+            q = q.where(
+              sql<boolean>`(metadata->>${p.col}) ~ '^-?[0-9]+(\\.[0-9]+)?$' AND (metadata->>${p.col})::numeric ${sql.raw(p.op)} ${num}`,
+            );
+          }
+          // else: non-numeric value on a non-native col → skip.
         }
       }
     }
@@ -129,6 +146,20 @@ export function registerInventoryResolvers(): void {
   platform().entities.registerInstanceListResolver("inventory", (orgId, instance, query) =>
     partsListResolver(orgId, query, instance),
   );
+  // Single-entity twin — a `<name>:item` LOOKUP resolves the part by id scoped to
+  // the instance, so instance detail/lookup resolves + gets computed fields the
+  // same as the base inventory:part kind.
+  platform().entities.registerInstanceResolver("inventory", async (orgId, instance, id) => {
+    const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
+    const row = await db
+      .selectFrom("inventory_parts")
+      .selectAll()
+      .where("id", "=", id)
+      .where("instance", "=", instance as never)
+      .executeTakeFirst();
+    if (!row) return null;
+    return toResolvedPart(row);
+  });
 }
 
 function toResolvedPart(row: {
@@ -143,16 +174,27 @@ function toResolvedPart(row: {
   supplier_url: string | null;
   image_path: string | null;
   notes: string | null;
+  instance: string;
   metadata: unknown;
 }): ResolvedEntity {
   const qty = Number(row.qty);
+  // A skinned instance's items live at /instances/<name>/items/:id; the default
+  // ("inventory") instance lives at the base /inventory/parts/:id. Without this,
+  // clicking an instance item (e.g. a Filament TYPE in `filament-types`) from any
+  // surface that uses the resolved detailUrl — a saved view, the dashboard,
+  // search — navigated to the base route, which scopes to the default instance →
+  // "part not found".
+  const detailUrl =
+    row.instance && row.instance !== "inventory"
+      ? `/instances/${row.instance}/items/${row.id}`
+      : `/inventory/parts/${row.id}`;
   return {
     kind: "inventory:part",
     id: row.id,
     title: row.name,
     subtitle: row.manufacturer ?? undefined,
     image_path: row.image_path ?? undefined,
-    detailUrl: `/inventory/parts/${row.id}`,
+    detailUrl,
     fields: {
       name: row.name,
       description: row.description,

@@ -17,10 +17,13 @@ const PRIORITIES: Priority[] = ["low", "med", "high", "urgent"];
 
 export function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const { api } = useProjects();
+  const { api, entityKind } = useProjects();
   // Native-field presentation (relabel + show/hide via bundle/config); no-op
-  // until an override exists. Matches the assets/inventory pattern.
-  const fp = useFieldPresentation("projects:project");
+  // until an override exists. Keyed off the INSTANCE kind (designs:item) so a
+  // Designs instance's custom fields (pattern link, category) actually resolve —
+  // using projects:project fetched the base kind and showed NONE of them
+  // (reported: no place to add a pattern link on a design).
+  const fp = useFieldPresentation(entityKind);
   const qc = useQueryClient();
 
   const project = useQuery({
@@ -165,7 +168,7 @@ export function ProjectDetailPage() {
             Without this, migrated mod metadata — substate, energy,
             excitement — would be invisible on the detail page. */}
         <CustomFieldsPanel
-          entityKind="projects:project"
+          entityKind={entityKind}
           values={project.data.metadata}
           onCommit={(name, value) =>
             updateProject.mutate({

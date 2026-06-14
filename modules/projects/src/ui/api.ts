@@ -94,8 +94,15 @@ export class ProjectsApi {
 
   listProjects = () => this.projectsRequest<{ items: Project[] }>("GET", "");
   getProject = (id: string) => this.projectsRequest<Project>("GET", `/${id}`);
-  createProject = (b: { name: string; description?: string | null; status?: ProjectStatus; priority?: Priority | null }) =>
-    this.projectsRequest<Project>("POST", "", b);
+  createProject = (b: {
+    name: string;
+    description?: string | null;
+    status?: ProjectStatus;
+    priority?: Priority | null;
+    /** Instance custom fields (e.g. a Design's pattern_url / pattern_category)
+     *  captured at creation. The create route routes these into metadata. */
+    metadata?: Record<string, unknown>;
+  }) => this.projectsRequest<Project>("POST", "", b);
   updateProject = (id: string, b: Record<string, unknown>) =>
     this.projectsRequest<Project>("PATCH", `/${id}`, b);
   deleteProject = (id: string) => this.projectsRequest<void>("DELETE", `/${id}`);

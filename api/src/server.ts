@@ -19,7 +19,7 @@ import { authRouter } from "./routes/auth.js";
 import { requestGuardMiddleware } from "./platform/hosted-seams.js";
 import { publicRouter } from "./routes/public.js";
 import { meRouter } from "./routes/me.js";
-import { connectionsRouter } from "./routes/connections.js";
+import { connectionsRouter, workspaceAiSharesRouter } from "./routes/connections.js";
 import { modulesRouter } from "./routes/modules.js";
 import { orgsRouter } from "./routes/orgs.js";
 import { platformOrgRouter } from "./routes/platform.js";
@@ -171,6 +171,8 @@ export function createApp(): AppHandles {
   // Ravelry import — pull the user's stash + projects into this workspace's
   // Yarn bundle. Auth + tenant applied inside the router (per-route).
   v1.use("/orgs/:slug", ravelryImportRouter);
+  // Workspace owner: review + approve members' AI-share offers.
+  v1.use("/orgs/:slug", workspaceAiSharesRouter);
   v1.use("/orgs/:slug/instances", instancesRouter);
   // Instance-scoped item CRUD — resolves :instanceName → (module,
   // instance) then dispatches to the owning module's primary router

@@ -563,7 +563,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     // Land in the Yarn TABLE (the inventory instance), not bare /inventory —
     // so "where to start" points at the thing the bundle just made.
     next_steps: [
-      { label: "Add your first yarn", module: "inventory", path: "/instances/yarn", hint: "Brand, colorway, fibre, weight — tracked by the skein." },
+      { label: "Add your yarn", module: "inventory", path: "/instances/yarn", hint: "Brand, colorway, fibre, weight — tracked by the skein." },
     ],
     manifest: {
       id: "cobblr.flagship.yarn",
@@ -712,38 +712,105 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
     glyph: "🖨️🧵",
     blurb:
-      "Your filament stash — spools by material, colour, and diameter, weighed in grams, grouped by material. Turn on print settings to log the nozzle/bed temps that worked.",
-    // Land in the Filament TABLE (its own instance), not bare /inventory.
+      "Two tables that work together. A filament TYPE (Royal Blue PLA) defines everything about the filament once — material, colour, diameter, the nozzle/bed temps, whether it needs drying. Then your SPOOLS just pick a type and add what's unique to the physical spool: its size, the maker's batch code, and how much is left. Each type rolls up how many spools + total kg you have.",
+    // A type first (defines the filament), then spools of it.
     next_steps: [
-      { label: "Add your first spool", module: "inventory", path: "/instances/filament", hint: "Material, colour, diameter, weight." },
+      { label: "Add a filament type", module: "inventory", path: "/instances/filament-types", hint: "Define the filament once — brand, material, colour, diameter, temps." },
+      { label: "Add a spool", module: "inventory", path: "/instances/filament", hint: "Pick its type, then just the spool size, batch code, and how much is left." },
     ],
     manifest: {
       id: "cobblr.flagship.filament-stash",
-      version: "0.3.1",
+      version: "0.5.1",
       name: "Filament",
-      description: "Your filament stash as its own table — spools by material/colour/diameter, weighed in grams, grouped by material. Optional print settings.",
+      description: "A filament TYPE (Royal Blue PLA) defines the filament once — material, colour, diameter, nozzle/bed temps, needs-drying. SPOOLS pick a type + add only what's per-spool: size, batch code, remaining, state. Each type rolls up its spool count + total kg.",
       author: "Cobblr",
-      released_at: "2026-06-08",
+      released_at: "2026-06-14",
       changelog:
-        "Dropped the computed “Summary” line (clutter on the form). — Filament is now its OWN table (an inventory instance), not generic Inventory with extra columns — its own nav entry, a “New spool” button (in grams), and only filament fields (the parts/warranty/supplier cruft is hidden). Plain-language hints added; the “By material” view stays pinned. Turn on Print settings to log the nozzle/bed temps that worked.",
+        "Scanning a spool's QR (e.g. Polar's 3dqr.co code) now find-or-creates its filament TYPE and links the spool to it automatically — a scan lands in the type→spool model instead of a flat row. (0.5.0: the TYPE defines the whole filament — colour, diameter, nozzle/bed temps and needs-drying live on the type, not re-entered per spool; a SPOOL just picks its type and carries the per-spool facts — size, batch code, remaining, state. Upgrading carries your existing temps + colour up onto the type automatically.)",
       requires: [{ module: "inventory" }],
+      // The bundle OWNS its data migration: on upgrade from any earlier install,
+      // lift the flat `filament` spools into `filament-types` (deduped by the type
+      // key), COPY the defining fields (temps + needs-drying) up onto the type,
+      // link them, and convert grams → kg. Idempotent + automatic — runs through
+      // the generic inventory:lift-to-type action, no script.
+      migrations: [
+        {
+          to_version: "0.5.0",
+          action: "inventory:lift-to-type",
+          args: {
+            source_instance: "filament",
+            type_instance: "filament-types",
+            key_fields: ["manufacturer", "material", "color", "diameter"],
+            copy_fields: ["nozzle_temp", "bed_temp", "needs_drying"],
+            relationship_kind: "instance-of",
+            convert_qty: { from_unit: "g", to_unit: "kg", factor: 0.001 },
+          },
+        },
+      ],
       provides_instances: [
         {
+          // The TYPE — one row per kind of filament. Defines EVERYTHING about the
+          // filament; every spool of it inherits these. The dedup key.
           module: "inventory",
-          instance_name: "filament",
-          display_name: "Filament",
+          instance_name: "filament-types",
+          display_name: "Filament types",
           glyph: "🧵",
-          item_noun: "spool",
-          qty_unit: "g",
+          item_noun: "type",
           field_defs: [
             { entity_kind: "inventory:part", name: "material", display_label: "Material", type: "text", position: 1, choices: ["PLA", "PLA+", "PETG", "ABS", "ASA", "TPU", "Nylon", "PC", "PVA", "Other"], help: "The plastic type — PLA is the easy default; PETG/ABS for tougher parts." },
             { entity_kind: "inventory:part", name: "color", display_label: "Colour", type: "text", position: 2, renderer: "color-hex", help: "Pick a swatch so the table shows the colour at a glance." },
             { entity_kind: "inventory:part", name: "diameter", display_label: "Diameter", type: "text", position: 3, choices: ["1.75 mm", "2.85 mm"], help: "Filament thickness — 1.75 mm is by far the most common; 2.85 mm for some older/large printers." },
-            { entity_kind: "inventory:part", name: "length_per_spool", display_label: "Length / spool (m)", type: "number", position: 4, help: "Metres on a full spool (from the label) — to estimate if you have enough for a print." },
-            { entity_kind: "inventory:part", name: "spool_weight", display_label: "Empty spool (g)", type: "number", position: 5, help: "The bare spool's weight (tare) — subtract it from a weigh-in to see filament remaining." },
+            { entity_kind: "inventory:part", name: "nozzle_temp", display_label: "Nozzle °C", type: "number", position: 4, help: "The hot-end temperature that prints this filament cleanly — same for every spool of it." },
+            { entity_kind: "inventory:part", name: "bed_temp", display_label: "Bed °C", type: "number", position: 5, help: "The bed temperature that makes the first layer stick." },
+            { entity_kind: "inventory:part", name: "needs_drying", display_label: "Needs drying", type: "boolean", position: 6, choices: ["Stable", "Hygroscopic"], help: "Whether this filament tends to absorb moisture and should be kept dry / dried before use." },
+            // Live rollups over the spools linked to this type (instance-of).
+            { entity_kind: "inventory:part", name: "spool_count", display_label: "Spools", type: "computed", position: 7, template: "{{instances.count}}", help: "How many physical spools of this type you own." },
+            { entity_kind: "inventory:part", name: "total_remaining", display_label: "In stock", type: "computed", position: 8, template: "{{instances.total_qty}} kg", help: "Total filament remaining across all your spools of this type." },
           ],
           field_overrides: [
             { entity_kind: "inventory:part", name: "manufacturer", display_label: "Brand" },
+            { entity_kind: "inventory:part", name: "qty", hidden: true },
+            { entity_kind: "inventory:part", name: "unit", hidden: true },
+            { entity_kind: "inventory:part", name: "cost", hidden: true },
+            { entity_kind: "inventory:part", name: "category", hidden: true },
+            { entity_kind: "inventory:part", name: "location", hidden: true },
+            { entity_kind: "inventory:part", name: "warranty", hidden: true },
+            { entity_kind: "inventory:part", name: "min_qty", hidden: true },
+            { entity_kind: "inventory:part", name: "supplier_url", hidden: true },
+            { entity_kind: "inventory:part", name: "serial_number", hidden: true },
+            { entity_kind: "inventory:part", name: "model_number", hidden: true },
+          ],
+          saved_views: [
+            { entity_kind: "inventory:part", name: "By material", view_type: "table", pinned: true, config: { group_by: "material", visible_fields: ["title", "color", "diameter", "spool_count", "total_remaining"] } },
+          ],
+        },
+        {
+          // The SPOOL — one row per physical spool. Picks a TYPE (inherits its
+          // colour/temps/etc.) and carries ONLY what's unique to the spool.
+          module: "inventory",
+          instance_name: "filament",
+          display_name: "Filament Spools",
+          glyph: "🧵",
+          item_noun: "spool",
+          qty_unit: "kg",
+          // The parent picker on manual creates — AND the scan auto-lift: a
+          // scanned spool that carries material/colour/diameter find-or-creates
+          // its "Royal Blue PLA" type (deduped by these keys, temps copied up)
+          // and links to it, instead of landing as a flat row.
+          parent: {
+            instance: "filament-types",
+            label: "Type",
+            key_fields: ["manufacturer", "material", "color", "diameter"],
+            copy_fields: ["nozzle_temp", "bed_temp", "needs_drying"],
+          },
+          field_defs: [
+            { entity_kind: "inventory:part", name: "size", display_label: "Spool size", type: "text", position: 1, choices: ["0.5 kg", "1 kg", "2 kg", "3 kg", "4 kg", "5 kg", "25 kg"], help: "The full-spool size you bought (the label weight) — the remaining amount is tracked separately." },
+            { entity_kind: "inventory:part", name: "batch_code", display_label: "Batch / lot code", type: "text", position: 2, help: "The batch or lot code from the maker's label (e.g. Polar's spool code) — for traceability of this exact spool." },
+            { entity_kind: "inventory:part", name: "state", display_label: "State", type: "text", position: 3, choices: ["sealed", "open", "empty"], help: "Sealed = unopened; open = in use; empty = used up (keep it for the record or delete it)." },
+          ],
+          field_overrides: [
+            { entity_kind: "inventory:part", name: "qty", display_label: "Remaining (kg)" },
+            { entity_kind: "inventory:part", name: "manufacturer", hidden: true },
             { entity_kind: "inventory:part", name: "cost", display_label: "Price / spool" },
             { entity_kind: "inventory:part", name: "category", hidden: true },
             { entity_kind: "inventory:part", name: "location", hidden: true },
@@ -754,28 +821,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             { entity_kind: "inventory:part", name: "model_number", hidden: true },
           ],
           saved_views: [
-            { entity_kind: "inventory:part", name: "By material", view_type: "table", pinned: true, config: { group_by: "material", visible_fields: ["title", "color", "diameter", "qty", "unit"] } },
-          ],
-        },
-      ],
-      features: [
-        {
-          key: "print-settings",
-          name: "Print settings",
-          question: "Log the print settings that worked?",
-          description: "Log the nozzle/bed temps that worked + whether the spool needs drying.",
-          default: false,
-          provides_instances: [
-            {
-              module: "inventory",
-              instance_name: "filament",
-              display_name: "Filament",
-              field_defs: [
-                { entity_kind: "inventory:part", name: "nozzle_temp", display_label: "Nozzle °C", type: "number", position: 7, help: "The hot-end temperature that printed this filament cleanly." },
-                { entity_kind: "inventory:part", name: "bed_temp", display_label: "Bed °C", type: "number", position: 8, help: "The bed temperature that made the first layer stick." },
-                { entity_kind: "inventory:part", name: "needs_drying", display_label: "Needs drying", type: "boolean", position: 9, help: "Tick if it's absorbed moisture (stringy/popping) and should be dried before use." },
-              ],
-            },
+            { entity_kind: "inventory:part", name: "By state", view_type: "table", pinned: true, config: { group_by: "state", visible_fields: ["title", "size", "batch_code", "qty", "unit", "state"] } },
           ],
         },
       ],
@@ -1577,3 +1623,21 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     },
   },
 ];
+
+/** The CURRENT label a bundle declares for a next-step `path`. Setup cards are
+ *  cached in localStorage at install time, so a copy change to a next_steps
+ *  label wouldn't otherwise reach an existing card — the renderer prefers this
+ *  live label over the cached one (matched by path). */
+let _nextStepLabelByPath: Map<string, string> | null = null;
+export function liveNextStepLabel(path: string | undefined): string | undefined {
+  if (!path) return undefined;
+  if (!_nextStepLabelByPath) {
+    _nextStepLabelByPath = new Map();
+    for (const b of FEATURED_BUNDLES) {
+      for (const s of b.next_steps ?? []) if (s.path) _nextStepLabelByPath.set(s.path, s.label);
+      for (const f of b.manifest.features ?? [])
+        for (const s of f.next_steps ?? []) if (s.path) _nextStepLabelByPath.set(s.path, s.label);
+    }
+  }
+  return _nextStepLabelByPath.get(path);
+}
