@@ -18,6 +18,17 @@ import {
 } from "react";
 import { Link } from "react-router-dom";
 
+/** A workspace instance of a multi-instance module (e.g. inventory's "Yarn"),
+ *  as the host passes it to a per-instance tile. Structurally a subset of the
+ *  kernel's ModuleInstance — platform-web stays free of the web app's api types. */
+export interface DashboardInstance {
+  instance_name: string;
+  display_name: string;
+  is_default: boolean;
+  /** Primary-item count for this instance; null/undefined if the module reports none. */
+  item_count?: number | null;
+}
+
 /** Props every dashboard widget receives. The active workspace slug plus a
  *  `getToken` (read fresh per request) are enough for a widget — including one
  *  living inside a packaged module, mounted by the host outside the module's
@@ -25,6 +36,9 @@ import { Link } from "react-router-dom";
 export interface DashboardWidgetProps {
   slug: string;
   getToken: () => string | null;
+  /** Set ONLY when the host has expanded an instanceable module into one tile
+   *  per instance (see `instanceTile`). The aggregate `component` never sees it. */
+  instance?: DashboardInstance;
 }
 
 export interface DashboardWidgetSpec {
@@ -36,8 +50,19 @@ export interface DashboardWidgetSpec {
   id?: string;
   /** Sort hint within the grid; lower renders first. Default 100. */
   order?: number;
-  /** The tile component. Receives the active org slug; renders a DashboardTile. */
+  /** The tile component. Receives the active org slug; renders a DashboardTile.
+   *  For an instanceable module this is the FALLBACK (rendered only when the
+   *  workspace has no instances / they haven't loaded). */
   component: ComponentType<DashboardWidgetProps>;
+  /** Opt in to per-instance tiles: when set, the host fetches this module's
+   *  instances and renders this component once per real instance (the stray
+   *  empty default is dropped, mirroring the nav) instead of one aggregate tile —
+   *  so a Yarn-bundle workspace reads "Yarn"/"Hooks", never the module name. The
+   *  instance is passed via props.instance. */
+  instanceTile?: ComponentType<DashboardWidgetProps>;
+  /** Host-internal: the instance a per-instance tile represents. Set by the
+   *  Dashboard's expansion, never by a module's register call. */
+  _instance?: DashboardInstance;
 }
 
 const REGISTRY = new Map<string, DashboardWidgetSpec>();

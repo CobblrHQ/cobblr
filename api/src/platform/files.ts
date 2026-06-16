@@ -4,12 +4,27 @@
 // or knowing its tables / on-disk layout. Mirrors the
 // entities.registerResolver pattern (one registered fn, brokered).
 
-import type { FileBytes, FileReader, FileVariant, FilesDriver } from "@cobblr/platform-contract";
+import type { FileBytes, FileReader, FileVariant, FilesDriver, FileWriter, FileWriteResult } from "@cobblr/platform-contract";
 
 let reader: FileReader | null = null;
 
 export function registerReader(r: FileReader): void {
   reader = r;
+}
+
+let writer: FileWriter | null = null;
+
+export function registerWriter(w: FileWriter): void {
+  writer = w;
+}
+
+export async function write(
+  orgId: string,
+  bytes: Uint8Array,
+  opts: { filename?: string; mimeType?: string },
+): Promise<FileWriteResult | null> {
+  if (!writer) return null;
+  return writer(orgId, bytes, opts);
 }
 
 // Blob-storage driver override. Null → core-files uses its built-in local-disk

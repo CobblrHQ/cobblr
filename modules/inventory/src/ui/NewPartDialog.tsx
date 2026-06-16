@@ -69,8 +69,8 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
   // The instance's custom fields (yarn: colour, fibre, weight, …) — promoted
   // INTO the create form so the user fills them at creation, not after.
   const fieldDefs = useQuery({
-    queryKey: ["platform-field-defs", orgSlug, entityKind],
-    queryFn: () => api.listFieldDefs(entityKind),
+    queryKey: ["platform-field-defs", orgSlug, entityKind, "effective"],
+    queryFn: () => api.listFieldDefs(entityKind, true),
     staleTime: 60_000,
   });
   const customFields = (fieldDefs.data?.items ?? [])
@@ -208,7 +208,7 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
   }
 
   return (
-    <Modal open onClose={() => onClose(false)} title={`new ${itemNoun}`} size="sm">
+    <Modal open onClose={() => onClose(false)} title={`new ${itemNoun}`} size="sm" dismissOnBackdrop={false}>
       <form onSubmit={submit} className="space-y-3">
         {/* Catalog matching is for the base inventory (Lego/BrickLink etc.) —
             irrelevant noise on a skinned instance, so hide it when scoped. */}

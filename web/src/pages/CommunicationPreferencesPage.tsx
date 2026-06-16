@@ -180,6 +180,7 @@ export function CommunicationPreferencesPage() {
                 {visibleColumns.map((c) => (
                   <th key={c} className="font-medium py-2 px-3 text-center whitespace-nowrap">{CHANNEL_LABEL[c] ?? c}</th>
                 ))}
+                <th className="py-2 px-3" aria-hidden />
               </tr>
             </thead>
             <tbody>
@@ -190,25 +191,44 @@ export function CommunicationPreferencesPage() {
                     <div className="text-xs text-faint">{t.description}</div>
                   </td>
                   {t.tier === 1 ? (
-                    <td colSpan={visibleColumns.length} className="py-2.5 px-3 text-center">
+                    <td colSpan={visibleColumns.length + 1} className="py-2.5 px-3 text-center">
                       <span className="inline-flex items-center gap-1.5 text-xs text-faint">
                         <Lock size={12} /> Always email
                       </span>
                     </td>
                   ) : (
-                    visibleColumns.map((c) => (
-                      <td key={c} className="py-2.5 px-3 text-center">
-                        <input
-                          type="checkbox"
-                          className="h-4 w-4 accent-cobble-600 cursor-pointer"
-                          checked={data.prefs[t.key]?.[c] ?? false}
-                          onChange={(e) =>
-                            setPref.mutate({ notification_type: t.key, channel: c, enabled: e.target.checked })
-                          }
-                          aria-label={`${t.label} via ${CHANNEL_LABEL[c] ?? c}`}
-                        />
+                    <>
+                      {visibleColumns.map((c) => (
+                        <td key={c} className="py-2.5 px-3 text-center">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 accent-cobble-600 cursor-pointer"
+                            checked={data.prefs[t.key]?.[c] ?? false}
+                            onChange={(e) =>
+                              setPref.mutate({ notification_type: t.key, channel: c, enabled: e.target.checked })
+                            }
+                            aria-label={`${t.label} via ${CHANNEL_LABEL[c] ?? c}`}
+                          />
+                        </td>
+                      ))}
+                      {/* Consolidation nudge: when a type pushes to BOTH Discord and
+                          email, you'll get pinged twice — offer to keep just the
+                          "upgrade" (Discord). In-app (the inbox) is left alone. */}
+                      <td className="py-2.5 pl-3 align-middle">
+                        {verified && (data.prefs[t.key]?.discord_dm ?? false) && (data.prefs[t.key]?.email ?? false) && (
+                          <span className="text-xs text-faint whitespace-nowrap">
+                            Also emailed.{" "}
+                            <button
+                              type="button"
+                              onClick={() => setPref.mutate({ notification_type: t.key, channel: "email", enabled: false })}
+                              className="text-accent hover:underline"
+                            >
+                              Use Discord only?
+                            </button>
+                          </span>
+                        )}
                       </td>
-                    ))
+                    </>
                   )}
                 </tr>
               ))}

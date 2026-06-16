@@ -30,6 +30,8 @@ COPY modules/purchases/package.json ./modules/purchases/
 COPY modules/machines/package.json ./modules/machines/
 COPY modules/assets/package.json ./modules/assets/
 COPY modules/lists/package.json ./modules/lists/
+COPY modules/builds/package.json ./modules/builds/
+COPY modules/sales/package.json ./modules/sales/
 COPY modules/tracking/package.json ./modules/tracking/
 COPY modules/core-file-preview/package.json ./modules/core-file-preview/
 
@@ -47,6 +49,8 @@ COPY modules/purchases ./modules/purchases
 COPY modules/machines ./modules/machines
 COPY modules/assets ./modules/assets
 COPY modules/lists ./modules/lists
+COPY modules/builds ./modules/builds
+COPY modules/sales ./modules/sales
 COPY modules/tracking ./modules/tracking
 COPY modules/core-file-preview ./modules/core-file-preview
 COPY web ./web

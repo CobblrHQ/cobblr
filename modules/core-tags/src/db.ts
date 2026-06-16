@@ -7,6 +7,8 @@ export interface TagsTable {
   id: Generated<string>;
   name: string;
   color: string | null;
+  parent_id: string | null;
+  icon: string | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }

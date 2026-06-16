@@ -4,6 +4,7 @@
 // (super-admin → Feedback) has context. POSTs to /feedback.
 
 import { useState, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { Modal, useToast } from "@cobblr/platform-web";
 import { MessageSquare, ImagePlus, X } from "lucide-react";
 import { api } from "../lib/api";
@@ -179,16 +180,23 @@ export function FeedbackWidget() {
 
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        title="Send feedback"
-        aria-label="Send feedback"
-        className="fixed bottom-4 right-4 z-40 flex items-center gap-1.5 rounded-full bg-cobble-600 hover:bg-cobble-700 text-white shadow-lg px-3 py-2.5 text-xs font-medium transition"
-      >
-        <MessageSquare size={15} />
-        <span className="hidden sm:inline">Feedback</span>
-      </button>
+      {/* Portaled to <body> so an ancestor's backdrop-blur / transform can't trap
+          or blur this fixed button (the navbar uses backdrop-blur). z above the
+          modal backdrop (z-50) so feedback stays reachable while a form is open —
+          exactly what the user asked for. */}
+      {createPortal(
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          title="Send feedback"
+          aria-label="Send feedback"
+          className="fixed bottom-4 right-4 z-[55] flex items-center gap-1.5 rounded-full bg-cobble-600 hover:bg-cobble-700 text-white shadow-lg px-3 py-2.5 text-xs font-medium transition"
+        >
+          <MessageSquare size={15} />
+          <span className="hidden sm:inline">Feedback</span>
+        </button>,
+        document.body,
+      )}
 
       <Modal open={open} onClose={close} title="Send feedback" size="md">
         <div className="space-y-3">

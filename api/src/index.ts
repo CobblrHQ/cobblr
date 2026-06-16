@@ -217,6 +217,8 @@ async function boot() {
     files: {
       registerReader: files.registerReader,
       read: files.read,
+      registerWriter: files.registerWriter,
+      write: files.write,
       registerDriver: files.registerDriver,
       getDriver: files.getDriver,
     },

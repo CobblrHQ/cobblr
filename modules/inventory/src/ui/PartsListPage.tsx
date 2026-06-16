@@ -80,8 +80,8 @@ export function PartsListPage() {
   // swatch, url link, …) from each part's metadata. Capped so the table stays
   // readable; ordered by the field's position (which the user controls).
   const fieldDefs = useQuery({
-    queryKey: ["platform-field-defs", orgSlug, entityKind],
-    queryFn: () => api.listFieldDefs(entityKind),
+    queryKey: ["platform-field-defs", orgSlug, entityKind, "effective"],
+    queryFn: () => api.listFieldDefs(entityKind, true),
     staleTime: 60_000,
   });
   const allCustomCols = (fieldDefs.data?.items ?? [])

@@ -86,4 +86,47 @@ function InventoryDashboardWidget({ slug, getToken }: DashboardWidgetProps) {
   );
 }
 
-registerDashboardWidget({ module: "inventory", order: 10, component: InventoryDashboardWidget });
+// One tile for a SINGLE inventory instance — the per-instance shape the host
+// expands into ("Yarn", "Hooks") so a bundle workspace never sees the generic
+// "Inventory" label. The default instance reads the base parts list; a named one
+// reads its /instances/<name>/items. Same per-instance fetch the aggregate did,
+// so low-stock attention is preserved.
+function InventoryInstanceTile({ slug, getToken, instance }: DashboardWidgetProps) {
+  const name = instance?.instance_name ?? "";
+  const isDefault = instance?.is_default ?? false;
+  const url = isDefault
+    ? `/api/v1/orgs/${slug}/modules/inventory/parts?limit=200`
+    : `/api/v1/orgs/${slug}/instances/${encodeURIComponent(name)}/items?limit=200`;
+  const q = useQuery({
+    queryKey: ["dash-inv-inst", slug, name],
+    queryFn: () => getJson<{ items: Row[] }>(url, getToken).catch(() => ({ items: [] })),
+    enabled: !!slug && !!instance,
+    staleTime: 30_000,
+  });
+  if (!instance) return null;
+  const items = q.data?.items ?? [];
+  const low = items.filter((p) => p.low_stock).length;
+  return (
+    <DashboardTile
+      to={isDefault ? "/inventory" : `/instances/${encodeURIComponent(name)}`}
+      icon={Package}
+      label={instance.display_name}
+      primary={items.length}
+      secondary={
+        low > 0 ? (
+          <span className="text-ember-600 dark:text-ember-500">{low} low-stock</span>
+        ) : (
+          "all stocked"
+        )
+      }
+      attention={low > 0}
+    />
+  );
+}
+
+registerDashboardWidget({
+  module: "inventory",
+  order: 10,
+  component: InventoryDashboardWidget,
+  instanceTile: InventoryInstanceTile,
+});

@@ -51,6 +51,8 @@ COPY modules/core-scan/package.json ./modules/core-scan/
 COPY modules/core-apps/package.json ./modules/core-apps/
 COPY modules/core-authoring/package.json ./modules/core-authoring/
 COPY modules/lists/package.json ./modules/lists/
+COPY modules/builds/package.json ./modules/builds/
+COPY modules/sales/package.json ./modules/sales/
 COPY modules/tracking/package.json ./modules/tracking/
 COPY modules/digifab/package.json ./modules/digifab/
 COPY modules/core-file-preview/package.json ./modules/core-file-preview/
@@ -142,6 +144,10 @@ COPY modules/inventory ./modules/inventory
 RUN npm run --if-present build -w @cobblr/inventory
 COPY modules/lists ./modules/lists
 RUN npm run --if-present build -w @cobblr/lists
+COPY modules/builds ./modules/builds
+RUN npm run --if-present build -w @cobblr/builds
+COPY modules/sales ./modules/sales
+RUN npm run --if-present build -w @cobblr/sales
 COPY modules/tracking ./modules/tracking
 RUN npm run --if-present build -w @cobblr/tracking
 COPY modules/core-scan ./modules/core-scan
@@ -172,6 +178,8 @@ RUN node scripts/install-registry-modules.mjs
 
 # api last: an api-only change rebuilds just the api, not the 34 modules.
 COPY api ./api
+# Served read-only by the public /changelog endpoint (api/src/routes/changelog.ts).
+COPY CHANGELOG.md ./CHANGELOG.md
 WORKDIR /app/api
 RUN npm run build
 
@@ -203,6 +211,8 @@ COPY --from=builder /app/sandboxed-modules ./sandboxed-modules
 # Manifest of every baked-in marketplace module — consumed at api
 # boot to populate the installed_modules table.
 COPY --from=builder /app/installed-modules.manifest.json ./installed-modules.manifest.json
+# The "What's new" archive, served read-only by GET /api/v1/changelog.
+COPY --from=builder /app/CHANGELOG.md ./CHANGELOG.md
 
 EXPOSE 4000
 

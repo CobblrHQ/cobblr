@@ -14,6 +14,8 @@ import { InventoryUI } from "@cobblr/inventory/ui";
 import { LabelsBasket, LabelsUI } from "@cobblr/labels/ui";
 import { ProjectsUI } from "@cobblr/projects/ui";
 import { ListsUI } from "@cobblr/lists/ui";
+import { BuildsUI } from "@cobblr/builds/ui";
+import { SalesUI } from "@cobblr/sales/ui";
 import { TrackingUI } from "@cobblr/tracking/ui";
 // Side-effect import: registers the UNIVERSAL file renderers (svg, …).
 // The FABRICATION renderers (stl/gcode) are gated by FilePreviewGate.
@@ -24,11 +26,13 @@ import { PairsWellWith } from "./components/PairsWellWith";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { ActiveOrgProvider, useActiveOrg, pickDefaultOrg, urlHandleFor } from "./auth/ActiveOrgContext";
 import { AuthPage, MagicConsumePage } from "./pages/AuthPage";
+import { StartAppPage } from "./pages/StartAppPage";
 import { FeedbackWidget } from "./components/FeedbackWidget";
 import { Dashboard } from "./pages/Dashboard";
 import { InviteAcceptPage } from "./pages/InviteAcceptPage";
 import { JoinPage } from "./pages/JoinPage";
 import { PublicSurfacePage } from "./pages/PublicSurfacePage";
+import { ChangelogPage } from "./pages/ChangelogPage";
 import { QrResolvePage } from "./pages/QrResolvePage";
 import { ResetPasswordPage } from "./pages/ResetPasswordPage";
 import { VerifyEmailPage } from "./pages/VerifyEmailPage";
@@ -200,10 +204,14 @@ function PublicRoutes() {
       {/* /p/:token is the un-auth'd public surface render. Reachable
           signed-in or signed-out — the token is the secret. */}
       <Route path="/p/:token" element={<PublicSurfacePage />} />
+      {/* Public "What's new" feed — reachable signed-in or signed-out. */}
+      <Route path="/changelog" element={<ChangelogPage />} />
       {/* /qr/:token — printed QR-label resolve (phone-camera scans land
           here bare, signed-in or signed-out). Navigate-mode forwards to
           /w/<org>/<detail>; the workspace shell handles login from there. */}
       <Route path="/qr/:token" element={<QrResolvePage />} />
+      {/* Streamlined consumer signup for a managed app ("Cobblr for Yarn"). */}
+      <Route path="/start/:app" element={<StartAppPage />} />
       {/* Legacy un-prefixed member-portal links → workspace-scoped portal. */}
       <Route path="/portal/:slug/*" element={<PortalSlugRedirect />} />
       <Route path="*" element={<LandingRedirect />} />
@@ -310,6 +318,20 @@ function ActiveOrgScopedRoutes() {
     role !== "editor" &&
     !onPortal;
 
+  // Managed-app lock-down: when the active workspace is a managed vertical app
+  // ("Cobblr for Yarn"), the user only ever sees the app — its instance tables,
+  // the scanner, and their own account. Every other route (the dashboard,
+  // marketplace, bundles, configuration, wires, fields, other modules) bounces
+  // to the app home, so a non-technical user never reaches the platform. A
+  // WHITELIST (not blacklist) so new platform pages are blocked by default.
+  // See business-models/docs/18-managed-vertical-apps.md.
+  const appMode = activeOrg?.app_mode ?? null;
+  const APP_ALLOWED = ["/instances", "/scan", "/me"];
+  const inAppSurface = APP_ALLOWED.some(
+    (p) => location.pathname === p || location.pathname.startsWith(p + "/"),
+  );
+  const shouldRedirectToAppHome = !!appMode && !inAppSurface;
+
   return (
     <PlatformWebProvider
       orgSlug={activeSlug}
@@ -336,6 +358,7 @@ function ActiveOrgScopedRoutes() {
           operator console, where the operator IS the recipient. */}
       {!onAdmin && <FeedbackWidget />}
       {shouldRedirectToPortal && <Navigate to={`/portal/${activeSlug}`} replace />}
+      {shouldRedirectToAppHome && <Navigate to={appMode!.home_path} replace />}
       <Routes>
         <Route element={<AppLayout activeSlug={activeSlug} />}>
           <Route index element={<Dashboard />} />
@@ -357,6 +380,24 @@ function ActiveOrgScopedRoutes() {
               <>
                 <ListsUI orgSlug={activeSlug} getToken={getToken} />
                 <div className="max-w-4xl"><PairsWellWith module="lists" orgSlug={activeSlug} /></div>
+              </>
+            }
+          />
+          <Route
+            path="/builds/*"
+            element={
+              <>
+                <BuildsUI orgSlug={activeSlug} getToken={getToken} />
+                <div className="max-w-4xl"><PairsWellWith module="builds" orgSlug={activeSlug} /></div>
+              </>
+            }
+          />
+          <Route
+            path="/sales/*"
+            element={
+              <>
+                <SalesUI orgSlug={activeSlug} getToken={getToken} />
+                <div className="max-w-4xl"><PairsWellWith module="sales" orgSlug={activeSlug} /></div>
               </>
             }
           />

@@ -199,7 +199,7 @@ const AppEntry = z.object({
 /** Compare dotted numeric versions ("0.3.2" vs "0.4.0"). <0 if a<b, 0 if equal,
  *  >0 if a>b. Non-numeric/absent segments sort as 0. Good enough for bundle
  *  version gating (semver-lite — no pre-release tags in bundle versions). */
-function cmpVersion(a: string, b: string): number {
+export function cmpVersion(a: string, b: string): number {
   const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
   const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
   for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
@@ -396,6 +396,18 @@ export interface BundleValidationPreview {
   wires_added: Array<{ source_kind: string; action_id: string; trigger_type: string }>;
   modules_required: string[];
   modules_to_enable: string[];
+  /** Phase 2 — when this is a self-upgrade and the new version changes a field the
+   *  user customized. The user layer survives by construction; this lets the
+   *  install offer keep-yours (default) / take-theirs per field. Empty on a fresh
+   *  install or when nothing the user touched changed. */
+  upgrade_conflicts: Array<{
+    entity_kind: string;
+    name: string;
+    field_label: string;
+    attr: "label" | "choices" | "removed";
+    yours: string | string[] | null;
+    theirs: string | string[] | null;
+  }>;
 }
 export interface BundleValidationResult {
   valid: boolean;
@@ -632,11 +644,63 @@ export async function validateBundle(
     }
   }
 
+  // 5. Phase 2 — upgrade conflicts. When this manifest is a NEWER version of an
+  //    already-installed bundle and the update CHANGES (or removes) a field the
+  //    USER customized (a native_field_overrides row, bundle_id null), surface it.
+  //    The user layer always survives (the bundle never writes user rows); this is
+  //    the heads-up so the install can offer keep-yours / take-theirs per field.
+  const upgradeConflicts: BundleValidationPreview["upgrade_conflicts"] = [];
+  {
+    const installed = await meta
+      .selectFrom("bundles")
+      .select("id")
+      .where("org_id", "=", orgId)
+      .where("external_id", "=", m.id)
+      .execute();
+    if (installed.length > 0) {
+      const selfIds = installed.map((b) => b.id);
+      const curDefs = await meta
+        .selectFrom("module_field_defs")
+        .select(["entity_kind", "name", "display_label", "choices"])
+        .where("org_id", "=", orgId)
+        .where("bundle_id", "in", selfIds)
+        .execute();
+      const curByKey = new Map(curDefs.map((d) => [`${d.entity_kind} ${d.name}`, d]));
+      const newByKey = new Map(m.field_defs.map((f) => [`${f.entity_kind} ${f.name}`, f]));
+      const userOvrs = await meta
+        .selectFrom("native_field_overrides")
+        .select(["entity_kind", "name", "display_label", "overrides"])
+        .where("org_id", "=", orgId)
+        .where("bundle_id", "is", null)
+        .execute();
+      const sameJson = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+      for (const o of userOvrs) {
+        const key = `${o.entity_kind} ${o.name}`;
+        const cur = curByKey.get(key);
+        if (!cur) continue; // not a field this bundle owns — nothing to reconcile
+        const fieldLabel = o.display_label ?? cur.display_label ?? o.name;
+        const incoming = newByKey.get(key);
+        if (!incoming) {
+          upgradeConflicts.push({ entity_kind: o.entity_kind, name: o.name, field_label: fieldLabel, attr: "removed", yours: o.display_label ?? null, theirs: null });
+          continue;
+        }
+        if (o.display_label != null && incoming.display_label !== cur.display_label) {
+          upgradeConflicts.push({ entity_kind: o.entity_kind, name: o.name, field_label: fieldLabel, attr: "label", yours: o.display_label, theirs: incoming.display_label });
+        }
+        const userChoices = o.overrides?.choices ?? null;
+        if (userChoices != null && !sameJson(incoming.choices, cur.choices)) {
+          upgradeConflicts.push({ entity_kind: o.entity_kind, name: o.name, field_label: fieldLabel, attr: "choices", yours: userChoices, theirs: incoming.choices ?? null });
+        }
+      }
+    }
+  }
+
   const preview: BundleValidationPreview = {
     fields_added: m.field_defs.map((f) => ({ entity_kind: f.entity_kind, name: f.name, type: f.type, display_label: f.display_label })),
     wires_added: m.wires.map((w) => ({ source_kind: w.source_kind, action_id: w.action_id, trigger_type: w.trigger_type })),
     modules_required: [...declaredRequires],
     modules_to_enable: modulesToEnable,
+    upgrade_conflicts: upgradeConflicts,
   };
   return { valid: errors.length === 0, errors, preview, manifest: m, fullManifest: full, enabledFeatures };
 }
@@ -913,6 +977,562 @@ bundlesRouter.post(
   },
 );
 
+// Apply a VALIDATED bundle (the result of validateBundle, must be .valid) to a
+// workspace: enable modules, create instances, insert field defs / wires /
+// overrides / views / catalogs / apps, and run upgrade data-migrations. Extracted
+// from POST /install so provisioning (managed apps) + the route share ONE apply.
+export async function applyValidatedBundle(
+  orgId: string,
+  sess: { id: string; display_name?: string | null; auth_method: "session" | "api_token" | "system"; api_token_id?: string | null },
+  v: BundleValidationResult,
+  opts: { takeTheirs?: Array<{ entity_kind: string; name: string }> } = {},
+): Promise<{
+  bundle: { id: string; external_id: string; name: string; version: string };
+  applied: {
+    wires: number; field_defs: number; field_overrides: number; catalogs: number;
+    auto_enabled_modules: string[]; migrations: Array<{ to_version: string; action: string; result: unknown }>;
+  };
+}> {
+  const m = v.manifest!;
+  // Apply the RESOLVED manifest (m); store the FULL manifest (features
+  // intact) + which features were enabled, so they can be toggled later.
+  const fullManifest = v.fullManifest ?? m;
+  const enabledFeatures = v.enabledFeatures ?? [];
+
+  // Phase 2 — "take theirs": drop the user override for each chosen field so
+  // the incoming bundle version wins. (Default is keep-yours, which needs no
+  // action — the user layer survives the re-push by construction.)
+  for (const t of opts.takeTheirs ?? []) {
+    await meta
+      .deleteFrom("native_field_overrides")
+      .where("org_id", "=", orgId)
+      .where("entity_kind", "=", t.entity_kind)
+      .where("name", "=", t.name)
+      .where("bundle_id", "is", null)
+      .execute();
+  }
+
+  // Confirmed path: enable the modules that need enabling, parents
+  // before children (dependency order).
+  const autoEnabled: string[] = [];
+  const toEnable = [...(v.preview?.modules_to_enable ?? [])].sort(
+    (a, b) => (getEntry(a)?.manifest.dependencies.length ?? 0) - (getEntry(b)?.manifest.dependencies.length ?? 0),
+  );
+  for (const name of toEnable) {
+    await enableModuleForOrg(orgId, name, { userId: sess.id });
+    autoEnabled.push(name);
+  }
+
+  // Already installed? Replace ANY existing version of the same bundle
+  // (external_id) — not just the same version — so installing a newer
+  // version SUPERSEDES the old one (the update path) and a re-install is
+  // idempotent. Removing the old set first frees its field defs/views so
+  // the new set applies cleanly; the user's entities (parts, etc.) stay.
+  const existing = await meta
+    .selectFrom("bundles")
+    .select(["id", "version"])
+    .where("org_id", "=", orgId)
+    .where("external_id", "=", m.id)
+    .execute();
+  // The highest previously-installed version = the migration's FROM. Null on
+  // a fresh install (no data to migrate → migrations skipped below).
+  const priorVersion =
+    existing.length > 0
+      ? existing.map((e) => e.version).sort(cmpVersion).at(-1) ?? null
+      : null;
+  for (const old of existing) {
+    await uninstallBundleId(old.id);
+  }
+
+  // Create the module instances this bundle ships (skinned copies of a
+  // multi-instance module — e.g. a "Yarn" instance of inventory). Their
+  // field defs / views / wires are applied below scoped to `<name>:item`.
+  // Idempotent: skip createInstance if the instance already exists; the nav
+  // override is insert-only so a re-install won't clobber a user's rename.
+  for (const inst of m.provides_instances) {
+    const existingInst = await getInstance(orgId, inst.instance_name);
+    if (!existingInst) {
+      await createInstance({
+        orgId: orgId,
+        moduleName: inst.module,
+        instanceName: inst.instance_name,
+        displayName: inst.display_name,
+        isDefault: false,
+      });
+    }
+    const instConfig = { item_noun: inst.item_noun ?? null, qty_unit: inst.qty_unit ?? null, parent: inst.parent ?? null };
+    await upsertOverride({
+      orgId: orgId,
+      targetKind: "instance",
+      targetId: `${inst.module}:${inst.instance_name}`,
+      displayLabel: inst.display_name,
+      icon: inst.glyph ?? null,
+      config: instConfig,
+      insertOnly: true,
+    });
+    // `config` is bundle-OWNED (item_noun / qty_unit / parent) — not a
+    // user-edited field like display_label. insertOnly above preserves a
+    // user's rename, but the config must still UPDATE on upgrade so a new
+    // version's additions (e.g. the parent picker introduced in 0.4.0) land
+    // on an already-installed instance.
+    await meta
+      .updateTable("entity_kind_overrides")
+      .set({ config: sql`${JSON.stringify(instConfig)}::jsonb` as never, updated_at: new Date() })
+      .where("org_id", "=", orgId)
+      .where("target_kind", "=", "instance")
+      .where("target_id", "=", `${inst.module}:${inst.instance_name}`)
+      .execute();
+  }
+
+  // (Field-def collisions are checked inside validateBundle above.)
+
+  const inserted = await meta.transaction().execute(async (trx) => {
+    const bundle = await trx
+      .insertInto("bundles")
+      .values({
+        org_id: orgId,
+        external_id: m.id,
+        name: m.name,
+        version: m.version,
+        author: m.author ?? null,
+        description: m.description ?? null,
+        source_url: null,
+        manifest: sql`${JSON.stringify(fullManifest)}::jsonb`,
+        enabled_features: enabledFeatures,
+      })
+      .returning(["id", "external_id", "name", "version"])
+      .executeTakeFirstOrThrow();
+
+    for (const w of m.wires) {
+      await trx
+        .insertInto("entity_action_bindings")
+        .values({
+          org_id: orgId,
+          source_kind: w.source_kind,
+          action_id: w.action_id,
+          trigger_type: w.trigger_type,
+          trigger_event: w.trigger_event ?? null,
+          trigger_schedule: w.trigger_schedule ?? null,
+          template: w.template ?? null,
+          filter: w.filter ? sql`${JSON.stringify(w.filter)}::jsonb` : null,
+          args: w.args ? sql`${JSON.stringify(w.args)}::jsonb` : null,
+          bundle_id: bundle.id,
+          target: w.target
+            ? sql`${JSON.stringify(w.target)}::jsonb`
+            : sql`'"self"'::jsonb`,
+        })
+        .execute();
+    }
+    for (const f of m.field_defs) {
+      // Q6: collisions were pre-checked above and the install
+      // would have already failed with 409 field_def_collision.
+      // Plain insert; the unique constraint will surface any
+      // unexpected races as a 500 (and the transaction rolls
+      // back).
+      await trx
+        .insertInto("module_field_defs")
+        .values({
+          org_id: orgId,
+          entity_kind: f.entity_kind,
+          name: f.name,
+          display_label: f.display_label,
+          type: f.type,
+          required: f.required ?? false,
+          position: f.position ?? 0,
+          bundle_id: bundle.id,
+          // Propagate dropdown choices when the bundle supplies
+          // them — Pillar-E specialisation bundles use this for
+          // hotend / firmware / spindle etc.
+          choices: f.choices
+            ? (sql`${JSON.stringify(f.choices)}::jsonb` as unknown as string[])
+            : null,
+          renderer: (f as { renderer?: string | null }).renderer ?? null,
+          template: f.type === "computed" ? f.template ?? null : null,
+          help: f.help ?? null,
+        })
+        .execute();
+    }
+    // Native-field overrides (relabel / show-hide). Upsert so a bundle can
+    // reshape a field another bundle already touched (last writer wins);
+    // tagged with bundle_id so uninstall cleans them up.
+    for (const fo of m.field_overrides) {
+      await trx
+        .insertInto("native_field_overrides")
+        .values({
+          org_id: orgId,
+          entity_kind: fo.entity_kind,
+          name: fo.name,
+          display_label: fo.display_label ?? null,
+          hidden: fo.hidden ?? false,
+          position: fo.position ?? 0,
+          bundle_id: bundle.id,
+        })
+        .onConflict((c) =>
+          c
+            .columns(["org_id", "entity_kind", "name"])
+            .doUpdateSet({
+              display_label: fo.display_label ?? null,
+              hidden: fo.hidden ?? false,
+              position: fo.position ?? 0,
+              bundle_id: bundle.id,
+              updated_at: new Date(),
+            })
+            // Never overwrite a USER override (bundle_id null) on re-push: the
+            // user layer wins + survives bundle upgrades (bundle-overrides Phase 1).
+            .where("native_field_overrides.bundle_id", "is not", null),
+        )
+        .execute();
+    }
+
+    // Per-instance contributions — same shapes, but scoped to the
+    // instance's entity kind `<instance_name>:item` so they live ONLY on
+    // that instance (the Yarn instance shows yarn fields; the base
+    // inventory is untouched). saved_views run in the tenant-DB block below.
+    for (const inst of m.provides_instances) {
+      const kind = `${inst.instance_name}:item`;
+      for (const w of inst.wires) {
+        await trx
+          .insertInto("entity_action_bindings")
+          .values({
+            org_id: orgId,
+            source_kind: kind,
+            action_id: w.action_id,
+            trigger_type: w.trigger_type,
+            trigger_event: w.trigger_event ?? null,
+            trigger_schedule: w.trigger_schedule ?? null,
+            template: w.template ?? null,
+            filter: w.filter ? sql`${JSON.stringify(w.filter)}::jsonb` : null,
+            args: w.args ? sql`${JSON.stringify(w.args)}::jsonb` : null,
+            bundle_id: bundle.id,
+            target: w.target ? sql`${JSON.stringify(w.target)}::jsonb` : sql`'"self"'::jsonb`,
+          })
+          .execute();
+      }
+      for (const f of inst.field_defs) {
+        await trx
+          .insertInto("module_field_defs")
+          .values({
+            org_id: orgId,
+            entity_kind: kind,
+            name: f.name,
+            display_label: f.display_label,
+            type: f.type,
+            required: f.required ?? false,
+            position: f.position ?? 0,
+            bundle_id: bundle.id,
+            choices: f.choices
+              ? (sql`${JSON.stringify(f.choices)}::jsonb` as unknown as string[])
+              : null,
+            renderer: (f as { renderer?: string | null }).renderer ?? null,
+            template: f.type === "computed" ? f.template ?? null : null,
+            help: f.help ?? null,
+          })
+          .execute();
+      }
+      for (const fo of inst.field_overrides) {
+        await trx
+          .insertInto("native_field_overrides")
+          .values({
+            org_id: orgId,
+            entity_kind: kind,
+            name: fo.name,
+            display_label: fo.display_label ?? null,
+            hidden: fo.hidden ?? false,
+            position: fo.position ?? 0,
+            bundle_id: bundle.id,
+          })
+          .onConflict((c) =>
+            c
+              .columns(["org_id", "entity_kind", "name"])
+              .doUpdateSet({
+                display_label: fo.display_label ?? null,
+                hidden: fo.hidden ?? false,
+                position: fo.position ?? 0,
+                bundle_id: bundle.id,
+                updated_at: new Date(),
+              })
+              // Never overwrite a USER override (bundle_id null) on re-push.
+              .where("native_field_overrides.bundle_id", "is not", null),
+          )
+          .execute();
+      }
+    }
+    return bundle;
+  });
+
+  // v1.6: bundle catalogs land in the tenant DB too (core-catalogs
+  // module). Same pattern as saved_views: separate DB → can't share
+  // the meta transaction. Upsert by (bundle_external_id,
+  // external_id_within_bundle) — re-install refreshes the schema
+  // config in place, rows survive.
+  let catalogsInstalled = 0;
+  if (m.catalogs.length > 0) {
+    try {
+      const tdb = (await getTenantDb(orgId)) as unknown as Kysely<BundleTenantDB>;
+      for (const c of m.catalogs) {
+        const existing = await tdb
+          .selectFrom("core_catalogs_catalogs")
+          .select("id")
+          .where("bundle_external_id", "=", `${m.id}/${c.external_id}`)
+          .executeTakeFirst();
+        if (existing) {
+          await tdb
+            .updateTable("core_catalogs_catalogs")
+            .set({
+              name: c.name,
+              description: c.description ?? null,
+              source_url: c.source_url ?? null,
+              puller_id: c.puller_id ?? null,
+              schema: sql`${JSON.stringify(c.schema)}::jsonb`,
+              updated_at: new Date(),
+            })
+            .where("id", "=", existing.id)
+            .execute();
+        } else {
+          await tdb
+            .insertInto("core_catalogs_catalogs")
+            .values({
+              name: c.name,
+              description: c.description ?? null,
+              source_url: c.source_url ?? null,
+              puller_id: c.puller_id ?? null,
+              schema: sql`${JSON.stringify(c.schema)}::jsonb`,
+              bundle_external_id: `${m.id}/${c.external_id}`,
+            } as never)
+            .execute();
+        }
+        catalogsInstalled++;
+      }
+    } catch (err) {
+      console.error(
+        `[bundle-install] catalogs insert failed for bundle ${inserted.id} (${inserted.external_id}):`,
+        err,
+      );
+      // B2 from 2026-05-25-audit: don't fail the whole install;
+      // mark partial + return a warning. The bundle row stays in
+      // place + the workspace admin sees the partial state in the
+      // bundles list. Re-install fixes it.
+      await meta
+        .updateTable("bundles")
+        .set({
+          install_status: "partial",
+          install_warnings: sql`${JSON.stringify([
+            {
+              step: "catalogs",
+              failed_count: m.catalogs.length - catalogsInstalled,
+              message: (err as Error).message,
+            },
+          ])}::jsonb` as never,
+        })
+        .where("id", "=", inserted.id)
+        .execute();
+    }
+  }
+
+  // v1.5: bundle saved_views land in core-views' tenant table,
+  // which lives in a different Postgres DB from cobblr_meta. We
+  // can't extend the meta transaction across DBs, so this runs
+  // as a follow-up step. If it fails, the bundle is "installed"
+  // (meta side) but missing its views — the user can re-install
+  // (the existing-version uninstall path cleans up first) to
+  // recover. Logged loud so the partial state is visible.
+  let viewsInstalled = 0;
+  // Base views (declared entity_kind) + per-instance views (scoped to
+  // `<instance_name>:item`) are applied the same way.
+  const allViews = [
+    ...m.saved_views,
+    ...m.provides_instances.flatMap((inst) =>
+      inst.saved_views.map((v) => ({ ...v, entity_kind: `${inst.instance_name}:item` })),
+    ),
+  ];
+  if (allViews.length > 0) {
+    try {
+      const tdb = (await getTenantDb(orgId)) as unknown as Kysely<BundleTenantDB>;
+      for (const v of allViews) {
+        await tdb
+          .insertInto("core_views_views")
+          .values({
+            entity_kind: v.entity_kind,
+            name: v.name,
+            view_type: v.view_type,
+            config: sql`${JSON.stringify(v.config)}::jsonb`,
+            is_default: v.is_default ?? false,
+            pinned: v.pinned ?? false,
+            owner_user_id: null,
+            bundle_id: inserted.id,
+            source_module: null,
+          } as never)
+          .execute();
+        viewsInstalled++;
+      }
+    } catch (err) {
+      console.error(
+        `[bundle-install] saved_views insert failed for bundle ${inserted.id} (${inserted.external_id}):`,
+        err,
+      );
+      // B2: same pattern as the catalogs path — mark partial,
+      // return success-ish with a warning. Re-install to recover.
+      await meta
+        .updateTable("bundles")
+        .set({
+          install_status: "partial",
+          install_warnings: sql`coalesce(install_warnings, '[]'::jsonb) || ${JSON.stringify([
+            {
+              step: "saved_views",
+              failed_count: m.saved_views.length - viewsInstalled,
+              message: (err as Error).message,
+            },
+          ])}::jsonb` as never,
+        })
+        .where("id", "=", inserted.id)
+        .execute();
+    }
+  }
+
+  // Seed bundle-provided WorkspaceApps (e.g. Wardrobe → the Outfit
+  // Planner). Idempotent on slug — skip if one already exists so a
+  // re-install doesn't clobber a workspace's edits. Needs core-apps
+  // enabled (declare it in the bundle/feature requires) so the table
+  // exists; a miss is logged, non-fatal.
+  if (m.provides_apps.length > 0) {
+    try {
+      const tdb = (await getTenantDb(orgId)) as unknown as Kysely<BundleTenantDB>;
+      for (const app of m.provides_apps) {
+        const exists = await tdb
+          .selectFrom("core_apps_apps")
+          .select("id")
+          .where("slug", "=", app.slug)
+          .executeTakeFirst();
+        if (exists) continue;
+        await tdb
+          .insertInto("core_apps_apps")
+          .values({
+            slug: app.slug,
+            name: app.name,
+            icon: app.icon ?? null,
+            visible_capability: app.visible_capability ?? null,
+            pages: sql`${JSON.stringify(app.pages)}::jsonb` as never,
+            theme: app.theme ? (sql`${JSON.stringify(app.theme)}::jsonb` as never) : null,
+            created_by: null,
+          } as never)
+          .execute();
+      }
+    } catch (err) {
+      console.error(`[bundle-install] provides_apps insert failed for bundle ${inserted.id}:`, err);
+    }
+  }
+
+  // v1.6 (lens-promotion.md §1.3): if the bundle declares
+   // provides_lens, write initial entity_kind_overrides rows so the
+   // nav / breadcrumbs / search-chips render the bundle as a
+   // top-level item with its chosen label + icon. Workspace edits
+   // trump these defaults; insertOnly=true means a re-install
+   // doesn't clobber a workspace's customisation.
+  if (m.provides_lens) {
+    const lens = m.provides_lens;
+    try {
+      await upsertOverride({
+        orgId: orgId,
+        targetKind: "bundle",
+        targetId: m.id,
+        displayLabel: lens.label_override ?? lens.display_name,
+        icon: lens.icon ?? null,
+        insertOnly: true,
+        config: {
+          presents_as_top_level: lens.presents_as_top_level === true,
+          parent_kind: lens.entity_kind,
+          lens_slug: lens.name,
+        },
+      });
+      if (lens.hide_parent) {
+        // Parent kind gets a hidden=true override, scoped to
+        // target_kind='entity_kind'. Workspace can flip back on at
+        // /configuration/presentation.
+        await upsertOverride({
+          orgId: orgId,
+          targetKind: "entity_kind",
+          targetId: lens.entity_kind,
+          hidden: true,
+          insertOnly: true,
+        });
+      }
+    } catch (err) {
+      console.error(
+        `[bundle-install] lens override seed failed for ${inserted.id} (${inserted.external_id}):`,
+        err,
+      );
+      // Continue — overrides are presentation, not data. Re-install
+      // recovers.
+    }
+  }
+
+  // Count instance-scoped field_defs/wires too — an instance bundle (e.g.
+  // Yarn) carries ALL its fields on `provides_instances`, with an empty base
+  // `field_defs`. Counting only the base reported "Added 0 fields" even
+  // though the Yarn table got colorway/fibre/weight/… (applied above).
+  const instanceFieldDefs = m.provides_instances.reduce((n, inst) => n + inst.field_defs.length, 0);
+  const instanceWires = m.provides_instances.reduce((n, inst) => n + inst.wires.length, 0);
+  const totalFieldDefs = m.field_defs.length + instanceFieldDefs;
+  const totalWires = m.wires.length + instanceWires;
+  await activity.log({
+    orgId: orgId,
+    action: "bundle_installed",
+    ref: { module: null, entityType: "bundle", entityId: inserted.id },
+    diff: {
+      external_id: m.id,
+      version: m.version,
+      name: m.name,
+      wires: totalWires,
+      field_defs: totalFieldDefs,
+      saved_views: viewsInstalled,
+      catalogs: catalogsInstalled,
+    },
+  });
+  // Run the bundle's OWN data migrations whose to_version we just crossed —
+  // only on an UPGRADE (priorVersion set + below to_version). A fresh install
+  // runs none (no data to move). Idempotent: the migration actions skip
+  // already-migrated rows, so a re-upgrade is safe. Non-fatal: a failed
+  // migration logs + the install still succeeds (re-install retries).
+  const migrationsRun: Array<{ to_version: string; action: string; result: unknown }> = [];
+  if (priorVersion && m.migrations.length > 0) {
+    const actor = {
+      user_id: sess.id,
+      display_name: sess.display_name ?? null,
+      auth_method: sess.auth_method,
+      api_token_id: sess.api_token_id ?? null,
+      api_token_name: null,
+    };
+    for (const mig of m.migrations) {
+      if (cmpVersion(priorVersion, mig.to_version) >= 0) continue; // already past it
+      try {
+        const result = await platform().actions.invoke(mig.action, {
+          orgId: orgId,
+          userId: sess.id,
+          entity: { kind: "inventory:part", id: "" },
+          event: { name: "bundle.upgraded", payload: {}, actor, timestamp: new Date().toISOString(), trigger_type: "event" },
+          args: mig.args,
+          entityKind: "inventory:part",
+          entityId: "",
+        });
+        migrationsRun.push({ to_version: mig.to_version, action: mig.action, result });
+      } catch (err) {
+        console.error(`[bundle-install] migration ${mig.action} (→${mig.to_version}) failed for ${inserted.id}:`, (err as Error).message);
+      }
+    }
+  }
+  return {
+    bundle: inserted,
+    applied: {
+      wires: totalWires,
+      field_defs: totalFieldDefs,
+      field_overrides: m.field_overrides.length,
+      catalogs: catalogsInstalled,
+      auto_enabled_modules: autoEnabled,
+      migrations: migrationsRun,
+    },
+  };
+}
+
 bundlesRouter.post(
   "/install",
   requireAuth,
@@ -934,6 +1554,9 @@ bundlesRouter.post(
         /** Phase 2: which optional features to install. Omitted → the
          *  features' own default:true set (validateBundle's fallback). */
         enabled_features: z.array(z.string()).optional(),
+        /** Upgrade conflicts (preview.upgrade_conflicts) the user chose to
+         *  "take theirs" on: drop the user override so the new bundle wins. */
+        take_theirs: z.array(z.object({ entity_kind: z.string(), name: z.string() })).optional(),
       });
       const body = ManifestBody.safeParse(req.body);
       if (!body.success) {
@@ -988,522 +1611,13 @@ bundlesRouter.post(
         res.status(400).json({ error: { code: "invalid_bundle", message: "Bundle manifest failed validation", details: { errors: v.errors } } });
         return;
       }
-      const m = v.manifest!;
-      // Apply the RESOLVED manifest (m); store the FULL manifest (features
-      // intact) + which features were enabled, so they can be toggled later.
-      const fullManifest = v.fullManifest ?? m;
-      const enabledFeatures = v.enabledFeatures ?? [];
-
-      // Confirmed path: enable the modules that need enabling, parents
-      // before children (dependency order).
-      const autoEnabled: string[] = [];
-      const toEnable = [...(v.preview?.modules_to_enable ?? [])].sort(
-        (a, b) => (getEntry(a)?.manifest.dependencies.length ?? 0) - (getEntry(b)?.manifest.dependencies.length ?? 0),
+      const result = await applyValidatedBundle(
+        req.tenant!.org.id,
+        { id: req.session!.id, display_name: req.session!.display_name ?? null, auth_method: req.session!.auth_method, api_token_id: req.session!.api_token_id ?? null },
+        v,
+        { takeTheirs: body.data.take_theirs },
       );
-      for (const name of toEnable) {
-        await enableModuleForOrg(req.tenant!.org.id, name, { userId: req.session!.id });
-        autoEnabled.push(name);
-      }
-
-      // Already installed? Replace ANY existing version of the same bundle
-      // (external_id) — not just the same version — so installing a newer
-      // version SUPERSEDES the old one (the update path) and a re-install is
-      // idempotent. Removing the old set first frees its field defs/views so
-      // the new set applies cleanly; the user's entities (parts, etc.) stay.
-      const existing = await meta
-        .selectFrom("bundles")
-        .select(["id", "version"])
-        .where("org_id", "=", req.tenant!.org.id)
-        .where("external_id", "=", m.id)
-        .execute();
-      // The highest previously-installed version = the migration's FROM. Null on
-      // a fresh install (no data to migrate → migrations skipped below).
-      const priorVersion =
-        existing.length > 0
-          ? existing.map((e) => e.version).sort(cmpVersion).at(-1) ?? null
-          : null;
-      for (const old of existing) {
-        await uninstallBundleId(old.id);
-      }
-
-      // Create the module instances this bundle ships (skinned copies of a
-      // multi-instance module — e.g. a "Yarn" instance of inventory). Their
-      // field defs / views / wires are applied below scoped to `<name>:item`.
-      // Idempotent: skip createInstance if the instance already exists; the nav
-      // override is insert-only so a re-install won't clobber a user's rename.
-      for (const inst of m.provides_instances) {
-        const existingInst = await getInstance(req.tenant!.org.id, inst.instance_name);
-        if (!existingInst) {
-          await createInstance({
-            orgId: req.tenant!.org.id,
-            moduleName: inst.module,
-            instanceName: inst.instance_name,
-            displayName: inst.display_name,
-            isDefault: false,
-          });
-        }
-        const instConfig = { item_noun: inst.item_noun ?? null, qty_unit: inst.qty_unit ?? null, parent: inst.parent ?? null };
-        await upsertOverride({
-          orgId: req.tenant!.org.id,
-          targetKind: "instance",
-          targetId: `${inst.module}:${inst.instance_name}`,
-          displayLabel: inst.display_name,
-          icon: inst.glyph ?? null,
-          config: instConfig,
-          insertOnly: true,
-        });
-        // `config` is bundle-OWNED (item_noun / qty_unit / parent) — not a
-        // user-edited field like display_label. insertOnly above preserves a
-        // user's rename, but the config must still UPDATE on upgrade so a new
-        // version's additions (e.g. the parent picker introduced in 0.4.0) land
-        // on an already-installed instance.
-        await meta
-          .updateTable("entity_kind_overrides")
-          .set({ config: sql`${JSON.stringify(instConfig)}::jsonb` as never, updated_at: new Date() })
-          .where("org_id", "=", req.tenant!.org.id)
-          .where("target_kind", "=", "instance")
-          .where("target_id", "=", `${inst.module}:${inst.instance_name}`)
-          .execute();
-      }
-
-      // (Field-def collisions are checked inside validateBundle above.)
-
-      const inserted = await meta.transaction().execute(async (trx) => {
-        const bundle = await trx
-          .insertInto("bundles")
-          .values({
-            org_id: req.tenant!.org.id,
-            external_id: m.id,
-            name: m.name,
-            version: m.version,
-            author: m.author ?? null,
-            description: m.description ?? null,
-            source_url: null,
-            manifest: sql`${JSON.stringify(fullManifest)}::jsonb`,
-            enabled_features: enabledFeatures,
-          })
-          .returning(["id", "external_id", "name", "version"])
-          .executeTakeFirstOrThrow();
-
-        for (const w of m.wires) {
-          await trx
-            .insertInto("entity_action_bindings")
-            .values({
-              org_id: req.tenant!.org.id,
-              source_kind: w.source_kind,
-              action_id: w.action_id,
-              trigger_type: w.trigger_type,
-              trigger_event: w.trigger_event ?? null,
-              trigger_schedule: w.trigger_schedule ?? null,
-              template: w.template ?? null,
-              filter: w.filter ? sql`${JSON.stringify(w.filter)}::jsonb` : null,
-              args: w.args ? sql`${JSON.stringify(w.args)}::jsonb` : null,
-              bundle_id: bundle.id,
-              target: w.target
-                ? sql`${JSON.stringify(w.target)}::jsonb`
-                : sql`'"self"'::jsonb`,
-            })
-            .execute();
-        }
-        for (const f of m.field_defs) {
-          // Q6: collisions were pre-checked above and the install
-          // would have already failed with 409 field_def_collision.
-          // Plain insert; the unique constraint will surface any
-          // unexpected races as a 500 (and the transaction rolls
-          // back).
-          await trx
-            .insertInto("module_field_defs")
-            .values({
-              org_id: req.tenant!.org.id,
-              entity_kind: f.entity_kind,
-              name: f.name,
-              display_label: f.display_label,
-              type: f.type,
-              required: f.required ?? false,
-              position: f.position ?? 0,
-              bundle_id: bundle.id,
-              // Propagate dropdown choices when the bundle supplies
-              // them — Pillar-E specialisation bundles use this for
-              // hotend / firmware / spindle etc.
-              choices: f.choices
-                ? (sql`${JSON.stringify(f.choices)}::jsonb` as unknown as string[])
-                : null,
-              renderer: (f as { renderer?: string | null }).renderer ?? null,
-              template: f.type === "computed" ? f.template ?? null : null,
-              help: f.help ?? null,
-            })
-            .execute();
-        }
-        // Native-field overrides (relabel / show-hide). Upsert so a bundle can
-        // reshape a field another bundle already touched (last writer wins);
-        // tagged with bundle_id so uninstall cleans them up.
-        for (const fo of m.field_overrides) {
-          await trx
-            .insertInto("native_field_overrides")
-            .values({
-              org_id: req.tenant!.org.id,
-              entity_kind: fo.entity_kind,
-              name: fo.name,
-              display_label: fo.display_label ?? null,
-              hidden: fo.hidden ?? false,
-              position: fo.position ?? 0,
-              bundle_id: bundle.id,
-            })
-            .onConflict((c) =>
-              c.columns(["org_id", "entity_kind", "name"]).doUpdateSet({
-                display_label: fo.display_label ?? null,
-                hidden: fo.hidden ?? false,
-                position: fo.position ?? 0,
-                bundle_id: bundle.id,
-                updated_at: new Date(),
-              }),
-            )
-            .execute();
-        }
-
-        // Per-instance contributions — same shapes, but scoped to the
-        // instance's entity kind `<instance_name>:item` so they live ONLY on
-        // that instance (the Yarn instance shows yarn fields; the base
-        // inventory is untouched). saved_views run in the tenant-DB block below.
-        for (const inst of m.provides_instances) {
-          const kind = `${inst.instance_name}:item`;
-          for (const w of inst.wires) {
-            await trx
-              .insertInto("entity_action_bindings")
-              .values({
-                org_id: req.tenant!.org.id,
-                source_kind: kind,
-                action_id: w.action_id,
-                trigger_type: w.trigger_type,
-                trigger_event: w.trigger_event ?? null,
-                trigger_schedule: w.trigger_schedule ?? null,
-                template: w.template ?? null,
-                filter: w.filter ? sql`${JSON.stringify(w.filter)}::jsonb` : null,
-                args: w.args ? sql`${JSON.stringify(w.args)}::jsonb` : null,
-                bundle_id: bundle.id,
-                target: w.target ? sql`${JSON.stringify(w.target)}::jsonb` : sql`'"self"'::jsonb`,
-              })
-              .execute();
-          }
-          for (const f of inst.field_defs) {
-            await trx
-              .insertInto("module_field_defs")
-              .values({
-                org_id: req.tenant!.org.id,
-                entity_kind: kind,
-                name: f.name,
-                display_label: f.display_label,
-                type: f.type,
-                required: f.required ?? false,
-                position: f.position ?? 0,
-                bundle_id: bundle.id,
-                choices: f.choices
-                  ? (sql`${JSON.stringify(f.choices)}::jsonb` as unknown as string[])
-                  : null,
-                renderer: (f as { renderer?: string | null }).renderer ?? null,
-                template: f.type === "computed" ? f.template ?? null : null,
-                help: f.help ?? null,
-              })
-              .execute();
-          }
-          for (const fo of inst.field_overrides) {
-            await trx
-              .insertInto("native_field_overrides")
-              .values({
-                org_id: req.tenant!.org.id,
-                entity_kind: kind,
-                name: fo.name,
-                display_label: fo.display_label ?? null,
-                hidden: fo.hidden ?? false,
-                position: fo.position ?? 0,
-                bundle_id: bundle.id,
-              })
-              .onConflict((c) =>
-                c.columns(["org_id", "entity_kind", "name"]).doUpdateSet({
-                  display_label: fo.display_label ?? null,
-                  hidden: fo.hidden ?? false,
-                  position: fo.position ?? 0,
-                  bundle_id: bundle.id,
-                  updated_at: new Date(),
-                }),
-              )
-              .execute();
-          }
-        }
-        return bundle;
-      });
-
-      // v1.6: bundle catalogs land in the tenant DB too (core-catalogs
-      // module). Same pattern as saved_views: separate DB → can't share
-      // the meta transaction. Upsert by (bundle_external_id,
-      // external_id_within_bundle) — re-install refreshes the schema
-      // config in place, rows survive.
-      let catalogsInstalled = 0;
-      if (m.catalogs.length > 0) {
-        try {
-          const tdb = (await getTenantDb(req.tenant!.org.id)) as unknown as Kysely<BundleTenantDB>;
-          for (const c of m.catalogs) {
-            const existing = await tdb
-              .selectFrom("core_catalogs_catalogs")
-              .select("id")
-              .where("bundle_external_id", "=", `${m.id}/${c.external_id}`)
-              .executeTakeFirst();
-            if (existing) {
-              await tdb
-                .updateTable("core_catalogs_catalogs")
-                .set({
-                  name: c.name,
-                  description: c.description ?? null,
-                  source_url: c.source_url ?? null,
-                  puller_id: c.puller_id ?? null,
-                  schema: sql`${JSON.stringify(c.schema)}::jsonb`,
-                  updated_at: new Date(),
-                })
-                .where("id", "=", existing.id)
-                .execute();
-            } else {
-              await tdb
-                .insertInto("core_catalogs_catalogs")
-                .values({
-                  name: c.name,
-                  description: c.description ?? null,
-                  source_url: c.source_url ?? null,
-                  puller_id: c.puller_id ?? null,
-                  schema: sql`${JSON.stringify(c.schema)}::jsonb`,
-                  bundle_external_id: `${m.id}/${c.external_id}`,
-                } as never)
-                .execute();
-            }
-            catalogsInstalled++;
-          }
-        } catch (err) {
-          console.error(
-            `[bundle-install] catalogs insert failed for bundle ${inserted.id} (${inserted.external_id}):`,
-            err,
-          );
-          // B2 from 2026-05-25-audit: don't fail the whole install;
-          // mark partial + return a warning. The bundle row stays in
-          // place + the workspace admin sees the partial state in the
-          // bundles list. Re-install fixes it.
-          await meta
-            .updateTable("bundles")
-            .set({
-              install_status: "partial",
-              install_warnings: sql`${JSON.stringify([
-                {
-                  step: "catalogs",
-                  failed_count: m.catalogs.length - catalogsInstalled,
-                  message: (err as Error).message,
-                },
-              ])}::jsonb` as never,
-            })
-            .where("id", "=", inserted.id)
-            .execute();
-        }
-      }
-
-      // v1.5: bundle saved_views land in core-views' tenant table,
-      // which lives in a different Postgres DB from cobblr_meta. We
-      // can't extend the meta transaction across DBs, so this runs
-      // as a follow-up step. If it fails, the bundle is "installed"
-      // (meta side) but missing its views — the user can re-install
-      // (the existing-version uninstall path cleans up first) to
-      // recover. Logged loud so the partial state is visible.
-      let viewsInstalled = 0;
-      // Base views (declared entity_kind) + per-instance views (scoped to
-      // `<instance_name>:item`) are applied the same way.
-      const allViews = [
-        ...m.saved_views,
-        ...m.provides_instances.flatMap((inst) =>
-          inst.saved_views.map((v) => ({ ...v, entity_kind: `${inst.instance_name}:item` })),
-        ),
-      ];
-      if (allViews.length > 0) {
-        try {
-          const tdb = (await getTenantDb(req.tenant!.org.id)) as unknown as Kysely<BundleTenantDB>;
-          for (const v of allViews) {
-            await tdb
-              .insertInto("core_views_views")
-              .values({
-                entity_kind: v.entity_kind,
-                name: v.name,
-                view_type: v.view_type,
-                config: sql`${JSON.stringify(v.config)}::jsonb`,
-                is_default: v.is_default ?? false,
-                pinned: v.pinned ?? false,
-                owner_user_id: null,
-                bundle_id: inserted.id,
-                source_module: null,
-              } as never)
-              .execute();
-            viewsInstalled++;
-          }
-        } catch (err) {
-          console.error(
-            `[bundle-install] saved_views insert failed for bundle ${inserted.id} (${inserted.external_id}):`,
-            err,
-          );
-          // B2: same pattern as the catalogs path — mark partial,
-          // return success-ish with a warning. Re-install to recover.
-          await meta
-            .updateTable("bundles")
-            .set({
-              install_status: "partial",
-              install_warnings: sql`coalesce(install_warnings, '[]'::jsonb) || ${JSON.stringify([
-                {
-                  step: "saved_views",
-                  failed_count: m.saved_views.length - viewsInstalled,
-                  message: (err as Error).message,
-                },
-              ])}::jsonb` as never,
-            })
-            .where("id", "=", inserted.id)
-            .execute();
-        }
-      }
-
-      // Seed bundle-provided WorkspaceApps (e.g. Wardrobe → the Outfit
-      // Planner). Idempotent on slug — skip if one already exists so a
-      // re-install doesn't clobber a workspace's edits. Needs core-apps
-      // enabled (declare it in the bundle/feature requires) so the table
-      // exists; a miss is logged, non-fatal.
-      if (m.provides_apps.length > 0) {
-        try {
-          const tdb = (await getTenantDb(req.tenant!.org.id)) as unknown as Kysely<BundleTenantDB>;
-          for (const app of m.provides_apps) {
-            const exists = await tdb
-              .selectFrom("core_apps_apps")
-              .select("id")
-              .where("slug", "=", app.slug)
-              .executeTakeFirst();
-            if (exists) continue;
-            await tdb
-              .insertInto("core_apps_apps")
-              .values({
-                slug: app.slug,
-                name: app.name,
-                icon: app.icon ?? null,
-                visible_capability: app.visible_capability ?? null,
-                pages: sql`${JSON.stringify(app.pages)}::jsonb` as never,
-                theme: app.theme ? (sql`${JSON.stringify(app.theme)}::jsonb` as never) : null,
-                created_by: null,
-              } as never)
-              .execute();
-          }
-        } catch (err) {
-          console.error(`[bundle-install] provides_apps insert failed for bundle ${inserted.id}:`, err);
-        }
-      }
-
-      // v1.6 (lens-promotion.md §1.3): if the bundle declares
-       // provides_lens, write initial entity_kind_overrides rows so the
-       // nav / breadcrumbs / search-chips render the bundle as a
-       // top-level item with its chosen label + icon. Workspace edits
-       // trump these defaults; insertOnly=true means a re-install
-       // doesn't clobber a workspace's customisation.
-      if (m.provides_lens) {
-        const lens = m.provides_lens;
-        try {
-          await upsertOverride({
-            orgId: req.tenant!.org.id,
-            targetKind: "bundle",
-            targetId: m.id,
-            displayLabel: lens.label_override ?? lens.display_name,
-            icon: lens.icon ?? null,
-            insertOnly: true,
-            config: {
-              presents_as_top_level: lens.presents_as_top_level === true,
-              parent_kind: lens.entity_kind,
-              lens_slug: lens.name,
-            },
-          });
-          if (lens.hide_parent) {
-            // Parent kind gets a hidden=true override, scoped to
-            // target_kind='entity_kind'. Workspace can flip back on at
-            // /configuration/presentation.
-            await upsertOverride({
-              orgId: req.tenant!.org.id,
-              targetKind: "entity_kind",
-              targetId: lens.entity_kind,
-              hidden: true,
-              insertOnly: true,
-            });
-          }
-        } catch (err) {
-          console.error(
-            `[bundle-install] lens override seed failed for ${inserted.id} (${inserted.external_id}):`,
-            err,
-          );
-          // Continue — overrides are presentation, not data. Re-install
-          // recovers.
-        }
-      }
-
-      // Count instance-scoped field_defs/wires too — an instance bundle (e.g.
-      // Yarn) carries ALL its fields on `provides_instances`, with an empty base
-      // `field_defs`. Counting only the base reported "Added 0 fields" even
-      // though the Yarn table got colorway/fibre/weight/… (applied above).
-      const instanceFieldDefs = m.provides_instances.reduce((n, inst) => n + inst.field_defs.length, 0);
-      const instanceWires = m.provides_instances.reduce((n, inst) => n + inst.wires.length, 0);
-      const totalFieldDefs = m.field_defs.length + instanceFieldDefs;
-      const totalWires = m.wires.length + instanceWires;
-      await activity.log({
-        orgId: req.tenant!.org.id,
-        action: "bundle_installed",
-        ref: { module: null, entityType: "bundle", entityId: inserted.id },
-        diff: {
-          external_id: m.id,
-          version: m.version,
-          name: m.name,
-          wires: totalWires,
-          field_defs: totalFieldDefs,
-          saved_views: viewsInstalled,
-          catalogs: catalogsInstalled,
-        },
-      });
-      // Run the bundle's OWN data migrations whose to_version we just crossed —
-      // only on an UPGRADE (priorVersion set + below to_version). A fresh install
-      // runs none (no data to move). Idempotent: the migration actions skip
-      // already-migrated rows, so a re-upgrade is safe. Non-fatal: a failed
-      // migration logs + the install still succeeds (re-install retries).
-      const migrationsRun: Array<{ to_version: string; action: string; result: unknown }> = [];
-      if (priorVersion && m.migrations.length > 0) {
-        const actor = {
-          user_id: req.session!.id,
-          display_name: req.session!.display_name ?? null,
-          auth_method: req.session!.auth_method,
-          api_token_id: req.session!.api_token_id ?? null,
-          api_token_name: null,
-        };
-        for (const mig of m.migrations) {
-          if (cmpVersion(priorVersion, mig.to_version) >= 0) continue; // already past it
-          try {
-            const result = await platform().actions.invoke(mig.action, {
-              orgId: req.tenant!.org.id,
-              userId: req.session!.id,
-              entity: { kind: "inventory:part", id: "" },
-              event: { name: "bundle.upgraded", payload: {}, actor, timestamp: new Date().toISOString(), trigger_type: "event" },
-              args: mig.args,
-              entityKind: "inventory:part",
-              entityId: "",
-            });
-            migrationsRun.push({ to_version: mig.to_version, action: mig.action, result });
-          } catch (err) {
-            console.error(`[bundle-install] migration ${mig.action} (→${mig.to_version}) failed for ${inserted.id}:`, (err as Error).message);
-          }
-        }
-      }
-      res.status(201).json({
-        bundle: inserted,
-        applied: {
-          wires: totalWires,
-          field_defs: totalFieldDefs,
-          field_overrides: m.field_overrides.length,
-          catalogs: catalogsInstalled,
-          auto_enabled_modules: autoEnabled,
-          migrations: migrationsRun,
-        },
-      });
+      res.status(201).json(result);
     } catch (err) {
       next(err);
     }

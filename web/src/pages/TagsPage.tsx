@@ -3,7 +3,7 @@
 // happens module-side (Files page, parts page, etc.) — this page
 // is just the registry + delete.
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, Pencil, Plus, Tag as TagIcon, Trash2 } from "lucide-react";
@@ -36,6 +36,66 @@ function detailRoute(sourceModule: string, sourceType: string, id: string): stri
   return map[`${sourceModule}:${sourceType}`] ?? null;
 }
 
+// One tag rendered as a pill — its emoji icon (or the default tag glyph), name
+// (click to see what's tagged), edit + delete.
+function TagPillRow({
+  t,
+  onExplore,
+  onEdit,
+  onDelete,
+}: {
+  t: TagRecord;
+  onExplore: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <span
+      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm border"
+      style={{
+        borderColor: t.color ?? undefined,
+        background: t.color ? `${t.color}22` : undefined,
+      }}
+    >
+      {t.icon ? (
+        <span className="leading-none">{t.icon}</span>
+      ) : (
+        <TagIcon size={12} style={{ color: t.color ?? undefined }} />
+      )}
+      <button
+        type="button"
+        onClick={onExplore}
+        className="hover:underline focus:outline-none"
+        title={`Show what's tagged "${t.name}"`}
+      >
+        {t.name}
+      </button>
+      <button onClick={onEdit} className="text-faint hover:text-accent transition" title="Edit">
+        <Pencil size={12} />
+      </button>
+      <button onClick={onDelete} className="text-faint hover:text-ember-500 transition" title="Delete">
+        <Trash2 size={12} />
+      </button>
+    </span>
+  );
+}
+
+// Every descendant id of a tag — excluded from its own parent options so you
+// can't create a loop (the API guards this too).
+function descendantIds(tags: TagRecord[], rootId: string): Set<string> {
+  const out = new Set<string>();
+  const walk = (pid: string) => {
+    for (const c of tags.filter((t) => t.parent_id === pid)) {
+      if (!out.has(c.id)) {
+        out.add(c.id);
+        walk(c.id);
+      }
+    }
+  };
+  walk(rootId);
+  return out;
+}
+
 export function TagsPage() {
   usePageTitle("Tags");
   const { activeSlug } = useActiveOrg();
@@ -62,6 +122,38 @@ export function TagsPage() {
 
   const items = list.data?.items ?? [];
 
+  // Group into a tree by parent_id (a parent_id pointing at a missing tag is
+  // treated as top-level, so nothing is ever hidden).
+  const ids = new Set(items.map((t) => t.id));
+  const byParent = new Map<string | null, TagRecord[]>();
+  for (const t of items) {
+    const key = t.parent_id && ids.has(t.parent_id) ? t.parent_id : null;
+    const arr = byParent.get(key) ?? [];
+    arr.push(t);
+    byParent.set(key, arr);
+  }
+  const onDelete = async (t: TagRecord) => {
+    const ok = await confirm({
+      title: "Delete tag?",
+      message: `${t.name} — its attachments are removed (cascade); any child tags become top-level.`,
+      confirmLabel: "Delete",
+      destructive: true,
+    });
+    if (ok) del.mutate(t.id);
+  };
+  const renderNodes = (parentId: string | null, depth: number): ReactNode[] =>
+    (byParent.get(parentId) ?? []).map((t) => (
+      <div key={t.id} style={{ marginLeft: depth * 18 }} className="space-y-1.5">
+        <TagPillRow
+          t={t}
+          onExplore={() => setExploring(t)}
+          onEdit={() => setEditing(t)}
+          onDelete={() => void onDelete(t)}
+        />
+        {renderNodes(t.id, depth + 1)}
+      </div>
+    ));
+
   return (
     <div className="space-y-4">
       <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
@@ -86,50 +178,7 @@ export function TagsPage() {
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2">
-        {items.map((t) => (
-          <span
-            key={t.id}
-            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm border"
-            style={{
-              borderColor: t.color ?? undefined,
-              background: t.color ? `${t.color}22` : undefined,
-            }}
-          >
-            <TagIcon size={12} style={{ color: t.color ?? undefined }} />
-            <button
-              type="button"
-              onClick={() => setExploring(t)}
-              className="hover:underline focus:outline-none"
-              title={`Show what's tagged "${t.name}"`}
-            >
-              {t.name}
-            </button>
-            <button
-              onClick={() => setEditing(t)}
-              className="text-faint hover:text-accent transition"
-              title="Rename / recolor"
-            >
-              <Pencil size={12} />
-            </button>
-            <button
-              onClick={async () => {
-                const ok = await confirm({
-                  title: "Delete tag?",
-                  message: `${t.name} — all attachments will also be removed (cascade).`,
-                  confirmLabel: "Delete",
-                  destructive: true,
-                });
-                if (ok) del.mutate(t.id);
-              }}
-              className="text-faint hover:text-ember-500 transition"
-              title="Delete"
-            >
-              <Trash2 size={12} />
-            </button>
-          </span>
-        ))}
-      </div>
+      <div className="space-y-1.5">{renderNodes(null, 0)}</div>
 
       {exploring && (
         <TagAttachmentsModal
@@ -178,11 +227,19 @@ function EditTagModal({
 }) {
   const [name, setName] = useState(tag.name);
   const [color, setColor] = useState(tag.color ?? "#888888");
+  const [icon, setIcon] = useState(tag.icon ?? "");
+  const [parentId, setParentId] = useState(tag.parent_id ?? "");
   const [mergeInto, setMergeInto] = useState("");
   const toast = useToast();
   const confirm = useConfirm();
   const save = useMutation({
-    mutationFn: () => api.updateTag(slug, tag.id, { name: name.trim(), color }),
+    mutationFn: () =>
+      api.updateTag(slug, tag.id, {
+        name: name.trim(),
+        color,
+        icon: icon.trim() || null,
+        parent_id: parentId || null,
+      }),
     onSuccess: () => {
       toast.success("Tag updated — change applies everywhere it's attached");
       onSaved();
@@ -192,7 +249,12 @@ function EditTagModal({
   });
   // Other tags this one can be merged into.
   const allTags = useQuery({ queryKey: ["tags", slug], queryFn: () => api.listTags(slug) });
-  const otherTags = (allTags.data?.items ?? []).filter((t) => t.id !== tag.id);
+  const allItems = allTags.data?.items ?? [];
+  const otherTags = allItems.filter((t) => t.id !== tag.id);
+  // Valid parents = anything that isn't this tag or one of its descendants
+  // (else you'd create a loop; the API guards this too).
+  const noParent = descendantIds(allItems, tag.id);
+  const parentOptions = otherTags.filter((t) => !noParent.has(t.id));
   const merge = useMutation({
     mutationFn: (into: string) => api.mergeTag(slug, tag.id, into),
     onSuccess: (r) => {
@@ -232,6 +294,31 @@ function EditTagModal({
             className="h-8 w-12 border border-line dark:border-slate-600 rounded"
           />
           <span className="font-mono text-xs">{color}</span>
+        </label>
+        <label className="flex items-center gap-3 text-sm">
+          <span className="text-xs text-muted">Icon</span>
+          <input
+            type="text"
+            value={icon}
+            onChange={(e) => setIcon(e.target.value)}
+            placeholder="🏷️"
+            maxLength={8}
+            className="w-14 px-2 py-1 text-sm text-center border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+          />
+          <span className="text-[11px] text-faint">an emoji</span>
+        </label>
+        <label className="block">
+          <div className="text-xs text-muted mb-1">Parent tag (optional — for grouping)</div>
+          <select
+            value={parentId}
+            onChange={(e) => setParentId(e.target.value)}
+            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+          >
+            <option value="">— none (top-level) —</option>
+            {parentOptions.map((t) => (
+              <option key={t.id} value={t.id}>{t.icon ? `${t.icon} ` : ""}{t.name}</option>
+            ))}
+          </select>
         </label>
         <p className="text-[11px] text-faint">
           Renaming updates the tag everywhere it's attached — it's the same tag,
@@ -387,7 +474,11 @@ function CreateTagModal({
 }) {
   const [name, setName] = useState("");
   const [color, setColor] = useState("#888888");
+  const [icon, setIcon] = useState("");
+  const [parentId, setParentId] = useState("");
   const toast = useToast();
+  const allTags = useQuery({ queryKey: ["tags", slug], queryFn: () => api.listTags(slug) });
+  const parentOptions = allTags.data?.items ?? [];
 
   return (
     <Modal open onClose={onClose} title="New tag">
@@ -396,7 +487,12 @@ function CreateTagModal({
           e.preventDefault();
           if (!name.trim()) return;
           try {
-            await api.createTag(slug, { name: name.trim(), color });
+            await api.createTag(slug, {
+              name: name.trim(),
+              color,
+              icon: icon.trim() || null,
+              parent_id: parentId || null,
+            });
             toast.success("Tag created");
             onCreated();
           } catch (err) {
@@ -427,6 +523,33 @@ function CreateTagModal({
           />
           <span className="font-mono text-xs">{color}</span>
         </label>
+        <label className="flex items-center gap-3 text-sm">
+          <span className="text-xs text-muted">Icon</span>
+          <input
+            type="text"
+            value={icon}
+            onChange={(e) => setIcon(e.target.value)}
+            placeholder="🏷️"
+            maxLength={8}
+            className="w-14 px-2 py-1 text-sm text-center border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+          />
+          <span className="text-[11px] text-faint">an emoji</span>
+        </label>
+        {parentOptions.length > 0 && (
+          <label className="block">
+            <div className="text-xs text-muted mb-1">Parent tag (optional — for grouping)</div>
+            <select
+              value={parentId}
+              onChange={(e) => setParentId(e.target.value)}
+              className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+            >
+              <option value="">— none (top-level) —</option>
+              {parentOptions.map((t) => (
+                <option key={t.id} value={t.id}>{t.icon ? `${t.icon} ` : ""}{t.name}</option>
+              ))}
+            </select>
+          </label>
+        )}
         <div className="flex justify-end gap-2 pt-2">
           <button
             type="button"

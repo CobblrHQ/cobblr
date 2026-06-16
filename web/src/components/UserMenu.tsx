@@ -10,10 +10,13 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import {
+  ArrowRight,
   CalendarDays,
   ChevronDown,
   LogOut,
   MessageSquare,
+  Rocket,
+  Sparkles,
   MessagesSquare,
   Moon,
   Server,
@@ -26,14 +29,21 @@ import { useAuth } from "../auth/AuthContext";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useTheme } from "../theme/ThemeContext";
 import { UpdateBadge } from "./UpdateBadge";
+import { GrowModal } from "./GrowModal";
 
 // `themed` = a workspace admin_theme owns the palette, so the per-user
 // light/dark toggle is hidden (it would just fight the theme).
 export function UserMenu({ themed }: { themed: boolean }) {
+  // Managed app: strip the platform links (Calendar / What's new / Configuration
+  // — the gateway to bundles, modules, wires, fields). Profile + feedback + sign
+  // out remain so the user can still manage their own account.
   const { user, logout } = useAuth();
-  const { activeSlug } = useActiveOrg();
+  const { activeSlug, activeOrg } = useActiveOrg();
+  const appMode = !!activeOrg?.app_mode;
   const { theme, toggle } = useTheme();
   const [open, setOpen] = useState(false);
+  // Managed app: the "grow door" — the one deliberate exit to the rest of Cobblr.
+  const [growOpen, setGrowOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   // Portaled to <body> so the header's overflow-x-clip + backdrop-blur don't
@@ -124,19 +134,39 @@ export function UserMenu({ themed }: { themed: boolean }) {
           <Link to="/me/feedback" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
             <MessageSquare size={14} className="text-faint dark:text-slate-400" /> Your feedback
           </Link>
-          <Link to="/calendar" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
-            <CalendarDays size={14} className="text-faint dark:text-slate-400" /> Calendar
-          </Link>
-          <Link
-            to="/configuration"
-            onClick={() => setOpen(false)}
-            className={itemCls}
-            role="menuitem"
-          >
-            <SlidersHorizontal size={14} className="text-faint dark:text-slate-400" /> Configuration
-            {/* Bundles + their updates live under Configuration. */}
-            <UpdateBadge slug={activeSlug} variant="count" className="ml-auto" />
-          </Link>
+          {/* Managed app: the grow door — start a full Cobblr workspace or jump
+              to another. The one deliberate way out of the locked app. */}
+          {appMode && (
+            <button
+              type="button"
+              onClick={() => { setOpen(false); setGrowOpen(true); }}
+              className={itemCls}
+              role="menuitem"
+            >
+              <Rocket size={14} className="text-faint dark:text-slate-400" /> Do more with Cobblr
+              <ArrowRight size={13} className="ml-auto text-faint dark:text-slate-500" />
+            </button>
+          )}
+          {!appMode && (
+            <>
+              <Link to="/calendar" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
+                <CalendarDays size={14} className="text-faint dark:text-slate-400" /> Calendar
+              </Link>
+              <Link to="/changelog" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
+                <Sparkles size={14} className="text-faint dark:text-slate-400" /> What's new
+              </Link>
+              <Link
+                to="/configuration"
+                onClick={() => setOpen(false)}
+                className={itemCls}
+                role="menuitem"
+              >
+                <SlidersHorizontal size={14} className="text-faint dark:text-slate-400" /> Configuration
+                {/* Bundles + their updates live under Configuration. */}
+                <UpdateBadge slug={activeSlug} variant="count" className="ml-auto" />
+              </Link>
+            </>
+          )}
           {/* Community — only when an invite is configured (DISCORD_INVITE_URL). */}
           {user.discord_invite_url && (
             <a
@@ -202,6 +232,7 @@ export function UserMenu({ themed }: { themed: boolean }) {
         </div>,
         document.body,
       )}
+      {appMode && <GrowModal open={growOpen} onClose={() => setGrowOpen(false)} />}
     </div>
   );
 }

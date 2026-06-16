@@ -675,12 +675,32 @@ function FieldsEditorModal({ entityKind, title, onClose }: { entityKind: string;
     queryFn: () => api.listNativeFieldOverrides(activeSlug, entityKind),
     enabled: !!activeSlug,
   });
-  const fields = (kinds.data?.items.find((k) => k.id === entityKind)?.fields ?? []).filter(
+  // Bundle-added (+ user-added) custom fields, RAW, so they too can be relabelled /
+  // hidden by the same override layer (Phase 1: a bundle is a starting point, not a
+  // straitjacket). Forms read these EFFECTIVE (overrides applied); here we want raw.
+  const customDefs = useQuery({
+    queryKey: ["platform-field-defs", activeSlug, entityKind],
+    queryFn: () => api.listFieldDefs(activeSlug, entityKind),
+    enabled: !!activeSlug,
+  });
+  const nativeFields = (kinds.data?.items.find((k) => k.id === entityKind)?.fields ?? []).filter(
     (f) => f.name !== "metadata",
   );
+  const fields = [
+    ...nativeFields.map((f) => ({ name: f.name, defaultLabel: f.name, source: "native" as const })),
+    ...(customDefs.data?.items ?? []).map((d) => ({
+      name: d.name,
+      defaultLabel: d.display_label || d.name,
+      source: d.bundle_id ? ("bundled" as const) : ("custom" as const),
+    })),
+  ];
   const byName = new Map((overrides.data?.items ?? []).map((o) => [o.name, o]));
-  const invalidate = () =>
+  const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["native-field-overrides", activeSlug, entityKind] });
+    // refresh the EFFECTIVE field-defs that forms/lists read, so a relabel/hide
+    // shows immediately (prefix match also hits the "effective" query key).
+    void qc.invalidateQueries({ queryKey: ["platform-field-defs", activeSlug, entityKind] });
+  };
   const save = useMutation({
     mutationFn: (b: { name: string; display_label?: string | null; hidden?: boolean }) =>
       api.putNativeFieldOverride(activeSlug, { entity_kind: entityKind, ...b }),
@@ -694,8 +714,9 @@ function FieldsEditorModal({ entityKind, title, onClose }: { entityKind: string;
   return (
     <Modal open onClose={onClose} title={`Fields — ${title}`} size="md">
       <p className="text-sm text-muted mb-3">
-        Rename or hide each native field on this thing's form — un-clutter the modal, speak your own
-        language. (Custom fields added by bundles are managed where they're defined.)
+        Rename or hide any field on this thing's form — native or bundle-added — to un-clutter the
+        modal and speak your own language. Your edits layer on top and survive bundle updates; reset
+        returns the bundle's default.
       </p>
       <div className="space-y-1 max-h-[60vh] overflow-auto">
         {fields.map((f) => {
@@ -709,12 +730,17 @@ function FieldsEditorModal({ entityKind, title, onClose }: { entityKind: string;
                 (hidden ? "opacity-50" : "")
               }
             >
-              <span className="w-32 shrink-0 text-[10px] font-mono text-faint truncate" title={f.name}>
-                {f.name}
+              <span className="w-32 shrink-0 flex flex-col gap-0.5 min-w-0" title={f.name}>
+                <span className="text-[10px] font-mono text-faint truncate">{f.name}</span>
+                {f.source !== "native" && (
+                  <span className="text-[9px] font-mono uppercase tracking-wide text-accent dark:text-cobble-400">
+                    {f.source}
+                  </span>
+                )}
               </span>
               <input
                 defaultValue={o?.display_label ?? ""}
-                placeholder={f.name}
+                placeholder={f.defaultLabel}
                 onBlur={(e) => {
                   const v = e.target.value.trim();
                   if (v !== (o?.display_label ?? "")) save.mutate({ name: f.name, display_label: v || null, hidden });

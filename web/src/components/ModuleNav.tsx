@@ -28,7 +28,10 @@ import { ModulePickerModal } from "./ModulePickerModal";
 import { useNavModules, HEADING_PREFIX } from "./useNavModules";
 
 export function ModuleNav() {
-  const { activeSlug } = useActiveOrg();
+  const { activeSlug, activeOrg } = useActiveOrg();
+  // Managed app: no Dashboard (it redirects to the app home anyway) — the nav
+  // is just the app's own tables + Scan.
+  const appMode = !!activeOrg?.app_mode;
   const { tops, childrenByParent: children } = useNavModules(activeSlug);
   const [pickerScope, setPickerScope] = useState<string | null>(null);
   // Scan moved to the right cluster as a module-declared headerAction
@@ -108,19 +111,21 @@ export function ModuleNav() {
         ref={rowRef}
         className="flex items-center gap-0.5 flex-1 min-w-0 overflow-hidden"
       >
-        <NavLink
-          to="/"
-          end
-          data-navfixed
-          className={({ isActive }) =>
-            "px-2 py-1 rounded transition text-sm whitespace-nowrap shrink-0 " +
-            (isActive
-              ? "text-accent font-semibold"
-              : "text-muted dark:text-slate-400 hover:text-accent")
-          }
-        >
-          Dashboard
-        </NavLink>
+        {!appMode && (
+          <NavLink
+            to="/"
+            end
+            data-navfixed
+            className={({ isActive }) =>
+              "px-2 py-1 rounded transition text-sm whitespace-nowrap shrink-0 " +
+              (isActive
+                ? "text-accent font-semibold"
+                : "text-muted dark:text-slate-400 hover:text-accent")
+            }
+          >
+            Dashboard
+          </NavLink>
+        )}
         {visible.map(renderTop)}
         {overflow.length > 0 && (
           <MoreMenu

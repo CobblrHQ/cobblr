@@ -7,7 +7,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "purchases",
-  version: "0.1.0",
+  version: "0.2.0",
   displayName: "Purchases",
   description:
     "Orders, line items, and cost rollup. Each order is a vendor purchase; line items can link to inventory parts and to whatever consumed them — printer mods, projects, anything.",
@@ -72,6 +72,25 @@ export default defineModule({
         // ("3 of these were received last week"). Unit cost private.
         exposableFields: ["description", "qty", "received_at"],
       },
+      {
+        id: "purchases:vendor",
+        displayName: "Vendor",
+        displayNamePlural: "Vendors",
+        icon: "store",
+        profile: "digital-record",
+        fields: [
+          { name: "name", type: "text", role: "title", required: true },
+          { name: "website", type: "url" },
+          { name: "account_number", type: "text" },
+          { name: "contact", type: "text" },
+          { name: "lead_time_days", type: "number" },
+          { name: "notes", type: "text" },
+        ],
+        // Name + website are safe to show cross-module ("ordered from McMaster");
+        // account number / contact stay private procurement detail.
+        exposableFields: ["name", "website"],
+        detailRoute: "/purchases/vendors/{id}",
+      },
     ],
   },
 
@@ -88,6 +107,7 @@ export default defineModule({
       "purchases.order.status_changed",
       "purchases.order.arrived",
       "purchases.order_item.received",
+      "purchases.vendor.created",
     ],
     api: [],
     actions: [],

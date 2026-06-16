@@ -160,8 +160,8 @@ export function BundleDetailModal(props: Props) {
   });
 
   const install = useMutation({
-    mutationFn: (vars: { manifest: PlatformBundleManifest; confirm: boolean; enabledFeatures?: string[] }) =>
-      api.installBundle(slug, vars.manifest, vars.confirm, vars.enabledFeatures),
+    mutationFn: (vars: { manifest: PlatformBundleManifest; confirm: boolean; enabledFeatures?: string[]; takeTheirs?: Array<{ entity_kind: string; name: string }> }) =>
+      api.installBundle(slug, vars.manifest, vars.confirm, vars.enabledFeatures, vars.takeTheirs),
     onSuccess: (r) => {
       toast.success(
         isUpdate
@@ -398,12 +398,33 @@ export function BundleDetailModal(props: Props) {
     const enabledFeatures = featuresLocked
       ? (detail.data?.bundle.enabled_features ?? [...selectedFeatures])
       : [...selectedFeatures];
+    // Phase 2 — on an UPDATE, surface fields the user customized that this version
+    // changes, and let them keep theirs (the safe default) or take the update's.
+    let takeTheirs: Array<{ entity_kind: string; name: string }> = [];
+    if (isUpdate) {
+      try {
+        const v = await api.validateBundle(slug, manifest);
+        const conflicts = v.preview?.upgrade_conflicts ?? [];
+        if (conflicts.length > 0) {
+          const fields = [...new Set(conflicts.map((c) => c.field_label))].join(", ");
+          const useTheirs = await confirm({
+            title: "This update changes fields you customized",
+            message: `The update changes ${fields}, which you'd customized. Keep your version, or use the update's?`,
+            confirmLabel: "Use the update's",
+            cancelLabel: "Keep mine",
+          });
+          if (useTheirs) takeTheirs = conflicts.map((c) => ({ entity_kind: c.entity_kind, name: c.name }));
+        }
+      } catch {
+        // validate failed — proceed with a normal install (keep-yours is the default).
+      }
+    }
     let confirmEnable = false;
     // Up to a few passes: enable-modules confirm, then collision-supersede,
     // then the clean install. Each handled error sets up the next retry.
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        await install.mutateAsync({ manifest, confirm: confirmEnable, enabledFeatures });
+        await install.mutateAsync({ manifest, confirm: confirmEnable, enabledFeatures, takeTheirs });
         await landAfterInstall();
         return;
       } catch (e) {

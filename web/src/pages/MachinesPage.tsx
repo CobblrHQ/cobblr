@@ -48,8 +48,8 @@ export function MachinesPage() {
     enabled: !!activeSlug,
   });
   const fieldDefs = useQuery({
-    queryKey: ["platform-field-defs", activeSlug, ENTITY_KIND],
-    queryFn: () => api.listFieldDefs(activeSlug, ENTITY_KIND),
+    queryKey: ["platform-field-defs", activeSlug, ENTITY_KIND, "effective"],
+    queryFn: () => api.listFieldDefs(activeSlug, ENTITY_KIND, true),
     enabled: !!activeSlug,
     staleTime: 60_000,
   });

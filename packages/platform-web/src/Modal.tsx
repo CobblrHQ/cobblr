@@ -26,6 +26,10 @@ interface Props {
   size?: "sm" | "md" | "lg" | "xl";
   /** Tints the header to signal a destructive context. */
   destructive?: boolean;
+  /** Whether a click on the backdrop closes the modal. Default true. Set false
+   *  for DATA-ENTRY forms so a stray outside-click can't discard unsaved input
+   *  (Esc + the explicit close/cancel still work). */
+  dismissOnBackdrop?: boolean;
 }
 
 const SIZE: Record<NonNullable<Props["size"]>, string> = {
@@ -35,7 +39,7 @@ const SIZE: Record<NonNullable<Props["size"]>, string> = {
   xl: "max-w-5xl",
 };
 
-export function Modal({ open, onClose, title, subtitle, children, size = "md", destructive }: Props) {
+export function Modal({ open, onClose, title, subtitle, children, size = "md", destructive, dismissOnBackdrop = true }: Props) {
   useEffect(() => {
     if (!open) return;
     function onKey(e: KeyboardEvent) {
@@ -59,7 +63,7 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
   return createPortal(
     <div
       className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto"
-      onClick={onClose}
+      onClick={dismissOnBackdrop ? onClose : undefined}
       role="dialog"
       aria-modal="true"
     >

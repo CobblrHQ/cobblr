@@ -6,8 +6,8 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Plus, Search, Trash2 } from "lucide-react";
-import { ApiError, api, type Order } from "../lib/api";
+import { ChevronRight, Plus, Search, Store, Trash2 } from "lucide-react";
+import { ApiError, api, type Order, type VendorSummary } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useFieldPresentation } from "../lib/useFieldPresentation";
 import { BulkActionBar, EntityActionsBar, Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
@@ -41,6 +41,7 @@ export function PurchasesPage() {
   }
 
   const [newOpen, setNewOpen] = useState(false);
+  const [vendorsOpen, setVendorsOpen] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const qcP = useQueryClient();
   const toastP = useToast();
@@ -97,6 +98,12 @@ export function PurchasesPage() {
             className="input !py-1 !pl-7 !text-xs !w-56"
           />
         </div>
+        <button
+          onClick={() => setVendorsOpen(true)}
+          className="rounded-md border border-line dark:border-slate-600 hover:bg-subtle dark:hover:bg-slate-800 text-content dark:text-mortar-100 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
+        >
+          <Store size={14} /> Vendors
+        </button>
         <button
           onClick={() => setNewOpen(true)}
           className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
@@ -186,6 +193,7 @@ export function PurchasesPage() {
 
       <OrderDetailModal orderId={id ?? null} onClose={() => navigate("/purchases")} />
       <NewOrderModal open={newOpen} onClose={() => setNewOpen(false)} />
+      {vendorsOpen && <VendorsModal onClose={() => setVendorsOpen(false)} />}
       <BulkActionBar
         count={selected.size}
         onClear={() => setSelected(new Set())}
@@ -281,7 +289,17 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
         <div className="space-y-4">
           <EntityActionsBar entityKind="purchases:order" entityId={o.id} />
           <dl className="grid grid-cols-2 gap-3 text-xs">
-            {!fp.hidden("vendor") && <EditField label={fp.label("vendor", "Vendor")} value={o.vendor ?? ""} onCommit={(v) => update.mutate({ vendor: v || null })} />}
+            {!fp.hidden("vendor") && (
+              <div>
+                <dt className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">{fp.label("vendor", "Vendor")}</dt>
+                <VendorPicker
+                  slug={activeSlug}
+                  vendorId={o.vendor_id}
+                  vendorName={o.vendor ?? ""}
+                  onChange={(id, name) => update.mutate({ vendor_id: id, vendor: name || null })}
+                />
+              </div>
+            )}
             {!fp.hidden("order_number") && <EditField label={fp.label("order_number", "Order #")} value={o.order_number ?? ""} onCommit={(v) => update.mutate({ order_number: v || null })} />}
             {!fp.hidden("status") && <EditSelect label={fp.label("status", "Status")} value={o.status} options={STATUSES} onCommit={(v) => update.mutate({ status: v as Order["status"] })} />}
             {!fp.hidden("tracking_number") && <EditField label={fp.label("tracking_number", "Tracking #")} value={o.tracking_number ?? ""} onCommit={(v) => update.mutate({ tracking_number: v || null })} />}
@@ -352,12 +370,14 @@ function NewOrderModal({ open, onClose }: { open: boolean; onClose: () => void }
   const qc = useQueryClient();
   const toast = useToast();
   const navigate = useNavigate();
-  const [vendor, setVendor] = useState("");
+  const [vendorId, setVendorId] = useState<string | null>(null);
+  const [vendorName, setVendorName] = useState<string>("");
   const [orderNumber, setOrderNumber] = useState("");
   const [status, setStatus] = useState<Order["status"]>("ordered");
   useEffect(() => {
     if (open) {
-      setVendor("");
+      setVendorId(null);
+      setVendorName("");
       setOrderNumber("");
       setStatus("ordered");
     }
@@ -366,7 +386,8 @@ function NewOrderModal({ open, onClose }: { open: boolean; onClose: () => void }
   const create = useMutation({
     mutationFn: () =>
       api.createOrder(activeSlug, {
-        vendor: vendor.trim() || null,
+        vendor_id: vendorId,
+        vendor: vendorName.trim() || null,
         order_number: orderNumber.trim() || null,
         status,
       }),
@@ -389,7 +410,12 @@ function NewOrderModal({ open, onClose }: { open: boolean; onClose: () => void }
       <form onSubmit={submit} className="space-y-3">
         <label className="block">
           <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Vendor</span>
-          <input value={vendor} onChange={(e) => setVendor(e.target.value)} autoFocus className="input" />
+          <VendorPicker
+            slug={activeSlug}
+            vendorId={vendorId}
+            vendorName={vendorName}
+            onChange={(id, name) => { setVendorId(id); setVendorName(name); }}
+          />
         </label>
         <label className="block">
           <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Order #</span>
@@ -469,5 +495,198 @@ function EditSelect({
         {options.map((o) => (<option key={o} value={o}>{o}</option>))}
       </select>
     </label>
+  );
+}
+
+// Vendor combobox for the order form: pick a managed vendor, leave it unlinked,
+// or add a new vendor inline. Reports both the id (for linking) and the name
+// (dual-written to the order's legacy `vendor` text).
+function VendorPicker({
+  slug,
+  vendorId,
+  vendorName,
+  onChange,
+}: {
+  slug: string;
+  vendorId: string | null;
+  vendorName: string;
+  onChange: (vendorId: string | null, vendorName: string) => void;
+}) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const vendors = useQuery({ queryKey: ["vendors", slug], queryFn: () => api.listVendors(slug), enabled: !!slug });
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState("");
+  const create = useMutation({
+    mutationFn: (name: string) => api.createVendor(slug, { name }),
+    onSuccess: (v) => {
+      toast.success("Vendor added.");
+      void qc.invalidateQueries({ queryKey: ["vendors", slug] });
+      setCreating(false);
+      setNewName("");
+      onChange(v.id, v.name);
+    },
+    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't add vendor."),
+  });
+
+  if (creating) {
+    return (
+      <div className="flex gap-2">
+        <input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Vendor name" className="input flex-1" />
+        <button type="button" disabled={!newName.trim() || create.isPending} onClick={() => create.mutate(newName.trim())} className="px-2.5 py-1.5 rounded-md text-xs font-medium bg-slate-700 hover:bg-slate-600 text-mortar-50 disabled:opacity-50">Add</button>
+        <button type="button" onClick={() => setCreating(false)} className="px-2.5 py-1.5 rounded-md text-xs text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800">Cancel</button>
+      </div>
+    );
+  }
+
+  return (
+    <select
+      value={vendorId ?? ""}
+      onChange={(e) => {
+        const val = e.target.value;
+        if (val === "__new__") { setCreating(true); return; }
+        if (val === "") { onChange(null, ""); return; }
+        const v = vendors.data?.items.find((x) => x.id === val);
+        onChange(val, v?.name ?? "");
+      }}
+      className="input"
+    >
+      <option value="">{vendorName && !vendorId ? `(unlinked: ${vendorName})` : "— none —"}</option>
+      {vendors.data?.items.map((v) => (<option key={v.id} value={v.id}>{v.name}</option>))}
+      <option value="__new__">+ New vendor…</option>
+    </select>
+  );
+}
+
+// Vendor management surface: list with order-count + spend rollup, add, edit,
+// delete. Opened from the Purchases header.
+function VendorsModal({ onClose }: { onClose: () => void }) {
+  const { activeSlug } = useActiveOrg();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const confirm = useConfirm();
+  const vendors = useQuery({ queryKey: ["vendors", activeSlug], queryFn: () => api.listVendors(activeSlug), enabled: !!activeSlug });
+  const [editing, setEditing] = useState<string | "new" | null>(null);
+
+  const invalidate = () => {
+    void qc.invalidateQueries({ queryKey: ["vendors", activeSlug] });
+    void qc.invalidateQueries({ queryKey: ["orders", activeSlug] });
+  };
+  const remove = useMutation({
+    mutationFn: (id: string) => api.deleteVendor(activeSlug, id),
+    onSuccess: () => { toast.success("Vendor deleted."); invalidate(); },
+    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't delete."),
+  });
+
+  return (
+    <Modal open onClose={onClose} title="vendors" size="md">
+      <div className="space-y-3">
+        {vendors.isLoading && <div className="text-sm text-muted">Loading…</div>}
+        {vendors.data?.items.length === 0 && editing !== "new" && (
+          <div className="text-sm text-muted italic">No vendors yet. Add the places you buy from to track spend and reuse them across orders.</div>
+        )}
+
+        <ul className="space-y-2">
+          {vendors.data?.items.map((v) => (
+            <li key={v.id}>
+              {editing === v.id ? (
+                <VendorForm slug={activeSlug} vendor={v} onDone={() => { setEditing(null); invalidate(); }} onCancel={() => setEditing(null)} />
+              ) : (
+                <div className="flex items-center gap-3 rounded-lg border border-line dark:border-slate-700 p-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium text-content dark:text-mortar-100 truncate">{v.name}</div>
+                    <div className="text-xs text-muted">
+                      {v.order_count} order{v.order_count === 1 ? "" : "s"}
+                      {v.total_spend > 0 && ` · $${v.total_spend.toFixed(2)} spent`}
+                      {v.lead_time_days != null && ` · ~${v.lead_time_days}d lead`}
+                    </div>
+                  </div>
+                  {v.website && (
+                    <a href={v.website} target="_blank" rel="noreferrer" className="text-xs text-accent hover:underline shrink-0">site ↗</a>
+                  )}
+                  <button type="button" onClick={() => setEditing(v.id)} className="text-xs text-muted hover:text-accent shrink-0">Edit</button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (await confirm({ title: `Delete "${v.name}"?`, message: "Orders linked to this vendor keep their vendor name but lose the link.", confirmLabel: "Delete", destructive: true })) {
+                        remove.mutate(v.id);
+                      }
+                    }}
+                    className="text-slate-300 hover:text-red-500 shrink-0"
+                    aria-label="Delete vendor"
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+
+        {editing === "new" ? (
+          <VendorForm slug={activeSlug} onDone={() => { setEditing(null); invalidate(); }} onCancel={() => setEditing(null)} />
+        ) : (
+          <button type="button" onClick={() => setEditing("new")} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50">
+            <Plus size={14} /> Add vendor
+          </button>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+function VendorForm({
+  slug,
+  vendor,
+  onDone,
+  onCancel,
+}: {
+  slug: string;
+  vendor?: VendorSummary;
+  onDone: () => void;
+  onCancel: () => void;
+}) {
+  const toast = useToast();
+  const [name, setName] = useState(vendor?.name ?? "");
+  const [website, setWebsite] = useState(vendor?.website ?? "");
+  const [account, setAccount] = useState(vendor?.account_number ?? "");
+  const [contact, setContact] = useState(vendor?.contact ?? "");
+  const [lead, setLead] = useState(vendor?.lead_time_days != null ? String(vendor.lead_time_days) : "");
+  const [notes, setNotes] = useState(vendor?.notes ?? "");
+
+  const save = useMutation({
+    mutationFn: () => {
+      const body = {
+        name: name.trim(),
+        website: website.trim() || null,
+        account_number: account.trim() || null,
+        contact: contact.trim() || null,
+        lead_time_days: lead.trim() ? Number(lead) : null,
+        notes: notes.trim() || null,
+      };
+      return vendor ? api.updateVendor(slug, vendor.id, body) : api.createVendor(slug, body);
+    },
+    onSuccess: () => { toast.success(vendor ? "Vendor updated." : "Vendor added."); onDone(); },
+    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't save."),
+  });
+
+  return (
+    <form
+      className="rounded-lg border border-line dark:border-slate-700 p-3 space-y-2"
+      onSubmit={(e) => { e.preventDefault(); if (name.trim()) save.mutate(); }}
+    >
+      <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Vendor name *" className="input" />
+      <div className="grid grid-cols-2 gap-2">
+        <input value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="Website (https://…)" className="input" />
+        <input value={account} onChange={(e) => setAccount(e.target.value)} placeholder="Account #" className="input" />
+        <input value={contact} onChange={(e) => setContact(e.target.value)} placeholder="Contact (email / phone)" className="input" />
+        <input value={lead} onChange={(e) => setLead(e.target.value.replace(/[^0-9]/g, ""))} placeholder="Lead time (days)" inputMode="numeric" className="input" />
+      </div>
+      <input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notes" className="input" />
+      <div className="flex justify-end gap-2">
+        <button type="button" onClick={onCancel} className="px-2.5 py-1.5 rounded-md text-xs text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800">Cancel</button>
+        <button type="submit" disabled={!name.trim() || save.isPending} className="px-2.5 py-1.5 rounded-md text-xs font-medium bg-slate-700 hover:bg-slate-600 text-mortar-50 disabled:opacity-50">{vendor ? "Save" : "Add"}</button>
+      </div>
+    </form>
   );
 }

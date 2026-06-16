@@ -7,10 +7,11 @@
 // file's raw bytes — print farm uploading gcode, vision reading a
 // scan photo — without importing core-files or its disk layout.
 
+import { randomUUID } from "node:crypto";
 import type { Kysely } from "kysely";
 import { platform, type ResolvedEntity } from "@cobblr/platform-contract";
 import type { CoreFilesDB, FileVariants } from "../db.js";
-import { readVariantBytes } from "./storage.js";
+import { readVariantBytes, storeUpload } from "./storage.js";
 
 let registered = false;
 
@@ -52,6 +53,33 @@ export function registerFileResolvers(): void {
       // Derived variants are always JPEG; the original keeps its mime.
       mimeType: variant === "original" ? row.mime_type : "image/jpeg",
     };
+  });
+
+  // The byte-WRITING seam — mirrors POST /files but server-side (no request /
+  // session): generate an id, store bytes + variants, insert the DB row, meter.
+  // Used by the graduation import to COPY a photo into the new workspace.
+  platform().files.registerWriter(async (orgId, bytes, opts) => {
+    const fileId = randomUUID();
+    const stored = await storeUpload(orgId, fileId, Buffer.from(bytes), opts.mimeType || "application/octet-stream");
+    const db = (await platform().tenants.getDb(orgId)) as Kysely<CoreFilesDB>;
+    await db
+      .insertInto("core_files_files")
+      .values({
+        id: fileId,
+        org_id: orgId,
+        owner_user_id: null,
+        filename: opts.filename || "untitled",
+        mime_type: stored.mime_type,
+        size_bytes: String(stored.size_bytes),
+        sha256: stored.sha256,
+        variants: stored.variants,
+        kind: stored.kind,
+        width: stored.width,
+        height: stored.height,
+      })
+      .execute();
+    platform().metering.record({ orgId, kind: "files.bytes_stored", quantity: stored.size_bytes, meta: { fileId, kind: stored.kind } });
+    return { fileId, mimeType: stored.mime_type, sizeBytes: stored.size_bytes, kind: stored.kind };
   });
 }
 

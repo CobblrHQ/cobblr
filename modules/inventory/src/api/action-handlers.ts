@@ -44,7 +44,7 @@ export function registerInventoryActionHandlers(): void {
         updated_at: new Date(),
       })
       .where("id", "=", partId)
-      .returning(["id", "name", "qty"])
+      .returning(["id", "name", "qty", "min_qty"])
       .executeTakeFirst();
     if (!updated) return { ok: false, error: "part_not_found" };
     // Re-emit the stock-changed event so the existing
@@ -58,6 +58,23 @@ export function registerInventoryActionHandlers(): void {
       newQty: Number(updated.qty),
       reason,
     });
+
+    // Low-stock signal — mirror the HTTP stock-adjust route (parts.ts): on a
+    // DECREASE that lands at/below min_qty, fire inventory.stock.low. Without
+    // this, action-driven consumption (a Build consuming components, any wire
+    // that decrements) would never trip the "running low → shopping list"
+    // wires — only the direct HTTP adjust did. Only on a decrease, so an
+    // increase (e.g. checking an item off to restock) doesn't re-alert.
+    const newQty = Number(updated.qty);
+    const minQty = updated.min_qty == null ? null : Number(updated.min_qty);
+    if (delta < 0 && minQty != null && minQty > 0 && newQty <= minQty) {
+      await platform().events.emit("inventory.stock.low", {
+        orgId: ctx.orgId,
+        partId: updated.id,
+        newQty,
+        minQty,
+      });
+    }
     return {
       ok: true,
       partId: updated.id,
@@ -116,6 +133,7 @@ export function registerInventoryActionHandlers(): void {
     const fields = (a.fields && typeof a.fields === "object" ? a.fields : {}) as Record<string, unknown>;
     const qty = typeof a.qty === "number" ? String(a.qty) : "1";
     const unit = typeof a.unit === "string" && a.unit.trim() ? a.unit.trim().slice(0, 30) : "each";
+    const imagePath = typeof a.image_path === "string" && a.image_path ? a.image_path.slice(0, 500) : null;
 
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
     const created = await db
@@ -127,6 +145,7 @@ export function registerInventoryActionHandlers(): void {
         instance,
         location_id: locationId,
         manufacturer,
+        image_path: imagePath,
         metadata: sql`${JSON.stringify(fields)}::jsonb` as never,
       })
       .returning(["id", "name"])

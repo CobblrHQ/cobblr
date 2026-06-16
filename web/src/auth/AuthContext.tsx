@@ -9,7 +9,7 @@ import {
 } from "react";
 import {
   ApiError, api, getToken, setToken,
-  type OrgMembership, type SessionUser,
+  type OrgMembership, type SessionUser, type AuthResponse,
 } from "../lib/api";
 
 interface AuthState {
@@ -24,9 +24,11 @@ interface AuthCtx extends AuthState {
     email: string;
     password: string;
     display_name: string;
-    org_name: string;
+    org_name?: string;
     invite_token?: string;
-  }) => Promise<void>;
+    app?: string;
+    manifest?: unknown;
+  }) => Promise<AuthResponse>;
   /** Create a NEW account that joins an existing workspace via a
    *  workspace-invite token (no own workspace provisioned). */
   joinViaInvite: (
@@ -95,11 +97,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       email: string;
       password: string;
       display_name: string;
-      org_name: string;
+      org_name?: string;
+      app?: string;
+      manifest?: unknown;
     }) => {
       const res = await api.signup(input);
       setToken(res.token);
       setState({ user: res.user, orgs: res.orgs, loading: false });
+      return res;
     },
     [],
   );

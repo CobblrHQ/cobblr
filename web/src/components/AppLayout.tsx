@@ -10,7 +10,7 @@
 
 import { useEffect } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CobblestoneMark } from "../CobblestoneMark";
 import { NotificationsBell } from "./NotificationsBell";
 import { DriveBanner } from "./DriveBanner";
@@ -24,11 +24,28 @@ import { ChatWidget } from "./ChatWidget";
 import { SearchBar } from "./SearchBar";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { api } from "../lib/api";
+import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { getManagedAppMeta } from "../lib/managed-apps";
 import { adminHtmlVars, fontFaceCss } from "../lib/appTheme";
 import { useDeployEnv, DEFAULT_HEADER } from "../lib/deploy-env";
 
 export function AppLayout({ activeSlug }: { activeSlug: string }) {
   const location = useLocation();
+  const { activeOrg } = useActiveOrg();
+  const qc = useQueryClient();
+  // Managed-app mode: no workspace switching, no platform nav — just the app.
+  const appMode = activeOrg?.app_mode ?? null;
+
+  // Auto-update on use: once per session, ask the server to re-apply the latest
+  // bundle if this managed app is behind. No-op when current; if it updated,
+  // refetch so the new fields/views appear. Fire-and-forget — never blocks.
+  useEffect(() => {
+    if (!appMode || !activeSlug) return;
+    const key = `cobblr.appRefreshed.${activeSlug}`;
+    if (sessionStorage.getItem(key)) return;
+    sessionStorage.setItem(key, "1");
+    void api.refreshApp(activeSlug).then((r) => { if (r.updated) void qc.invalidateQueries(); }).catch(() => {});
+  }, [appMode, activeSlug, qc]);
 
   // Workspace brand for the admin shell. The whole dashboard recolours to
   // `admin_theme` — page, header bar, every module page / card / table —
@@ -41,7 +58,15 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
     queryFn: () => api.getPortalConfig(activeSlug),
     enabled: !!activeSlug,
   });
-  const skin = config.data?.config.admin_theme ?? null;
+  // A managed app wears its own author-defined palette (web-side registry) — it
+  // takes precedence over (and managed apps never have) a workspace admin_theme.
+  // Same `--c-*` override machinery below, so the whole locked shell recolours.
+  const appMeta = appMode ? getManagedAppMeta(appMode.app) : null;
+  const skin = appMeta?.theme ?? config.data?.config.admin_theme ?? null;
+  // The header reads "[mark] cobblr <suffix>" (e.g. "for Yarn") — no repeated
+  // "Cobblr". Prefer the registry's suffix; else strip a leading "Cobblr " off
+  // the label as a fallback.
+  const navSuffix = appMode ? appMeta?.navSuffix ?? (appMode.label ?? "").replace(/^cobblr\s+/i, "") : "";
   const wsLogo = config.data?.config.logo_path ?? null;
   const { badge: envBadge } = useDeployEnv();
   const fontFace = fontFaceCss(skin);
@@ -101,6 +126,13 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
             <span className="font-display font-extrabold text-content dark:text-mortar-100 lowercase">
               cobblr
             </span>
+            {/* Managed app: the wordmark IS the "Cobblr", so append the suffix
+                here ("for Yarn") instead of a separate label that repeats it. */}
+            {appMode && navSuffix && (
+              <span className="font-display font-extrabold text-content dark:text-mortar-100 truncate">
+                {navSuffix}
+              </span>
+            )}
             {/* Mobile: overlay the env chip ON the wordmark (right-aligned) so
                 it adds ZERO width — the navbar fits exactly as it does in prod,
                 the chip can't push the right menu off-screen. */}
@@ -121,27 +153,37 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
               {envBadge.label}
             </span>
           )}
-          <span className="text-faint dark:text-slate-700 shrink-0">/</span>
-          {/* Workspace logo — the builder's brand, alongside the Cobblr mark. */}
-          {wsLogo && (
-            <img
-              src={wsLogo}
-              alt=""
-              className="w-6 h-6 rounded object-contain shrink-0 border border-line dark:border-slate-700"
-            />
+          {/* Platform workspace: a "/" divider + the workspace logo + switcher.
+              A managed app shows none of this — its name is already the
+              wordmark suffix ("cobblr for Yarn"), and there's nothing to
+              switch to. */}
+          {!appMode && (
+            <>
+              <span className="text-faint dark:text-slate-700 shrink-0">/</span>
+              {/* Workspace logo — the builder's brand, alongside the Cobblr mark. */}
+              {wsLogo && (
+                <img
+                  src={wsLogo}
+                  alt=""
+                  className="w-6 h-6 rounded object-contain shrink-0 border border-line dark:border-slate-700"
+                />
+              )}
+              {/* min-w-0 (not shrink-0): if the row is still too tight, the
+                  workspace name truncates here FIRST, keeping the right-side menu
+                  button on-screen instead of clipping it. */}
+              <div className="min-w-0">
+                <WorkspaceSwitcher />
+              </div>
+            </>
           )}
-          {/* min-w-0 (not shrink-0): if the row is still too tight, the
-              workspace name truncates here FIRST, keeping the right-side menu
-              button on-screen instead of clipping it. */}
-          <div className="min-w-0">
-            <WorkspaceSwitcher />
-          </div>
 
           {/* Center nav (desktop): a single non-wrapping row. ModuleNav
               measures its own width and folds any links that don't fit
               into a trailing "more ▾" dropdown — so it never wraps to a
               second line (the author's ask) and nothing past the fold is lost.
-              Hidden on mobile — MobileNav takes over. */}
+              Hidden on mobile — MobileNav takes over. ModuleNav itself drops
+              its platform affordances (dashboard, Configuration gear) in
+              app mode. */}
           <nav className="hidden md:flex flex-nowrap items-center gap-0.5 flex-1 min-w-0">
             <ModuleNav />
           </nav>

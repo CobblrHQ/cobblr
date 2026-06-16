@@ -116,7 +116,11 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
           fields: vendor.fields,
         })}::jsonb` as never,
         ai_confidence: "0.9",
-        ai_notes: `Resolved via ${vendor.source}.`,
+        // User-facing note: name the maker/brand, never the internal resolver
+        // id (e.g. "polar-pfil") — that's a private routing detail, not for users.
+        ai_notes: vendor.brand
+          ? `Matched from the ${vendor.brand} product page.`
+          : "Matched from the maker's product page.",
         ai_suggested_at: new Date(),
         updated_at: new Date(),
       })

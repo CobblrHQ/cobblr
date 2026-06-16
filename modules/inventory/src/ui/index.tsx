@@ -96,8 +96,8 @@ function Header({ title, scoped }: { title: string; scoped: boolean }) {
           reachable — it's where you edit a list's dropdown options (otherwise
           there's no findable "config area"). So keep a settings link either way. */}
       <nav className="flex gap-3 text-xs font-mono">
-        <NavLink to={base} end className={cls}>{scoped ? "// list" : "// parts"}</NavLink>
-        <NavLink to={`${base}/settings`} className={cls}>// settings</NavLink>
+        <NavLink to={base} end className={cls}>{scoped ? "// List" : "// Parts"}</NavLink>
+        <NavLink to={`${base}/settings`} className={cls}>// Settings</NavLink>
       </nav>
     </div>
   );

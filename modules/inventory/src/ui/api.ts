@@ -232,9 +232,11 @@ export class InventoryApi {
   );
   /** Field defs for an entity kind — drives the parts table's custom-field
    *  columns (label + renderer). Org-level endpoint, not module-scoped. */
-  listFieldDefs = (kind: string) => this.requestAbs<{ items: InvFieldDef[] }>(
+  // `effective` applies the user override layer (relabel / hide / reorder) — forms
+  // + lists pass it; Settings (config) reads the raw defs to manage them.
+  listFieldDefs = (kind: string, effective = false) => this.requestAbs<{ items: InvFieldDef[] }>(
     "GET",
-    `/api/v1/orgs/${this.slug}/field-defs?kind=${encodeURIComponent(kind)}`,
+    `/api/v1/orgs/${this.slug}/field-defs?kind=${encodeURIComponent(kind)}${effective ? "&effective=1" : ""}`,
   );
   /** Patch a field def — used to add a new option to a `choices` dropdown on
    *  the fly (e.g. a vendor not yet in the list). */

@@ -5,9 +5,24 @@ import type { Request } from "express";
 
 export type OrderStatus = "planned" | "ordered" | "in-transit" | "arrived" | "cancelled";
 
+export interface PurchasesVendorsTable {
+  id: Generated<string>;
+  name: string;
+  website: string | null;
+  account_number: string | null;
+  contact: string | null;
+  lead_time_days: number | null;
+  notes: string | null;
+  metadata: ColumnType<Record<string, unknown>, Record<string, unknown> | undefined, Record<string, unknown> | undefined>;
+  instance: Generated<string>;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
 export interface PurchasesOrdersTable {
   id: Generated<string>;
   vendor: string | null;
+  vendor_id: string | null;
   order_number: string | null;
   url: string | null;
   ordered_at: ColumnType<Date | null, string | null | undefined, string | null | undefined>;
@@ -42,6 +57,7 @@ export interface PurchasesOrderItemsTable {
 }
 
 export interface PurchasesDB {
+  purchases_vendors: PurchasesVendorsTable;
   purchases_orders: PurchasesOrdersTable;
   purchases_order_items: PurchasesOrderItemsTable;
 }

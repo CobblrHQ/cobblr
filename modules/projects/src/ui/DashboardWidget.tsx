@@ -86,4 +86,41 @@ function ProjectsDashboardWidget({ slug, getToken }: DashboardWidgetProps) {
   );
 }
 
-registerDashboardWidget({ module: "projects", order: 30, component: ProjectsDashboardWidget });
+// One tile for a SINGLE projects instance — the per-instance shape the host
+// expands into ("Designs", "Outfits") so a bundle workspace never sees the
+// generic "Projects" label. Default reads the base projects list; a named one
+// reads its /instances/<name>/items. Primary = how many in this instance, with
+// the active count as the secondary (the blocked-tasks signal is workspace-wide,
+// so it stays on the aggregate tile, not here).
+function ProjectsInstanceTile({ slug, getToken, instance }: DashboardWidgetProps) {
+  const name = instance?.instance_name ?? "";
+  const isDefault = instance?.is_default ?? false;
+  const url = isDefault
+    ? `/api/v1/orgs/${slug}/modules/projects/projects?limit=200`
+    : `/api/v1/orgs/${slug}/instances/${encodeURIComponent(name)}/items?limit=200`;
+  const q = useQuery({
+    queryKey: ["dash-proj-inst", slug, name],
+    queryFn: () => getJson<{ items: Proj[] }>(url, getToken).catch(() => ({ items: [] })),
+    enabled: !!slug && !!instance,
+    staleTime: 30_000,
+  });
+  if (!instance) return null;
+  const items = q.data?.items ?? [];
+  const active = items.filter((p) => p.status === "active").length;
+  return (
+    <DashboardTile
+      to={isDefault ? "/projects" : `/instances/${encodeURIComponent(name)}`}
+      icon={ListChecks}
+      label={instance.display_name}
+      primary={items.length}
+      secondary={items.length > 0 ? `${active} active` : "none yet"}
+    />
+  );
+}
+
+registerDashboardWidget({
+  module: "projects",
+  order: 30,
+  component: ProjectsDashboardWidget,
+  instanceTile: ProjectsInstanceTile,
+});

@@ -9,6 +9,7 @@ import { z } from "zod";
 import { requireAuth } from "../auth/middleware.js";
 import { meta } from "../db/meta.js";
 import { announce } from "../platform/announce.js";
+import { reporterCardFields } from "../platform/feedback-card.js";
 import { pokeTriage } from "../platform/triage-trigger.js";
 import { verifyReplyToken } from "../platform/feedback-reply.js";
 
@@ -166,14 +167,12 @@ feedbackRouter.post("/", async (req, res, next) => {
     const emoji =
       parsed.data.type === "bug" ? "🐛" : parsed.data.type === "confusing" ? "😕" : parsed.data.type === "idea" ? "💡" : "•";
     const route = typeof parsed.data.context.route === "string" ? parsed.data.context.route : "";
+    const cardFields = await reporterCardFields({ userId, orgId, route });
     void announce("feedback.new", {
       title: `${emoji} New ${parsed.data.type} feedback`,
       body: parsed.data.message.slice(0, 1500),
       color: 0xb5651d,
-      fields: [
-        ...(parsed.data.workspace_slug ? [{ name: "workspace", value: parsed.data.workspace_slug, inline: true }] : []),
-        ...(route ? [{ name: "page", value: route, inline: true }] : []),
-      ],
+      fields: cardFields,
       // Show the reporter's screenshots inline in the Discord post (c53a6c4f).
       ...(orgId && attachments.length
         ? { images: attachments.map((a) => ({ orgId, fileId: a.file_id, name: a.name })) }

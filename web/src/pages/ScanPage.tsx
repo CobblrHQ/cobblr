@@ -62,6 +62,20 @@ function entryKey(module: string, instance: string | null): string {
   return `${module}::${instance ?? ""}`;
 }
 
+/** A vendor/URL resolver (a Polar spool QR, …) stows its structured parse under
+ *  `suggested_metadata.fields` — keys aligned to field-def names (size,
+ *  batch_code, material, color, …). Pull that nested object out as a flat map. */
+function parsedScanFields(meta: Record<string, unknown> | null | undefined): Record<string, unknown> {
+  const f = meta?.fields;
+  return f && typeof f === "object" && !Array.isArray(f) ? (f as Record<string, unknown>) : {};
+}
+
+/** "batch_code" -> "Batch code". Display label for a parsed field we don't have
+ *  a field-def label for (it lands on a linked entity, e.g. the filament type). */
+function humanizeKey(k: string): string {
+  return k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 /** Is AI usable for this workspace/user? Cached well beyond a scan
  *  session — availability only changes when someone reconfigures. */
 export function useAiStatus(): AiStatus | null {
@@ -726,7 +740,7 @@ function InboxCard({
           </div>
 
           {/* Research hint — correct the AI and re-run with it. */}
-          <HintBox onSubmit={(h) => rerun.mutate(h)} busy={aiWorking} />
+          <HintBox onSubmit={(h) => rerun.mutate(h || undefined)} busy={aiWorking} />
           </div>
           </div>
 
@@ -806,9 +820,9 @@ function HintBox({ onSubmit, busy }: { onSubmit: (hint: string) => void; busy: b
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        const h = hint.trim();
-        if (!h) return;
-        onSubmit(h);
+        // The hint is OPTIONAL — submitting empty re-runs the AI as-is (matches
+        // the inline re-run); with a hint it re-runs with that extra context.
+        onSubmit(hint.trim());
         setHint("");
       }}
       className="rounded-md border border-dashed border-line dark:border-slate-700 p-2"
@@ -826,10 +840,10 @@ function HintBox({ onSubmit, busy }: { onSubmit: (hint: string) => void; busy: b
         />
         <button
           type="submit"
-          disabled={!hint.trim() || busy}
+          disabled={busy}
           className="rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm font-medium disabled:opacity-50 shrink-0 inline-flex items-center gap-1.5"
         >
-          <RotateCcw size={13} className={busy ? "animate-spin" : ""} /> Re-run AI
+          <RotateCcw size={13} className={busy ? "animate-spin" : ""} /> {hint.trim() ? "Re-run with hint" : "Re-run AI"}
         </button>
       </div>
     </form>
@@ -930,6 +944,14 @@ function ConfirmForm({
     const seed: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(meta)) {
       if (v != null && v !== "" && typeof v !== "object") seed[k] = v;
+    }
+    // A vendor/URL resolver (a Polar spool QR, …) stows its PARSED FIELDS as a
+    // nested `fields` object — size, batch_code, material, … keyed to field-def
+    // names. The loop above skips objects, so without this those parsed fields
+    // never reach the form (the "all the info is there but nothing's filled in"
+    // bug). Spread them in over the flat seed.
+    for (const [k, v] of Object.entries(parsedScanFields(meta))) {
+      if (v != null && v !== "") seed[k] = v;
     }
     // Layering: raw lookup seed < the matchmaker's extraction for this
     // table < an explicit chip prefill (which IS that extraction when the
@@ -1071,6 +1093,41 @@ function ConfirmForm({
             className={inputCls}
           />
         </label>
+
+        {/* "From the label" — everything the resolver parsed that ISN'T a
+            field on this table (so the user sees the info was captured even
+            though there's no box for it here — e.g. a spool's material/colour/
+            temps, which ride onto its linked filament TYPE via the auto-lift).
+            The covered keys (size, batch code…) already show filled in below. */}
+        {(() => {
+          const parsed = parsedScanFields(item.suggested_metadata as Record<string, unknown> | null);
+          const covered = new Set(entry.fields.map((f) => f.name));
+          const extra = Object.entries(parsed).filter(
+            ([k, v]) => v != null && v !== "" && !covered.has(k),
+          );
+          if (extra.length === 0) return null;
+          return (
+            <div className="rounded-md border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/40 px-3 py-2">
+              <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1.5">
+                From the label
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {extra.map(([k, v]) => (
+                  <span
+                    key={k}
+                    className="inline-flex items-center gap-1 rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2 py-0.5 text-[11px]"
+                  >
+                    <span className="text-faint dark:text-slate-500">{humanizeKey(k)}</span>
+                    <span className="font-medium text-content dark:text-mortar-100">{String(v)}</span>
+                  </span>
+                ))}
+              </div>
+              <div className="mt-1.5 text-[10px] text-faint dark:text-slate-500">
+                Parsed from the scan and saved with this item.
+              </div>
+            </div>
+          );
+        })()}
 
         {/* The selected TABLE's own fields (from the scan menu — the same
             defs the matchmaker extracts into). Values seed from the lookup

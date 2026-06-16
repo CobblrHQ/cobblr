@@ -27,6 +27,7 @@ export {
   useDashboardWidgets,
   type DashboardWidgetProps,
   type DashboardWidgetSpec,
+  type DashboardInstance,
 } from "./dashboardWidgets";
 export { BackToTop } from "./BackToTop";
 export { CatalogTypeahead, type CatalogTypeaheadHit } from "./CatalogTypeahead";

@@ -14,6 +14,23 @@ export function publicSignupEnabled(): boolean {
   return process.env.NODE_ENV !== "production";
 }
 
+// Managed-app signup: whether a `/start/:app` consumer signup ("Cobblr for Yarn")
+// is allowed when generic public signup is closed. This is the **funnel lever** —
+// it opens ONLY managed-app signups (which land in a locked single-app workspace),
+// never generic platform signup, so the consumer product can launch without
+// opening the whole platform. Default CLOSED in prod (opening it is an
+// outward-facing go-live decision: cost / abuse / support) — set
+// COBBLR_MANAGED_APP_SIGNUP_ENABLED=true on a deployment to open the funnel there
+// (e.g. staging, to test the flow). Same precedence as public signup; unset = open
+// in dev/test, closed in prod. (When publicSignupEnabled() is already true this is
+// moot — generic signup, managed-app included, is open.)
+export function managedAppSignupEnabled(): boolean {
+  const raw = process.env.COBBLR_MANAGED_APP_SIGNUP_ENABLED?.toLowerCase();
+  if (raw === "true" || raw === "1" || raw === "yes") return true;
+  if (raw === "false" || raw === "0" || raw === "no") return false;
+  return process.env.NODE_ENV !== "production";
+}
+
 // Self-serve invites: whether a regular workspace OWNER can mint a "start your
 // own Cobblr" link (a new person → their OWN fresh workspace). This is the
 // uncontrolled-growth lever — each invitee becomes an owner who can invite

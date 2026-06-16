@@ -1749,7 +1749,7 @@ function AnnouncementsTab() {
   );
 }
 
-const FEEDBACK_STATUSES = ["new", "triaged", "in_progress", "resolved", "wontfix"] as const;
+const FEEDBACK_STATUSES = ["new", "triaged", "in_progress", "backlog", "resolved", "wontfix"] as const;
 
 // Feedback triage queue — what users submit via the FeedbackWidget lands here.
 function FeedbackTab() {

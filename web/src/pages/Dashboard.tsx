@@ -18,7 +18,7 @@
 // 30s so navigating away + back doesn't refire everything.
 
 import { Fragment, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpCircle, Camera, Compass, Eye, EyeOff, GripVertical, LayoutList, Maximize2, Minimize2, Plus, ScanLine, Sliders, Sparkles, X } from "lucide-react";
 import { useBundleUpdates } from "../lib/useBundleUpdates";
@@ -33,6 +33,7 @@ import { EntityThumb,
 // TileGrid renders whatever's registered for an enabled module — no per-module
 // knowledge here. (inventory / labels / projects register from their own /ui.)
 import "../dashboard/builtinWidgets";
+import { expandInstanceWidgets } from "../dashboard/expandInstanceWidgets";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useAuth } from "../auth/AuthContext";
 import { FirstRunWizard } from "../components/FirstRunWizard";
@@ -643,7 +644,23 @@ function ArrangeableBody({
 }) {
   const qc = useQueryClient();
   const toast = useToast();
-  const widgets = useDashboardWidgets().filter((w) => enabled.has(w.module));
+  const registered = useDashboardWidgets().filter((w) => enabled.has(w.module));
+  // Modules that want one tile per instance ("Yarn"/"Hooks", not "Inventory").
+  // Fetch their instances and expand each into per-instance specs; everything
+  // else passes through as its single aggregate tile.
+  const instanceModules = registered.filter((w) => w.instanceTile).map((w) => w.module);
+  const instanceQs = useQueries({
+    queries: instanceModules.map((m) => ({
+      queryKey: ["dash-instances", slug, m],
+      queryFn: () => api.listInstances(slug, m).then((r) => r.items),
+      enabled: !!slug,
+      staleTime: 30_000,
+    })),
+  });
+  const instancesByModule = new Map(
+    instanceModules.map((m, i) => [m, instanceQs[i]?.data] as const),
+  );
+  const widgets = expandInstanceWidgets(registered, instancesByModule);
   const layoutQ = useQuery({
     queryKey: ["dash-layout", slug],
     queryFn: () => api.getDashboardLayout(slug),
@@ -862,7 +879,7 @@ function TileGrid({
               const Widget = a.spec.component;
               return (
                 <div key={widgetId(a.spec)} className={spanCls(a.span)}>
-                  <Widget slug={slug} getToken={getToken} />
+                  <Widget slug={slug} getToken={getToken} instance={a.spec._instance} />
                 </div>
               );
             })}
@@ -889,7 +906,7 @@ function TileGrid({
             className={"relative rounded-xl cursor-grab " + spanCls(a.span) + (a.hidden ? " opacity-40" : "")}
           >
             <div className="pointer-events-none">
-              <Widget slug={slug} getToken={getToken} />
+              <Widget slug={slug} getToken={getToken} instance={a.spec._instance} />
             </div>
             <div className="absolute top-1.5 right-1.5 flex items-center gap-1 rounded-md bg-surface/90 dark:bg-slate-900/90 backdrop-blur border border-line dark:border-slate-700 px-1 py-0.5">
               <button

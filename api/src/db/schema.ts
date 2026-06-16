@@ -59,6 +59,18 @@ export interface OrgsTable {
     widgets: { id: string; hidden: boolean; span?: number }[];
     sections?: { id: string; hidden: boolean }[];
   } | null>;
+  /** Managed vertical-app config — when set, this workspace is a single-purpose
+   *  "managed app" ("Cobblr for Yarn"): the web hides all platform chrome and
+   *  lands the user straight in the app. NULL = normal platform workspace.
+   *  See business-models/docs/18-managed-vertical-apps.md. */
+  app_mode: Generated<{
+    /** App id, e.g. "yarn" — keys the managed-app registry. */
+    app: string;
+    /** Route to land in inside the app, e.g. "/inventory". */
+    home_path: string;
+    /** Display label, e.g. "Cobblr for Yarn". */
+    label?: string;
+  } | null>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }
@@ -596,8 +608,17 @@ export interface NativeFieldOverridesTable {
   position: Generated<number>;
   bundle_id: string | null;
   source_module: string | null;
+  /** Phase 1b — open-ended presentation overrides ({ choices?: string[], … }).
+   *  The user layer (bundle_id null) wins at resolve; default {}. */
+  overrides: Generated<FieldOverrideBlob>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
+}
+
+/** The JSONB `overrides` blob on native_field_overrides. Open-ended by design;
+ *  `choices` is the first key (user-customized dropdown options). */
+export interface FieldOverrideBlob {
+  choices?: string[];
 }
 
 /** One iCal feed token per workspace, in meta so the unauthenticated

@@ -18,6 +18,7 @@ import { env } from "./env.js";
 import { authRouter } from "./routes/auth.js";
 import { requestGuardMiddleware } from "./platform/hosted-seams.js";
 import { publicRouter } from "./routes/public.js";
+import { changelogRouter } from "./routes/changelog.js";
 import { meRouter } from "./routes/me.js";
 import { connectionsRouter, workspaceAiSharesRouter } from "./routes/connections.js";
 import { modulesRouter } from "./routes/modules.js";
@@ -120,6 +121,8 @@ export function createApp(): AppHandles {
   // token in the URL is the secret. Mounted on /api/v1/public/* —
   // outside /orgs because the URL carries no slug.
   v1.use("/public", publicRouter);
+  // Public "What's new" feed — unauthenticated; serves the parsed CHANGELOG.md.
+  v1.use("/changelog", changelogRouter);
   // Public iCal feed — unauthenticated; token in the URL is the secret.
   // GET /api/v1/calendar/:token.ics. Paste into Google Calendar / Apple
   // Calendar to subscribe. Outside /orgs (no slug in the URL).

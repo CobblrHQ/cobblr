@@ -1,100 +1,110 @@
-// Polar Filament — 3dqr.co spool QR resolver.
+// Polar Filament — spool QR resolver via the official pfil.us data API.
 //
-// Polar prints a QR on every spool that resolves to `3dqr.co/?i=<serial>`,
-// which redirects to a per-spool data page ("Royal Blue PLA 1.75 1kg",
-// serial #52435). The page has no JSON API, so we fetch + parse its HTML —
-// tolerant of markup drift (it returns null on any miss, and the scan
-// pipeline falls back to its generic path).
+// Polar prints a QR on every spool that encodes `3dqr.co/?i=<id>-<checksum>`
+// (a redirect). The structured spool data lives at Polar's own JSON API,
+// https://pfil.us/query_spool.php (given to us directly by Polar). We pull the
+// spool id+checksum out of the scanned URL and query that API — clean JSON
+// including nozzle/bed temps, which the public redirect page never exposed.
 //
-// Temps (nozzle/bed) and "needs drying" live only on the physical label and
-// the type spec, NOT this page — so the QR scrape can't fill them. They
-// belong to the filament *type*; the scan creates/updates a spool.
+// Polar asks callers to (1) send a contact email and (2) cache results. We do
+// both: POLAR_QUERY_EMAIL (env; defaults to Cobblr's contact) identifies us,
+// and every resolution is cached cross-tenant by spool ref — a spool's data is
+// immutable, so any given spool hits their server at most once, ever.
 
+import { platform } from "@cobblr/platform-contract";
 import type { ScanUrlResolver, ScanUrlResolution } from "@cobblr/platform-contract";
 
-/** Accepts a bare host too (`3dqr.co/?i=…`), since QR decoders sometimes
- *  drop the scheme. */
-function matchesPolar(value: string): boolean {
-  return /(?:^|\/\/|\.|\s)3dqr\.co\//i.test(value.trim());
+const QUERY_URL = "https://pfil.us/query_spool.php";
+const API_VERSION = "1.00";
+const CONTACT_EMAIL = process.env.POLAR_QUERY_EMAIL || "contact@example.com";
+const CACHE_NS = "polar-spool";
+
+/** The QR encodes `…?i=<id>-<checksum>` (e.g. `52435-20V0`). Pull that token
+ *  out of a 3dqr.co or pfil.us URL. */
+function spoolRefFromUrl(value: string): string | null {
+  const m = value.match(/[?&]i=([0-9]+-[A-Za-z0-9]+)/);
+  return m?.[1] ?? null;
 }
 
-async function resolvePolar(value: string): Promise<ScanUrlResolution | null> {
-  const raw = value.trim();
-  if (!matchesPolar(raw)) return null;
-  const url = /^https?:\/\//i.test(raw) ? raw : `https://${raw.replace(/^\/+/, "")}`;
-  const res = await fetch(url, {
-    redirect: "follow",
-    headers: { "user-agent": "CobblrScan/1.0 (+https://cobblr.me)" },
-    signal: AbortSignal.timeout(8000),
-  });
-  if (!res.ok) return null;
-  const html = await res.text();
-  const spool = parsePolarSpool(html);
-  if (!spool) return null;
+function matchesPolar(value: string): boolean {
+  const v = value.trim();
+  return /(?:3dqr\.co|pfil\.us)/i.test(v) && spoolRefFromUrl(v) != null;
+}
+
+/** The pfil.us `spool` object (the fields we map). */
+export interface PolarSpoolData {
+  id?: number;
+  checksum?: string;
+  color?: string;
+  material_name?: string;
+  diameter?: number;
+  mass_grams?: number;
+  nozzle_temp?: number;
+  bed_temp?: number;
+  brand_name?: string;
+  sku?: string;
+}
+
+/** Map the API's spool object onto a ScanUrlResolution. Pure + tolerant —
+ *  returns null if the essential identity (material/colour) is missing.
+ *  Exported for the smoke test. material/color/diameter/temps land on the
+ *  filament TYPE via the auto-lift; size/batch_code stay on the spool. */
+export function polarSpoolToResolution(spool: PolarSpoolData): ScanUrlResolution | null {
+  const material = spool.material_name?.trim() || null;
+  const color = spool.color?.trim() || null;
+  if (!material && !color) return null;
+  const name = [color, material].filter(Boolean).join(" ") || "Filament";
+  const sizeKg = typeof spool.mass_grams === "number" ? spool.mass_grams / 1000 : null;
   return {
-    source: "polar-3dqr",
-    name: spool.name,
-    brand: spool.brand,
+    source: "polar-pfil",
+    name,
+    brand: spool.brand_name?.trim() || "Polar Filament",
     category: "filament",
     entityType: "part",
     fields: {
-      material: spool.material,
-      color: spool.color,
-      diameter: spool.diameter,
-      size: spool.size,
-      // The spool serial doubles as the maker's batch/lot code on this label.
-      batch_code: spool.serial,
+      material,
+      color,
+      diameter: typeof spool.diameter === "number" ? `${spool.diameter} mm` : null,
+      size: sizeKg != null ? `${sizeKg} kg` : null,
+      // The spool serial doubles as the maker's batch/lot code.
+      batch_code: spool.id != null ? String(spool.id) : null,
+      // From the official API — the public redirect page never had these.
+      nozzle_temp: typeof spool.nozzle_temp === "number" ? spool.nozzle_temp : null,
+      bed_temp: typeof spool.bed_temp === "number" ? spool.bed_temp : null,
     },
   };
 }
 
+async function resolvePolar(value: string): Promise<ScanUrlResolution | null> {
+  const ref = spoolRefFromUrl(value.trim());
+  if (!ref) return null;
+
+  // Cache cross-tenant by spool ref (immutable per spool) — Polar asks callers
+  // to cache; each spool's data never changes, so query them at most once.
+  const cached = await platform()
+    .sharedCache.get<ScanUrlResolution>(CACHE_NS, ref)
+    .catch(() => null);
+  if (cached) return cached;
+
+  const url = `${QUERY_URL}?i=${encodeURIComponent(ref)}&email=${encodeURIComponent(
+    CONTACT_EMAIL,
+  )}&version=${API_VERSION}`;
+  const res = await fetch(url, {
+    headers: { "user-agent": "CobblrScan/1.0 (+https://cobblr.me)" },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) return null;
+  const json = (await res.json()) as { status?: string; spool?: PolarSpoolData };
+  if (json.status !== "OK" || !json.spool) return null;
+  const resolution = polarSpoolToResolution(json.spool);
+  if (resolution) {
+    await platform().sharedCache.put(CACHE_NS, ref, resolution).catch(() => {});
+  }
+  return resolution;
+}
+
 export const polarResolver: ScanUrlResolver = {
-  name: "polar-3dqr",
+  name: "polar-pfil",
   matches: matchesPolar,
   resolve: resolvePolar,
 };
-
-export interface PolarSpool {
-  name: string;
-  material: string | null;
-  color: string | null;
-  diameter: string | null;
-  size: string | null;
-  serial: string | null;
-  brand: string;
-}
-
-const MATERIALS = ["PLA+", "PLA", "PETG", "ABS", "ASA", "TPU", "Nylon", "PC", "PVA", "HIPS"];
-
-/** Parse a Polar spool data page. Pure + tolerant — returns null if it can't
- *  find the identity line or a serial. Exported for the smoke test. */
-export function parsePolarSpool(html: string): PolarSpool | null {
-  const text = html
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  // The label line: "Royal Blue PLA 1.75 1kg" → name, diameter (mm), size.
-  const line = text.match(/([A-Za-z][\w '+./\-]*?)\s+(\d+(?:[.,]\d+)?)\s+([\d.]+)\s*(kg|g)\b/i);
-  const serialM = text.match(/#\s?(\d{3,})/);
-  if (!line && !serialM) return null;
-
-  const name = (line?.[1] ?? text.match(/Spool Details\s+(.+?)\s+#/i)?.[1] ?? "Filament").trim();
-  const material =
-    MATERIALS.find((m) => new RegExp(`\\b${m.replace("+", "\\+")}\\b`, "i").test(name)) ?? null;
-  const color = material
-    ? name.replace(new RegExp(`\\s*\\b${material.replace("+", "\\+")}\\b\\s*`, "i"), " ").trim() || null
-    : name || null;
-
-  return {
-    name,
-    material,
-    color,
-    diameter: line?.[2] ? `${line[2].replace(",", ".")} mm` : null,
-    size: line?.[3] && line[4] ? `${line[3]} ${line[4].toLowerCase()}` : null,
-    serial: serialM?.[1] ?? null,
-    brand: "Polar Filament",
-  };
-}

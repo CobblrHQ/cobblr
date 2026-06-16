@@ -1828,6 +1828,23 @@ export type FileReader = (
   variant: FileVariant,
 ) => Promise<FileBytes | null>;
 
+/** Result of storing a file through the write seam. */
+export interface FileWriteResult {
+  fileId: string;
+  mimeType: string;
+  sizeBytes: number;
+  kind: string;
+}
+/** Stores bytes as a new file in `orgId` (its own variants + DB row) and
+ *  returns the new file id. core-files registers it; the kernel calls it to
+ *  COPY a file across workspaces (e.g. the graduation import duplicating a
+ *  photo into the new workspace). */
+export type FileWriter = (
+  orgId: string,
+  bytes: Uint8Array,
+  opts: { filename?: string; mimeType?: string },
+) => Promise<FileWriteResult>;
+
 /** Server-side access to stored file bytes, brokered so a module never
  *  imports core-files or touches its on-disk layout. core-files
  *  registers the reader at boot; everyone else just calls read(). */
@@ -1841,6 +1858,16 @@ export interface PlatformFiles {
     fileId: string,
     variant?: FileVariant,
   ): Promise<FileBytes | null>;
+  /** A file-storage module registers the byte writer once at boot. */
+  registerWriter(writer: FileWriter): void;
+  /** Store bytes as a NEW file in `orgId` (variants + DB row). Returns the new
+   *  file id, or null if no writer is registered. Used for cross-workspace
+   *  file copies (the graduation import). */
+  write(
+    orgId: string,
+    bytes: Uint8Array,
+    opts: { filename?: string; mimeType?: string },
+  ): Promise<FileWriteResult | null>;
   /** Override the blob-storage driver (the overlay injects S3/R2). If none is
    *  registered, core-files uses its built-in local-disk driver. */
   registerDriver(driver: FilesDriver): void;

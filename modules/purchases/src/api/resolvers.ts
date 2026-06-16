@@ -132,4 +132,43 @@ export function registerPurchasesResolvers(): void {
       })),
     };
   });
+
+  // ── vendors ──────────────────────────────────────────────────────
+  platform().entities.registerResolver("purchases:vendor", async (orgId, id) => {
+    const db = (await platform().tenants.getDb(orgId)) as Kysely<PurchasesDB>;
+    const row = await db.selectFrom("purchases_vendors").selectAll().where("id", "=", id).executeTakeFirst();
+    if (!row) return null;
+    return {
+      kind: "purchases:vendor",
+      id: row.id,
+      title: row.name,
+      subtitle: row.website ?? undefined,
+      detailUrl: `/purchases/vendors/${row.id}`,
+      fields: { ...row } as Record<string, unknown>,
+    };
+  });
+
+  platform().entities.registerListResolver("purchases:vendor", async (orgId, query) => {
+    const db = (await platform().tenants.getDb(orgId)) as Kysely<PurchasesDB>;
+    let q = db.selectFrom("purchases_vendors").selectAll();
+    if (query.q) {
+      const needle = `%${query.q.toLowerCase()}%`;
+      q = q.where((eb) => eb(eb.fn("lower", ["name"]), "like", needle));
+    }
+    const rows = await q
+      .orderBy("name")
+      .limit(Math.min(query.limit ?? 50, 200))
+      .offset(query.offset ?? 0)
+      .execute();
+    return {
+      items: rows.map((row) => ({
+        kind: "purchases:vendor",
+        id: row.id,
+        title: row.name,
+        subtitle: row.website ?? undefined,
+        detailUrl: `/purchases/vendors/${row.id}`,
+        fields: { ...row } as Record<string, unknown>,
+      })),
+    };
+  });
 }

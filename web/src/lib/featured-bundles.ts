@@ -125,6 +125,33 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     },
   },
   {
+    glyph: "🔧",
+    blurb:
+      "Run a workshop: keep parts in inventory, define Builds (bills of materials) of those parts, see how many you can build right now — and auto-add anything that runs low to a parts shopping list you check off to restock.",
+    manifest: {
+      id: "cobblr.flagship.maker-workshop",
+      version: "0.1.0",
+      name: "Maker Workshop",
+      description:
+        "Inventory + Builds + a parts shopping list, pre-wired into the maker loop: define builds as recipes of tracked parts, build them (which consumes stock), and auto-restock low parts through a shopping list you check off. Showcases the Builds (light BOM) module.",
+      author: "Cobblr",
+      requires: [{ module: "inventory" }, { module: "builds" }, { module: "lists" }],
+      wires: [
+        // A part runs low (e.g. consumed by building something) → add it to the
+        // parts shopping list. Same proven plumbing as the kitchen bundle.
+        { source_kind: "inventory:part", action_id: "lists:add-item", trigger_type: "event", trigger_event: "inventory.stock.low", args: { listTitle: "Parts to buy" } },
+        // Check the part off the shopping list → restock it by one.
+        { source_kind: "inventory:part", action_id: "inventory:adjust-stock", trigger_type: "event", trigger_event: "lists.item.checked", args: { delta: 1, reason: "Restocked — checked off the parts list" } },
+      ],
+      field_defs: [
+        { entity_kind: "inventory:part", name: "part_type", display_label: "Part type", type: "text", position: 1, choices: ["Mechanical", "Electronic", "Fastener", "Printed", "Raw material", "Consumable"] },
+        { entity_kind: "inventory:part", name: "package", display_label: "Package / footprint", type: "text", position: 2 },
+        { entity_kind: "inventory:part", name: "value", display_label: "Value / spec", type: "text", position: 3 },
+        { entity_kind: "inventory:part", name: "datasheet_url", display_label: "Datasheet / source URL", type: "url", position: 4 },
+      ],
+    },
+  },
+  {
     glyph: "🥬➜📈",
     blurb:
       "Bridge: every grocery order you receive logs its cost as a 'Grocery spend' measurement — your spending trends like any metric. Set a monthly budget as the goal.",
@@ -567,14 +594,14 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.yarn",
-      version: "0.4.0",
+      version: "0.4.1",
       name: "Yarn",
       description:
         "Yarn as its own inventory instance — skein-tracked, yarn-only fields, grouped by weight. Optional Hooks + Designs tables.",
       author: "Cobblr",
-      released_at: "2026-06-08",
+      released_at: "2026-06-16",
       changelog:
-        "Real yarn-user polish: the Color field is a swatch picker (type a hex or pick one), Brand + Price now show right on the “New yarn” modal, and a “Suggested needle size” field was added. Dropdowns (vendor, fibre…) let you add a new option on the fly that sticks for next time. Dropped the confusing “Summary” computed field. — Yarn is its OWN table (a Yarn instance), not a skin over generic inventory: only yarn fields show, the button reads “New yarn”, quantities are in skeins. Hooks and Designs become their own tables too. The generic inventory cruft (warranty, insured, lifecycle…) is hidden, and the pinned view is named for its lens (“By weight”).",
+        "Your Yarn table now reads “yarn” everywhere — the “New”, search box, and empty-state labels say “yarn” instead of “part”. (Earlier installs picked up the generic “part” wording; upgrading applies the fix.) Real yarn-user polish: the Color field is a swatch picker (type a hex or pick one), Brand + Price now show right on the “New yarn” modal, and a “Suggested needle size” field was added. Dropdowns (vendor, fibre…) let you add a new option on the fly that sticks for next time. Dropped the confusing “Summary” computed field. — Yarn is its OWN table (a Yarn instance), not a skin over generic inventory: only yarn fields show, the button reads “New yarn”, quantities are in skeins. Hooks and Designs become their own tables too. The generic inventory cruft (warranty, insured, lifecycle…) is hidden, and the pinned view is named for its lens (“By weight”).",
       requires: [{ module: "inventory" }],
       // The always-on base: a "Yarn" instance of inventory.
       provides_instances: [
@@ -735,7 +762,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       // the generic inventory:lift-to-type action, no script.
       migrations: [
         {
-          to_version: "0.5.0",
+          to_version: "0.4.1",
           action: "inventory:lift-to-type",
           args: {
             source_instance: "filament",

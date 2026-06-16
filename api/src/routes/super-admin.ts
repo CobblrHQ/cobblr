@@ -22,6 +22,7 @@ import { getCpuStats, getInvocationStats } from "../sandbox/pool.js";
 import { hasAuthEmailSender, sendAuthEmail } from "../platform/hosted-seams.js";
 import { notifyAccount } from "../platform/notifications.js";
 import { announce, listAnnounceSettings, setAnnounceSetting, isComposable } from "../platform/announce.js";
+import { reporterCardFields } from "../platform/feedback-card.js";
 import { pokeDiscordResolved, pokeDiscordWaitlistCard } from "../platform/discord-bot-trigger.js";
 import { pokeTriage } from "../platform/triage-trigger.js";
 import { absoluteAppUrl } from "../platform/public-url.js";
@@ -1074,7 +1075,10 @@ superAdminRouter.get("/barcode-cache", async (req, res, next) => {
 // The queue users submit into (POST /feedback). Reviewed + worked here.
 
 const UpdateFeedback = z.object({
-  status: z.enum(["new", "triaged", "in_progress", "resolved", "wontfix"]).optional(),
+  // `backlog` = parked for a human to handle interactively later: OPEN (not
+  // dismissed like wontfix), but the autopilot + triage skip it (only
+  // new/triaged/in_progress are actionable). The "keep for human" lane.
+  status: z.enum(["new", "triaged", "in_progress", "backlog", "resolved", "wontfix"]).optional(),
   admin_notes: z.string().max(5000).nullable().optional(),
   // When true, send the reporter an in-app notification (a "we looked at
   // this" / "it's fixed" reply). `reply_message` is the human note; falls
@@ -1431,7 +1435,12 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
             : parsed.data.status === "wontfix"
               ? "We reviewed this — thanks for flagging it."
               : "We're looking into this.";
-        pokeDiscordResolved({ thread_id: ref.thread_id, text: parsed.data.reply_message?.trim() || defaultMsg });
+        // Prefer the actual reply / what-we-did over the generic line.
+        const did = parsed.data.reply_message?.trim() || parsed.data.public_summary?.trim();
+        pokeDiscordResolved({
+          thread_id: ref.thread_id,
+          text: parsed.data.status === "resolved" && did ? `Fixed — this is live now. 🎉\n\n${did}` : did || defaultMsg,
+        });
         notified = true;
       }
     }
@@ -1480,9 +1489,13 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
                 ? `Just reply to this email and it'll land on your report — or use your feedback page:\n  ${absoluteAppUrl("/me/feedback")}`
                 : `To reply, use your feedback page — replies to this email aren't monitored yet:\n  ${absoluteAppUrl("/me/feedback")}`;
               if (isResolved) {
+                // Match the multi-resolve (batch) email style: lead with the
+                // reporter's own words ("You reported: …"), then what we did — a
+                // "reported → fixed" record, not the reply with the quote tacked on.
+                const head = `You reported:\n  "${(row.message ?? "").trim().slice(0, 600)}"`;
                 email = {
                   subject: "Your Cobblr request is live",
-                  text: `${hi}\n\n${message}\n\n${reported}\n\nStill off? ${replyHere}\n\nThanks for helping make Cobblr better.\n— The Cobblr team`,
+                  text: `${hi}\n\n${head}\n\n${message}\n\nStill off? ${replyHere}\n\nThanks for helping make Cobblr better.\n— The Cobblr team`,
                   replyTo: replyAddr ?? undefined,
                 };
               } else if (parsed.data.reply_message?.trim()) {
@@ -1520,13 +1533,14 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
       // the reply we sent the requester so the public card ALWAYS says what we
       // did — never just re-echoes the complaint with a green check.
       const fixed = parsed.data.public_summary?.trim() || parsed.data.reply_message?.trim();
+      const cardFields = await reporterCardFields({ userId: row.user_id, orgId: row.org_id, route: ctx.route });
       void announce("feedback.resolved", {
         title: "✅ Feedback resolved",
         // When we have a "what we did" line, the post reads as a public changelog
         // entry (reported → fixed); otherwise just the original report.
         body: fixed ? `**Reported:** ${reported}\n\n**Fixed:** ${fixed.slice(0, 2400)}` : reported,
         color: 0x2e7d32,
-        fields: typeof ctx.route === "string" && ctx.route ? [{ name: "page", value: ctx.route, inline: true }] : undefined,
+        fields: cardFields,
       });
     }
 
@@ -1599,9 +1613,15 @@ superAdminRouter.post("/feedback/batch-resolve", async (req, res, next) => {
       if (notify_reporter && row.origin === "discord") {
         const ref = (row.origin_ref ?? {}) as { thread_id?: string };
         if (ref.thread_id) {
+          // Send what we ACTUALLY did (the per-item fix / reply), not a generic
+          // line — mirrors the email's per-item block + the single-resolve DM.
+          // The reporter's report is already in the thread, so don't re-quote it.
+          const did = (fixNoteById.get(row.id) || summaryById.get(row.id) || reply_message || "").trim();
           const dmsg = isResolved
-            ? "The issue you reported has been fixed — it's live now."
-            : "We reviewed your feedback — thanks for flagging it.";
+            ? did
+              ? `Fixed — this is live now. 🎉\n\n${did}`
+              : "Fixed — this is live now. 🎉"
+            : did || "We reviewed your feedback — thanks for flagging it.";
           void pokeDiscordResolved({ thread_id: ref.thread_id, text: dmsg });
         }
       }
@@ -1621,11 +1641,12 @@ superAdminRouter.post("/feedback/batch-resolve", async (req, res, next) => {
         const ctx = (row.context ?? {}) as { route?: string };
         const fixed = (summaryById.get(row.id) || reply_message || "").trim();
         const reported = (row.message ?? "").slice(0, 1200);
+        const cardFields = await reporterCardFields({ userId: row.user_id, orgId: row.org_id, route: ctx.route });
         void announce("feedback.resolved", {
           title: "✅ Feedback resolved",
           body: fixed ? `**Reported:** ${reported}\n\n**Fixed:** ${fixed.slice(0, 2400)}` : reported,
           color: 0x2e7d32,
-          fields: typeof ctx.route === "string" && ctx.route ? [{ name: "page", value: ctx.route, inline: true }] : undefined,
+          fields: cardFields,
         });
       }
     }

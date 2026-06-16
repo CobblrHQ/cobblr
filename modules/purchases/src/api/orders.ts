@@ -16,6 +16,7 @@ const OrderStatus = z.enum(["planned", "ordered", "in-transit", "arrived", "canc
 
 const OrderCreate = z.object({
   vendor: z.string().max(160).nullable().optional(),
+  vendor_id: z.string().uuid().nullable().optional(),
   order_number: z.string().max(160).nullable().optional(),
   url: z.string().url().max(500).nullable().optional(),
   ordered_at: z.string().nullable().optional(),
@@ -46,6 +47,28 @@ const ItemCreate = z.object({
 // POSTs gets hoisted into metadata by routeUnknownToMetadata().
 const ORDER_NATIVE_KEYS = new Set(Object.keys(OrderCreate.shape));
 const ITEM_NATIVE_KEYS = new Set(Object.keys(ItemCreate.shape));
+
+// Resolve the `vendor` text an order should store: the linked vendor's name
+// when vendor_id is set, else the explicit text. `undefined` (vendor_id absent
+// from a PATCH body) means "leave whatever's there"; only return a value when
+// we actually want to write one.
+async function vendorTextFor(
+  req: import("express").Request,
+  vendorId: string | null | undefined,
+  vendorText: string | null | undefined,
+): Promise<string | null | undefined> {
+  if (vendorId) {
+    const v = await tenantDb(req)
+      .selectFrom("purchases_vendors")
+      .select("name")
+      .where("id", "=", vendorId)
+      .where("instance", "=", instanceOf(req))
+      .executeTakeFirst();
+    if (v) return v.name;
+  }
+  if (vendorId === null) return vendorText ?? null; // unlinked → keep/clear text
+  return vendorText;
+}
 
 // ── orders ───────────────────────────────────────────────────────
 
@@ -103,10 +126,14 @@ ordersRouter.post(
     const db = tenantDb(req);
     const ctx = tenantContext(req);
     const session = sessionUser(req);
+    // Dual-write the legacy `vendor` text from the linked vendor's name so
+    // cross-module readers + the orders list stay correct without a join.
+    const vendorText = await vendorTextFor(req, parsed.data.vendor_id, parsed.data.vendor);
     const inserted = await db
       .insertInto("purchases_orders")
       .values({
         ...parsed.data,
+        vendor: vendorText,
         instance: instanceOf(req),
         status: parsed.data.status ?? "ordered",
         metadata: parsed.data.metadata ?? {},
@@ -152,9 +179,15 @@ ordersRouter.patch(
       res.status(404).json({ error: { code: "not_found", message: "order not found" } });
       return;
     }
+    // Keep the legacy `vendor` text in sync when vendor_id changes in this PATCH.
+    const patch: Record<string, unknown> = { ...parsed.data, updated_at: new Date() };
+    if ("vendor_id" in parsed.data) {
+      const vt = await vendorTextFor(req, parsed.data.vendor_id, parsed.data.vendor);
+      if (vt !== undefined) patch.vendor = vt;
+    }
     const updated = await db
       .updateTable("purchases_orders")
-      .set({ ...parsed.data, updated_at: new Date() } as never)
+      .set(patch as never)
       .where("id", "=", id)
       .where("instance", "=", instanceOf(req))
       .returningAll()

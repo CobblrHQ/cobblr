@@ -18,13 +18,14 @@ import { provisionTenantDb } from "../db/provision.js";
 import { hashPassword, verifyPassword } from "../auth/password.js";
 import { signSession } from "../auth/jwt.js";
 import { isPlatformAdmin } from "../auth/middleware.js";
-import { publicSignupEnabled, selfServeInvitesEnabled } from "../auth/signup-gate.js";
+import { publicSignupEnabled, managedAppSignupEnabled, selfServeInvitesEnabled } from "../auth/signup-gate.js";
 import { dispatch } from "../platform/notifications.js";
 import { isUndeliverableTestAddress } from "../platform/email-send.js";
 import * as activity from "../platform/activity.js";
 import { fireSignup, sendAuthEmail } from "../platform/hosted-seams.js";
 import { discordInviteUrl } from "../platform/discord-oauth.js";
 import { enableDefaultModulesForOrg } from "../modules/enable.js";
+import { provisionAppWorkspace, ProvisionAppError } from "../platform/provision-app.js";
 import type { OrgRole } from "../db/schema.js";
 
 class SkipNotify extends Error {}
@@ -37,10 +38,18 @@ const SignupBody = z.object({
   email: z.string().email().max(255),
   password: z.string().min(8).max(128),
   display_name: z.string().min(1).max(120),
-  org_name: z.string().min(1).max(120),
+  // Optional when `app` is set — a managed-app signup names the workspace
+  // after the app (the consumer never picks a workspace name).
+  org_name: z.string().min(1).max(120).optional(),
   /** Single-use signup-invite token. When public signup is disabled, a
    *  valid token authorises this registration (the invite-only gate). */
   invite_token: z.string().max(200).optional(),
+  /** Managed-app signup ("Cobblr for Yarn"): provision the user's first (only)
+   *  workspace AS this app — install its flagship bundle + lock it into app
+   *  mode — instead of a generic workspace. `manifest` is the app's bundle
+   *  (caller-supplied for now; server-side registry fetch is the follow-up). */
+  app: z.string().min(1).optional(),
+  manifest: z.unknown().optional(),
 });
 
 const LoginBody = z.object({
@@ -121,6 +130,9 @@ interface AuthResponseOrg {
   name: string;
   slug: string;
   role: OrgRole;
+  /** Set when this workspace is a managed vertical app — the web hides all
+   *  platform chrome and lands the user in `app_mode.home_path`. */
+  app_mode: { app: string; home_path: string; label?: string } | null;
 }
 
 interface AuthResponse {
@@ -251,7 +263,7 @@ export async function buildAuthResponse(userId: string): Promise<AuthResponse> {
   const orgs = await meta
     .selectFrom("org_memberships as m")
     .innerJoin("orgs as o", "o.id", "m.org_id")
-    .select((eb) => ["o.id", "o.name", "o.slug", "m.role", eb.selectFrom("org_memberships as om").innerJoin("users as ou", "ou.id", "om.user_id").select("ou.display_name").whereRef("om.org_id", "=", "o.id").where("om.role", "=", "owner").limit(1).as("owner_name")])
+    .select((eb) => ["o.id", "o.name", "o.slug", "o.app_mode", "m.role", eb.selectFrom("org_memberships as om").innerJoin("users as ou", "ou.id", "om.user_id").select("ou.display_name").whereRef("om.org_id", "=", "o.id").where("om.role", "=", "owner").limit(1).as("owner_name")])
     .where("m.user_id", "=", userId)
     .execute();
 
@@ -296,11 +308,14 @@ authRouter.post("/signup", async (req, res, next) => {
     const body = SignupBody.parse(req.body);
     const email = body.email.toLowerCase().trim();
 
-    // Authorisation: either public signup is open, OR the caller holds a
-    // valid single-use signup-invite. Validate (status + email-lock) now;
-    // the atomic claim happens just before user creation (race-safe).
+    // Authorisation: open if public signup is on, OR this is a managed-app
+    // signup on a deployment that's opened the funnel (the consumer product can
+    // launch without opening generic platform signup), OR the caller holds a
+    // valid single-use signup-invite. Validate (status + email-lock) now; the
+    // atomic claim happens just before user creation (race-safe).
+    const isManagedAppSignup = !!body.app && managedAppSignupEnabled();
     let invite: { id: string; invited_email: string | null; created_by: string } | null = null;
-    if (!publicSignupEnabled()) {
+    if (!publicSignupEnabled() && !isManagedAppSignup) {
       if (!body.invite_token) {
         return res.status(403).json({
           error: {
@@ -410,8 +425,12 @@ authRouter.post("/signup", async (req, res, next) => {
       }
     }
 
-    // Phase 2: provision the user's first org.
-    const provisioned = await provisionOrgForUser(userId, body.org_name);
+    // Phase 2: provision the user's first org. A managed-app signup ("Cobblr
+    // for Yarn") makes that workspace the app itself (bundle + app mode);
+    // otherwise it's a generic workspace.
+    const provisioned = body.app
+      ? await provisionAppWorkspace(userId, body.app, body.manifest, { auth_method: "session" })
+      : await provisionOrgForUser(userId, body.org_name ?? `${body.display_name.trim()}'s workspace`);
 
     // Lifecycle seam: the hosted overlay attaches here. No-op in open core.
     await fireSignup({ userId, email, orgId: provisioned.orgId });
@@ -443,6 +462,9 @@ authRouter.post("/signup", async (req, res, next) => {
       return res.status(400).json({
         error: { code: "invalid_body", message: "Bad signup payload", details: err.issues },
       });
+    }
+    if (err instanceof ProvisionAppError) {
+      return res.status(400).json({ error: { code: err.code, message: err.message, details: err.detail } });
     }
     return next(err);
   }

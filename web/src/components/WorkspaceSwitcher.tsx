@@ -196,7 +196,7 @@ export function WorkspaceSwitcher() {
   );
 }
 
-function CreateWorkspaceModal({
+export function CreateWorkspaceModal({
   open,
   onClose,
   onCreated,

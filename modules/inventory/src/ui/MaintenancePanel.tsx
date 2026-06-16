@@ -323,7 +323,7 @@ function AddEntryModal({
   }
 
   return (
-    <Modal open onClose={onClose} title="Add maintenance entry" size="sm">
+    <Modal open onClose={onClose} title="Add maintenance entry" size="sm" dismissOnBackdrop={false}>
       <form onSubmit={submit} className="space-y-3">
         <Field label="What">
           <input

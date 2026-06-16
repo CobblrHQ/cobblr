@@ -12,6 +12,7 @@ import { requireAuth } from "../auth/middleware.js";
 import { requireCapability, requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
 import { meta } from "../db/meta.js";
+import type { FieldOverrideBlob } from "../db/schema.js";
 import { listEntries } from "../modules/registry.js";
 import * as activity from "../platform/activity.js";
 import { checkAvailability as checkAiAvailability } from "../platform/ai.js";
@@ -57,6 +58,47 @@ platformOrgRouter.get(
         return;
       }
       res.json(found);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// Generic entity list — the cross-module read for any picker UI.
+// GET /entities/:kind?q=&limit=&filter[x]=  → { items: ResolvedEntity[] }
+// Projected through exposableFields for foreign callers, and gated by the
+// viewer's per-field read-scope (member-facing callers don't see prices).
+// Returns { items: [] } when the kind has no list resolver (the contract).
+platformOrgRouter.get(
+  "/:slug/entities/:kind",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      const { kind } = req.params;
+      if (!kind) {
+        res.status(400).json({ error: { code: "missing_params", message: "kind required" } });
+        return;
+      }
+      const filter: Record<string, unknown> = {};
+      const raw = req.query.filter;
+      if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+        for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+          if (typeof v === "string") filter[k] = v;
+        }
+      }
+      const result = await platform().entities.list(
+        req.tenant!.org.id,
+        kind,
+        {
+          q: typeof req.query.q === "string" ? req.query.q : undefined,
+          limit: Math.min(Number(req.query.limit) || 50, 200),
+          offset: Number(req.query.offset) || 0,
+          filter: Object.keys(filter).length ? filter : undefined,
+        },
+        { userId: req.session?.id, role: req.tenant!.role },
+      );
+      res.json(result);
     } catch (err) {
       next(err);
     }
@@ -694,6 +736,12 @@ platformOrgRouter.get(
   async (req, res, next) => {
     try {
       const kind = typeof req.query.kind === "string" ? req.query.kind : null;
+      // ?effective=1 — apply the user override layer (native_field_overrides) so a
+      // form gets the RESOLVED fields: relabel, hide (omitted), reorder. Config
+      // surfaces (Presentation, composer, field detail) omit it to manage the raw
+      // defs. Resolved at load = "rename on the fly", no data migration: the field
+      // is still stored under `name`; only its presentation changes.
+      const effective = req.query.effective === "1" || req.query.effective === "true";
       let q = meta
         .selectFrom("module_field_defs")
         .selectAll()
@@ -702,7 +750,35 @@ platformOrgRouter.get(
         .orderBy("position");
       if (kind) q = q.where("entity_kind", "=", kind);
       const items = await q.execute();
-      res.json({ items });
+      if (!effective) {
+        res.json({ items });
+        return;
+      }
+      let oq = meta
+        .selectFrom("native_field_overrides")
+        .select(["entity_kind", "name", "display_label", "hidden", "position", "overrides"])
+        .where("org_id", "=", req.tenant!.org.id);
+      if (kind) oq = oq.where("entity_kind", "=", kind);
+      const overrides = await oq.execute();
+      const ov = new Map(overrides.map((o) => [`${o.entity_kind} ${o.name}`, o]));
+      const resolved = items
+        .map((f) => {
+          const o = ov.get(`${f.entity_kind} ${f.name}`);
+          if (!o) return { ...f, _hidden: false };
+          // The user blob wins: relabel, reorder, and (1b) replace the dropdown
+          // choices — all on top of the pristine bundle/module-owned field def.
+          return {
+            ...f,
+            display_label: o.display_label ?? f.display_label,
+            position: o.position ?? f.position,
+            choices: o.overrides?.choices ?? f.choices,
+            _hidden: o.hidden,
+          };
+        })
+        .filter((f) => !f._hidden)
+        .sort((a, b) => a.position - b.position)
+        .map(({ _hidden, ...f }) => f);
+      res.json({ items: resolved });
     } catch (err) {
       next(err);
     }
@@ -767,6 +843,9 @@ const NativeFieldOverrideBody = z.object({
   display_label: z.string().max(160).nullable().optional(),
   hidden: z.boolean().optional(),
   position: z.number().int().optional(),
+  // 1b — custom dropdown choices that override the field's own. null = clear
+  // (fall back to the base choices). Omitted = leave the blob's choices as-is.
+  choices: z.array(z.string().max(120)).nullable().optional(),
 });
 
 platformOrgRouter.put(
@@ -782,21 +861,48 @@ platformOrgRouter.put(
         return;
       }
       const d = parsed.data;
+      // Partial merge: a write that only sets `choices` must not wipe a relabel
+      // (and vice versa). Read the existing row, layer the provided fields on top.
+      const existing = await meta
+        .selectFrom("native_field_overrides")
+        .selectAll()
+        .where("org_id", "=", req.tenant!.org.id)
+        .where("entity_kind", "=", d.entity_kind)
+        .where("name", "=", d.name)
+        .executeTakeFirst();
+
+      const blob: FieldOverrideBlob = { ...(existing?.overrides ?? {}) };
+      if (d.choices !== undefined) {
+        if (d.choices === null) delete blob.choices;
+        else blob.choices = d.choices;
+      }
+      const display_label = d.display_label !== undefined ? d.display_label : (existing?.display_label ?? null);
+      const hidden = d.hidden !== undefined ? d.hidden : (existing?.hidden ?? false);
+      const position = d.position !== undefined ? d.position : (existing?.position ?? 0);
+      const blobSql = sql`${JSON.stringify(blob)}::jsonb` as unknown as FieldOverrideBlob;
+
       const row = await meta
         .insertInto("native_field_overrides")
         .values({
           org_id: req.tenant!.org.id,
           entity_kind: d.entity_kind,
           name: d.name,
-          display_label: d.display_label ?? null,
-          hidden: d.hidden ?? false,
-          position: d.position ?? 0,
+          display_label,
+          hidden,
+          position,
+          overrides: blobSql,
+          // A user edit CLAIMS the row as user-owned (bundle_id null) so the bundle
+          // re-push can't clobber it (the install upsert only overwrites
+          // bundle-owned rows). This is what makes the user layer win + survive.
+          bundle_id: null,
         })
         .onConflict((c) =>
           c.columns(["org_id", "entity_kind", "name"]).doUpdateSet({
-            display_label: d.display_label ?? null,
-            hidden: d.hidden ?? false,
-            position: d.position ?? 0,
+            display_label,
+            hidden,
+            position,
+            overrides: blobSql,
+            bundle_id: null,
             updated_at: new Date(),
           }),
         )
@@ -907,20 +1013,77 @@ platformOrgRouter.patch(
       }
       if (parsed.data.renderer !== undefined) updates.renderer = parsed.data.renderer;
       if (parsed.data.template !== undefined) updates.template = parsed.data.template;
-      if (Object.keys(updates).length === 0) {
+
+      // Provenance check: a `choices` change on a BUNDLE-owned field def routes to
+      // the USER override layer (bundle_id null), never the bundle row — so the
+      // "+ add option" can't be clobbered by the next bundle update. This is the
+      // single chokepoint: every client (inventory's updateFieldDef, the platform
+      // composer, …) PATCHes here, so none of them can clobber a bundle field.
+      const def = await meta
+        .selectFrom("module_field_defs")
+        .selectAll()
+        .where("id", "=", id)
+        .where("org_id", "=", req.tenant!.org.id)
+        .executeTakeFirst();
+      if (!def) {
+        res.status(404).json({ error: { code: "not_found", message: "field def not found" } });
+        return;
+      }
+      let routedChoices = false;
+      if (def.bundle_id && parsed.data.choices !== undefined) {
+        const existing = await meta
+          .selectFrom("native_field_overrides")
+          .selectAll()
+          .where("org_id", "=", req.tenant!.org.id)
+          .where("entity_kind", "=", def.entity_kind)
+          .where("name", "=", def.name)
+          .executeTakeFirst();
+        const blob: FieldOverrideBlob = { ...(existing?.overrides ?? {}) };
+        if (parsed.data.choices === null) delete blob.choices;
+        else blob.choices = parsed.data.choices;
+        const blobSql = sql`${JSON.stringify(blob)}::jsonb` as unknown as FieldOverrideBlob;
+        await meta
+          .insertInto("native_field_overrides")
+          .values({
+            org_id: req.tenant!.org.id,
+            entity_kind: def.entity_kind,
+            name: def.name,
+            display_label: existing?.display_label ?? null,
+            hidden: existing?.hidden ?? false,
+            position: existing?.position ?? 0,
+            overrides: blobSql,
+            bundle_id: null,
+          })
+          .onConflict((c) =>
+            c.columns(["org_id", "entity_kind", "name"]).doUpdateSet({
+              overrides: blobSql,
+              bundle_id: null,
+              updated_at: new Date(),
+            }),
+          )
+          .execute();
+        delete updates.choices;
+        routedChoices = true;
+      }
+
+      if (Object.keys(updates).length === 0 && !routedChoices) {
         res.status(400).json({ error: { code: "no_changes", message: "no fields to update" } });
         return;
       }
-      const updated = await meta
-        .updateTable("module_field_defs")
-        .set(updates as never)
-        .where("id", "=", id)
-        .where("org_id", "=", req.tenant!.org.id)
-        .returningAll()
-        .executeTakeFirst();
-      if (!updated) {
-        res.status(404).json({ error: { code: "not_found", message: "field def not found" } });
-        return;
+      let updated = def;
+      if (Object.keys(updates).length > 0) {
+        const u = await meta
+          .updateTable("module_field_defs")
+          .set(updates as never)
+          .where("id", "=", id)
+          .where("org_id", "=", req.tenant!.org.id)
+          .returningAll()
+          .executeTakeFirst();
+        if (!u) {
+          res.status(404).json({ error: { code: "not_found", message: "field def not found" } });
+          return;
+        }
+        updated = u;
       }
       await activity.log({
         orgId: req.tenant!.org.id,
@@ -929,7 +1092,8 @@ platformOrgRouter.patch(
         diff: parsed.data,
       });
       clearComputedDefsCache();
-      res.json(updated);
+      // Surface the EFFECTIVE choices so the caller immediately sees its override.
+      res.json(routedChoices ? { ...updated, choices: parsed.data.choices ?? def.choices } : updated);
     } catch (err) {
       next(err);
     }

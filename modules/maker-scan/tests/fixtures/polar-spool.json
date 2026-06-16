@@ -1,0 +1,27 @@
+{
+    "status": "OK",
+    "api": {
+        "version": "1.00",
+        "version_status": "active"
+    },
+    "spool": {
+        "id": 52435,
+        "checksum": "20V0",
+        "manufactured_at": "2026-05-11T15:02:59Z",
+        "made_by": "Misty",
+        "mass_grams": 1000,
+        "length_meters": 35.1,
+        "diameter": 1.75,
+        "sku": "P016",
+        "product_id": 16,
+        "qa_status": "Pass",
+        "color": "Royal Blue",
+        "material_name": "PLA",
+        "material_id": 1,
+        "label_tolerance": 0.011,
+        "label_ovality": 3.419595,
+        "brand_name": "Polar Filament",
+        "nozzle_temp": 215,
+        "bed_temp": 60
+    }
+}

@@ -11,14 +11,17 @@
 //      contents (different `created_at` values)
 
 import { Router } from "express";
+import { sql } from "kysely";
 import { z } from "zod";
 import { meta } from "../db/meta.js";
+import { getManagedApp } from "../platform/managed-apps.js";
 import { hardDeleteOrg } from "../platform/delete-org.js";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import * as activity from "../platform/activity.js";
 import * as notifications from "../platform/notifications.js";
 import { provisionOrgForUser } from "./auth.js";
+import { provisionAppWorkspace, ProvisionAppError, refreshManagedApp, importAppData } from "../platform/provision-app.js";
 import { checkEntitlement } from "../platform/hosted-seams.js";
 import { disableModuleForOrg, enableModuleForOrg } from "../modules/enable.js";
 import { getEntry as getModuleEntry } from "../modules/registry.js";
@@ -36,7 +39,7 @@ orgsRouter.get("/", requireAuth, async (req, res, next) => {
     const orgs = await meta
       .selectFrom("org_memberships as m")
       .innerJoin("orgs as o", "o.id", "m.org_id")
-      .select((eb) => ["o.id", "o.name", "o.slug", "m.role", eb.selectFrom("org_memberships as om").innerJoin("users as ou", "ou.id", "om.user_id").select("ou.display_name").whereRef("om.org_id", "=", "o.id").where("om.role", "=", "owner").limit(1).as("owner_name")])
+      .select((eb) => ["o.id", "o.name", "o.slug", "o.app_mode", "m.role", eb.selectFrom("org_memberships as om").innerJoin("users as ou", "ou.id", "om.user_id").select("ou.display_name").whereRef("om.org_id", "=", "o.id").where("om.role", "=", "owner").limit(1).as("owner_name")])
       .where("m.user_id", "=", req.session!.id)
       .orderBy("o.created_at")
       .execute();
@@ -193,6 +196,120 @@ orgsRouter.delete("/:slug", requireAuth, withTenant, async (req, res, next) => {
   }
 });
 
+// PATCH /orgs/:slug/app-mode — owner-only. Flip a workspace into a managed
+// vertical app ("Cobblr for Yarn") — the web then hides ALL platform chrome and
+// lands the user in the app — or clear it back to a normal platform workspace.
+// Body: { app: "yarn" } to set (home_path + label come from the server-side
+// managed-app registry), or { app: null } to clear. Setting app_mode does NOT
+// itself install the app's bundle — that's done separately (the workspace is
+// expected to already have, or get, the flagship bundle applied); this only
+// records "treat this workspace as that managed app + lock it down."
+const AppModeBody = z.object({ app: z.string().min(1).nullable() });
+orgsRouter.patch("/:slug/app-mode", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    if (req.tenant!.role !== "owner") {
+      res.status(403).json({
+        error: { code: "forbidden", message: "Only the workspace owner can change app mode." },
+      });
+      return;
+    }
+    const parsed = AppModeBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues } });
+      return;
+    }
+    let appMode: { app: string; home_path: string; label: string } | null = null;
+    if (parsed.data.app) {
+      const app = getManagedApp(parsed.data.app);
+      if (!app) {
+        res.status(400).json({ error: { code: "unknown_app", message: `Unknown managed app "${parsed.data.app}".` } });
+        return;
+      }
+      appMode = { app: app.id, home_path: app.homePath, label: app.label };
+    }
+    await meta
+      .updateTable("orgs")
+      .set({
+        app_mode: (appMode ? sql`${JSON.stringify(appMode)}::jsonb` : null) as never,
+        updated_at: new Date(),
+      })
+      .where("id", "=", req.tenant!.org.id)
+      .execute();
+    await activity.log({
+      orgId: req.tenant!.org.id,
+      userId: req.session!.id,
+      action: appMode ? "app_mode_set" : "app_mode_cleared",
+      ref: { module: null, entityType: "org", entityId: req.tenant!.org.id },
+      diff: { app_mode: appMode },
+    });
+    res.json({ app_mode: appMode });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /orgs/:slug/refresh-app — re-apply the latest published version of this
+// managed app's bundle if it's behind ("auto-update on use"). Owner/admin; safe
+// + idempotent (no-op when current). The web calls it once per session when a
+// managed-app user enters the app. `manifest` is a test/operator override.
+const RefreshAppBody = z.object({ manifest: z.unknown().optional() });
+orgsRouter.post("/:slug/refresh-app", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    if (req.tenant!.role !== "owner" && req.tenant!.role !== "admin") {
+      res.status(403).json({ error: { code: "forbidden", message: "Only owners or admins can refresh the app." } });
+      return;
+    }
+    const parsed = RefreshAppBody.safeParse(req.body ?? {});
+    const result = await refreshManagedApp(req.tenant!.org.id, req.session!.id, parsed.success ? parsed.data.manifest : undefined);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /orgs/:slug/import-app — graduation: copy a managed app's data (source_slug,
+// the user's "Cobblr for Yarn") INTO this (full) workspace. Ensures the matching
+// instance + fields exist here, then copies the items. Owner/admin of the target;
+// the caller must also be a member of the source. Source data is left untouched.
+const ImportAppBody = z.object({ source_slug: z.string().min(1) });
+orgsRouter.post("/:slug/import-app", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    if (req.tenant!.role !== "owner" && req.tenant!.role !== "admin") {
+      res.status(403).json({ error: { code: "forbidden", message: "Only owners or admins can import into this workspace." } });
+      return;
+    }
+    const parsed = ImportAppBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues } });
+      return;
+    }
+    // The source must be one of the caller's own workspaces.
+    const source = await meta
+      .selectFrom("orgs as o")
+      .innerJoin("org_memberships as m", "m.org_id", "o.id")
+      .select(["o.id"])
+      .where("o.slug", "=", parsed.data.source_slug)
+      .where("m.user_id", "=", req.session!.id)
+      .executeTakeFirst();
+    if (!source) {
+      res.status(404).json({ error: { code: "source_not_found", message: "That source workspace isn't one of yours." } });
+      return;
+    }
+    if (source.id === req.tenant!.org.id) {
+      res.status(400).json({ error: { code: "same_workspace", message: "Source and target are the same workspace." } });
+      return;
+    }
+    const result = await importAppData(source.id, req.tenant!.org.id, req.session!.id);
+    res.json(result);
+  } catch (err) {
+    if (err instanceof ProvisionAppError) {
+      res.status(400).json({ error: { code: err.code, message: err.message, details: err.detail } });
+      return;
+    }
+    next(err);
+  }
+});
+
 orgsRouter.post("/", requireAuth, async (req, res, next) => {
   try {
     const parsed = CreateOrgBody.safeParse(req.body);
@@ -219,12 +336,45 @@ orgsRouter.post("/", requireAuth, async (req, res, next) => {
     const row = await meta
       .selectFrom("org_memberships as m")
       .innerJoin("orgs as o", "o.id", "m.org_id")
-      .select((eb) => ["o.id", "o.name", "o.slug", "m.role", eb.selectFrom("org_memberships as om").innerJoin("users as ou", "ou.id", "om.user_id").select("ou.display_name").whereRef("om.org_id", "=", "o.id").where("om.role", "=", "owner").limit(1).as("owner_name")])
+      .select((eb) => ["o.id", "o.name", "o.slug", "o.app_mode", "m.role", eb.selectFrom("org_memberships as om").innerJoin("users as ou", "ou.id", "om.user_id").select("ou.display_name").whereRef("om.org_id", "=", "o.id").where("om.role", "=", "owner").limit(1).as("owner_name")])
       .where("m.user_id", "=", req.session!.id)
       .where("o.id", "=", orgId)
       .executeTakeFirstOrThrow();
     res.status(201).json({ org: row, slug });
   } catch (err) {
+    next(err);
+  }
+});
+
+// POST /orgs/provision-app — one-step managed-app provisioning ("Cobblr for
+// Yarn"): create a workspace, apply the app's flagship bundle, and flip it into
+// app mode. The web lands the user straight in the locked app. `app` is keyed
+// against the server-side managed-app registry; `manifest` is the app's bundle
+// (caller-supplied for now — a server-side registry fetch is the follow-up).
+const ProvisionAppBody = z.object({ app: z.string().min(1), manifest: z.unknown() });
+orgsRouter.post("/provision-app", requireAuth, async (req, res, next) => {
+  try {
+    const parsed = ProvisionAppBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues } });
+      return;
+    }
+    const ent = await checkEntitlement({ orgId: "", feature: "workspaces.create", userId: req.session!.id });
+    if (!ent.allow) {
+      res.status(402).json({ error: { code: "plan_limit", message: ent.reason ?? "Your plan's workspace limit is reached." } });
+      return;
+    }
+    const result = await provisionAppWorkspace(req.session!.id, parsed.data.app, parsed.data.manifest, {
+      display_name: req.session!.display_name ?? null,
+      auth_method: req.session!.auth_method,
+      api_token_id: req.session!.api_token_id ?? null,
+    });
+    res.status(201).json({ slug: result.slug, app_mode: result.app });
+  } catch (err) {
+    if (err instanceof ProvisionAppError) {
+      res.status(400).json({ error: { code: err.code, message: err.message, details: err.detail } });
+      return;
+    }
     next(err);
   }
 });

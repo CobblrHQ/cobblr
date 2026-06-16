@@ -12,6 +12,8 @@ export const tagsRouter = Router({ mergeParams: true });
 const TagCreate = z.object({
   name: z.string().min(1).max(60),
   color: z.string().max(40).nullable().optional(),
+  parent_id: z.string().uuid().nullable().optional(),
+  icon: z.string().max(16).nullable().optional(),
 });
 
 const TagUpdate = TagCreate.partial();
@@ -44,6 +46,8 @@ tagsRouter.post(
         .values({
           name: parsed.data.name.trim(),
           color: parsed.data.color ?? null,
+          parent_id: parsed.data.parent_id ?? null,
+          icon: parsed.data.icon ?? null,
         })
         .returningAll()
         .executeTakeFirstOrThrow();
@@ -99,10 +103,35 @@ tagsRouter.patch(
     }
     const parsed = TagUpdate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
+    const db = tenantDb(req);
     const patch: Record<string, unknown> = { updated_at: new Date() };
     if (parsed.data.name !== undefined) patch.name = parsed.data.name.trim();
     if (parsed.data.color !== undefined) patch.color = parsed.data.color;
-    const db = tenantDb(req);
+    if (parsed.data.icon !== undefined) patch.icon = parsed.data.icon;
+    if (parsed.data.parent_id !== undefined) {
+      const newParent = parsed.data.parent_id;
+      // Guard against loops: a tag can't be its own parent, and a parent can't
+      // be one of this tag's own descendants. Walk up the proposed parent's
+      // ancestry — if we reach `id`, it would create a cycle.
+      if (newParent === id) {
+        res.status(400).json({ error: { code: "invalid_parent", message: "A tag can't be its own parent." } });
+        return;
+      }
+      let cursor: string | null = newParent;
+      const seen = new Set<string>();
+      while (cursor) {
+        if (cursor === id) {
+          res.status(400).json({ error: { code: "invalid_parent", message: "That would create a tag loop." } });
+          return;
+        }
+        if (seen.has(cursor)) break;
+        seen.add(cursor);
+        const anc: { parent_id: string | null } | undefined = await db
+          .selectFrom("core_tags_tags").select("parent_id").where("id", "=", cursor).executeTakeFirst();
+        cursor = anc?.parent_id ?? null;
+      }
+      patch.parent_id = newParent;
+    }
     const row = await db
       .updateTable("core_tags_tags")
       .set(patch)

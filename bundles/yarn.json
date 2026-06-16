@@ -1,12 +1,12 @@
 {
   "manifest": {
     "id": "cobblr.flagship.yarn",
-    "version": "0.4.0",
+    "version": "0.4.1",
     "name": "Yarn",
     "description": "Yarn as its own inventory instance \u2014 skein-tracked, yarn-only fields, grouped by weight. Optional Hooks + Designs tables.",
     "author": "Cobblr",
-    "released_at": "2026-06-08",
-    "changelog": "Real yarn-user polish: the Color field is a swatch picker (type a hex or pick one), Brand + Price now show right on the \u201cNew yarn\u201d modal, and a \u201cSuggested needle size\u201d field was added. Dropdowns (vendor, fibre\u2026) let you add a new option on the fly that sticks for next time. Dropped the confusing \u201cSummary\u201d computed field. \u2014 Yarn is its OWN table (a Yarn instance), not a skin over generic inventory: only yarn fields show, the button reads \u201cNew yarn\u201d, quantities are in skeins. Hooks and Designs become their own tables too. The generic inventory cruft (warranty, insured, lifecycle\u2026) is hidden, and the pinned view is named for its lens (\u201cBy weight\u201d).",
+    "released_at": "2026-06-16",
+    "changelog": "Your Yarn table now reads \"yarn\" everywhere - the \"New\", search box, and empty-state labels say \"yarn\" instead of \"part\". (Earlier installs picked up the generic \"part\" wording; upgrading applies the fix.) Real yarn-user polish: the Color field is a swatch picker (type a hex or pick one), Brand + Price now show right on the \u201cNew yarn\u201d modal, and a \u201cSuggested needle size\u201d field was added. Dropdowns (vendor, fibre\u2026) let you add a new option on the fly that sticks for next time. Dropped the confusing \u201cSummary\u201d computed field. \u2014 Yarn is its OWN table (a Yarn instance), not a skin over generic inventory: only yarn fields show, the button reads \u201cNew yarn\u201d, quantities are in skeins. Hooks and Designs become their own tables too. The generic inventory cruft (warranty, insured, lifecycle\u2026) is hidden, and the pinned view is named for its lens (\u201cBy weight\u201d).",
     "requires": [
       {
         "module": "inventory"

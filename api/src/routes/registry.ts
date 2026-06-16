@@ -82,6 +82,22 @@ async function fetchIndex(url: string): Promise<{ raw: string; data: IndexShape 
   return entry;
 }
 
+/** Fetch a single bundle's full manifest from the OFFICIAL registry index by
+ *  its id (e.g. "cobblr.flagship.yarn"). Used by managed-app provisioning so the
+ *  server owns the bundle (the rich, published version) instead of trusting a
+ *  caller-supplied manifest. Cached via fetchIndex (5-min TTL). Returns null on
+ *  a miss or if the registry is unreachable (caller decides the fallback). */
+export async function getOfficialBundleManifest(bundleId: string): Promise<unknown | null> {
+  try {
+    const { data } = await fetchIndex(DEFAULT_INDEX);
+    const entry = (data.bundles ?? []).find((b) => b.id === bundleId || (b.manifest as { id?: string } | undefined)?.id === bundleId);
+    return (entry?.manifest as unknown) ?? null;
+  } catch (err) {
+    console.error(`[registry] getOfficialBundleManifest(${bundleId}) failed:`, (err as Error).message);
+    return null;
+  }
+}
+
 /** Fetch the official index's detached signature and verify it over the
  *  raw index bytes. Returns whether the root anchor checks out. */
 async function verifyRoot(rawIndex: string): Promise<boolean> {

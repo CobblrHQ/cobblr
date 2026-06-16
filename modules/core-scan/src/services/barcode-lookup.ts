@@ -97,9 +97,20 @@ async function tryUpcitemdb(upc: string): Promise<ProviderResult> {
   };
 }
 
-async function tryOpenProductsFacts(upc: string): Promise<ProviderResult> {
+// The Open Facts family — same API v2 shape, different databases. A given UPC
+// usually lives in exactly one: general products in OPF, groceries in OFF,
+// cosmetics in OBF. All free + keyless, so we fire all three concurrently and
+// take whichever has it. (OFF/OBF added 2026-06-16 — broadens free coverage,
+// trims paid-GoUPC spend, and enriches the cache / barcode-DB.)
+const OPEN_FACTS_DBS: ReadonlyArray<{ host: string; source: string }> = [
+  { host: "world.openproductsfacts.org", source: "openproductsfacts" },
+  { host: "world.openfoodfacts.org", source: "openfoodfacts" },
+  { host: "world.openbeautyfacts.org", source: "openbeautyfacts" },
+];
+
+async function tryOpenFacts(upc: string, host: string, source: string): Promise<ProviderResult> {
   const { body } = await fetchJson(
-    `https://world.openproductsfacts.org/api/v2/product/${encodeURIComponent(upc)}.json`,
+    `https://${host}/api/v2/product/${encodeURIComponent(upc)}.json`,
     OPF_TIMEOUT_MS,
   );
   const data = body as { status?: number; product?: Record<string, unknown> } | null;
@@ -113,7 +124,7 @@ async function tryOpenProductsFacts(upc: string): Promise<ProviderResult> {
   return {
     kind: "hit",
     hit: {
-      source: "openproductsfacts",
+      source,
       title: name.trim(),
       brand: typeof p.brands === "string" ? p.brands.split(",")[0]?.trim() ?? null : null,
       model: null,
@@ -329,13 +340,14 @@ async function tryResolver(upc: string): Promise<ProviderResult> {
 }
 
 /**
- * Resolve a UPC: go-upc first (authoritative), then both API providers
+ * Resolve a UPC: go-upc first (authoritative), then the API providers
  * concurrently as the fallback.
  *
  * - go-upc HIT wins outright — curated data, never a wrong-product answer,
  *   and a hit spends none of upcitemdb's 100/day quota.
- * - else (go-upc miss, busy-skip, or transport error) → upcitemdb ‖ OPF;
- *   upcitemdb HIT preferred over OPF.
+ * - else (go-upc miss, busy-skip, or transport error) → upcitemdb ‖ the Open
+ *   Facts trio (products/food/beauty); upcitemdb HIT preferred, else the first
+ *   Open Facts hit.
  * - else if upcitemdb was rate-limited → `rate_limited` (caller must NOT cache;
  *   the product is unresolved, not absent — retry later or fall to web search).
  * - else `miss` (a genuine "no catalog has this", safe to cache).
@@ -367,13 +379,16 @@ export async function lookupBarcode(upc: string): Promise<BarcodeOutcome> {
   const goRes = await tryGoUpc(norm).catch((): ProviderResult => ({ kind: "miss" }));
   if (goRes.kind === "hit") return { outcome: "hit", hit: goRes.hit };
 
-  const [upcRes, opfRes] = await Promise.all([
+  const [upcRes, ...factsRes] = await Promise.all([
     tryUpcitemdb(norm).catch((): ProviderResult => ({ kind: "miss" })),
-    tryOpenProductsFacts(norm).catch((): ProviderResult => ({ kind: "miss" })),
+    ...OPEN_FACTS_DBS.map((db) =>
+      tryOpenFacts(norm, db.host, db.source).catch((): ProviderResult => ({ kind: "miss" })),
+    ),
   ]);
 
   if (upcRes.kind === "hit") return { outcome: "hit", hit: upcRes.hit };
-  if (opfRes.kind === "hit") return { outcome: "hit", hit: opfRes.hit };
+  const factsHit = factsRes.find((r) => r.kind === "hit");
+  if (factsHit && factsHit.kind === "hit") return { outcome: "hit", hit: factsHit.hit };
 
   // No catalog hit. If upcitemdb was throttled, the answer is
   // "unknown, retry" — not "doesn't exist".

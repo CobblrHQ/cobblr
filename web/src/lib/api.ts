@@ -70,6 +70,16 @@ async function request<T>(
   return parsed as T;
 }
 
+export interface ChangelogEntry {
+  type: "feature" | "improvement" | "fix" | "change";
+  scope: string | null;
+  text: string;
+}
+export interface ChangelogDay {
+  date: string;
+  entries: ChangelogEntry[];
+}
+
 // ─────────────────────────── public api ──────────────────────────
 
 export interface SessionUser {
@@ -101,6 +111,17 @@ export interface OrgMembership {
   /** Display name of the workspace's owner — for the switcher's "Owner: …" on
    *  workspaces you don't own. Null if unresolved. */
   owner_name?: string | null;
+  /** Set when this workspace is a managed vertical app ("Cobblr for Yarn") —
+   *  the shell hides ALL platform chrome and lands the user in `home_path`.
+   *  Null/absent = a normal platform workspace. */
+  app_mode?: { app: string; home_path: string; label?: string } | null;
+}
+
+/** True when the active workspace is a managed single-purpose app — the shell
+ *  must hide the marketplace, bundles, modules, wires, fields, Configuration,
+ *  and the workspace switcher, and land the user in `app_mode.home_path`. */
+export function isAppMode(org: OrgMembership | null | undefined): org is OrgMembership & { app_mode: { app: string; home_path: string; label?: string } } {
+  return !!org?.app_mode;
 }
 
 /** A feedback item as the REPORTER sees it (no internal triage fields). */
@@ -229,9 +250,34 @@ export interface Machine {
   updated_at: string;
 }
 
+export interface Vendor {
+  id: string;
+  name: string;
+  website: string | null;
+  account_number: string | null;
+  contact: string | null;
+  lead_time_days: number | null;
+  notes: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VendorSummary extends Vendor {
+  order_count: number;
+  total_spend: number;
+}
+
+export interface VendorDetail extends Vendor {
+  orders: Array<Pick<Order, "id" | "order_number" | "status" | "ordered_at" | "expected_arrival" | "arrived_at" | "total_cost">>;
+  order_count: number;
+  total_spend: number;
+}
+
 export interface Order {
   id: string;
   vendor: string | null;
+  vendor_id: string | null;
   order_number: string | null;
   url: string | null;
   ordered_at: string | null;
@@ -334,14 +380,18 @@ export const api = {
   request: <T>(method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: unknown) =>
     request<T>(method, path, body),
   healthz: () => request<Healthz>("GET", "/healthz"),
+  changelog: () => request<{ sections: ChangelogDay[] }>("GET", "/changelog"),
   authConfig: () =>
     request<{ signup_enabled: boolean; self_serve_invites?: boolean }>("GET", "/auth/config"),
   signup: (body: {
     email: string;
     password: string;
     display_name: string;
-    org_name: string;
+    org_name?: string;
     invite_token?: string;
+    /** Managed-app signup: provision the first workspace as this app. */
+    app?: string;
+    manifest?: unknown;
   }) => request<AuthResponse>("POST", "/auth/signup", body),
   // Public preview of a single-use signup invite (the /join/:token page).
   previewSignupInvite: (token: string) =>
@@ -505,6 +555,26 @@ export const api = {
   // order), so this stays on the legacy nested route either way.
   addOrderItem: (slug: string, orderId: string, body: Partial<OrderItem>) =>
     request<OrderItem>("POST", `/orgs/${slug}/modules/purchases/orders/${orderId}/items`, body),
+
+  // Vendors — managed entity (purchasing depth). Not the primary entity,
+  // so it lives on the module-root route, not primaryBase.
+  // Managed app: re-apply the latest bundle version if behind (auto-update on use).
+  refreshApp: (slug: string) =>
+    request<{ updated: boolean; from?: string; to?: string }>("POST", `/orgs/${slug}/refresh-app`, {}),
+  // Graduation: copy a managed app's data into a full workspace (targetSlug).
+  importApp: (targetSlug: string, sourceSlug: string) =>
+    request<{ imported: number; instance: string }>("POST", `/orgs/${targetSlug}/import-app`, { source_slug: sourceSlug }),
+
+  listVendors: (slug: string) =>
+    request<{ items: VendorSummary[] }>("GET", `/orgs/${slug}/modules/purchases/vendors`),
+  getVendor: (slug: string, id: string) =>
+    request<VendorDetail>("GET", `/orgs/${slug}/modules/purchases/vendors/${id}`),
+  createVendor: (slug: string, body: Partial<Vendor>) =>
+    request<Vendor>("POST", `/orgs/${slug}/modules/purchases/vendors`, body),
+  updateVendor: (slug: string, id: string, body: Partial<Vendor>) =>
+    request<Vendor>("PATCH", `/orgs/${slug}/modules/purchases/vendors/${id}`, body),
+  deleteVendor: (slug: string, id: string) =>
+    request<void>("DELETE", `/orgs/${slug}/modules/purchases/vendors/${id}`),
 
   // inventory module — just enough to count parts by location (the
   // configuration/locations page needs it). Module-specific UI lives
@@ -706,8 +776,13 @@ export const api = {
     request<void>("DELETE", `/orgs/${slug}/bindings/${id}`),
 
   // Field defs (Pillar D-lite)
-  listFieldDefs: (slug: string, kind?: string) => {
-    const qs = kind ? `?kind=${encodeURIComponent(kind)}` : "";
+  // `effective` applies the user override layer (relabel / hide / reorder) — forms
+  // + lists pass it; config surfaces (Fields, composer) read the raw defs.
+  listFieldDefs: (slug: string, kind?: string, effective?: boolean) => {
+    const params = new URLSearchParams();
+    if (kind) params.set("kind", kind);
+    if (effective) params.set("effective", "1");
+    const qs = params.toString() ? `?${params.toString()}` : "";
     return request<{ items: PlatformFieldDef[] }>("GET", `/orgs/${slug}/field-defs${qs}`);
   },
   createFieldDef: (slug: string, body: Partial<PlatformFieldDef>) =>
@@ -722,12 +797,15 @@ export const api = {
     const qs = kind ? `?kind=${encodeURIComponent(kind)}` : "";
     return request<{ items: NativeFieldOverride[] }>("GET", `/orgs/${slug}/native-field-overrides${qs}`);
   },
-  putNativeFieldOverride: (slug: string, body: { entity_kind: string; name: string; display_label?: string | null; hidden?: boolean; position?: number }) =>
-    request<NativeFieldOverride>("PUT", `/orgs/${slug}/native-field-overrides`, body),
+  putNativeFieldOverride: (
+    slug: string,
+    body: { entity_kind: string; name: string; display_label?: string | null; hidden?: boolean; position?: number; choices?: string[] | null },
+  ) => request<NativeFieldOverride>("PUT", `/orgs/${slug}/native-field-overrides`, body),
   deleteNativeFieldOverride: (slug: string, entityKind: string, name: string) =>
     request<void>("DELETE", `/orgs/${slug}/native-field-overrides/${encodeURIComponent(entityKind)}/${encodeURIComponent(name)}`),
   appendFieldDefChoice: async (slug: string, id: string, value: string) => {
-    // Fetch current choices, append, PATCH.
+    // Fetch current choices, append, PATCH. The server routes a bundle-owned
+    // field's choices to the user override layer, so this never clobbers a bundle.
     const list = await request<{ items: PlatformFieldDef[] }>("GET", `/orgs/${slug}/field-defs`);
     const cur = list.items.find((f) => f.id === id);
     const choices = [...(cur?.choices ?? []), value];
@@ -742,12 +820,15 @@ export const api = {
     manifest: PlatformBundleManifest,
     confirm?: boolean,
     enabledFeatures?: string[],
+    takeTheirs?: Array<{ entity_kind: string; name: string }>,
   ) =>
     request<{ bundle: PlatformBundle; applied: { wires: number; field_defs: number } }>(
       "POST",
       `/orgs/${slug}/bundles/install`,
-      { manifest, confirm, enabled_features: enabledFeatures },
+      { manifest, confirm, enabled_features: enabledFeatures, take_theirs: takeTheirs },
     ),
+  validateBundle: (slug: string, manifest: PlatformBundleManifest) =>
+    request<BundleValidation>("POST", `/orgs/${slug}/bundles/validate`, { manifest }),
   uninstallBundle: (slug: string, id: string) =>
     request<void>("DELETE", `/orgs/${slug}/bundles/${id}`),
 
@@ -1086,12 +1167,14 @@ export const api = {
   // ─── core-tags ────────────────────────────────────────────────────
   listTags: (slug: string) =>
     request<{ items: TagRecord[] }>("GET", `/orgs/${slug}/modules/core-tags/tags`),
-  createTag: (slug: string, body: { name: string; color?: string | null }) =>
-    request<TagRecord>("POST", `/orgs/${slug}/modules/core-tags/tags`, body),
+  createTag: (
+    slug: string,
+    body: { name: string; color?: string | null; parent_id?: string | null; icon?: string | null },
+  ) => request<TagRecord>("POST", `/orgs/${slug}/modules/core-tags/tags`, body),
   updateTag: (
     slug: string,
     id: string,
-    body: { name?: string; color?: string | null },
+    body: { name?: string; color?: string | null; parent_id?: string | null; icon?: string | null },
   ) =>
     request<TagRecord>(
       "PATCH",
@@ -2888,6 +2971,8 @@ export interface TagRecord {
   id: string;
   name: string;
   color: string | null;
+  parent_id: string | null;
+  icon: string | null;
   created_at: string;
 }
 
@@ -3306,11 +3391,22 @@ export interface BundleValidationError {
   code: string;
   message: string;
 }
+export interface BundleUpgradeConflict {
+  entity_kind: string;
+  name: string;
+  field_label: string;
+  attr: "label" | "choices" | "removed";
+  yours: string | string[] | null;
+  theirs: string | string[] | null;
+}
 export interface BundleValidationPreview {
   fields_added: { entity_kind: string; name: string; type: string; display_label: string }[];
   wires_added: { source_kind: string; action_id: string; trigger_type: string }[];
   modules_required: string[];
   modules_to_enable: string[];
+  /** Phase 2 — on a self-upgrade, fields the user customized that this version
+   *  changes. Empty on a fresh install. */
+  upgrade_conflicts?: BundleUpgradeConflict[];
 }
 export interface BundleValidation {
   valid: boolean;
@@ -3449,6 +3545,8 @@ export interface NativeFieldOverride {
   position: number;
   bundle_id: string | null;
   source_module: string | null;
+  /** 1b — open-ended presentation overrides; `choices` overrides the dropdown. */
+  overrides: { choices?: string[] };
   created_at: string;
   updated_at: string;
 }
