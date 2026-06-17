@@ -99,7 +99,9 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
   // find the maker's marketing page. Nothing vendor-specific lives here — the
   // kernel just asks the registry (the maker-scan connector registers the
   // vendors). A miss falls straight through to the barcode path below.
-  const vendor = await platform().scan.resolveUrl(ctx.upc).catch(() => null);
+  // `force` (a re-run) rides through so the vendor resolver bypasses its own
+  // cache and re-fetches — otherwise a stale cached resolution survives a re-run.
+  const vendor = await platform().scan.resolveUrl(ctx.upc, { force: ctx.force }).catch(() => null);
   if (vendor) {
     await ctx.db
       .updateTable("core_scan_inbox_items")

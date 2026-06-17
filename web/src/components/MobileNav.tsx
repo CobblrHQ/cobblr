@@ -17,11 +17,11 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { UpdateBadge } from "./UpdateBadge";
 import { useAuth } from "../auth/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
-import { useNavModules } from "./useNavModules";
+import { useNavModules, NAVGROUP_PREFIX, INSTANCE_PREFIX } from "./useNavModules";
 
 export function MobileNav() {
   const { activeSlug } = useActiveOrg();
-  const { tops, childrenByParent } = useNavModules(activeSlug);
+  const { tops, childrenByParent, instanceGroups } = useNavModules(activeSlug);
   const { logout } = useAuth();
   const { theme, toggle } = useTheme();
   const navigate = useNavigate();
@@ -110,6 +110,30 @@ export function MobileNav() {
               </NavLink>
 
               {tops.map((m) => {
+                // Instance nav-group → a stem section label + its members as
+                // indented instance rows (the inline segment treatment doesn't
+                // fit a stacked mobile list).
+                if (m.name.startsWith(NAVGROUP_PREFIX)) {
+                  const g = instanceGroups.get(m.name);
+                  if (!g) return null;
+                  return (
+                    <div key={m.name}>
+                      <div className={linkClass + " text-faint dark:text-slate-500 uppercase text-[10px] font-mono tracking-widest"}>
+                        {g.label}
+                      </div>
+                      {g.members.map((mem) => (
+                        <button
+                          key={mem.name}
+                          type="button"
+                          onClick={() => go(`/instances/${mem.name.slice(INSTANCE_PREFIX.length)}`)}
+                          className={linkClass + " w-full text-left pl-8 text-muted dark:text-slate-400"}
+                        >
+                          {mem.displayName}
+                        </button>
+                      ))}
+                    </div>
+                  );
+                }
                 const kids = childrenByParent.get(m.name) ?? [];
                 const isHeading = m.name.startsWith("__heading__");
                 return (

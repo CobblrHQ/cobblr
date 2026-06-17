@@ -17,7 +17,12 @@ import type { ScanUrlResolver, ScanUrlResolution } from "@cobblr/platform-contra
 const QUERY_URL = "https://pfil.us/query_spool.php";
 const API_VERSION = "1.00";
 const CONTACT_EMAIL = process.env.POLAR_QUERY_EMAIL || "contact@example.com";
-const CACHE_NS = "polar-spool";
+// Cache the MAPPED resolution by spool ref (a spool's data is immutable). The
+// version suffix is bumped whenever polarSpoolToResolution's field mapping
+// changes, so old entries (e.g. pre-pfil.us resolutions that lacked spool
+// size / batch / temps) are abandoned and the spool is re-resolved fresh —
+// otherwise a re-run keeps returning the stale shape and the form stays empty.
+const CACHE_NS = "polar-spool-pfil-v2";
 
 /** The QR encodes `…?i=<id>-<checksum>` (e.g. `52435-20V0`). Pull that token
  *  out of a 3dqr.co or pfil.us URL. */
@@ -75,16 +80,24 @@ export function polarSpoolToResolution(spool: PolarSpoolData): ScanUrlResolution
   };
 }
 
-async function resolvePolar(value: string): Promise<ScanUrlResolution | null> {
+async function resolvePolar(
+  value: string,
+  opts?: { force?: boolean },
+): Promise<ScanUrlResolution | null> {
   const ref = spoolRefFromUrl(value.trim());
   if (!ref) return null;
 
   // Cache cross-tenant by spool ref (immutable per spool) — Polar asks callers
-  // to cache; each spool's data never changes, so query them at most once.
-  const cached = await platform()
-    .sharedCache.get<ScanUrlResolution>(CACHE_NS, ref)
-    .catch(() => null);
-  if (cached) return cached;
+  // to cache; each spool's data never changes, so query them at most once. A
+  // user-initiated re-run (`force`) SKIPS the read so the spool is re-fetched +
+  // re-mapped (still re-cached below, healing a stale entry — e.g. after a
+  // field-mapping change).
+  if (!opts?.force) {
+    const cached = await platform()
+      .sharedCache.get<ScanUrlResolution>(CACHE_NS, ref)
+      .catch(() => null);
+    if (cached) return cached;
+  }
 
   const url = `${QUERY_URL}?i=${encodeURIComponent(ref)}&email=${encodeURIComponent(
     CONTACT_EMAIL,

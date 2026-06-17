@@ -18,6 +18,7 @@ import {
   type CatalogTypeaheadHit,
   type FieldType,
   type FieldRendererId,
+  usePlatformWeb,
 } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { useFieldPresentation } from "./useFieldPresentation";
@@ -94,6 +95,7 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
   const [printLabel, setPrintLabel] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { appMode } = usePlatformWeb();
 
   function pickImageFromPayload(payload: Record<string, unknown>): string | null {
     for (const k of ["img_url", "image_url", "image", "thumbnail"]) {
@@ -347,15 +349,19 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
             </select>
           </Field>
         )}
-        <label className="flex items-center gap-2 text-xs text-content dark:text-mortar-200 cursor-pointer pt-1">
-          <input
-            type="checkbox"
-            checked={printLabel}
-            onChange={(e) => setPrintLabel(e.target.checked)}
-            className="accent-cobble-500"
-          />
-          Queue a QR label print after create
-        </label>
+        {/* QR-label printing is a platform/maker feature — hide it in a locked
+            managed app (a yarn consumer has no label printer). */}
+        {!appMode && (
+          <label className="flex items-center gap-2 text-xs text-content dark:text-mortar-200 cursor-pointer pt-1">
+            <input
+              type="checkbox"
+              checked={printLabel}
+              onChange={(e) => setPrintLabel(e.target.checked)}
+              className="accent-cobble-500"
+            />
+            Queue a QR label print after create
+          </label>
+        )}
         {error && (
           <div className="text-xs text-ember-500 bg-ember-50 rounded-md px-3 py-2">{error}</div>
         )}

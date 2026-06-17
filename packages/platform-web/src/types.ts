@@ -72,6 +72,16 @@ export interface PlatformFieldDef {
   /** Plain-language one-line hint shown under the input, so jargon fields
    *  (colorway, dye lot…) explain themselves to a novice. */
   help?: string | null;
+  /** Form-builder section this field belongs to (field_sections.id), or
+   *  null/undefined for ungrouped. */
+  section_id?: string | null;
+}
+
+/** A named form-builder section grouping a kind's fields under a heading. */
+export interface FieldSection {
+  id: string;
+  name: string;
+  position: number;
 }
 
 /** The adapter the host (web app) injects. Every shared component
@@ -93,7 +103,7 @@ export interface PlatformWebApi {
     },
   ): Promise<{ ok: boolean; result: unknown }>;
   lookupEntity(slug: string, kind: string, id: string): Promise<PlatformResolvedEntity>;
-  listFieldDefs(slug: string, kind: string): Promise<{ items: PlatformFieldDef[] }>;
+  listFieldDefs(slug: string, kind: string): Promise<{ items: PlatformFieldDef[]; sections?: FieldSection[] }>;
   /** Append a new choice to a text field-def's `choices` array. The
    *  CustomFieldsPanel's "+ add new" affordance calls this. */
   appendFieldDefChoice?(slug: string, id: string, value: string): Promise<PlatformFieldDef>;

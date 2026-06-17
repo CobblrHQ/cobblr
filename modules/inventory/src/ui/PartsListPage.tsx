@@ -29,6 +29,7 @@ import {
   useConfirm,
   usePageTitle,
   useViewMode,
+  usePlatformWeb,
   type FieldRendererId,
 } from "@cobblr/platform-web";
 import { useInventory } from "./context";
@@ -52,6 +53,7 @@ type SavedViewLite = {
 export function PartsListPage() {
   usePageTitle("Inventory");
   const { api, orgSlug, getToken, entityKind, itemNoun, basePath, instance } = useInventory();
+  const { appMode } = usePlatformWeb();
   const qc = useQueryClient();
   // /inventory/parts/:id keeps this list mounted and opens the detail
   // modal (D4). Closing returns to /inventory.
@@ -505,21 +507,31 @@ export function PartsListPage() {
           lifecycle || warrantyFilter !== "all" || archivedFilter !== "hide"
         );
         const plural = itemNoun === "part" ? "parts" : itemNoun;
+        // A locked managed app's first screen — give a warm welcome + a clear
+        // "what to do", not a bare table (Grace's "no call to action").
+        const welcome = appMode && !hasFilters && !activeView;
         return (
           <div className="border-2 border-dashed border-line dark:border-slate-700 rounded-xl p-10 text-center space-y-3">
+            {welcome && (
+              <h2 className="font-display text-xl font-bold text-content dark:text-mortar-100">
+                Welcome! Let’s add your first {itemNoun}.
+              </h2>
+            )}
             <p className="text-sm text-muted dark:text-slate-400">
               {activeView
                 ? `Nothing in “${activeView.name}” yet.`
                 : hasFilters
                   ? "No matches — try widening the filter."
-                  : `No ${plural} here yet. Add your first ${itemNoun} to get started.`}
+                  : welcome
+                    ? `Tap below to add a ${itemNoun} by hand, or use Scan in the top bar to add one from a label.`
+                    : `No ${plural} here yet. Add your first ${itemNoun} to get started.`}
             </p>
             {!hasFilters && (
               <button
                 onClick={() => setAdding(true)}
                 className="inline-flex items-center gap-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-4 py-2 transition"
               >
-                <Plus size={15} /> New {itemNoun}
+                <Plus size={15} /> {welcome ? `Add a ${itemNoun}` : `New ${itemNoun}`}
               </button>
             )}
           </div>

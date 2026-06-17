@@ -45,6 +45,16 @@ services:
       # dev (no /super-admin/* access); set in prod .env per
       # docs/operations/PRODUCTION_DEPLOY.md §3.1.
       SUPERADMIN_EMAILS: ${SUPERADMIN_EMAILS:-}
+      # Backup destinations (docs/operations/google-drive-backup-setup.md).
+      # All empty in dev. Google app (Path A) + broker (Path B) config.
+      BACKUP_FS_ROOT: ${BACKUP_FS_ROOT:-}
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      GOOGLE_OAUTH_REDIRECT_URL: ${GOOGLE_OAUTH_REDIRECT_URL:-}
+      GOOGLE_OAUTH_AUTH_URL: ${GOOGLE_OAUTH_AUTH_URL:-}
+      GOOGLE_OAUTH_TOKEN_URL: ${GOOGLE_OAUTH_TOKEN_URL:-}
+      BACKUP_OAUTH_BROKER_URL: ${BACKUP_OAUTH_BROKER_URL:-}
+      BACKUP_BROKER_SHARED_SECRET: ${BACKUP_BROKER_SHARED_SECRET:-}
       # CORS allowlist for the web origin in production. Empty in
       # dev = reflect-any-origin (preserves local-host UX).
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}

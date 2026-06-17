@@ -18,6 +18,7 @@ import {
   ClipboardList,
   MessageSquare,
   Megaphone,
+  Eye,
 } from "lucide-react";
 
 export type AdminSectionId =
@@ -35,6 +36,7 @@ export type AdminSectionId =
   | "barcodes"
   | "tokens"
   | "scaneval"
+  | "impersonation"
   | "health";
 
 export const ADMIN_SECTIONS: Array<{
@@ -56,6 +58,7 @@ export const ADMIN_SECTIONS: Array<{
   { id: "barcodes", label: "Barcodes", icon: Barcode },
   { id: "tokens", label: "Tokens", icon: KeyRound },
   { id: "scaneval", label: "Scan Eval", icon: FlaskConical },
+  { id: "impersonation", label: "View-as Log", icon: Eye },
   { id: "health", label: "Health", icon: HeartPulse },
 ];
 

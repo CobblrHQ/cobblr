@@ -2,6 +2,8 @@
 // call so the AuthProvider can update it without rewiring the client.
 // Everything goes through `request<T>` so error shape stays uniform.
 
+import { getImpersonationToken } from "./impersonation";
+
 const TOKEN_KEY = "cobblr.token";
 
 export function getToken(): string | null {
@@ -33,6 +35,10 @@ async function request<T>(
   if (body !== undefined) headers["Content-Type"] = "application/json";
   const token = getToken();
   if (token) headers["Authorization"] = `Bearer ${token}`;
+  // Operator impersonation: the grant rides alongside the operator's own Bearer.
+  // withTenant resolves the tenant as the target member + enforces read-only.
+  const impToken = getImpersonationToken();
+  if (impToken) headers["X-Impersonation"] = impToken;
 
   const res = await fetch(`/api/v1${path}`, {
     method,
@@ -115,6 +121,11 @@ export interface OrgMembership {
    *  the shell hides ALL platform chrome and lands the user in `home_path`.
    *  Null/absent = a normal platform workspace. */
   app_mode?: { app: string; home_path: string; label?: string } | null;
+  /** "Focused mode" — the owner has hidden the platform BUILDER chrome
+   *  (marketplace / add-modules / AI builder / Configuration / "+ New thing")
+   *  to see a finished app, not a toolkit. Softer than app_mode: the workspace
+   *  stays navigable and any owner/admin flips it back (the upsell). */
+  focused?: boolean;
 }
 
 /** True when the active workspace is a managed single-purpose app — the shell
@@ -123,6 +134,19 @@ export interface OrgMembership {
 export function isAppMode(org: OrgMembership | null | undefined): org is OrgMembership & { app_mode: { app: string; home_path: string; label?: string } } {
   return !!org?.app_mode;
 }
+
+/** True when the active workspace is in FOCUSED mode — the shell hides the
+ *  builder chrome (marketplace, AI builder, "add modules", Configuration, the
+ *  "+ New thing" funnel) but keeps the workspace navigable. app_mode takes
+ *  precedence: a managed app is already locked tighter, so `focused` only
+ *  applies to a normal platform workspace. */
+export function isFocused(org: OrgMembership | null | undefined): boolean {
+  return !!org?.focused && !org?.app_mode;
+}
+
+/** Owner/admin: flip focused mode on/off for a workspace. */
+export const setFocused = (slug: string, focused: boolean) =>
+  request<{ focused: boolean }>("PATCH", `/orgs/${slug}/focused`, { focused });
 
 /** A feedback item as the REPORTER sees it (no internal triage fields). */
 export interface MyFeedbackItem {
@@ -783,7 +807,7 @@ export const api = {
     if (kind) params.set("kind", kind);
     if (effective) params.set("effective", "1");
     const qs = params.toString() ? `?${params.toString()}` : "";
-    return request<{ items: PlatformFieldDef[] }>("GET", `/orgs/${slug}/field-defs${qs}`);
+    return request<{ items: PlatformFieldDef[]; sections?: FieldSection[] }>("GET", `/orgs/${slug}/field-defs${qs}`);
   },
   createFieldDef: (slug: string, body: Partial<PlatformFieldDef>) =>
     request<PlatformFieldDef>("POST", `/orgs/${slug}/field-defs`, body),
@@ -791,6 +815,19 @@ export const api = {
     request<PlatformFieldDef>("PATCH", `/orgs/${slug}/field-defs/${id}`, body),
   deleteFieldDef: (slug: string, id: string) =>
     request<void>("DELETE", `/orgs/${slug}/field-defs/${id}`),
+  // Form-builder sections — group a kind's fields under headings.
+  listFieldSections: (slug: string, kind: string) =>
+    request<{ items: FieldSection[] }>("GET", `/orgs/${slug}/field-sections?kind=${encodeURIComponent(kind)}`),
+  createFieldSection: (slug: string, body: { entity_kind: string; name: string }) =>
+    request<FieldSection>("POST", `/orgs/${slug}/field-sections`, body),
+  updateFieldSection: (slug: string, id: string, body: { name?: string; position?: number }) =>
+    request<FieldSection>("PATCH", `/orgs/${slug}/field-sections/${id}`, body),
+  deleteFieldSection: (slug: string, id: string) =>
+    request<void>("DELETE", `/orgs/${slug}/field-sections/${id}`),
+  reorderFields: (
+    slug: string,
+    body: { entity_kind: string; sections?: Array<{ id: string; position: number }>; fields?: Array<{ name: string; section_id: string | null; position: number }> },
+  ) => request<{ ok: boolean }>("POST", `/orgs/${slug}/field-defs/reorder`, body),
   // Native-field presentation overrides (relabel / show-hide of a module's
   // own fields). Read by the entity forms; written by Configuration → Presentation.
   listNativeFieldOverrides: (slug: string, kind?: string) => {
@@ -2601,6 +2638,8 @@ export interface ScanMenuEntry {
   noun: string;
   label: string;
   fields: ScanMenuField[];
+  /** Domain routing terms a bundle declared for this table. */
+  scan_keywords?: string[];
 }
 
 /** A captured matchmaker eval case (P2). The expected answer = the admin's
@@ -3569,7 +3608,17 @@ export interface PlatformFieldDef {
   template: string | null;
   /** Plain-language one-line hint shown under the input. */
   help: string | null;
+  /** Form-builder section (field_sections.id) or null = ungrouped. */
+  section_id?: string | null;
   created_at: string;
+}
+
+/** A named form-builder section grouping a kind's fields under a heading. */
+export interface FieldSection {
+  id: string;
+  entity_kind?: string;
+  name: string;
+  position: number;
 }
 
 export interface PlatformBundle {
@@ -3707,6 +3756,17 @@ export interface PlatformBundleInstance {
     key_fields?: string[];
     copy_fields?: string[];
   };
+  /** Visually group this instance with siblings sharing the same `key` into
+   *  one connected navbar element (a quiet `label` stem + each member's name
+   *  as a segment). Presentational + generic. */
+  nav_group?: {
+    key: string;
+    label: string;
+  };
+  /** Domain terms that sharpen scan ROUTING to this instance (yarn →
+   *  ["yarn","skein","wool","ball-band"]). Additive — routing works off noun +
+   *  fields when absent. */
+  scan_keywords?: string[];
   field_defs?: PlatformBundleManifest["field_defs"];
   field_overrides?: PlatformBundleManifest["field_overrides"];
   saved_views?: PlatformBundleManifest["saved_views"];

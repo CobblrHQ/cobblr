@@ -747,13 +747,13 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.filament-stash",
-      version: "0.5.1",
+      version: "0.5.3",
       name: "Filament",
       description: "A filament TYPE (Royal Blue PLA) defines the filament once — material, colour, diameter, nozzle/bed temps, needs-drying. SPOOLS pick a type + add only what's per-spool: size, batch code, remaining, state. Each type rolls up its spool count + total kg.",
       author: "Cobblr",
-      released_at: "2026-06-14",
+      released_at: "2026-06-17",
       changelog:
-        "Scanning a spool's QR (e.g. Polar's 3dqr.co code) now find-or-creates its filament TYPE and links the spool to it automatically — a scan lands in the type→spool model instead of a flat row. (0.5.0: the TYPE defines the whole filament — colour, diameter, nozzle/bed temps and needs-drying live on the type, not re-entered per spool; a SPOOL just picks its type and carries the per-spool facts — size, batch code, remaining, state. Upgrading carries your existing temps + colour up onto the type automatically.)",
+        "Types and Spools now sit together in the navbar as one element — a quiet \"Filament\" stem with \"Types │ Spools\" links — so the two related tables read as one thing. (0.5.1: scanning a spool's QR find-or-creates its filament TYPE and links the spool automatically — a scan lands in the type→spool model instead of a flat row. 0.5.0: the TYPE defines the whole filament — colour, diameter, nozzle/bed temps and needs-drying live on the type, not re-entered per spool; a SPOOL just picks its type and carries the per-spool facts — size, batch code, remaining, state. Upgrading carries your existing temps + colour up onto the type automatically.)",
       requires: [{ module: "inventory" }],
       // The bundle OWNS its data migration: on upgrade from any earlier install,
       // lift the flat `filament` spools into `filament-types` (deduped by the type
@@ -780,9 +780,12 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           // filament; every spool of it inherits these. The dedup key.
           module: "inventory",
           instance_name: "filament-types",
-          display_name: "Filament types",
+          display_name: "Filament Types",
           glyph: "🧵",
           item_noun: "type",
+          // Group Types + Spools as one connected navbar element under a quiet
+          // "Filament" stem (renders "Filament  Types │ Spools").
+          nav_group: { key: "filament", label: "Filament" },
           field_defs: [
             { entity_kind: "inventory:part", name: "material", display_label: "Material", type: "text", position: 1, choices: ["PLA", "PLA+", "PETG", "ABS", "ASA", "TPU", "Nylon", "PC", "PVA", "Other"], help: "The plastic type — PLA is the easy default; PETG/ABS for tougher parts." },
             { entity_kind: "inventory:part", name: "color", display_label: "Colour", type: "text", position: 2, renderer: "color-hex", help: "Pick a swatch so the table shows the colour at a glance." },
@@ -816,10 +819,14 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           // colour/temps/etc.) and carries ONLY what's unique to the spool.
           module: "inventory",
           instance_name: "filament",
-          display_name: "Filament Spools",
+          // Short within the group — the "Filament" stem supplies the context,
+          // so the segment just reads "Spools". The full "Filament Spools" name
+          // is reconstructed for page titles from stem + this where needed.
+          display_name: "Spools",
           glyph: "🧵",
           item_noun: "spool",
           qty_unit: "kg",
+          nav_group: { key: "filament", label: "Filament" },
           // The parent picker on manual creates — AND the scan auto-lift: a
           // scanned spool that carries material/colour/diameter find-or-creates
           // its "Royal Blue PLA" type (deduped by these keys, temps copied up)

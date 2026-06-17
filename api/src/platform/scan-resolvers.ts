@@ -26,7 +26,10 @@ export function registerScanUrlResolver(resolver: ScanUrlResolver): void {
  *  registration order. Returns the first hit, or null if no resolver claims
  *  or successfully parses it. A throwing matcher/resolver is swallowed so a
  *  flaky vendor can never break the generic barcode path. */
-export async function resolveScanUrl(value: string): Promise<ScanUrlResolution | null> {
+export async function resolveScanUrl(
+  value: string,
+  opts?: { force?: boolean },
+): Promise<ScanUrlResolution | null> {
   const v = value?.trim();
   if (!v) return null;
   for (const r of resolvers) {
@@ -38,7 +41,7 @@ export async function resolveScanUrl(value: string): Promise<ScanUrlResolution |
     }
     if (!claimed) continue;
     try {
-      const res = await r.resolve(v);
+      const res = await r.resolve(v, opts);
       if (res) return res;
     } catch {
       // fall through to the next resolver / the caller's generic path

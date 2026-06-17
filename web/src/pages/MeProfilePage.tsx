@@ -12,12 +12,18 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { Bell, History, KeyRound, Monitor, Plug, UserCog } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
+import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api, ApiError } from "../lib/api";
 import { useToast, usePageTitle } from "@cobblr/platform-web";
 
 export function MeProfilePage() {
   usePageTitle("Profile");
   const { user } = useAuth();
+  const { activeOrg } = useActiveOrg();
+  // A locked managed app ("Cobblr for Yarn") hides the platform — so the profile
+  // shows only what a single-app consumer needs (name + password + how they're
+  // notified), not cross-workspace / BYO-AI / browser-driving platform settings.
+  const appMode = !!activeOrg?.app_mode;
   const qc = useQueryClient();
   const toast = useToast();
 
@@ -47,13 +53,7 @@ export function MeProfilePage() {
       />
 
       <div className="flex flex-col gap-2">
-        <Link
-          to="/me/activity"
-          className="inline-flex items-center gap-2 text-sm text-accent hover:text-accent"
-        >
-          <History size={14} />
-          Your activity across all workspaces →
-        </Link>
+        {/* Notifications stay — a consumer cares how they're reached. */}
         <Link
           to="/me/communication"
           className="inline-flex items-center gap-2 text-sm text-accent hover:text-accent"
@@ -61,27 +61,39 @@ export function MeProfilePage() {
           <Bell size={14} />
           Communication preferences (in-app / Discord DM / email) →
         </Link>
-        <Link
-          to="/me/notification-channels"
-          className="inline-flex items-center gap-2 text-sm text-accent hover:text-accent"
-        >
-          <Bell size={14} />
-          Notification channels (per-workspace Discord / Slack / email / SMS / webhook) →
-        </Link>
-        <Link
-          to="/me/connections"
-          className="inline-flex items-center gap-2 text-sm text-accent hover:text-accent"
-        >
-          <Plug size={14} />
-          Connections — BYO AI keys / edge bridge that follow you to your workspaces →
-        </Link>
-        <Link
-          to="/me/drive"
-          className="inline-flex items-center gap-2 text-sm text-accent hover:text-accent"
-        >
-          <Monitor size={14} />
-          Browser driving — let Claude drive the app you have open (per workspace, off by default) →
-        </Link>
+        {/* Platform-level surfaces — hidden inside a locked managed app. */}
+        {!appMode && (
+          <>
+            <Link
+              to="/me/activity"
+              className="inline-flex items-center gap-2 text-sm text-accent hover:text-accent"
+            >
+              <History size={14} />
+              Your activity across all workspaces →
+            </Link>
+            <Link
+              to="/me/notification-channels"
+              className="inline-flex items-center gap-2 text-sm text-accent hover:text-accent"
+            >
+              <Bell size={14} />
+              Notification channels (per-workspace Discord / Slack / email / SMS / webhook) →
+            </Link>
+            <Link
+              to="/me/connections"
+              className="inline-flex items-center gap-2 text-sm text-accent hover:text-accent"
+            >
+              <Plug size={14} />
+              Connections — BYO AI keys / edge bridge that follow you to your workspaces →
+            </Link>
+            <Link
+              to="/me/drive"
+              className="inline-flex items-center gap-2 text-sm text-accent hover:text-accent"
+            >
+              <Monitor size={14} />
+              Browser driving — let Claude drive the app you have open (per workspace, off by default) →
+            </Link>
+          </>
+        )}
       </div>
     </div>
   );

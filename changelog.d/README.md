@@ -1,10 +1,11 @@
-# changelog.d — staged changelog entries
+# changelog.d — the live changelog archive
 
-One file per change. Entries **stage** here, then the **8pm EST digest consolidates
-them** (our daily "release"): it posts the `feature` entries to Discord, appends
-them all to the permanent `CHANGELOG.md`, and removes the consumed files. So this
-directory stays small (cleared daily); `CHANGELOG.md` is the growing archive the
-`/changelog` page renders.
+One file per change. **This directory IS the archive** — entries land here in the
+same feature PR that ships the change, and stay. The `/changelog` page reads them
+live (`GET /api/v1/changelog`), and the **8pm EST digest** posts that day's new
+`feature` entries to Discord. Nothing consolidates or clears this dir, and the
+digest is **read-only** — it has no repo write, no PR, no merge, no API token.
+(Pre-cutover history lives frozen in `CHANGELOG.md`; the page reads both.)
 
 **Why files, not a shared `CHANGELOG.md`:** one file per PR = no merge conflicts
 when multiple agents/people land changes in parallel. (The `changesets` model.)
@@ -16,12 +17,15 @@ changelog.d/<short-slug>.md
 ---
 type: feature        # feature | improvement | fix
 scope: bundles       # optional — the area
+date: 2026-06-17     # the day it shipped (used to group it on the /changelog page)
 ---
 One user-facing line. Past tense, plain language, what changed for the user.
 ```
 
 - `type: feature` → the **Discord digest** + the changelog page.
 - `type: improvement` / `fix` → changelog page only (no Discord spam).
+- `date:` → groups the entry on the page. Use the day you ship it. Missing → the
+  entry shows under "Unreleased" until corrected.
 
 ## When (enforced by `lint:changelog`)
 

@@ -171,6 +171,23 @@ const InstanceEntry = z.object({
       copy_fields: z.array(z.string()).optional(),
     })
     .optional(),
+  /** Visually group this instance with its sibling instances in the navbar.
+   *  Every instance sharing the same `key` renders as one connected element —
+   *  a quiet `label` stem followed by each member's name as a segment (the
+   *  stem prefix is stripped from each, so "Filament Types" shows as "Types"
+   *  under a "Filament" stem). Purely presentational + generic — any bundle
+   *  can group its instances; nothing module-specific. */
+  nav_group: z
+    .object({
+      key: z.string().min(1).max(80),
+      label: z.string().min(1).max(80),
+    })
+    .optional(),
+  /** Domain terms that sharpen scan ROUTING to this instance (yarn →
+   *  ["yarn","skein","wool","ball-band"]). Surfaced into the scan menu + the
+   *  matchmaker prompt; purely additive — routing still works off noun + fields
+   *  when absent. */
+  scan_keywords: z.array(z.string().min(1).max(60)).max(40).optional(),
   field_defs: z.array(FieldDefEntry).default([]),
   field_overrides: z.array(FieldOverrideEntry).default([]),
   saved_views: z.array(SavedViewEntry).default([]),
@@ -426,9 +443,39 @@ export interface BundleValidationResult {
 
 const moduleOf = (id: string): string | null => (id.includes(":") ? (id.split(":")[0] ?? null) : null);
 
+/** Merge instance declarations that target the same (module, instance_name) into
+ *  ONE — so a FEATURE that re-declares an existing instance only to attach a wire
+ *  (e.g. yarn's shopping-list re-declares `yarn` to add a low-stock wire, with no
+ *  `item_noun`) doesn't clobber the base instance's identity (item_noun /
+ *  display_name / glyph …) back to the generic default ("part"). First entry wins
+ *  on scalars — the base comes first, so its identity is authoritative; arrays
+ *  (field_defs, field_overrides, wires, saved_views) concatenate. */
+function mergeInstances(
+  list: BundleManifestT["provides_instances"],
+): BundleManifestT["provides_instances"] {
+  const ARRAY_KEYS = ["field_defs", "field_overrides", "wires", "saved_views"];
+  const byKey = new Map<string, Record<string, unknown>>();
+  for (const raw of list as unknown as Record<string, unknown>[]) {
+    const key = `${String(raw.module)}::${String(raw.instance_name)}`;
+    const ex = byKey.get(key);
+    if (!ex) {
+      const copy: Record<string, unknown> = { ...raw };
+      for (const k of ARRAY_KEYS) copy[k] = [...((raw[k] as unknown[]) ?? [])];
+      byKey.set(key, copy);
+      continue;
+    }
+    for (const k of ARRAY_KEYS) ex[k] = [...((ex[k] as unknown[]) ?? []), ...((raw[k] as unknown[]) ?? [])];
+    // Scalars: fill only what the base left undefined (base identity wins).
+    for (const [k, v] of Object.entries(raw)) {
+      if (!ARRAY_KEYS.includes(k) && (ex[k] === undefined || ex[k] === null)) ex[k] = v;
+    }
+  }
+  return [...byKey.values()] as unknown as BundleManifestT["provides_instances"];
+}
+
 /** Merge a bundle's BASE manifest with its enabled optional features into one
- *  resolved manifest (arrays concatenated, requires dedup-unioned by module).
- *  Mirrors the web-side resolveBundleManifest used for the install preview. */
+ *  resolved manifest (arrays concatenated, requires dedup-unioned by module,
+ *  instances merged by name). Mirrors the web-side resolveBundleManifest. */
 export function resolveManifestFeatures(full: BundleManifestT, enabledKeys: string[]): BundleManifestT {
   const on = full.features.filter((f) => enabledKeys.includes(f.key));
   if (on.length === 0) return full;
@@ -443,7 +490,7 @@ export function resolveManifestFeatures(full: BundleManifestT, enabledKeys: stri
     field_defs: [...full.field_defs, ...on.flatMap((f) => f.field_defs)],
     field_overrides: [...full.field_overrides, ...on.flatMap((f) => f.field_overrides)],
     saved_views: [...full.saved_views, ...on.flatMap((f) => f.saved_views)],
-    provides_instances: [...full.provides_instances, ...on.flatMap((f) => f.provides_instances)],
+    provides_instances: mergeInstances([...full.provides_instances, ...on.flatMap((f) => f.provides_instances)]),
     provides_apps: [...full.provides_apps, ...on.flatMap((f) => f.provides_apps)],
   };
 }
@@ -1030,7 +1077,7 @@ export async function applyValidatedBundle(
   // the new set applies cleanly; the user's entities (parts, etc.) stay.
   const existing = await meta
     .selectFrom("bundles")
-    .select(["id", "version"])
+    .select(["id", "version", "manifest"])
     .where("org_id", "=", orgId)
     .where("external_id", "=", m.id)
     .execute();
@@ -1040,6 +1087,27 @@ export async function applyValidatedBundle(
     existing.length > 0
       ? existing.map((e) => e.version).sort(cmpVersion).at(-1) ?? null
       : null;
+  // The display_name each instance carried in the PREVIOUS bundle version,
+  // keyed by instance_name. Used below to propagate a bundle-OWNED rename
+  // (Filament types → Filament Types) to existing installs without clobbering
+  // a user's own rename: if the stored nav label still equals the prior
+  // bundle's label, the user never touched it, so the new name is safe.
+  const priorInstanceLabels = new Map<string, string>();
+  const priorBundle =
+    existing.length > 0
+      ? [...existing].sort((a, b) => cmpVersion(a.version, b.version)).at(-1)
+      : null;
+  if (priorBundle) {
+    const rawPm = priorBundle.manifest;
+    const pm = (typeof rawPm === "string" ? JSON.parse(rawPm) : rawPm) as
+      | { provides_instances?: Array<{ instance_name?: string; display_name?: string }> }
+      | null;
+    for (const pi of pm?.provides_instances ?? []) {
+      if (pi.instance_name && typeof pi.display_name === "string") {
+        priorInstanceLabels.set(pi.instance_name, pi.display_name);
+      }
+    }
+  }
   for (const old of existing) {
     await uninstallBundleId(old.id);
   }
@@ -1060,7 +1128,7 @@ export async function applyValidatedBundle(
         isDefault: false,
       });
     }
-    const instConfig = { item_noun: inst.item_noun ?? null, qty_unit: inst.qty_unit ?? null, parent: inst.parent ?? null };
+    const instConfig = { item_noun: inst.item_noun ?? null, qty_unit: inst.qty_unit ?? null, parent: inst.parent ?? null, nav_group: inst.nav_group ?? null, scan_keywords: inst.scan_keywords ?? null };
     await upsertOverride({
       orgId: orgId,
       targetKind: "instance",
@@ -1082,6 +1150,24 @@ export async function applyValidatedBundle(
       .where("target_kind", "=", "instance")
       .where("target_id", "=", `${inst.module}:${inst.instance_name}`)
       .execute();
+    // Propagate a bundle-OWNED rename of the instance's nav label to existing
+    // installs — but ONLY when the user hasn't renamed it themselves. The
+    // insert-only upsert above preserves ANY current label; here we update it
+    // to the new name iff (a) the bundle actually changed the label this
+    // version and (b) the stored label still equals what the PREVIOUS bundle
+    // version set (so the user never touched it). A genuine user rename — any
+    // other stored value — won't match the WHERE and is left intact.
+    const priorLabel = priorInstanceLabels.get(inst.instance_name);
+    if (priorLabel && priorLabel !== inst.display_name) {
+      await meta
+        .updateTable("entity_kind_overrides")
+        .set({ display_label: inst.display_name, updated_at: new Date() })
+        .where("org_id", "=", orgId)
+        .where("target_kind", "=", "instance")
+        .where("target_id", "=", `${inst.module}:${inst.instance_name}`)
+        .where("display_label", "=", priorLabel)
+        .execute();
+    }
   }
 
   // (Field-def collisions are checked inside validateBundle above.)

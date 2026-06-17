@@ -234,7 +234,7 @@ export function CreateWorkspaceModal({
     <Modal
       open={open}
       onClose={onClose}
-      title="new workspace"
+      title="New workspace"
       subtitle="separate tenant DB · separate data · same login"
       size="sm"
     >

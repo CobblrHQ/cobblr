@@ -9,13 +9,16 @@
 // workspace operates; settings change how you personally see it.
 
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   Activity,
+  ArrowUpCircle,
   Boxes,
   ChevronRight,
+  FileArchive,
   FileText,
   Files,
+  Eye,
   Globe,
   HeartPulse,
   KeyRound,
@@ -33,12 +36,14 @@ import {
   Printer,
   QrCode,
   Ruler,
+  Search,
   Sliders,
   Sparkles,
   Tag,
   Shield,
   Users,
   Wrench,
+  X,
 } from "lucide-react";
 import { ModulePickerModal } from "../components/ModulePickerModal";
 import { MembersModal } from "../components/MembersModal";
@@ -48,7 +53,8 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { displaySlug } from "../lib/workspaceSlug";
 import { usePageTitle, useToast } from "@cobblr/platform-web";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "../lib/api";
+import { api, setFocused } from "../lib/api";
+import { useBundleUpdates } from "../lib/useBundleUpdates";
 
 interface Tile {
   icon: typeof Wrench;
@@ -78,6 +84,54 @@ const DEFAULT_OPEN: Record<Tile["group"], boolean> = {
   admin: false,
 };
 
+/** Owner/admin control to flip the workspace into (or out of) FOCUSED mode —
+ *  hides the builder chrome (marketplace / modules / this Configuration page /
+ *  the AI builder / "+ New thing") so the workspace reads as a finished app.
+ *  Reversible from here or the account menu ("Explore the full platform"). A
+ *  full reload re-fetches /me so the whole shell re-renders in the new mode. */
+function FocusedModeToggle({ slug, focused }: { slug: string; focused: boolean }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const flip = async () => {
+    setBusy(true);
+    try {
+      await setFocused(slug, !focused);
+      window.location.reload();
+    } catch (e) {
+      setBusy(false);
+      toast.error(e instanceof Error ? e.message : "Couldn't change simple mode");
+    }
+  };
+  return (
+    <div className="rounded-lg border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/40 px-4 py-3 flex items-start gap-3">
+      <Eye size={18} className="mt-0.5 shrink-0 text-accent dark:text-cobble-300" />
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-medium text-content dark:text-mortar-100">
+          Simple mode {focused ? "is on" : "is off"}
+        </div>
+        <p className="mt-0.5 text-xs text-faint dark:text-slate-400">
+          {focused
+            ? "The platform's build-it chrome (marketplace, modules, this Configuration page, the AI builder) is hidden — a calm, everyday view of just your data. Turn it off whenever you want to tinker; it's all still here."
+            : "Hide the platform's build-it chrome (marketplace, modules, this Configuration page, the AI builder) for a calmer, everyday view of just your data. Nothing is removed — flip it back anytime from the account menu when you want to add or configure things."}
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={flip}
+        disabled={busy}
+        className={
+          "shrink-0 rounded-md px-3 py-1.5 text-sm font-medium transition disabled:opacity-50 " +
+          (focused
+            ? "border border-line dark:border-slate-600 text-content dark:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800"
+            : "bg-cobble-600 text-white hover:bg-cobble-700")
+        }
+      >
+        {busy ? "…" : focused ? "Turn off" : "Turn on simple mode"}
+      </button>
+    </div>
+  );
+}
+
 export function ConfigurationPage() {
   usePageTitle("Configuration");
   const { activeOrg, activeSlug } = useActiveOrg();
@@ -85,6 +139,7 @@ export function ConfigurationPage() {
   const [membersOpen, setMembersOpen] = useState(false);
   const [newThingOpen, setNewThingOpen] = useState(false);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(DEFAULT_OPEN);
+  const [query, setQuery] = useState("");
 
   const tiles: Tile[] = [
     // ── modules + bundles ──────────────────────────────────────────
@@ -171,6 +226,14 @@ export function ConfigurationPage() {
     },
     {
       group: "data",
+      icon: LayoutList,
+      label: "Form builder",
+      description:
+        "Visually drag your custom fields into order and group them under section headings (Specs, Purchase info…). The layout shows on every create/edit form.",
+      to: "/configuration/form-builder",
+    },
+    {
+      group: "data",
       icon: Ruler,
       label: "Units",
       description:
@@ -192,6 +255,14 @@ export function ConfigurationPage() {
       description:
         "Workspace-wide service log — everything scheduled, what's overdue, and the full history across every machine / asset / part. Complete, edit, or delete entries in one place.",
       to: "/configuration/maintenance",
+    },
+    {
+      group: "data",
+      icon: FileArchive,
+      label: "Backup & blueprints",
+      description:
+        "Download a blueprint of your workspace SETUP to share, or a full BACKUP (setup + every row + every file) to keep in your Google Drive / NAS. Install a blueprint or restore a backup into a fresh workspace.",
+      to: "/configuration/backup",
     },
     {
       group: "data",
@@ -358,11 +429,21 @@ export function ConfigurationPage() {
     },
   ];
 
+  // A search bar over every tile so the dense control room is navigable by
+  // name instead of by hunting through five collapsed sections (feedback
+  // b746e0e4: "nightmare of complexity… and a search bar at the top").
+  const q = query.trim().toLowerCase();
+  const matches = (t: Tile) =>
+    !q ||
+    t.label.toLowerCase().includes(q) ||
+    t.description.toLowerCase().includes(q) ||
+    GROUP_LABELS[t.group].toLowerCase().includes(q);
+
   const grouped = GROUP_ORDER.map((group) => ({
     group,
     label: GROUP_LABELS[group],
-    items: tiles.filter((t) => t.group === group),
-  }));
+    items: tiles.filter((t) => t.group === group && matches(t)),
+  })).filter((g) => g.items.length > 0);
 
   return (
     <div className="space-y-5 max-w-4xl">
@@ -377,26 +458,74 @@ export function ConfigurationPage() {
         )}
       </div>
 
-      <p className="text-sm text-content dark:text-mortar-200">
-        Start with <span className="font-medium">Set up your workspace</span> — turn on the
-        modules you want or install a starter pack. The rest is optional and opens when you
-        need it.
-      </p>
+      {(activeOrg?.role === "owner" || activeOrg?.role === "admin") && (
+        <FocusedModeToggle slug={activeSlug} focused={!!activeOrg?.focused} />
+      )}
 
-      {activeOrg?.role === "owner" && <WorkspaceAiSharing slug={activeSlug} />}
-
-      {/* Nav-customize control — relocated out of the navbar (it's a
-          per-device preference, not a nav heading). */}
-      <div className="flex items-center gap-3 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-4 py-3">
-        <NavCustomizeMenu />
-        <span className="text-sm text-content dark:text-mortar-200">
-          Customize navigation — show, hide &amp; reorder your navbar items
-          (saved on this device).
-        </span>
+      <div className="relative">
+        <Search
+          size={16}
+          className="absolute left-3 top-1/2 -translate-y-1/2 text-faint dark:text-slate-500"
+        />
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search configuration…"
+          aria-label="Search configuration"
+          className="input !pl-9 !pr-9"
+        />
+        {q && (
+          <button
+            type="button"
+            onClick={() => setQuery("")}
+            aria-label="Clear search"
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-faint hover:text-content dark:hover:text-mortar-100"
+          >
+            <X size={16} />
+          </button>
+        )}
       </div>
 
+      {/* Helper chrome and alerts only get in the way of a filtered list, so
+          they collapse away while a search is active. */}
+      {!q && (
+        <>
+          <p className="text-sm text-content dark:text-mortar-200">
+            Start with <span className="font-medium">Set up your workspace</span> — turn on the
+            modules you want or install a starter pack. The rest is optional and opens when you
+            need it.
+          </p>
+
+          {/* What the nav badge points at — spell out the pending bundle updates
+              here so the amber dot on "Configuration" has somewhere that explains
+              itself, rather than leaving the user hunting (feedback f22a7620). */}
+          <BundleUpdatesCallout slug={activeSlug} />
+
+          {activeOrg?.role === "owner" && <WorkspaceAiSharing slug={activeSlug} />}
+
+          {/* Nav-customize control — relocated out of the navbar (it's a
+              per-device preference, not a nav heading). */}
+          <div className="flex items-center gap-3 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-4 py-3">
+            <NavCustomizeMenu />
+            <span className="text-sm text-content dark:text-mortar-200">
+              Customize navigation — show, hide &amp; reorder your navbar items
+              (saved on this device).
+            </span>
+          </div>
+        </>
+      )}
+
+      {q && grouped.length === 0 && (
+        <p className="text-sm text-faint dark:text-slate-500">
+          No configuration matches “{query.trim()}”.
+        </p>
+      )}
+
       {grouped.map(({ group, label, items }) => {
-        const open = openGroups[group] ?? false;
+        // While searching, every matching section is expanded — the point is to
+        // see the hits, not to re-open collapsed groups by hand.
+        const open = q ? true : (openGroups[group] ?? false);
         return (
         <section key={group} className="space-y-2">
           <button
@@ -468,6 +597,48 @@ export function ConfigurationPage() {
         onClose={() => setNewThingOpen(false)}
       />
     </div>
+  );
+}
+
+// ─────────────── "Needs your attention" — pending bundle updates ───────────────
+// The nav shows an amber badge on Configuration when an installed bundle has a
+// newer catalog version, but the destination page never said WHAT (feedback
+// f22a7620). This callout names each pending update and links straight to the
+// place to apply it. Renders nothing when everything is up to date.
+function BundleUpdatesCallout({ slug }: { slug: string }) {
+  const updates = useBundleUpdates(slug);
+  const navigate = useNavigate();
+  if (updates.length === 0) return null;
+  return (
+    <section className="rounded-xl border border-amber-300 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-500/10 p-4 space-y-2">
+      <div className="flex items-center gap-2 text-sm font-medium text-amber-800 dark:text-amber-300">
+        <ArrowUpCircle size={16} className="shrink-0" />
+        {updates.length} bundle update{updates.length === 1 ? "" : "s"} available
+      </div>
+      <div className="space-y-1.5">
+        {updates.map((u) => (
+          <div key={u.externalId} className="flex items-center gap-2 text-sm">
+            <span className="flex-1 min-w-0 truncate text-content dark:text-mortar-200">
+              {u.glyph} <strong>{u.name}</strong>{" "}
+              <span className="text-faint dark:text-slate-500">
+                v{u.installedV} → v{u.latestV}
+              </span>
+            </span>
+            <button
+              type="button"
+              onClick={() =>
+                navigate(
+                  `/bundles?open=${encodeURIComponent(u.externalId)}&returnTo=${encodeURIComponent(window.location.pathname + window.location.search)}`,
+                )
+              }
+              className="shrink-0 rounded bg-amber-600 hover:bg-amber-700 text-white text-xs font-medium px-2.5 py-1"
+            >
+              Update
+            </button>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 

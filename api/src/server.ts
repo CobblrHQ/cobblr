@@ -26,6 +26,8 @@ import { orgsRouter } from "./routes/orgs.js";
 import { platformOrgRouter } from "./routes/platform.js";
 import { calendarOrgRouter, calendarPublicRouter } from "./routes/calendar.js";
 import { bundlesRouter } from "./routes/bundles.js";
+import { blueprintRouter } from "./routes/blueprint.js";
+import { backupRouter, backupGoogleCallbackRouter } from "./routes/backup.js";
 import { membersRouter, invitesRootRouter } from "./routes/members.js";
 import { pairingsRouter } from "./routes/pairings.js";
 import { portalRouter } from "./routes/portal.js";
@@ -169,6 +171,13 @@ export function createApp(): AppHandles {
   // Bundles live one layer further down — same auth + tenant
   // middleware, dedicated mount for clarity.
   v1.use("/orgs/:slug/bundles", bundlesRouter);
+  // Blueprint (workspace setup snapshot) + Backup (setup + data + files).
+  // Both sit at the workspace level above bundles. See
+  // docs/architecture/blueprint-backup-export.md.
+  v1.use("/orgs/:slug/blueprint", blueprintRouter);
+  v1.use("/orgs/:slug/backup", backupRouter);
+  // Google Drive OAuth callback (the fixed redirect URI — not org-scoped).
+  v1.use(backupGoogleCallbackRouter);
   v1.use("/orgs/:slug/members", membersRouter);
   v1.use("/orgs/:slug/pairings", pairingsRouter);
   // Ravelry import — pull the user's stash + projects into this workspace's

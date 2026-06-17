@@ -778,12 +778,160 @@ platformOrgRouter.get(
         .filter((f) => !f._hidden)
         .sort((a, b) => a.position - b.position)
         .map(({ _hidden, ...f }) => f);
-      res.json({ items: resolved });
+      // Form-builder sections (for grouped form rendering). Cheap; only the
+      // effective (form) read needs them.
+      let sq = meta
+        .selectFrom("field_sections")
+        .select(["id", "name", "position"])
+        .where("org_id", "=", req.tenant!.org.id)
+        .orderBy("position")
+        .orderBy("name");
+      if (kind) sq = sq.where("entity_kind", "=", kind);
+      const sections = await sq.execute();
+      res.json({ items: resolved, sections });
     } catch (err) {
       next(err);
     }
   },
 );
+
+// ── Field sections (visual form builder) ────────────────────────────
+// Named headings that group a kind's CUSTOM fields on the create/edit form.
+// A field points at a section via module_field_defs.section_id (null =
+// ungrouped). The builder saves a section's order + each field's section +
+// position together via POST /field-defs/reorder.
+platformOrgRouter.get("/:slug/field-sections", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    const kind = typeof req.query.kind === "string" ? req.query.kind : null;
+    let q = meta
+      .selectFrom("field_sections")
+      .select(["id", "entity_kind", "name", "position"])
+      .where("org_id", "=", req.tenant!.org.id)
+      .orderBy("position")
+      .orderBy("name");
+    if (kind) q = q.where("entity_kind", "=", kind);
+    res.json({ items: await q.execute() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const SectionCreate = z.object({ entity_kind: z.string().min(1), name: z.string().min(1).max(120) });
+platformOrgRouter.post("/:slug/field-sections", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const p = SectionCreate.safeParse(req.body);
+    if (!p.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Bad section", details: p.error.issues } });
+      return;
+    }
+    const orgId = req.tenant!.org.id;
+    const last = await meta
+      .selectFrom("field_sections")
+      .select("position")
+      .where("org_id", "=", orgId)
+      .where("entity_kind", "=", p.data.entity_kind)
+      .orderBy("position", "desc")
+      .limit(1)
+      .executeTakeFirst();
+    const row = await meta
+      .insertInto("field_sections")
+      .values({ org_id: orgId, entity_kind: p.data.entity_kind, name: p.data.name, position: (last?.position ?? -1) + 1 })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    res.status(201).json(row);
+  } catch (err) {
+    next(err);
+  }
+});
+
+const SectionPatch = z.object({ name: z.string().min(1).max(120).optional(), position: z.number().int().optional() });
+platformOrgRouter.patch("/:slug/field-sections/:id", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const p = SectionPatch.safeParse(req.body);
+    if (!p.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Bad patch", details: p.error.issues } });
+      return;
+    }
+    const patch: Record<string, unknown> = { updated_at: new Date() };
+    if (p.data.name !== undefined) patch.name = p.data.name;
+    if (p.data.position !== undefined) patch.position = p.data.position;
+    const row = await meta
+      .updateTable("field_sections")
+      .set(patch as never)
+      .where("id", "=", req.params.id!)
+      .where("org_id", "=", req.tenant!.org.id)
+      .returningAll()
+      .executeTakeFirst();
+    if (!row) {
+      res.status(404).json({ error: { code: "not_found", message: "section not found" } });
+      return;
+    }
+    res.json(row);
+  } catch (err) {
+    next(err);
+  }
+});
+
+platformOrgRouter.delete("/:slug/field-sections/:id", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    // Fields fall back to ungrouped (section_id ON DELETE SET NULL).
+    await meta
+      .deleteFrom("field_sections")
+      .where("id", "=", req.params.id!)
+      .where("org_id", "=", req.tenant!.org.id)
+      .execute();
+    clearComputedDefsCache();
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Bulk-save the form layout: section order + each field's section + position.
+const FieldReorder = z.object({
+  entity_kind: z.string().min(1),
+  sections: z.array(z.object({ id: z.string().uuid(), position: z.number().int() })).optional(),
+  fields: z.array(z.object({ name: z.string().min(1), section_id: z.string().uuid().nullable(), position: z.number().int() })).optional(),
+});
+platformOrgRouter.post("/:slug/field-defs/reorder", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const p = FieldReorder.safeParse(req.body);
+    if (!p.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Bad reorder", details: p.error.issues } });
+      return;
+    }
+    const orgId = req.tenant!.org.id;
+    const kind = p.data.entity_kind;
+    await meta.transaction().execute(async (trx) => {
+      for (const s of p.data.sections ?? []) {
+        await trx
+          .updateTable("field_sections")
+          .set({ position: s.position, updated_at: new Date() })
+          .where("id", "=", s.id)
+          .where("org_id", "=", orgId)
+          .where("entity_kind", "=", kind)
+          .execute();
+      }
+      for (const f of p.data.fields ?? []) {
+        await trx
+          .updateTable("module_field_defs")
+          .set({ position: f.position, section_id: f.section_id })
+          .where("org_id", "=", orgId)
+          .where("entity_kind", "=", kind)
+          .where("name", "=", f.name)
+          .execute();
+      }
+    });
+    clearComputedDefsCache();
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
 
 // Would an AI call work right now? Member-accessible (the providers list is
 // admin-only — this leaks nothing but a boolean + why), so AI-consuming UI

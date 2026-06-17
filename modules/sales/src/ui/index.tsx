@@ -347,7 +347,7 @@ function CustomersModal({ api, onClose }: { api: SalesApi; onClose: () => void }
   });
 
   return (
-    <Modal open onClose={onClose} title="customers" size="md">
+    <Modal open onClose={onClose} title="Customers" size="md">
       <div className="space-y-3">
         {customers.isLoading && <div className="text-sm text-muted">Loading…</div>}
         {customers.data?.items.length === 0 && editing !== "new" && <div className="text-sm text-muted italic">No customers yet. Add the people you sell to.</div>}

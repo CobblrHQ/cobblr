@@ -55,6 +55,7 @@ COPY modules/builds/package.json ./modules/builds/
 COPY modules/sales/package.json ./modules/sales/
 COPY modules/tracking/package.json ./modules/tracking/
 COPY modules/digifab/package.json ./modules/digifab/
+COPY modules/core-devices/package.json ./modules/core-devices/
 COPY modules/core-file-preview/package.json ./modules/core-file-preview/
 COPY modules/bricklink-connector/package.json ./modules/bricklink-connector/
 COPY modules/maker-scan/package.json ./modules/maker-scan/
@@ -137,6 +138,8 @@ COPY modules/maker-scan ./modules/maker-scan
 RUN npm run --if-present build -w @cobblr/maker-scan
 COPY modules/core-print ./modules/core-print
 RUN npm run --if-present build -w @cobblr/core-print
+COPY modules/core-devices ./modules/core-devices
+RUN npm run --if-present build -w @cobblr/core-devices
 # ── actively-developed (hot) modules last — their edits rebuild fewest layers ──
 COPY modules/digifab ./modules/digifab
 RUN npm run --if-present build -w @cobblr/digifab
@@ -178,8 +181,11 @@ RUN node scripts/install-registry-modules.mjs
 
 # api last: an api-only change rebuilds just the api, not the 34 modules.
 COPY api ./api
-# Served read-only by the public /changelog endpoint (api/src/routes/changelog.ts).
+# Served read-only by the public /changelog endpoint (api/src/routes/changelog.ts):
+# changelog.d/ is the LIVE archive (one changeset file per change), CHANGELOG.md is
+# the frozen pre-cutover history.
 COPY CHANGELOG.md ./CHANGELOG.md
+COPY changelog.d ./changelog.d
 WORKDIR /app/api
 RUN npm run build
 
@@ -211,8 +217,10 @@ COPY --from=builder /app/sandboxed-modules ./sandboxed-modules
 # Manifest of every baked-in marketplace module — consumed at api
 # boot to populate the installed_modules table.
 COPY --from=builder /app/installed-modules.manifest.json ./installed-modules.manifest.json
-# The "What's new" archive, served read-only by GET /api/v1/changelog.
+# The "What's new" archive, served read-only by GET /api/v1/changelog —
+# the live changesets + the frozen history.
 COPY --from=builder /app/CHANGELOG.md ./CHANGELOG.md
+COPY --from=builder /app/changelog.d ./changelog.d
 
 EXPOSE 4000
 

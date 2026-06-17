@@ -19,9 +19,12 @@ import {
   Copy,
   Trash2,
   X,
+  Eye,
 } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
 import { useConfirm, usePageTitle, useToast, Modal, useImageSrc } from "@cobblr/platform-web";
+import { setImpersonation } from "../lib/impersonation";
+import { displaySlug } from "../lib/workspaceSlug";
 import {
   ApiError,
   api,
@@ -61,6 +64,7 @@ export function AdminConsole() {
       {active === "barcodes" && <BarcodeCacheTab />}
       {active === "tokens" && <TokenManager variant="operator" />}
       {active === "scaneval" && <ScanEvalTab />}
+      {active === "impersonation" && <ImpersonationLogTab />}
       {active === "health" && <HealthTab />}
     </div>
   );
@@ -351,6 +355,7 @@ function WorkspacesTab() {
 
 function UsersTab() {
   const [search, setSearch] = useState("");
+  const [viewAs, setViewAs] = useState<{ userId: string; userName: string; orgId: string; orgName: string } | null>(null);
   const q = useQuery({
     queryKey: ["super-admin-users"],
     queryFn: () => api.superAdminUsers(),
@@ -399,17 +404,16 @@ function UsersTab() {
                 )}
                 <div className="flex flex-wrap gap-1">
                   {u.orgs.map((o) => (
-                    // Not a link: operators can't open another user's
-                    // workspace (separate tier — the member route would
-                    // dead-end). Informational chip; manage tenants from
-                    // the Workspaces tab.
-                    <span
+                    // "View as": start a read-only, audited impersonation session
+                    // to see this user's workspace exactly as they see it.
+                    <button
                       key={o.org_id}
-                      title="Operators can't open another user's workspace — manage tenants from the Workspaces tab."
-                      className="inline-flex items-center gap-1 rounded border border-line dark:border-slate-700 px-1.5 py-0.5 text-[10px] font-mono text-content dark:text-mortar-100"
+                      onClick={() => setViewAs({ userId: u.id, userName: u.display_name, orgId: o.org_id, orgName: o.org_name })}
+                      title={`View ${u.display_name}'s "${o.org_name}" workspace (read-only)`}
+                      className="inline-flex items-center gap-1 rounded border border-line dark:border-slate-700 px-1.5 py-0.5 text-[10px] font-mono text-content dark:text-mortar-100 hover:border-accent hover:bg-subtle/60 transition"
                     >
-                      {o.org_name} <span className="text-accent">{o.role}</span>
-                    </span>
+                      <Eye size={10} className="text-accent" /> {o.org_name} <span className="text-accent">{o.role}</span>
+                    </button>
                   ))}
                 </div>
               </td>
@@ -433,6 +437,169 @@ function UsersTab() {
         </tbody>
       </table>
     </div>
+    {viewAs && <ViewAsModal target={viewAs} onClose={() => setViewAs(null)} />}
+    </div>
+  );
+}
+
+// "View as" — mint a read-only impersonation session, store it per-tab, and open
+// the workspace. Required reason; short TTL. See operator-impersonation.md.
+function ViewAsModal({
+  target,
+  onClose,
+}: {
+  target: { userId: string; userName: string; orgId: string; orgName: string };
+  onClose: () => void;
+}) {
+  const toast = useToast();
+  const [reason, setReason] = useState("");
+  const [ttl, setTtl] = useState(30);
+  const [busy, setBusy] = useState(false);
+
+  const start = async () => {
+    if (!reason.trim()) {
+      toast.error("A reason is required (it's logged).");
+      return;
+    }
+    setBusy(true);
+    try {
+      const s = await api.request<{
+        session_id: string;
+        token: string;
+        expires_at: string;
+        mode: "read" | "write";
+        target: { id: string; name: string; role: string };
+        workspace: { id: string; slug: string; name: string };
+      }>("POST", "/super-admin/impersonations", {
+        org_id: target.orgId,
+        target_user_id: target.userId,
+        reason: reason.trim(),
+        ttl_min: ttl,
+      });
+      setImpersonation(s);
+      // Open the workspace by its pretty handle; the banner + X-Impersonation
+      // take over from there.
+      window.location.assign(`/w/${displaySlug(s.workspace.slug)}/`);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't start the session.");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal open onClose={onClose} title="View as — read-only support session" size="md">
+      <div className="space-y-3 text-sm">
+        <p className="text-muted">
+          You'll see <b>{target.orgName}</b> exactly as <b>{target.userName}</b> does. It starts
+          <b> read-only</b> (you can enable editing from the banner). The session is time-boxed,
+          logged, and leaves a visible note in the workspace's activity feed.
+        </p>
+        <label className="block">
+          <span className="text-xs text-faint">Reason (logged, required)</span>
+          <input
+            autoFocus
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="e.g. investigating their 'low contrast button' report"
+            className="input w-full mt-1"
+          />
+        </label>
+        <label className="block">
+          <span className="text-xs text-faint">Session length</span>
+          <select value={ttl} onChange={(e) => setTtl(Number(e.target.value))} className="input w-full mt-1">
+            <option value={15}>15 minutes</option>
+            <option value={30}>30 minutes</option>
+            <option value={60}>60 minutes</option>
+          </select>
+        </label>
+        <div className="flex justify-end gap-2 pt-1">
+          <button onClick={onClose} className="rounded px-3 py-1.5 text-muted hover:bg-subtle/60">Cancel</button>
+          <button
+            onClick={start}
+            disabled={busy}
+            className="inline-flex items-center gap-1.5 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 disabled:opacity-50"
+          >
+            <Eye size={14} /> {busy ? "Starting…" : "Start read-only session"}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// The append-only View-as log: who viewed whose workspace, why, for how long.
+function ImpersonationLogTab() {
+  const q = useQuery({
+    queryKey: ["super-admin-impersonations"],
+    queryFn: () =>
+      api.request<{
+        items: Array<{
+          id: string;
+          reason: string;
+          mode: "read" | "write";
+          request_count: number;
+          created_at: string;
+          expires_at: string;
+          write_enabled_at: string | null;
+          ended_at: string | null;
+          operator_email: string | null;
+          operator_name: string | null;
+          target_email: string | null;
+          target_name: string | null;
+          workspace_slug: string | null;
+          workspace_name: string | null;
+        }>;
+      }>("GET", "/super-admin/impersonations"),
+    refetchInterval: 30_000,
+  });
+  const items = q.data?.items ?? [];
+  const now = Date.now();
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-muted">
+        Every operator "View as" session — append-only. Read-only by default; <b>write</b> means editing
+        was deliberately enabled. Each session also leaves a trace in the workspace's own activity feed.
+      </p>
+      <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-subtle/50 dark:bg-slate-800/40">
+            <tr>
+              <Th>Operator</Th>
+              <Th>Viewed</Th>
+              <Th>Workspace</Th>
+              <Th>Reason</Th>
+              <Th>Mode</Th>
+              <Th>Reqs</Th>
+              <Th>When</Th>
+              <Th>State</Th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-line dark:divide-slate-800">
+            {items.map((s) => {
+              const live = !s.ended_at && new Date(s.expires_at).getTime() > now;
+              return (
+                <tr key={s.id}>
+                  <td className="px-3 py-2 text-xs">{s.operator_name ?? s.operator_email ?? "—"}</td>
+                  <td className="px-3 py-2 text-xs">{s.target_name ?? s.target_email ?? "—"}</td>
+                  <td className="px-3 py-2 text-xs">{s.workspace_name ?? s.workspace_slug ?? "—"}</td>
+                  <td className="px-3 py-2 text-xs text-muted max-w-[240px] truncate" title={s.reason}>{s.reason}</td>
+                  <td className="px-3 py-2 text-[10px] font-mono uppercase">
+                    {s.write_enabled_at ? <span className="text-red-500">write</span> : <span className="text-amber-500">read</span>}
+                  </td>
+                  <td className="px-3 py-2 text-xs tabular-nums">{s.request_count}</td>
+                  <td className="px-3 py-2 text-[11px] text-muted">{new Date(s.created_at).toLocaleString()}</td>
+                  <td className="px-3 py-2 text-[10px] font-mono uppercase tracking-widest">
+                    {live ? <span className="text-moss-500">live</span> : s.ended_at ? <span className="text-faint">ended</span> : <span className="text-faint">expired</span>}
+                  </td>
+                </tr>
+              );
+            })}
+            {!q.isLoading && items.length === 0 && (
+              <tr><td colSpan={8} className="px-3 py-6 text-center text-faint text-xs">No impersonation sessions yet.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

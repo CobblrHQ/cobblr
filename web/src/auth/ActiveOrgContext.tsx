@@ -19,6 +19,7 @@ import {
 } from "react";
 import { useAuth } from "./AuthContext";
 import { displaySlug } from "../lib/workspaceSlug";
+import { useImpersonation } from "../lib/impersonation";
 import type { OrgMembership } from "../lib/api";
 
 const STORAGE_KEY = "cobblr.activeOrgSlug";
@@ -69,15 +70,31 @@ export function ActiveOrgProvider({
   children: ReactNode;
 }) {
   const { orgs } = useAuth();
-  const org = useMemo(() => resolveHandle(urlHandle, orgs), [urlHandle, orgs]);
+  const imp = useImpersonation();
+  const org = useMemo(() => {
+    // While impersonating, the impersonated workspace IS the active one — even
+    // though the operator isn't a member, so resolveHandle would miss it. Build a
+    // synthetic membership from the grant (the target's role is what they see).
+    if (imp && (urlHandle === displaySlug(imp.workspace.slug) || urlHandle === imp.workspace.slug)) {
+      return {
+        id: imp.workspace.id,
+        name: imp.workspace.name,
+        slug: imp.workspace.slug,
+        role: imp.target.role as OrgMembership["role"],
+        owner_name: imp.target.name,
+      } satisfies OrgMembership;
+    }
+    return resolveHandle(urlHandle, orgs);
+  }, [urlHandle, orgs, imp]);
 
   // If the URL handle doesn't resolve to a membership (revoked, wrong account,
-  // typo), bounce to the user's default workspace.
+  // typo), bounce to the user's default workspace — but NEVER while impersonating
+  // (the operator legitimately isn't a member of the workspace they're viewing).
   useEffect(() => {
-    if (orgs.length === 0 || org) return;
+    if (orgs.length === 0 || org || imp) return;
     const fallback = pickDefaultOrg(orgs);
     if (fallback) window.location.replace(`/w/${urlHandleFor(fallback, orgs)}/`);
-  }, [orgs, org]);
+  }, [orgs, org, imp]);
 
   // Remember the last-active workspace (by full slug) for bare-URL landings.
   useEffect(() => {

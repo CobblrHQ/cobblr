@@ -71,6 +71,12 @@ export interface OrgsTable {
     /** Display label, e.g. "Cobblr for Yarn". */
     label?: string;
   } | null>;
+  /** Focused mode — when true, the web shell hides the platform BUILDER chrome
+   *  (marketplace / add-modules / AI builder / Configuration / the "+ New thing"
+   *  funnel) so a non-technical owner sees a finished app, not a toolkit. Softer
+   *  than app_mode (workspace stays navigable; owner can flip it back, which is
+   *  the upsell). false = full platform (the default). */
+  focused: Generated<boolean>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }
@@ -206,6 +212,40 @@ export interface PlatformAnnounceSettingsTable {
   category: string;
   enabled: Generated<boolean>;
   webhook_url: string | null;
+  updated_at: Generated<Date>;
+}
+
+/** Operator impersonation ("View as") — see docs/modules/operator-impersonation.md.
+ *  The server-side session an impersonation token points at; read-only unless
+ *  `mode='write'` is deliberately armed. */
+export interface ImpersonationSessionsTable {
+  id: Generated<string>;
+  operator_user_id: string;
+  target_user_id: string;
+  org_id: string;
+  reason: string;
+  mode: Generated<"read" | "write">;
+  request_count: Generated<number>;
+  created_at: Generated<Date>;
+  expires_at: Date;
+  write_enabled_at: Date | null;
+  ended_at: Date | null;
+}
+
+export interface BackupDestinationsTable {
+  id: Generated<string>;
+  org_id: string;
+  driver: string;
+  label: string;
+  config: Generated<Record<string, unknown>>;
+  credentials_enc: Generated<string>;
+  schedule: Generated<"off" | "daily" | "weekly">;
+  retention: Generated<number>;
+  enabled: Generated<boolean>;
+  last_run_at: Date | null;
+  last_status: string | null;
+  next_run_at: Date | null;
+  created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }
 
@@ -591,7 +631,22 @@ export interface ModuleFieldDefsTable {
   /** Plain-language one-line hint shown under the input on create + detail
    *  forms, so jargon fields (colorway, dye lot…) explain themselves. */
   help: string | null;
+  /** Form-builder section this field belongs to (field_sections.id), or null
+   *  for ungrouped. Set together with position by the reorder call. */
+  section_id: string | null;
   created_at: Generated<Date>;
+}
+
+/** A named heading grouping an entity kind's form fields ("Specs", "Purchase
+ *  info") — the visual form builder. Ordered by position per (org, kind). */
+export interface FieldSectionsTable {
+  id: Generated<string>;
+  org_id: string;
+  entity_kind: string;
+  name: string;
+  position: Generated<number>;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
 }
 
 /** Presentation overrides for a module's NATIVE fields, per entity kind /
@@ -608,6 +663,10 @@ export interface NativeFieldOverridesTable {
   position: Generated<number>;
   bundle_id: string | null;
   source_module: string | null;
+  /** Form-builder section for this NATIVE field (field_sections.id) — null =
+   *  ungrouped. The override row is created/upserted when a native field is
+   *  assigned to a section or reordered. */
+  section_id: string | null;
   /** Phase 1b — open-ended presentation overrides ({ choices?: string[], … }).
    *  The user layer (bundle_id null) wins at resolve; default {}. */
   overrides: Generated<FieldOverrideBlob>;
@@ -759,6 +818,8 @@ export interface MetaDB {
   user_credentials: UserCredentialsTable;
   user_credential_orgs: UserCredentialOrgsTable;
   platform_announce_settings: PlatformAnnounceSettingsTable;
+  impersonation_sessions: ImpersonationSessionsTable;
+  backup_destinations: BackupDestinationsTable;
   entity_pairings: EntityPairingsTable;
   tags: TagsTable;
   tag_assignments: TagAssignmentsTable;
@@ -780,6 +841,7 @@ export interface MetaDB {
   bundles: BundlesTable;
   module_field_defs: ModuleFieldDefsTable;
   native_field_overrides: NativeFieldOverridesTable;
+  field_sections: FieldSectionsTable;
   calendar_feeds: CalendarFeedsTable;
   public_surface_tokens: PublicSurfaceTokensTable;
   core_queue_jobs: CoreQueueJobsTable;

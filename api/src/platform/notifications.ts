@@ -264,11 +264,16 @@ export interface NotifyAccountParams {
   /** A Tier-2 notification type key (see notification-catalog). */
   notificationType: string;
   message: string;
+  /** Optional override for the Discord DM text only — when the DM wants a more
+   *  formal/longer phrasing (e.g. a greeting) than the in-app bell. Falls back to
+   *  `message` when unset. */
+  discordMessage?: string;
   link_url?: string;
   module?: string;
   /** Optional richer email than the generic "<message> <link>" fallback.
-   *  `replyTo` (optional) carries a tokenized reply-by-email address. */
-  email?: { subject: string; text: string; replyTo?: string };
+   *  `replyTo` (optional) carries a tokenized reply-by-email address; `html`
+   *  (optional) is a rich body sent alongside `text` (the plaintext fallback). */
+  email?: { subject: string; text: string; html?: string; replyTo?: string };
 }
 
 /** Deliver an account-level (platform) notification across the user's chosen
@@ -314,7 +319,7 @@ export async function notifyAccount(
       .where("id", "=", args.userId)
       .executeTakeFirst();
     if (u?.email) {
-      const ok = await sendAuthEmail({ to: u.email, subject: args.email.subject, text: args.email.text, kind: "notification", replyTo: args.email.replyTo });
+      const ok = await sendAuthEmail({ to: u.email, subject: args.email.subject, text: args.email.text, html: args.email.html, kind: "notification", replyTo: args.email.replyTo });
       if (ok) deliveredVia.push("email");
     }
   }
@@ -327,9 +332,10 @@ export async function notifyAccount(
       .where("user_id", "=", args.userId)
       .executeTakeFirst();
     if (conn?.verified && conn.discord_user_id) {
+      const dmBody = args.discordMessage ?? args.message;
       const text = args.link_url
-        ? `${args.message}\n${absoluteAppUrl(args.link_url)}`
-        : args.message;
+        ? `${dmBody}\n${absoluteAppUrl(args.link_url)}`
+        : dmBody;
       const res = await sendDiscordDm({ discord_user_id: conn.discord_user_id, text });
       if (res.ok) deliveredVia.push("discord_dm");
     }

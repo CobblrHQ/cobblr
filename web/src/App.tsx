@@ -53,10 +53,12 @@ const ActionsPage = lazy(() => import("./pages/ActionsPage").then((m) => ({ defa
 const BundlesPage = lazy(() => import("./pages/BundlesPage").then((m) => ({ default: m.BundlesPage })));
 const BuildPage = lazy(() => import("./pages/BuildPage").then((m) => ({ default: m.BuildPage })));
 const FieldsPage = lazy(() => import("./pages/FieldsPage").then((m) => ({ default: m.FieldsPage })));
+const FormBuilderPage = lazy(() => import("./pages/FormBuilderPage").then((m) => ({ default: m.FormBuilderPage })));
 const MeActivityPage = lazy(() => import("./pages/MeActivityPage").then((m) => ({ default: m.MeActivityPage })));
 const MeNotificationsPage = lazy(() => import("./pages/MeNotificationsPage").then((m) => ({ default: m.MeNotificationsPage })));
 const MeNotificationChannelsPage = lazy(() => import("./pages/MeNotificationChannelsPage").then((m) => ({ default: m.MeNotificationChannelsPage })));
 const MeProfilePage = lazy(() => import("./pages/MeProfilePage").then((m) => ({ default: m.MeProfilePage })));
+const AppSettingsPage = lazy(() => import("./pages/AppSettingsPage").then((m) => ({ default: m.AppSettingsPage })));
 const CommunicationPreferencesPage = lazy(() => import("./pages/CommunicationPreferencesPage").then((m) => ({ default: m.CommunicationPreferencesPage })));
 const MyFeedbackPage = lazy(() => import("./pages/MyFeedbackPage").then((m) => ({ default: m.MyFeedbackPage })));
 const DriveSettingsPage = lazy(() => import("./pages/DriveSettingsPage").then((m) => ({ default: m.DriveSettingsPage })));
@@ -68,6 +70,7 @@ const DigifabPage = lazy(() => import("./pages/DigifabPage").then((m) => ({ defa
 const PrintPage = lazy(() => import("./pages/PrintPage").then((m) => ({ default: m.PrintPage })));
 const MaintenancePage = lazy(() => import("./pages/MaintenancePage").then((m) => ({ default: m.MaintenancePage })));
 const UnitsPage = lazy(() => import("./pages/UnitsPage").then((m) => ({ default: m.UnitsPage })));
+const BackupPage = lazy(() => import("./pages/BackupPage").then((m) => ({ default: m.BackupPage })));
 const CalendarPage = lazy(() => import("./pages/CalendarPage").then((m) => ({ default: m.CalendarPage })));
 const QrTokensPage = lazy(() => import("./pages/QrTokensPage").then((m) => ({ default: m.QrTokensPage })));
 const HealthPage = lazy(() => import("./pages/HealthPage").then((m) => ({ default: m.HealthPage })));
@@ -99,6 +102,7 @@ const UsersPage = lazy(() => import("./pages/UsersPage").then((m) => ({ default:
 const AdminConsole = lazy(() => import("./pages/AdminConsole").then((m) => ({ default: m.AdminConsole })));
 const RolesPage = lazy(() => import("./pages/RolesPage").then((m) => ({ default: m.RolesPage })));
 import { AppLayout } from "./components/AppLayout";
+import { ImpersonationBanner } from "./components/ImpersonationBanner";
 import { AdminLayout } from "./components/AdminLayout";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { PortalLayout } from "./components/PortalLayout";
@@ -153,6 +157,9 @@ function Shell() {
   if (ws) {
     return (
       <BrowserRouter basename={`/w/${ws[1]}`}>
+        {/* Portaled to body — overlays whichever shell renders (AppLayout /
+            PortalLayout / AppPlayer) while an operator is impersonating. */}
+        <ImpersonationBanner />
         <WorkspaceRoutes urlHandle={ws[1]!} />
       </BrowserRouter>
     );
@@ -335,6 +342,7 @@ function ActiveOrgScopedRoutes() {
   return (
     <PlatformWebProvider
       orgSlug={activeSlug}
+      appMode={!!appMode}
       api={{
         listActions: (slug, kind) => api.listActions(slug, kind),
         invokeAction: (slug, body) => api.invokeAction(slug, body),
@@ -427,12 +435,14 @@ function ActiveOrgScopedRoutes() {
           <Route path="/build" element={<BuildPage />} />
           <Route path="/bundles/compose" element={<BundleComposerPage />} />
           <Route path="/fields" element={<FieldsPage />} />
+          <Route path="/configuration/form-builder" element={<FormBuilderPage />} />
           <Route path="/configuration/tokens" element={<ApiTokensPage />} />
           <Route path="/configuration/surfaces" element={<SurfacesPage />} />
           <Route path="/configuration/digifab" element={<DigifabPage />} />
           <Route path="/configuration/print" element={<PrintPage />} />
           <Route path="/configuration/maintenance" element={<MaintenancePage />} />
           <Route path="/configuration/units" element={<UnitsPage />} />
+          <Route path="/configuration/backup" element={<BackupPage />} />
           <Route path="/calendar" element={<CalendarPage />} />
           <Route path="/configuration/qr-tokens" element={<QrTokensPage />} />
           <Route path="/configuration/health" element={<HealthPage />} />
@@ -469,6 +479,7 @@ function ActiveOrgScopedRoutes() {
           <Route path="/me/notification-channels" element={<MeNotificationChannelsPage />} />
           <Route path="/me/communication" element={<CommunicationPreferencesPage />} />
           <Route path="/me/feedback" element={<MyFeedbackPage />} />
+          <Route path="/me/app-settings" element={<AppSettingsPage />} />
           <Route path="/me/drive" element={<DriveSettingsPage />} />
           {/* /me is canonical; /me/profile redirects so old bookmarks keep working. */}
           <Route path="/me/profile" element={<Navigate to="/me" replace />} />

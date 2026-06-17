@@ -83,6 +83,47 @@ export function registerInventoryActionHandlers(): void {
     };
   });
 
+  // ─────────────────────── set-stock ───────────────────────────────
+  // Set a part's on-hand qty to an ABSOLUTE value (not a delta). The
+  // natural op for a scale ("grams remaining"), a stocktake, or a recount —
+  // adjust-stock can't express "set to N" without a racy read-then-delta.
+  // Same downstream signals as adjust-stock (stock.changed + low-stock).
+  platform().actions.registerHandler("inventory.set-stock", async (ctx) => {
+    const args = (ctx.args as { partId?: string; qty?: number; reason?: string } | null) ?? {};
+    const ev = (ctx.event?.payload as { partId?: string; qty?: number } | null) ?? {};
+    const partId = args.partId ?? ev.partId;
+    const qty = args.qty ?? ev.qty;
+    const reason = args.reason ?? "set to an absolute value";
+    if (!partId || typeof qty !== "number" || qty < 0) {
+      return { ok: true, skipped: true, reason: "missing partId or a non-negative qty" };
+    }
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
+    const updated = await db
+      .updateTable("inventory_parts")
+      .set({ qty: sql<string>`${qty}::numeric`, updated_at: new Date() })
+      .where("id", "=", partId)
+      .returning(["id", "name", "qty", "min_qty"])
+      .executeTakeFirst();
+    if (!updated) return { ok: false, error: "part_not_found" };
+    const newQty = Number(updated.qty);
+    await platform().events.emit("inventory.stock.changed", {
+      orgId: ctx.orgId,
+      partId: updated.id,
+      newQty,
+      reason,
+    });
+    const minQty = updated.min_qty == null ? null : Number(updated.min_qty);
+    if (minQty != null && minQty > 0 && newQty <= minQty) {
+      await platform().events.emit("inventory.stock.low", {
+        orgId: ctx.orgId,
+        partId: updated.id,
+        newQty,
+        minQty,
+      });
+    }
+    return { ok: true, partId: updated.id, newQty };
+  });
+
   // ─────────────────────── set-status ──────────────────────────────
   // A small, member-appropriate write: set a part's metadata.status
   // (the Lego set Built/Unbuilt/Missing-pieces field). This is the

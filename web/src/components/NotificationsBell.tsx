@@ -1,23 +1,44 @@
-// Bell icon in the header — badge with unread count, click opens
-// a popover list. Cross-workspace inbox: every notification for
-// the user is visible regardless of which workspace they're
-// currently viewing. Each row shows the workspace name and
-// clicking switches the active workspace + navigates to link_url
-// so accept/revoke flows still land on the right page.
+// Bell icon in the header — badge with unread count, click opens the inbox.
+// Cross-workspace inbox: every notification for the user is visible regardless
+// of which workspace they're currently viewing. Each row shows the workspace
+// name and clicking switches the active workspace + navigates to link_url so
+// accept/revoke flows still land on the right page.
+//
+// The inbox renders in one of two modes, toggleable + remembered (per request
+// from feedback — the small dropdown felt cramped): a compact DROPDOWN popover,
+// or a full-height right SIDEBAR (same shape as the AI chat / ChatWidget). The
+// sidebar portals to <body> so the header's backdrop-blur can't trap its
+// position:fixed (CLAUDE.md modal note).
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, Check } from "lucide-react";
+import { Bell, Check, PanelRight, PanelRightClose, X } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, type CrossOrgNotificationEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
+type Mode = "dropdown" | "sidebar";
+const MODE_KEY = "cobblr.notif.mode";
+
 export function NotificationsBell() {
   const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState<Mode>(() =>
+    (typeof localStorage !== "undefined" && localStorage.getItem(MODE_KEY)) === "sidebar" ? "sidebar" : "dropdown",
+  );
   const wrapperRef = useRef<HTMLDivElement>(null);
   const qc = useQueryClient();
   const navigate = useNavigate();
   const { activeSlug, setActiveSlug } = useActiveOrg();
+
+  function chooseMode(m: Mode) {
+    setMode(m);
+    try {
+      localStorage.setItem(MODE_KEY, m);
+    } catch {
+      /* private mode — fine, just won't persist */
+    }
+  }
 
   const unread = useQuery({
     queryKey: ["me-notifications-unread"],
@@ -55,9 +76,10 @@ export function NotificationsBell() {
     },
   });
 
-  // Close on outside click.
+  // Close on outside click — DROPDOWN only. The sidebar is dismissed with its
+  // own X (like the chat panel), so an accidental click outside doesn't lose it.
   useEffect(() => {
-    if (!open) return;
+    if (!open || mode !== "dropdown") return;
     function handler(e: MouseEvent) {
       if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
         setOpen(false);
@@ -65,7 +87,7 @@ export function NotificationsBell() {
     }
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, [open]);
+  }, [open, mode]);
 
   const count = unread.data?.count ?? 0;
   const here = unreadHere.data?.count ?? 0;
@@ -83,6 +105,108 @@ export function NotificationsBell() {
     setOpen(false);
   }
 
+  // Shared inbox body (header actions + the list + "see all"). Rendered inside
+  // both the dropdown popover and the sidebar so the two modes never drift.
+  const body = (
+    <>
+      <div className="flex items-center justify-between px-3 py-2 border-b border-line dark:border-slate-700 shrink-0">
+        <div className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">notifications</div>
+        <div className="flex items-center gap-2">
+          {count > 0 && (
+            <button
+              onClick={() => markAll.mutate()}
+              disabled={markAll.isPending}
+              className="text-[10px] font-mono text-accent hover:text-accent transition"
+            >
+              mark all read
+            </button>
+          )}
+          {mode === "dropdown" ? (
+            <button
+              onClick={() => chooseMode("sidebar")}
+              title="Dock as a side panel"
+              aria-label="Dock notifications as a side panel"
+              className="text-faint hover:text-accent dark:text-slate-500 dark:hover:text-cobble-300 transition"
+            >
+              <PanelRight size={14} />
+            </button>
+          ) : (
+            <>
+              <button
+                onClick={() => chooseMode("dropdown")}
+                title="Collapse to a dropdown"
+                aria-label="Collapse notifications to a dropdown"
+                className="text-faint hover:text-accent dark:text-slate-500 dark:hover:text-cobble-300 transition"
+              >
+                <PanelRightClose size={16} />
+              </button>
+              <button
+                onClick={() => setOpen(false)}
+                title="Close"
+                aria-label="Close notifications"
+                className="text-faint hover:text-content dark:text-slate-500 dark:hover:text-mortar-200 transition"
+              >
+                <X size={16} />
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+      <div className={mode === "sidebar" ? "flex-1 overflow-y-auto" : ""}>
+        {list.isLoading && <div className="px-3 py-4 text-[11px] text-faint">loading…</div>}
+        {list.data && list.data.items.length === 0 && (
+          <div className="px-3 py-4 text-[11px] text-faint italic">No notifications yet.</div>
+        )}
+        <ul>
+          {list.data?.items.map((n) => (
+            <li
+              key={n.id}
+              className={
+                "group flex items-stretch border-b border-line dark:border-slate-700 last:border-0 transition " +
+                (n.read_at
+                  ? "opacity-60 hover:bg-subtle/50 dark:hover:bg-slate-800/50"
+                  : "hover:bg-subtle dark:hover:bg-slate-800")
+              }
+            >
+              {/* Body click = open it (navigate + mark read). */}
+              <button onClick={() => handleItemClick(n)} className="flex-1 min-w-0 text-left px-3 py-2">
+                <div className="text-sm text-content dark:text-mortar-100">{n.message}</div>
+                {/* flex-wrap so the timestamp wraps instead of clipping "PM". */}
+                <div className="text-[10px] font-mono text-faint dark:text-slate-500 mt-1 flex items-center gap-1.5 flex-wrap">
+                  <span className="px-1 py-0.5 rounded bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300">
+                    {n.event_type === "workspace.invited" ? "invite" : n.org_name}
+                  </span>
+                  <span>·</span>
+                  <span>{new Date(n.created_at).toLocaleString()}</span>
+                </div>
+              </button>
+              {/* Mark read WITHOUT navigating — a checkmark (not an ×) so it reads
+                  as "acknowledge", not "delete" (reported). */}
+              {!n.read_at && (
+                <button
+                  onClick={() => markRead.mutate(n.id)}
+                  disabled={markRead.isPending}
+                  title="Mark as read"
+                  aria-label="Mark notification as read"
+                  className="shrink-0 px-2 text-faint hover:text-accent dark:text-slate-500 dark:hover:text-cobble-300 transition"
+                >
+                  <Check size={14} />
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      </div>
+      <Link
+        to="/me/notifications"
+        onClick={() => setOpen(false)}
+        className="block px-3 py-2 border-t border-line dark:border-slate-700 text-[11px] font-mono uppercase tracking-widest text-accent hover:text-accent transition text-center shrink-0"
+      >
+        see all →
+      </Link>
+    </>
+  );
+
   return (
     <div className="relative" ref={wrapperRef}>
       <button
@@ -98,106 +222,39 @@ export function NotificationsBell() {
                 : `${here} unread notification${here === 1 ? "" : "s"}`
         }
       >
-        {/* Always a normal bell — a struck-through (BellOff) icon reads
-            as "notifications muted", which is wrong; zero unread is just
-            an empty badge, not a disabled state. */}
+        {/* Always a normal bell — a struck-through (BellOff) icon reads as
+            "notifications muted", which is wrong; zero unread is just an empty
+            badge, not a disabled state. */}
         <Bell size={14} />
         {count > 0 && (
           <span
             className={`absolute -top-0.5 -right-0.5 text-[9px] font-bold rounded-full min-w-[14px] h-[14px] flex items-center justify-center px-1 leading-none ${
-              otherOnly
-                ? "bg-sky-600 text-white"
-                : "bg-ember-500 text-mortar-50"
+              otherOnly ? "bg-sky-600 text-white" : "bg-ember-500 text-mortar-50"
             }`}
-            aria-label={
-              otherOnly
-                ? `${count} unread in other workspaces`
-                : `${count} unread`
-            }
+            aria-label={otherOnly ? `${count} unread in other workspaces` : `${count} unread`}
           >
             {count > 99 ? "99+" : count}
           </span>
         )}
       </button>
-      {open && (
-        <div className="absolute right-0 top-9 w-80 max-h-96 overflow-y-auto rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg z-50">
-          <div className="flex items-center justify-between px-3 py-2 border-b border-line dark:border-slate-700">
-            <div className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
-              notifications
-            </div>
-            {count > 0 && (
-              <button
-                onClick={() => markAll.mutate()}
-                disabled={markAll.isPending}
-                className="text-[10px] font-mono text-accent hover:text-accent transition"
-              >
-                mark all read
-              </button>
-            )}
-          </div>
-          {list.isLoading && (
-            <div className="px-3 py-4 text-[11px] text-faint">loading…</div>
-          )}
-          {list.data && list.data.items.length === 0 && (
-            <div className="px-3 py-4 text-[11px] text-faint italic">
-              No notifications yet.
-            </div>
-          )}
-          <ul>
-            {list.data && list.data.items.length === 0 && (
-              <li className="px-3 py-4 text-[11px] text-faint italic">
-                Nothing yet.
-              </li>
-            )}
-            {list.data?.items.map((n) => (
-              <li
-                key={n.id}
-                className={
-                  "group flex items-stretch border-b border-line dark:border-slate-700 last:border-0 transition " +
-                  (n.read_at
-                    ? "opacity-60 hover:bg-subtle/50 dark:hover:bg-slate-800/50"
-                    : "hover:bg-subtle dark:hover:bg-slate-800")
-                }
-              >
-                {/* Body click = open it (navigate + mark read). */}
-                <button onClick={() => handleItemClick(n)} className="flex-1 min-w-0 text-left px-3 py-2">
-                  <div className="text-sm text-content dark:text-mortar-100">{n.message}</div>
-                  {/* flex-wrap so the timestamp wraps instead of clipping "PM". */}
-                  <div className="text-[10px] font-mono text-faint dark:text-slate-500 mt-1 flex items-center gap-1.5 flex-wrap">
-                    <span className="px-1 py-0.5 rounded bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300">
-                      {n.event_type === "workspace.invited" ? "invite" : n.org_name}
-                    </span>
-                    <span>·</span>
-                    <span>{new Date(n.created_at).toLocaleString()}</span>
-                  </div>
-                </button>
-                {/* Mark read WITHOUT navigating. A checkmark (not an ×) so it
-                    reads as "acknowledge / clear the unread dot" — the
-                    notification STAYS in the list — instead of "delete it"
-                    (reported: the × looked like it deleted the notification). */}
-                {!n.read_at && (
-                  <button
-                    onClick={() => markRead.mutate(n.id)}
-                    disabled={markRead.isPending}
-                    title="Mark as read"
-                    aria-label="Mark notification as read"
-                    className="shrink-0 px-2 text-faint hover:text-accent dark:text-slate-500 dark:hover:text-cobble-300 transition"
-                  >
-                    <Check size={14} />
-                  </button>
-                )}
-              </li>
-            ))}
-          </ul>
-          <Link
-            to="/me/notifications"
-            onClick={() => setOpen(false)}
-            className="block px-3 py-2 border-t border-line dark:border-slate-700 text-[11px] font-mono uppercase tracking-widest text-accent hover:text-accent transition text-center"
-          >
-            see all →
-          </Link>
+
+      {/* DROPDOWN mode — compact popover anchored under the bell. */}
+      {open && mode === "dropdown" && (
+        <div className="absolute right-0 top-9 w-80 max-h-96 overflow-y-auto rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg z-50 flex flex-col">
+          {body}
         </div>
       )}
+
+      {/* SIDEBAR mode — full-height right panel (mirrors ChatWidget). Portals to
+          <body> so the header's backdrop-blur can't trap position:fixed. */}
+      {open &&
+        mode === "sidebar" &&
+        createPortal(
+          <div className="fixed top-0 right-0 z-[60] h-screen w-[min(100vw,420px)] border-l border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-2xl flex flex-col">
+            {body}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

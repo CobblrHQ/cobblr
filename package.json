@@ -22,6 +22,7 @@
     "lint:versions": "tsx scripts/lint-versions.ts",
     "lint:docs": "tsx scripts/lint-docs.ts",
     "lint:changelog": "tsx scripts/lint-changelog.ts",
+    "lint:scan-keywords": "tsx scripts/lint-scan-keywords.ts",
     "build": "npm run build --workspaces --if-present",
     "dev:api": "npm run dev -w api",
     "dev:web": "npm run dev -w web",

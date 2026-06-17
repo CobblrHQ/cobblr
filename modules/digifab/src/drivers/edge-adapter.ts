@@ -9,11 +9,13 @@
 //   POST {base}/upload  (multipart "file") → { fileId }
 //   POST {base}/submit  { fileId, target? } → { jobId, queued? }
 //   GET  {base}/status/{jobId}     → { state, progress? }
+//   POST {base}/command { command, params } → { ok, ref? }   (actuator; optional)
 //
 // `edge_adapter` is a BUILT-IN driver key (always available); no install
 // needed — just create a connection pointing base_url at your bridge.
 
 import type {
+  CommandResult,
   ConnectionResult,
   ManagerConfig,
   MachineDriver,
@@ -123,5 +125,26 @@ export class EdgeAdapterDriver implements MachineDriver {
       deviceId: null,
       raw: data,
     };
+  }
+
+  // The ACTUATOR verb — POST the command + params to the bridge's /command and
+  // map its ack. Fire-and-forget: no file, no job to poll. A bridge that only
+  // fabricates answers /command with 501, which `json()` raises and we return as
+  // a soft failure (mirrors the declarative driver — never throws to the action
+  // handler, which only reads `ok`). This is what makes an `edge_adapter`
+  // connection a valid target of the digifab:run-command action.
+  async runCommand(command: string, params: Record<string, unknown>): Promise<CommandResult> {
+    try {
+      const data = (await this.json("POST", "/command", {
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ command, params }),
+      })) as { ok?: unknown; ref?: unknown; detail?: unknown } | null;
+      if (data && data.ok === false) {
+        return { ok: false, detail: data.detail != null ? String(data.detail) : "adapter reported failure" };
+      }
+      return { ok: true, ref: data?.ref != null ? String(data.ref) : undefined };
+    } catch (e) {
+      return { ok: false, detail: (e as Error).message };
+    }
   }
 }

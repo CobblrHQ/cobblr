@@ -30,6 +30,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useTheme } from "../theme/ThemeContext";
 import { UpdateBadge } from "./UpdateBadge";
 import { GrowModal } from "./GrowModal";
+import { isFocused, setFocused } from "../lib/api";
 
 // `themed` = a workspace admin_theme owns the palette, so the per-user
 // light/dark toggle is hidden (it would just fight the theme).
@@ -40,6 +41,22 @@ export function UserMenu({ themed }: { themed: boolean }) {
   const { user, logout } = useAuth();
   const { activeSlug, activeOrg } = useActiveOrg();
   const appMode = !!activeOrg?.app_mode;
+  // Simple mode (the `focused` flag): hide the build-it chrome (the Configuration
+  // link below) for a calmer everyday view, but keep the workspace navigable.
+  // Owner/admin flip it back via "Explore the full platform". A full reload
+  // re-fetches /me so the whole shell re-renders (same pattern as switching
+  // workspaces).
+  const focused = isFocused(activeOrg);
+  const canFocus = activeOrg?.role === "owner" || activeOrg?.role === "admin";
+  const exitFocused = async () => {
+    setOpen(false);
+    try {
+      await setFocused(activeSlug, false);
+      window.location.reload();
+    } catch {
+      /* a failed toggle just leaves simple mode on; no destructive effect */
+    }
+  };
   const { theme, toggle } = useTheme();
   const [open, setOpen] = useState(false);
   // Managed app: the "grow door" — the one deliberate exit to the rest of Cobblr.
@@ -134,6 +151,13 @@ export function UserMenu({ themed }: { themed: boolean }) {
           <Link to="/me/feedback" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
             <MessageSquare size={14} className="text-faint dark:text-slate-400" /> Your feedback
           </Link>
+          {/* Managed app: the one settings surface — tailor the locked app (hide
+              tables you don't use) without exposing the platform Configuration. */}
+          {appMode && (
+            <Link to="/me/app-settings" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
+              <SlidersHorizontal size={14} className="text-faint dark:text-slate-400" /> Settings
+            </Link>
+          )}
           {/* Managed app: the grow door — start a full Cobblr workspace or jump
               to another. The one deliberate way out of the locked app. */}
           {appMode && (
@@ -155,16 +179,29 @@ export function UserMenu({ themed }: { themed: boolean }) {
               <Link to="/changelog" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
                 <Sparkles size={14} className="text-faint dark:text-slate-400" /> What's new
               </Link>
-              <Link
-                to="/configuration"
-                onClick={() => setOpen(false)}
-                className={itemCls}
-                role="menuitem"
-              >
-                <SlidersHorizontal size={14} className="text-faint dark:text-slate-400" /> Configuration
-                {/* Bundles + their updates live under Configuration. */}
-                <UpdateBadge slug={activeSlug} variant="count" className="ml-auto" />
-              </Link>
+              {/* Configuration is the build-it hub (modules / bundles / wires /
+                  fields) — hidden in simple mode for a calmer everyday view. */}
+              {!focused && (
+                <Link
+                  to="/configuration"
+                  onClick={() => setOpen(false)}
+                  className={itemCls}
+                  role="menuitem"
+                >
+                  <SlidersHorizontal size={14} className="text-faint dark:text-slate-400" /> Configuration
+                  {/* Bundles + their updates live under Configuration. */}
+                  <UpdateBadge slug={activeSlug} variant="count" className="ml-auto" />
+                </Link>
+              )}
+              {/* Simple mode's escape hatch + upsell — always reachable here so
+                  the owner can return to the full platform (the Trojan-horse
+                  funnel: simple → discover → expand, same workspace). */}
+              {focused && canFocus && (
+                <button type="button" onClick={exitFocused} className={itemCls} role="menuitem">
+                  <Rocket size={14} className="text-accent dark:text-cobble-300" /> Explore the full platform
+                  <ArrowRight size={13} className="ml-auto text-faint dark:text-slate-500" />
+                </button>
+              )}
             </>
           )}
           {/* Community — only when an invite is configured (DISCORD_INVITE_URL). */}

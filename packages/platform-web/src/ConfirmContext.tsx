@@ -95,7 +95,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
             onClick={(e) => e.stopPropagation()}
           >
             {pending.title && (
-              <h2 className="font-display text-base font-bold text-content dark:text-mortar-100 mb-2 lowercase">
+              <h2 className="font-display text-base font-bold text-content dark:text-mortar-100 mb-2">
                 {pending.title}
               </h2>
             )}

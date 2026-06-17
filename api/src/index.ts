@@ -29,6 +29,7 @@ import { syncTenantMigrations } from "./modules/enable.js";
 import { mountModules } from "./modules/mount.js";
 import * as activity from "./platform/activity.js";
 import * as actions from "./platform/actions.js";
+import * as devices from "./platform/devices.js";
 import * as entities from "./platform/entities.js";
 import * as files from "./platform/files.js";
 import * as hostedSeams from "./platform/hosted-seams.js";
@@ -57,6 +58,7 @@ import { migrateLensModules } from "./platform/migrate-lens-modules.js";
 import { migrateInventoryLocations } from "./platform/migrate-inventory-locations.js";
 import { backfillDefaultBindings } from "./platform/seed-bindings.js";
 import { runOnBoot, runOnShutdown } from "./modules/lifecycle.js";
+import { registerBackupCron, seedBackupSchedules } from "./platform/backup-destinations.js";
 import { completeApp, createApp } from "./server.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -114,6 +116,12 @@ async function boot() {
       registerHandler: actions.registerHandler,
       listApplicable: actions.listApplicable,
       invoke: actions.invoke,
+    },
+    devices: {
+      registerDriverProvider: devices.registerDriverProvider,
+      getDriver: devices.getDriver,
+      registerConnectionStore: devices.registerConnectionStore,
+      connections: devices.connections,
     },
     templates: { render: templates.render },
     wires: { fireEvent: wires.fireEvent },
@@ -554,10 +562,19 @@ async function boot() {
   // entity kinds shows up on the workspace calendar automatically.
   registerDateFieldCalendarSources();
 
+  // Scheduled backups (Blueprint/Backup/Export Phase C) — register the
+  // per-destination cron worker, then re-arm any due schedules. Before
+  // startWorker so the handler is in place when the loop begins.
+  registerBackupCron();
+
   // Platform-owned background work — the queue worker loop. Started
   // AFTER onBoot so modules have had a chance to register their
   // queue handlers via platform.queue.registerWorker().
   queue.startWorker();
+
+  void seedBackupSchedules().catch((err) =>
+    console.error("[backup-cron] seed schedules failed:", (err as Error).message),
+  );
 
   const server = app.listen(env.API_PORT, () => {
     console.log(`[cobblr-api] listening on :${env.API_PORT} (${env.NODE_ENV})`);

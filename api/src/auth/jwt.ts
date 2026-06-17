@@ -67,12 +67,60 @@ export async function signAppToken(
   return { token, expires_in: APP_TOKEN_TTL_SECONDS };
 }
 
+// Operator impersonation ("View as"). A SHORT-LIVED token distinct from a
+// session: it carries BOTH identities — `sub` is the operator (never replaced,
+// so attribution can't be forged), `act` the target member, `org` the scope,
+// `sid` the server-side session row it points at. Sent in the `X-Impersonation`
+// header alongside the operator's real Bearer session; verified + matched in
+// withTenant. See docs/modules/operator-impersonation.md.
+export interface ImpersonationClaims {
+  typ: "impersonation";
+  sub: string; // operator user id
+  act: string; // target user id
+  org: string; // org id
+  sid: string; // impersonation_sessions.id
+  iat: number;
+  exp: number;
+}
+
+export async function signImpersonation(
+  operatorId: string,
+  targetId: string,
+  orgId: string,
+  sessionId: string,
+  ttlSeconds: number,
+): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  return new SignJWT({ typ: "impersonation", act: targetId, org: orgId, sid: sessionId })
+    .setProtectedHeader({ alg: ALG })
+    .setIssuer(ISSUER)
+    .setSubject(operatorId)
+    .setIssuedAt(now)
+    .setExpirationTime(now + ttlSeconds)
+    .sign(secretKey());
+}
+
+export async function verifyImpersonation(token: string): Promise<ImpersonationClaims> {
+  const { payload } = await jwtVerify(token, secretKey(), { issuer: ISSUER, algorithms: [ALG] });
+  if (payload.typ !== "impersonation") throw new Error("Not an impersonation token");
+  const { sub, act, org, sid } = payload as Record<string, unknown>;
+  if (typeof sub !== "string" || typeof act !== "string" || typeof org !== "string" || typeof sid !== "string") {
+    throw new Error("Invalid impersonation token claims");
+  }
+  return { typ: "impersonation", sub, act, org, sid, iat: payload.iat as number, exp: payload.exp as number };
+}
+
 export async function verifySession(token: string): Promise<SessionClaims> {
   // Pin the algorithm allowlist explicitly — don't rely solely on the
   // symmetric key type to reject RS256/none confusion.
   const { payload } = await jwtVerify(token, secretKey(), { issuer: ISSUER, algorithms: [ALG] });
   if (typeof payload.sub !== "string") {
     throw new Error("Invalid token: missing sub");
+  }
+  // An impersonation token must NEVER authenticate as a full session — it's a
+  // scoped grant carried in X-Impersonation, not a login. Reject it as Bearer.
+  if (payload.typ === "impersonation") {
+    throw new Error("Impersonation token cannot be used as a session");
   }
   return {
     sub: payload.sub,

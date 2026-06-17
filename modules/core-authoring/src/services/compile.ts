@@ -8,7 +8,7 @@
 // hardcode — so create-bundle is the first of a taxonomy (add-view,
 // wire-event, …), each with its own context recipe + output contract.
 
-import { platform, type EntityKindRecord } from "@cobblr/platform-contract";
+import { platform, parseJsonReply, type EntityKindRecord } from "@cobblr/platform-contract";
 import { getTemplate, type TemplateEntry } from "./templates.js";
 
 export interface ContextField {
@@ -445,39 +445,16 @@ VALIDATION ERRORS — fix EVERY one and output ONLY the corrected JSON object:
 ${errlines}`;
 }
 
-/** Tolerant JSON extraction — strip prose and parse the first {…} block
- *  (same approach as core-scan's enrich-photo). Used for paste-back +
- *  hosted parsing. Returns null if no object parses. */
+/** Tolerant JSON extraction — strip prose/fences and parse the first {…} block,
+ *  recovering from the cosmetic noise cheap models emit (trailing commas, smart
+ *  quotes, truncation). The recovery is the shared contract helper, the same
+ *  hardening the scan matchmaker uses, so the bundle builder benefits from every
+ *  improvement to it. A REAL error (bad field/module ref, schema violation)
+ *  survives untouched and is caught by the kernel validator + the repair loop;
+ *  the output is re-validated regardless, so a salvaged parse is never worse than
+ *  the outright null it replaced. Used for paste-back + hosted parsing. */
 export function parseJsonObject(raw: string): unknown {
-  const start = raw.indexOf("{");
-  const end = raw.lastIndexOf("}");
-  if (start === -1 || end === -1 || end < start) return null;
-  const slice = raw.slice(start, end + 1);
-  try {
-    return JSON.parse(slice);
-  } catch {
-    // Silent trivial repair (the spec's "auto-fix the trailing comma / smart
-    // quote" — fix it locally instead of burning a whole AI repair round-trip
-    // on cosmetic noise). Conservative on purpose: only the two highest-
-    // frequency, lowest-risk LLM JSON defects. A REAL error (bad field/module
-    // ref, schema violation) survives this untouched and is caught by the
-    // kernel validator + the repair loop. The output is re-validated regardless,
-    // so a bad repair is never worse than today's outright null.
-    try {
-      return JSON.parse(repairTrivialJson(slice));
-    } catch {
-      return null;
-    }
-  }
-}
-
-/** Fix only cosmetic JSON noise a model commonly emits: curly double-quotes
- *  used as delimiters, and trailing commas before a closing }/]. Anything
- *  structural is left alone for the validator. */
-export function repairTrivialJson(s: string): string {
-  return s
-    .replace(/[“”]/g, '"') // “ ” → "
-    .replace(/,(\s*[}\]])/g, "$1"); // trailing comma before } or ]
+  return parseJsonReply(raw);
 }
 
 /** Split a parsed build reply into its interpretation + the bundle manifest.

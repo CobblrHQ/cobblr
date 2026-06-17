@@ -1965,6 +1965,10 @@ export interface AuthEmailMessage {
   to: string;
   subject: string;
   text: string;
+  /** Optional HTML body. Senders deliver multipart text+html when present (the
+   *  text stays the plaintext fallback). Used for richer transactional emails
+   *  (e.g. the feedback "your request is live" note). */
+  html?: string;
   // `notification` = a platform-level transactional note to a known user (e.g.
   // "the feedback you reported is live"). Distinct from the pre-workspace auth
   // kinds; reuses the same registered sender (the overlay's managed mailer).
@@ -2007,8 +2011,11 @@ export interface ScanUrlResolver {
   /** Cheap + synchronous: does this resolver claim the scanned value? */
   matches: (value: string) => boolean;
   /** Fetch + parse the value into a product, or null on any miss / parse
-   *  failure (the caller then falls back to its generic barcode path). */
-  resolve: (value: string) => Promise<ScanUrlResolution | null>;
+   *  failure (the caller then falls back to its generic barcode path).
+   *  `opts.force` = a user-initiated re-run: bypass any resolver-side cache so
+   *  the value is re-fetched + re-mapped fresh (otherwise a stale cached
+   *  resolution survives the re-run). */
+  resolve: (value: string, opts?: { force?: boolean }) => Promise<ScanUrlResolution | null>;
 }
 
 export interface PlatformScan {
@@ -2016,8 +2023,9 @@ export interface PlatformScan {
    *  api/index.ts at module-load. Idempotent per `name`. */
   registerUrlResolver(resolver: ScanUrlResolver): void;
   /** Resolve a scanned value through the registered vendor resolvers, in
-   *  registration order. Returns the first hit, or null if none claim it. */
-  resolveUrl(value: string): Promise<ScanUrlResolution | null>;
+   *  registration order. Returns the first hit, or null if none claim it.
+   *  `opts.force` rides through to each resolver (re-run bypasses caches). */
+  resolveUrl(value: string, opts?: { force?: boolean }): Promise<ScanUrlResolution | null>;
 }
 
 export interface Platform {
@@ -2044,11 +2052,105 @@ export interface Platform {
   files: PlatformFiles;
   instances: PlatformInstances;
   scan: PlatformScan;
+  devices: PlatformDevices;
   // Hosted-overlay seams (no-op / allow-all in open core):
   entitlements: PlatformEntitlements;
   metering: PlatformMetering;
   accounts: PlatformAccounts;
   http: PlatformHttp;
+}
+
+// ── Device substrate seam ────────────────────────────────────────────────────
+// Lets a device-touching consumer (the core-devices actuator today; core-print,
+// other modules later) reach a DEVICE without owning the connection table or the
+// driver registry. The owner of those (digifab today; core-devices after the
+// connections move) REGISTERS a provider; consumers call getDriver(). This is the
+// `platform().devices` half of the core-devices extraction
+// (docs/architecture/core-devices-extraction.md §2) — start of the substrate move
+// that doesn't require migrating the connections table.
+
+/** The generic device contract — what EVERY connection can do. Fabrication
+ *  drivers (digifab) extend this with file→job→status; a structural superset is
+ *  assignable here, so a MachineDriver satisfies it. */
+export interface DeviceDriver {
+  testConnection?(): Promise<{ ok: boolean; detail?: string }>;
+  listDevices?(): Promise<Array<{ id: string; name: string; state?: string | null; enabled?: boolean }>>;
+  /** The actuator verb — fire a parameterised command-and-forget. */
+  runCommand?(command: string, params: Record<string, unknown>): Promise<{ ok: boolean; ref?: string; detail?: string }>;
+  /** The sensor verb — a point reading. */
+  readSensor?(deviceId: string): Promise<{ value: number; unit?: string; at?: string }>;
+}
+
+/** Build a driver from a connection ref (id OR label). null when unresolved. */
+export type DeviceDriverProvider = (orgId: string, connectionRef: string) => Promise<DeviceDriver | null>;
+
+/** A device connection as returned to clients — NEVER includes credentials. */
+export interface DeviceConnectionPublic {
+  id: string;
+  type: string;
+  label: string;
+  base_url: string;
+  config: Record<string, unknown>;
+  enabled: boolean;
+  capabilities: Record<string, unknown>;
+  last_sync_at: string | Date | null;
+  last_sync_status: string | null;
+  created_at: string | Date;
+  updated_at: string | Date;
+}
+
+/** Internal shape for building a driver — carries the encrypted credentials. */
+export interface DeviceConnectionInternal {
+  id: string;
+  type: string;
+  base_url: string;
+  credentials_enc: string;
+}
+
+export interface DeviceConnectionCreate {
+  type: string;
+  label: string;
+  base_url: string;
+  /** Raw credential fields — the store encrypts them. */
+  creds?: Record<string, unknown>;
+  config?: Record<string, unknown>;
+}
+
+export interface DeviceConnectionPatch {
+  label?: string;
+  base_url?: string;
+  enabled?: boolean;
+  config?: Record<string, unknown>;
+  /** Raw credential fields to merge; a null value clears that field. */
+  creds?: Record<string, string | null>;
+}
+
+/** The connection store — implemented by the owner of the connections table
+ *  (core-devices); a connection-MANAGING consumer (digifab's CRUD routes) calls
+ *  it so the table can live in one place without cross-module table access. */
+export interface DeviceConnectionStore {
+  list(orgId: string): Promise<DeviceConnectionPublic[]>;
+  /** Public shape (no creds) by id. */
+  get(orgId: string, id: string): Promise<DeviceConnectionPublic | null>;
+  /** Internal shape (with creds) by id OR case-insensitive label — for driver building. */
+  getInternal(orgId: string, ref: string): Promise<DeviceConnectionInternal | null>;
+  create(orgId: string, input: DeviceConnectionCreate): Promise<DeviceConnectionPublic>;
+  update(orgId: string, id: string, patch: DeviceConnectionPatch): Promise<DeviceConnectionPublic | null>;
+  remove(orgId: string, id: string): Promise<boolean>;
+  /** Stamp the cached probe result (capabilities + last_sync) after a test. */
+  setProbe(orgId: string, id: string, capabilities: Record<string, unknown>, status: string): Promise<void>;
+}
+
+export interface PlatformDevices {
+  /** The connection/driver owner registers this at boot (one provider). */
+  registerDriverProvider(provider: DeviceDriverProvider): void;
+  /** Resolve a connection ref to a driver via the registered provider. */
+  getDriver(orgId: string, connectionRef: string): Promise<DeviceDriver | null>;
+  /** The connections-table owner (core-devices) registers the store at boot. */
+  registerConnectionStore(store: DeviceConnectionStore): void;
+  /** The connection store, for a connection-managing consumer (digifab CRUD).
+   *  Throws if no store is registered (core-devices always registers one). */
+  connections(): DeviceConnectionStore;
 }
 
 let _platform: Platform | null = null;
@@ -2067,4 +2169,79 @@ export function platform(): Platform {
     throw new Error("Platform not initialised — setPlatform() must run during boot");
   }
   return _platform;
+}
+
+// ── AI-reply JSON hygiene ────────────────────────────────────────────────────
+// Every AI surface that asks a model for JSON (scan matchmaker, the bundle
+// builder's intent-match + describe-it→bundle, barcode/photo identify) hits the
+// same problem: cheaper / smaller models (Haiku, local Ollama) garble strict
+// JSON — markdown fences, trailing commas, smart quotes, truncated output,
+// unescaped quotes in a string. A single garble used to drop the whole result.
+// These pure helpers recover the structured object from imperfect output, so
+// ONE source of truth serves every module (modules can't import each other; they
+// all import this contract). Each caller keeps its own thin wrapper for its
+// shape (the matchmaker's `candidates`, core-authoring's `bundle`).
+
+/** Extract the first BALANCED `{…}` object from a model reply, tolerant of
+ *  ```fences``` + leading/trailing prose. Brace-matches OUTSIDE strings; returns
+ *  the object substring, or — if the output was truncated mid-object — from the
+ *  first `{` to the end (repairJson then closes it). null if there's no `{`. */
+export function extractJsonObject(s: string): string | null {
+  const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const body = fence ? fence[1]! : s;
+  const start = body.indexOf("{");
+  if (start === -1) return null;
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < body.length; i++) {
+    const ch = body[i]!;
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+    } else if (ch === '"') inStr = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}" && --depth === 0) return body.slice(start, i + 1);
+  }
+  return body.slice(start);
+}
+
+/** Best-effort repair of common cheap-model JSON breakage, applied only AFTER a
+ *  clean parse fails: curly "smart quotes" used as delimiters → straight, drop
+ *  trailing commas, terminate an unclosed string, and balance unclosed `{`/`[`
+ *  (truncation). Quote/bracket tracking skips characters inside strings. A
+ *  structural/semantic error survives untouched for the caller's validator. */
+export function repairJson(s: string): string {
+  let out = s.replace(/[“”]/g, '"').replace(/,(\s*[}\]])/g, "$1");
+  const stack: string[] = [];
+  let inStr = false, esc = false;
+  for (let i = 0; i < out.length; i++) {
+    const ch = out[i]!;
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+    } else if (ch === '"') inStr = true;
+    else if (ch === "{" || ch === "[") stack.push(ch);
+    else if (ch === "}" || ch === "]") stack.pop();
+  }
+  if (inStr) out += '"';
+  for (let i = stack.length - 1; i >= 0; i--) out += stack[i] === "{" ? "}" : "]";
+  return out;
+}
+
+/** Parse a model JSON reply into an object, recovering from fences/prose/
+ *  commas/smart-quotes/truncation. Layered: as-is → repaired. Returns the parsed
+ *  value (typed by the caller) or null when nothing salvageable — the caller may
+ *  then retry the model or fall back. */
+export function parseJsonReply<T = unknown>(content: string): T | null {
+  const obj = extractJsonObject(content);
+  if (!obj) return null;
+  for (const candidate of [obj, repairJson(obj)]) {
+    try {
+      return JSON.parse(candidate) as T;
+    } catch {
+      /* try the next repair */
+    }
+  }
+  return null;
 }

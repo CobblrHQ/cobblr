@@ -361,7 +361,7 @@ function RevealedModal({
     }
   }
   return (
-    <Modal open={!!revealed} onClose={onClose} title="token minted" subtitle={revealed?.name ?? ""} size="md">
+    <Modal open={!!revealed} onClose={onClose} title="Token minted" subtitle={revealed?.name ?? ""} size="md">
       <div className="space-y-4">
         <p className="text-sm text-content dark:text-mortar-100">
           Copy this token now. It'll never be shown again — if you lose it, you'll need to mint a

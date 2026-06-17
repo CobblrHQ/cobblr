@@ -5,7 +5,7 @@
 // (was previously inlined only in BundlesPage).
 
 import { useQuery } from "@tanstack/react-query";
-import { api } from "./api";
+import { api, type PlatformBundleManifest } from "./api";
 import { useBundleCatalog } from "./useBundleCatalog";
 
 const SOURCES_KEY = "cobblr.registry.sources";
@@ -26,6 +26,11 @@ export interface BundleUpdate {
   glyph: string;
   installedV: string;
   latestV: string;
+  /** Catalog manifest for the new version — what an inline "Update Now" installs. */
+  manifest: PlatformBundleManifest;
+  /** Features enabled on the CURRENT install — replayed on an inline update so a
+   *  one-click update never silently re-enables defaults the user turned off. */
+  enabledFeatures: string[];
 }
 
 /** Installed bundles whose catalog version differs from what's installed. */
@@ -49,6 +54,8 @@ export function useBundleUpdates(slug: string): BundleUpdate[] {
         glyph: cat.glyph ?? "📦",
         installedV: b.version,
         latestV: cat.manifest.version,
+        manifest: cat.manifest,
+        enabledFeatures: b.enabled_features ?? [],
       });
     }
   }

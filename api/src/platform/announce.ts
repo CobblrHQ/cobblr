@@ -60,18 +60,20 @@ async function settingsFor(category: string): Promise<{ enabled: boolean; webhoo
   return { enabled, webhook };
 }
 
-/** Post a categorized announcement to Discord. Fire-and-forget: returns
- *  immediately; never throws. No-ops when the category is disabled or no
- *  webhook is configured. */
-export async function announce(category: string, payload: AnnouncePayload): Promise<void> {
+/** Post a categorized announcement to Discord. Never throws. Returns whether it
+ *  actually DELIVERED (true) vs no-op'd / failed (false) — event callers
+ *  `void announce(...)` and ignore it (non-blocking); the manual composer awaits
+ *  it to report a real outcome. Returns false when the category is disabled, no
+ *  webhook is configured, or Discord rejected the post. */
+export async function announce(category: string, payload: AnnouncePayload): Promise<boolean> {
   let cfg: { enabled: boolean; webhook: string };
   try {
     cfg = await settingsFor(category);
   } catch (err) {
     console.error(`[announce] settings lookup failed for ${category}:`, err);
-    return;
+    return false;
   }
-  if (!cfg.enabled || !cfg.webhook) return;
+  if (!cfg.enabled || !cfg.webhook) return false;
   const embed = {
     title: payload.title.slice(0, 256),
     description: payload.body ? payload.body.slice(0, 4000) : undefined,
@@ -96,8 +98,7 @@ export async function announce(category: string, payload: AnnouncePayload): Prom
       }
       if (n > 0) {
         form.append("payload_json", JSON.stringify({ embeds: [embed] }));
-        void fetch(cfg.webhook, { method: "POST", body: form }).catch(() => {});
-        return;
+        return postToWebhook(cfg.webhook, { method: "POST", body: form }, category);
       }
     } catch (err) {
       console.error(`[announce] image attach failed for ${category}:`, err);
@@ -105,13 +106,33 @@ export async function announce(category: string, payload: AnnouncePayload): Prom
     }
   }
 
-  void fetch(cfg.webhook, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ embeds: [embed] }),
-  }).catch(() => {
-    /* Discord down / bad webhook — the underlying event already happened; ignore. */
-  });
+  return postToWebhook(
+    cfg.webhook,
+    { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ embeds: [embed] }) },
+    category,
+  );
+}
+
+/** POST to a Discord webhook and report whether it actually landed. `fetch` only
+ *  rejects on a network error — a 4xx/5xx (bad/expired webhook, malformed embed,
+ *  rate-limit) resolves with `ok:false`, so the old `void fetch().catch()` dropped
+ *  every Discord rejection SILENTLY and the composer still reported success. Check
+ *  the status, log the body on failure, and return the verdict so callers (the
+ *  "Post an update" composer) can surface a real outcome. Still never throws —
+ *  event callers `void announce(...)` and ignore the result. */
+async function postToWebhook(url: string, init: RequestInit, category: string): Promise<boolean> {
+  try {
+    const r = await fetch(url, init);
+    if (!r.ok) {
+      const detail = await r.text().catch(() => "");
+      console.error(`[announce] ${category} webhook POST failed: HTTP ${r.status} ${detail.slice(0, 300)}`);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error(`[announce] ${category} webhook POST threw (network):`, err);
+    return false;
+  }
 }
 
 // ── super-admin config surface ───────────────────────────────────────────────

@@ -14,7 +14,9 @@ import { Router } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
 import { randomBytes } from "node:crypto";
-import { requireAuth, requirePlatformAdmin } from "../auth/middleware.js";
+import { requireAuth, requirePlatformAdmin, isPlatformAdmin } from "../auth/middleware.js";
+import { signImpersonation } from "../auth/jwt.js";
+import { log as activityLog } from "../platform/activity.js";
 import { meta } from "../db/meta.js";
 import { getTenantDb } from "../db/tenant.js";
 import { hardDeleteOrg } from "../platform/delete-org.js";
@@ -37,6 +39,31 @@ import { identifyImage } from "@cobblr/core-scan/services/enrich-photo";
 import { platform } from "@cobblr/platform-contract";
 import { assembleContext, compilePrompt, unwrapBuild, parseJsonObject } from "@cobblr/core-authoring/services/compile";
 import { validateBundle } from "./bundles.js";
+
+// ── Feedback reply email (HTML) ──────────────────────────────────────
+// A small, email-client-safe HTML body for the transactional feedback reply,
+// so it reads as a designed message (greeting · the quoted report in a styled
+// blockquote · the fix · a button to the thread) rather than a wall of text.
+// The plaintext version is always sent alongside as the fallback.
+function escHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function feedbackEmailHtml(opts: { greeting: string; reportText?: string; bodyParas: string[]; ctaUrl: string; ctaLabel: string; footerNote?: string }): string {
+  const para = (t: string) => `<p style="margin:0 0 14px;">${escHtml(t).replace(/\n/g, "<br>")}</p>`;
+  const quote = opts.reportText
+    ? `<p style="margin:0 0 4px;color:#6b7280;font-size:13px;">You reported:</p>
+       <blockquote style="margin:0 0 18px;padding:10px 16px;border-left:3px solid #c7b8a6;background:#f6f3ee;color:#374151;border-radius:0 6px 6px 0;white-space:pre-wrap;">${escHtml(opts.reportText)}</blockquote>`
+    : "";
+  return `<!DOCTYPE html><html><body style="margin:0;background:#f3f4f6;padding:24px 12px;">
+  <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2937;font-size:15px;line-height:1.5;max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:28px 28px 24px;">
+    <p style="margin:0 0 16px;">${escHtml(opts.greeting)}</p>
+    ${quote}
+    ${opts.bodyParas.map(para).join("")}
+    <p style="margin:22px 0 8px;"><a href="${escHtml(opts.ctaUrl)}" style="display:inline-block;background:#8a6f47;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:8px;">${escHtml(opts.ctaLabel)}</a></p>
+    ${opts.footerNote ? `<p style="margin:14px 0 0;color:#9ca3af;font-size:12px;">${escHtml(opts.footerNote)}</p>` : ""}
+    <p style="margin:18px 0 0;color:#9ca3af;font-size:12px;">— The Cobblr team</p>
+  </div></body></html>`;
+}
 
 export const superAdminRouter = Router();
 
@@ -1459,52 +1486,84 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
         }
         if (orgId) {
           const isResolved = parsed.data.status === "resolved";
+          const reply = parsed.data.reply_message?.trim();
           const defaultMsg = isResolved
             ? "The issue you reported has been fixed — it's live now."
             : parsed.data.status === "wontfix"
               ? "We reviewed your feedback — thanks for flagging it."
               : "We're looking into the feedback you sent.";
-          const message = parsed.data.reply_message?.trim() || defaultMsg;
+          // The reporter — for the greeting + the email address.
+          const u = await meta
+            .selectFrom("users")
+            .select(["email", "display_name"])
+            .where("id", "=", row.user_id)
+            .executeTakeFirst();
+          const hi = u?.display_name ? `Hi ${u.display_name},` : "Hi,";
+          // Lead the bell + DM with the reporter's own words ("You reported: …")
+          // then the fix — same shape as the email, so the message has context
+          // instead of being a wall of fix text. A shorter quote than the email's
+          // (a notification should stay scannable).
+          const reportRaw = (row.message ?? "").trim();
+          const reportQuote = reportRaw.length > 240 ? `${reportRaw.slice(0, 240)}…` : reportRaw;
+          // Markdown blockquote — Discord renders `>` as a quoted block (a vertical
+          // bar), and it still reads as a quote in the plain-text bell. Each line
+          // is prefixed so a multi-line report stays inside the quote.
+          const bq = (s: string) => s.split("\n").map((l) => `> ${l}`).join("\n");
+          const reported = reportRaw ? `You reported:\n${bq(reportQuote)}` : "";
+          const useContext = isResolved && !!reply && !!reported;
+          // in-app bell: context + fix, NO greeting (a "Hi the author," is too much there).
+          const message = useContext ? `${reported}\n\n${reply}` : (reply || defaultMsg);
+          // Discord DM: the same, WITH the greeting (the more formal channel).
+          const discordMessage = useContext ? `${hi}\n\n${reported}\n\n${reply}` : undefined;
           // Email both ways now that feedback is a conversation: "your request is
           // live" on resolve, and "we replied / have a question" on an OPEN item
           // when there's an explicit reply_message (so a clarifying question
           // actually reaches the reporter — not just the in-app bell). The latter
           // links them to their thread to answer. notifyAccount also honors the
           // matrix per channel + DMs them if Discord is verified.
-          let email: { subject: string; text: string; replyTo?: string } | undefined;
-          if (hasAuthEmailSender()) {
-            const u = await meta
-              .selectFrom("users")
-              .select(["email", "display_name"])
-              .where("id", "=", row.user_id)
-              .executeTakeFirst();
-            if (u?.email) {
-              const hi = u.display_name ? `Hi ${u.display_name},` : "Hi,";
-              const reported = `You'd sent us:\n  "${(row.message ?? "").slice(0, 500)}"`;
-              // Reply-by-email when wired (a tokenized Reply-To routes replies
-              // back inbound); otherwise be explicit that email replies aren't
-              // seen and point to the in-app thread.
-              const replyAddr = feedbackReplyAddress(row.id);
-              const replyHere = replyAddr
-                ? `Just reply to this email and it'll land on your report — or use your feedback page:\n  ${absoluteAppUrl("/me/feedback")}`
-                : `To reply, use your feedback page — replies to this email aren't monitored yet:\n  ${absoluteAppUrl("/me/feedback")}`;
-              if (isResolved) {
-                // Match the multi-resolve (batch) email style: lead with the
-                // reporter's own words ("You reported: …"), then what we did — a
-                // "reported → fixed" record, not the reply with the quote tacked on.
-                const head = `You reported:\n  "${(row.message ?? "").trim().slice(0, 600)}"`;
-                email = {
-                  subject: "Your Cobblr request is live",
-                  text: `${hi}\n\n${head}\n\n${message}\n\nStill off? ${replyHere}\n\nThanks for helping make Cobblr better.\n— The Cobblr team`,
-                  replyTo: replyAddr ?? undefined,
-                };
-              } else if (parsed.data.reply_message?.trim()) {
-                email = {
-                  subject: "We replied to your Cobblr feedback",
-                  text: `${hi}\n\n${message}\n\n${replyHere}\n\n${reported}\n\n— The Cobblr team`,
-                  replyTo: replyAddr ?? undefined,
-                };
-              }
+          let email: { subject: string; text: string; html?: string; replyTo?: string } | undefined;
+          if (hasAuthEmailSender() && u?.email) {
+            const sentUs = `You'd sent us:\n  "${(row.message ?? "").slice(0, 500)}"`;
+            // Reply-by-email when wired (a tokenized Reply-To routes replies
+            // back inbound); otherwise be explicit that email replies aren't
+            // seen and point to the in-app thread.
+            const replyAddr = feedbackReplyAddress(row.id);
+            const feedbackUrl = absoluteAppUrl("/me/feedback");
+            const replyHere = replyAddr
+              ? `Just reply to this email and it'll land on your report — or use your feedback page:\n  ${feedbackUrl}`
+              : `To reply, use your feedback page — replies to this email aren't monitored yet:\n  ${feedbackUrl}`;
+            if (isResolved) {
+              // Lead with the reporter's own words, then what we did — a
+              // "reported → fixed" record. (Body is the raw fix, not the
+              // context-wrapped `message`, or "You reported" would double up.)
+              const head = `You reported:\n${bq(reportRaw.slice(0, 600))}`;
+              email = {
+                subject: "Your Cobblr request is live",
+                text: `${hi}\n\n${head}\n\n${reply || defaultMsg}\n\nStill off? ${replyHere}\n\nThanks for helping make Cobblr better.\n— The Cobblr team`,
+                html: feedbackEmailHtml({
+                  greeting: hi,
+                  reportText: reportRaw.slice(0, 600),
+                  bodyParas: [reply || defaultMsg],
+                  ctaUrl: feedbackUrl,
+                  ctaLabel: "View your feedback",
+                  footerNote: replyAddr ? "Still off? Just reply to this email and it'll land on your report." : "Still off? Reply on your feedback page (email replies aren't monitored yet).",
+                }),
+                replyTo: replyAddr ?? undefined,
+              };
+            } else if (reply) {
+              email = {
+                subject: "We replied to your Cobblr feedback",
+                text: `${hi}\n\n${reply}\n\n${replyHere}\n\n${sentUs}\n\n— The Cobblr team`,
+                html: feedbackEmailHtml({
+                  greeting: hi,
+                  reportText: (row.message ?? "").slice(0, 500),
+                  bodyParas: [reply],
+                  ctaUrl: feedbackUrl,
+                  ctaLabel: "Open your feedback",
+                  footerNote: replyAddr ? "Reply to this email to answer, or use your feedback page." : "Reply on your feedback page — email replies aren't monitored yet.",
+                }),
+                replyTo: replyAddr ?? undefined,
+              };
             }
           }
           const { deliveredVia } = await notifyAccount({
@@ -1512,6 +1571,7 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
             representativeOrgId: orgId,
             notificationType: "platform.feedback.replied",
             message,
+            discordMessage,
             // Land them on their feedback thread to read our reply + respond.
             link_url: "/me/feedback",
             email,
@@ -1674,7 +1734,7 @@ superAdminRouter.post("/feedback/batch-resolve", async (req, res, next) => {
           orgId = m?.org_id ?? null;
         }
         if (!orgId) continue;
-        let email: { subject: string; text: string } | undefined;
+        let email: { subject: string; text: string; html?: string } | undefined;
         if (status === "resolved") {
           const u = await meta.selectFrom("users").select(["display_name"]).where("id", "=", userId).executeTakeFirst();
           const hi = u?.display_name ? `Hi ${u.display_name},` : "Hi,";
@@ -1682,15 +1742,26 @@ superAdminRouter.post("/feedback/batch-resolve", async (req, res, next) => {
           // Per-item "you reported X → we fixed it by Y" blocks, after the
           // optional intro/summary. Each pairs the reporter's own words with the
           // specific fix, so the email is both a scannable summary AND a record.
+          const bq = (s: string) => s.split("\n").map((l) => `> ${l}`).join("\n");
           const blocks = userRows
             .map((r) => {
               const reported = (r.message ?? "").trim().slice(0, 600);
               const fix = (fixNoteById.get(r.id) || summaryById.get(r.id) || "").trim();
-              const head = `You reported:\n  "${reported}"`;
+              const head = `You reported:\n${bq(reported)}`;
               return fix ? `${head}\n\n${fix}` : head;
             })
             .join("\n\n");
           const intro = reply_message.trim();
+          // HTML: one styled quote+fix block per item (escaped), mirroring the text.
+          const htmlBlocks = userRows
+            .map((r) => {
+              const reported = (r.message ?? "").trim().slice(0, 600);
+              const fix = (fixNoteById.get(r.id) || summaryById.get(r.id) || "").trim();
+              const q = `<p style="margin:0 0 4px;color:#6b7280;font-size:13px;">You reported:</p><blockquote style="margin:0 0 10px;padding:10px 16px;border-left:3px solid #c7b8a6;background:#f6f3ee;color:#374151;border-radius:0 6px 6px 0;white-space:pre-wrap;">${escHtml(reported)}</blockquote>`;
+              const f = fix ? `<p style="margin:0 0 18px;">${escHtml(fix).replace(/\n/g, "<br>")}</p>` : "";
+              return q + f;
+            })
+            .join("");
           email = {
             subject: plural ? "Your Cobblr requests are live" : "Your Cobblr request is live",
             text:
@@ -1698,6 +1769,7 @@ superAdminRouter.post("/feedback/batch-resolve", async (req, res, next) => {
               (intro ? `${intro}\n\n` : "") +
               `${blocks}\n\n` +
               `Thanks for helping make Cobblr better.\n— The Cobblr team`,
+            html: `<!DOCTYPE html><html><body style="margin:0;background:#f3f4f6;padding:24px 12px;"><div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2937;font-size:15px;line-height:1.5;max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:28px;"><p style="margin:0 0 16px;">${escHtml(hi)}</p>${intro ? `<p style="margin:0 0 16px;">${escHtml(intro).replace(/\n/g, "<br>")}</p>` : ""}${htmlBlocks}<p style="margin:14px 0 0;"><a href="${escHtml(absoluteAppUrl("/me/feedback"))}" style="display:inline-block;background:#8a6f47;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:8px;">View your feedback</a></p><p style="margin:18px 0 0;color:#9ca3af;font-size:12px;">— The Cobblr team</p></div></body></html>`,
           };
         }
         const { deliveredVia } = await notifyAccount({
@@ -1932,12 +2004,188 @@ superAdminRouter.post("/announce", async (req, res, next) => {
       return;
     }
     const color = parsed.data.category === "bundle.release" ? 0x6d28d9 : 0x2563eb;
-    await announce(parsed.data.category, {
+    const delivered = await announce(parsed.data.category, {
       title: parsed.data.title.trim(),
       body: parsed.data.body?.trim() || undefined,
       color,
     });
-    res.json({ ok: true });
+    // Don't claim success when Discord rejected the post (bad/expired webhook,
+    // etc.) — the old code always returned ok:true and the failure was invisible.
+    if (!delivered) {
+      res.status(502).json({
+        error: {
+          code: "announce_delivery_failed",
+          message: "The announcement could not be delivered to Discord — check the channel webhook in Settings.",
+        },
+      });
+      return;
+    }
+    res.json({ ok: true, delivered: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ───────────────────── operator impersonation ("View as") ─────────────────────
+// Time-boxed, audited, read-only-by-default grant to render a workspace AS one of
+// its members for support. The operator's identity is never replaced (it rides
+// the token's `sub`). See docs/modules/operator-impersonation.md.
+
+const StartImpersonation = z.object({
+  org_id: z.string().uuid(),
+  target_user_id: z.string().uuid(),
+  reason: z.string().min(1).max(500),
+  ttl_min: z.number().int().min(1).max(60).optional(),
+});
+
+// POST /super-admin/impersonations — mint a session + token (read-only).
+superAdminRouter.post("/impersonations", async (req, res, next) => {
+  try {
+    const parsed = StartImpersonation.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Bad request", details: parsed.error.issues } });
+      return;
+    }
+    const { org_id, target_user_id, reason } = parsed.data;
+    const ttlMin = parsed.data.ttl_min ?? 30;
+    const operatorId = req.session!.id;
+
+    const target = await meta.selectFrom("users").select(["email", "display_name"]).where("id", "=", target_user_id).executeTakeFirst();
+    if (!target) {
+      res.status(404).json({ error: { code: "user_not_found", message: "Target user not found." } });
+      return;
+    }
+    // Platform admins can't be impersonated (no tier-internal impersonation).
+    if (isPlatformAdmin(target.email)) {
+      res.status(403).json({ error: { code: "target_is_admin", message: "Platform admins can't be impersonated." } });
+      return;
+    }
+    const membership = await meta
+      .selectFrom("org_memberships")
+      .select(["role"])
+      .where("user_id", "=", target_user_id)
+      .where("org_id", "=", org_id)
+      .executeTakeFirst();
+    if (!membership) {
+      res.status(404).json({ error: { code: "not_a_member", message: "That user is not a member of that workspace." } });
+      return;
+    }
+    const org = await meta.selectFrom("orgs").select(["slug", "name"]).where("id", "=", org_id).executeTakeFirst();
+    if (!org) {
+      res.status(404).json({ error: { code: "org_not_found", message: "Workspace not found." } });
+      return;
+    }
+
+    const expiresAt = new Date(Date.now() + ttlMin * 60 * 1000);
+    const row = await meta
+      .insertInto("impersonation_sessions")
+      .values({ operator_user_id: operatorId, target_user_id, org_id, reason, expires_at: expiresAt })
+      .returning(["id"])
+      .executeTakeFirstOrThrow();
+    const token = await signImpersonation(operatorId, target_user_id, org_id, row.id, ttlMin * 60);
+
+    // Transparent by default: a workspace-visible trace in the org's activity feed.
+    await activityLog({
+      orgId: org_id,
+      userId: operatorId,
+      action: "impersonation_started",
+      ref: { module: null, entityType: "org", entityId: org_id },
+      diff: { reason, target: target.display_name || target.email },
+    });
+
+    res.status(201).json({
+      session_id: row.id,
+      token,
+      expires_at: expiresAt.toISOString(),
+      mode: "read",
+      target: { id: target_user_id, name: target.display_name || target.email, role: membership.role },
+      workspace: { id: org_id, slug: org.slug, name: org.name },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const PatchImpersonation = z.object({
+  ended: z.boolean().optional(),
+  mode: z.enum(["read", "write"]).optional(),
+});
+
+// PATCH /super-admin/impersonations/:id — end the session, and/or arm/disarm write
+// mode (the deliberate, separately-audited write escalation).
+superAdminRouter.patch("/impersonations/:id", async (req, res, next) => {
+  try {
+    const parsed = PatchImpersonation.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Bad request", details: parsed.error.issues } });
+      return;
+    }
+    const sess = await meta
+      .selectFrom("impersonation_sessions")
+      .select(["id", "operator_user_id", "org_id", "mode", "write_enabled_at", "ended_at"])
+      .where("id", "=", req.params.id!)
+      .executeTakeFirst();
+    if (!sess) {
+      res.status(404).json({ error: { code: "session_not_found", message: "Impersonation session not found." } });
+      return;
+    }
+    // Only the operator who started it can change it.
+    if (sess.operator_user_id !== req.session!.id) {
+      res.status(403).json({ error: { code: "not_your_session", message: "Not your impersonation session." } });
+      return;
+    }
+    const updates: { ended_at?: Date; mode?: "read" | "write"; write_enabled_at?: Date } = {};
+    if (parsed.data.ended) updates.ended_at = new Date();
+    if (parsed.data.mode) {
+      updates.mode = parsed.data.mode;
+      if (parsed.data.mode === "write" && !sess.write_enabled_at) updates.write_enabled_at = new Date();
+    }
+    if (Object.keys(updates).length > 0) {
+      await meta.updateTable("impersonation_sessions").set(updates).where("id", "=", sess.id).execute();
+    }
+    // Arming write mode is its own audited event in the workspace's feed.
+    if (parsed.data.mode === "write" && sess.mode !== "write") {
+      await activityLog({
+        orgId: sess.org_id,
+        userId: sess.operator_user_id,
+        action: "impersonation_write_enabled",
+        ref: { module: null, entityType: "org", entityId: sess.org_id },
+      });
+    }
+    res.json({ ok: true, ended: !!parsed.data.ended, mode: parsed.data.mode ?? sess.mode });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /super-admin/impersonations — the append-only "Impersonation log".
+superAdminRouter.get("/impersonations", async (_req, res, next) => {
+  try {
+    const items = await meta
+      .selectFrom("impersonation_sessions as s")
+      .leftJoin("users as op", "op.id", "s.operator_user_id")
+      .leftJoin("users as tu", "tu.id", "s.target_user_id")
+      .leftJoin("orgs as o", "o.id", "s.org_id")
+      .select([
+        "s.id",
+        "s.reason",
+        "s.mode",
+        "s.request_count",
+        "s.created_at",
+        "s.expires_at",
+        "s.write_enabled_at",
+        "s.ended_at",
+        "op.email as operator_email",
+        "op.display_name as operator_name",
+        "tu.email as target_email",
+        "tu.display_name as target_name",
+        "o.slug as workspace_slug",
+        "o.name as workspace_name",
+      ])
+      .orderBy("s.created_at", "desc")
+      .limit(100)
+      .execute();
+    res.json({ items });
   } catch (err) {
     next(err);
   }

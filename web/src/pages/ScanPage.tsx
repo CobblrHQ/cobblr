@@ -15,7 +15,7 @@
 // URL intake is deliberately absent: the API stores source_url but
 // nothing enriches it yet — a dead control is worse than none.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -40,6 +40,7 @@ import {
   type ScanCandidate,
   type ScanMenuEntry,
 } from "../lib/api";
+import { matchParentType, readField } from "../lib/parent-type-match";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useAuth } from "../auth/AuthContext";
 
@@ -74,6 +75,21 @@ function parsedScanFields(meta: Record<string, unknown> | null | undefined): Rec
  *  a field-def label for (it lands on a linked entity, e.g. the filament type). */
 function humanizeKey(k: string): string {
   return k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/** A colour VALUE → a CSS colour usable as a swatch background, or null if it
+ *  isn't a colour we can render. A `#rrggbb` (or `rrggbb`) is used as-is; a NAME
+ *  ("Royal Blue") is normalised to a CSS named colour ("royalblue") — vendors
+ *  like Polar give us only the name, no hex (pfil.us returns `color:"Royal
+ *  Blue"`), so this is the only way to show a swatch. Maker-specific names that
+ *  aren't CSS colours ("Galaxy Black") return null → the caller shows text. */
+function colorSwatch(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const v = value.trim();
+  if (!v) return null;
+  if (/^#?[0-9a-fA-F]{6}$/.test(v)) return v[0] === "#" ? v : `#${v}`;
+  const named = v.toLowerCase().replace(/\s+/g, "");
+  return typeof CSS !== "undefined" && CSS.supports?.("color", named) ? named : null;
 }
 
 /** Is AI usable for this workspace/user? Cached well beyond a scan
@@ -670,7 +686,7 @@ function InboxCard({
                     {rerun.isPending ? "Re-running the lookup…" : "AI is reading the details…"}
                   </span>
                 ) : (
-                  "AI suggestion"
+                  "Source data"
                 )}
                 {!aiWorking && item.ai_confidence && (
                   <span className="text-muted">· {item.ai_confidence}</span>
@@ -684,6 +700,36 @@ function InboxCard({
               {item.ai_notes && (
                 <p className="text-xs text-muted dark:text-slate-400 mt-1">{item.ai_notes}</p>
               )}
+              {/* The actual data the lookup returned — every parsed field, so it's
+                  visible even when the form has no box for it, plus the raw dump. */}
+              {(() => {
+                const fields = parsedScanFields(item.suggested_metadata as Record<string, unknown> | null);
+                const entries = Object.entries(fields).filter(([, v]) => v != null && v !== "");
+                if (entries.length === 0) return null;
+                return (
+                  <div className="mt-1.5">
+                    <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Parsed fields</div>
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+                      {entries.map(([k, v]) => {
+                        const sw = /colou?r/i.test(k) ? colorSwatch(v) : null;
+                        return (
+                        <div key={k} className="flex items-baseline gap-1.5 text-[11px] min-w-0">
+                          {sw && <span className="h-2.5 w-2.5 self-center shrink-0 rounded-full border border-line dark:border-slate-600" style={{ background: sw }} />}
+                          <span className="shrink-0 text-faint">{humanizeKey(k)}</span>
+                          <span className="truncate font-medium text-content dark:text-mortar-200">{String(v)}</span>
+                        </div>
+                        );
+                      })}
+                    </div>
+                    <details className="mt-1.5">
+                      <summary className="cursor-pointer select-none text-[10px] text-faint hover:text-muted">raw response</summary>
+                      <pre className="mt-1 overflow-x-auto rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-2 text-[10px] leading-snug text-content dark:text-mortar-200">
+{JSON.stringify(item.suggested_metadata, null, 2)}
+                      </pre>
+                    </details>
+                  </div>
+                );
+              })()}
               {topCand && Object.keys(topCand.fields).length > 0 && (
                 <div className="flex flex-wrap items-center gap-1 mt-1.5">
                   <span className="text-[11px] text-muted dark:text-slate-400">
@@ -747,7 +793,7 @@ function InboxCard({
           {/* The inline confirm form — full width below (the right-rail
               attempt collided labels at every width; reverted per the author). */}
           <ConfirmForm
-            key={`${item.id}:${formCtx.selKey ?? "auto"}:${item.suggested_name ?? ""}:${item.suggested_manufacturer ?? ""}:${topCand ? topCand.label + JSON.stringify(topCand.fields) + (topCand.quantity ?? "") : "none"}`}
+            key={`${item.id}:${formCtx.selKey ?? "auto"}:${item.suggested_name ?? ""}:${item.suggested_manufacturer ?? ""}:${item.ai_suggested_at ?? ""}:${topCand ? topCand.label + JSON.stringify(topCand.fields) + (topCand.quantity ?? "") : "none"}`}
             item={item}
             menu={menu}
             candidates={candidates}
@@ -865,6 +911,127 @@ function menuFieldLabel(
   return entry?.fields.find((f) => f.name === fieldName)?.label ?? fieldName;
 }
 
+/** The `parent` config a bundle puts on a child instance (Spools → Filament
+ *  Types): the create/scan flow find-or-creates the parent "type" by
+ *  `key_fields` and links the child to it. Read off the instance's
+ *  presentation-override config — generic, nothing filament-specific. */
+interface ParentConfig {
+  instance: string;
+  label?: string;
+  key_fields?: string[];
+  copy_fields?: string[];
+}
+
+/** Shown when the selected table is a CHILD instance with a `parent` type
+ *  (Spools → Filament Types). It answers the question the auto-lift will
+ *  resolve on commit — *does this type already exist?* — BEFORE you commit:
+ *  match the in-progress item's `key_fields` against the parent instance's
+ *  rows and show "adding to an existing <type>" vs "a new <type> will be
+ *  created", with the defining fields (+ a colour swatch). Commit behaviour is
+ *  unchanged — `inventory:lift-to-type` still does the find-or-create. Purely
+ *  generic: the keys, label, and parent instance all come from the config. */
+function ParentTypeCard({
+  slug,
+  menu,
+  parent,
+  values,
+  childNoun,
+}: {
+  slug: string;
+  menu: ScanMenuEntry[] | null;
+  parent: ParentConfig;
+  /** The child item's current field values (merged custom fields + brand). */
+  values: Record<string, unknown>;
+  /** The child instance's own noun ("spool") for the copy. */
+  childNoun: string;
+}) {
+  const typeLabel = parent.label?.trim() || "type";
+  const keyFields = parent.key_fields ?? [];
+  const items = useQuery({
+    queryKey: ["instance-items", slug, parent.instance],
+    queryFn: () =>
+      api.request<{ items: Array<Record<string, unknown> & { id: string; name: string; metadata?: Record<string, unknown> }> }>(
+        "GET",
+        `/orgs/${slug}/instances/${parent.instance}/items`,
+      ),
+    enabled: !!slug && !!parent.instance,
+    staleTime: 15_000,
+  });
+
+  // Labels for the parent's fields come from its scan-menu entry (so the chips
+  // read "Material", "Colour" — not the raw key). Falls back to humanizeKey.
+  const parentEntry = (menu ?? []).find((m) => m.instance === parent.instance);
+  const labelOf = (k: string) =>
+    parentEntry?.fields.find((f) => f.name === k)?.label ?? humanizeKey(k);
+
+  // Match the in-progress item against the parent instance's rows (same
+  // find-or-create rule the commit-time auto-lift uses).
+  const { present, match } = matchParentType(items.data?.items ?? [], keyFields, values);
+  const typeVal = readField;
+
+  const chip = (k: string, v: unknown) => {
+    const sw = /colou?r/i.test(k) ? colorSwatch(v) : null;
+    return (
+      <span
+        key={k}
+        className="inline-flex items-center gap-1 rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2 py-0.5 text-[11px]"
+      >
+        {sw && <span className="h-3 w-3 shrink-0 rounded-full border border-line dark:border-slate-600" style={{ background: sw }} />}
+        <span className="text-faint dark:text-slate-500">{labelOf(k)}</span>
+        <span className="font-medium text-content dark:text-mortar-100">{String(v)}</span>
+      </span>
+    );
+  };
+
+  let body: ReactNode;
+  if (items.isLoading) {
+    body = <div className="text-[11px] text-faint dark:text-slate-500">Checking existing {typeLabel.toLowerCase()}s…</div>;
+  } else if (present.length === 0) {
+    body = (
+      <div className="text-[11px] text-faint dark:text-slate-500">
+        Fill {keyFields.map(labelOf).join(" / ") || "the defining fields"} and we'll match this to a {typeLabel.toLowerCase()} (or create one).
+      </div>
+    );
+  } else if (match) {
+    body = (
+      <>
+        <div className="text-[12px] text-content dark:text-mortar-100">
+          <span className="font-semibold text-moss-600 dark:text-moss-400">✓ Existing {typeLabel.toLowerCase()}</span>
+          {" — "}this {childNoun} will be added to{" "}
+          <span className="font-semibold">{String(match.name)}</span>.
+        </div>
+        <div className="mt-1.5 flex flex-wrap gap-1.5">
+          {[...(parent.key_fields ?? []), ...(parent.copy_fields ?? [])]
+            .map((k) => [k, typeVal(match, k)] as const)
+            .filter(([, v]) => v != null && v !== "")
+            .map(([k, v]) => chip(k, v))}
+        </div>
+      </>
+    );
+  } else {
+    body = (
+      <>
+        <div className="text-[12px] text-content dark:text-mortar-100">
+          <span className="font-semibold text-cobble-600 dark:text-cobble-300">✦ New {typeLabel.toLowerCase()}</span>
+          {" — "}no match yet, so a {typeLabel.toLowerCase()} will be created from these and this {childNoun} linked to it.
+        </div>
+        <div className="mt-1.5 flex flex-wrap gap-1.5">
+          {present.map((k) => chip(k, values[k]))}
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <div className="rounded-md border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/40 px-3 py-2 sm:col-span-2">
+      <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1.5">
+        {typeLabel}
+      </div>
+      {body}
+    </div>
+  );
+}
+
 // ── the inline confirm form — driven by the workspace scan MENU ───────
 // The target picker lists the workspace's ACTUAL tables (instances like
 // "Yarn" + each enabled module's default), straight from the same menu
@@ -924,6 +1091,25 @@ function ConfirmForm({
   // lookup title.
   const initialCand =
     candidates.find((c) => entryKey(c.module, c.instance) === hintedKey) ?? null;
+
+  // If the selected table is a CHILD instance with a `parent` type (Spools →
+  // Filament Types), read its parent config off the presentation override so
+  // the form can show whether the type already exists. Generic — the keys all
+  // come from config; nothing here knows "filament".
+  const overrides = useQuery({
+    queryKey: ["entity-kind-overrides", activeSlug],
+    queryFn: () => api.listOverrides(activeSlug),
+    enabled: !!activeSlug,
+    staleTime: 30_000,
+  });
+  const parentConfig: ParentConfig | null = (() => {
+    if (!entry.instance) return null;
+    const o = (overrides.data?.items ?? []).find(
+      (x) => x.target_kind === "instance" && x.target_id === `${entry.module}:${entry.instance}`,
+    );
+    const p = o?.config?.parent as ParentConfig | undefined;
+    return p && p.instance ? p : null;
+  })();
 
   const [name, setName] = useState(initialCand?.name ?? item.suggested_name ?? "");
   const aiStatus = useAiStatus();
@@ -1069,6 +1255,15 @@ function ConfirmForm({
           ))}
         </select>
       </label>
+      {parentConfig && (
+        <ParentTypeCard
+          slug={activeSlug}
+          menu={menu}
+          parent={parentConfig}
+          values={{ ...customValues, manufacturer }}
+          childNoun={entry.noun}
+        />
+      )}
       <div className="grid sm:grid-cols-2 gap-3">
         <label className="block sm:col-span-2">
           <div className={labelCls}>Name</div>
@@ -1112,15 +1307,19 @@ function ConfirmForm({
                 From the label
               </div>
               <div className="flex flex-wrap gap-1.5">
-                {extra.map(([k, v]) => (
+                {extra.map(([k, v]) => {
+                  const sw = /colou?r/i.test(k) ? colorSwatch(v) : null;
+                  return (
                   <span
                     key={k}
                     className="inline-flex items-center gap-1 rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2 py-0.5 text-[11px]"
                   >
+                    {sw && <span className="h-3 w-3 shrink-0 rounded-full border border-line dark:border-slate-600" style={{ background: sw }} />}
                     <span className="text-faint dark:text-slate-500">{humanizeKey(k)}</span>
                     <span className="font-medium text-content dark:text-mortar-100">{String(v)}</span>
                   </span>
-                ))}
+                  );
+                })}
               </div>
               <div className="mt-1.5 text-[10px] text-faint dark:text-slate-500">
                 Parsed from the scan and saved with this item.

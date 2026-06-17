@@ -11,7 +11,7 @@
 // zero-inference catalog when no AI provider is configured — the feature is
 // an accelerant, never a hard dependency.
 
-import { platform } from "@cobblr/platform-contract";
+import { platform, parseJsonReply } from "@cobblr/platform-contract";
 import { listTemplates } from "./templates.js";
 
 export interface TemplateMatch {
@@ -37,20 +37,16 @@ function buildPrompt(intent: string): { system: string; user: string } {
   return { system, user };
 }
 
-/** Tolerant parse — models wrap JSON in prose/fences. Mirrors core-scan. */
+/** Tolerant parse — models wrap JSON in prose/fences, and cheap tiers add
+ *  trailing commas / smart quotes / truncation. The recovery is the shared
+ *  contract helper (same hardening as the scan matchmaker). */
 function parseMatch(result: unknown): { template_id: unknown; confidence: unknown; reason: unknown } | null {
   const raw =
     (typeof result === "object" && result !== null
       ? ((result as { content?: string; text?: string }).content ?? (result as { content?: string; text?: string }).text)
       : undefined) ?? "";
   if (!raw) return null;
-  const m = raw.match(/\{[\s\S]*\}/);
-  if (!m) return null;
-  try {
-    return JSON.parse(m[0]);
-  } catch {
-    return null;
-  }
+  return parseJsonReply<{ template_id: unknown; confidence: unknown; reason: unknown }>(raw);
 }
 
 /**

@@ -20,8 +20,8 @@
 import { Fragment, useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpCircle, Camera, Compass, Eye, EyeOff, GripVertical, LayoutList, Maximize2, Minimize2, Plus, ScanLine, Sliders, Sparkles, X } from "lucide-react";
-import { useBundleUpdates } from "../lib/useBundleUpdates";
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpCircle, Camera, CheckCircle2, Compass, Eye, EyeOff, GripVertical, LayoutList, Maximize2, Minimize2, Plus, ScanLine, Sliders, Sparkles, X } from "lucide-react";
+import { useBundleUpdates, type BundleUpdate } from "../lib/useBundleUpdates";
 import { useSetupCards, dismissSetup } from "../lib/setupCards";
 import { EntityThumb,
   EntityTile,
@@ -42,9 +42,12 @@ import { liveNextStepLabel } from "../lib/featured-bundles";
 import {
   api,
   getToken,
+  ApiError,
+  isFocused,
   type ActivityEntry,
   type DashboardLayout,
   type OrgModuleListItem,
+  type PlatformBundleManifest,
   type SavedView,
 } from "../lib/api";
 
@@ -249,6 +252,12 @@ function GettingStartedPanel({
   const qc = useQueryClient();
   const navigate = useNavigate();
   const toast = useToast();
+  const { activeOrg } = useActiveOrg();
+  // Focused mode: this whole panel is platform onboarding (the bundle wizard,
+  // the "browse the marketplace" + "Configuration" cards) — exactly the builder
+  // chrome focused mode hides. A focused workspace's empty domains show their
+  // OWN add flows, so suppress the platform onboarding entirely here.
+  const focused = isFocused(activeOrg);
   // First-run wizard is the default empty-state. "Skip for now" remembers the
   // dismissal per-workspace (device-local) and falls back to the plain
   // action-card panel. The empty-state self-heals once any entity exists, so
@@ -316,6 +325,7 @@ function GettingStartedPanel({
   // disabled → data undefined; treat that as "empty" too so the panel
   // still greets a truly blank install. Hide the moment any module
   // gains its first entity.
+  if (focused) return null; // focused mode: no platform onboarding chrome
   if (enabled.size > 0 && probe.data === undefined) return null; // still probing
   if ((probe.data ?? 0) > 0) return null; // has content already
 
@@ -487,7 +497,12 @@ function WorkspaceHeader({
   userName: string;
 }) {
   const updates = useBundleUpdates(slug);
-  const navigate = useNavigate();
+  // Bundles the user just updated inline — kept on screen as "Update complete"
+  // even after the refetched updates list drops them (the author: "the same thin bar
+  // then says Update Complete").
+  const [completed, setCompleted] = useState<Record<string, { name: string; glyph: string }>>({});
+  const pending = updates.filter((u) => !completed[u.externalId]);
+  const completedList = Object.entries(completed);
   return (
     <header className="rounded-xl border border-line dark:border-slate-700 bg-gradient-to-br from-cobble-50/40 to-white dark:from-slate-900 dark:to-slate-900/40 p-5">
       <div className="flex items-baseline gap-3 flex-wrap">
@@ -520,33 +535,143 @@ function WorkspaceHeader({
       {/* Compact message strip — one line + action per message. Bundle-update
           nudges live here now (the standalone banner was too noisy). Room for
           other one-line messages later. */}
-      {updates.length > 0 && (
+      {(pending.length > 0 || completedList.length > 0) && (
         <div className="mt-3 space-y-1 border-t border-line/60 dark:border-slate-800 pt-2">
-          {updates.map((u) => (
-            <div key={u.name} className="flex items-center gap-2 text-xs">
-              <ArrowUpCircle size={13} className="text-amber-500 dark:text-amber-400 shrink-0" />
+          {pending.map((u) => (
+            <BundleUpdateRow
+              key={u.externalId}
+              slug={slug}
+              update={u}
+              onDone={() =>
+                setCompleted((c) => ({ ...c, [u.externalId]: { name: u.name, glyph: u.glyph } }))
+              }
+            />
+          ))}
+          {completedList.map(([id, c]) => (
+            <div key={id} className="flex items-center gap-2 text-xs">
+              <CheckCircle2 size={13} className="text-emerald-500 dark:text-emerald-400 shrink-0" />
               <span className="flex-1 min-w-0 truncate text-content dark:text-mortar-200">
-                {u.glyph} <strong>{u.name}</strong>{" "}
-                <span className="text-faint dark:text-slate-500">
-                  v{u.installedV} → v{u.latestV}
-                </span>
+                {c.glyph} <strong>{c.name}</strong>{" "}
+                <span className="text-faint dark:text-slate-500">Update complete</span>
               </span>
-              <button
-                type="button"
-                onClick={() =>
-                  navigate(
-                    `/bundles?open=${encodeURIComponent(u.externalId)}&returnTo=${encodeURIComponent(window.location.pathname + window.location.search)}`,
-                  )
-                }
-                className="shrink-0 text-accent hover:underline font-medium"
-              >
-                Update
-              </button>
             </div>
           ))}
         </div>
       )}
     </header>
+  );
+}
+
+// One bundle-update line in the dashboard header strip. A conflict-free update
+// applies inline (one click, no modal — feedback e429a627); only an update that
+// collides with a field the user customized routes to the modal to resolve. We
+// learn which by previewing via validateBundle (cheap, one POST per update).
+function BundleUpdateRow({
+  slug,
+  update,
+  onDone,
+}: {
+  slug: string;
+  update: BundleUpdate;
+  onDone: () => void;
+}) {
+  const navigate = useNavigate();
+  const toast = useToast();
+  const qc = useQueryClient();
+
+  const preview = useQuery({
+    queryKey: ["bundle-update-preview", slug, update.externalId, update.latestV],
+    queryFn: () => api.validateBundle(slug, update.manifest),
+    enabled: !!slug,
+    staleTime: 60_000,
+  });
+  const hasConflict = (preview.data?.preview?.upgrade_conflicts?.length ?? 0) > 0;
+
+  function openModal() {
+    navigate(
+      `/bundles?open=${encodeURIComponent(update.externalId)}&returnTo=${encodeURIComponent(window.location.pathname + window.location.search)}`,
+    );
+  }
+
+  const install = useMutation({
+    mutationFn: (vars: { manifest: PlatformBundleManifest; confirm: boolean; enabledFeatures: string[] }) =>
+      api.installBundle(slug, vars.manifest, vars.confirm, vars.enabledFeatures),
+    onSuccess: (r) => {
+      toast.success(`Updated ${r.bundle.name} to v${r.bundle.version}.`);
+      // Mirror BundleDetailModal's post-install refresh — an update can move
+      // field defs / wires / instances, so the same queries must invalidate.
+      for (const key of ["bundles", "bindings", "field-defs", "org-modules", "instances", "entity-kind-overrides"]) {
+        void qc.invalidateQueries({ queryKey: [key, slug] });
+      }
+      onDone();
+    },
+  });
+
+  async function updateNow() {
+    try {
+      await install.mutateAsync({ manifest: update.manifest, confirm: false, enabledFeatures: update.enabledFeatures });
+    } catch (e) {
+      // Anything that needs a decision (module-enable / collision / unexpected)
+      // falls back to the full modal flow rather than guessing.
+      if (e instanceof ApiError && (e.code === "needs_enable" || e.code === "field_def_collision")) {
+        openModal();
+        return;
+      }
+      toast.error(e instanceof ApiError ? e.message : (e as Error).message);
+    }
+  }
+
+  const version = (
+    <>
+      {update.glyph} <strong>{update.name}</strong>{" "}
+      <span className="text-faint dark:text-slate-500">
+        v{update.installedV} → v{update.latestV}
+      </span>
+    </>
+  );
+
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      <ArrowUpCircle size={13} className="text-amber-500 dark:text-amber-400 shrink-0" />
+      <span className="flex-1 min-w-0 truncate text-content dark:text-mortar-200">{version}</span>
+      {install.isPending ? (
+        <span className="shrink-0 text-faint dark:text-slate-500">Updating…</span>
+      ) : preview.isPending ? (
+        <button
+          type="button"
+          onClick={openModal}
+          className="shrink-0 text-accent hover:underline font-medium"
+        >
+          See details
+        </button>
+      ) : hasConflict ? (
+        <button
+          type="button"
+          onClick={openModal}
+          className="shrink-0 text-accent hover:underline font-medium"
+        >
+          Resolve conflict to update
+        </button>
+      ) : (
+        <>
+          <button
+            type="button"
+            onClick={() => void updateNow()}
+            className="shrink-0 text-accent hover:underline font-medium"
+          >
+            Update now
+          </button>
+          <span className="shrink-0 text-faint dark:text-slate-600">·</span>
+          <button
+            type="button"
+            onClick={openModal}
+            className="shrink-0 text-muted dark:text-slate-400 hover:underline"
+          >
+            See details
+          </button>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -1161,10 +1286,11 @@ function ActivityRow({ entry: e }: { entry: ActivityEntry }) {
 }
 
 /** Consolidated row for a burst of N identical-signature entries.
- *  Shows one summary line + a `×N` chip. If any entry in the group
- *  has unique detail in its diff (a name/title/label), expanding the
- *  group reveals each line; otherwise no accordion (nothing extra to
- *  show). */
+ *  Shows one summary line + a `×N` chip that always expands to reveal
+ *  each underlying entry — so a "deleted ×3" can be opened to see the
+ *  three specific things. Each child row falls back to its entity_type
+ *  + timestamp when its diff carries no title, so the burst is always
+ *  inspectable even without per-item names. */
 function ActivityGroupRow({ group }: { group: ActivityGroup }) {
   // Guaranteed non-empty: ActivityGroup is only constructed inside
   // groupActivity which always pushes at least one item before the
@@ -1174,10 +1300,6 @@ function ActivityGroupRow({ group }: { group: ActivityGroup }) {
   const last = group.items[group.items.length - 1]!;
   const action = humanAction(first.action);
   const actor = first.actor?.display_name ?? "someone";
-  const titles = group.items
-    .map((e) => pickString((e.diff ?? {}) as Record<string, unknown>, ["name", "title", "label"]))
-    .filter((t): t is string => !!t);
-  const hasUniqueDetail = titles.length > 0;
   const rowContent = (
     <div className="flex items-baseline gap-3 text-sm w-full">
       <span className="text-muted dark:text-slate-400 shrink-0">
@@ -1200,9 +1322,6 @@ function ActivityGroupRow({ group }: { group: ActivityGroup }) {
       </span>
     </div>
   );
-  if (!hasUniqueDetail) {
-    return <li className="px-4 py-2">{rowContent}</li>;
-  }
   return (
     <li>
       <details className="group">
@@ -1210,7 +1329,7 @@ function ActivityGroupRow({ group }: { group: ActivityGroup }) {
           <span className="text-faint dark:text-slate-600 text-[10px] shrink-0 group-open:rotate-90 transition-transform">▸</span>
           {rowContent}
         </summary>
-        <ul className="border-t border-line dark:border-slate-800 bg-mortar-25 dark:bg-slate-800/20 divide-y divide-line dark:divide-slate-800/40">
+        <ul className="border-t border-line dark:border-slate-800 bg-mortar-25 dark:bg-slate-800/20 divide-y divide-line dark:divide-slate-800/40 pl-6 border-l-2 border-l-line dark:border-l-slate-700">
           {group.items.map((e) => (
             <ActivityRow key={e.id} entry={e} />
           ))}

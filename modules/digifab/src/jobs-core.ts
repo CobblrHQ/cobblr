@@ -10,17 +10,15 @@ import type { MachineDriver } from "./drivers/types.js";
 
 const TERMINAL = new Set(["completed", "failed", "cancelled"]);
 
-/** Build a live driver from a connection row (decrypts creds). */
+/** Build a live driver from a connection ref (id OR label; decrypts creds). The
+ *  connection now lives in core-devices — fetch it via the platform store; the
+ *  digifab db is still needed for the installed-driver (digifab_drivers) lookup. */
 export async function buildDriverById(
   db: Kysely<DigifabDB>,
   orgId: string,
-  connectionId: string,
+  connectionRef: string,
 ): Promise<MachineDriver | null> {
-  const conn = await db
-    .selectFrom("digifab_connections")
-    .select(["id", "type", "base_url", "credentials_enc"])
-    .where("id", "=", connectionId)
-    .executeTakeFirst();
+  const conn = await platform().devices.connections().getInternal(orgId, connectionRef);
   if (!conn) return null;
   let creds: Record<string, unknown> = {};
   if (conn.credentials_enc) {

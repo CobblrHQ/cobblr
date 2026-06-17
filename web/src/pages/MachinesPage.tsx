@@ -775,7 +775,7 @@ function NewMachineModal({ open, onClose }: { open: boolean; onClose: () => void
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="new machine" size="sm">
+    <Modal open={open} onClose={onClose} title="New machine" size="sm">
       <form onSubmit={submit} className="space-y-3">
         <label className="block">
           <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">

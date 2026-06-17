@@ -10,7 +10,7 @@
 // targets, and the instance's noun/name is the routing signal — so a new bundle
 // becomes scannable just by shipping its fields, no scanner code changes.
 
-import { platform } from "@cobblr/platform-contract";
+import { platform, extractJsonObject, repairJson, parseJsonReply } from "@cobblr/platform-contract";
 
 // A HANG GUARD, not a latency knob (the companion app scan lesson): the matchmaker
 // runs detached server-side — nobody is blocked on it — and a queued
@@ -19,6 +19,12 @@ import { platform } from "@cobblr/platform-contract";
 // completed call then populated the core-ai cache, which is why a manual
 // re-run later looked fine). Be generous; the in-flight guard prevents pileups.
 const MATCH_DEADLINE_MS = 120_000;
+// Only take the JSON-recovery retry (a 2nd model call) when at least this much of
+// the shared deadline is left — so a slow first call can't trigger a second that
+// doubles total latency. On a fast provider the first call returns in seconds,
+// leaving the whole budget; on the slow subscription bridge a slow first call
+// burns it, and the retry is skipped (graceful fall-back to []).
+const RETRY_MIN_MS = 30_000;
 
 /** One field the model can extract a value for. */
 interface MenuField {
@@ -43,6 +49,10 @@ export interface ScanMenuEntry {
   /** Display label ("Yarn", "Inventory"). */
   label: string;
   fields: MenuField[];
+  /** Domain terms a bundle declares for this table ("yarn","skein","ball-band")
+   *  — an explicit routing hint that sharpens ambiguous matches (a bolt → "Parts
+   *  Bin" vs "Car Parts"). Optional; routing still works off noun + fields. */
+  scan_keywords?: string[];
 }
 
 /** What the scanner perceived (the left half). */
@@ -141,11 +151,11 @@ export async function assembleScanMenu(
     if (hasNamed && def && def.item_count === 0) hideDefaults.add(moduleName);
   }
 
-  const overridesByTarget = new Map<string, { item_noun?: string }>();
+  const overridesByTarget = new Map<string, { item_noun?: string; scan_keywords?: string[] }>();
   try {
     const res = await fetch(`${baseUrl}/api/v1/orgs/${slug}/entity-kind-overrides`, { headers: auth });
     if (res.ok) {
-      const items = ((await res.json()) as { items?: Array<{ target_kind: string; target_id: string; config?: { item_noun?: string } }> }).items ?? [];
+      const items = ((await res.json()) as { items?: Array<{ target_kind: string; target_id: string; config?: { item_noun?: string; scan_keywords?: string[] } }> }).items ?? [];
       for (const o of items) {
         if (o.target_kind === "instance" && o.config) overridesByTarget.set(o.target_id, o.config);
       }
@@ -163,6 +173,9 @@ export async function assembleScanMenu(
       : `${inst.instance_name}:item`;
     const override = overridesByTarget.get(`${inst.module_name}:${inst.instance_name}`);
     const noun = override?.item_noun || (inst.module_name === "assets" ? "asset" : "part");
+    const scanKeywords = Array.isArray(override?.scan_keywords)
+      ? override!.scan_keywords.filter((k): k is string => typeof k === "string" && k.trim() !== "")
+      : undefined;
 
     let fields: MenuField[] = [];
     try {
@@ -190,9 +203,42 @@ export async function assembleScanMenu(
       noun,
       label: inst.display_name,
       fields,
+      ...(scanKeywords && scanKeywords.length ? { scan_keywords: scanKeywords } : {}),
     });
   }
   return entries;
+}
+
+// ── robust JSON parsing of the model reply ───────────────────────────────────
+// Cheaper / smaller models (Haiku, local Ollama) garble strict JSON more often —
+// trailing commas, truncated output, markdown fences, unescaped quotes in the
+// notes prose. A single garble used to ZERO the whole scan (return []). The
+// generic recovery (fences/prose/commas/smart-quotes/truncation) lives in
+// @cobblr/platform-contract so every AI surface shares it; this wrapper adds the
+// one matchmaker-specific salvage and the `candidates` shape check. Pure +
+// unit-tested (matchmaker-json.test.ts).
+
+/** Parse the model reply into the raw candidates array, recovering from common
+ *  malformations. First the shared layered parse; then the matchmaker-specific
+ *  notes-truncation salvage (an unescaped quote in the notes prose breaks the
+ *  whole object, but the structured fields all precede `notes`, so dropping the
+ *  notes value keeps routing + field extraction). null = nothing salvageable
+ *  (the caller may then retry the model once). */
+export function parseMatchmakerCandidates(content: string): unknown[] | null {
+  const primary = parseJsonReply<{ candidates?: unknown }>(content);
+  if (primary && Array.isArray(primary.candidates)) return primary.candidates;
+  const obj = extractJsonObject(content);
+  if (!obj) return null;
+  const cut = obj.search(/,\s*"notes"\s*:/);
+  if (cut !== -1) {
+    try {
+      const p = JSON.parse(repairJson(obj.slice(0, cut))) as { candidates?: unknown };
+      if (Array.isArray(p.candidates)) return p.candidates;
+    } catch {
+      /* nothing salvageable */
+    }
+  }
+  return null;
 }
 
 /**
@@ -216,11 +262,26 @@ export async function runMatchmaker(
     "extract its fields. You are given the ITEM (what a scanner/vision read, " +
     "including lookup_metadata — the raw catalog/web data: attributes, " +
     "descriptions, pack info) and the user's TABLES (each: a module, an " +
-    "optional instance slug, a noun, and fields with labels/help/allowed " +
-    "choices). Do three things:\n" +
+    "optional instance slug, a noun, optional scan_keywords, and fields with " +
+    "labels/help/allowed choices). Do three things:\n" +
     "1. Pick the best-fitting tables for this item, RANKED, at most 3. A table " +
     "fits when the item is the kind of thing that table holds (a skein of yarn " +
-    "-> a 'yarn' table; a drill -> 'tools'/'assets'). If nothing fits well, " +
+    "-> a 'yarn' table; a drill -> 'tools'/'assets'). Judge fit PRIMARILY from " +
+    "the table's noun and its FIELDS — a field's label, help, and allowed " +
+    "choices reveal what the table is for (a table with `fiber:[Wool,Cotton]` " +
+    "and `weight:[Worsted,Aran]` is clearly for yarn; one with " +
+    "`material:[PLA,PETG]` + `nozzle_temp` is for 3D-printer filament; one with " +
+    "`VIN`/`mileage` is for vehicles). scan_keywords, when present, are an " +
+    "EXTRA explicit hint — use them to BREAK TIES when two tables fit similarly, " +
+    "not as the main signal (most tables won't have them, and route fine " +
+    "without). But a specific table holds a specific KIND of thing — its fields " +
+    "say which (a Components table of resistors/ICs/capacitors is for DISCRETE " +
+    "parts, NOT a finished USB cable; a Filament-Types table is for spools, not " +
+    "a 3D-printed widget). If the item is a finished or whole product that merely " +
+    "RELATES to a table's domain rather than being the kind it holds, route it to " +
+    "the generic default table (instance null) — and do NOT invent a field value " +
+    "to justify forcing it into a specific table (a fabricated field is worse " +
+    "than the honest generic table). If nothing fits well, " +
     "return the generic default table (instance null) for the closest module.\n" +
     "2. For EACH picked table, fill in field values — MINE EVERY ITEM FIELD: " +
     "the title, lookup_metadata attributes (material/color/size), the " +
@@ -263,6 +324,7 @@ export async function runMatchmaker(
     instance: m.instance,
     noun: m.noun,
     label: m.label,
+    ...(m.scan_keywords && m.scan_keywords.length ? { scan_keywords: m.scan_keywords } : {}),
     fields: m.fields.map((f) => ({
       name: f.name,
       label: f.label,
@@ -297,42 +359,40 @@ export async function runMatchmaker(
     "\n\nTABLES:\n" +
     JSON.stringify(compactMenu, null, 0);
 
-  const call = platform()
-    .ai.invoke({
-      orgId,
-      capability: "chat",
-      input: { messages: [{ role: "system", content: system }, { role: "user", content: user }] },
-      source: { kind: "core-scan:matchmaker", id: sourceId ?? "" },
-    })
-    .then((r) => r.result as { content?: string })
-    .catch(() => null);
+  // One model call → robust-parse, both calls SHARING a single MATCH_DEADLINE_MS
+  // budget. bypass_cache lets the retry take a fresh sample (the cache key is the
+  // messages, not the model, so a plain re-invoke returns the same garbled reply).
+  const t0 = Date.now();
+  const remaining = () => MATCH_DEADLINE_MS - (Date.now() - t0);
+  const callOnce = async (bypassCache: boolean, budgetMs: number): Promise<unknown[] | null> => {
+    if (budgetMs <= 0) return null;
+    const call = platform()
+      .ai.invoke({
+        orgId,
+        capability: "chat",
+        input: { messages: [{ role: "system", content: system }, { role: "user", content: user }] },
+        source: { kind: "core-scan:matchmaker", id: sourceId ?? "" },
+        bypass_cache: bypassCache,
+      })
+      .then((r) => r.result as { content?: string })
+      .catch(() => null);
+    const res = await Promise.race([
+      call,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), budgetMs)),
+    ]);
+    return res?.content ? parseMatchmakerCandidates(res.content) : null;
+  };
 
-  const res = await Promise.race([
-    call,
-    new Promise<null>((resolve) => setTimeout(() => resolve(null), MATCH_DEADLINE_MS)),
-  ]);
-  if (!res?.content) return [];
-
-  let parsed: { candidates?: unknown };
-  const rawJson = (res.content.match(/\{[\s\S]*\}/) ?? [res.content])[0]!;
-  try {
-    parsed = JSON.parse(rawJson);
-  } catch {
-    // Salvage: the model sometimes drops UNESCAPED double quotes into the
-    // notes prose ('calls this a "medium weight"'), invalidating the whole
-    // payload — which silently zeroed every candidate (the Red Heart bug).
-    // The structured fields all precede notes, so truncate at `,"notes":`
-    // and close the shapes; we lose notes/quantity for this response but
-    // keep the routing + field extraction.
-    const cut = rawJson.search(/,\s*"notes"\s*:/);
-    if (cut === -1) return [];
-    try {
-      parsed = JSON.parse(rawJson.slice(0, cut) + "}]}");
-    } catch {
-      return [];
-    }
-  }
-  const rawList = Array.isArray(parsed.candidates) ? parsed.candidates : [];
+  // First shot; if the reply was wholly unparseable (a cheaper model garbling
+  // JSON), take ONE fresh retry — a second sample almost always parses, which is
+  // what makes a cheap model (Haiku / local Ollama) viable. BUT both calls share
+  // the ONE deadline and we only retry when a meaningful slice is left
+  // (RETRY_MIN_MS), so a slow first call (e.g. via the subscription bridge) can't
+  // trigger a second that doubles latency + times out a synchronous caller; on a
+  // fast provider the retry has ample budget and fires.
+  let rawList = await callOnce(false, MATCH_DEADLINE_MS);
+  if (rawList === null && remaining() > RETRY_MIN_MS) rawList = await callOnce(true, remaining());
+  if (rawList === null) return [];
 
   // Validate each candidate against the menu — the model may only route to a
   // table we actually offered, and we resolve module/kind/label from the menu

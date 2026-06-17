@@ -39,7 +39,7 @@ orgsRouter.get("/", requireAuth, async (req, res, next) => {
     const orgs = await meta
       .selectFrom("org_memberships as m")
       .innerJoin("orgs as o", "o.id", "m.org_id")
-      .select((eb) => ["o.id", "o.name", "o.slug", "o.app_mode", "m.role", eb.selectFrom("org_memberships as om").innerJoin("users as ou", "ou.id", "om.user_id").select("ou.display_name").whereRef("om.org_id", "=", "o.id").where("om.role", "=", "owner").limit(1).as("owner_name")])
+      .select((eb) => ["o.id", "o.name", "o.slug", "o.app_mode", "o.focused", "m.role", eb.selectFrom("org_memberships as om").innerJoin("users as ou", "ou.id", "om.user_id").select("ou.display_name").whereRef("om.org_id", "=", "o.id").where("om.role", "=", "owner").limit(1).as("owner_name")])
       .where("m.user_id", "=", req.session!.id)
       .orderBy("o.created_at")
       .execute();
@@ -248,6 +248,44 @@ orgsRouter.patch("/:slug/app-mode", requireAuth, withTenant, async (req, res, ne
   }
 });
 
+// PATCH /orgs/:slug/focused — owner/admin. Flip "focused mode" on this workspace:
+// the web shell hides the builder chrome (marketplace / add-modules / AI builder /
+// Configuration / the "+ New thing" funnel) so a non-technical owner sees a
+// finished app, not a toolkit. SOFTER than app_mode — the workspace stays fully
+// navigable and any owner/admin can flip it straight back ("Explore the full
+// platform"). Body: { focused: boolean }.
+const FocusedBody = z.object({ focused: z.boolean() });
+orgsRouter.patch("/:slug/focused", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    if (req.tenant!.role !== "owner" && req.tenant!.role !== "admin") {
+      res.status(403).json({
+        error: { code: "forbidden", message: "Only an owner or admin can change focused mode." },
+      });
+      return;
+    }
+    const parsed = FocusedBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues } });
+      return;
+    }
+    await meta
+      .updateTable("orgs")
+      .set({ focused: parsed.data.focused, updated_at: new Date() })
+      .where("id", "=", req.tenant!.org.id)
+      .execute();
+    await activity.log({
+      orgId: req.tenant!.org.id,
+      userId: req.session!.id,
+      action: parsed.data.focused ? "focused_enabled" : "focused_disabled",
+      ref: { module: null, entityType: "org", entityId: req.tenant!.org.id },
+      diff: { focused: parsed.data.focused },
+    });
+    res.json({ focused: parsed.data.focused });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /orgs/:slug/refresh-app — re-apply the latest published version of this
 // managed app's bundle if it's behind ("auto-update on use"). Owner/admin; safe
 // + idempotent (no-op when current). The web calls it once per session when a
@@ -336,7 +374,7 @@ orgsRouter.post("/", requireAuth, async (req, res, next) => {
     const row = await meta
       .selectFrom("org_memberships as m")
       .innerJoin("orgs as o", "o.id", "m.org_id")
-      .select((eb) => ["o.id", "o.name", "o.slug", "o.app_mode", "m.role", eb.selectFrom("org_memberships as om").innerJoin("users as ou", "ou.id", "om.user_id").select("ou.display_name").whereRef("om.org_id", "=", "o.id").where("om.role", "=", "owner").limit(1).as("owner_name")])
+      .select((eb) => ["o.id", "o.name", "o.slug", "o.app_mode", "o.focused", "m.role", eb.selectFrom("org_memberships as om").innerJoin("users as ou", "ou.id", "om.user_id").select("ou.display_name").whereRef("om.org_id", "=", "o.id").where("om.role", "=", "owner").limit(1).as("owner_name")])
       .where("m.user_id", "=", req.session!.id)
       .where("o.id", "=", orgId)
       .executeTakeFirstOrThrow();

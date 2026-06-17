@@ -8,13 +8,21 @@
 import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "../lib/api";
+import { api, isFocused } from "../lib/api";
 import { moduleIcon } from "../lib/module-icon";
 import { readNavActionsHidden } from "../lib/nav-order";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
+/** A header action that leads to BUILDER chrome (the AI builder, the
+ *  marketplace) — hidden in focused mode. NB: `/builds` (the Builds domain) is
+ *  NOT a builder route, so match `/build` exactly, not as a prefix. */
+function isBuilderRoute(route: string): boolean {
+  return route === "/build" || route.startsWith("/build/") || route.startsWith("/bundles");
+}
+
 export function HeaderActions() {
-  const { activeSlug } = useActiveOrg();
+  const { activeSlug, activeOrg } = useActiveOrg();
+  const focused = isFocused(activeOrg);
   const modules = useQuery({
     queryKey: ["org-modules", activeSlug],
     queryFn: () => api.orgModules(activeSlug),
@@ -39,7 +47,13 @@ export function HeaderActions() {
 
   const hiddenSet = new Set(hidden);
   const actions = (modules.data?.items ?? []).filter(
-    (m) => m.enabled && m.headerAction && !hiddenSet.has(m.name),
+    (m) =>
+      m.enabled &&
+      m.headerAction &&
+      !hiddenSet.has(m.name) &&
+      // Focused mode hides the builder header actions (the AI builder) but keeps
+      // capability actions like Scan.
+      !(focused && isBuilderRoute(m.headerAction.route)),
   );
   // No count badge on the camera action: it opens the SCANNER, and a badge
   // reads as "this is the inbox" (the author). Pending-count signals live on the

@@ -96,7 +96,7 @@ export function WireDetailModal({ open, onClose, slug, binding, onEdit }: Props)
     <Modal
       open={open}
       onClose={onClose}
-      title="wire detail"
+      title="Wire detail"
       subtitle={`${binding.source_kind} → ${binding.action_id}`}
       size="lg"
     >

@@ -69,7 +69,11 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
     >
       <div
         className={
+          // Height-constrained + column layout so a tall form scrolls WITHIN the
+          // modal (header pinned) instead of running off the page (the bug Grace
+          // hit). my-12 = 6rem of vertical margin, so cap at 100vh − 6rem.
           "bg-surface dark:bg-slate-900 rounded-xl shadow-2xl border w-full my-12 " +
+          "flex flex-col max-h-[calc(100vh-6rem)] " +
           SIZE[size] +
           " " +
           (destructive
@@ -81,7 +85,7 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
         {(title || subtitle) && (
           <div
             className={
-              "flex items-start gap-3 px-5 py-3 border-b " +
+              "flex items-start gap-3 px-5 py-3 border-b shrink-0 " +
               (destructive
                 ? "border-ember-200 dark:border-ember-700/40"
                 : "border-line dark:border-slate-700")
@@ -91,7 +95,7 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
               {title && (
                 <div
                   className={
-                    "font-display text-lg font-bold lowercase " +
+                    "font-display text-lg font-bold " +
                     (destructive
                       ? "text-ember-700 dark:text-ember-300"
                       : "text-content dark:text-mortar-100")
@@ -115,7 +119,7 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
             </button>
           </div>
         )}
-        <div className="p-5">{children}</div>
+        <div className="p-5 flex-1 min-h-0 overflow-y-auto">{children}</div>
       </div>
     </div>,
     document.body,

@@ -100,29 +100,46 @@ export function CustomFieldsPanel({
 
   if (fields.length === 0) return null;
   const visible = showAll ? fields : shown;
+
+  // Group by form-builder section: ungrouped fields first (no heading), then
+  // each section (in its saved order) with a heading. A section with no visible
+  // fields is skipped.
+  const sections = (data?.sections ?? []).slice().sort((a, b) => a.position - b.position);
+  const inSection = (sid: string | null) => visible.filter((f) => (f.section_id ?? null) === sid);
+  const ungrouped = inSection(null);
+  const grouped = sections.map((s) => ({ s, fs: inSection(s.id) })).filter((g) => g.fs.length > 0);
+
+  const grid = (fs: PlatformFieldDef[]) => (
+    <div className="grid grid-cols-2 gap-3">
+      {fs.map((f) => (
+        <FieldRow
+          key={f.id}
+          def={f}
+          value={f.type === "computed" ? computedValues[f.name] : values[f.name]}
+          fallbackValue={fallbackValues?.[f.name]}
+          fallbackLabel={fallbackLabel}
+          onCommit={(v) => onCommit(f.name, v)}
+        />
+      ))}
+    </div>
+  );
+
   return (
     // No "// custom fields" box or header: to the user there's no stock-vs-custom
-    // distinction — every field they configured is just a field, rendered in the
-    // same grid as the module's native ones.
-    <div className={"space-y-3 " + (className ?? "")}>
-      {visible.length > 0 && (
-        <div className="grid grid-cols-2 gap-3">
-          {visible.map((f) => (
-            <FieldRow
-              key={f.id}
-              def={f}
-              value={f.type === "computed" ? computedValues[f.name] : values[f.name]}
-              fallbackValue={fallbackValues?.[f.name]}
-              fallbackLabel={fallbackLabel}
-              onCommit={(v) => onCommit(f.name, v)}
-            />
-          ))}
+    // distinction — every field they configured is just a field, grouped under
+    // the sections they arranged in the form builder.
+    <div className={"space-y-4 " + (className ?? "")}>
+      {ungrouped.length > 0 && grid(ungrouped)}
+      {grouped.map(({ s, fs }) => (
+        <div key={s.id} className="space-y-2">
+          <div className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 border-b border-line dark:border-slate-700 pb-1">
+            {s.name}
+          </div>
+          {grid(fs)}
         </div>
-      )}
+      ))}
       {visible.length === 0 && !showAll && (
-        <div className="text-[11px] text-faint dark:text-slate-500 italic">
-          No fields set.
-        </div>
+        <div className="text-[11px] text-faint dark:text-slate-500 italic">No fields set.</div>
       )}
       {hidden.length > 0 && (
         <button
@@ -130,9 +147,7 @@ export function CustomFieldsPanel({
           onClick={() => setShowAll((v) => !v)}
           className="text-[10px] font-mono uppercase tracking-widest text-accent hover:text-accent transition"
         >
-          {showAll
-            ? "− hide empty fields"
-            : `+ ${hidden.length} more field${hidden.length === 1 ? "" : "s"}`}
+          {showAll ? "− hide empty fields" : `+ ${hidden.length} more field${hidden.length === 1 ? "" : "s"}`}
         </button>
       )}
     </div>

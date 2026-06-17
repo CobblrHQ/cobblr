@@ -70,7 +70,7 @@ export function checkEmailConfig(cfg: EmailConfig, requireTo = true): CheckResul
 
 const TIMEOUT_MS = 8000;
 
-async function sendSmtp(cfg: ValidConfig, subject: string, text: string): Promise<void> {
+async function sendSmtp(cfg: ValidConfig, subject: string, text: string, html?: string): Promise<void> {
   const port = cfg.smtp_port ?? 465;
   // 465 = implicit TLS; 587/other = STARTTLS, unless explicitly overridden.
   const secure = cfg.smtp_secure ?? port === 465;
@@ -83,7 +83,7 @@ async function sendSmtp(cfg: ValidConfig, subject: string, text: string): Promis
     socketTimeout: 5000,
   });
   try {
-    await transport.sendMail({ from: cfg.from, to: cfg.to, subject, text });
+    await transport.sendMail({ from: cfg.from, to: cfg.to, subject, text, ...(html ? { html } : {}) });
   } finally {
     transport.close();
   }
@@ -93,9 +93,10 @@ async function expectOk(res: Response): Promise<void> {
   if (!res.ok) throw new Error(`${res.status} ${(await res.text().catch(() => "")).slice(0, 200)}`);
 }
 
-async function sendMailgun(cfg: ValidConfig, subject: string, text: string): Promise<void> {
+async function sendMailgun(cfg: ValidConfig, subject: string, text: string, html?: string): Promise<void> {
   const base = cfg.mailgun_eu ? "https://api.eu.mailgun.net" : "https://api.mailgun.net";
   const form = new URLSearchParams({ from: cfg.from, to: cfg.to, subject, text });
+  if (html) form.set("html", html);
   const res = await fetch(`${base}/v3/${encodeURIComponent(cfg.mailgun_domain!)}/messages`, {
     method: "POST",
     headers: {
@@ -108,27 +109,27 @@ async function sendMailgun(cfg: ValidConfig, subject: string, text: string): Pro
   await expectOk(res);
 }
 
-async function sendResend(cfg: ValidConfig, subject: string, text: string): Promise<void> {
+async function sendResend(cfg: ValidConfig, subject: string, text: string, html?: string): Promise<void> {
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { authorization: `Bearer ${cfg.resend_api_key}`, "content-type": "application/json" },
-    body: JSON.stringify({ from: cfg.from, to: cfg.to, subject, text }),
+    body: JSON.stringify({ from: cfg.from, to: cfg.to, subject, text, ...(html ? { html } : {}) }),
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
   await expectOk(res);
 }
 
-async function sendPostmark(cfg: ValidConfig, subject: string, text: string): Promise<void> {
+async function sendPostmark(cfg: ValidConfig, subject: string, text: string, html?: string): Promise<void> {
   const res = await fetch("https://api.postmarkapp.com/email", {
     method: "POST",
     headers: { "x-postmark-server-token": cfg.postmark_token!, "content-type": "application/json" },
-    body: JSON.stringify({ From: cfg.from, To: cfg.to, Subject: subject, TextBody: text }),
+    body: JSON.stringify({ From: cfg.from, To: cfg.to, Subject: subject, TextBody: text, ...(html ? { HtmlBody: html } : {}) }),
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
   await expectOk(res);
 }
 
-const SENDERS: Record<EmailProvider, (cfg: ValidConfig, subject: string, text: string) => Promise<void>> = {
+const SENDERS: Record<EmailProvider, (cfg: ValidConfig, subject: string, text: string, html?: string) => Promise<void>> = {
   smtp: sendSmtp,
   mailgun: sendMailgun,
   resend: sendResend,
@@ -148,10 +149,10 @@ export function isUndeliverableTestAddress(email: string): boolean {
   return false;
 }
 
-export async function sendEmailVia(cfg: ValidConfig, subject: string, text: string): Promise<void> {
+export async function sendEmailVia(cfg: ValidConfig, subject: string, text: string, html?: string): Promise<void> {
   if (cfg.to && isUndeliverableTestAddress(cfg.to)) {
     console.log(`[email] skipping send to reserved/test address ${cfg.to}`);
     return;
   }
-  await SENDERS[cfg.provider](cfg, subject, text);
+  await SENDERS[cfg.provider](cfg, subject, text, html);
 }

@@ -72,18 +72,25 @@ export default defineModule({
       "digifab.print.completed",
       "digifab.print.failed",
       "digifab.driver.installed",
+      // The actuator's canonical event is now core-devices.command.sent (the
+      // inbound ingest + device.* events also moved). digifab.command.sent stays
+      // declared for any pre-existing listeners. digifab now backs
+      // platform().devices.getDriver. See modules/core-devices.
       "digifab.command.sent",
     ],
     api: [],
     actions: [
       {
+        // DEPRECATED ALIAS. The actuator moved to core-devices (general device
+        // I/O, not fabrication). This thin alias delegates to
+        // core-devices:run-command so wires in ALREADY-INSTALLED bundles keep
+        // working; new bundles should use core-devices:run-command.
         id: "digifab:run-command",
-        label: "Run a device command",
+        label: "Run a device command (deprecated → core-devices:run-command)",
         description:
-          "Fire a parameterized command-and-forget at a connected actuator/controller — open a valve for N seconds, call a Home Assistant service, flip a relay. Wire-invokable: an entity's schedule (e.g. each plant's water_rrule) commands a device with THAT entity's own params (zone, seconds). `connection` + `command` are fixed wire args; the rest are passed through as the command's params.",
+          "Deprecated alias of core-devices:run-command, kept so installed bundle wires keep working. Fires a parameterized command-and-forget at a connected actuator via platform().devices. New wires should target core-devices:run-command.",
         appliesTo: { any: true },
         invokeHandler: "digifab.run-command",
-        // Wire-driven (the actuator shape) — not a per-row button.
         userInvokable: false,
       },
     ],

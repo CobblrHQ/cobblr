@@ -25,14 +25,18 @@ import { NavLink } from "react-router-dom";
 import { ChevronDown, Settings2, Sliders } from "lucide-react";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ModulePickerModal } from "./ModulePickerModal";
-import { useNavModules, HEADING_PREFIX } from "./useNavModules";
+import { isFocused } from "../lib/api";
+import { useNavModules, HEADING_PREFIX, NAVGROUP_PREFIX, stripNavStem } from "./useNavModules";
 
 export function ModuleNav() {
   const { activeSlug, activeOrg } = useActiveOrg();
   // Managed app: no Dashboard (it redirects to the app home anyway) — the nav
   // is just the app's own tables + Scan.
   const appMode = !!activeOrg?.app_mode;
-  const { tops, childrenByParent: children } = useNavModules(activeSlug);
+  // Focused mode: keep the domains, but hide the "manage specialisations" /
+  // add-instance affordance (builder chrome).
+  const focused = isFocused(activeOrg);
+  const { tops, childrenByParent: children, instanceGroups } = useNavModules(activeSlug);
   const [pickerScope, setPickerScope] = useState<string | null>(null);
   // Scan moved to the right cluster as a module-declared headerAction
   // (an icon-only quick-action) — see HeaderActions. It's no longer a
@@ -92,6 +96,11 @@ export function ModuleNav() {
   const overflow = tops.slice(visibleCount);
 
   const renderTop = (m: (typeof tops)[number]) => {
+    // Instance nav-group → one connected element (stem + segments).
+    if (m.name.startsWith(NAVGROUP_PREFIX)) {
+      const g = instanceGroups.get(m.name);
+      if (g) return <NavGroupSegments key={m.name} name={m.name} group={g} />;
+    }
     const kids = children.get(m.name) ?? [];
     return kids.length === 0 ? (
       <ModuleTopLink key={m.name} name={m.name} label={m.displayName} />
@@ -100,7 +109,7 @@ export function ModuleNav() {
         key={m.name}
         parent={m}
         children={kids}
-        onInstallMore={() => setPickerScope(m.name)}
+        onInstallMore={focused ? undefined : () => setPickerScope(m.name)}
       />
     );
   };
@@ -129,7 +138,14 @@ export function ModuleNav() {
         {visible.map(renderTop)}
         {overflow.length > 0 && (
           <MoreMenu
-            items={overflow.map((m) => ({ top: m, kids: children.get(m.name) ?? [] }))}
+            items={overflow.map((m) => ({
+              top: m,
+              // A folded nav-group lists its member instances as children
+              // (full labels — there's room in the dropdown).
+              kids: m.name.startsWith(NAVGROUP_PREFIX)
+                ? instanceGroups.get(m.name)?.members ?? []
+                : children.get(m.name) ?? [],
+            }))}
           />
         )}
         {/* The nav-customize control was moved out of the navbar into
@@ -167,6 +183,47 @@ function ModuleTopLink({ name, label }: { name: string; label: string }) {
     >
       {label}
     </NavLink>
+  );
+}
+
+/** A connected navbar element for sibling instances a bundle joined under one
+ *  `nav_group` — a quiet stem label followed by each member as a segment with
+ *  a divider between (e.g. `Filament  Types │ Spools`). Each segment links to
+ *  its instance page. Matches the "shared stem + segments" treatment. */
+function NavGroupSegments({
+  name,
+  group,
+}: {
+  name: string;
+  group: { label: string; members: { name: string; displayName: string }[] };
+}) {
+  return (
+    <div
+      data-top={name}
+      className="flex items-center shrink-0 rounded border border-line dark:border-slate-700 overflow-hidden"
+    >
+      <span className="pl-2 pr-1.5 py-1 text-xs font-mono uppercase tracking-wide text-faint dark:text-slate-500 select-none">
+        {group.label}
+      </span>
+      {group.members.map((mem, i) => (
+        <span key={mem.name} className="flex items-center">
+          {i > 0 && (
+            <span className="text-faint/60 dark:text-slate-600 select-none">│</span>
+          )}
+          <NavLink
+            to={`/instances/${mem.name.slice(INSTANCE_PREFIX.length)}`}
+            className={({ isActive }) =>
+              "px-2 py-1 transition text-sm whitespace-nowrap " +
+              (isActive
+                ? "text-accent font-semibold"
+                : "text-muted dark:text-slate-400 hover:text-accent")
+            }
+          >
+            {stripNavStem(mem.displayName, group.label)}
+          </NavLink>
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -244,7 +301,7 @@ function MoreMenu({
         ? `/${k.name}`
         : `/${parentName}?lens=${k.name}`;
   const topTo = (m: OrgModule) =>
-    m.name.startsWith(HEADING_PREFIX)
+    m.name.startsWith(HEADING_PREFIX) || m.name.startsWith(NAVGROUP_PREFIX)
       ? null
       : m.name.startsWith(INSTANCE_PREFIX)
         ? `/instances/${m.name.slice(INSTANCE_PREFIX.length)}`
@@ -340,7 +397,8 @@ function ModuleGroupChip({
 }: {
   parent: OrgModule;
   children: OrgModule[];
-  onInstallMore: () => void;
+  /** Omitted in focused mode → the "manage specialisations" footer is hidden. */
+  onInstallMore?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLDivElement>(null);
@@ -520,8 +578,9 @@ function ModuleGroupChip({
             )}
           </ul>
           {/* The "manage specialisations" affordance is module-specific;
-              headings are managed in the nav builder, not here. */}
-          {!parent.name.startsWith(HEADING_PREFIX) && (
+              headings are managed in the nav builder, not here. Hidden in
+              focused mode (onInstallMore omitted). */}
+          {onInstallMore && !parent.name.startsWith(HEADING_PREFIX) && (
           <button
             onClick={() => {
               setOpen(false);

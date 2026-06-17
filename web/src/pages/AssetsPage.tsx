@@ -707,7 +707,7 @@ function NewAssetModal({ open, onClose }: { open: boolean; onClose: () => void }
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="new asset" size="sm">
+    <Modal open={open} onClose={onClose} title="New asset" size="sm">
       <form onSubmit={submit} className="space-y-3">
         <label className="block">
           <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Name</span>

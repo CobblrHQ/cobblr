@@ -26,6 +26,27 @@ const Schema = z.object({
   SESSION_TTL_DAYS: z.coerce.number().int().positive().default(30),
   TENANT_CREDS_ENCRYPTION_KEY: z.string().min(16),
 
+  // Backup destinations (Phase C) — all optional.
+  //  • BACKUP_FS_ROOT — root dir for the filesystem destination driver
+  //    (a NAS bind-mount, etc.). Defaults to /files/backups.
+  //  • GOOGLE_OAUTH_* — a Google Cloud OAuth app, required to enable the
+  //    Google Drive destination. Unset → the Drive driver is unavailable.
+  BACKUP_FS_ROOT: z.string().optional(),
+  GOOGLE_OAUTH_CLIENT_ID: z.string().optional(),
+  GOOGLE_OAUTH_CLIENT_SECRET: z.string().optional(),
+  GOOGLE_OAUTH_REDIRECT_URL: z.string().optional(),
+  // Google endpoint overrides — default to the real Google URLs; pointed
+  // elsewhere only by tests (a stub OAuth server).
+  GOOGLE_OAUTH_AUTH_URL: z.string().optional(),
+  GOOGLE_OAUTH_TOKEN_URL: z.string().optional(),
+  // OAuth broker (Path B in docs/operations/google-drive-backup-setup.md).
+  //  • BACKUP_OAUTH_BROKER_URL — a Cobblr instance (that HAS Google creds)
+  //    to broker the Drive connect, so THIS instance needs no Google app.
+  //  • BACKUP_BROKER_SHARED_SECRET — set on the BROKER to gate who it brokers
+  //    for, and on each CLIENT to authenticate to that broker (must match).
+  BACKUP_OAUTH_BROKER_URL: z.string().optional(),
+  BACKUP_BROKER_SHARED_SECRET: z.string().optional(),
+
   // Comma-separated allowlist of CORS origins, e.g.
   //   "https://cobblr.example.com,https://workshop.example.com"
   // Default in dev is "*" (any origin) — the previous behavior. In

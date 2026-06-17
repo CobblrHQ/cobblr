@@ -6,8 +6,10 @@
 
 import type { NextFunction, Request, Response } from "express";
 import type { Kysely } from "kysely";
+import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { getTenantDb } from "../db/tenant.js";
+import { verifyImpersonation } from "../auth/jwt.js";
 import type { OrgRole } from "../db/schema.js";
 import type { TenantDB } from "../db/tenant-schema.js";
 
@@ -21,11 +23,24 @@ export interface RequestTenant {
   db: Kysely<TenantDB>;
 }
 
+/** Set ONLY when the request is served under an operator impersonation grant
+ *  (a valid X-Impersonation token). The operator's own identity still rides the
+ *  Bearer (`req.session`); `req.tenant.role` is the TARGET's role. */
+export interface RequestImpersonation {
+  operatorId: string;
+  targetId: string;
+  sessionId: string;
+  mode: "read" | "write";
+}
+
 declare module "express-serve-static-core" {
   interface Request {
     tenant?: RequestTenant;
+    impersonation?: RequestImpersonation;
   }
 }
+
+const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
 /** Reads org slug from `req.params.slug` (route param) or the
  *  `X-Org-Slug` header. Returns 400 if neither is present. */
@@ -51,6 +66,15 @@ export async function withTenant(
     res
       .status(400)
       .json({ error: { code: "missing_org", message: "Org slug required (path param or X-Org-Slug header)" } });
+    return;
+  }
+
+  // Operator impersonation: a valid X-Impersonation token resolves the tenant as
+  // the TARGET member (their role/grants/field-scopes), read-only unless write
+  // mode is armed. The operator's own Bearer still identifies them in req.session.
+  const impToken = req.header("X-Impersonation");
+  if (impToken) {
+    await resolveImpersonatedTenant(req, res, next, slug, impToken);
     return;
   }
 
@@ -108,5 +132,86 @@ export async function withTenant(
     res.status(500).json({
       error: { code: "tenant_unavailable", message: (err as Error).message },
     });
+  }
+}
+
+/** Resolve tenant context for an impersonated request. Verifies the grant, swaps
+ *  in the target member's role, enforces read-only (unless write mode is armed),
+ *  and stamps req.impersonation. Every guard is server-side — the client banner
+ *  is disclosure, not security. */
+async function resolveImpersonatedTenant(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+  slug: string,
+  token: string,
+): Promise<void> {
+  let claims;
+  try {
+    claims = await verifyImpersonation(token);
+  } catch {
+    res.status(401).json({ error: { code: "impersonation_expired", message: "Impersonation session expired or invalid." } });
+    return;
+  }
+  // The token must belong to the operator making the call (their Bearer session).
+  if (!req.session || claims.sub !== req.session.id) {
+    res.status(403).json({ error: { code: "impersonation_mismatch", message: "Impersonation token does not match the authenticated operator." } });
+    return;
+  }
+  const sess = await meta
+    .selectFrom("impersonation_sessions")
+    .select(["id", "org_id", "mode", "ended_at", "expires_at"])
+    .where("id", "=", claims.sid)
+    .executeTakeFirst();
+  if (!sess || sess.ended_at || new Date(sess.expires_at).getTime() <= Date.now()) {
+    res.status(401).json({ error: { code: "impersonation_expired", message: "Impersonation session has ended or expired." } });
+    return;
+  }
+  // Resolve the org by slug + the TARGET member's role in it.
+  const row = await meta
+    .selectFrom("org_memberships as m")
+    .innerJoin("orgs as o", "o.id", "m.org_id")
+    .select(["o.id as org_id", "o.name as org_name", "o.slug as org_slug", "o.db_credentials_encrypted", "o.plan", "m.role"])
+    .where("m.user_id", "=", claims.act)
+    .where("o.slug", "=", slug)
+    .executeTakeFirst();
+  if (!row) {
+    res.status(404).json({ error: { code: "org_not_found", message: "Org not found, or the target is not a member." } });
+    return;
+  }
+  // Token org claim + session row must match the resolved workspace.
+  if (row.org_id !== claims.org || row.org_id !== sess.org_id) {
+    res.status(403).json({ error: { code: "impersonation_scope", message: "Impersonation token is scoped to a different workspace." } });
+    return;
+  }
+  if (row.plan === "disabled") {
+    res.status(403).json({ error: { code: "workspace_disabled", message: "This workspace has been disabled by the platform operator." } });
+    return;
+  }
+  if (!row.db_credentials_encrypted) {
+    res.status(503).json({ error: { code: "tenant_unprovisioned", message: "Org's tenant DB hasn't been provisioned yet" } });
+    return;
+  }
+  // Read-only enforcement, server-side, before any handler: a mutating method
+  // under a non-write session is refused. Buttons hidden in the UI are courtesy;
+  // THIS is the guarantee.
+  if (!READ_METHODS.has(req.method) && sess.mode !== "write") {
+    res.status(403).json({ error: { code: "impersonation_read_only", message: "This is a read-only support session. Enable editing to make changes." } });
+    return;
+  }
+  // Amortized audit: bump the request counter (fire-and-forget).
+  void meta
+    .updateTable("impersonation_sessions")
+    .set({ request_count: sql`request_count + 1` })
+    .where("id", "=", sess.id)
+    .execute()
+    .catch(() => {});
+  try {
+    const db = await getTenantDb(row.org_id);
+    req.tenant = { org: { id: row.org_id, name: row.org_name, slug: row.org_slug }, role: row.role, db };
+    req.impersonation = { operatorId: claims.sub, targetId: claims.act, sessionId: sess.id, mode: sess.mode };
+    next();
+  } catch (err) {
+    res.status(500).json({ error: { code: "tenant_unavailable", message: (err as Error).message } });
   }
 }

@@ -140,6 +140,20 @@ export default defineModule({
         },
       },
       {
+        id: "inventory:set-stock",
+        label: "Set part stock",
+        description:
+          "Set a part's on-hand qty to an ABSOLUTE value (not a delta). The natural op for a scale ('grams remaining'), a stocktake, or a recount. Reached from core-devices.device.reading via a device→part link, or any source. Args: { partId, qty, reason? }.",
+        appliesTo: { kinds: ["inventory:part"] },
+        invokeHandler: "inventory.set-stock",
+        userInvokable: false,
+        argsSchema: {
+          partId: { label: "Part id", type: "text" },
+          qty: { label: "On-hand qty (absolute)", type: "number" },
+          reason: { label: "Reason (optional)", type: "text" },
+        },
+      },
+      {
         id: "inventory:set-status",
         label: "Set status",
         description:

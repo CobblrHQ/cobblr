@@ -25,6 +25,16 @@ import { readNavHidden, readNavOrder } from "../lib/nav-order";
 /** Synthetic top-level name prefix for a user-defined heading group. */
 export const HEADING_PREFIX = "__heading__";
 
+/** Synthetic top-level name prefix for an instance NAV-GROUP — sibling
+ *  instances a bundle joined under one `nav_group.key` (e.g. Filament Types +
+ *  Spools). Rendered inline as a connected element (stem + segments), NOT a
+ *  dropdown. */
+export const NAVGROUP_PREFIX = "__navgroup__";
+
+/** Synthetic instance-entry prefix (an instance rendered as a top-level nav
+ *  item). The slug after the prefix is the instance_name. */
+export const INSTANCE_PREFIX = "__instance__";
+
 export interface NavModules {
   /** Top-level modules the user sees — ordered + with per-device hidden
    *  entries removed. */
@@ -39,6 +49,11 @@ export interface NavModules {
    *  (either real Pillar-E modules OR installed lens bundles
    *  rendered as synthetic module items). */
   childrenByParent: Map<string, OrgModuleListItem[]>;
+  /** `__navgroup__<key>` → the joined sibling instances (and their shared
+   *  stem label) that render as one connected navbar element. The members are
+   *  pulled OUT of `tops`/`allTops` and replaced by the group entry, so the
+   *  renderer special-cases the group name and reads its members here. */
+  instanceGroups: Map<string, { label: string; members: OrgModuleListItem[] }>;
   /** Every enabled module name (including `core-*`). Lets the nav gate
    *  hardcoded affordances like the scan link on their module being on
    *  — a blank slate shows only what the user has turned on. */
@@ -65,6 +80,77 @@ export function defaultModuleEntriesToHide(instances: ModuleInstance[]): Set<str
     if (hasNamed && def && def.item_count === 0) hide.add(moduleName);
   }
   return hide;
+}
+
+/** Collapse sibling instance tops that share a `nav_group` key into one
+ *  synthetic `__navgroup__<key>` entry (the connected stem+segments element),
+ *  preserving order — the group lands at its FIRST member's slot. Only groups
+ *  with ≥2 present members collapse; a lone member stays a normal top (nothing
+ *  to connect it to). `groupOf` maps a top's `name` → its `{key,label}`. Pure
+ *  for testability. */
+export function collapseNavGroups(
+  rawTops: OrgModuleListItem[],
+  groupOf: Map<string, { key: string; label: string }>,
+): { tops: OrgModuleListItem[]; groups: Map<string, { label: string; members: OrgModuleListItem[] }> } {
+  const groups = new Map<string, { label: string; members: OrgModuleListItem[] }>();
+  // Return a COPY, never the input array by reference: the caller does
+  // `rawTops.length = 0; rawTops.push(...groupedTops)` to refill the const
+  // `rawTops` in place. If we returned `rawTops` itself, `groupedTops` would
+  // alias it, the `.length = 0` would empty the very array being spread back,
+  // and the nav would silently go EMPTY for every workspace whose instances
+  // carry no `nav_group` (managed apps, fresh workspaces) — the grouped path
+  // below already builds a fresh `collapsed` array, which is why this only bit
+  // the un-grouped case.
+  if (groupOf.size === 0) return { tops: [...rawTops], groups };
+  const membersByKey = new Map<string, OrgModuleListItem[]>();
+  const labelByKey = new Map<string, string>();
+  for (const t of rawTops) {
+    const g = groupOf.get(t.name);
+    if (!g) continue;
+    if (!membersByKey.has(g.key)) membersByKey.set(g.key, []);
+    membersByKey.get(g.key)!.push(t);
+    labelByKey.set(g.key, g.label);
+  }
+  const collapsed: OrgModuleListItem[] = [];
+  const insertedKey = new Set<string>();
+  for (const t of rawTops) {
+    const g = groupOf.get(t.name);
+    const members = g ? membersByKey.get(g.key) ?? [] : [];
+    if (g && members.length >= 2) {
+      if (!insertedKey.has(g.key)) {
+        insertedKey.add(g.key);
+        const groupName = `${NAVGROUP_PREFIX}${g.key}`;
+        groups.set(groupName, { label: labelByKey.get(g.key)!, members });
+        collapsed.push({
+          name: groupName,
+          version: "0.1.0",
+          displayName: labelByKey.get(g.key)!,
+          description: "Instance group",
+          icon: null,
+          headerAction: null,
+          dependencies: [],
+          contributes: { fieldDefs: 0, wires: 0 },
+          enabled: true,
+          enabled_version: "0.1.0",
+          enabled_at: "",
+        });
+      }
+      // individual member folded into the group — dropped from tops
+    } else {
+      collapsed.push(t);
+    }
+  }
+  return { tops: collapsed, groups };
+}
+
+/** Drop a group's stem from a member label so its segment reads short:
+ *  ("Filament", "Filament Types") → "Types"; ("Filament", "Spools") → "Spools".
+ *  Case-insensitive prefix match on a word boundary; no match → full label. */
+export function stripNavStem(label: string, stem: string): string {
+  if (label.toLowerCase().startsWith(stem.toLowerCase() + " ")) {
+    return label.slice(stem.length).trimStart();
+  }
+  return label;
 }
 
 export function useNavModules(activeSlug: string): NavModules {
@@ -277,6 +363,27 @@ export function useNavModules(activeSlug: string): NavModules {
     childrenByParent.set(parent, arr);
   }
 
+  // Instance NAV-GROUPS: instances a bundle joined under one `nav_group.key`
+  // (e.g. Filament Types + Spools) collapse into ONE connected navbar element
+  // — a quiet stem + each member as a segment. Generic + presentational: read
+  // the group off each instance's presentation override (`config.nav_group`),
+  // gather the synthetic instance tops that share a key, and replace them in
+  // rawTops with a single `__navgroup__<key>` entry at the first member's slot.
+  // Only groups with ≥2 present members collapse; a lone member stays a normal
+  // top (nothing to connect it to).
+  const groupOf = new Map<string, { key: string; label: string }>(); // topName → group
+  for (const inst of instances.data?.items ?? []) {
+    if (inst.is_default) continue;
+    const o = overridesByKey.get(`instance:${inst.module_name}:${inst.instance_name}`);
+    const ng = o?.config?.nav_group as { key?: string; label?: string } | undefined;
+    if (ng?.key && ng?.label) {
+      groupOf.set(`${INSTANCE_PREFIX}${inst.instance_name}`, { key: ng.key, label: ng.label });
+    }
+  }
+  const { tops: groupedTops, groups: instanceGroups } = collapseNavGroups(rawTops, groupOf);
+  rawTops.length = 0;
+  rawTops.push(...groupedTops);
+
   // Fold user-defined headings (#2b): each heading becomes a synthetic
   // top-level GROUP; its members move out of their default position
   // (top row / under-module) into the heading's dropdown. Instance
@@ -376,11 +483,32 @@ export function useNavModules(activeSlug: string): NavModules {
   const hiddenNames = new Set(navHidden);
   const tops = allTops.filter((t) => !hiddenNames.has(t.name));
 
+  // TEMP DEBUG (#4 managed-app empty nav) — remove after diagnosis.
+  if (typeof window !== "undefined") {
+    (window as unknown as { __navDbg?: unknown }).__navDbg = {
+      activeSlug,
+      modStatus: modules.status,
+      modItems: modules.data?.items?.length ?? null,
+      instStatus: instances.status,
+      instItems: instances.data?.items?.length ?? null,
+      instNamed: (instances.data?.items ?? []).filter((i) => !i.is_default).map((i) => `${i.module_name}/${i.instance_name}`),
+      ovrItems: overrides.data?.items?.length ?? null,
+      enabled: enabled.length,
+      userFacing: userFacing.map((m) => m.name),
+      hideSet: [...hideDefaultModules],
+      rawTops: rawTops.map((t) => t.name),
+      allTops: allTops.map((t) => t.name),
+      tops: tops.map((t) => t.name),
+      navHidden,
+    };
+  }
+
   return {
     tops,
     allTops,
     hiddenNames,
     childrenByParent,
+    instanceGroups,
     enabledNames,
     isLoading: modules.isLoading || bundles.isLoading,
   };

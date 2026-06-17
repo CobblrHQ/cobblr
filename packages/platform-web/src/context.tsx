@@ -9,6 +9,10 @@ import type { PlatformWebApi } from "./types";
 interface PlatformWebCtx {
   api: PlatformWebApi;
   orgSlug: string;
+  /** True when the active workspace is a LOCKED managed vertical app
+   *  ("Cobblr for Yarn"). Lets shared/module UI trim platform-only chrome
+   *  (e.g. the QR-label option) without importing the host's org context. */
+  appMode: boolean;
 }
 
 const Ctx = createContext<PlatformWebCtx | null>(null);
@@ -16,13 +20,15 @@ const Ctx = createContext<PlatformWebCtx | null>(null);
 export function PlatformWebProvider({
   api,
   orgSlug,
+  appMode = false,
   children,
 }: {
   api: PlatformWebApi;
   orgSlug: string;
+  appMode?: boolean;
   children: ReactNode;
 }) {
-  return <Ctx.Provider value={{ api, orgSlug }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ api, orgSlug, appMode }}>{children}</Ctx.Provider>;
 }
 
 export function usePlatformWeb(): PlatformWebCtx {

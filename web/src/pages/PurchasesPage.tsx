@@ -406,7 +406,7 @@ function NewOrderModal({ open, onClose }: { open: boolean; onClose: () => void }
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="new order" size="sm">
+    <Modal open={open} onClose={onClose} title="New order" size="sm">
       <form onSubmit={submit} className="space-y-3">
         <label className="block">
           <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Vendor</span>
@@ -579,7 +579,7 @@ function VendorsModal({ onClose }: { onClose: () => void }) {
   });
 
   return (
-    <Modal open onClose={onClose} title="vendors" size="md">
+    <Modal open onClose={onClose} title="Vendors" size="md">
       <div className="space-y-3">
         {vendors.isLoading && <div className="text-sm text-muted">Loading…</div>}
         {vendors.data?.items.length === 0 && editing !== "new" && (
