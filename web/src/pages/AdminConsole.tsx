@@ -9,7 +9,7 @@
 // Access is gated server-side by SUPERADMIN_EMAILS (every /super-admin/* API)
 // and client-side by AdminLayout. See docs/operations/PRODUCTION_DEPLOY.md.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle,
@@ -1917,13 +1917,34 @@ function AnnouncementsTab() {
 }
 
 const FEEDBACK_STATUSES = ["new", "triaged", "in_progress", "backlog", "resolved", "wontfix"] as const;
+const FEEDBACK_FILTERS = ["all", ...FEEDBACK_STATUSES] as const;
+const FEEDBACK_SORTS = ["priority", "recent"] as const;
+type FeedbackSort = (typeof FEEDBACK_SORTS)[number];
+const FEEDBACK_FILTER_KEY = "cobblr.admin.feedback.filter";
+const FEEDBACK_SORT_KEY = "cobblr.admin.feedback.sort";
+
+function loadFeedbackFilter(): string {
+  const v = localStorage.getItem(FEEDBACK_FILTER_KEY);
+  return v && (FEEDBACK_FILTERS as readonly string[]).includes(v) ? v : "new";
+}
+function loadFeedbackSort(): FeedbackSort {
+  const v = localStorage.getItem(FEEDBACK_SORT_KEY);
+  return v && (FEEDBACK_SORTS as readonly string[]).includes(v) ? (v as FeedbackSort) : "priority";
+}
 
 // Feedback triage queue — what users submit via the FeedbackWidget lands here.
 function FeedbackTab() {
   const qc = useQueryClient();
   const toast = useToast();
-  const [filter, setFilter] = useState<string>("new");
-  const [sort, setSort] = useState<"priority" | "recent">("priority");
+  // Persist the filter/sort selection so it survives a refresh (reported bug).
+  const [filter, setFilter] = useState<string>(loadFeedbackFilter);
+  const [sort, setSort] = useState<FeedbackSort>(loadFeedbackSort);
+  useEffect(() => {
+    localStorage.setItem(FEEDBACK_FILTER_KEY, filter);
+  }, [filter]);
+  useEffect(() => {
+    localStorage.setItem(FEEDBACK_SORT_KEY, sort);
+  }, [sort]);
   const q = useQuery({
     queryKey: ["sa-feedback", filter, sort],
     queryFn: () => api.listFeedback(filter === "all" ? undefined : filter, sort),
@@ -1960,7 +1981,7 @@ function FeedbackTab() {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-1 text-xs font-mono flex-wrap">
-        {(["all", ...FEEDBACK_STATUSES] as const).map((s) => (
+        {FEEDBACK_FILTERS.map((s) => (
           <button
             key={s}
             type="button"
@@ -1977,7 +1998,7 @@ function FeedbackTab() {
         ))}
         <div className="flex-1" />
         <span className="text-faint dark:text-slate-500">sort</span>
-        {(["priority", "recent"] as const).map((s) => (
+        {FEEDBACK_SORTS.map((s) => (
           <button
             key={s}
             type="button"

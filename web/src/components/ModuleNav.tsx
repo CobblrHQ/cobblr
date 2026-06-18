@@ -168,7 +168,7 @@ function ModuleTopLink({ name, label }: { name: string; label: string }) {
   // Synthetic instance entries (useNavModules) route to the platform
   // per-instance page; real modules route to their own top path.
   const to = name.startsWith(INSTANCE_PREFIX)
-    ? `/instances/${name.slice(INSTANCE_PREFIX.length)}`
+    ? `/${name.slice(INSTANCE_PREFIX.length)}`
     : `/${name}`;
   return (
     <NavLink
@@ -211,7 +211,7 @@ function NavGroupSegments({
             <span className="text-faint/60 dark:text-slate-600 select-none">│</span>
           )}
           <NavLink
-            to={`/instances/${mem.name.slice(INSTANCE_PREFIX.length)}`}
+            to={`/${mem.name.slice(INSTANCE_PREFIX.length)}`}
             className={({ isActive }) =>
               "px-2 py-1 transition text-sm whitespace-nowrap " +
               (isActive
@@ -296,7 +296,7 @@ function MoreMenu({
 
   const childTo = (parentName: string, k: { name: string }) =>
     k.name.startsWith(INSTANCE_PREFIX)
-      ? `/instances/${k.name.slice(INSTANCE_PREFIX.length)}`
+      ? `/${k.name.slice(INSTANCE_PREFIX.length)}`
       : parentName.startsWith(HEADING_PREFIX)
         ? `/${k.name}`
         : `/${parentName}?lens=${k.name}`;
@@ -304,7 +304,7 @@ function MoreMenu({
     m.name.startsWith(HEADING_PREFIX) || m.name.startsWith(NAVGROUP_PREFIX)
       ? null
       : m.name.startsWith(INSTANCE_PREFIX)
-        ? `/instances/${m.name.slice(INSTANCE_PREFIX.length)}`
+        ? `/${m.name.slice(INSTANCE_PREFIX.length)}`
         : `/${m.name}`;
 
   return (
@@ -543,7 +543,7 @@ function ModuleGroupChip({
               const isInstance = k.name.startsWith(INSTANCE_PREFIX);
               const parentIsHeading = parent.name.startsWith(HEADING_PREFIX);
               const to = isInstance
-                ? `/instances/${k.name.slice(INSTANCE_PREFIX.length)}`
+                ? `/${k.name.slice(INSTANCE_PREFIX.length)}`
                 : parentIsHeading
                   ? `/${k.name}`
                   : `/${parent.name}?lens=${k.name}`;

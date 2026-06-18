@@ -152,9 +152,12 @@ export function WireComposer({
     >
       <div className="text-[10px] font-mono uppercase tracking-widest text-accent">{ed ? "// edit wire" : "// new wire"}</div>
 
-      {/* live plain-language preview */}
-      <div className="rounded-lg bg-subtle dark:bg-slate-800/70 px-3 py-2 text-sm text-content dark:text-mortar-100">
-        {preview}
+      {/* live plain-language preview — a read-only summary of the wire, not an
+          editable field; styled as a left-accent callout so it doesn't read like
+          the inputs below it. */}
+      <div className="rounded-lg border-l-2 border-accent/40 bg-subtle/60 dark:bg-slate-800/40 px-3 py-2">
+        <span className={L}>Preview</span>
+        <p className="text-sm italic text-muted dark:text-slate-300">{preview}</p>
       </div>
 
       {/* WHEN */}

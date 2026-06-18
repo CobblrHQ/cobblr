@@ -89,6 +89,10 @@ const CatalogMatchPage = lazy(() => import("./pages/CatalogMatchPage").then((m) 
 const PresentationPage = lazy(() => import("./pages/PresentationPage").then((m) => ({ default: m.PresentationPage })));
 const IntegrationsPage = lazy(() => import("./pages/IntegrationsPage").then((m) => ({ default: m.IntegrationsPage })));
 const AiPage = lazy(() => import("./pages/AiPage").then((m) => ({ default: m.AiPage })));
+// Generic renderer for hosted-only settings panels (billing/Slack live in the
+// closed overlay and are returned as declarative views; no panel-specific code
+// ships in open core).
+const HostedPanelPage = lazy(() => import("./pages/HostedPanelPage").then((m) => ({ default: m.HostedPanelPage })));
 const PortalConfigPage = lazy(() => import("./pages/PortalConfigPage").then((m) => ({ default: m.PortalConfigPage })));
 const AppsConfigPage = lazy(() => import("./pages/AppsConfigPage").then((m) => ({ default: m.AppsConfigPage })));
 const PermissionsPage = lazy(() => import("./pages/PermissionsPage").then((m) => ({ default: m.PermissionsPage })));
@@ -108,6 +112,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { PortalLayout } from "./components/PortalLayout";
 import { ToastProvider, ConfirmProvider } from "@cobblr/platform-web";
 import { api, getToken } from "./lib/api";
+import { useQuery } from "@tanstack/react-query";
 import { InstancePage } from "./pages/InstancePage";
 
 function RouteFallback() {
@@ -317,6 +322,30 @@ function ActiveOrgScopedRoutes() {
   // (409 noise on every /admin page) and the operator got a "send feedback"
   // bubble pointed at themselves.
   const onAdmin = location.pathname === "/admin" || location.pathname.startsWith("/admin/");
+  // Only mount the labels print-basket when the labels module is actually
+  // enabled. Otherwise its BasketWidget polls /modules/labels/queue every
+  // render and floods the console with 409s (the module's routes aren't
+  // mounted when it's off — e.g. managed apps like Cobblr-for-Yarn). Shares
+  // the cached ["org-modules"] query the nav already fetches → no extra request.
+  const orgModulesQ = useQuery({
+    queryKey: ["org-modules", activeSlug],
+    queryFn: () => api.orgModules(activeSlug),
+    enabled: !!activeSlug,
+    staleTime: 30_000,
+  });
+  // Named instances get a CLEAN top-level URL (`/3d-printers`, `/yarn`) — not
+  // `/instances/3d-printers` — so a specialisation reads as its own first-class
+  // thing in the address bar. Registered as explicit per-instance routes below
+  // (the canonical `/instances/:name` stays for back-compat / old bookmarks).
+  const instancesQ = useQuery({
+    queryKey: ["instances", activeSlug],
+    queryFn: () => api.listInstances(activeSlug),
+    enabled: !!activeSlug,
+    staleTime: 30_000,
+  });
+  const labelsEnabled = (orgModulesQ.data?.items ?? []).some(
+    (m) => m.name === "labels" && m.enabled,
+  );
   const shouldRedirectToPortal =
     activeSlug &&
     role &&
@@ -422,6 +451,17 @@ function ActiveOrgScopedRoutes() {
               /* suffix lets a packaged module UI mount its own nested
               routes (e.g. inventory's parts/:id) under the instance. */}
           <Route path="/instances/:name/*" element={<InstancePage />} />
+          {/* Clean top-level alias per named instance: `/3d-printers` renders the
+              instance directly (the prop overrides the route param). */}
+          {(instancesQ.data?.items ?? [])
+            .filter((i) => !i.is_default)
+            .map((i) => (
+              <Route
+                key={i.instance_name}
+                path={`/${i.instance_name}/*`}
+                element={<InstancePage instanceName={i.instance_name} />}
+              />
+            ))}
           <Route path="/machines" element={<MachinesPage />} />
           <Route path="/machines/:id" element={<MachinesPage />} />
           <Route path="/assets" element={<AssetsPage />} />
@@ -458,6 +498,7 @@ function ActiveOrgScopedRoutes() {
           <Route path="/configuration/presentation" element={<PresentationPage />} />
           <Route path="/configuration/integrations" element={<IntegrationsPage />} />
           <Route path="/configuration/ai" element={<AiPage />} />
+          <Route path="/configuration/x/:panelId" element={<HostedPanelPage />} />
           <Route path="/configuration/catalogs" element={<CatalogsPage />} />
           <Route path="/configuration/catalogs/match" element={<CatalogMatchPage />} />
           <Route path="/configuration/catalogs/:id" element={<CatalogDetailPage />} />
@@ -516,7 +557,7 @@ function ActiveOrgScopedRoutes() {
         <Route path="/super-admin" element={<ConsoleEscape />} />
       </Routes>
       </Suspense>
-      {!onAdmin && <LabelsBasket orgSlug={activeSlug} getToken={getToken} />}
+      {!onAdmin && labelsEnabled && <LabelsBasket orgSlug={activeSlug} getToken={getToken} />}
     </PlatformWebProvider>
   );
 }

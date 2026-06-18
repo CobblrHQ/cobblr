@@ -48,6 +48,18 @@ export function WireDetailModal({ open, onClose, slug, binding, onEdit }: Props)
       return d.action === binding?.action_id;
     }) ?? [];
 
+  // Resolve the originating bundle so the Origin row can name it and
+  // deep-link to that specific bundle — the binding only carries the
+  // bundle's internal id. Shares the cached ["bundles", slug] list.
+  const bundles = useQuery({
+    queryKey: ["bundles", slug],
+    queryFn: () => api.listBundles(slug),
+    enabled: open && !!binding?.bundle_id,
+  });
+  const originBundle = binding?.bundle_id
+    ? bundles.data?.items.find((b) => b.id === binding.bundle_id)
+    : undefined;
+
   const save = useMutation({
     mutationFn: () =>
       api.updateBinding(slug, binding!.id, {
@@ -128,11 +140,11 @@ export function WireDetailModal({ open, onClose, slug, binding, onEdit }: Props)
           <Row label="Origin">
             {binding.bundle_id ? (
               <Link
-                to="/bundles"
+                to={originBundle ? `/bundles?open=${originBundle.external_id}` : "/bundles"}
                 onClick={onClose}
                 className="text-accent hover:text-accent inline-flex items-center gap-1"
               >
-                bundle <ExternalLink size={11} />
+                {originBundle?.name ?? "bundle"} <ExternalLink size={11} />
               </Link>
             ) : (
               <span className="text-muted">user-authored</span>

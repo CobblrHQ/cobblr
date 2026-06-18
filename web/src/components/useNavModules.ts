@@ -309,7 +309,7 @@ export function useNavModules(activeSlug: string): NavModules {
     const o = overridesByKey.get(key);
     if (o?.hidden) continue;
     const display = o?.display_label ?? inst.display_name;
-    const synth: OrgModuleListItem & { _instance?: ModuleInstance } = {
+    const synth: OrgModuleListItem & { _instance?: ModuleInstance; navOrder?: number | null } = {
       name: `__instance__${inst.instance_name}`,
       version: "0.1.0",
       displayName: display,
@@ -322,6 +322,12 @@ export function useNavModules(activeSlug: string): NavModules {
       enabled_version: "0.1.0",
       enabled_at: inst.created_at,
       _instance: inst,
+      // Honour the override's nav_order so an app (or the user) can order
+      // instance tops — module tops already pick this up via
+      // applyEntityKindOverride; instance synths were missing it, so they only
+      // ever sorted alphabetically (Designs before Yarn). The allTops sort
+      // reads `.navOrder`.
+      navOrder: o?.nav_order ?? null,
     };
     // Top-level unless the override explicitly opts into nesting.
     const nestUnderModule =

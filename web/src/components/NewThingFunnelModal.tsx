@@ -95,6 +95,10 @@ export function NewThingFunnelModal({
           <p className="text-sm text-content dark:text-mortar-200">
             What kind of thing do you want to add to your workspace?
           </p>
+          <p className="text-xs text-muted dark:text-slate-400">
+            The difference is how it's organized — a thing that stands on its own,
+            or a category that lives inside one you already track.
+          </p>
           <button
             type="button"
             onClick={() => setStep("instance-pick-module")}
@@ -106,7 +110,13 @@ export function NewThingFunnelModal({
                 Its own thing
               </div>
               <div className="text-xs text-muted dark:text-slate-400 mt-1">
-                Separate from everything else — its own list, its own custom fields, possibly thousands of rows. (e.g., a "Cars" inventory separate from your "Tools" inventory)
+                <span className="font-medium text-content dark:text-mortar-200">
+                  Stands on its own.
+                </span>{" "}
+                Its own list with its own custom fields, and it can grow large
+                (thousands of rows). Choose this when what you're adding doesn't
+                belong inside anything you already track. Example: a "Cars" list,
+                separate from your "Tools."
               </div>
             </div>
           </button>
@@ -121,7 +131,13 @@ export function NewThingFunnelModal({
                 Sub-category of an existing thing
               </div>
               <div className="text-xs text-muted dark:text-slate-400 mt-1">
-                Shares custom fields and list views with a parent. Small (1–100 rows). Browsed together with siblings. (e.g., "Castle sets" within your Lego inventory)
+                <span className="font-medium text-content dark:text-mortar-200">
+                  Lives inside an existing thing.
+                </span>{" "}
+                Reuses that parent's custom fields and list views, and is browsed
+                alongside its siblings — best for small sets (1–100 rows). Choose
+                this when it's really just a subdivision of something you already
+                track. Example: "Castle sets" inside your Lego inventory.
               </div>
             </div>
           </button>

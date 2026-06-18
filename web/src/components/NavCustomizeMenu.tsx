@@ -44,12 +44,23 @@ export function NavCustomizeMenu() {
   const actionsHidden = new Set(readNavActionsHidden(activeSlug));
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
-  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
 
   useEffect(() => {
     if (open && btnRef.current) {
       const r = btnRef.current.getBoundingClientRect();
-      setPos({ top: r.bottom + 6, right: window.innerWidth - r.right });
+      // Prefer opening leftward (right edge aligned to the trigger) — that's
+      // the header case, where the trigger sits at the right edge. But the
+      // same menu also renders on /configuration where the trigger is at the
+      // LEFT, so right-aligning would push the 256px panel off the left edge
+      // (the "modal to far left" bug). Fall back to left-aligning, then clamp
+      // into the viewport so it can never overflow either edge.
+      const PANEL_W = 256; // w-64
+      const M = 8; // viewport margin
+      let left = r.right - PANEL_W;
+      if (left < M) left = r.left;
+      left = Math.max(M, Math.min(left, window.innerWidth - PANEL_W - M));
+      setPos({ top: r.bottom + 6, left });
     }
   }, [open]);
 
@@ -99,7 +110,7 @@ export function NavCustomizeMenu() {
         createPortal(
           <div
             data-nav-customize-pop
-            style={{ position: "fixed", top: pos.top, right: pos.right }}
+            style={{ position: "fixed", top: pos.top, left: pos.left }}
             className="z-50 w-64 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-2xl p-2"
           >
             <div className="flex items-baseline justify-between px-2 py-1">

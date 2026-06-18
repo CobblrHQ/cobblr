@@ -10,7 +10,41 @@ import { platform } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
 import { validateBundle, applyValidatedBundle, cmpVersion } from "../routes/bundles.js";
 import { getOfficialBundleManifest } from "../routes/registry.js";
-import { getManagedApp } from "./managed-apps.js";
+import { getManagedApp, type ManagedApp } from "./managed-apps.js";
+import { listInstances } from "./instances.js";
+import { upsertOverride } from "./entity-kind-overrides.js";
+
+/** Write the app's curated `nav_order` onto each nav entry's override, so the
+ *  navbar reads left-to-right in the intended order (Yarn, Hooks, Designs, …)
+ *  instead of alphabetically. Idempotent — safe to re-run on every app entry
+ *  (that's how an EXISTING workspace backfills). A nav entry is either a named
+ *  instance (target `instance:<module>:<instance_name>`) or a module's default
+ *  entry (target `instance:<module>:<module>`); `instance_name` is workspace-
+ *  unique, so the instance map disambiguates. Best-effort: a failure here must
+ *  never break provisioning / refresh. */
+async function applyManagedAppNavOrder(orgId: string, app: ManagedApp): Promise<void> {
+  if (!app.navOrder?.length) return;
+  try {
+    const insts = await listInstances(orgId);
+    const moduleByInstanceName = new Map(
+      insts.filter((i) => !i.is_default).map((i) => [i.instance_name, i.module_name]),
+    );
+    for (let i = 0; i < app.navOrder.length; i++) {
+      const entry = app.navOrder[i]!;
+      // Named instance → its module; otherwise the entry IS a module name and
+      // we target its default instance (`<module>:<module>`).
+      const moduleName = moduleByInstanceName.get(entry) ?? entry;
+      await upsertOverride({
+        orgId,
+        targetKind: "instance",
+        targetId: `${moduleName}:${entry}`,
+        navOrder: i,
+      });
+    }
+  } catch (err) {
+    console.error(`[applyManagedAppNavOrder] ${orgId} failed:`, (err as Error).message);
+  }
+}
 
 export interface ProvisionAppResult {
   orgId: string;
@@ -55,6 +89,10 @@ export async function provisionAppWorkspace(
   }
   await applyValidatedBundle(orgId, { id: userId, display_name: sess.display_name ?? null, auth_method: sess.auth_method, api_token_id: sess.api_token_id ?? null }, v);
 
+  // 2b. Curate the nav order (Yarn, Hooks, Designs, …) — the bundle creates the
+  //     instances/overrides above; this stamps each one's nav_order.
+  await applyManagedAppNavOrder(orgId, app);
+
   // 3. Flip the workspace into the managed app (the web then hides the platform
   //    and lands the user in app.homePath).
   const appMode = { app: app.id, home_path: app.homePath, label: app.label };
@@ -86,6 +124,11 @@ export async function refreshManagedApp(
     if (!appMode) return { updated: false };
     const app = getManagedApp(appMode.app);
     if (!app) return { updated: false };
+
+    // Always (re)assert the curated nav order — cheap, idempotent, and the path
+    // by which an EXISTING app backfills it (the web calls refresh-app once per
+    // session on entry). Runs before the version/feature early-return below.
+    await applyManagedAppNavOrder(orgId, app);
 
     const manifest = manifestOverride ?? (await getOfficialBundleManifest(app.bundleId));
     if (!manifest) return { updated: false }; // registry unreachable — leave the app as-is

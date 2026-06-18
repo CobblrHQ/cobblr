@@ -415,6 +415,15 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
 
       <MaintenancePanel entityModule="inventory" entityType="part" entityId={p.id} />
 
+      <ConsumptionPanel
+        partId={p.id}
+        qty={Number(p.qty)}
+        unit={p.unit}
+        capacity={pmeta.capacity != null ? Number(pmeta.capacity) : null}
+        trackedBy={typeof pmeta.tracked_by === "string" ? pmeta.tracked_by : null}
+        onSetCapacity={(c) => update.mutate({ metadata: { ...pmeta, capacity: c } })}
+      />
+
       <AllocationsPanel partId={p.id} />
 
       <div className="flex items-center justify-center gap-4 pt-4">
@@ -711,5 +720,159 @@ export function PartDetailModal({
     <Modal open onClose={onClose} title={part.data?.name ?? "Part"} size="xl">
       <PartDetailPage id={id} onClose={onClose} />
     </Modal>
+  );
+}
+
+// Consumption / spool view. `qty` is what's REMAINING; metadata.capacity is the
+// full / new amount (a 1kg spool). The ledger (inventory_consumption) is what
+// drew it down and how much — the spool's print/usage history. Generic: works
+// for filament, yarn, tape, anything you set a capacity on.
+function ConsumptionPanel({
+  partId,
+  qty,
+  unit,
+  capacity,
+  trackedBy,
+  onSetCapacity,
+}: {
+  partId: string;
+  qty: number;
+  unit: string;
+  capacity: number | null;
+  trackedBy?: string | null;
+  onSetCapacity: (c: number | null) => void;
+}) {
+  const { api } = useInventory();
+  const [editing, setEditing] = useState(false);
+  const [cap, setCap] = useState(capacity != null ? String(capacity) : "");
+  const log = useQuery({ queryKey: ["inventory-consumption", partId], queryFn: () => api.listConsumption(partId) });
+  const rows = log.data?.items ?? [];
+  const pct = capacity && capacity > 0 ? Math.max(0, Math.min(100, Math.round((qty / capacity) * 100))) : null;
+
+  // Externally tracked (e.g. a Spoolman spool): Spoolman owns the remaining; we
+  // mirror it and don't deduct. Show the source, the gauge, no editor/ledger.
+  if (trackedBy) {
+    const label = trackedBy.charAt(0).toUpperCase() + trackedBy.slice(1);
+    return (
+      <section className="rounded-xl border border-line dark:border-slate-700 p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-semibold text-content dark:text-mortar-100">Consumption</h3>
+          <span className="text-[10px] font-mono uppercase tracking-wider text-accent dark:text-cobble-300 bg-cobble-50 dark:bg-cobble-900/40 border border-cobble-200 dark:border-cobble-800 rounded px-1.5 py-0.5">
+            tracked by {label}
+          </span>
+        </div>
+        <div>
+          <div className="flex items-baseline justify-between text-sm">
+            <span className="text-content dark:text-mortar-100">
+              <b>{qty}</b> {unit} left
+            </span>
+            {capacity != null && pct != null && (
+              <span className="text-faint text-xs">
+                of {capacity} {unit} · {pct}%
+              </span>
+            )}
+          </div>
+          {capacity != null && pct != null && (
+            <div className="mt-1 h-2 rounded bg-line dark:bg-slate-700 overflow-hidden">
+              <div className={`h-full ${pct <= 15 ? "bg-ember-500" : "bg-moss-500"}`} style={{ width: `${pct}%` }} />
+            </div>
+          )}
+          <div className="text-[11px] text-faint mt-1">{label} owns this spool's count — Cobblr mirrors it on sync and doesn't deduct.</div>
+        </div>
+      </section>
+    );
+  }
+
+  // Not a consumable yet (no capacity, no history) — offer to make it one.
+  if (capacity == null && rows.length === 0 && !editing) {
+    return (
+      <div className="pt-1">
+        <button onClick={() => setEditing(true)} className="text-[11px] text-faint hover:text-accent">
+          + Track as a consumable (set a full capacity)
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <section className="rounded-xl border border-line dark:border-slate-700 p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <h3 className="text-sm font-semibold text-content dark:text-mortar-100">Consumption</h3>
+        <div className="flex-1" />
+        {!editing && (
+          <button
+            onClick={() => {
+              setCap(capacity != null ? String(capacity) : "");
+              setEditing(true);
+            }}
+            className="text-[11px] text-faint hover:text-accent"
+          >
+            {capacity != null ? "Edit capacity" : "Set capacity"}
+          </button>
+        )}
+      </div>
+
+      {editing ? (
+        <div className="flex items-center gap-2">
+          <input
+            type="number"
+            min="0"
+            step="any"
+            value={cap}
+            onChange={(e) => setCap(e.target.value)}
+            placeholder={`full amount (${unit})`}
+            className="w-44 px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+            autoFocus
+          />
+          <button
+            onClick={() => {
+              onSetCapacity(cap.trim() ? Number(cap) : null);
+              setEditing(false);
+            }}
+            className="text-xs rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2.5 py-1"
+          >
+            Save
+          </button>
+          <button onClick={() => setEditing(false)} className="text-xs text-faint hover:text-content">
+            Cancel
+          </button>
+        </div>
+      ) : capacity != null && pct != null ? (
+        <div>
+          <div className="flex items-baseline justify-between text-sm">
+            <span className="text-content dark:text-mortar-100">
+              <b>{qty}</b> {unit} left
+            </span>
+            <span className="text-faint text-xs">
+              of {capacity} {unit} · {pct}%
+            </span>
+          </div>
+          <div className="mt-1 h-2 rounded bg-line dark:bg-slate-700 overflow-hidden">
+            <div className={`h-full ${pct <= 15 ? "bg-ember-500" : "bg-moss-500"}`} style={{ width: `${pct}%` }} />
+          </div>
+        </div>
+      ) : null}
+
+      {rows.length > 0 && (
+        <div className="space-y-1">
+          <div className="text-[11px] font-mono uppercase tracking-wider text-faint">History</div>
+          <ul className="divide-y divide-line dark:divide-slate-800">
+            {rows.map((r) => {
+              const d = Number(r.delta);
+              return (
+                <li key={r.id} className="py-1.5 flex items-center gap-2 text-[13px]">
+                  <span className={"font-medium tabular-nums " + (d < 0 ? "text-ember-600 dark:text-ember-500" : "text-moss-600 dark:text-moss-400")}>
+                    {d < 0 ? "" : "+"}
+                    {d} {unit}
+                  </span>
+                  <span className="text-muted dark:text-slate-400 truncate flex-1">{r.reason ?? r.source_kind ?? "adjustment"}</span>
+                  <span className="text-[11px] text-faint shrink-0">{new Date(r.at).toLocaleDateString()}</span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+    </section>
   );
 }

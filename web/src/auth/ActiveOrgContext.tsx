@@ -41,7 +41,14 @@ export function resolveHandle(handle: string, orgs: OrgMembership[]): OrgMembers
   return matches.length === 1 ? matches[0]! : null;
 }
 
-/** Last-active org if still valid, else the first. null if the user has none. */
+/** Where a bare URL lands: the last-active org if still valid (resume on a
+ *  device you've used), else a sensible fallback. The fallback prefers your
+ *  first OWNED workspace — the top of the switcher's owned-first grouping —
+ *  rather than the raw `orgs[0]`, which is your OLDEST membership by join date
+ *  (`joined_at asc` from the API) and can be a shared workspace sitting low in
+ *  the list. So a fresh device opens into the top of your switcher, not an
+ *  arbitrary old/shared one. (A user-pinned default workspace is a deliberate
+ *  follow-up; this just makes the no-preference fallback intuitive.) */
 export function pickDefaultOrg(orgs: OrgMembership[]): OrgMembership | null {
   if (orgs.length === 0) return null;
   try {
@@ -51,7 +58,7 @@ export function pickDefaultOrg(orgs: OrgMembership[]): OrgMembership | null {
   } catch {
     /* ignore */
   }
-  return orgs[0]!;
+  return orgs.find((o) => o.role === "owner") ?? orgs[0]!;
 }
 
 interface ActiveOrgCtx {

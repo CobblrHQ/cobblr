@@ -26,6 +26,7 @@ import { orgsRouter } from "./routes/orgs.js";
 import { platformOrgRouter } from "./routes/platform.js";
 import { calendarOrgRouter, calendarPublicRouter } from "./routes/calendar.js";
 import { bundlesRouter } from "./routes/bundles.js";
+import { quickstartRouter } from "./routes/quickstart.js";
 import { blueprintRouter } from "./routes/blueprint.js";
 import { backupRouter, backupGoogleCallbackRouter } from "./routes/backup.js";
 import { membersRouter, invitesRootRouter } from "./routes/members.js";
@@ -41,6 +42,7 @@ import { sandboxInstallRouter } from "./routes/sandbox-install.js";
 import { registryRouter } from "./routes/registry.js";
 import { customRolesRouter } from "./routes/custom-roles.js";
 import { driveRouter } from "./routes/drive.js";
+import { scanDriveRouter } from "./routes/scan-drive.js";
 import { instancesRouter, overridesRouter } from "./routes/instances.js";
 import { navHeadingsRouter } from "./routes/nav-headings.js";
 import { requireAuth } from "./auth/middleware.js";
@@ -49,6 +51,8 @@ import { resolveInstance } from "./middleware/instance.js";
 import { dispatchInstanceItems } from "./modules/mount.js";
 import { qrScanRouter } from "./routes/qr-scan.js";
 import { integrationsInboundRouter } from "./routes/integrations-inbound.js";
+import { hooksRouter } from "./routes/hooks.js";
+import { hostedPanelsRouter } from "./routes/hosted-panels.js";
 
 export interface AppHandles {
   app: Application;
@@ -80,14 +84,14 @@ export function createApp(): AppHandles {
   app.use(
     express.json({
       limit: "1mb",
-      // Capture raw body bytes on inbound webhook paths so the
-      // integrations receiver can verify HMAC signatures against the
-      // exact bytes that were transmitted. Cheap (one toString per
-      // request, kept only on the request object), bounded to the
-      // /integrations/ path so we don't keep raw bytes for every API
-      // call.
+      // Capture raw body bytes on inbound webhook paths so the receivers can
+      // verify provider signatures (HMAC / Stripe) against the exact bytes that
+      // were transmitted. Cheap (one toString per request, kept only on the
+      // request object), bounded to the webhook paths — /integrations/ (the
+      // per-workspace inbound receiver) and /hooks/ (the global public-webhook
+      // receiver) — so we don't keep raw bytes for every API call.
       verify: (req, _res, buf) => {
-        if (req.url?.startsWith("/api/v1/integrations/")) {
+        if (req.url?.startsWith("/api/v1/integrations/") || req.url?.startsWith("/api/v1/hooks/")) {
           (req as unknown as { rawBody?: string }).rawBody = buf.toString("utf8");
         }
       },
@@ -136,6 +140,11 @@ export function createApp(): AppHandles {
   // the token in the URL is the secret. See
   // modules/core-integrations.
   v1.use("/integrations", integrationsInboundRouter);
+  // Global public-webhook receiver for ACCOUNT-LEVEL provider webhooks (Stripe
+  // billing, etc.). Unauthenticated; the handler verifies its own signature.
+  // Open core registers no handlers (404 until an overlay/module does). See
+  // platform().http.registerWebhook + routes/hooks.ts.
+  v1.use("/hooks", hooksRouter);
   // Inbound feedback email (reply-by-email). Unauthenticated at the router level;
   // the Cloudflare Email Worker authenticates with COBBLR_INBOUND_EMAIL_SECRET.
   v1.use(feedbackInboundRouter);
@@ -148,6 +157,9 @@ export function createApp(): AppHandles {
   v1.use("/orgs", calendarOrgRouter);
   // Member portal config + per-action capability grants.
   v1.use("/orgs", portalRouter);
+  // Generic hosted settings panels — empty in open core; the overlay registers
+  // billing/Slack. The web app renders them with one generic renderer.
+  v1.use("/orgs", hostedPanelsRouter);
   // Admin dashboard widget arrangement (order + visibility).
   v1.use("/orgs", dashboardRouter);
   // Admin user creation (no-email onboarding flow).
@@ -157,6 +169,8 @@ export function createApp(): AppHandles {
   // Browser driving (Feature 3): SSE relay so Claude (via MCP) can drive the
   // user's open tab — gated by a per-workspace grant + a drive:control token.
   v1.use("/orgs", driveRouter);
+  // A scan drives the user's designated tab (scan-drives-screen, Phase 1).
+  v1.use("/orgs", scanDriveRouter);
   // Super-admin (platform operator) surface — cross-workspace
   // dashboards. Gated by SUPERADMIN_EMAILS env var.
   v1.use("/super-admin", superAdminRouter);
@@ -171,6 +185,10 @@ export function createApp(): AppHandles {
   // Bundles live one layer further down — same auth + tenant
   // middleware, dedicated mount for clarity.
   v1.use("/orgs/:slug/bundles", bundlesRouter);
+  // Capture-first onboarding: the flagship bundle menu, the pending-capture
+  // rollup, and materialize (install a bundle + batch-commit captures). See
+  // docs/design-decisions/capture-first-onboarding.md.
+  v1.use("/orgs/:slug/quickstart", quickstartRouter);
   // Blueprint (workspace setup snapshot) + Backup (setup + data + files).
   // Both sit at the workspace level above bundles. See
   // docs/architecture/blueprint-backup-export.md.

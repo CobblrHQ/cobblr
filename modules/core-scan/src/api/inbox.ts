@@ -3,6 +3,9 @@
 // v0.1 routes:
 //   POST /scan                  — ingest a barcode (photos = v0.2).
 //                                  Inline-enriches up to a 12s budget.
+//   POST /scan/note              — capture free text → matchmaker.
+//   POST /scan/receipt          — parse a receipt PDF/photo (core-ai) into
+//                                  one inbox row per line item.
 //   GET  /inbox                  — list pending+resolved items.
 //   GET  /inbox/:id              — one item.
 //   POST /inbox/:id/confirm      — commit into target_module/kind.
@@ -15,6 +18,7 @@
 // obtained from a separate multipart endpoint — keeps the JSON
 // body limits sane.
 
+import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
@@ -23,7 +27,8 @@ import { asyncHandler, badBody, requireRole } from "./util.js";
 import { downloadCatalogImage, enrichBarcodeItem } from "../services/enrich.js";
 import { enrichPhotoItem, observeScanPhoto } from "../services/enrich-photo.js";
 import { searchImages } from "../services/ddg-images.js";
-import { assembleScanMenu, runMatchmaker } from "../services/matchmaker.js";
+import { assembleScanMenu, assembleMergedMenu, runMatchmaker } from "../services/matchmaker.js";
+import { parseReceipt } from "../services/receipt.js";
 
 export const inboxRouter = Router({ mergeParams: true });
 
@@ -181,6 +186,170 @@ inboxRouter.post(
   }),
 );
 
+// ─────────────────────────── POST /scan/note ───────────────────────
+// Capture-first "write something down": free text the user typed, with ZERO
+// structure set up. The text IS the perceived item — the matchmaker routes it
+// against the merged menu (the flagship bundle shapes on a blank workspace) and
+// extracts fields, exactly like a scan. No enrichment to wait for, so the match
+// fires immediately + detached; the web polls /inbox for the suggestion.
+
+const NoteBody = z.object({
+  text: z.string().trim().min(1).max(2000),
+  scan_batch_id: z.string().uuid().optional(),
+  scan_area: z.string().max(200).optional(),
+});
+
+inboxRouter.post(
+  "/scan/note",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const parsed = NoteBody.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const body = parsed.data;
+
+    const db = tenantDb(req);
+    const ctx = tenantContext(req);
+    const session = sessionUser(req);
+
+    const inserted = await db
+      .insertInto("core_scan_inbox_items")
+      .values({
+        source_kind: "note",
+        // The raw text is both the provisional name AND the matchmaker's
+        // description — it's all we know until the model reads it.
+        suggested_name: body.text.slice(0, 300),
+        suggested_metadata: JSON.stringify({ description: body.text }) as never,
+        scan_batch_id: body.scan_batch_id ?? null,
+        scan_area: body.scan_area ?? null,
+        created_by_user_id: session.id,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+
+    void platform().events.emit("core-scan.scan.received", {
+      orgId: ctx.org.id,
+      itemId: inserted.id,
+      barcode: null,
+      sourceKind: "note",
+    });
+
+    // No enrichment to wait for — route immediately, detached. The web polls
+    // /inbox for the candidates (same passive "AI is reading…" pulse as a scan).
+    const token = bearer(req);
+    if (token) {
+      const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+      void matchItem({
+        orgId: ctx.org.id,
+        orgSlug: ctx.org.slug,
+        token,
+        baseUrl,
+        itemId: inserted.id,
+        force: true,
+      }).catch((err) => console.error("[core-scan] note match threw:", (err as Error).message));
+    }
+    res.status(201).json(inserted);
+  }),
+);
+
+// ─────────────────────────── POST /scan/receipt ────────────────────
+// Upload-a-receipt intake: a receipt PDF (or a photo of one) is parsed by
+// core-ai into vendor + date + line items, then EACH line becomes its own
+// scan-inbox row (source_kind "receipt") sharing a receipt_group_id. From there
+// every line rides the same matchmaker + confirm flow a barcode/photo scan
+// does — a receipt becomes N parts without retyping. The file is uploaded
+// separately via core-files (like image_file_id), keeping this body small.
+
+const ReceiptBody = z.object({ file_id: z.string().uuid() });
+
+inboxRouter.post(
+  "/scan/receipt",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const parsed = ReceiptBody.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+
+    const db = tenantDb(req);
+    const ctx = tenantContext(req);
+    const session = sessionUser(req);
+
+    const result = await parseReceipt(ctx.org.id, parsed.data.file_id);
+    if (!result.ok) {
+      // 422: the file was read but yielded no usable line items (bad scan, no
+      // AI provider, not a receipt). The reason is user-facing.
+      res.status(422).json({ error: { code: "receipt_unparsed", message: result.reason } });
+      return;
+    }
+    const { receipt } = result;
+
+    // One inbox row per line item, grouped by a shared receipt id so the UI can
+    // show "<vendor> — N items" and triage them together. Vendor/date/currency
+    // ride in metadata; the line price stays on the row for a later order rollup.
+    const groupId = randomUUID();
+    const baseMeta = {
+      source: "receipt",
+      receipt_group_id: groupId,
+      receipt_vendor: receipt.vendor,
+      receipt_date: receipt.date,
+      receipt_currency: receipt.currency,
+    };
+
+    const rows: Array<{ id: string }> = [];
+    for (const line of receipt.items) {
+      const inserted = await db
+        .insertInto("core_scan_inbox_items")
+        .values({
+          source_kind: "receipt",
+          suggested_name: line.description.slice(0, 300),
+          quantity: Math.max(1, Math.round(line.qty || 1)),
+          suggested_metadata: JSON.stringify({
+            ...baseMeta,
+            description: line.description,
+            unit_price: line.unit_price,
+            line_total: line.line_total,
+          }) as never,
+          created_by_user_id: session.id,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      rows.push(inserted);
+      void platform().events.emit("core-scan.scan.received", {
+        orgId: ctx.org.id,
+        itemId: inserted.id,
+        barcode: null,
+        sourceKind: "receipt",
+      });
+    }
+
+    // Route each line against the menu, detached — same as /scan/note. No
+    // enrichment to wait for (we already have name + qty + price).
+    const token = bearer(req);
+    if (token) {
+      const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+      for (const row of rows) {
+        void matchItem({
+          orgId: ctx.org.id,
+          orgSlug: ctx.org.slug,
+          token,
+          baseUrl,
+          itemId: row.id,
+          force: false,
+        }).catch((err) => console.error("[core-scan] receipt match threw:", (err as Error).message));
+      }
+    }
+
+    res.status(201).json({
+      receipt: {
+        vendor: receipt.vendor,
+        date: receipt.date,
+        currency: receipt.currency,
+        total: receipt.total,
+        item_count: rows.length,
+      },
+      items: rows,
+    });
+  }),
+);
+
 // ─────────────────────────── GET /inbox ────────────────────────────
 
 const ListQuery = z.object({
@@ -269,6 +438,25 @@ inboxRouter.patch(
     if (!row) {
       res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
       return;
+    }
+
+    // Manual-name fallback: when the user NAMES a previously-unidentified item
+    // (a bare photo on a no-vision workspace — see enrich-photo's "fill in
+    // manually"), re-route it through the matchmaker so the heuristic (or AI)
+    // suggests a table + fills fields, instead of leaving them to pick. Detached,
+    // forced (the row had no name, so it was never matched). The web polls /inbox.
+    const token = bearer(req);
+    if (parsed.data.name !== undefined && parsed.data.name.trim() && token) {
+      const ctx = tenantContext(req);
+      const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+      void matchItem({
+        orgId: ctx.org.id,
+        orgSlug: ctx.org.slug,
+        token,
+        baseUrl,
+        itemId: id,
+        force: true,
+      }).catch((err) => console.error("[core-scan] re-match after rename threw:", (err as Error).message));
     }
     res.json(row);
   }),
@@ -542,7 +730,7 @@ inboxRouter.post(
     const sess = sessionUser(req);
     if (parsed.data.save_eval_case && sess.is_platform_admin) {
       try {
-        const menu = await assembleScanMenu(baseUrl, ctx.org.slug, token);
+        const menu = await assembleMergedMenu(baseUrl, ctx.org.slug, token);
         await db
           .insertInto("core_scan_eval_cases")
           .values({
@@ -871,7 +1059,7 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
       ]);
     }
 
-    const menu = await assembleScanMenu(opts.baseUrl, opts.orgSlug, opts.token);
+    const menu = await assembleMergedMenu(opts.baseUrl, opts.orgSlug, opts.token);
     const candidates = await runMatchmaker(
       opts.orgId,
       {
@@ -917,6 +1105,11 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
               ai_confidence: String((top as { confidence: number }).confidence),
             }
           : {}),
+        // Stamp the canonical "matchmaker has run" marker. Without it a note that
+        // matched NOTHING (e.g. "3d printer" on a blank workspace) left the web's
+        // "reading…" pulse spinning forever — the UI keys off ai_suggested_at to
+        // know enrichment finished. Set once; a re-match keeps the original stamp.
+        ...(row.ai_suggested_at ? {} : { ai_suggested_at: new Date() }),
         updated_at: new Date(),
       })
       .where("id", "=", opts.itemId)

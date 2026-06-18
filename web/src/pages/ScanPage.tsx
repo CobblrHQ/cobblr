@@ -15,15 +15,17 @@
 // URL intake is deliberately absent: the API stores source_url but
 // nothing enriches it yet — a dead control is worse than none.
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Camera,
   CheckCircle,
   ChevronDown,
   ExternalLink,
+  FileText,
   MapPin,
+  MonitorSmartphone,
   RotateCcw,
   ScanLine,
   Sparkles,
@@ -41,6 +43,8 @@ import {
   type ScanMenuEntry,
 } from "../lib/api";
 import { matchParentType, readField } from "../lib/parent-type-match";
+import { useBarcodeWedge } from "../lib/useBarcodeWedge";
+import { tabBrowserId } from "../hooks/useBrowserDrive";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useAuth } from "../auth/AuthContext";
 
@@ -56,6 +60,168 @@ const FALLBACK_MENU: ScanMenuEntry[] = [
 /** The confirm endpoint's target_kind is the module's BASE kind. */
 function baseKind(module: string): string {
   return module === "assets" ? "asset" : module === "machines" ? "machine" : "part";
+}
+
+// ── scan-drives-screen (Phase 1) ─────────────────────────────────────────────
+interface ScanDrive {
+  /** Has this tab opted in as the driven screen? */
+  on: boolean;
+  /** True once the drive hub has actually claimed THIS tab (stream connected). */
+  active: boolean;
+  /** Toggle this tab as the driven screen (non-destructive to a Claude grant). */
+  toggle: () => void;
+  /** Route a scanned code through /scan-drive (navigate the driven tab / intake). */
+  scan: (code: string) => void;
+}
+
+/** Own the "drive this screen with scans" opt-in. Reuses the browser-drive hub
+ *  built for Claude driving — but does NOT open its own SSE stream: the
+ *  always-mounted DriveBanner already runs the stream app-wide (so navigation
+ *  survives leaving /scan), keyed by the same per-tab id. Turning on raises the
+ *  workspace grant to `navigate` (if it was off), claims THIS tab, and routes
+ *  scans through POST /scan-drive. Turning off releases the tab and restores the
+ *  grant if WE raised it — never clobbering a separately-enabled Claude grant. */
+function useScanDrive(slug: string | undefined, batchId: string | undefined): ScanDrive {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const navigate = useNavigate();
+  const [on, setOn] = useState(false);
+  const weRaisedGrant = useRef(false);
+  const bid = useRef(tabBrowserId());
+
+  // Remember the opt-in per workspace so a refresh keeps this as the scan screen.
+  useEffect(() => {
+    if (!slug) return;
+    setOn(localStorage.getItem(`cobblr.scanDrive.${slug}`) === "1");
+  }, [slug]);
+
+  // Is the hub pointing at THIS tab? Poll status while opted in.
+  const statusQ = useQuery({
+    queryKey: ["drive-status", slug],
+    queryFn: () => api.driveStatus(slug!),
+    enabled: !!slug && on,
+    refetchInterval: 1500,
+  });
+  const active = on && statusQ.data?.active === bid.current;
+
+  // Claim this tab as the driven one. The DriveBanner stream needs a beat to
+  // connect after the grant flips on, so retry until the hub reports us active.
+  useEffect(() => {
+    if (!on || !slug || active) return;
+    const claim = () => {
+      void api.driveTabAccept(slug, bid.current).catch(() => {});
+      void qc.invalidateQueries({ queryKey: ["drive-status", slug] });
+    };
+    claim();
+    const iv = setInterval(claim, 1200);
+    return () => clearInterval(iv);
+  }, [on, slug, active, qc]);
+
+  const toggle = useCallback(() => {
+    if (!slug) return;
+    if (on) {
+      setOn(false);
+      localStorage.removeItem(`cobblr.scanDrive.${slug}`);
+      void api.driveTabRelease(slug, bid.current).catch(() => {});
+      if (weRaisedGrant.current) {
+        weRaisedGrant.current = false;
+        void api.setDriveGrant(slug, "off").finally(() =>
+          qc.invalidateQueries({ queryKey: ["drive-grant", slug] }),
+        );
+      }
+      return;
+    }
+    // Turn on: raise the grant only if it's currently off (don't downgrade a
+    // navigate_observe Claude grant; remember if WE were the one to raise it).
+    void api
+      .driveGrant(slug)
+      .then((g) => {
+        if (g.mode === "off") {
+          weRaisedGrant.current = true;
+          return api.setDriveGrant(slug, "navigate");
+        }
+        return null;
+      })
+      .catch(() => null)
+      .finally(() => {
+        // DriveBanner caches the grant 60s — nudge it to (re)open the stream now.
+        void qc.invalidateQueries({ queryKey: ["drive-grant", slug] });
+        setOn(true);
+        localStorage.setItem(`cobblr.scanDrive.${slug}`, "1");
+      });
+  }, [slug, on, qc]);
+
+  const scanMut = useMutation({
+    mutationFn: (code: string) => api.scanDrive(slug!, code, batchId),
+    onSuccess: (r) => {
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", slug] });
+      // The driven tab is navigated server-push via the DriveBanner stream. If
+      // nothing is driven (single-device, no opt-in), do the friendly thing
+      // locally so a QR scan on this very tab still opens the entity.
+      if (!r.driven && r.kind === "qr" && r.path) navigate(r.path);
+      if (r.kind === "qr") toast.success("Opened from QR");
+      else toast.success(r.driven ? "Scanned → sent to your screen" : "Scanned → in the inbox");
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+
+  return { on, active, toggle, scan: (code) => scanMut.mutate(code) };
+}
+
+/** The opt-in card: "this is my scan screen." */
+function ScanDrivePanel({ drive }: { drive: ScanDrive }) {
+  const active = drive.active;
+  return (
+    <div
+      className={
+        "flex items-center gap-3 rounded-md border px-3 py-2 text-sm transition " +
+        (drive.on
+          ? "border-cobble-400 dark:border-cobble-600 bg-cobble-50 dark:bg-cobble-900/30"
+          : "border-line dark:border-slate-700")
+      }
+    >
+      <MonitorSmartphone
+        size={18}
+        className={(drive.on ? "text-accent" : "text-faint") + " shrink-0"}
+      />
+      <div className="min-w-0 flex-1">
+        <div className="text-content dark:text-mortar-100">
+          {drive.on ? "This screen follows your scans" : "Drive this screen with scans"}
+        </div>
+        <div className="text-xs text-muted dark:text-slate-400">
+          {drive.on
+            ? active
+              ? "Scan a bin or item from anywhere — it jumps to it here."
+              : "Connecting this screen…"
+            : "Make this the screen a wireless scan jumps to — a bin opens that bin, an item opens its intake."}
+        </div>
+      </div>
+      {drive.on && (
+        <span
+          className={
+            "shrink-0 rounded-full px-2 py-0.5 text-xs " +
+            (active
+              ? "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300"
+              : "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300")
+          }
+        >
+          {active ? "live" : "…"}
+        </span>
+      )}
+      <button
+        type="button"
+        onClick={drive.toggle}
+        className={
+          "shrink-0 rounded border px-2.5 py-1 text-sm transition " +
+          (drive.on
+            ? "border-line dark:border-slate-700 text-content hover:bg-subtle dark:hover:bg-slate-800/70"
+            : "border-cobble-600 bg-cobble-600 text-white hover:bg-cobble-700")
+        }
+      >
+        {drive.on ? "Stop" : "Use this screen"}
+      </button>
+    </div>
+  );
 }
 
 /** Selection key for a menu entry. */
@@ -149,6 +315,46 @@ export function AiOffMissHint({ status }: { status: AiStatus | null }) {
   );
 }
 
+/** Inline "name it yourself" for a scan that couldn't be auto-identified (a bare
+ *  photo with no vision provider). Naming it triggers a server re-match, so the
+ *  heuristic (or AI) suggests a table + fills fields — a one-field entry instead
+ *  of a dead end. Stops click propagation so typing doesn't expand the card. */
+function NameItInline({ slug, itemId }: { slug: string; itemId: string }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [name, setName] = useState("");
+  const mut = useMutation({
+    mutationFn: () => api.updateScanItem(slug, itemId, { name: name.trim() }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", slug] });
+      toast.success("Got it — finding the right table…");
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+  return (
+    <div className="mt-1.5 flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+      <input
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        placeholder="What is this? e.g. blue worsted yarn"
+        aria-label="Name this item"
+        className="input !py-1 !text-xs flex-1"
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && name.trim()) mut.mutate();
+        }}
+      />
+      <button
+        type="button"
+        disabled={!name.trim() || mut.isPending}
+        onClick={() => mut.mutate()}
+        className="shrink-0 rounded bg-cobble-600 text-white text-xs font-medium px-2.5 py-1 hover:bg-cobble-700 transition disabled:opacity-50"
+      >
+        Identify
+      </button>
+    </div>
+  );
+}
+
 /** Where scans confirm into — a module instance (e.g. the "yarn" inventory
  *  instance), passed via the URL when you scan from an instance's table. */
 export type ScanTarget = { instance: string; module: string; kind: string; label: string };
@@ -173,6 +379,7 @@ export function ScanPage() {
   // anyway); Upload triggers the hidden file input DIRECTLY — no modal hop.
   const [upcOpen, setUpcOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const receiptRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
 
   async function uploadPhoto(file: File) {
@@ -187,6 +394,25 @@ export function ScanPage() {
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  // A receipt PDF/photo → core-ai pulls out the line items → one inbox row
+  // per item, each triaged into a part below like any other scan.
+  async function uploadReceipt(file: File) {
+    setUploading(true);
+    try {
+      const rec = await api.uploadFile(activeSlug, file);
+      const out = await api.scanReceipt(activeSlug, rec.id);
+      const n = out.receipt.item_count;
+      const from = out.receipt.vendor ? ` from ${out.receipt.vendor}` : "";
+      toast.success(`Found ${n} item${n === 1 ? "" : "s"}${from} — review below`);
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setUploading(false);
+      if (receiptRef.current) receiptRef.current.value = "";
     }
   }
 
@@ -207,6 +433,36 @@ export function ScanPage() {
 
   const aiStatus = useAiStatus();
   const items = list.data?.items ?? [];
+
+  // Hardware barcode scanners (USB/Bluetooth HID, 1D or 2D) "type" the code +
+  // Enter. Capture that burst page-wide so a physical scan intakes a barcode
+  // hands-free — no need to open the UPC modal first. Keystrokes aimed at a real
+  // input (the UPC field, search…) pass through untouched (see useBarcodeWedge).
+  const wedgeScan = useMutation({
+    mutationFn: (code: string) =>
+      api.scanBarcode(activeSlug, {
+        barcode: code,
+        source_kind: "barcode",
+        scan_batch_id: batchId ?? undefined,
+      }),
+    onSuccess: (item) => {
+      toast.success(`Scanned: ${item.suggested_name ?? `Barcode ${item.barcode_text}`}`);
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+
+  // ── scan-drives-screen (Phase 1): a scan is a DRIVER ─────────────────────────
+  // When ON, this tab is the "driven screen" (reusing the browser-drive hub built
+  // for Claude): every scan POSTs to /scan-drive, which routes a Cobblr QR →
+  // navigate the driven tab there, a product barcode → intake + jump to the
+  // inbox, nothing → triage. A scanner anywhere (this device's wedge, or a phone
+  // BT scanner, or — Phase 2 — an edge bridge) drives whichever tab opted in.
+  const scanDrive = useScanDrive(activeSlug, batchId ?? undefined);
+  useBarcodeWedge({
+    enabled: !!activeSlug && !upcOpen,
+    onScan: (code) => (scanDrive.on ? scanDrive.scan(code) : wedgeScan.mutate(code)),
+  });
 
   // The workspace scan MENU — the same instances-with-fields catalog the
   // matchmaker prompts with. Drives the confirm form's target picker, so
@@ -293,6 +549,25 @@ export function ScanPage() {
             if (f) void uploadPhoto(f);
           }}
         />
+        <button
+          type="button"
+          onClick={() => receiptRef.current?.click()}
+          disabled={uploading}
+          title="Upload a receipt PDF or photo — we'll pull out the line items"
+          className={headerBtn + (uploading ? " opacity-50" : "")}
+        >
+          <FileText size={15} /> Receipt
+        </button>
+        <input
+          ref={receiptRef}
+          type="file"
+          accept="application/pdf,image/*"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) void uploadReceipt(f);
+          }}
+        />
         <Link
           to={`/scan/camera${params.toString() ? `?${params}` : ""}`}
           title="Open the full-screen scanner"
@@ -304,6 +579,8 @@ export function ScanPage() {
       </div>
 
       <AiOffNotice status={aiStatus} />
+
+      <ScanDrivePanel drive={scanDrive} />
 
       {/* When you arrived here from an instance's table ("Scan" on the Yarn
           page), confirms default into that instance. */}
@@ -320,6 +597,10 @@ export function ScanPage() {
           <ScanLine size={28} className="mx-auto text-faint dark:text-slate-600 mb-2" />
           <div className="text-sm text-muted dark:text-slate-400">
             Nothing pending. Open the camera or add a UPC / photo above.
+          </div>
+          <div className="text-xs text-faint dark:text-slate-500 mt-1">
+            Got a USB or Bluetooth barcode scanner? Just point and scan — it lands
+            here automatically, no need to open anything first.
           </div>
         </div>
       )}
@@ -464,11 +745,20 @@ function InboxCard({
   // resolves on its own.
   const candidates = (item.suggested_candidates ?? []).slice(0, 3);
   const topCand = candidates[0] ?? null;
+  // Stuck-nameless: enrichment finished (ai_suggested_at) but produced no name
+  // and no candidates — a bare photo that couldn't be auto-identified. Offer the
+  // manual "name it" entry instead of an endless "AI is reading…" pulse.
+  const needsName =
+    item.status === "pending" &&
+    !item.suggested_name &&
+    !!item.ai_suggested_at &&
+    candidates.length === 0;
   const serverMatching =
     item.status === "pending" &&
     !!(item.suggested_name || item.ai_suggested_at) &&
     candidates.length === 0 &&
-    !(item.suggested_metadata as { matched_at?: string } | null)?.matched_at;
+    !(item.suggested_metadata as { matched_at?: string } | null)?.matched_at &&
+    !needsName;
 
   const discard = useMutation({
     mutationFn: () => api.discardScanItem(activeSlug, item.id),
@@ -546,6 +836,8 @@ function InboxCard({
               <span className="text-accent animate-pulse">Re-running the lookup…</span>
             ) : serverMatching ? (
               <span className="text-accent animate-pulse">AI is reading the details…</span>
+            ) : needsName ? (
+              <span className="text-muted">Couldn’t identify this photo — name it:</span>
             ) : (
               <span className="text-faint italic">Awaiting lookup…</span>
             )}
@@ -559,6 +851,7 @@ function InboxCard({
           {!expanded && item.ai_notes && (
             <div className="text-[11px] text-muted mt-0.5 line-clamp-1">{item.ai_notes}</div>
           )}
+          {needsName && <NameItInline slug={activeSlug} itemId={item.id} />}
           {/* Matchmaker chips — the best-fitting tables, their fields
               pre-filled. Tap one to expand straight into that table's form. */}
           {candidates.length > 0 ? (

@@ -125,7 +125,7 @@ export function MobileNav() {
                         <button
                           key={mem.name}
                           type="button"
-                          onClick={() => go(`/instances/${mem.name.slice(INSTANCE_PREFIX.length)}`)}
+                          onClick={() => go(`/${mem.name.slice(INSTANCE_PREFIX.length)}`)}
                           className={linkClass + " w-full text-left pl-8 text-muted dark:text-slate-400"}
                         >
                           {mem.displayName}
@@ -148,7 +148,7 @@ export function MobileNav() {
                       <NavLink
                         to={
                           m.name.startsWith("__instance__")
-                            ? `/instances/${m.name.slice("__instance__".length)}`
+                            ? `/${m.name.slice("__instance__".length)}`
                             : `/${m.name}`
                         }
                         className={linkClass}
@@ -160,7 +160,7 @@ export function MobileNav() {
                     {kids.map((k) => {
                       const isInstance = k.name.startsWith("__instance__");
                       const to = isInstance
-                        ? `/instances/${k.name.slice("__instance__".length)}`
+                        ? `/${k.name.slice("__instance__".length)}`
                         : isHeading
                           ? `/${k.name}`
                           : `/${m.name}?lens=${k.name}`;

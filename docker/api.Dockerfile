@@ -221,6 +221,11 @@ COPY --from=builder /app/installed-modules.manifest.json ./installed-modules.man
 # the live changesets + the frozen history.
 COPY --from=builder /app/CHANGELOG.md ./CHANGELOG.md
 COPY --from=builder /app/changelog.d ./changelog.d
+# Flagship bundle manifests — read at runtime by the capture-first quickstart
+# (api/src/lib/flagship-bundles.ts) so onboarding works offline + for every
+# self-hoster, independent of the private GitHub registry. Lands at /app/bundles
+# (cwd is /app/api at runtime; the loader resolves ../bundles).
+COPY bundles ./bundles
 
 EXPOSE 4000
 

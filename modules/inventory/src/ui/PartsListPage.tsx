@@ -3,7 +3,7 @@
 
 import { useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   Archive,
@@ -70,6 +70,7 @@ export function PartsListPage() {
   const [lifecycle, setLifecycle] = useState<"" | "bulk" | "kit" | "parted-out">("");
   const [adding, setAdding] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [spoolmanOpen, setSpoolmanOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [ravImporting, setRavImporting] = useState(false);
   const [viewMode, setViewMode] = useViewMode("parts", "list");
@@ -141,8 +142,13 @@ export function PartsListPage() {
   const warrantyWithin =
     warrantyFilter === "expiring30" ? 30 : warrantyFilter === "expiring90" ? 90 : undefined;
   const parts = useInfiniteQuery({
+    // entityKind (`<instance>:item`, or `inventory:part` for the default) MUST
+    // be in the key — yarn + hooks are both inventory instances and the API is
+    // instance-scoped, so without it they collide on one cache entry and show
+    // each other's items / blank on re-click (Grace's "weird all over").
     queryKey: [
       "inventory-parts",
+      entityKind,
       { search, categoryId, locationId, state, lowOnly, archivedFilter, warrantyFilter, insuredOnly, lifecycle },
     ],
     initialPageParam: undefined as string | undefined,
@@ -445,6 +451,13 @@ export function PartsListPage() {
         >
           <FileUp size={14} /> Import CSV
         </button>
+        <button
+          onClick={() => setSpoolmanOpen(true)}
+          className="rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800/70 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
+          title="Sync remaining weight from Spoolman"
+        >
+          <Download size={14} /> Spoolman
+        </button>
         {/* Import a Ravelry stash straight into the Yarn table (a713b84c). Only
             the yarn instance — the bundle names it "yarn" — since the importer
             maps to yarn fields + the Designs table. */}
@@ -613,6 +626,13 @@ export function PartsListPage() {
         <PartDetailModal
           id={detailId}
           onClose={() => navigate(basePath)}
+        />
+      )}
+      {spoolmanOpen && (
+        <SpoolmanModal
+          instance={instance}
+          onClose={() => setSpoolmanOpen(false)}
+          onSynced={() => void qc.invalidateQueries({ queryKey: ["inventory-parts"] })}
         />
       )}
       <BulkActionBar
@@ -1011,6 +1031,7 @@ function PartsTileGrid({ items, basePath }: { items: PartListItem[]; basePath: s
         <Link key={p.id} to={`${basePath}/parts/${p.id}`} className="block">
           <EntityTile
             src={p.image_path}
+            color={(p.metadata as Record<string, unknown> | null)?.color as string | undefined}
             title={p.name}
             subtitle={p.manufacturer || p.category_name || null}
             badge={
@@ -1068,4 +1089,104 @@ function warrantyChip(daysUntil: number | null, lifetime: boolean) {
     );
   }
   return null;
+}
+
+// Spoolman connect + sync. When Spoolman is present it's the tracker; Cobblr
+// pulls each spool's remaining weight in (parts in this instance, marked
+// tracked_by="spoolman" so adjust-stock skips them — no double-count).
+function SpoolmanModal({
+  instance,
+  onClose,
+  onSynced,
+}: {
+  instance?: string;
+  onClose: () => void;
+  onSynced: () => void;
+}) {
+  const { api } = useInventory();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [label, setLabel] = useState("Spoolman");
+  const [baseUrl, setBaseUrl] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const conns = useQuery({ queryKey: ["spoolman-connections"], queryFn: () => api.listSpoolman() });
+  const items = conns.data?.items ?? [];
+  const invalidate = () => void qc.invalidateQueries({ queryKey: ["spoolman-connections"] });
+
+  const create = useMutation({
+    mutationFn: () => api.createSpoolman({ label: label.trim(), base_url: baseUrl.trim(), api_key: apiKey.trim() || undefined }),
+    onSuccess: () => {
+      setBaseUrl("");
+      setApiKey("");
+      toast.success("Spoolman connected");
+      invalidate();
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
+  const sync = useMutation({
+    mutationFn: (id: string) => api.syncSpoolman(id, instance),
+    onSuccess: (r) => {
+      toast.success(`Synced ${r.synced} spool${r.synced === 1 ? "" : "s"} — ${r.created} new, ${r.updated} updated`);
+      onSynced();
+      invalidate();
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
+  const del = useMutation({
+    mutationFn: (id: string) => api.deleteSpoolman(id),
+    onSuccess: () => {
+      toast.success("Removed");
+      invalidate();
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
+
+  const field = "w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900";
+  return (
+    <Modal open onClose={onClose} title="Spoolman" size="sm">
+      <div className="space-y-3">
+        <p className="text-[13px] text-muted dark:text-slate-400">
+          Link Cobblr to your Spoolman. Spoolman stays the tracker — Cobblr pulls each spool's remaining weight in (as an item here) and won't deduct it itself.
+        </p>
+        {items.map((c) => (
+          <div key={c.id} className="flex items-center gap-2 rounded border border-line dark:border-slate-700 p-2">
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium text-content dark:text-mortar-100 truncate">{c.label}</div>
+              <div className="text-[11px] font-mono text-faint truncate">{c.base_url}</div>
+            </div>
+            <button
+              onClick={() => sync.mutate(c.id)}
+              disabled={sync.isPending}
+              className="rounded bg-cobble-600 hover:bg-cobble-700 text-white text-xs px-2.5 py-1 disabled:opacity-50"
+            >
+              {sync.isPending ? "syncing…" : "Sync now"}
+            </button>
+            <button onClick={() => del.mutate(c.id)} className="text-[11px] text-faint hover:text-ember-500 px-1">
+              Remove
+            </button>
+          </div>
+        ))}
+        {items.length === 0 && !conns.isLoading && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (baseUrl.trim()) create.mutate();
+            }}
+            className="space-y-2"
+          >
+            <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label" className={field} />
+            <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="http://spoolman.local:7912" className={field} />
+            <input value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="API key (optional)" className={field} />
+            <button
+              type="submit"
+              disabled={!baseUrl.trim() || create.isPending}
+              className="w-full rounded bg-cobble-600 hover:bg-cobble-700 text-white text-sm px-3 py-2 disabled:opacity-50"
+            >
+              {create.isPending ? "Connecting…" : "Connect"}
+            </button>
+          </form>
+        )}
+      </div>
+    </Modal>
+  );
 }

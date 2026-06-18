@@ -1,6 +1,6 @@
 {
   "id": "fluidnc",
-  "name": "FluidNC (GRBL laser/CNC)",
+  "name": "FluidNC (WiFi GRBL laser/CNC)",
   "version": "1.0.0",
   "routing": false,
   "test": { "method": "GET", "path": "/command?commandText=%3F" },

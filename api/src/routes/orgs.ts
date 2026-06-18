@@ -51,6 +51,13 @@ orgsRouter.get("/", requireAuth, async (req, res, next) => {
 
 const CreateOrgBody = z.object({
   name: z.string().min(1).max(120),
+  // Optional managed-app id ("yarn"). When set, the new workspace is provisioned
+  // AS that app (flagship bundle + app mode), exactly like POST /provision-app
+  // and the /auth/signup app branch — so all three create-paths agree. Without
+  // it, a plain workspace (the default). `manifest` is the usual test/operator
+  // override; production resolves the bundle from the registry server-side.
+  app: z.string().min(1).optional(),
+  manifest: z.unknown().optional(),
 });
 
 // POST /orgs — create a new workspace for the current user. The user
@@ -370,7 +377,20 @@ orgsRouter.post("/", requireAuth, async (req, res, next) => {
       });
       return;
     }
-    const { orgId, slug } = await provisionOrgForUser(req.session!.id, parsed.data.name);
+    // `app` set → provision a managed app (bundle + app mode), same as
+    // /provision-app and the signup app branch. Else a plain workspace.
+    let orgId: string, slug: string;
+    if (parsed.data.app) {
+      const result = await provisionAppWorkspace(req.session!.id, parsed.data.app, parsed.data.manifest, {
+        display_name: req.session!.display_name ?? null,
+        auth_method: req.session!.auth_method,
+        api_token_id: req.session!.api_token_id ?? null,
+      });
+      orgId = result.orgId;
+      slug = result.slug;
+    } else {
+      ({ orgId, slug } = await provisionOrgForUser(req.session!.id, parsed.data.name));
+    }
     const row = await meta
       .selectFrom("org_memberships as m")
       .innerJoin("orgs as o", "o.id", "m.org_id")
@@ -380,6 +400,10 @@ orgsRouter.post("/", requireAuth, async (req, res, next) => {
       .executeTakeFirstOrThrow();
     res.status(201).json({ org: row, slug });
   } catch (err) {
+    if (err instanceof ProvisionAppError) {
+      res.status(400).json({ error: { code: err.code, message: err.message, details: err.detail } });
+      return;
+    }
     next(err);
   }
 });

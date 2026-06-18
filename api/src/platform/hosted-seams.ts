@@ -6,7 +6,12 @@
 // `ai.registerEntitlementGuard` / `ai.registerProvider` pattern.
 
 import type { RequestHandler } from "express";
-import type { AuthEmailMessage, AuthEmailSender } from "@cobblr/platform-contract";
+import type {
+  AuthEmailMessage,
+  AuthEmailSender,
+  HostedPanel,
+  HostedPanelSummary,
+} from "@cobblr/platform-contract";
 
 // ───────────────────────── Seam 3: auth-email sender ─────────────────────────
 // Platform-level (pre-workspace) email for verify / reset / magic-link. Open
@@ -186,4 +191,57 @@ export function requestGuardMiddleware(): RequestHandler {
       });
     });
   };
+}
+
+// ───────────────────────── Seam 7: public webhooks ───────────────────────────
+// A global, UNAUTHENTICATED webhook endpoint mounted at /api/v1/hooks/:id, for
+// ACCOUNT-LEVEL provider webhooks (Stripe billing, a GitHub app, …) that are NOT
+// tenant-scoped. Distinct from integrations.registerInboundHandler — that one is
+// the per-workspace inbound receiver keyed by a token in the URL; this one has no
+// tenant in the URL at all. The handler verifies its OWN signature (against the
+// captured rawBody) and resolves any tenant from the payload. Open core registers
+// no handlers, but the dispatch route is always mounted (404 for unknown ids), so
+// a self-hoster who registers one from their own module gets the same seam.
+
+export interface PublicWebhookRequest {
+  method: string;
+  headers: Record<string, string | string[] | undefined>;
+  body: unknown;
+  rawBody?: string;
+  query: Record<string, unknown>;
+}
+export interface PublicWebhookHandler {
+  id: string;
+  handle: (
+    req: PublicWebhookRequest,
+  ) => Promise<{ status: number; body?: unknown; headers?: Record<string, string> }>;
+}
+
+const webhookHandlers = new Map<string, PublicWebhookHandler>();
+export function registerWebhook(h: PublicWebhookHandler): void {
+  if (webhookHandlers.has(h.id)) {
+    console.log(`[hooks] replacing webhook handler '${h.id}'`);
+  }
+  webhookHandlers.set(h.id, h);
+}
+export function getWebhookHandler(id: string): PublicWebhookHandler | undefined {
+  return webhookHandlers.get(id);
+}
+
+// ───────────────────────── Seam 8: hosted settings panels ────────────────────
+// A module/overlay contributes a settings page as a DECLARATIVE view (see the
+// contract's HostedPanel) — no frontend code ships into the open-core web bundle.
+// Open core registers no panels, so a self-hoster's Configuration shows none of
+// them (not even their names). The web app lists summaries to build tiles/routes,
+// fetches a panel's view, and posts its actions, all through one generic renderer.
+
+const hostedPanels = new Map<string, HostedPanel>();
+export function registerHostedPanel(p: HostedPanel): void {
+  hostedPanels.set(p.id, p);
+}
+export function listHostedPanels(): HostedPanelSummary[] {
+  return [...hostedPanels.values()].map((p) => ({ id: p.id, label: p.label, icon: p.icon, group: p.group }));
+}
+export function getHostedPanel(id: string): HostedPanel | undefined {
+  return hostedPanels.get(id);
 }

@@ -9,7 +9,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "digifab",
-  version: "0.1.0",
+  version: "0.20.0",
   displayName: "Digital Fabrication",
   description:
     "Send a design file to the software that runs your machine — FDM Monster, OctoPrint, and friends — and track the job to completion. Map a manager's printers to your machines and route files to them. Talks to each manager's REST API; it sends files, it never drives the hardware.",
@@ -30,6 +30,8 @@ export default defineModule({
     onBoot: async () => {
       const { registerPollWorker } = await import("./poll-worker.js");
       registerPollWorker();
+      const { registerAssignWorker } = await import("./assign-worker.js");
+      registerAssignWorker();
     },
   },
 
@@ -46,7 +48,7 @@ export default defineModule({
         // A unit of work that queues → prints → completes: digital,
         // unique, completable, durable. Registering it lets the wire
         // composer show digifab:job as a source (e.g. the seeded
-        // print.completed → mark-task-done binding) and lets other
+        // print.confirmed → mark-task-done binding) and lets other
         // modules look a job up via platform.entities.
         profile: "work-item",
         fields: [
@@ -69,8 +71,18 @@ export default defineModule({
       "digifab.connection.synced",
       "digifab.connection.deleted",
       "digifab.job.sent",
+      // Print-lifecycle notifications (the "post updates to Discord" flow): a
+      // user routes these to a channel at /me/notification-channels.
+      "digifab.print.started",
+      "digifab.print.progress",
       "digifab.print.completed",
       "digifab.print.failed",
+      // F-13 — the human's bed-clear verdict. `completed` fires the cheap,
+      // reversible effects (filament deduct, usage accrual) immediately; the
+      // consequential one (closing the linked task) waits for `confirmed`.
+      // `reversed` fires on a "scrapped" verdict to undo the optimistic effects.
+      "digifab.print.confirmed",
+      "digifab.print.reversed",
       "digifab.driver.installed",
       // The actuator's canonical event is now core-devices.command.sent (the
       // inbound ingest + device.* events also moved). digifab.command.sent stays

@@ -105,6 +105,18 @@ export default defineModule({
           order_id: { label: "Sales order id", type: "text" },
         },
       },
+      {
+        id: "sales:create-order",
+        label: "Create order",
+        description:
+          "Create a sales order programmatically (e.g. importing an order from a connected store). Optionally upserts the customer by email and adds line items. Args: { order_number?, status?, order_date?, notes?, metadata?, customer?: {name,email,phone,address}, items?: [{part_id?, description?, qty, unit_price?, metadata?}] }.",
+        appliesTo: { kinds: ["sales:order"] },
+        invokeHandler: "sales.create-order",
+        userInvokable: false,
+        argsSchema: {
+          order_number: { label: "Order number", type: "text" },
+        },
+      },
     ],
   },
 

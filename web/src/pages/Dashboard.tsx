@@ -36,7 +36,7 @@ import "../dashboard/builtinWidgets";
 import { expandInstanceWidgets } from "../dashboard/expandInstanceWidgets";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useAuth } from "../auth/AuthContext";
-import { FirstRunWizard } from "../components/FirstRunWizard";
+import { CaptureFirstPanel } from "../components/CaptureFirstPanel";
 import { displaySlug } from "../lib/workspaceSlug";
 import { liveNextStepLabel } from "../lib/featured-bundles";
 import {
@@ -88,7 +88,15 @@ export function Dashboard() {
 
       <SetupCardsPanel slug={activeSlug} />
 
-      {enabled.has("core-scan") && <ScanCard slug={activeSlug} />}
+      {/* The standing "Scan something" entry — but NOT on a brand-new workspace
+          with no domain module yet, where the capture-first hero below owns the
+          scan/write CTA (a second "Scan something" card would be redundant). It
+          returns once the workspace has a domain (e.g. after materializing a
+          bundle). */}
+      {enabled.has("core-scan") &&
+        [...enabled].some((m) => !m.startsWith("core-") && m !== "cobblr-cloud") && (
+          <ScanCard slug={activeSlug} />
+        )}
 
       <GettingStartedPanel
         slug={activeSlug}
@@ -262,14 +270,17 @@ function GettingStartedPanel({
   // dismissal per-workspace (device-local) and falls back to the plain
   // action-card panel. The empty-state self-heals once any entity exists, so
   // this flag only matters for a skipped-but-still-empty workspace.
+  // Legacy: a workspace dismissed before the onboarding-start redesign falls to
+  // the plain action-card panel. Nothing sets this now (the start screen has no
+  // "skip"); read-only so old dismissals still resolve.
   const dismissKey = `cobblr.firstRun.dismissed.${slug}`;
-  const [skippedWizard, setSkippedWizard] = useState(() => {
+  const skippedWizard = (() => {
     try {
       return localStorage.getItem(dismissKey) === "1";
     } catch {
       return false;
     }
-  });
+  })();
   // Turn on a not-yet-enabled module straight from a suggestion card and
   // drop the user into it — no detour through Configuration.
   const enableMut = useMutation({
@@ -329,23 +340,12 @@ function GettingStartedPanel({
   if (enabled.size > 0 && probe.data === undefined) return null; // still probing
   if ((probe.data ?? 0) > 0) return null; // has content already
 
-  // The default empty-state: the bundle-rooted "what do you want to set up?"
-  // wizard. The plain action-card fallback below is reached only if the user
-  // taps "Skip for now".
+  // The default empty-state is the onboarding start: ONE screen with the
+  // capture box (scan / type) AND the ready-made-tracker gallery side by side
+  // (CaptureFirstPanel) — no toggle, no dead-end. The plain action-card
+  // fallback below is reached only for a workspace dismissed before this.
   if (!skippedWizard) {
-    return (
-      <FirstRunWizard
-        slug={slug}
-        onSkip={() => {
-          try {
-            localStorage.setItem(dismissKey, "1");
-          } catch {
-            /* private mode / disabled storage — just skip in-memory */
-          }
-          setSkippedWizard(true);
-        }}
-      />
-    );
+    return <CaptureFirstPanel slug={slug} />;
   }
 
   // Determine the most relevant "first thing to do" based on which

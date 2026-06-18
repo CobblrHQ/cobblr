@@ -1,7 +1,7 @@
 // /start/:app — the streamlined consumer signup for a managed vertical app
-// ("Cobblr for Yarn"). One screen: brand + email + password → sign up → the
-// server provisions the app workspace (bundle + app mode) atomically → we land
-// the user straight in the app. No workspace naming, no bundle picking, no
+// ("Cobblr for Yarn"). One screen: brand + name + email + password → sign up →
+// the server provisions the app workspace (bundle + app mode) atomically → we
+// land the user straight in the app. No workspace naming, no bundle picking, no
 // platform. See business-models/docs/18-managed-vertical-apps.md.
 
 import { useState, type FormEvent } from "react";
@@ -15,6 +15,7 @@ export function StartAppPage() {
   const { signup } = useAuth();
   const meta = getManagedAppMeta(app);
 
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -30,14 +31,16 @@ export function StartAppPage() {
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    if (!email.trim() || password.length < 8) return;
+    if (!name.trim() || !email.trim() || password.length < 8) return;
     setBusy(true);
     setError(null);
     try {
       const res = await signup({
         email: email.trim(),
         password,
-        display_name: email.trim().split("@")[0] || "there",
+        // The name the user typed — falls back to the email local-part only if
+        // somehow blank (the field is required, so this is belt-and-braces).
+        display_name: name.trim() || email.trim().split("@")[0] || "there",
         // The server resolves the app's bundle from the registry — the client
         // never supplies it for a managed-app signup.
         app: meta!.id,
@@ -62,8 +65,13 @@ export function StartAppPage() {
         </div>
         <form onSubmit={submit} className="space-y-3 rounded-xl border border-line dark:border-slate-700 p-5 bg-white dark:bg-slate-900">
           <label className="block">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Your name</span>
+            <input type="text" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} required autoFocus
+              className="w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm" />
+          </label>
+          <label className="block">
             <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Email</span>
-            <input type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus
+            <input type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required
               className="w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm" />
           </label>
           <label className="block">
@@ -73,7 +81,7 @@ export function StartAppPage() {
             <span className="block text-[10px] text-faint dark:text-slate-500 mt-1">At least 8 characters.</span>
           </label>
           {error && <div className="text-xs text-red-600 dark:text-red-400">{error}</div>}
-          <button type="submit" disabled={busy || !email.trim() || password.length < 8}
+          <button type="submit" disabled={busy || !name.trim() || !email.trim() || password.length < 8}
             className="w-full rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-3 py-2.5 transition disabled:opacity-50">
             {busy ? "Setting up your workspace…" : "Start free"}
           </button>

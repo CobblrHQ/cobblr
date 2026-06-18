@@ -251,6 +251,12 @@ async function boot() {
     },
     http: {
       registerRequestGuard: hostedSeams.registerRequestGuard,
+      registerWebhook: hostedSeams.registerWebhook,
+    },
+    hostedPanels: {
+      register: hostedSeams.registerHostedPanel,
+      list: hostedSeams.listHostedPanels,
+      get: hostedSeams.getHostedPanel,
     },
     auth: {
       // Capability check walks three sources in order:

@@ -33,6 +33,8 @@ interface MockJob {
   polls: number;
   completeAfter: number;
   fail?: boolean;
+  cancelled?: boolean;
+  paused?: boolean;
 }
 
 export interface MockOptions {
@@ -63,7 +65,17 @@ export class MockDriver implements MachineDriver {
   }
 
   async listDevices(): Promise<RemoteDevice[]> {
-    return this.printers.map((p) => ({ ...p }));
+    return this.printers.map((p) => {
+      // Live temps: hot while a job is actively printing on this printer, cool
+      // when idle — so the cockpit shows realistic, changing readings.
+      const printing = [...this.jobs.values()].some(
+        (j) => j.deviceId === p.id && !j.cancelled && !j.fail && !j.paused && j.polls >= 1 && j.polls < j.completeAfter + 1,
+      );
+      const temps = printing
+        ? { nozzle: { actual: 215, target: 215 }, bed: { actual: 60, target: 60 } }
+        : { nozzle: { actual: 24, target: 0 }, bed: { actual: 23, target: 0 } };
+      return { ...p, temps };
+    });
   }
 
   async setDeviceEnabled(deviceId: string, enabled: boolean): Promise<void> {
@@ -123,20 +135,50 @@ export class MockDriver implements MachineDriver {
   async getJobStatus(jobId: string): Promise<JobStatus> {
     const job = this.jobs.get(jobId);
     if (!job) throw new Error(`mock: no job ${jobId}`);
+    if (job.cancelled) return { jobId, state: "cancelled", progress: null, deviceId: job.deviceId };
+    if (job.fail) return { jobId, state: "failed", progress: null, deviceId: job.deviceId };
+    // A paused job holds — it doesn't advance toward completion until resumed.
+    if (job.paused) {
+      return { jobId, state: "paused", progress: Math.min(1, job.polls / (job.completeAfter + 1)), deviceId: job.deviceId };
+    }
     job.polls += 1;
     let state: JobStatus["state"];
-    if (job.fail) state = "failed";
-    else if (job.polls >= job.completeAfter + 1) state = "completed";
+    if (job.polls >= job.completeAfter + 1) state = "completed";
     else if (job.polls >= 1) state = "printing";
     else state = "queued";
-    const progress = job.fail ? null : Math.min(1, job.polls / (job.completeAfter + 1));
-    return { jobId, state, progress, deviceId: job.deviceId };
+    const progress = Math.min(1, job.polls / (job.completeAfter + 1));
+    // Fake a ~2h print so the notification ETA/elapsed look realistic.
+    const TOTAL = 7200;
+    return {
+      jobId,
+      state,
+      progress,
+      deviceId: job.deviceId,
+      elapsedSec: Math.round(progress * TOTAL),
+      timeRemainingSec: Math.round((1 - progress) * TOTAL),
+    };
   }
 
   /** Test helper: force a job to fail on next poll. */
   failJob(jobId: string): void {
     const j = this.jobs.get(jobId);
     if (j) j.fail = true;
+  }
+
+  /** F-4: abort a job (the mock can stop a "print"). */
+  async cancelJob(jobId: string): Promise<void> {
+    const j = this.jobs.get(jobId);
+    if (j) j.cancelled = true;
+  }
+
+  /** Cockpit live-control: pause / resume a running job. */
+  async pauseJob(jobId: string): Promise<void> {
+    const j = this.jobs.get(jobId);
+    if (j) j.paused = true;
+  }
+  async resumeJob(jobId: string): Promise<void> {
+    const j = this.jobs.get(jobId);
+    if (j) j.paused = false;
   }
 
   /** ActuatorDriver: record the command + params so a test can assert the right

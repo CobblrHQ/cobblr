@@ -24,6 +24,18 @@ export function DriveBanner() {
   const mode: DriveMode = data?.mode ?? "off";
   const { state, accept, release, presence } = useBrowserDrive(slug || undefined, mode);
 
+  // The grant is shared with scan-drives-screen (a scan drives a designated tab).
+  // When the room has no MCP driver attached, the navigation is coming from
+  // SCANS, not Claude — so the banner says so. Cheap poll, only while driving.
+  const { data: status } = useQuery({
+    queryKey: ["drive-status", slug],
+    queryFn: () => api.driveStatus(slug),
+    enabled: !!slug && mode !== "off" && state !== "idle",
+    refetchInterval: 4000,
+  });
+  const byScans = !status?.driver;
+  const driverName = byScans ? "Scans are" : "Claude is";
+
   if (mode === "off" || state === "idle") return null;
 
   if (state === "offer") {
@@ -64,7 +76,7 @@ export function DriveBanner() {
           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
           <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
         </span>
-        <span className="font-medium">Claude is driving this window</span>
+        <span className="font-medium">{driverName} driving this window</span>
         <button
           type="button"
           onClick={release}
@@ -82,7 +94,7 @@ export function DriveBanner() {
   return (
     <div className="fixed bottom-4 right-4 z-[1000] flex items-center gap-2 rounded-full border border-ember-300 dark:border-ember-700 bg-ember-50 dark:bg-ember-900/40 text-ember-800 dark:text-ember-200 shadow-lg px-3 py-1.5 text-sm">
       <MonitorX size={14} />
-      <span className="font-medium">Claude is driving a different window</span>
+      <span className="font-medium">{driverName} driving a different window</span>
     </div>
   );
 }

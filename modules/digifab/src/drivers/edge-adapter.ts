@@ -19,6 +19,7 @@ import type {
   ConnectionResult,
   ManagerConfig,
   MachineDriver,
+  DeviceTemps,
   JobState,
   JobStatus,
   PlacementResolution,
@@ -28,6 +29,12 @@ import type {
   UploadResult,
 } from "./types.js";
 import { assertSafeMachineUrl } from "./ssrf.js";
+
+/** A relay transport — when present, the driver routes its edge-adapter calls
+ *  through it (the cloud→edge tunnel) instead of dialing the bridge directly.
+ *  Supplied by the caller (which holds platform().edge + the orgId), so this
+ *  pure driver stays platform-free. Returns the agent's { status, body }. */
+export type EdgeRelay = (req: { method: string; path: string; body?: unknown }) => Promise<{ status: number; body: unknown }>;
 
 const JOB_STATES = new Set<JobState>([
   "queued", "printing", "paused", "completed", "failed", "cancelled", "awaiting-assignment", "unknown",
@@ -45,34 +52,72 @@ function coerceState(raw: unknown): JobState {
   return "unknown";
 }
 
+/** Coerce a bridge's free-form temps JSON into DeviceTemps. Display-only; drops
+ *  anything malformed rather than throwing. */
+function coerceTemps(raw: unknown): DeviceTemps | null {
+  if (!raw || typeof raw !== "object") return null;
+  const pair = (v: unknown): { actual: number; target?: number } | null => {
+    if (!v || typeof v !== "object") return null;
+    const o = v as { actual?: unknown; target?: unknown };
+    if (typeof o.actual !== "number" || !Number.isFinite(o.actual)) return null;
+    return typeof o.target === "number" && Number.isFinite(o.target)
+      ? { actual: o.actual, target: o.target }
+      : { actual: o.actual };
+  };
+  const r = raw as Record<string, unknown>;
+  const out: DeviceTemps = {};
+  const nozzle = pair(r.nozzle); if (nozzle) out.nozzle = nozzle;
+  const bed = pair(r.bed); if (bed) out.bed = bed;
+  const chamber = pair(r.chamber); if (chamber) out.chamber = chamber;
+  return out.nozzle || out.bed || out.chamber ? out : null;
+}
+
 export class EdgeAdapterDriver implements MachineDriver {
   private base: string;
-  constructor(cfg: ManagerConfig) {
+  private token: string | null;
+  private relay: EdgeRelay | null;
+  constructor(cfg: ManagerConfig, relay?: EdgeRelay | null) {
     this.base = cfg.baseUrl.replace(/\/+$/, "");
     // Optional shared-secret: sent as a Bearer if the connection stored an apiKey.
     this.token = cfg.apiKey ?? null;
+    this.relay = relay ?? null;
   }
-  private token: string | null;
 
   private headers(extra: Record<string, string> = {}): Record<string, string> {
     return this.token ? { ...extra, authorization: `Bearer ${this.token}` } : extra;
   }
 
-  private async json(method: string, path: string, init: RequestInit = {}): Promise<unknown> {
+  /** One transport for every contract call. Tunnel mode routes through the relay
+   *  (the body is JSON; an upload rides as { filename, data_b64 }); direct mode
+   *  dials the bridge (an upload is multipart). */
+  private async req(method: string, path: string, opts: { body?: unknown; file?: { bytes: Uint8Array; filename: string } } = {}): Promise<unknown> {
+    if (this.relay) {
+      const body = opts.file
+        ? { filename: opts.file.filename, data_b64: Buffer.from(opts.file.bytes).toString("base64") }
+        : opts.body;
+      const r = await this.relay({ method, path, body });
+      if (r.status >= 400) throw new Error(`adapter ${method} ${path} → ${r.status} (tunnel)`);
+      return r.body ?? null;
+    }
     await assertSafeMachineUrl(this.base + path);
-    const res = await fetch(this.base + path, {
-      ...init,
-      method,
-      headers: { ...(init.headers as Record<string, string>), ...this.headers() },
-      signal: AbortSignal.timeout(15_000),
-    });
+    let fetchBody: FormData | string | undefined;
+    const headers = this.headers();
+    if (opts.file) {
+      const form = new FormData();
+      form.append("file", new Blob([opts.file.bytes]), opts.file.filename);
+      fetchBody = form;
+    } else if (opts.body !== undefined) {
+      fetchBody = JSON.stringify(opts.body);
+      headers["content-type"] = "application/json";
+    }
+    const res = await fetch(this.base + path, { method, headers, body: fetchBody, signal: AbortSignal.timeout(15_000) });
     if (!res.ok) throw new Error(`adapter ${method} ${path} → ${res.status}: ${(await res.text()).slice(0, 160)}`);
     return res.status === 204 ? null : res.json().catch(() => null);
   }
 
   async testConnection(): Promise<ConnectionResult> {
     try {
-      await this.json("GET", "/devices");
+      await this.req("GET", "/devices");
       return { ok: true, capabilities: { routing: false } };
     } catch (e) {
       return { ok: false, detail: (e as Error).message, capabilities: { routing: false } };
@@ -80,13 +125,15 @@ export class EdgeAdapterDriver implements MachineDriver {
   }
 
   async listDevices(): Promise<RemoteDevice[]> {
-    const data = (await this.json("GET", "/devices")) as Array<Record<string, unknown>>;
+    const data = (await this.req("GET", "/devices")) as Array<Record<string, unknown>>;
     return (Array.isArray(data) ? data : []).map((d) => ({
       id: String(d.id ?? ""),
       name: String(d.name ?? "device"),
       enabled: d.enabled !== false,
       state: (d.state as string | undefined) ?? null,
       tags: [],
+      temps: coerceTemps(d.temps),
+      stage: typeof d.stage === "string" && d.stage ? d.stage : null,
     }));
   }
 
@@ -95,9 +142,7 @@ export class EdgeAdapterDriver implements MachineDriver {
   }
 
   async uploadFile(file: Uint8Array, filename: string): Promise<UploadResult> {
-    const form = new FormData();
-    form.append("file", new Blob([file]), filename);
-    const data = (await this.json("POST", "/upload", { body: form })) as { fileId?: string };
+    const data = (await this.req("POST", "/upload", { file: { bytes: file, filename } })) as { fileId?: string };
     return { fileId: data?.fileId ?? filename, filename };
   }
 
@@ -106,9 +151,8 @@ export class EdgeAdapterDriver implements MachineDriver {
   }
 
   async submitJob(args: SubmitArgs): Promise<SubmitResult> {
-    const data = (await this.json("POST", "/submit", {
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ fileId: args.fileId, target: args.deviceId ?? args.tag ?? null }),
+    const data = (await this.req("POST", "/submit", {
+      body: { fileId: args.fileId, target: args.deviceId ?? args.tag ?? null },
     })) as { jobId?: string; queued?: boolean };
     const jobId = data?.jobId ?? null;
     const queued = data?.queued ?? !!jobId;
@@ -116,7 +160,7 @@ export class EdgeAdapterDriver implements MachineDriver {
   }
 
   async getJobStatus(jobId: string): Promise<JobStatus> {
-    const data = (await this.json("GET", `/status/${encodeURIComponent(jobId)}`)) as { state?: unknown; progress?: unknown };
+    const data = (await this.req("GET", `/status/${encodeURIComponent(jobId)}`)) as { state?: unknown; progress?: unknown };
     const p = Number(data?.progress);
     return {
       jobId,
@@ -135,9 +179,8 @@ export class EdgeAdapterDriver implements MachineDriver {
   // connection a valid target of the digifab:run-command action.
   async runCommand(command: string, params: Record<string, unknown>): Promise<CommandResult> {
     try {
-      const data = (await this.json("POST", "/command", {
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ command, params }),
+      const data = (await this.req("POST", "/command", {
+        body: { command, params },
       })) as { ok?: unknown; ref?: unknown; detail?: unknown } | null;
       if (data && data.ok === false) {
         return { ok: false, detail: data.detail != null ? String(data.detail) : "adapter reported failure" };

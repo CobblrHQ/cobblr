@@ -19,6 +19,10 @@ interface AdjustStockPayload {
   partId?: string;
   delta?: number;
   reason?: string;
+  // Optional source attribution for the consumption ledger — e.g. the wire
+  // fired by digifab.print.completed passes sourceKind:"digifab:job" + the job id.
+  sourceKind?: string;
+  sourceId?: string;
 }
 
 export function registerInventoryActionHandlers(): void {
@@ -37,6 +41,21 @@ export function registerInventoryActionHandlers(): void {
       return { ok: true, skipped: true, reason: "missing partId or delta" };
     }
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
+
+    // Externally-tracked stock: if this part's quantity is owned by another
+    // system (e.g. a Spoolman spool — metadata.tracked_by = "spoolman"), don't
+    // mutate it here. The external tracker counts the usage (Moonraker reports
+    // the print to Spoolman); Cobblr mirrors its number on sync. Adjusting here
+    // too would double-count. Generic — any external tracker opts a part out.
+    const ext = await db
+      .selectFrom("inventory_parts")
+      .select(sql<string | null>`metadata->>'tracked_by'`.as("tracked_by"))
+      .where("id", "=", partId)
+      .executeTakeFirst();
+    if (ext?.tracked_by) {
+      return { ok: true, skipped: true, reason: `externally tracked by ${ext.tracked_by}` };
+    }
+
     const updated = await db
       .updateTable("inventory_parts")
       .set({
@@ -47,6 +66,26 @@ export function registerInventoryActionHandlers(): void {
       .returning(["id", "name", "qty", "min_qty"])
       .executeTakeFirst();
     if (!updated) return { ok: false, error: "part_not_found" };
+
+    // Consumption ledger: record this change with its source, so a consumable
+    // (a spool) shows WHAT drew it down and HOW MUCH. Append-only; reading it
+    // back is the spool's print/usage history. Best-effort — a ledger hiccup
+    // must never fail the stock adjustment itself.
+    try {
+      await db
+        .insertInto("inventory_consumption")
+        .values({
+          part_id: partId,
+          delta: String(delta),
+          reason: reason ?? null,
+          source_kind: args.sourceKind ?? ev.sourceKind ?? null,
+          source_id: args.sourceId ?? ev.sourceId ?? null,
+        })
+        .execute();
+    } catch (e) {
+      console.error("[inventory.adjust-stock] ledger write failed:", (e as Error).message);
+    }
+
     // Re-emit the stock-changed event so the existing
     // wire-of-record (inventory.stock.changed → projects.set-dep-
     // satisfied) keeps working — this action is additive, not a

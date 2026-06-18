@@ -18,7 +18,10 @@ import { api } from "../lib/api";
 export type DriveMode = "off" | "navigate" | "navigate_observe";
 export type DriveState = "idle" | "offer" | "active" | "elsewhere";
 
-function tabBrowserId(): string {
+/** Stable per-tab id (sessionStorage). Shared by the always-mounted DriveBanner
+ *  stream AND the Scan page's scan-drive opt-in, so accepting "this is my scan
+ *  screen" claims the very tab whose stream receives the navigate. */
+export function tabBrowserId(): string {
   const KEY = "cobblr.drive.browserId";
   let id = sessionStorage.getItem(KEY);
   if (!id) {

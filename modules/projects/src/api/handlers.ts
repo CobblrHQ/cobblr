@@ -215,8 +215,9 @@ export function registerProjectsHandlers(): void {
   );
 
   // Mark a linked task done when an upstream event reports its work is
-  // finished. Default wire: digifab.print.completed (a print job that
-  // completes auto-closes the task it was linked to). The task id rides
+  // finished. Default wire: digifab.print.confirmed (the bed-clear "good"
+  // verdict on a finished print auto-closes the task it was linked to — NOT
+  // raw `completed`, which can be a failed print; see F-13). The task id rides
   // on the event payload as `linkedTaskId` — the wire's target entity is
   // the *source* (the print job), which this handler ignores; it reads
   // the payload directly. Loose-coupled: digifab never imports projects.

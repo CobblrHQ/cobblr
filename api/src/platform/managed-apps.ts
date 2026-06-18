@@ -25,6 +25,12 @@ export interface ManagedApp {
    *  auto-update both apply them. Omit / empty → only the bundle's `default:true`
    *  features (none, for yarn). */
   enabledFeatures?: string[];
+  /** Left-to-right nav order, by nav-entry name: a named instance's
+   *  `instance_name` (yarn, hooks, designs) or a module name for its default
+   *  entry (lists, purchases). Provisioning writes each as `nav_order` on the
+   *  matching entity-kind override; entries omitted here (e.g. Scan) sort after,
+   *  alphabetically. Without this the nav is alphabetical (Designs before Yarn). */
+  navOrder?: string[];
 }
 
 export const MANAGED_APPS: Record<string, ManagedApp> = {
@@ -41,6 +47,12 @@ export const MANAGED_APPS: Record<string, ManagedApp> = {
     // All four are `default:false` on the bundle — a locked consumer can't turn
     // them on later, so the managed app ships them ON.
     enabledFeatures: ["scan", "hooks", "shopping-list", "designs"],
+    // Only the instance tops need explicit ordering (Yarn the headline, then the
+    // secondary trackers). Everything WITHOUT a nav_order sorts after these,
+    // alphabetically — and lists < purchases < scan already gives the intended
+    // tail (Lists, Purchases, Scan). Naming only instances also keeps this kernel
+    // file from hardcoding module names (the isolation lint).
+    navOrder: ["yarn", "hooks", "designs"],
   },
 };
 

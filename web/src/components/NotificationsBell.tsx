@@ -15,6 +15,7 @@ import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell, Check, PanelRight, PanelRightClose, X } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
+import ReactMarkdown from "react-markdown";
 import { api, type CrossOrgNotificationEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
@@ -27,6 +28,7 @@ export function NotificationsBell() {
     (typeof localStorage !== "undefined" && localStorage.getItem(MODE_KEY)) === "sidebar" ? "sidebar" : "dropdown",
   );
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const sidebarRef = useRef<HTMLDivElement>(null);
   const qc = useQueryClient();
   const navigate = useNavigate();
   const { activeSlug, setActiveSlug } = useActiveOrg();
@@ -76,18 +78,21 @@ export function NotificationsBell() {
     },
   });
 
-  // Close on outside click — DROPDOWN only. The sidebar is dismissed with its
-  // own X (like the chat panel), so an accidental click outside doesn't lose it.
+  // Close on outside click — both modes (reported: clicking outside the sidebar
+  // should dismiss it, not persist). The sidebar portals to <body>, so its panel
+  // isn't inside wrapperRef; check sidebarRef too so a click INSIDE the panel
+  // (mark-read, toggle) doesn't close it.
   useEffect(() => {
-    if (!open || mode !== "dropdown") return;
+    if (!open) return;
     function handler(e: MouseEvent) {
-      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      const t = e.target as Node;
+      if (wrapperRef.current?.contains(t)) return;
+      if (sidebarRef.current?.contains(t)) return;
+      setOpen(false);
     }
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, [open, mode]);
+  }, [open]);
 
   const count = unread.data?.count ?? 0;
   const here = unreadHere.data?.count ?? 0;
@@ -168,9 +173,26 @@ export function NotificationsBell() {
                   : "hover:bg-subtle dark:hover:bg-slate-800")
               }
             >
-              {/* Body click = open it (navigate + mark read). */}
-              <button onClick={() => handleItemClick(n)} className="flex-1 min-w-0 text-left px-3 py-2">
-                <div className="text-sm text-content dark:text-mortar-100">{n.message}</div>
+              {/* Body click = open it (navigate + mark read). A clickable div, not
+                  a <button>, so the markdown body can use block elements
+                  (blockquote/p) — those are invalid nested inside a button. */}
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={() => handleItemClick(n)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    handleItemClick(n);
+                  }
+                }}
+                className="flex-1 min-w-0 text-left px-3 py-2 cursor-pointer"
+              >
+                {/* Render the message as markdown so a quoted report (Discord-style
+                    "> …") shows as a block quote instead of a literal ">". */}
+                <div className="prose prose-sm dark:prose-invert max-w-none text-sm text-content dark:text-mortar-100 prose-p:my-1 prose-blockquote:my-1 break-words">
+                  <ReactMarkdown>{n.message}</ReactMarkdown>
+                </div>
                 {/* flex-wrap so the timestamp wraps instead of clipping "PM". */}
                 <div className="text-[10px] font-mono text-faint dark:text-slate-500 mt-1 flex items-center gap-1.5 flex-wrap">
                   <span className="px-1 py-0.5 rounded bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300">
@@ -179,7 +201,7 @@ export function NotificationsBell() {
                   <span>·</span>
                   <span>{new Date(n.created_at).toLocaleString()}</span>
                 </div>
-              </button>
+              </div>
               {/* Mark read WITHOUT navigating — a checkmark (not an ×) so it reads
                   as "acknowledge", not "delete" (reported). */}
               {!n.read_at && (
@@ -250,7 +272,10 @@ export function NotificationsBell() {
       {open &&
         mode === "sidebar" &&
         createPortal(
-          <div className="fixed top-0 right-0 z-[60] h-screen w-[min(100vw,420px)] border-l border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-2xl flex flex-col">
+          <div
+            ref={sidebarRef}
+            className="fixed top-0 right-0 z-[60] h-screen w-[min(100vw,420px)] border-l border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-2xl flex flex-col"
+          >
             {body}
           </div>,
           document.body,

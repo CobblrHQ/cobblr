@@ -10,6 +10,7 @@ import { Router } from "express";
 import { connectorsRouter } from "./connectors.js";
 import { inboundTokensRouter } from "./inbound-tokens.js";
 import { register as registerWebhook } from "../connectors/webhook.js";
+import { register as registerHttp } from "../connectors/http.js";
 import { register as registerSlack } from "../connectors/slack.js";
 import { register as registerDiscord } from "../connectors/discord.js";
 import { register as registerInboundWebhook } from "../connectors/inbound-webhook.js";
@@ -19,6 +20,7 @@ function registerBuiltins(): void {
   if (registered) return;
   registered = true;
   registerWebhook();
+  registerHttp();
   registerSlack();
   registerDiscord();
   registerInboundWebhook();

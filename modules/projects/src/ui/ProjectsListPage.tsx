@@ -37,7 +37,11 @@ export function ProjectsListPage() {
   const nounPlural = `${noun}s`;
   usePageTitle(displayName ?? "Projects");
   const qc = useQueryClient();
-  const list = useQuery({ queryKey: ["projects-list"], queryFn: () => api.listProjects() });
+  // entityKind (`<instance>:item`, or `projects:project` for the default) MUST
+  // be in the key — the API is instance-scoped, so without it sibling projects
+  // instances (e.g. Designs) collide on one cache entry and show each other's
+  // items. Same class of bug as the inventory parts list.
+  const list = useQuery({ queryKey: ["projects-list", entityKind], queryFn: () => api.listProjects() });
   const [name, setName] = useState("");
   // Create modal: name + the instance's custom fields (e.g. a Design's pattern
   // link + category) promoted into creation — so "New design" can capture the

@@ -7,7 +7,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "machines",
-  version: "0.1.0",
+  version: "0.2.0",
   displayName: "Machines",
   description:
     "Physical machines you own. The base layer — install a specialisation (3D Printers / Laser Cutters / CNC Machines) for type-specific fields.",
@@ -71,8 +71,46 @@ export default defineModule({
       "machines.machine.deleted",
     ],
     api: [],
-    actions: [],
+    actions: [
+      {
+        id: "machines:record-usage",
+        label: "Record machine usage",
+        description:
+          "Add to a machine's lifetime usage counters (print_count, print_hours). Wire it to digifab.print.completed to accrue usage as prints finish — the foundation for maintenance-by-usage ('nozzle due at 500 prints'). Args: { machineId, prints?, hours? }; machineId falls back to the event's linkedMachineId.",
+        appliesTo: { kinds: ["machines:machine"] },
+        invokeHandler: "machines.record-usage",
+        userInvokable: false,
+        argsSchema: {
+          machineId: { label: "Machine id", type: "text" },
+          prints: { label: "Prints to add", type: "number" },
+          hours: { label: "Hours to add", type: "number" },
+        },
+      },
+    ],
   },
 
-  subscribes: [],
+  subscribes: ["digifab.print.completed", "digifab.print.reversed"],
+
+  // A completed print accrues usage on the machine it ran on (the event's
+  // linkedMachineId). The wire belongs to machines: it owns the action. Inert
+  // for a print not linked to a machine, and for any workspace without digifab.
+  contributes: {
+    wires: [
+      {
+        source_kind: "digifab:job",
+        action_id: "machines:record-usage",
+        trigger_type: "event",
+        trigger_event: "digifab.print.completed",
+      },
+      // F-13 — the reverse: a SCRAPPED print fires digifab.print.reversed with
+      // { prints: -1 }, un-accruing the one print that print.completed
+      // optimistically added (record-usage adds the signed delta). Same handler.
+      {
+        source_kind: "digifab:job",
+        action_id: "machines:record-usage",
+        trigger_type: "event",
+        trigger_event: "digifab.print.reversed",
+      },
+    ],
+  },
 });

@@ -53,7 +53,8 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { displaySlug } from "../lib/workspaceSlug";
 import { usePageTitle, useToast } from "@cobblr/platform-web";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, setFocused } from "../lib/api";
+import { api, setFocused, isFocused } from "../lib/api";
+import { iconForName as iconForPanel } from "../lib/panel-icons";
 import { useBundleUpdates } from "../lib/useBundleUpdates";
 
 interface Tile {
@@ -66,6 +67,25 @@ interface Tile {
   group: "modules" | "data" | "access" | "extend" | "admin";
 }
 
+// The everyday handful most workspaces actually touch. Everything else is real
+// but rarely-visited, so it's tucked behind "Show advanced settings" — the page
+// reads as a short menu (~11 tiles), not a 35-card wall (feedback b746e0e4).
+// Matched by label, so a tile lands in "advanced" simply by NOT being listed
+// here. Search ignores the split and always searches every tile.
+const PRIMARY_TILES = new Set<string>([
+  "+ New thing in workspace",
+  "Modules",
+  "Bundles",
+  "Saved views",
+  "Tags",
+  "Locations",
+  "Custom fields",
+  "Form builder",
+  "Members + invites",
+  "AI",
+  "Integrations",
+]);
+
 const GROUP_LABELS: Record<Tile["group"], string> = {
   modules: "set up your workspace",
   data: "customize your data",
@@ -74,14 +94,16 @@ const GROUP_LABELS: Record<Tile["group"], string> = {
   admin: "system & diagnostics",
 };
 const GROUP_ORDER: Tile["group"][] = ["modules", "data", "access", "extend", "admin"];
-// Only the essential "set up" group is expanded on arrival; the rest start
-// collapsed so the page reads as a short menu, not a 35-card wall.
+// Groups open on arrival — but each shows only its PRIMARY tiles (~11 total),
+// so the page reads as a short, fully-visible menu rather than a 35-card wall.
+// The other two dozen settings stay behind "Show advanced settings". (`admin`
+// has no primary tiles, so it doesn't render at all until advanced is on.)
 const DEFAULT_OPEN: Record<Tile["group"], boolean> = {
   modules: true,
-  data: false,
-  access: false,
-  extend: false,
-  admin: false,
+  data: true,
+  access: true,
+  extend: true,
+  admin: true,
 };
 
 /** Owner/admin control to flip the workspace into (or out of) FOCUSED mode —
@@ -95,8 +117,14 @@ function FocusedModeToggle({ slug, focused }: { slug: string; focused: boolean }
   const flip = async () => {
     setBusy(true);
     try {
-      await setFocused(slug, !focused);
-      window.location.reload();
+      const turningOn = !focused;
+      await setFocused(slug, turningOn);
+      // Turning ON hides the builder chrome — so land on the workspace HOME, not
+      // back on this (now-hidden) Configuration page. Reloading here was the bug
+      // behind "turn on simple mode did nothing": the page reloaded to the same
+      // 35-card wall, so nothing looked different (feedback c1dbdf1b). Turning
+      // OFF: reload in place so the full Configuration page returns.
+      window.location.assign(turningOn ? "/" : window.location.pathname);
     } catch (e) {
       setBusy(false);
       toast.error(e instanceof Error ? e.message : "Couldn't change simple mode");
@@ -140,6 +168,24 @@ export function ConfigurationPage() {
   const [newThingOpen, setNewThingOpen] = useState(false);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(DEFAULT_OPEN);
   const [query, setQuery] = useState("");
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const focused = isFocused(activeOrg);
+
+  // Hosted-only settings panels (billing, Slack, …) contributed by the cloud
+  // overlay. Open core registers none, so this is [] on a self-hosted instance
+  // and no tiles appear — none of the panels' names/logic exist in core. Each
+  // panel renders through the generic HostedPanelPage at /configuration/x/:id.
+  const hostedPanelsQ = useQuery({
+    queryKey: ["hosted-panels", activeSlug],
+    queryFn: () =>
+      api.request<{ panels: Array<{ id: string; label: string; icon?: string; group?: string }> }>(
+        "GET",
+        `/orgs/${activeSlug}/hosted-panels`,
+      ),
+    enabled: !!activeSlug,
+    retry: false,
+    staleTime: 5 * 60_000,
+  });
 
   const tiles: Tile[] = [
     // ── modules + bundles ──────────────────────────────────────────
@@ -429,6 +475,19 @@ export function ConfigurationPage() {
     },
   ];
 
+  // Hosted-only panels (billing/Slack/…) — one tile each, only when the overlay
+  // registers them. Label/icon/group come from the overlay at runtime.
+  for (const p of hostedPanelsQ.data?.panels ?? []) {
+    const group = (p.group ?? "access") as Tile["group"];
+    tiles.push({
+      group,
+      icon: iconForPanel(p.icon),
+      label: p.label,
+      description: "",
+      to: `/configuration/x/${p.id}`,
+    });
+  }
+
   // A search bar over every tile so the dense control room is navigable by
   // name instead of by hunting through five collapsed sections (feedback
   // b746e0e4: "nightmare of complexity… and a search bar at the top").
@@ -442,8 +501,16 @@ export function ConfigurationPage() {
   const grouped = GROUP_ORDER.map((group) => ({
     group,
     label: GROUP_LABELS[group],
-    items: tiles.filter((t) => t.group === group && matches(t)),
+    items: tiles.filter(
+      (t) =>
+        t.group === group &&
+        matches(t) &&
+        // Advanced tiles only show while searching or when explicitly revealed.
+        (q || showAdvanced || PRIMARY_TILES.has(t.label)),
+    ),
   })).filter((g) => g.items.length > 0);
+
+  const advancedCount = tiles.filter((t) => !PRIMARY_TILES.has(t.label)).length;
 
   return (
     <div className="space-y-5 max-w-4xl">
@@ -462,6 +529,23 @@ export function ConfigurationPage() {
         <FocusedModeToggle slug={activeSlug} focused={!!activeOrg?.focused} />
       )}
 
+      {focused ? (
+        // Simple mode hides the builder chrome, so the Configuration page itself
+        // becomes a calm one-card state rather than the 35-tile control room.
+        // (The toggle normally lands you on Home; this covers a direct visit.)
+        <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 text-sm text-content dark:text-mortar-200 space-y-2">
+          <p className="font-medium text-content dark:text-mortar-100">
+            Simple mode is on — builder tools are tucked away.
+          </p>
+          <p>
+            Modules, bundles, custom fields, integrations and the rest of the
+            control room are hidden for a calm, everyday workspace. Turn simple
+            mode off above whenever you want to configure or extend things —
+            nothing was removed.
+          </p>
+        </div>
+      ) : (
+      <>
       <div className="relative">
         <Search
           size={16}
@@ -523,9 +607,9 @@ export function ConfigurationPage() {
       )}
 
       {grouped.map(({ group, label, items }) => {
-        // While searching, every matching section is expanded — the point is to
-        // see the hits, not to re-open collapsed groups by hand.
-        const open = q ? true : (openGroups[group] ?? false);
+        // While searching — or while "show advanced" is on — every section is
+        // expanded; the point is to see the hits, not to re-open groups by hand.
+        const open = q || showAdvanced ? true : (openGroups[group] ?? false);
         return (
         <section key={group} className="space-y-2">
           <button
@@ -582,6 +666,27 @@ export function ConfigurationPage() {
         </section>
         );
       })}
+
+      {/* The everyday page is ~11 tiles; the other two dozen settings live
+          behind this so the page reads as a short menu, not a wall (feedback
+          b746e0e4). Search still finds every tile regardless of this toggle. */}
+      {!q && advancedCount > 0 && (
+        <button
+          type="button"
+          onClick={() => setShowAdvanced((v) => !v)}
+          className="w-full flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-line dark:border-slate-700 px-4 py-3 text-sm text-faint dark:text-slate-400 hover:text-content dark:hover:text-mortar-100 hover:border-cobble-300 dark:hover:border-cobble-700 transition"
+        >
+          <ChevronRight
+            size={14}
+            className={`transition-transform ${showAdvanced ? "rotate-90" : ""}`}
+          />
+          {showAdvanced
+            ? "Hide advanced settings"
+            : `Show advanced settings (${advancedCount})`}
+        </button>
+      )}
+      </>
+      )}
 
       <ModulePickerModal
         open={modulesOpen}

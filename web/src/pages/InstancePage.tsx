@@ -19,9 +19,12 @@ import { ProjectsUI } from "@cobblr/projects/ui";
 import { ApiError, api, getToken } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
-export function InstancePage() {
+export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
   const { activeSlug } = useActiveOrg();
-  const { name } = useParams<{ name: string }>();
+  // Reached two ways: the canonical `/instances/:name` (param) AND the clean
+  // top-level alias `/<name>` registered in App.tsx (prop). The prop wins.
+  const params = useParams<{ name: string }>();
+  const name = instanceName ?? params.name;
 
   const instancesQ = useQuery({
     queryKey: ["instances", activeSlug],

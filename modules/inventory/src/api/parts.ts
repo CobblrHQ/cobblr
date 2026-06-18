@@ -512,6 +512,30 @@ partsRouter.get(
   }),
 );
 
+// The consumption ledger for a part — what drew it down and how much, newest
+// first. For a consumable (a spool) this is its print/usage history; with
+// metadata.capacity + qty (remaining) it tells the whole "1kg → these prints →
+// this much left" story.
+partsRouter.get(
+  "/:id/consumption",
+  asyncHandler(async (req, res) => {
+    const db = tenantDb(req);
+    const id = req.params.id;
+    if (!id) {
+      res.status(400).json({ error: { code: "missing_id", message: "id required" } });
+      return;
+    }
+    const items = await db
+      .selectFrom("inventory_consumption")
+      .select(["id", "delta", "reason", "source_kind", "source_id", "at"])
+      .where("part_id", "=", id)
+      .orderBy("at", "desc")
+      .limit(200)
+      .execute();
+    res.json({ items });
+  }),
+);
+
 // D6: top-level keys the PartCreate / PartUpdate schemas know about.
 // Derived from the zod schema's shape so they stay in sync. Anything
 // not in here that the caller sends gets hoisted into metadata by

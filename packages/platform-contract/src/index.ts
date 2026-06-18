@@ -1941,9 +1941,117 @@ export interface RequestGuardCtx { ip: string; path: string; method: string; use
 export type RequestGuard = (
   ctx: RequestGuardCtx,
 ) => Promise<{ allow: boolean; retryAfterSec?: number; reason?: string }>;
+/** A delivery to a global, unauthenticated webhook endpoint
+ *  (/api/v1/hooks/:id). `rawBody` is the exact transmitted bytes, captured so a
+ *  handler can verify a provider signature (Stripe, GitHub, …) against them.
+ *  `method` is "POST" for webhooks/interactivity or "GET" for OAuth callbacks. */
+export interface PublicWebhookRequest {
+  method: string;
+  headers: Record<string, string | string[] | undefined>;
+  body: unknown;
+  rawBody?: string;
+  query: Record<string, unknown>;
+}
+export interface PublicWebhookHandler {
+  /** URL segment under /api/v1/hooks/, e.g. "stripe-billing". Last
+   *  registration for an id wins. */
+  id: string;
+  /** Return `headers` + a 3xx `status` with a `Location` header to issue a
+   *  redirect (an OAuth "Add to X" callback) instead of a JSON body. */
+  handle: (
+    req: PublicWebhookRequest,
+  ) => Promise<{ status: number; body?: unknown; headers?: Record<string, string> }>;
+}
 export interface PlatformHttp {
   /** Hosted overlay registers a request guard (rate-limit / abuse). */
   registerRequestGuard(g: RequestGuard): void;
+  /** Register a global, UNAUTHENTICATED webhook endpoint mounted at
+   *  /api/v1/hooks/:id. For ACCOUNT-LEVEL provider webhooks (Stripe billing,
+   *  GitHub app, …) that are NOT tenant-scoped — distinct from
+   *  integrations.registerInboundHandler, which is the per-workspace,
+   *  token-in-URL inbound receiver. The handler verifies its own signature and
+   *  resolves any tenant from the payload; the platform mounts it before auth
+   *  and captures rawBody for signature checks. Open core mounts the dispatch
+   *  route regardless, 404-ing unregistered ids. */
+  registerWebhook(h: PublicWebhookHandler): void;
+}
+
+// ── Hosted settings panels ───────────────────────────────────────────────────
+// Lets a module/overlay contribute a SETTINGS PAGE to the web app WITHOUT
+// shipping any frontend code into the open-core web bundle. The overlay returns
+// a small DECLARATIVE view (text / status / buttons / a select) + handles the
+// actions; the open-core web app renders it with one generic renderer. Open core
+// registers no panels, so a self-hoster sees nothing — none of the panel's
+// labels, logic, or even its name exist in core. Used for the hosted-only
+// billing + Slack panels, which therefore live entirely in the closed overlay.
+
+export type HostedPanelBlock =
+  | { kind: "text"; text: string; tone?: "muted" | "warning" }
+  | { kind: "status"; label: string; value: string; active?: boolean }
+  // A text field. Its current value is collected by `key` and submitted together
+  // when a `kind:"button"` with `submit:true` is clicked (input values arrive on
+  // runAction's `input.values`). `secret:true` renders a password field and the
+  // panel should not echo the stored value back.
+  | { kind: "input"; key: string; label: string; placeholder?: string; secret?: boolean; value?: string }
+  | {
+      kind: "button";
+      label: string;
+      action: string;
+      style?: "primary" | "default" | "danger";
+      confirm?: string;
+      /** Gather every input block's value and pass them as `input.values`. */
+      submit?: boolean;
+    }
+  | {
+      kind: "select";
+      label: string;
+      action: string;
+      value: string | null;
+      options: Array<{ value: string; label: string }>;
+      placeholder?: string;
+      hint?: string;
+    };
+export interface HostedPanelView {
+  blocks: HostedPanelBlock[];
+}
+/** What a button/select action returns: optionally redirect the browser (OAuth /
+ *  checkout), re-fetch the view, and/or show a toast. */
+export interface HostedPanelActionResult {
+  redirect?: string;
+  refresh?: boolean;
+  toast?: string;
+}
+export interface HostedPanelContext {
+  orgId: string;
+  userId: string;
+  slug: string;
+}
+export interface HostedPanel {
+  /** URL segment + key, e.g. "billing", "slack". */
+  id: string;
+  label: string;
+  /** Generic icon NAME (e.g. "credit-card"); the web maps a small allowlist. */
+  icon?: string;
+  group?: "modules" | "data" | "access" | "extend" | "admin";
+  getView(ctx: HostedPanelContext): Promise<HostedPanelView>;
+  runAction(
+    ctx: HostedPanelContext,
+    action: string,
+    input?: { value?: string | null; values?: Record<string, string> },
+  ): Promise<HostedPanelActionResult>;
+}
+export interface HostedPanelSummary {
+  id: string;
+  label: string;
+  icon?: string;
+  group?: string;
+}
+export interface PlatformHostedPanels {
+  /** Hosted overlay registers a settings panel. Last registration per id wins. */
+  register(panel: HostedPanel): void;
+  /** Summaries for building tiles/routes (no handlers). Empty in open core. */
+  list(): HostedPanelSummary[];
+  get(id: string): HostedPanel | undefined;
 }
 
 /** Blob persistence driver. core-files ships + falls back to a local-disk
@@ -2058,6 +2166,7 @@ export interface Platform {
   metering: PlatformMetering;
   accounts: PlatformAccounts;
   http: PlatformHttp;
+  hostedPanels: PlatformHostedPanels;
 }
 
 // ── Device substrate seam ────────────────────────────────────────────────────

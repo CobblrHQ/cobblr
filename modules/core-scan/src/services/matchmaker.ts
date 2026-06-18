@@ -53,6 +53,11 @@ export interface ScanMenuEntry {
    *  — an explicit routing hint that sharpens ambiguous matches (a bolt → "Parts
    *  Bin" vs "Car Parts"). Optional; routing still works off noun + fields. */
   scan_keywords?: string[];
+  /** Capture-first: when this menu entry comes from a NOT-yet-installed flagship
+   *  bundle (so the workspace can be matched against bundles it could become),
+   *  the bundle to install on materialize. Absent for the user's live instances.
+   *  This is the "link" — a capture knows which bundle would hold it. */
+  bundle_external_id?: string;
 }
 
 /** What the scanner perceived (the left half). */
@@ -98,6 +103,9 @@ export interface MatchCandidate {
   /** When the item data implies a count ("1 Pack Of 9 Skein", "10 Pack"),
    *  the unit quantity to pre-fill. Omitted when nothing implies one. */
   quantity?: number;
+  /** Capture-first: copied from the chosen menu entry when this candidate routes
+   *  to a not-yet-installed flagship bundle — the bundle to materialize. */
+  bundle_external_id?: string;
 }
 
 function clamp01(n: number): number {
@@ -209,6 +217,35 @@ export async function assembleScanMenu(
   return entries;
 }
 
+/**
+ * Capture-first merged menu. Returns the user's LIVE instances when the
+ * workspace has any — so established-workspace scan routing is byte-for-byte
+ * unchanged. When the workspace has NO scannable instances yet (a blank,
+ * just-signed-up workspace), it falls back to the FLAGSHIP BUNDLE menu
+ * (GET /quickstart/bundle-menu) so a capture still routes + extracts fields
+ * against the shapes the workspace could become — each entry tagged with the
+ * bundle to install on materialize. The same declarative matchmaker handles
+ * both: a not-yet-installed bundle is just a menu entry with field defs.
+ */
+export async function assembleMergedMenu(
+  baseUrl: string,
+  slug: string,
+  token: string,
+): Promise<ScanMenuEntry[]> {
+  const live = await assembleScanMenu(baseUrl, slug, token);
+  if (live.length > 0) return live;
+  try {
+    const res = await fetch(`${baseUrl}/api/v1/orgs/${slug}/quickstart/bundle-menu`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return live;
+    const body = (await res.json()) as { items?: ScanMenuEntry[] };
+    return Array.isArray(body.items) ? body.items : [];
+  } catch {
+    return live;
+  }
+}
+
 // ── robust JSON parsing of the model reply ───────────────────────────────────
 // Cheaper / smaller models (Haiku, local Ollama) garble strict JSON more often —
 // trailing commas, truncated output, markdown fences, unescaped quotes in the
@@ -247,6 +284,99 @@ export function parseMatchmakerCandidates(content: string): unknown[] | null {
  * Returns [] when there's no AI provider, the menu is empty, or the model fails
  * — the UI then falls back to today's generic part/asset behaviour.
  */
+/** Strip a leading count + unit + "of" from a capture so the name reads clean:
+ *  "3 skeins of blue worsted wool" → "Blue worsted wool". */
+function cleanCaptureName(raw: string): string {
+  const s = raw
+    .replace(/^\s*\d+\s*(x|×)?\s*/i, "")
+    .replace(/^(skeins?|balls?|spools?|rolls?|packs?|boxes?|bottles?|cans?|bags?|units?|pcs?|pieces?)\b\s*/i, "")
+    .replace(/^of\s+/i, "")
+    .trim();
+  const cut = s.split(/[,.;\n]/)[0]?.trim() || s;
+  return cut ? cut.charAt(0).toUpperCase() + cut.slice(1) : raw.slice(0, 80);
+}
+
+/**
+ * The HEURISTIC floor — a deterministic, zero-cost matcher used when the AI
+ * matchmaker is unavailable (no provider, not entitled, errored, or empty). It
+ * scores each menu table by keyword overlap between the capture text and the
+ * table's noun / scan_keywords / field names / field CHOICES, and extracts a
+ * field value whenever a capture token equals one of a field's allowed choices
+ * (the choices ARE the vocabulary — "worsted" → weight_class:Worsted). Weaker
+ * than the model, but it means free / no-AI workspaces still get a real tracker
+ * suggestion instead of a capture that never resolves. Connect AI to sharpen it.
+ */
+export function heuristicMatch(item: PerceivedItem, menu: ScanMenuEntry[]): MatchCandidate[] {
+  if (menu.length === 0) return [];
+  const hay = `${item.name ?? ""} ${item.description ?? ""} ${item.category ?? ""} ${item.notes ?? ""} ${
+    item.metadata ? JSON.stringify(item.metadata) : ""
+  }`.toLowerCase();
+  const tokens = new Set(hay.split(/[^a-z0-9]+/).filter((t) => t.length >= 3));
+  const hasWord = (phrase: string): boolean => {
+    const p = phrase.toLowerCase();
+    if (p.length >= 3 && hay.includes(p)) return true;
+    return p.split(/[^a-z0-9]+/).some((w) => w.length >= 3 && tokens.has(w));
+  };
+
+  const scored = menu
+    .map((entry) => {
+      let score = 0;
+      const fields: Record<string, string | number | boolean> = {};
+      // The table's OWN noun/keywords route it (a "yarn" table for a "...yarn"),
+      // but they must NOT leak into field-value extraction — otherwise a vendor
+      // choice "Local yarn shop" gets picked just because the capture says "yarn".
+      const nounWords = new Set(
+        [entry.noun, ...(entry.scan_keywords ?? [])]
+          .flatMap((s) => s.toLowerCase().split(/[^a-z0-9]+/))
+          .filter((w) => w.length >= 3),
+      );
+      for (const term of [entry.noun, ...(entry.scan_keywords ?? [])]) {
+        if (term && hasWord(term)) score += 2;
+      }
+      // A choice matches only on a NON-noun capture token (whole-phrase hits the
+      // noun-word guard too: every matched word must be a non-noun word).
+      const choiceHit = (ch: string): boolean => {
+        const words = ch.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3);
+        return words.some((w) => tokens.has(w) && !nounWords.has(w));
+      };
+      for (const f of entry.fields) {
+        if (hasWord(f.name) || hasWord(f.label)) score += 1;
+        if (f.choices) {
+          for (const ch of f.choices) {
+            if (ch && choiceHit(ch)) {
+              score += 3;
+              if (!(f.name in fields)) fields[f.name] = ch; // extract the matched choice
+            }
+          }
+        }
+      }
+      return { entry, score, fields };
+    })
+    .filter((s) => s.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3);
+
+  if (scored.length === 0) return [];
+  const qm = hay.match(/(\d+)\s*(skein|ball|spool|roll|pack|box|bottle|can|bag|unit|pcs|piece|x|×)/);
+  const quantity = qm ? Number(qm[1]) : undefined;
+  const name = cleanCaptureName(item.name ?? "");
+
+  return scored.map(({ entry, score, fields }, i) => ({
+    module: entry.module,
+    instance: entry.instance,
+    kind: entry.kind,
+    label: entry.label,
+    confidence: Math.min(0.6, 0.3 + score * 0.04),
+    name,
+    fields,
+    ...(Number.isInteger(quantity) && quantity! > 0 && quantity! <= 10_000 ? { quantity } : {}),
+    ...(entry.bundle_external_id ? { bundle_external_id: entry.bundle_external_id } : {}),
+    ...(i === 0
+      ? { notes: "Matched by keywords (no AI). Connect an AI provider for sharper identification + field-fill." }
+      : {}),
+  }));
+}
+
 export async function runMatchmaker(
   orgId: string,
   item: PerceivedItem,
@@ -392,7 +522,10 @@ export async function runMatchmaker(
   // fast provider the retry has ample budget and fires.
   let rawList = await callOnce(false, MATCH_DEADLINE_MS);
   if (rawList === null && remaining() > RETRY_MIN_MS) rawList = await callOnce(true, remaining());
-  if (rawList === null) return [];
+  // AI unavailable (no provider / not entitled / errored / timed out) → fall back
+  // to the deterministic heuristic so capture-first still suggests a tracker for
+  // free / no-AI workspaces. The whole point: capture-first never goes dark.
+  if (rawList === null) return heuristicMatch(item, menu);
 
   // Validate each candidate against the menu — the model may only route to a
   // table we actually offered, and we resolve module/kind/label from the menu
@@ -428,8 +561,12 @@ export async function runMatchmaker(
         ? { notes: cand.notes.trim().slice(0, 2000) }
         : {}),
       ...(Number.isInteger(qty) && qty > 0 && qty <= 10_000 ? { quantity: qty } : {}),
+      // Carry the bundle pointer through from the chosen menu entry so a
+      // capture against a not-yet-installed bundle remembers what to install.
+      ...(entry.bundle_external_id ? { bundle_external_id: entry.bundle_external_id } : {}),
     });
     if (out.length >= 3) break;
   }
-  return out;
+  // AI returned nothing usable for this menu → heuristic floor, never blank.
+  return out.length > 0 ? out : heuristicMatch(item, menu);
 }

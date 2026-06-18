@@ -24,12 +24,16 @@ interface Props {
   /** Optional small chip shown in the bottom-right of the image —
    *  state, qty, status. Pass a string or a styled ReactNode. */
   badge?: ReactNode;
+  /** Optional swatch color (hex). When there's no image, fill the square
+   *  with this instead of the initial-letter card — e.g. a yarn/filament
+   *  colour is the item's identity. Mirrors EntityThumb's `color`. */
+  color?: string | null;
   /** Optional ember-tinted border when the row wants attention
    *  (low-stock, blocked, expired). */
   attention?: boolean;
 }
 
-export function EntityTile({ src, title, subtitle, badge, attention }: Props) {
+export function EntityTile({ src, title, subtitle, badge, color, attention }: Props) {
   const borderCls = attention
     ? "border-ember-300 dark:border-ember-700"
     : "border-line dark:border-slate-700";
@@ -49,6 +53,16 @@ export function EntityTile({ src, title, subtitle, badge, attention }: Props) {
             loading="lazy"
             className="w-full h-full object-cover"
           />
+        ) : color ? (
+          // No photo but a swatch colour — the colour IS the identity (yarn,
+          // filament, paint). Fill the square; the initial sits subtly on top
+          // so two same-colour items are still distinguishable at a glance.
+          <div
+            className="w-full h-full flex items-center justify-center text-3xl font-mono text-black/25 dark:text-black/30"
+            style={{ backgroundColor: color }}
+          >
+            {title.trim().slice(0, 1).toUpperCase()}
+          </div>
         ) : (
           <div className="w-full h-full flex items-center justify-center text-3xl font-mono text-faint dark:text-slate-600">
             {title.trim().slice(0, 1).toUpperCase() || "?"}

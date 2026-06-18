@@ -104,6 +104,22 @@ export interface Part extends HomeBoxFields {
   updated_at: string;
 }
 
+export interface ConsumptionRow {
+  id: string;
+  delta: string; // signed: negative = consumed
+  reason: string | null;
+  source_kind: string | null;
+  source_id: string | null;
+  at: string;
+}
+
+export interface SpoolmanConnection {
+  id: string;
+  label: string;
+  base_url: string;
+  last_sync_status: string | null;
+}
+
 export interface ImportRow {
   name: string;
   qty: number;
@@ -332,6 +348,20 @@ export class InventoryApi {
     URL.revokeObjectURL(a.href);
   };
   getPart = (id: string) => this.partsRequest<Part>("GET", `/${id}`);
+  /** A consumable's ledger — what drew it down and how much, newest first. */
+  listConsumption = (id: string) =>
+    this.partsRequest<{ items: ConsumptionRow[] }>("GET", `/${id}/consumption`);
+
+  // ── Spoolman: when present, it's the tracker; we pull a spool's remaining in. ──
+  listSpoolman = () => this.request<{ items: SpoolmanConnection[] }>("GET", "/spoolman/connections");
+  createSpoolman = (b: { label: string; base_url: string; api_key?: string }) =>
+    this.request<SpoolmanConnection>("POST", "/spoolman/connections", b);
+  deleteSpoolman = (id: string) => this.request<void>("DELETE", `/spoolman/connections/${id}`);
+  syncSpoolman = (connection_id: string, instance?: string) =>
+    this.request<{ ok: boolean; synced: number; created: number; updated: number }>("POST", "/spoolman/sync", {
+      connection_id,
+      instance,
+    });
   createPart = (b: Partial<Omit<PartListItem, "id" | "created_at" | "updated_at" | "assigned_qty" | "available_qty" | "low_stock">> & { name: string }) =>
     this.partsRequest<Part>("POST", "", b);
   updatePart = (id: string, b: Record<string, unknown>) =>

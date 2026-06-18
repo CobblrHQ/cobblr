@@ -14,6 +14,7 @@ import { categoriesRouter } from "./categories.js";
 import { partsRouter } from "./parts.js";
 import { allocationsRouter } from "./allocations.js";
 import { importRouter } from "./import.js";
+import { spoolmanRouter } from "./spoolman.js";
 import { registerInventoryResolvers } from "./resolvers.js";
 import { registerInventoryActionHandlers } from "./action-handlers.js";
 import { registerInventoryComputedContext } from "./computed-context.js";
@@ -35,6 +36,7 @@ const router = Router({ mergeParams: true });
 router.use("/categories", categoriesRouter);
 router.use("/parts", partsRouter);
 router.use("/allocations", allocationsRouter);
+router.use("/spoolman", spoolmanRouter);
 router.use(importRouter);
 
 export default router;

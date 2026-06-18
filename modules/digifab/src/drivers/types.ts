@@ -13,6 +13,23 @@ export interface RemoteDevice {
   state?: string | null;
   /** Printer tags/groups (FDM Monster tags) — used for tag routing. */
   tags?: string[];
+  /** Live temperatures the manager reports, if any (°C). Cockpit display only. */
+  temps?: DeviceTemps | null;
+  /** Current job sub-stage label (preheating/leveling/calibrating…), when the
+   *  manager reports one. Cockpit display only — answers "why isn't it printing
+   *  yet". */
+  stage?: string | null;
+  /** A webcam/MJPEG/HLS stream URL the MANAGER serves for this device, if it
+   *  exposes one. Cobblr only embeds the URL — it never proxies the video
+   *  (coordinate-not-control). A user can also set one manually per device. */
+  camera_url?: string | null;
+}
+
+/** Live temperatures (°C). `actual` is the reading; `target` the setpoint. */
+export interface DeviceTemps {
+  nozzle?: { actual: number; target?: number } | null;
+  bed?: { actual: number; target?: number } | null;
+  chamber?: { actual: number; target?: number } | null;
 }
 
 export type JobState =
@@ -31,6 +48,10 @@ export interface JobStatus {
   /** 0..1 when known. */
   progress?: number | null;
   deviceId?: string | null;
+  /** Seconds remaining / elapsed, when the manager reports them (OctoPrint's
+   *  printTimeLeft / printTime). Surfaced in print-update notifications. */
+  timeRemainingSec?: number | null;
+  elapsedSec?: number | null;
   /** The raw upstream payload, for debugging / fields we don't model. */
   raw?: unknown;
 }
@@ -97,6 +118,15 @@ export interface MachineDriver {
   submitJob(args: SubmitArgs): Promise<SubmitResult>;
   /** Poll a job's status. Read-only. */
   getJobStatus(jobId: string): Promise<JobStatus>;
+  /** OPTIONAL — ask the manager to ABORT a running job (F-4). Best-effort: a
+   *  driver that can't stop a print leaves this undefined, and cancel is then
+   *  local-only (the print keeps running — stop it at the machine). */
+  cancelJob?(jobId: string): Promise<void>;
+  /** OPTIONAL — pause a running job at the manager (cockpit live-control). A
+   *  driver that can't pause leaves these undefined; the API returns 501. */
+  pauseJob?(jobId: string): Promise<void>;
+  /** OPTIONAL — resume a paused job at the manager. */
+  resumeJob?(jobId: string): Promise<void>;
   /** OPTIONAL — the ACTUATOR shape: fire a parameterized command-and-forget
    *  (open a valve for N seconds, call a service, flip a relay). No file, no
    *  long-lived job — fire and ack. Drivers that only fabricate (file → job)

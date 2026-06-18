@@ -73,10 +73,24 @@ export interface InventoryAllocationsTable {
   instance: Generated<string>;
 }
 
+/** Append-only consumption ledger — one row per stock change with a source, so
+ *  a consumable shows WHAT drew it down and HOW MUCH (the spool's print history).
+ *  delta is signed: negative = consumed, positive = restocked. */
+export interface InventoryConsumptionTable {
+  id: Generated<string>;
+  part_id: string;
+  delta: string;
+  reason: string | null;
+  source_kind: string | null;
+  source_id: string | null;
+  at: Generated<Date>;
+}
+
 export interface InventoryDB {
   inventory_categories: InventoryCategoriesTable;
   inventory_parts: InventoryPartsTable;
   inventory_allocations: InventoryAllocationsTable;
+  inventory_consumption: InventoryConsumptionTable;
 }
 
 export type OrgRole = "owner" | "admin" | "member" | "guest";

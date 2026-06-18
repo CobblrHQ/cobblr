@@ -66,7 +66,9 @@ export function AuthPage() {
           email: cleanEmail,
           password: cleanPassword,
           display_name: displayName.trim(),
-          org_name: orgName.trim(),
+          // Optional — blank → the API names it "<your name>'s workspace". Send
+          // undefined (not ""), which the server's `?? default` relies on.
+          org_name: orgName.trim() || undefined,
         });
       }
     } catch (err) {
@@ -147,12 +149,11 @@ export function AuthPage() {
                   className="input"
                 />
               </Field>
-              <Field label="Workspace name">
+              <Field label="Workspace name (optional)">
                 <input
-                  required
                   value={orgName}
                   onChange={(e) => setOrgName(e.target.value)}
-                  placeholder="e.g. my workshop"
+                  placeholder="Leave blank — we'll name it after you"
                   className="input"
                 />
               </Field>

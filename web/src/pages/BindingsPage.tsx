@@ -26,6 +26,14 @@ export function BindingsPage() {
     queryFn: () => api.listBindings(slug),
     enabled: !!slug,
   });
+  // Resolve bundle ids → names so each row can say which bundle it came
+  // from (the binding only carries the bundle's internal id).
+  const bundles = useQuery({
+    queryKey: ["bundles", slug],
+    queryFn: () => api.listBundles(slug),
+    enabled: !!slug,
+  });
+  const bundleName = new Map((bundles.data?.items ?? []).map((b) => [b.id, b.name]));
 
   const toggle = useMutation({
     mutationFn: (b: PlatformBinding) => api.updateBinding(slug, b.id, { enabled: !b.enabled }),
@@ -119,7 +127,9 @@ export function BindingsPage() {
                   </div>
                 )}
                 {b.bundle_id && (
-                  <div className="mt-1 text-[10px] font-mono text-faint dark:text-slate-500">installed via bundle</div>
+                  <div className="mt-1 text-[10px] font-mono text-faint dark:text-slate-500">
+                    installed via {bundleName.get(b.bundle_id) ?? "bundle"}
+                  </div>
                 )}
               </button>
             </li>

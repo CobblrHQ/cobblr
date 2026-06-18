@@ -53,6 +53,27 @@ function toJobState(raw: unknown): JobState {
   return s ? "unknown" : "queued";
 }
 
+/** A printer FDMM manages, as a Cobblr import target — the underlying controller
+ *  URL + key + the matching Cobblr driver key. */
+export interface ImportTarget {
+  id: string;
+  name: string;
+  url: string | null;
+  apiKey: string | null;
+  driverType: string;
+}
+
+/** Map an FDMM printer's type/protocol to a Cobblr driver key. FDMM speaks the
+ *  same protocols as us except RRF; default to octoprint (its historical
+ *  default) when the field is absent or unrecognised. */
+function mapFdmmType(t: unknown): string {
+  const s = String(t ?? "").toLowerCase();
+  if (s.includes("klipper") || s.includes("moonraker")) return "klipper-moonraker";
+  if (s.includes("prusa")) return "prusalink";
+  if (s.includes("fluidnc") || s.includes("grbl")) return "fluidnc";
+  return "octoprint";
+}
+
 export class FdmMonsterDriver implements MachineDriver {
   private base: string;
   private cfg: ManagerConfig;
@@ -158,6 +179,22 @@ export class FdmMonsterDriver implements MachineDriver {
       enabled: Boolean(pick(p, "enabled") ?? true),
       state: (pick<string>(p, "printerState", "state") ?? null) as string | null,
       tags: (pick<string[]>(p, "tags") ?? []) as string[],
+    }));
+  }
+
+  /** Migration source: each FDMM printer's underlying controller URL + key +
+   *  protocol, so Cobblr can recreate it as a DIRECT connection of the matching
+   *  driver type (FDMM speaks the same protocols as us bar RRF — so a printer
+   *  may be OctoPrint, Klipper/Moonraker, PrusaLink, …, not just OctoPrint). */
+  async listImportTargets(): Promise<ImportTarget[]> {
+    const data = await this.json(EP.printers);
+    const arr = Array.isArray(data) ? data : (pick<unknown[]>(data, "printers", "items") ?? []);
+    return (arr as unknown[]).map((p) => ({
+      id: String(pick(p, "id", "_id") ?? ""),
+      name: String(pick(p, "name", "printerName") ?? "unnamed"),
+      url: (pick<string>(p, "printerURL", "printerUrl", "url") ?? null) as string | null,
+      apiKey: (pick<string>(p, "apiKey", "apikey") ?? null) as string | null,
+      driverType: mapFdmmType(pick(p, "printerType", "service", "type", "managerType")),
     }));
   }
 

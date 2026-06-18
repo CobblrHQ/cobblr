@@ -93,6 +93,18 @@ export function deriveNextSteps(
   const declared = resolveNextSteps(baseNextSteps, manifest.features, selected);
   if (declared.length) return declared;
   const resolved = resolveBundleManifest(manifest, selected);
+  // A bundle that PROVISIONS instances (e.g. "3D Printers" of machines) lands the
+  // user in the INSTANCE it just created — the thing they made — not the bare
+  // host module. ("Go to 3D Printers" → /3d-printers, never "Go to Machines".)
+  const instances = resolved.provides_instances ?? [];
+  if (instances.length) {
+    return instances.map((i) => ({
+      label: `Go to ${i.display_name}`,
+      module: i.module,
+      path: `/${i.instance_name}`,
+      ...(i.item_noun ? { hint: `Add your first ${i.item_noun}` } : {}),
+    }));
+  }
   return [...new Set((resolved.requires ?? []).map((r) => r.module))]
     .filter((m) => !m.startsWith("core-"))
     .map((m) => ({ label: `Go to ${m.charAt(0).toUpperCase() + m.slice(1)}`, module: m }));
@@ -350,101 +362,114 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
   // — nothing hardcoded" reads better when even these very domain-
   // specific things are bundles a builder turns on.
   //
-  // `provides_lens` is the bundle-side replacement for the module-
-  // dependency mechanic: the nav reads installed bundles for this
-  // field and renders the lens chip under the parent module's
-  // popover.
+  // Machine specialisations are `provides_instances` of the multi-instance
+  // `machines` module — a named top-level collection (3D Printers) whose items
+  // are still `machines:machine` rows, so digifab / fleet / maintenance keep
+  // working. (Was a `provides_lens` — a filtered view of the shared table —
+  // which couldn't cleanly be its own top-level thing.)
   {
     glyph: "🖨️",
     blurb:
-      "3D printer fields — hotend, extruder, board, firmware, bed size, local IP. Drives the '3D printers' lens on the Machines page.",
+      "Track your 3D printers — hotend, extruder, board, firmware, bed size, local IP. Its own tab; still part of your machines (prints, fleet, maintenance).",
     manifest: {
       id: "cobblr.community.3d-printers",
-      version: "0.1.0",
+      version: "0.2.0",
       name: "3D Printers",
       description:
-        "Extends machines with 3D-printer-specific fields: hotend, extruder, board, firmware, bed_size, local_ip.",
+        "A 3D Printers tracker — your printers with hotend, extruder, board, firmware, bed size, and local IP. It's a named view of your machines, so each printer still drives prints, fleet status, and maintenance.",
       author: "Cobblr community",
       requires: [{ module: "machines" }],
-      provides_lens: {
-        entity_kind: "machines:machine",
-        name: "3d-printers",
-        display_name: "3D Printers",
-      },
-      wires: [],
-      field_defs: [
+      provides_instances: [
         {
-          entity_kind: "machines:machine",
-          name: "hotend",
-          display_label: "Hotend",
-          type: "text",
-          position: 10,
-          choices: [
-            "Stock",
-            "E3D V6",
-            "E3D Volcano",
-            "E3D Revo",
-            "Phaetus Dragonfly",
-            "Phaetus Rapido",
-            "Mosquito",
-            "Bondtech CHT",
+          module: "machines",
+          instance_name: "3d-printers",
+          display_name: "3D Printers",
+          item_noun: "3D printer",
+          glyph: "🖨️",
+          field_defs: [
+            {
+              entity_kind: "machines:machine",
+              name: "hotend",
+              display_label: "Hotend",
+              type: "text",
+              position: 10,
+              choices: [
+                "Stock",
+                "E3D V6",
+                "E3D Volcano",
+                "E3D Revo",
+                "Phaetus Dragonfly",
+                "Phaetus Rapido",
+                "Mosquito",
+                "Bondtech CHT",
+              ],
+            },
+            {
+              entity_kind: "machines:machine",
+              name: "extruder",
+              display_label: "Extruder",
+              type: "text",
+              position: 11,
+              choices: [
+                "Stock",
+                "Bondtech LGX",
+                "Bondtech LGX Lite",
+                "Bondtech DDX",
+                "BMG (clone)",
+                "Titan",
+                "Orbiter v2",
+                "Sherpa Mini",
+              ],
+            },
+            {
+              entity_kind: "machines:machine",
+              name: "board",
+              display_label: "Mainboard",
+              type: "text",
+              position: 12,
+              choices: [
+                "Stock",
+                "BTT SKR Mini E3",
+                "BTT SKR 1.4 Turbo",
+                "BTT Octopus",
+                "Duet 3 6HC",
+                "Duet 3 6XD",
+                "MKS Robin Nano",
+              ],
+            },
+            {
+              entity_kind: "machines:machine",
+              name: "firmware",
+              display_label: "Firmware",
+              type: "text",
+              position: 13,
+              choices: ["Stock", "Marlin", "Klipper", "RepRapFirmware", "Prusa Buddy"],
+            },
+            {
+              entity_kind: "machines:machine",
+              name: "bed_size",
+              display_label: "Bed size (mm)",
+              type: "text",
+              position: 14,
+              choices: ["180×180", "200×200", "220×220", "235×235", "250×250", "300×300", "350×350", "400×400"],
+            },
+            {
+              entity_kind: "machines:machine",
+              name: "local_ip",
+              display_label: "Local IP / hostname",
+              type: "text",
+              position: 15,
+            },
           ],
-        },
-        {
-          entity_kind: "machines:machine",
-          name: "extruder",
-          display_label: "Extruder",
-          type: "text",
-          position: 11,
-          choices: [
-            "Stock",
-            "Bondtech LGX",
-            "Bondtech LGX Lite",
-            "Bondtech DDX",
-            "BMG (clone)",
-            "Titan",
-            "Orbiter v2",
-            "Sherpa Mini",
+          saved_views: [
+            {
+              entity_kind: "machines:machine",
+              name: "Printer fleet by state",
+              view_type: "kanban",
+              config: { group_by: "state" },
+              pinned: true,
+            },
           ],
-        },
-        {
-          entity_kind: "machines:machine",
-          name: "board",
-          display_label: "Mainboard",
-          type: "text",
-          position: 12,
-          choices: [
-            "Stock",
-            "BTT SKR Mini E3",
-            "BTT SKR 1.4 Turbo",
-            "BTT Octopus",
-            "Duet 3 6HC",
-            "Duet 3 6XD",
-            "MKS Robin Nano",
-          ],
-        },
-        {
-          entity_kind: "machines:machine",
-          name: "firmware",
-          display_label: "Firmware",
-          type: "text",
-          position: 13,
-          choices: ["Stock", "Marlin", "Klipper", "RepRapFirmware", "Prusa Buddy"],
-        },
-        {
-          entity_kind: "machines:machine",
-          name: "bed_size",
-          display_label: "Bed size (mm)",
-          type: "text",
-          position: 14,
-          choices: ["180×180", "200×200", "220×220", "235×235", "250×250", "300×300", "350×350", "400×400"],
-        },
-        {
-          entity_kind: "machines:machine",
-          name: "local_ip",
-          display_label: "Local IP / hostname",
-          type: "text",
-          position: 15,
         },
       ],
     },
@@ -452,22 +477,23 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
     glyph: "🔥",
     blurb:
-      "Laser cutter fields — tube type, wattage, bed size, cooling, focal length. Drives the 'Laser Cutters' lens on the Machines page.",
+      "Track your laser cutters — tube type, wattage, bed size, cooling, focal length. Its own tab; still part of your machines (jobs, fleet, maintenance).",
     manifest: {
       id: "cobblr.community.laser-cutters",
-      version: "0.1.0",
+      version: "0.2.0",
       name: "Laser Cutters",
       description:
-        "Extends machines with laser-cutter-specific fields: tube_type, wattage, bed_size, cooling_type, focal_length.",
+        "A Laser Cutters tracker — tube type, wattage, bed size, cooling, focal length. A named view of your machines, so each cutter still drives jobs, fleet status, and maintenance.",
       author: "Cobblr community",
       requires: [{ module: "machines" }],
-      provides_lens: {
-        entity_kind: "machines:machine",
-        name: "laser-cutters",
-        display_name: "Laser Cutters",
-      },
-      wires: [],
-      field_defs: [
+      provides_instances: [
+        {
+          module: "machines",
+          instance_name: "laser-cutters",
+          display_name: "Laser Cutters",
+          item_noun: "laser cutter",
+          glyph: "🔥",
+          field_defs: [
         {
           entity_kind: "machines:machine",
           name: "tube_type",
@@ -505,6 +531,17 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           display_label: "Focal length (mm)",
           type: "number",
           position: 24,
+            },
+          ],
+          saved_views: [
+            {
+              entity_kind: "machines:machine",
+              name: "Laser fleet by tube type",
+              view_type: "kanban",
+              config: { group_by: "tube_type" },
+              pinned: true,
+            },
+          ],
         },
       ],
     },
@@ -512,22 +549,23 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
     glyph: "⚙️",
     blurb:
-      "CNC machine fields — spindle, axes, work area, controller, coolant. Drives the 'CNC Machines' lens on the Machines page.",
+      "Track your CNC machines — spindle, axes, work area, controller, coolant. Its own tab; still part of your machines (jobs, fleet, maintenance).",
     manifest: {
       id: "cobblr.community.cnc-machines",
-      version: "0.1.0",
+      version: "0.2.0",
       name: "CNC Machines",
       description:
-        "Extends machines with CNC-specific fields: spindle, axis_count, work_area, controller, coolant_type.",
+        "A CNC Machines tracker — spindle, axes, work area, controller, coolant. A named view of your machines, so each mill still drives jobs, fleet status, and maintenance.",
       author: "Cobblr community",
       requires: [{ module: "machines" }],
-      provides_lens: {
-        entity_kind: "machines:machine",
-        name: "cnc-machines",
-        display_name: "CNC Machines",
-      },
-      wires: [],
-      field_defs: [
+      provides_instances: [
+        {
+          module: "machines",
+          instance_name: "cnc-machines",
+          display_name: "CNC Machines",
+          item_noun: "CNC machine",
+          glyph: "⚙️",
+          field_defs: [
         {
           entity_kind: "machines:machine",
           name: "spindle",
@@ -575,6 +613,17 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           type: "text",
           position: 34,
           choices: ["None", "Air blast", "Mist", "Flood", "MQL"],
+            },
+          ],
+          saved_views: [
+            {
+              entity_kind: "machines:machine",
+              name: "CNC fleet by controller",
+              view_type: "kanban",
+              config: { group_by: "controller" },
+              pinned: true,
+            },
+          ],
         },
       ],
     },

@@ -10,7 +10,7 @@ import type { ManagerConfig, MachineDriver } from "./types.js";
 import { fdmMonsterFactory } from "./fdm-monster.js";
 import { MockDriver } from "./mock.js";
 import { DeclarativeDriver } from "./declarative.js";
-import { EdgeAdapterDriver } from "./edge-adapter.js";
+import { EdgeAdapterDriver, type EdgeRelay } from "./edge-adapter.js";
 import { DriverManifest } from "./manifest.js";
 
 /** Built-in drivers — always available, ship in code, reference impls. */
@@ -31,9 +31,12 @@ export async function resolveDriver(
   type: string,
   cfg: ManagerConfig,
   connectionId: string,
+  relay?: EdgeRelay | null,
 ): Promise<MachineDriver> {
   if (type === "fdm_monster") return fdmMonsterFactory(cfg);
-  if (type === "edge_adapter") return new EdgeAdapterDriver(cfg);
+  // A tunnelled edge_adapter connection routes through the cloud→edge relay
+  // (base_url cobblr-edge://); a direct one dials the bridge URL.
+  if (type === "edge_adapter") return new EdgeAdapterDriver(cfg, relay ?? null);
   if (type === "mock") {
     let m = mockInstances.get(connectionId);
     if (!m) {

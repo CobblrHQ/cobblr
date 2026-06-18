@@ -15,6 +15,19 @@ export function setToken(token: string | null) {
   else localStorage.removeItem(TOKEN_KEY);
 }
 
+/** Fetch a binary endpoint with auth → an object URL (for <img>). Caller must
+ *  revokeObjectURL when done. Returns null on any error. */
+export async function fetchAuthBlobUrl(path: string): Promise<string | null> {
+  try {
+    const token = getToken();
+    const res = await fetch(`/api/v1${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    if (!res.ok) return null;
+    return URL.createObjectURL(await res.blob());
+  } catch {
+    return null;
+  }
+}
+
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
@@ -1113,6 +1126,25 @@ export const api = {
     request<{ ok: boolean }>("POST", `/orgs/${slug}/drive/tab/release`, { browser_id }),
   driveTabTelemetry: (slug: string, browser_id: string, events: unknown[]) =>
     request<{ ok: boolean }>("POST", `/orgs/${slug}/drive/tab/telemetry`, { browser_id, events }),
+  driveStatus: (slug: string) =>
+    request<{ driver: boolean; tabs: number; active: string | null }>(
+      "GET",
+      `/orgs/${slug}/drive/status`,
+    ),
+
+  // ─── scan-drives-screen (Phase 1) ─────────────────────────────────
+  // A scan is a driver: a Cobblr QR navigates the designated tab to that
+  // entity; a product barcode intakes it + surfaces the Scan inbox; nothing
+  // designated → it lands in triage (driven:false). See
+  // docs/design-decisions/scan-drives-screen.md.
+  scanDrive: (slug: string, code: string, scan_batch_id?: string) =>
+    request<{
+      driven: boolean;
+      kind: "qr" | "barcode";
+      action?: "navigate";
+      path?: string;
+      item_id?: string;
+    }>("POST", `/orgs/${slug}/scan-drive`, { code, ...(scan_batch_id ? { scan_batch_id } : {}) }),
 
   // ─── core-files ───────────────────────────────────────────────────
   listFiles: (slug: string, kind?: string) =>
@@ -1325,6 +1357,24 @@ export const api = {
       "GET",
       `/orgs/${slug}/modules/digifab/connections`,
     ),
+  // The live fleet/floor view: every enabled connection's devices + state, with
+  // Cobblr's in-flight jobs overlaid. Read-only; the page polls it.
+  getDigifabFleet: (slug: string) =>
+    request<DigifabFleet>("GET", `/orgs/${slug}/modules/digifab/fleet`),
+  // F-1: clear a printer's bed-clear flag — "cleared, ready for the next job".
+  // F-13 — clear the bed + give the verdict. "good" closes the linked task;
+  // "scrapped" reverses the optimistic filament/usage effects. Default "good".
+  markDigifabDeviceReady: (slug: string, connectionId: string, deviceId: string, outcome: "good" | "scrapped" = "good") =>
+    request<{ ok: boolean; outcome: string }>("POST", `/orgs/${slug}/modules/digifab/fleet/${connectionId}/${encodeURIComponent(deviceId)}/ready`, { outcome }),
+  // Cockpit: set/clear a device's camera stream URL (manual override).
+  setDigifabDeviceCamera: (slug: string, connectionId: string, deviceId: string, cameraUrl: string | null) =>
+    request<{ ok: boolean; camera_url: string | null }>("POST", `/orgs/${slug}/modules/digifab/fleet/${connectionId}/${encodeURIComponent(deviceId)}/camera`, { camera_url: cameraUrl }),
+  // Snapshot relay (opt-in, off by default): toggle whether the cloud accepts +
+  // serves agent-pushed frames for remote viewing.
+  setDigifabDeviceSnapshotRelay: (slug: string, connectionId: string, deviceId: string, enabled: boolean) =>
+    request<{ ok: boolean; snapshot_relay: boolean }>("POST", `/orgs/${slug}/modules/digifab/fleet/${connectionId}/${encodeURIComponent(deviceId)}/snapshot-relay`, { enabled }),
+  digifabSnapshotPath: (slug: string, connectionId: string, deviceId: string) =>
+    `/orgs/${slug}/modules/digifab/fleet/${connectionId}/${encodeURIComponent(deviceId)}/snapshot`,
   createDigifabConnection: (
     slug: string,
     body: {
@@ -1397,25 +1447,97 @@ export const api = {
   ) => request<DigifabLink>("POST", `/orgs/${slug}/modules/digifab/links`, body),
   deleteDigifabLink: (slug: string, id: string) =>
     request<void>("DELETE", `/orgs/${slug}/modules/digifab/links/${id}`),
-  listDigifabJobs: (slug: string) =>
-    request<{ items: DigifabJob[] }>("GET", `/orgs/${slug}/modules/digifab/jobs`),
+  listDigifabJobs: (slug: string, opts?: { limit?: number; cursor?: string; status?: string }) => {
+    const q = new URLSearchParams();
+    if (opts?.limit) q.set("limit", String(opts.limit));
+    if (opts?.cursor) q.set("cursor", opts.cursor);
+    if (opts?.status) q.set("status", opts.status);
+    const qs = q.toString();
+    return request<{ items: DigifabJob[]; next_cursor: string | null }>("GET", `/orgs/${slug}/modules/digifab/jobs${qs ? `?${qs}` : ""}`);
+  },
+  cancelDigifabJob: (slug: string, id: string) =>
+    request<{ status: string; remote_cancelled: boolean }>("POST", `/orgs/${slug}/modules/digifab/jobs/${id}/cancel`, {}),
+  // Cockpit live-control: pause / resume a running job (501 if the driver can't).
+  pauseDigifabJob: (slug: string, id: string) =>
+    request<{ status: string }>("POST", `/orgs/${slug}/modules/digifab/jobs/${id}/pause`, {}),
+  resumeDigifabJob: (slug: string, id: string) =>
+    request<{ status: string }>("POST", `/orgs/${slug}/modules/digifab/jobs/${id}/resume`, {}),
+  deleteDigifabJob: (slug: string, id: string) =>
+    request<void>("DELETE", `/orgs/${slug}/modules/digifab/jobs/${id}`),
   createDigifabJob: (
     slug: string,
     body: {
-      connection_id: string;
+      connection_id?: string;
       file_ref: string;
       target_device?: string | null;
       target_tag?: string | null;
+      target_pool?: string | null;
+      material_part_id?: string | null;
+      material_grams?: number | null;
       file_id?: string | null;
       linked_machine_id?: string | null;
       linked_task_id?: string | null;
     },
   ) => request<DigifabJob>("POST", `/orgs/${slug}/modules/digifab/jobs`, body),
+  // ── Pools: a Cobblr-native set of devices to queue jobs onto (auto-assigned). ──
+  listDigifabPools: (slug: string) =>
+    request<{ items: DigifabPool[] }>("GET", `/orgs/${slug}/modules/digifab/pools`),
+  createDigifabPool: (slug: string, name: string) =>
+    request<DigifabPool>("POST", `/orgs/${slug}/modules/digifab/pools`, { name }),
+  deleteDigifabPool: (slug: string, id: string) =>
+    request<void>("DELETE", `/orgs/${slug}/modules/digifab/pools/${id}`),
+  addDigifabPoolMember: (slug: string, poolId: string, connection_id: string, remote_device_id: string) =>
+    request<{ ok: boolean }>("POST", `/orgs/${slug}/modules/digifab/pools/${poolId}/members`, {
+      connection_id,
+      remote_device_id,
+    }),
+  removeDigifabPoolMember: (slug: string, poolId: string, connectionId: string, deviceId: string) =>
+    request<void>(
+      "DELETE",
+      `/orgs/${slug}/modules/digifab/pools/${poolId}/members/${connectionId}/${encodeURIComponent(deviceId)}`,
+    ),
+  // Migrate an FDM Monster farm in: "direct" recreates each printer as its own
+  // connection (drops FDMM); "mirror" keeps FDMM + pools its printers.
+  importDigifabFdmMonster: (
+    slug: string,
+    body: { base_url: string; api_key?: string; username?: string; password?: string; mode: "direct" | "mirror"; pool_name: string },
+  ) =>
+    request<{ mode: string; pool_id: string; pool_name: string; created?: number; skipped?: number; mirrored?: number }>(
+      "POST",
+      `/orgs/${slug}/modules/digifab/import/fdm-monster`,
+      body,
+    ),
+  bulkAddDigifabConnections: (
+    slug: string,
+    body: {
+      default_type: string;
+      pool_name?: string;
+      test?: boolean;
+      printers: { name?: string; url: string; api_key?: string; username?: string; password?: string; type?: string }[];
+    },
+  ) =>
+    request<{
+      created: number;
+      failed: number;
+      pool_id?: string;
+      pool_name?: string;
+      results: { index: number; name: string; url: string; type: string; status: "created" | "failed"; connection_id?: string; reachable?: boolean; detail?: string }[];
+    }>("POST", `/orgs/${slug}/modules/digifab/bulk/connections`, body),
+  detectDigifabType: (slug: string, body: { url: string; api_key?: string }) =>
+    request<{ type: string | null; detail: string }>("POST", `/orgs/${slug}/modules/digifab/bulk/detect`, body),
   sendDigifabJob: (slug: string, id: string) =>
     request<{ status: string; remote_job_id: string | null; placement: unknown; uploaded_bytes?: number }>(
       "POST",
       `/orgs/${slug}/modules/digifab/jobs/${id}/send`,
       {},
+    ),
+  // F-14 — re-pick a printer for an awaiting-assignment job (re-submits the
+  // already-uploaded file to an explicit device; no re-upload).
+  assignDigifabJob: (slug: string, id: string, deviceId: string) =>
+    request<{ status: string; remote_job_id: string | null; placement: unknown }>(
+      "POST",
+      `/orgs/${slug}/modules/digifab/jobs/${id}/assign`,
+      { device_id: deviceId },
     ),
   pollDigifabJob: (slug: string, id: string) =>
     request<{ status: string; terminal: boolean }>(
@@ -1783,6 +1905,32 @@ export const api = {
       "POST",
       `/orgs/${slug}/modules/core-scan/inbox/${id}/discard`,
     ),
+  // Capture-first "write something down": free text → a note capture the
+  // matchmaker identifies against the flagship bundle menu.
+  scanNote: (slug: string, text: string) =>
+    request<ScanInboxItem>("POST", `/orgs/${slug}/modules/core-scan/scan/note`, { text }),
+  // Parse an uploaded receipt PDF/photo (core-ai) into one inbox row per line
+  // item — each then triages into a part via the normal confirm flow.
+  scanReceipt: (slug: string, file_id: string) =>
+    request<{
+      receipt: {
+        vendor: string | null;
+        date: string | null;
+        currency: string | null;
+        total: number | null;
+        item_count: number;
+      };
+      items: ScanInboxItem[];
+    }>("POST", `/orgs/${slug}/modules/core-scan/scan/receipt`, { file_id }),
+  // Pending captures grouped by the bundle they fit ("These look like yarn (3)").
+  quickstart: (slug: string) =>
+    request<QuickstartSuggestions>("GET", `/orgs/${slug}/quickstart`),
+  // Install a flagship bundle + batch-commit the captures that fit it.
+  materializeQuickstart: (slug: string, bundle_external_id: string, item_ids?: string[]) =>
+    request<QuickstartMaterializeResult>("POST", `/orgs/${slug}/quickstart/materialize`, {
+      bundle_external_id,
+      ...(item_ids ? { item_ids } : {}),
+    }),
   rerunScanAi: (slug: string, id: string, hint?: string) =>
     request<ScanInboxItem>(
       "POST",
@@ -2617,6 +2765,9 @@ export interface ScanCandidate {
   notes?: string;
   /** Unit count when the item data implies one ("1 Pack Of 9 Skein"). */
   quantity?: number;
+  /** Capture-first: set when this routes to a not-yet-installed flagship
+   *  bundle — the bundle to materialize. */
+  bundle_external_id?: string;
 }
 
 /** One field on a scan-menu table (a trimmed field def). */
@@ -2662,7 +2813,7 @@ export interface ScanEvalCase {
 export interface ScanInboxItem {
   id: string;
   status: "pending" | "enriching" | "resolved" | "discarded";
-  source_kind: "barcode" | "photo" | "url" | "receipt";
+  source_kind: "barcode" | "photo" | "url" | "receipt" | "note";
   barcode_text: string | null;
   source_url: string | null;
   image_file_id: string | null;
@@ -2687,6 +2838,28 @@ export interface ScanInboxItem {
   created_at: string;
   updated_at: string;
   resolved_at: string | null;
+}
+
+/** Capture-first: pending captures grouped by the flagship bundle they fit. */
+export interface QuickstartSuggestion {
+  bundle_external_id: string;
+  bundle_name: string;
+  noun: string;
+  count: number;
+  sample_names: string[];
+}
+export interface QuickstartSuggestions {
+  pending_total: number;
+  suggestions: QuickstartSuggestion[];
+}
+export interface QuickstartMaterializeResult {
+  created: number;
+  module: string | null;
+  instance: string | null;
+  label?: string;
+  /** Route under /w/:slug to land the user in the new, populated table. */
+  route: string | null;
+  errors?: Array<{ id: string; status: number }>;
 }
 
 export interface EntityTemplate {
@@ -3123,6 +3296,63 @@ export interface DigifabConnection {
   updated_at: string;
 }
 
+export type DigifabDeviceClass = "printing" | "idle" | "paused" | "complete" | "offline" | "error" | "unknown";
+
+export interface DigifabDeviceTemp {
+  actual: number;
+  target?: number;
+}
+export interface DigifabFleetDevice {
+  id: string;
+  name: string;
+  state: string;
+  klass: DigifabDeviceClass;
+  enabled: boolean;
+  tags: string[];
+  linked_machine_id: string | null;
+  pool_id: string | null;
+  pool_name: string | null;
+  /** Cockpit: live temps the manager reports (°C), if any. */
+  temps: { nozzle?: DigifabDeviceTemp | null; bed?: DigifabDeviceTemp | null; chamber?: DigifabDeviceTemp | null } | null;
+  /** Cockpit: current job sub-stage (preheating/leveling/…) when reported — the
+   *  "why isn't it printing yet" signal. */
+  stage: string | null;
+  /** Cockpit: a webcam/MJPEG stream URL (manual override or driver-reported). */
+  camera_url: string | null;
+  /** Snapshot relay (opt-in, off by default) + whether a fresh relayed frame is
+   *  available right now (the web prefers it over camera_url for remote viewing). */
+  snapshot_relay: boolean;
+  snapshot_fresh: boolean;
+  /** F-1: finished/failed a print — needs a human bed-clear before it's assignable. */
+  needs_attention: { reason: string; since: string } | null;
+  active_job: { id: string; file_ref: string; status: string; progress: number | null } | null;
+}
+
+export interface DigifabFleetConnection {
+  connection_id: string;
+  label: string;
+  type: string;
+  error: string | null;
+  /** When this connection's device list was last fetched from its manager (F-11
+   *  cache); null when the connection errored. May be up to ~10s stale. */
+  fetched_at: string | null;
+  devices: DigifabFleetDevice[];
+}
+
+export interface DigifabFleet {
+  connections: DigifabFleetConnection[];
+  summary: {
+    devices: number;
+    printing: number;
+    idle: number;
+    offline: number;
+    error: number;
+    connections: number;
+    connections_down: number;
+    needs_attention: number;
+  };
+}
+
 export interface Printer {
   id: string;
   name: string;
@@ -3176,10 +3406,13 @@ export interface DigifabLink {
 
 export interface DigifabJob {
   id: string;
-  connection_id: string;
+  connection_id: string | null;
   file_ref: string;
   target_device: string | null;
   target_tag: string | null;
+  target_pool: string | null;
+  material_part_id: string | null;
+  material_grams: string | null;
   remote_file_id: string | null;
   remote_job_id: string | null;
   status: string;
@@ -3191,6 +3424,19 @@ export interface DigifabJob {
   created_at: string;
   updated_at: string;
   last_polled_at: string | null;
+}
+
+export interface DigifabPoolMember {
+  connection_id: string;
+  remote_device_id: string;
+  loaded_material: string | null;
+}
+
+export interface DigifabPool {
+  id: string;
+  name: string;
+  config: Record<string, unknown>;
+  members: DigifabPoolMember[];
 }
 
 export interface MaintenanceEntry {

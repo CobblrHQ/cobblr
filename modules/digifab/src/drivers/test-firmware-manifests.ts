@@ -110,6 +110,30 @@ const FILE = new Uint8Array([1, 2, 3, 4]);
   } finally { f.restore(); }
 }
 
+// ── Klipper on Fluidd (same Moonraker API, different host) ─────────────────
+// Mainsail and Fluidd are both web UIs over the SAME Moonraker API, so the one
+// manifest drives either — only the base URL differs (Moonraker direct on :7125,
+// or the frontend host that proxies /printer + /server). Prove it: the same
+// manifest against a Fluidd-style host issues the same Moonraker calls + works.
+{
+  const m = load("klipper-moonraker.json");
+  const f = installFakeFetch({
+    "GET /printer/info": () => ({ json: { result: { hostname: "fluidd-voron", state: "ready" } } }),
+    "POST /server/files/upload": () => ({ json: { item: { path: "plate.gcode" } } }),
+    "POST /printer/print/start": () => ({ json: { result: "ok" } }),
+    "GET /printer/objects/query": () => ({ json: { result: { status: { print_stats: { state: "complete" }, virtual_sdcard: { progress: 1 } } } } }),
+  });
+  try {
+    const d = new DeclarativeDriver(m, { baseUrl: "http://fluidd.local", apiKey: "test-key" });
+    note("klipper (Fluidd host) testConnection ok", (await d.testConnection()).ok);
+    note("klipper (Fluidd host) listDevices → hostname", (await d.listDevices())[0]!.name === "fluidd-voron");
+    const up = await d.uploadFile(FILE, "plate.gcode");
+    const sub = await d.submitJob({ fileId: up.fileId });
+    note("klipper (Fluidd host) submit queued", sub.queued);
+    note("klipper (Fluidd host) status complete", (await d.getJobStatus(sub.jobId!)).state === "completed");
+  } finally { f.restore(); }
+}
+
 // ── Duet RRF (raw upload + templated path) ────────────────────────────────
 {
   const m = load("duet-rrf.json");

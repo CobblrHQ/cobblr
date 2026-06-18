@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "inventory",
-  version: "0.2.0",
+  version: "0.5.0",
   displayName: "Inventory",
   description:
     "Parts, locations, categories, stock tracking, polymorphic allocations. The generalised toolkit you'd otherwise Frankenstein from a spreadsheet.",
@@ -231,6 +231,29 @@ export default defineModule({
         action_id: "inventory:adjust-stock",
         trigger_type: "event",
         trigger_event: "purchases.order_item.received",
+      },
+      // A completed print deducts the filament it consumed. digifab's
+      // print.completed payload carries { partId, delta } when the job declared
+      // a material; adjust-stock reads them off the payload. Inert for a print
+      // with no declared material (partId null → the handler skips), and for
+      // any workspace without digifab (the event never fires) — same shape as
+      // the order-arrival wire above. The wire belongs to inventory: it owns
+      // the action.
+      {
+        source_kind: "digifab:job",
+        action_id: "inventory:adjust-stock",
+        trigger_type: "event",
+        trigger_event: "digifab.print.completed",
+      },
+      // F-13 — the reverse: a print SCRAPPED at the bed-clear step fires
+      // digifab.print.reversed carrying { partId, delta: +grams }, adding the
+      // filament back that print.completed optimistically deducted. Same handler,
+      // mirrored payload. Inert when the scrapped print declared no material.
+      {
+        source_kind: "digifab:job",
+        action_id: "inventory:adjust-stock",
+        trigger_type: "event",
+        trigger_event: "digifab.print.reversed",
       },
     ],
   },

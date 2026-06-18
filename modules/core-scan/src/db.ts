@@ -4,7 +4,7 @@ import type { Generated, Kysely } from "kysely";
 import type { Request } from "express";
 
 export type ScanStatus = "pending" | "enriching" | "resolved" | "discarded";
-export type ScanSourceKind = "barcode" | "photo" | "url" | "receipt";
+export type ScanSourceKind = "barcode" | "photo" | "url" | "receipt" | "note";
 
 export interface CoreScanInboxItemsTable {
   id: Generated<string>;

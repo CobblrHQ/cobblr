@@ -38,7 +38,7 @@ function entry(raw: unknown, summary: string, credentialHint: string): CatalogEn
 
 export const DRIVER_CATALOG: CatalogEntry[] = [
   entry(octoprint, "Single-printer host. Upload + select-and-print over the OctoPrint REST API.", "API key (Settings → Application Keys)"),
-  entry(klipper, "Klipper via the Moonraker API. Upload to the gcodes store + start a print.", "API key (optional; Moonraker [authorization])"),
+  entry(klipper, "Klipper via the Moonraker API — works with Mainsail OR Fluidd (both are UIs over the same Moonraker). Point the URL at Moonraker (usually :7125; the Mainsail/Fluidd host also proxies its API). Upload to the gcodes store + start a print.", "API key (optional; Moonraker [authorization])"),
   entry(duet, "RepRapFirmware (Duet Web Control). Raw gcode upload + M32 print start.", "none (or DWC password)"),
   entry(prusalink, "Prusa printers via PrusaLink. Raw PUT upload + print.", "API key (PrusaLink Settings)"),
   entry(fluidnc, "GRBL lasers/CNC on FluidNC. Upload to SD + $SD/Run; plain-text GRBL status.", "none (or device password)"),

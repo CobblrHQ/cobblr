@@ -32,6 +32,48 @@ interface ResolveResult {
   detail_path?: string;
 }
 
+/** Resolve a QR token slug → its target (org, entity, mode, detail_path), or a
+ *  non-ok status. Pure lookup, no HTTP / audit — shared by the public scan route
+ *  AND the scan-drives-screen router (api/src/platform/scan-drive.ts). */
+export async function resolveQrToken(token: string): Promise<ResolveResult> {
+  const row = await meta
+    .selectFrom("core_labels_qr_tokens")
+    .selectAll()
+    .where("token", "=", token)
+    .executeTakeFirst();
+  if (!row) return { ok: false, status: "not_found" };
+  if (row.revoked_at) return { ok: false, status: "revoked" };
+  if (row.expires_at && row.expires_at < new Date()) return { ok: false, status: "expired" };
+
+  const orgRow = await meta
+    .selectFrom("orgs")
+    .select(["id", "slug"])
+    .where("id", "=", row.org_id)
+    .executeTakeFirst();
+  if (!orgRow) return { ok: false, status: "not_found" };
+
+  const ekRow = await meta
+    .selectFrom("entity_kinds")
+    .select(["detail_route"])
+    .where("id", "=", row.entity_kind)
+    .executeTakeFirst();
+  const detailPath = ekRow?.detail_route ? ekRow.detail_route.replace("{id}", row.entity_id) : undefined;
+
+  return {
+    ok: true,
+    status: "active",
+    token_id: row.id,
+    org_id: row.org_id,
+    org_slug: orgRow.slug,
+    entity_kind: row.entity_kind,
+    entity_id: row.entity_id,
+    mode: row.mode,
+    action_id: row.action_id,
+    auth: row.auth,
+    detail_path: detailPath,
+  };
+}
+
 qrScanRouter.get("/:token", async (req, res, next) => {
   try {
     const slug = req.params.token;
@@ -39,64 +81,14 @@ qrScanRouter.get("/:token", async (req, res, next) => {
       res.status(400).json({ error: { code: "missing_token", message: "token required" } });
       return;
     }
-    const row = await meta
-      .selectFrom("core_labels_qr_tokens")
-      .selectAll()
-      .where("token", "=", slug)
-      .executeTakeFirst();
-    if (!row) {
-      const out: ResolveResult = { ok: false, status: "not_found" };
-      res.status(404).json(out);
+    const result = await resolveQrToken(slug);
+    if (!result.ok) {
+      res.status(result.status === "not_found" ? 404 : 410).json(result);
       return;
     }
-    if (row.revoked_at) {
-      res.status(410).json({ ok: false, status: "revoked" } satisfies ResolveResult);
-      return;
-    }
-    if (row.expires_at && row.expires_at < new Date()) {
-      res.status(410).json({ ok: false, status: "expired" } satisfies ResolveResult);
-      return;
-    }
-
-    const orgRow = await meta
-      .selectFrom("orgs")
-      .select(["id", "slug"])
-      .where("id", "=", row.org_id)
-      .executeTakeFirst();
-    if (!orgRow) {
-      // Token's org was deleted out from under it. Treat as not_found.
-      res.status(404).json({ ok: false, status: "not_found" } satisfies ResolveResult);
-      return;
-    }
-
-    // Look up the entity kind's detail_route from the registry.
-    const ekRow = await meta
-      .selectFrom("entity_kinds")
-      .select(["detail_route"])
-      .where("id", "=", row.entity_kind)
-      .executeTakeFirst();
-    const detailPath =
-      ekRow?.detail_route
-        ? ekRow.detail_route.replace("{id}", row.entity_id)
-        : undefined;
-
-    const result: ResolveResult = {
-      ok: true,
-      status: "active",
-      token_id: row.id,
-      org_id: row.org_id,
-      org_slug: orgRow.slug,
-      entity_kind: row.entity_kind,
-      entity_id: row.entity_id,
-      mode: row.mode,
-      action_id: row.action_id,
-      auth: row.auth,
-      detail_path: detailPath,
-    };
-
     // Best-effort scan audit log. Failures here don't 500 the scan.
     try {
-      const tdb = (await getTenantDb(row.org_id)) as unknown as {
+      const tdb = (await getTenantDb(result.org_id!)) as unknown as {
         insertInto: (table: string) => {
           values: (v: Record<string, unknown>) => { execute: () => Promise<unknown> };
         };
@@ -104,7 +96,7 @@ qrScanRouter.get("/:token", async (req, res, next) => {
       await tdb
         .insertInto("core_labels_qr_scans")
         .values({
-          token_id: row.id,
+          token_id: result.token_id!,
           ua_hint: ((req.headers["user-agent"] as string | undefined) ?? "").slice(0, 200),
           referer: ((req.headers["referer"] as string | undefined) ?? "").slice(0, 500),
         })
@@ -113,11 +105,11 @@ qrScanRouter.get("/:token", async (req, res, next) => {
       console.error("[qr-scan] audit log write failed:", err);
     }
     void events.emit("core-labels-qr.scan.received", {
-      orgId: row.org_id,
-      tokenId: row.id,
-      entityKind: row.entity_kind,
-      entityId: row.entity_id,
-      mode: row.mode,
+      orgId: result.org_id,
+      tokenId: result.token_id,
+      entityKind: result.entity_kind,
+      entityId: result.entity_id,
+      mode: result.mode,
       ua: ((req.headers["user-agent"] as string | undefined) ?? "").slice(0, 200),
     });
 

@@ -90,7 +90,13 @@ connectionsRouter.get(
   "/",
   asyncHandler(async (req, res) => {
     const ctx = tenantContext(req);
-    res.json({ items: await store().list(ctx.org.id), types: await availableDriverKeys(tenantDb(req)) });
+    // The device-connection store is SHARED across modules (inventory keeps its
+    // Spoolman connection here too). Show only connections digifab can drive —
+    // its own driver types — so a Spoolman (or other) connection never leaks in.
+    const types = await availableDriverKeys(tenantDb(req));
+    const driveable = new Set(types);
+    const items = (await store().list(ctx.org.id)).filter((c) => driveable.has(c.type));
+    res.json({ items, types });
   }),
 );
 

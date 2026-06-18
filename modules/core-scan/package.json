@@ -30,6 +30,7 @@
     "@cobblr/platform-contract": "*",
     "express": "^4.21.2",
     "kysely": "^0.27.5",
+    "pdf-parse": "^2.4.5",
     "zod": "^3.24.1"
   },
   "devDependencies": {

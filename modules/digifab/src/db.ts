@@ -23,15 +23,25 @@ export interface DigifabConnectionsTable {
 
 export interface DigifabJobsTable {
   id: Generated<string>;
-  connection_id: string;
+  /** Null for an unassigned pool job — the assignment worker sets it. */
+  connection_id: string | null;
   file_ref: string;
   target_device: string | null;
   target_tag: string | null;
+  /** A Cobblr pool to drip this job onto a free member (queue mode). */
+  target_pool: string | null;
+  /** Filament the print consumes — an inventory part + grams. On completion a
+   *  seeded wire deducts `material_grams` from `material_part_id`'s stock. */
+  material_part_id: string | null;
+  material_grams: string | null;
   remote_file_id: string | null;
   remote_job_id: string | null;
   status: Generated<string>;
   progress: number | null;
   error: string | null;
+  /** Consecutive poll errors (F-12) — reset to 0 on a successful poll; a job is
+   *  only declared `failed` after this crosses the threshold. */
+  poll_errors: Generated<number>;
   /** A stored core-files file whose bytes are uploaded at send. */
   file_id: string | null;
   linked_machine_id: string | null;
@@ -65,11 +75,60 @@ export interface DigifabDriversTable {
   updated_at: Generated<Date>;
 }
 
+export interface DigifabPoolsTable {
+  id: Generated<string>;
+  name: string;
+  config: Generated<Record<string, unknown>>;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+export interface DigifabPoolMembersTable {
+  pool_id: string;
+  connection_id: string;
+  remote_device_id: string;
+  loaded_material: string | null;
+  created_at: Generated<Date>;
+}
+
+// A device that finished/failed a print and needs a human to clear the bed
+// before it can take new work. The assign worker skips these; the fleet view
+// surfaces them; POST …/ready deletes the row.
+export interface DigifabDeviceAttentionTable {
+  connection_id: string;
+  remote_device_id: string;
+  job_id: string | null;
+  reason: string; // print-completed | print-failed
+  note: string | null;
+  created_at: Generated<Date>;
+}
+
+export interface DigifabDeviceSettingsTable {
+  connection_id: string;
+  remote_device_id: string;
+  camera_url: string | null;
+  snapshot_relay: Generated<boolean>;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+export interface DigifabDeviceSnapshotsTable {
+  connection_id: string;
+  remote_device_id: string;
+  jpeg: Buffer;
+  updated_at: Generated<Date>;
+}
+
 export interface DigifabDB {
   digifab_connections: DigifabConnectionsTable;
   digifab_jobs: DigifabJobsTable;
   digifab_device_links: DigifabDeviceLinksTable;
   digifab_drivers: DigifabDriversTable;
+  digifab_pools: DigifabPoolsTable;
+  digifab_pool_members: DigifabPoolMembersTable;
+  digifab_device_attention: DigifabDeviceAttentionTable;
+  digifab_device_settings: DigifabDeviceSettingsTable;
+  digifab_device_snapshots: DigifabDeviceSnapshotsTable;
 }
 
 export type OrgRole = "owner" | "admin" | "member" | "guest";

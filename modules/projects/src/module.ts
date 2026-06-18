@@ -129,7 +129,7 @@ export default defineModule({
 
   // Subscribes is informational — the actual reaction happens
   // through user-configurable wires (seeded at signup / module enable).
-  subscribes: ["inventory.stock.changed", "digifab.print.completed"],
+  subscribes: ["inventory.stock.changed", "digifab.print.confirmed"],
 
   // Reactions ship as wires, not hardcoded code, so users can edit /
   // disable / replace them. The wires belong to projects because
@@ -143,14 +143,17 @@ export default defineModule({
         trigger_type: "event",
         trigger_event: "inventory.stock.changed",
       },
-      // Auto-close a task when its linked print job completes. The
-      // job carries linkedTaskId on the event payload; the handler
-      // reads it directly (target defaults to "self" = the job).
+      // Auto-close a task when its linked print is CONFIRMED good (F-13). Not on
+      // raw `completed` — a manager's "completed" only means the gcode finished,
+      // not that a good part exists, and silently closing the human's task on a
+      // spaghetti-failed print is the one effect too costly to get wrong. The
+      // bed-clear "good" verdict emits digifab.print.confirmed (carrying
+      // linkedTaskId); the handler reads it directly.
       {
         source_kind: "digifab:job",
         action_id: "projects:mark-task-done",
         trigger_type: "event",
-        trigger_event: "digifab.print.completed",
+        trigger_event: "digifab.print.confirmed",
       },
     ],
   },
