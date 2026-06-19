@@ -110,6 +110,32 @@ export function deriveNextSteps(
     .map((m) => ({ label: `Go to ${m.charAt(0).toUpperCase() + m.slice(1)}`, module: m }));
 }
 
+/** The "send files to your machines" capability, shared by every machine-type
+ *  bundle (3D Printers / Laser Cutters / CNC Machines) so it's DRY + identical.
+ *  Checked by DEFAULT — most people setting up a printer want to send jobs to
+ *  it — but a plain checkbox the user can uncheck if they only want to catalog
+ *  the machine. Enabling it brings the digifab (Print Manager) module under the
+ *  bundle's roof; the machine's detail page then links straight to its manager.
+ *  Bundle title stays the noun (3D Printers); the capability lives here. */
+function connectMachinesFeature(noun: string): BundleFeature {
+  return {
+    key: "digifab",
+    name: `Connect to your ${noun}s`,
+    question: `Want to send files to your ${noun}s and track the job?`,
+    description:
+      "Adds the Print Manager — map each machine to the software that runs it (FDM Monster, OctoPrint, …), send a file to be made, and track the job to completion. Talks to the manager's API; it never drives the hardware. You can link a machine to its manager right from the machine's page.",
+    default: true,
+    requires: [{ module: "digifab" }],
+  };
+}
+
+/** The v0.3.0 "what's new" line shown in the bundle modal after an update — so a
+ *  one-click inline update still lets you review what changed. DRY across the
+ *  three machine bundles; varies only by noun, tab name, and field examples. */
+function machineBundleChangelog(noun: string, tab: string, fields: string): string {
+  return `Your ${noun}s now open the full machine page — set every field (${fields}), edit in place, attach files, and link the machine straight to its print manager (FDM Monster / OctoPrint) right from its own page, instead of a name-only stub. Installing now offers a checked-by-default “Connect to your ${noun}s” option that brings the Print Manager along — send a file to be made and track the job — which you can uncheck for catalog-only use. Existing installs auto-upgrade: your ${noun}s move into the ${tab} tab automatically, no reinstall.`;
+}
+
 export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
     glyph: "🥬",
@@ -373,12 +399,15 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Track your 3D printers — hotend, extruder, board, firmware, bed size, local IP. Its own tab; still part of your machines (prints, fleet, maintenance).",
     manifest: {
       id: "cobblr.community.3d-printers",
-      version: "0.2.0",
+      version: "0.3.0",
       name: "3D Printers",
       description:
         "A 3D Printers tracker — your printers with hotend, extruder, board, firmware, bed size, and local IP. It's a named view of your machines, so each printer still drives prints, fleet status, and maintenance.",
       author: "Cobblr community",
+      released_at: "2026-06-19",
+      changelog: machineBundleChangelog("3D printer", "3D Printers", "hotend, extruder, mainboard, firmware, bed size, local IP"),
       requires: [{ module: "machines" }],
+      features: [connectMachinesFeature("3D printer")],
       provides_instances: [
         {
           module: "machines",
@@ -480,12 +509,15 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Track your laser cutters — tube type, wattage, bed size, cooling, focal length. Its own tab; still part of your machines (jobs, fleet, maintenance).",
     manifest: {
       id: "cobblr.community.laser-cutters",
-      version: "0.2.0",
+      version: "0.3.0",
       name: "Laser Cutters",
       description:
         "A Laser Cutters tracker — tube type, wattage, bed size, cooling, focal length. A named view of your machines, so each cutter still drives jobs, fleet status, and maintenance.",
       author: "Cobblr community",
+      released_at: "2026-06-19",
+      changelog: machineBundleChangelog("laser cutter", "Laser Cutters", "tube type, wattage, bed size, cooling, focal length"),
       requires: [{ module: "machines" }],
+      features: [connectMachinesFeature("laser cutter")],
       provides_instances: [
         {
           module: "machines",
@@ -552,12 +584,15 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Track your CNC machines — spindle, axes, work area, controller, coolant. Its own tab; still part of your machines (jobs, fleet, maintenance).",
     manifest: {
       id: "cobblr.community.cnc-machines",
-      version: "0.2.0",
+      version: "0.3.0",
       name: "CNC Machines",
       description:
         "A CNC Machines tracker — spindle, axes, work area, controller, coolant. A named view of your machines, so each mill still drives jobs, fleet status, and maintenance.",
       author: "Cobblr community",
+      released_at: "2026-06-19",
+      changelog: machineBundleChangelog("CNC machine", "CNC Machines", "spindle, axes, work area, controller, coolant"),
       requires: [{ module: "machines" }],
+      features: [connectMachinesFeature("CNC machine")],
       provides_instances: [
         {
           module: "machines",

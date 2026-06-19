@@ -436,4 +436,127 @@ export function registerTools(server: McpServer, client: CobblrClient): void {
       }
     },
   );
+
+  // ──────────────────────────────────────────────────────────────────────
+  // OPERATE — read + act on the data of ANY app in the workspace.
+  //
+  // These wrap the kernel's generic registry, so they work for every module
+  // and every app the user built — no per-app tools. The loop to DO something:
+  //   1. cobblr_list_record_kinds          → what kinds exist (inventory:part…)
+  //   2. cobblr_list_records / cobblr_get_record   → read the data
+  //   3. cobblr_list_actions kind=<k>      → the verbs that apply + their args
+  //   4. cobblr_invoke_action              → do it (adjust stock, mark done, …)
+  // ──────────────────────────────────────────────────────────────────────
+
+  server.registerTool(
+    "cobblr_list_record_kinds",
+    {
+      title: "List record kinds in a workspace",
+      description:
+        "Discover every kind of record this workspace can hold (e.g. inventory:part, machines:machine, builds:build, projects:task) — across all enabled modules AND any app the user built. Start here when you want to READ or OPERATE data (not build an app). Returns { items:[{ id, displayName, … }] }.",
+      inputSchema: { ...workspaceArg },
+    },
+    async ({ workspace }) => {
+      try {
+        const slug = client.resolveSlug(workspace);
+        return ok(await client.listEntityKinds(slug));
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "cobblr_list_records",
+    {
+      title: "List records of a kind",
+      description:
+        "List records of one kind (get the kind id from cobblr_list_record_kinds). `q` is a text search; `limit` defaults to 50 (max 200). Returns { items:[{ kind, id, title, subtitle, fields }] } — projected through the kind's exposable fields. Use this to find a record's id before reading or acting on it.",
+      inputSchema: {
+        ...workspaceArg,
+        kind: z.string().describe("The record kind id, e.g. 'inventory:part'."),
+        q: z.string().optional().describe("Optional text search."),
+        limit: z.number().int().positive().max(200).optional().describe("Max rows (default 50)."),
+      },
+    },
+    async ({ workspace, kind, q, limit }) => {
+      try {
+        const slug = client.resolveSlug(workspace);
+        return ok(await client.listEntities(slug, kind, { q, limit }));
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "cobblr_get_record",
+    {
+      title: "Get one record",
+      description:
+        "Fetch a single record by kind + id. Returns the resolved entity { kind, id, title, subtitle, fields, detailUrl }.",
+      inputSchema: {
+        ...workspaceArg,
+        kind: z.string().describe("The record kind id, e.g. 'inventory:part'."),
+        id: z.string().describe("The record id."),
+      },
+    },
+    async ({ workspace, kind, id }) => {
+      try {
+        const slug = client.resolveSlug(workspace);
+        return ok(await client.getEntity(slug, kind, id));
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "cobblr_list_actions",
+    {
+      title: "List invokable actions (verbs)",
+      description:
+        "Discover the actions you can invoke — the write/operate verbs every module and app expose (e.g. inventory:adjust-stock, builds:build-one, projects:mark-task-done). Each item carries its `id`, `label`, `description`, and `matched_kinds` (the record kinds it applies to). Pass `kind` to filter to actions that apply to that kind. Read this BEFORE cobblr_invoke_action so you know the action id + its args (the args shape is in the description).",
+      inputSchema: {
+        ...workspaceArg,
+        kind: z.string().optional().describe("Optional: only actions that apply to this record kind."),
+      },
+    },
+    async ({ workspace, kind }) => {
+      try {
+        const slug = client.resolveSlug(workspace);
+        const all = (await client.listActions(slug)) as { items?: Array<{ matched_kinds?: string[] }> };
+        if (kind && Array.isArray(all.items)) {
+          return ok({ items: all.items.filter((a) => (a.matched_kinds ?? []).includes(kind)) });
+        }
+        return ok(all);
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "cobblr_invoke_action",
+    {
+      title: "Invoke an action on a record",
+      description:
+        "Do something — the generic WRITE path that lets you operate any app the user built (adjust stock, mark a task done, build one, change a status…). Get `action_id` and its `args` shape from cobblr_list_actions, and the `entity_kind`+`entity_id` from cobblr_list_records. Permission-checked server-side (members need an explicit grant). Returns the action's result.",
+      inputSchema: {
+        ...workspaceArg,
+        action_id: z.string().describe("The action id, e.g. 'inventory:adjust-stock'."),
+        entity_kind: z.string().describe("The kind of the record to act on, e.g. 'inventory:part'."),
+        entity_id: z.string().describe("The id of the record to act on."),
+        args: z.record(z.unknown()).optional().describe("Action arguments (see the action's args schema from cobblr_list_actions)."),
+      },
+    },
+    async ({ workspace, action_id, entity_kind, entity_id, args }) => {
+      try {
+        const slug = client.resolveSlug(workspace);
+        return ok(await client.invokeAction(slug, action_id, entity_kind, entity_id, args));
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
 }

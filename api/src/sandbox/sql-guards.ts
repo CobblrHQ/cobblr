@@ -86,6 +86,110 @@ export function commaListTables(stripped: string): Array<{ raw: string; qualifie
   return out;
 }
 
+/** Enumerate the tables of every `USING` clause — the cross-join /
+ *  delete-source tables the FROM/JOIN regex misses entirely.
+ *
+ *  Two `USING` forms exist and only one names tables:
+ *    - `DELETE FROM t USING a, b WHERE …`  → a, b ARE tables (enumerate)
+ *    - `… JOIN t USING (col, …)`           → a COLUMN list (skip)
+ *  We tell them apart by the next non-space char: `(` ⇒ join column
+ *  list, anything else ⇒ a table list. Without this, a sandboxed
+ *  module could read ANY table in its tenant DB via
+ *  `DELETE FROM mymod_t USING secret_table … RETURNING secret_table.*`
+ *  — the USING table was never prefix-checked. (Audit 2026-06-19 #1a.)
+ */
+export function usingTables(stripped: string): Array<{ raw: string; qualified: boolean }> {
+  const out: Array<{ raw: string; qualified: boolean }> = [];
+  for (const m of stripped.matchAll(/\busing\b/gi)) {
+    const after = m.index! + m[0].length;
+    let j = after;
+    while (j < stripped.length && /\s/.test(stripped[j]!)) j++;
+    if (stripped[j] === "(") continue; // JOIN … USING (cols) — not tables
+    const clause = readFromClause(stripped, after);
+    for (const entry of splitTopLevelCommas(clause)) {
+      const idm = /^\s*("?[A-Za-z_][A-Za-z0-9_]*"?)(\s*\.\s*("?[A-Za-z_][A-Za-z0-9_]*"?))?/.exec(entry);
+      if (!idm) continue;
+      if (idm[3]) out.push({ raw: `${unquoteIdent(idm[1]!)}.${unquoteIdent(idm[3])}`, qualified: true });
+      else out.push({ raw: unquoteIdent(idm[1]!), qualified: false });
+    }
+  }
+  return out;
+}
+
+/** Read-path (TENANT_QUERY) guard against statements that *look* like a
+ *  SELECT but smuggle in a write. The leading-keyword class gate is not
+ *  enough: a data-modifying CTE
+ *    `WITH x AS (DELETE FROM t RETURNING *) SELECT * FROM x`
+ *  passes an `isSelect` check yet executes a DELETE — and combined with
+ *  a `reads` grant it turns a read grant into a write. (Audit 2026-06-19
+ *  #1b.) Returns a human reason if a forbidden construct is found, else
+ *  null. Walks outside single-/double-/dollar-quoted literals so a
+ *  column named "into" or a string value '(delete' can't trip it.
+ *
+ *  Precise by construction:
+ *   - INSERT/UPDATE/DELETE/MERGE/TRUNCATE are non-reserved in Postgres
+ *     (legal column names), so we flag them ONLY right after `(` — where
+ *     a sub-statement begins (a CTE/subquery body), never where a column
+ *     reference sits. A subquery proper opens with SELECT, not a DML
+ *     verb.
+ *   - INTO is reserved, so a bare `INTO` word can only be `SELECT … INTO`
+ *     (table creation) — always rejected in read mode. */
+export function forbiddenReadConstruct(sqlIn: string): string | null {
+  let i = 0;
+  const n = sqlIn.length;
+  while (i < n) {
+    const c = sqlIn[i]!;
+    if (c === "'") {
+      i++;
+      while (i < n) {
+        if (sqlIn[i] === "'") {
+          if (sqlIn[i + 1] === "'") { i += 2; continue; }
+          i++;
+          break;
+        }
+        i++;
+      }
+      continue;
+    }
+    if (c === '"') {
+      i++;
+      while (i < n) {
+        if (sqlIn[i] === '"') {
+          if (sqlIn[i + 1] === '"') { i += 2; continue; }
+          i++;
+          break;
+        }
+        i++;
+      }
+      continue;
+    }
+    if (c === "$") {
+      const tagMatch = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sqlIn.slice(i));
+      if (tagMatch) {
+        const tag = tagMatch[0];
+        i += tag.length;
+        const end = sqlIn.indexOf(tag, i);
+        if (end < 0) return null; // unterminated; pg will reject anyway
+        i = end + tag.length;
+        continue;
+      }
+    }
+    if (c === "(") {
+      let j = i + 1;
+      while (j < n && /\s/.test(sqlIn[j]!)) j++;
+      const m = /^(insert|update|delete|merge|truncate)\b/i.exec(sqlIn.slice(j));
+      if (m) return `data-modifying '${m[1]!.toLowerCase()}' inside a read query is not allowed (use TENANT_EXEC)`;
+      i++;
+      continue;
+    }
+    if ((c === "i" || c === "I") && (i === 0 || /\W/.test(sqlIn[i - 1]!)) && /^into\b/i.test(sqlIn.slice(i))) {
+      return "SELECT … INTO is not allowed in a read query";
+    }
+    i++;
+  }
+  return null;
+}
+
 /** Detect a second statement after the first semicolon. Walks
  *  outside string literals + dollar-quoted blocks so a `;` inside
  *  a TEXT value or a $tag$ block isn't counted. */

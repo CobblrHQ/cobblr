@@ -10,6 +10,7 @@ import { fleetRouter } from "./fleet.js";
 import { poolsRouter } from "./pools.js";
 import { importRouter } from "./import.js";
 import { bulkRouter } from "./bulk.js";
+import { bambuRouter } from "./bambu.js";
 import { registerFarmResolvers } from "./resolvers.js";
 import { registerDeviceSeam } from "./device-provider.js";
 
@@ -25,5 +26,6 @@ router.use("/fleet", fleetRouter);
 router.use("/pools", poolsRouter);
 router.use("/import", importRouter);
 router.use("/bulk", bulkRouter);
+router.use("/bambu", bambuRouter);
 
 export default router;

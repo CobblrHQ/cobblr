@@ -15,6 +15,42 @@ import { runMigrations } from "../db/migrate.js";
 import { getTenantPool, evictTenantPool } from "../db/tenant.js";
 import { getEntry, listEntries } from "./registry.js";
 import * as activity from "../platform/activity.js";
+import { getSandboxedModuleInfo } from "../sandbox/sandboxed-module-info.js";
+import { ensureModuleRole, moduleRolesEnabled } from "../sandbox/module-role.js";
+
+/** Provision the per-module Postgres role for a sandboxed module (no-op
+ *  for in-process modules / when superuser DB access is unavailable).
+ *  Best-effort + never throws — failure just leaves the module on the
+ *  lexer-only path. See sandbox/module-role.ts. */
+async function ensureSandboxRole(orgId: string, moduleName: string): Promise<void> {
+  const info = getSandboxedModuleInfo(moduleName);
+  if (!info) return; // not a sandboxed module
+  try {
+    await ensureModuleRole({
+      orgId,
+      moduleName,
+      prefix: info.prefix,
+      readsTables: info.readsTables,
+    });
+  } catch (err) {
+    console.error(`[enable] sandbox role setup failed for ${moduleName}:`, (err as Error).message);
+  }
+}
+
+/** Re-ensure EVERY sandboxed module's role in an org. Called after any
+ *  enable / after a tenant's migration sweep, so a module's cross-module
+ *  `reads` grant lands even when its read-target module is enabled
+ *  AFTER it (the grant needs the target table to already exist). No-op
+ *  unless SANDBOX_MODULE_ROLES is enabled. */
+async function ensureAllSandboxRolesForOrg(orgId: string): Promise<void> {
+  if (!moduleRolesEnabled()) return; // fully inert when the layer is off
+  const rows = await meta
+    .selectFrom("org_modules")
+    .select("module_name")
+    .where("org_id", "=", orgId)
+    .execute();
+  for (const r of rows) await ensureSandboxRole(orgId, r.module_name);
+}
 
 export interface EnableResult {
   alreadyEnabled: boolean;
@@ -92,6 +128,12 @@ export async function enableModuleForOrg(
       last_migration: lastMigration,
     })
     .execute();
+
+  // Provision/refresh the DB-level isolation role(s). Re-ensures ALL of
+  // the org's sandboxed modules so cross-module `reads` grants land
+  // regardless of enable order. No-op for in-process modules + when
+  // SANDBOX_MODULE_ROLES is off. (Audit follow-up #1.)
+  await ensureAllSandboxRolesForOrg(orgId);
 
   // Create the default instance row for this (org, module). The
   // default's instance_name matches the module's name so existing
@@ -313,6 +355,11 @@ export async function syncTenantMigrations(): Promise<number> {
           );
         }
       }
+      // After ALL of this org's modules have migrated (so every read-target
+      // table exists), retrofit the per-module Postgres roles. Idempotent +
+      // self-healing for installs that predate the role layer; no-op unless
+      // SANDBOX_MODULE_ROLES is on. (Audit follow-up #1.)
+      await ensureAllSandboxRolesForOrg(orgId);
     } finally {
       // Safe pre-`listen`: nothing is serving traffic, and the pool lazily
       // reopens on this org's first real request.
@@ -392,4 +439,49 @@ export async function enableDefaultModulesForOrg(
     }
   }
   return enabled;
+}
+
+/** Self-heal: ensure EVERY workspace has the current foundational + autoEnable
+ *  capability set. A workspace created before a capability existed never got it
+ *  (signup only enables what existed then), so any table that capability owns is
+ *  missing — surfacing later as `relation "<x>" does not exist` (e.g.
+ *  core-devices owns `core_devices_connections`, so an old workspace 500s on any
+ *  connection op). Runs at boot, idempotent: an org already holding all defaults
+ *  costs ONE in-memory check and opens no tenant pool; only orgs genuinely
+ *  missing a capability open their pool + migrate. Boot-time, so pools are
+ *  evicted unconditionally after each heal. */
+export async function reconcileDefaultModules(): Promise<{ orgsHealed: number; modulesAdded: number }> {
+  const wanted = listEntries()
+    .filter((e) => e.manifest.band === "foundational" || e.manifest.autoEnable === true)
+    .map((e) => e.manifest.name);
+  if (wanted.length === 0) return { orgsHealed: 0, modulesAdded: 0 };
+
+  const orgs = await meta.selectFrom("orgs").select("id").execute();
+  const rows = await meta.selectFrom("org_modules").select(["org_id", "module_name"]).execute();
+  const byOrg = new Map<string, Set<string>>();
+  for (const r of rows) {
+    let s = byOrg.get(r.org_id);
+    if (!s) { s = new Set(); byOrg.set(r.org_id, s); }
+    s.add(r.module_name);
+  }
+
+  let orgsHealed = 0;
+  let modulesAdded = 0;
+  for (const org of orgs) {
+    const have = byOrg.get(org.id) ?? new Set<string>();
+    if (wanted.every((m) => have.has(m))) continue; // complete — no tenant pool opened
+    try {
+      const added = await enableDefaultModulesForOrg(org.id);
+      if (added.length) {
+        orgsHealed++;
+        modulesAdded += added.length;
+        console.log(`[reconcile] org ${org.id}: enabled ${added.join(", ")}`);
+      }
+    } catch (err) {
+      console.error(`[reconcile] default-module heal failed for org ${org.id}:`, err);
+    } finally {
+      await evictTenantPool(org.id).catch(() => {});
+    }
+  }
+  return { orgsHealed, modulesAdded };
 }

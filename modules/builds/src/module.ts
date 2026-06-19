@@ -6,9 +6,11 @@
 // components from stock. Consumes inventory ONLY through the inventory API
 // (the inventory:adjust-stock action), never a join — cross-module isolation.
 //
-// Tier 1 = flat builds (no nested sub-assemblies). A "Maker Workshop" bundle
-// pre-wires builds + inventory + purchasing + projects. Strategy:
-// business-models/docs/15 (operations) + 08 (flagship). Yardsticks:
+// Tier 2 = nested sub-assemblies: a component line can be another build, and the
+// engine explodes the BoM down to leaf inventory parts. Plus routing: an ordered
+// list of operations (steps) per build. A "Maker Workshop" bundle pre-wires
+// builds + inventory + purchasing + projects. Strategy: business-models/docs/15
+// (operations) + 22 (manufacturing depth ladder — rungs 4+5). Yardsticks:
 // docs/design-decisions/pcb-assembly-use-case.md + the maker flagship.
 
 import { defineModule } from "@cobblr/platform-contract";
@@ -62,6 +64,20 @@ export default defineModule({
       // Fired when a target build count can't be met — carries the per-component
       // shortfall. Wire it to a purchasing shopping list to auto-restock.
       "builds.shortfall.detected",
+      // An operation (routing step) was added to a build.
+      "builds.operation.created",
+      // An operation crossed into 'done'. Carries build_id + operation_id + name
+      // so a wire can react (e.g. mark a linked task done, notify on last step).
+      "builds.operation.completed",
+      // Shop-floor execution (rung 6): time logged against an operation.
+      "builds.operation.time_logged",
+      // Scrap recorded at an operation — carries quantity + reason. Wire it to a
+      // notification or (later) a quality log.
+      "builds.operation.scrapped",
+      // Scheduling (rung 7): a planned production order was added.
+      "builds.planned.created",
+      // A planned order crossed into 'done' — wire to mark a task done / notify.
+      "builds.planned.completed",
     ],
     api: [],
     actions: [

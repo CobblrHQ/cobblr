@@ -43,3 +43,18 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     defaultOrgSlug: env.COBBLR_ORG_SLUG?.trim() || null,
   };
 }
+
+/** Config for the REMOTE (Streamable-HTTP) server. Unlike the stdio server, the
+ *  token is NOT read from the environment — it arrives per-request as a Bearer
+ *  header, so one hosted process serves many users (each with their own token).
+ *  Only the target install (baseUrl) and the listen port are process-level. */
+export interface HttpConfig {
+  baseUrl: string;
+  port: number;
+}
+
+export function loadHttpConfig(env: NodeJS.ProcessEnv): HttpConfig {
+  const baseUrl = stripTrailingSlash(env.COBBLR_BASE_URL?.trim() || "http://localhost:4000/api/v1");
+  const port = Number(env.MCP_HTTP_PORT) || 8848;
+  return { baseUrl, port };
+}

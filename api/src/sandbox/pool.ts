@@ -28,11 +28,16 @@ import { getTenantPool } from "../db/tenant.js";
 import {
   commaListTables,
   containsMultipleStatements,
+  forbiddenReadConstruct,
   unquoteIdent,
+  usingTables,
 } from "./sql-guards.js";
-import { isPrivateIp } from "./ssrf.js";
-import { lookup as dnsLookup } from "node:dns/promises";
-import { isIP } from "node:net";
+import { validateFetchTarget } from "./ssrf.js";
+import { isModuleRoleReady, moduleRoleName } from "./module-role.js";
+// undici's OWN fetch + Agent (NOT the global fetch): a dispatcher must be the
+// same undici instance the fetch uses, so we pair them. Lets us pin the
+// connection to a pre-validated IP (DNS-rebind defense). (Audit follow-up #3.)
+import { fetch as undiciFetch, Agent, type RequestInit as UndiciRequestInit } from "undici";
 import { platform } from "@cobblr/platform-contract";
 import {
   OP,
@@ -89,6 +94,22 @@ async function resolveWorkerEntry(): Promise<URL> {
 const WORKER_IDLE_EVICT_MS = Number(process.env.SANDBOX_WORKER_IDLE_MS ?? 5 * 60 * 1000);
 const WORKER_POOL_MAX = Number(process.env.SANDBOX_WORKER_POOL_MAX ?? 64);
 const DEFAULT_DEADLINE_MS = Number(process.env.SANDBOX_DEFAULT_DEADLINE_MS ?? 1000);
+
+/** Max simultaneous in-flight invocations for ONE workspace, summed
+ *  across all its modules. Without this a single workspace could fan
+ *  out across many modules, pass the up-front CPU gate concurrently
+ *  (TOCTOU — none have recorded time yet), and occupy a large slice of
+ *  the global worker pool. Excess invocations are rejected up-front with
+ *  429 instead of queueing unbounded. (Audit 2026-06-19 finding #5.) */
+const MAX_CONCURRENCY_PER_WS = Number(process.env.SANDBOX_MAX_CONCURRENCY_PER_WS ?? 4);
+
+/** Live count of in-flight invocations per workspace. */
+const inflightByOrg = new Map<string, number>();
+
+/** Thrown by spawnWorker when the global pool is full and every worker
+ *  is busy (so none can be LRU-evicted). Surfaced to the caller as a
+ *  503 rather than letting the pool grow without bound. */
+class PoolExhaustedError extends Error {}
 
 /** CPU accounting + quota. The pool tracks per-workspace wasm
  *  invocation time (wall-clock — since the worker is single-
@@ -163,6 +184,12 @@ export interface InvocationResult {
   /** Set when the call was rejected up-front for CPU-quota
    *  reasons (no worker spawned, no wasm run). */
   cpuQuotaExceeded?: boolean;
+  /** Set when the workspace already has MAX_CONCURRENCY_PER_WS
+   *  invocations in flight. Maps to HTTP 429. */
+  concurrencyExceeded?: boolean;
+  /** Set when the global worker pool is full and no worker is free to
+   *  evict. Maps to HTTP 503. */
+  poolExhausted?: boolean;
 }
 
 interface PooledWorker {
@@ -235,7 +262,8 @@ async function spawnWorker(
   wasmPath: string,
   maxMemoryPages: number,
 ): Promise<PooledWorker> {
-  // Pool-cap eviction (LRU).
+  // Pool-cap eviction (LRU). Only IDLE workers can be evicted — killing
+  // a busy one would abort another workspace's in-flight invocation.
   if (pool.size >= WORKER_POOL_MAX) {
     let oldest: { key: string; lastUsedAt: number } | null = null;
     for (const [key, p] of pool.entries()) {
@@ -245,6 +273,11 @@ async function spawnWorker(
       }
     }
     if (oldest) retire(oldest.key, "pool-cap");
+  }
+  // If still at capacity, every slot is busy — refuse rather than grow
+  // the pool (and its memory) without bound. (Audit 2026-06-19 #5.)
+  if (pool.size >= WORKER_POOL_MAX) {
+    throw new PoolExhaustedError(`sandbox worker pool at capacity (${WORKER_POOL_MAX})`);
   }
 
   const sab = new SharedArrayBuffer(SAB_TOTAL_BYTES);
@@ -517,12 +550,47 @@ export async function invoke(ctx: InvocationContext, exportName: string): Promis
       error: `workspace cpu quota exceeded: ${used}ms / ${CPU_QUOTA_MS_PER_WINDOW}ms in last ${CPU_WINDOW_MS}ms`,
     };
   }
+  // Per-workspace concurrency gate. Reserve the slot synchronously
+  // (before any await) so a burst can't all pass the check at once.
+  const inflight = inflightByOrg.get(ctx.orgId) ?? 0;
+  if (inflight >= MAX_CONCURRENCY_PER_WS) {
+    return {
+      ok: false,
+      logs: [],
+      kernelCalls: 0,
+      concurrencyExceeded: true,
+      error: `workspace concurrency limit reached (${MAX_CONCURRENCY_PER_WS} invocations in flight)`,
+    };
+  }
+  inflightByOrg.set(ctx.orgId, inflight + 1);
+  let slotReleased = false;
+  const releaseSlot = () => {
+    if (slotReleased) return;
+    slotReleased = true;
+    const c = (inflightByOrg.get(ctx.orgId) ?? 1) - 1;
+    if (c <= 0) inflightByOrg.delete(ctx.orgId);
+    else inflightByOrg.set(ctx.orgId, c);
+  };
+
   const key = poolKey(ctx.orgId, ctx.moduleName);
   let pooled = pool.get(key);
   if (!pooled) {
-    pooled = await spawnWorker(ctx.orgId, ctx.moduleName, ctx.wasmPath, ctx.maxMemoryPages);
+    try {
+      pooled = await spawnWorker(ctx.orgId, ctx.moduleName, ctx.wasmPath, ctx.maxMemoryPages);
+    } catch (err) {
+      releaseSlot();
+      if (err instanceof PoolExhaustedError) {
+        return { ok: false, logs: [], kernelCalls: 0, poolExhausted: true, error: err.message };
+      }
+      throw err;
+    }
   }
-  await pooled.readyPromise;
+  try {
+    await pooled.readyPromise;
+  } catch (err) {
+    releaseSlot();
+    throw err;
+  }
 
   // Serialise invocations into this worker by chaining onto the
   // previous invocation's promise. Each link resolves with the
@@ -532,8 +600,15 @@ export async function invoke(ctx: InvocationContext, exportName: string): Promis
     // hit a deadline + caused the worker to be retired.
     let current = pool.get(key);
     if (!current) {
-      current = await spawnWorker(ctx.orgId, ctx.moduleName, ctx.wasmPath, ctx.maxMemoryPages);
-      await current.readyPromise;
+      try {
+        current = await spawnWorker(ctx.orgId, ctx.moduleName, ctx.wasmPath, ctx.maxMemoryPages);
+        await current.readyPromise;
+      } catch (err) {
+        if (err instanceof PoolExhaustedError) {
+          return { ok: false, logs: [], kernelCalls: 0, poolExhausted: true, error: err.message };
+        }
+        throw err;
+      }
     }
     pooled = current;
     const invocationId = String(nextInvocationId++);
@@ -571,7 +646,9 @@ export async function invoke(ctx: InvocationContext, exportName: string): Promis
 
   const next = pooled.invocationChain.then(runMine, runMine);
   pooled.invocationChain = next.catch(() => undefined);
-  return next;
+  // Release the workspace concurrency slot once this invocation settles
+  // (success or failure), passing the result/rejection through.
+  return next.finally(releaseSlot);
 }
 
 function runInvocation(
@@ -674,7 +751,17 @@ async function handleKernelCall(
       // outside the sandbox see e.g. "hello-wasm.something" rather
       // than a wasm spoofing "inventory.stock.changed". orgId is
       // stamped on the payload from the host's bound context.
-      const namespaced = event.includes(".") ? event : `${ctx.moduleName}.${event}`;
+      //
+      // SECURITY: the top-level namespace is ALWAYS the module name —
+      // no exceptions. The wasm cannot opt out by pre-dotting the
+      // event: a module passing "inventory.stock.changed" gets
+      // "<module>.inventory.stock.changed" (its own namespace), never
+      // the bare foreign name, so it can't fire another module's
+      // subscribers. (Audit 2026-06-19 finding #4 — the old
+      // `event.includes(".")` short-circuit WAS that opt-out.)
+      const modPrefix = `${ctx.moduleName}.`;
+      const bareEvent = event.startsWith(modPrefix) ? event.slice(modPrefix.length) : event;
+      const namespaced = `${ctx.moduleName}.${bareEvent}`;
       const safePayload = { ...payload, orgId: ctx.orgId, __from_sandbox: ctx.moduleName };
       await platform().events.emit(namespaced, safePayload);
       return;
@@ -910,6 +997,9 @@ async function runTenantQuery(
   // left the second table UNCHECKED — a cross-module read bypass that defeated
   // the `reads` allowlist. (2026-06-10 pre-launch audit.)
   refs.push(...commaListTables(stripped));
+  // `USING` tables (DELETE … USING a, b) — never reached by the
+  // FROM/JOIN regex above. (2026-06-19 audit #1a.)
+  refs.push(...usingTables(stripped));
   const allowed = ctx.allowedReadTables ?? new Set<string>();
   for (const ref of refs) {
     if (ref.qualified) {
@@ -940,6 +1030,13 @@ async function runTenantQuery(
   const isWrite = /^\s*(?:with\b[\s\S]*?)?(insert|update|delete)\b/i.test(stripped);
   if (mode === "read" && !isSelect) {
     return { rows: [], error: "only SELECT statements allowed in TENANT_QUERY" };
+  }
+  // Read-path can't smuggle a write via a data-modifying CTE / SELECT
+  // INTO. This is what stops a `reads` grant from being escalated into
+  // a cross-module DELETE/UPDATE. (2026-06-19 audit #1b.)
+  if (mode === "read") {
+    const forbidden = forbiddenReadConstruct(stripped);
+    if (forbidden) return { rows: [], error: forbidden };
   }
   if (mode === "write" && !isWrite) {
     return {
@@ -973,6 +1070,15 @@ async function runTenantQuery(
     // SET LOCAL only applies inside a transaction, so wrap.
     await client.query("BEGIN");
     await client.query(`SET LOCAL statement_timeout = ${Math.max(100, SQL_TIMEOUT_MS)}`);
+    // DB-level isolation: drop to the module's own Postgres role (granted
+    // ONLY its own + declared-reads tables) for the duration of this
+    // statement, so Postgres enforces table access even if the SQL lexer
+    // missed something. Only when the role is provisioned in this process
+    // (graceful fallback to lexer-only otherwise). SET LOCAL ROLE resets
+    // on COMMIT/ROLLBACK. (Audit follow-up #1.)
+    if (isModuleRoleReady(ctx.orgId, ctx.moduleName)) {
+      await client.query(`SET LOCAL ROLE "${moduleRoleName(ctx.orgId, ctx.moduleName)}"`);
+    }
     const result = await client.query<Record<string, unknown>>(translated, params);
     await client.query("COMMIT");
     if (mode === "read") {
@@ -1063,8 +1169,10 @@ function translatePlaceholders(sqlIn: string): { translated: string; paramCount:
   return { translated: out, paramCount: n };
 }
 
-/** HOST_FETCH runner. Enforces the manifest's network[] allowlist
- *  against URL hostname. Strips hop-by-hop headers + caps body size. */
+/** HOST_FETCH runner. Enforces the manifest's network[] allowlist + the
+ *  SSRF guard on every hop, strips hop-by-hop headers, caps body size,
+ *  and follows redirects MANUALLY (re-validating each) so an allowlisted
+ *  host can't 30x-redirect the request to an internal target. */
 async function runHostFetch(
   ctx: InvocationContext,
   a: Record<string, unknown>,
@@ -1074,56 +1182,15 @@ async function runHostFetch(
   body?: string;
   error?: string;
 }> {
-  const url = String(a.url ?? "");
-  if (!url) return { error: "empty_url" };
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return { error: "invalid_url" };
-  }
-  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-    return { error: `protocol ${parsed.protocol} not allowed (https/http only)` };
-  }
+  if (!a.url) return { error: "empty_url" };
   const allowlist = ctx.network ?? [];
-  // Empty allowlist = no fetch access. Each entry is either:
-  //   - exact hostname match ("api.bricklink.com")
-  //   - leading-dot wildcard (".bricklink.com" matches the apex
-  //     "bricklink.com" AND any subdomain "api.bricklink.com").
-  const allowed = allowlist.some((entry) => {
-    if (entry === parsed.hostname) return true;
-    if (entry.startsWith(".")) {
-      const bare = entry.slice(1);
-      if (parsed.hostname === bare) return true;
-      if (parsed.hostname.endsWith(entry)) return true;
-    }
-    return false;
-  });
-  if (!allowed) {
-    return { error: `host ${parsed.hostname} not in allowlist` };
-  }
-  // SSRF: the allowlist gates by HOSTNAME, but an allowed host can resolve to a
-  // private/loopback/metadata IP (or rebind to one). Third-party wasm has no
-  // business reaching the host's own network, so block private egress always
-  // (strict), DNS-resolved. (2026-06-10 audit — HOST_FETCH had no IP guard.)
-  const fetchHost = parsed.hostname.replace(/^\[|\]$/g, "");
-  if (isIP(fetchHost)) {
-    if (isPrivateIp(fetchHost)) return { error: `host ${fetchHost} is a blocked (private/loopback) address` };
-  } else {
-    try {
-      const recs = await dnsLookup(fetchHost, { all: true });
-      if (recs.length === 0 || recs.some((r) => isPrivateIp(r.address))) {
-        return { error: `host ${fetchHost} resolves to a blocked (private/loopback) address` };
-      }
-    } catch {
-      return { error: `host ${fetchHost} did not resolve` };
-    }
-  }
   // 5 MiB cap on response body — keeps the SAB-bounded transfer
   // possible without truncating mid-byte. Modules that need larger
   // payloads should paginate.
   const MAX_BODY = 5 * 1024 * 1024;
-  const method = String(a.method ?? "GET").toUpperCase();
+  const MAX_REDIRECTS = 5;
+
+  let method = String(a.method ?? "GET").toUpperCase();
   const headers = (a.headers ?? {}) as Record<string, string>;
   // Strip headers a sandboxed module shouldn't be able to set —
   // host, cookie, authorization to internal targets, etc. Keep the
@@ -1135,41 +1202,84 @@ async function runHostFetch(
   }
   // Always identify the fetch as coming from a sandboxed module.
   safeHeaders["User-Agent"] = `cobblr-sandbox/${ctx.moduleName}`;
-  try {
-    const init: RequestInit = {
-      method,
-      headers: safeHeaders,
-      // ctx.abortSignal fires when the invocation deadline trips
-      // or the worker dies. fetch + arrayBuffer both observe it,
-      // so a hung-server fetch doesn't keep running after the
-      // wasm is gone.
-      signal: ctx.abortSignal,
-    };
-    if (a.body !== undefined && method !== "GET" && method !== "HEAD") {
-      init.body = String(a.body);
+  let body: string | undefined =
+    a.body !== undefined && method !== "GET" && method !== "HEAD" ? String(a.body) : undefined;
+
+  let currentUrl = String(a.url);
+  for (let hop = 0; ; hop++) {
+    const target = await validateFetchTarget(currentUrl, allowlist);
+    if ("error" in target) return { error: target.error };
+    // Pin the TCP connection to the exact IP the guard just validated, so a
+    // DNS rebind between our resolution and undici's own can't land on a
+    // private address. SNI/Host stay the original hostname (cert still
+    // verifies). Fresh Agent per hop; closed in finally.
+    let dispatcher: Agent | undefined;
+    if (target.pin) {
+      const { address, family } = target.pin;
+      dispatcher = new Agent({
+        connect: {
+          lookup: (_hostname, _opts, cb) =>
+            (cb as (e: Error | null, a: string, f: number) => void)(null, address, family),
+        },
+      });
     }
-    const res = await fetch(url, init);
-    const buf = await res.arrayBuffer();
-    if (buf.byteLength > MAX_BODY) {
-      return { error: `response too large (${buf.byteLength}B > ${MAX_BODY}B cap)` };
+    try {
+      const init: UndiciRequestInit = {
+        method,
+        headers: safeHeaders,
+        // Follow redirects ourselves so each hop is re-validated.
+        redirect: "manual",
+        // ctx.abortSignal fires when the invocation deadline trips
+        // or the worker dies. fetch + arrayBuffer both observe it,
+        // so a hung-server fetch doesn't keep running after the
+        // wasm is gone.
+        signal: ctx.abortSignal,
+        ...(dispatcher ? { dispatcher } : {}),
+      };
+      if (body !== undefined) init.body = body;
+      const res = await undiciFetch(target.url.href, init);
+
+      if (res.status >= 300 && res.status < 400 && res.headers.has("location")) {
+        if (hop >= MAX_REDIRECTS) return { error: `too many redirects (> ${MAX_REDIRECTS})` };
+        const loc = res.headers.get("location")!;
+        let next: URL;
+        try {
+          next = new URL(loc, target.url); // resolve relative redirects
+        } catch {
+          return { error: `invalid redirect location: ${loc}` };
+        }
+        // 301/302/303 → re-issue as GET without a body (browser
+        // semantics); 307/308 preserve method + body.
+        if (res.status !== 307 && res.status !== 308) {
+          method = "GET";
+          body = undefined;
+        }
+        currentUrl = next.href;
+        continue;
+      }
+
+      const buf = await res.arrayBuffer();
+      if (buf.byteLength > MAX_BODY) {
+        return { error: `response too large (${buf.byteLength}B > ${MAX_BODY}B cap)` };
+      }
+      const respHeaders: Record<string, string> = {};
+      res.headers.forEach((value, key) => {
+        respHeaders[key] = value;
+      });
+      return {
+        status: res.status,
+        headers: respHeaders,
+        body: new TextDecoder().decode(buf),
+      };
+    } catch (err) {
+      // AbortError surfaces as { error: "This operation was aborted" }
+      // — useful in logs but the calling wasm has already been
+      // terminated, so the response never reaches it.
+      return { error: (err as Error).message };
+    } finally {
+      // Don't leak the pinned-connection pool past this hop.
+      if (dispatcher) await dispatcher.close().catch(() => {});
     }
-    const respHeaders: Record<string, string> = {};
-    res.headers.forEach((value, key) => {
-      respHeaders[key] = value;
-    });
-    return {
-      status: res.status,
-      headers: respHeaders,
-      body: new TextDecoder().decode(buf),
-    };
-  } catch (err) {
-    // AbortError surfaces as { error: "This operation was aborted" }
-    // — useful in logs but the calling wasm has already been
-    // terminated, so the response never reaches it. The wasm-side
-    // signalReady() also short-circuits if the worker is dead
-    // (worker.terminate() unblocks Atomics.wait into a stale state;
-    // we don't care because the invocation is over).
-    return { error: (err as Error).message };
   }
 }
 

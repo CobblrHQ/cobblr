@@ -15,7 +15,7 @@ export default defineConfig({
     // handles the same job at port 8080.
     proxy: {
       "/api": {
-        target: "http://api:4000",
+        target: process.env.VITE_API_PROXY ?? "http://api:4000",
         changeOrigin: true,
       },
     },

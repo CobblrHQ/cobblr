@@ -37,6 +37,11 @@ interface Props {
    *  of the fallback source. */
   fallbackValues?: Record<string, unknown>;
   fallbackLabel?: string;
+  /** Field-def names to suppress entirely — for conditional relevance the host
+   *  decides (e.g. a Bambu printer hides hotend/mainboard/firmware/local-IP, a
+   *  DIY Klipper shows them). Generic: any host can gate fields on its own
+   *  discriminator without a per-field schema change. */
+  hideNames?: Set<string>;
 }
 
 const isBlank = (v: unknown) => v === null || v === undefined || v === "";
@@ -49,6 +54,7 @@ export function CustomFieldsPanel({
   fallbackValues,
   fallbackLabel,
   entityId,
+  hideNames,
 }: Props) {
   const { api, orgSlug } = usePlatformWeb();
   const { data } = useQuery({
@@ -58,8 +64,11 @@ export function CustomFieldsPanel({
   });
   const [showAll, setShowAll] = useState(false);
   const fields = useMemo(
-    () => (data?.items ?? []).slice().sort((a, b) => a.position - b.position),
-    [data],
+    () => (data?.items ?? [])
+      .filter((f) => !hideNames?.has(f.name))
+      .slice()
+      .sort((a, b) => a.position - b.position),
+    [data, hideNames],
   );
 
   // Computed fields are rendered server-side at resolve time, so for a

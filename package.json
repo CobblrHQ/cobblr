@@ -2,7 +2,7 @@
   "name": "cobblr",
   "version": "0.0.1",
   "private": true,
-  "description": "Cobblr — modular workflow platform for niche workflows.",
+  "description": "Cobblr \u2014 modular workflow platform for niche workflows.",
   "workspaces": [
     "api",
     "web",
@@ -24,6 +24,7 @@
     "lint:changelog": "tsx scripts/lint-changelog.ts",
     "lint:scan-keywords": "tsx scripts/lint-scan-keywords.ts",
     "lint:deprecated-fks": "tsx scripts/lint-deprecated-table-fks.ts",
+    "lint:self-heal": "tsx scripts/lint-self-heal.ts",
     "build": "npm run build --workspaces --if-present",
     "dev:api": "npm run dev -w api",
     "dev:web": "npm run dev -w web",

@@ -36,6 +36,7 @@ import { dashboardRouter } from "./routes/dashboard.js";
 import { adminUsersRouter } from "./routes/admin-users.js";
 import { superAdminRouter } from "./routes/super-admin.js";
 import { feedbackRouter, feedbackInboundRouter } from "./routes/feedback.js";
+import { receiptInboundRouter, receiptAddressRouter } from "./routes/receipt-ingest.js";
 import { ravelryRouter } from "./routes/ravelry.js";
 import { ravelryImportRouter } from "./routes/ravelry-import.js";
 import { sandboxInstallRouter } from "./routes/sandbox-install.js";
@@ -148,6 +149,10 @@ export function createApp(): AppHandles {
   // Inbound feedback email (reply-by-email). Unauthenticated at the router level;
   // the Cloudflare Email Worker authenticates with COBBLR_INBOUND_EMAIL_SECRET.
   v1.use(feedbackInboundRouter);
+  // Inbound receipt email (forward a receipt → scan inbox). Unauthenticated at
+  // the router level; the Cloudflare Email Worker authenticates with
+  // COBBLR_INBOUND_EMAIL_SECRET. See routes/receipt-ingest.ts.
+  v1.use(receiptInboundRouter);
   v1.use("/orgs", orgsRouter);
   // platformOrgRouter mounts /:slug/entity-kinds, /:slug/entities/:kind/:id,
   // /:slug/actions, /:slug/bindings, /:slug/field-defs, etc. Composed
@@ -155,6 +160,8 @@ export function createApp(): AppHandles {
   v1.use("/orgs", platformOrgRouter);
   // Workspace calendar — aggregated events + iCal feed config (authed).
   v1.use("/orgs", calendarOrgRouter);
+  // The caller's per-workspace receipt-forwarding address (authed).
+  v1.use("/orgs", receiptAddressRouter);
   // Member portal config + per-action capability grants.
   v1.use("/orgs", portalRouter);
   // Generic hosted settings panels — empty in open core; the overlay registers

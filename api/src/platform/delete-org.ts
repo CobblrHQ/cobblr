@@ -7,6 +7,8 @@
 import { meta } from "../db/meta.js";
 import { metaPool } from "../db/meta.js";
 import { evictTenantPool } from "../db/tenant.js";
+import { getSandboxedModuleInfo } from "../sandbox/sandboxed-module-info.js";
+import { dropModuleRole } from "../sandbox/module-role.js";
 
 export async function hardDeleteOrg(orgId: string): Promise<void> {
   const dbName = await meta
@@ -14,6 +16,19 @@ export async function hardDeleteOrg(orgId: string): Promise<void> {
     .select("db_name")
     .where("id", "=", orgId)
     .executeTakeFirstOrThrow();
+
+  // Collect this org's sandboxed modules BEFORE we delete their
+  // org_modules rows — their global Postgres roles must be dropped after
+  // the tenant DB is gone (roles are cluster-global, so DROP DATABASE
+  // alone leaves them orphaned). (Audit follow-up #1.)
+  const moduleRows = await meta
+    .selectFrom("org_modules")
+    .select("module_name")
+    .where("org_id", "=", orgId)
+    .execute();
+  const sandboxedModules = moduleRows
+    .map((r) => r.module_name)
+    .filter((m) => getSandboxedModuleInfo(m) !== null);
 
   // Close any cached connection pool to the tenant DB BEFORE dropping
   // it. Otherwise DROP DATABASE WITH (FORCE) kills active connections
@@ -37,6 +52,12 @@ export async function hardDeleteOrg(orgId: string): Promise<void> {
     // Fall through — DB drop failing doesn't block the meta cleanup,
     // since the credentials are encrypted on the org row and the
     // user can't reach a stranded DB anyway.
+  }
+
+  // Drop the now-orphaned per-module roles (best-effort; DROP DATABASE
+  // above removed their grant dependencies so DROP ROLE is clean).
+  for (const moduleName of sandboxedModules) {
+    await dropModuleRole(orgId, moduleName);
   }
 
   // FKs with ON DELETE CASCADE handle most child rows

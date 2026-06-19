@@ -148,7 +148,12 @@ import { z } from "zod";
  *  build install + runtime install to catch malformed manifests
  *  with a structured error instead of a runtime crash later. */
 export const SandboxedModuleManifestSchema = z.object({
-  name: z.string().regex(/^[a-z0-9][a-z0-9_-]*$/, "name must be kebab-case ascii"),
+  // Kebab-only (NO underscore): the host derives the table prefix via
+  // name.replace(/-/g, "_"), so allowing both `-` and `_` would let
+  // `a-b` and `a_b` collide on the same `a_b_` prefix and share a
+  // table namespace. Forbidding `_` keeps the transform injective.
+  // (Audit 2026-06-19 finding #6.)
+  name: z.string().regex(/^[a-z0-9][a-z0-9-]*$/, "name must be kebab-case ascii (no underscore)"),
   version: z.string().regex(/^\d+\.\d+\.\d+/, "version must be semver-ish"),
   displayName: z.string().min(1).max(120),
   description: z.string().min(1).max(2000),
@@ -215,7 +220,11 @@ export interface SandboxedModuleManifest {
    *  on TENANT_EXEC (writes always require own-prefix). The named
    *  module must be enabled in the workspace, else SELECT errors. */
   reads?: Record<string, string[]>;
-  /** Memory ceiling in pages (1 page = 64KiB). Host instantiates
-   *  the wasm with max = this; growth beyond traps. */
+  /** Memory ceiling in pages (1 page = 64KiB). Before instantiation
+   *  the host clamps the module's declared linear-memory maximum to
+   *  this value (and injects one if the module declares none), so any
+   *  `memory.grow` past the ceiling traps. A module whose *initial*
+   *  memory already exceeds the ceiling is rejected at load. See
+   *  sandbox/wasm-limits.ts. */
   max_memory_pages: number;
 }

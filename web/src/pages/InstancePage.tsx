@@ -16,6 +16,7 @@ import { Plus, Trash2 } from "lucide-react";
 import { useConfirm, useToast } from "@cobblr/platform-web";
 import { InventoryUI } from "@cobblr/inventory/ui";
 import { ProjectsUI } from "@cobblr/projects/ui";
+import { MachinesPage } from "./MachinesPage";
 import { ApiError, api, getToken } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
@@ -93,13 +94,22 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
       />
     );
   }
-  // Host-page modules (machines, assets) don't expose a packaged UI to
-  // parameterize, and their full pages assume their own /<module> route
-  // (absolute detail navigation). Rather than risk that refactor, give
-  // their instances a lightweight scoped list — see / add / delete,
-  // isolated — using the instance-aware web client. Full detail-modal
-  // parity is a follow-up (instances.md). Both kinds are name-based.
-  if (inst.module_name === "machines" || inst.module_name === "assets") {
+  // Machines renders its FULL page (fields, detail/edit, digifab linking)
+  // scoped to the instance — a 3D printer on /3d-printers is a complete
+  // machine, not a name-only stub. The detail modal opens via local state
+  // (no /machines/:id route exists under the clean /<instance> URL).
+  if (inst.module_name === "machines") {
+    return (
+      <MachinesPage
+        instance={inst.instance_name}
+        displayName={displayName}
+        itemNoun={cfg.item_noun}
+      />
+    );
+  }
+  // Assets has no parameterized page yet — keep the lightweight scoped list
+  // (see / add / delete) until its full page is instance-aware (instances.md).
+  if (inst.module_name === "assets") {
     return (
       <HostInstanceList
         slug={activeSlug}

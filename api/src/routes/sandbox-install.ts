@@ -56,6 +56,42 @@ function verifyEd25519(publicKeyB64: string, tarball: Buffer, signatureB64: stri
   return cryptoVerify(null, tarball, pubKey, sig);
 }
 
+/** Audit a tarball's members BEFORE extraction. Even though the tarball
+ *  is ed25519-verified and only a super-admin can install, a malicious
+ *  (or compromised) signed module shouldn't be able to write outside its
+ *  target dir. Reject absolute paths, `..` traversal, and any symlink /
+ *  hardlink / device member (the classic symlink-then-write escape).
+ *  Returns an error string, or null if every member is a plain file or
+ *  directory with a safe relative path. (Audit 2026-06-19 finding #8.) */
+function auditTarballMembers(tmpTar: string): string | null {
+  // `-tzvf` includes the type char (first column) + name; parse both.
+  const listed = spawnSync("tar", ["-tzvf", tmpTar], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+  if (listed.status !== 0) {
+    return `could not list tarball contents (tar exit ${listed.status})`;
+  }
+  const lines = (listed.stdout ?? "").split("\n").filter((l) => l.trim().length > 0);
+  for (const line of lines) {
+    const typeChar = line[0];
+    // 'd' dir, '-' regular file are the only allowed member types.
+    // 'l' symlink, 'h' hardlink, 'b'/'c' device, 'p' fifo, 's' socket → reject.
+    if (typeChar !== "d" && typeChar !== "-") {
+      return `tarball contains a non-file member (type '${typeChar}') — refusing to extract`;
+    }
+    // Member name: GNU/BSD `tar -tv` puts " name" (and " name -> target"
+    // for links, already rejected above) after the date/time columns.
+    // Take everything after the first column-block; the absolute/`..`
+    // check below is what matters and is robust to column spacing.
+    const name = line.replace(/^\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+/, "").trim();
+    if (name.startsWith("/") || name.startsWith("~")) {
+      return `tarball member has an absolute path: ${name}`;
+    }
+    if (name.split("/").some((seg) => seg === "..")) {
+      return `tarball member escapes its directory (..): ${name}`;
+    }
+  }
+  return null;
+}
+
 sandboxInstallRouter.post("/install", async (req, res, next) => {
   try {
     const parsed = InstallBody.safeParse(req.body);
@@ -162,7 +198,20 @@ sandboxInstallRouter.post("/install", async (req, res, next) => {
     mkdirSync(targetDir, { recursive: true });
     const tmpTar = joinPath(RUNTIME_INSTALL_DIR, `.install-${name}-${Date.now()}.tgz`);
     writeFileSync(tmpTar, tarball);
-    const tarRes = spawnSync("tar", ["-xzf", tmpTar, "-C", targetDir]);
+    // Audit members BEFORE extracting — reject path-traversal / symlink
+    // escapes even from a signed tarball. (Audit 2026-06-19 finding #8.)
+    const auditErr = auditTarballMembers(tmpTar);
+    if (auditErr) {
+      try { spawnSync("rm", ["-f", tmpTar]); } catch {/* ignore */}
+      rollback(`unsafe tarball: ${auditErr}`, 400, "unsafe_tarball");
+      return;
+    }
+    const tarRes = spawnSync("tar", [
+      "-xzf", tmpTar,
+      "-C", targetDir,
+      "--no-same-owner",
+      "--no-same-permissions",
+    ]);
     try {
       spawnSync("rm", ["-f", tmpTar]);
     } catch {/* ignore */}

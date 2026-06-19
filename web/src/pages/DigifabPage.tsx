@@ -8,6 +8,7 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import { useMutation, useQuery, useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, Wifi, Printer, RefreshCw, Send, ListChecks, Boxes, AlertTriangle, Layers, X, ListPlus, Ban, Camera, Pause, Play, Thermometer } from "lucide-react";
 import { ApiError, api, fetchAuthBlobUrl, type DigifabConnection, type DigifabJob, type DigifabFleetDevice, type DigifabDeviceClass } from "../lib/api";
+import { BambuConnectWizard } from "../components/BambuConnectWizard";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 import { Combobox } from "../components/Combobox";
@@ -916,6 +917,18 @@ function CreateConnectionModal({
 
   return (
     <Modal open onClose={onClose} title="Add a connection" size="md">
+      <div className="space-y-3">
+        <label className="block">
+          <span className={lbl}>Type</span>
+          <select value={type} onChange={(e) => setType(e.target.value)} className={field}>
+            {types.map((t) => (
+              <option key={t} value={t}>{t === "fdm_monster" ? "FDM Monster" : t === "mock" ? "Mock (test)" : t === "bambu" ? "Bambu Lab" : t === "edge_adapter" ? "Edge adapter (your bridge)" : t}</option>
+            ))}
+          </select>
+        </label>
+        {type === "bambu" ? (
+          <BambuConnectWizard onConnected={() => onCreated()} onCancel={onClose} />
+        ) : (
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -923,14 +936,6 @@ function CreateConnectionModal({
         }}
         className="space-y-3"
       >
-        <label className="block">
-          <span className={lbl}>Type</span>
-          <select value={type} onChange={(e) => setType(e.target.value)} className={field}>
-            {types.map((t) => (
-              <option key={t} value={t}>{t === "fdm_monster" ? "FDM Monster" : t === "mock" ? "Mock (test)" : t}</option>
-            ))}
-          </select>
-        </label>
         <label className="block">
           <span className={lbl}>Label</span>
           <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Main FDM farm" className={field} autoFocus />
@@ -979,6 +984,8 @@ function CreateConnectionModal({
           </button>
         </div>
       </form>
+        )}
+      </div>
     </Modal>
   );
 }

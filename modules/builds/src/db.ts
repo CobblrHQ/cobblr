@@ -19,7 +19,9 @@ export interface BuildsTable {
 export interface ComponentsTable {
   id: Generated<string>;
   build_id: string;
-  part_id: string;
+  // A line is EITHER a leaf inventory part OR a sub-assembly (another build).
+  part_id: string | null;
+  sub_assembly_build_id: string | null;
   quantity: Generated<string>;
   optional: Generated<boolean>;
   notes: string | null;
@@ -35,10 +37,86 @@ export interface RunsTable {
   built_at: Generated<Date>;
 }
 
+export interface OperationsTable {
+  id: Generated<string>;
+  build_id: string;
+  seq: Generated<number>;
+  name: string;
+  description: string | null;
+  status: Generated<string>;
+  est_minutes: string | null;
+  resource_module: string | null;
+  resource_type: string | null;
+  resource_id: string | null;
+  notes: string | null;
+  metadata: Generated<unknown>;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+export interface OpTimeTable {
+  id: Generated<string>;
+  operation_id: string;
+  build_id: string;
+  kind: Generated<string>;
+  minutes: string;
+  notes: string | null;
+  logged_by: string | null;
+  logged_at: Generated<Date>;
+}
+
+export interface OpQtyTable {
+  id: Generated<string>;
+  operation_id: string;
+  build_id: string;
+  kind: string;
+  quantity: string;
+  reason: string | null;
+  logged_by: string | null;
+  logged_at: Generated<Date>;
+}
+
+export interface RunOutputsTable {
+  id: Generated<string>;
+  run_id: string;
+  part_id: string | null;
+  serial_code: string | null;
+  quantity: Generated<string>;
+  created_at: Generated<Date>;
+}
+
+export interface RunInputsTable {
+  id: Generated<string>;
+  run_id: string;
+  part_id: string;
+  lot_code: string | null;
+  quantity: Generated<string>;
+  created_at: Generated<Date>;
+}
+
+export interface PlannedTable {
+  id: Generated<string>;
+  build_id: string;
+  qty: Generated<string>;
+  due_date: string | null;
+  priority: Generated<number>;
+  resource_label: string | null;
+  status: Generated<string>;
+  notes: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
 export interface BuildsDB {
   builds_builds: BuildsTable;
   builds_components: ComponentsTable;
   builds_runs: RunsTable;
+  builds_operations: OperationsTable;
+  builds_op_time: OpTimeTable;
+  builds_op_qty: OpQtyTable;
+  builds_run_outputs: RunOutputsTable;
+  builds_run_inputs: RunInputsTable;
+  builds_planned: PlannedTable;
 }
 
 export type OrgRole = "owner" | "admin" | "member" | "guest";

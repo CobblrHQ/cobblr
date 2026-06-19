@@ -17,7 +17,7 @@
 // /projects/tasks?blocked=1 and 404. Each query stays cached for
 // 30s so navigating away + back doesn't refire everything.
 
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpCircle, Camera, CheckCircle2, Compass, Eye, EyeOff, GripVertical, LayoutList, Maximize2, Minimize2, Plus, ScanLine, Sliders, Sparkles, X } from "lucide-react";
@@ -167,10 +167,31 @@ function ScanCard({ slug }: { slug: string }) {
 function SetupCardsPanel({ slug }: { slug: string }) {
   const cards = useSetupCards(slug);
   const navigate = useNavigate();
-  if (cards.length === 0) return null;
+  // A setup card outlives its bundle: uninstall the bundle and the localStorage
+  // card lingered. Cross-check against installed bundles — hide cards whose
+  // bundle is gone, and prune them from storage so they don't come back.
+  const bundlesQ = useQuery({
+    queryKey: ["bundles", slug],
+    queryFn: () => api.listBundles(slug),
+    enabled: !!slug,
+    staleTime: 30_000,
+  });
+  const installed = bundlesQ.data
+    ? new Set(bundlesQ.data.items.map((b) => b.external_id))
+    : null;
+  useEffect(() => {
+    if (!installed) return;
+    for (const c of cards) {
+      if (!installed.has(c.externalId)) dismissSetup(slug, c.externalId);
+    }
+  }, [installed, cards, slug]);
+  // Until bundles load, show what we have (the common case is they're valid);
+  // once loaded, only render cards whose bundle is still installed.
+  const visible = installed ? cards.filter((c) => installed.has(c.externalId)) : cards;
+  if (visible.length === 0) return null;
   return (
     <div className="space-y-3">
-      {cards.map((card) => (
+      {visible.map((card) => (
         <div
           key={card.externalId}
           className="rounded-xl border border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20 p-4"
@@ -496,11 +517,15 @@ function WorkspaceHeader({
   role: string;
   userName: string;
 }) {
+  const navigate = useNavigate();
   const updates = useBundleUpdates(slug);
   // Bundles the user just updated inline — kept on screen as "Update complete"
   // even after the refetched updates list drops them (the author: "the same thin bar
-  // then says Update Complete").
-  const [completed, setCompleted] = useState<Record<string, { name: string; glyph: string }>>({});
+  // then says Update Complete"). We hold the version so the row can say what it
+  // updated TO and keep a "See details" link into the bundle modal — which shows
+  // that version's changelog ("what's new"), so the inline one-click update still
+  // lets you review what just changed (the author).
+  const [completed, setCompleted] = useState<Record<string, { name: string; glyph: string; version: string }>>({});
   const pending = updates.filter((u) => !completed[u.externalId]);
   const completedList = Object.entries(completed);
   return (
@@ -543,7 +568,7 @@ function WorkspaceHeader({
               slug={slug}
               update={u}
               onDone={() =>
-                setCompleted((c) => ({ ...c, [u.externalId]: { name: u.name, glyph: u.glyph } }))
+                setCompleted((c) => ({ ...c, [u.externalId]: { name: u.name, glyph: u.glyph, version: u.latestV } }))
               }
             />
           ))}
@@ -552,8 +577,19 @@ function WorkspaceHeader({
               <CheckCircle2 size={13} className="text-emerald-500 dark:text-emerald-400 shrink-0" />
               <span className="flex-1 min-w-0 truncate text-content dark:text-mortar-200">
                 {c.glyph} <strong>{c.name}</strong>{" "}
-                <span className="text-faint dark:text-slate-500">Update complete</span>
+                <span className="text-faint dark:text-slate-500">updated to v{c.version}</span>
               </span>
+              <button
+                type="button"
+                onClick={() =>
+                  navigate(
+                    `/bundles?open=${encodeURIComponent(id)}&returnTo=${encodeURIComponent(window.location.pathname + window.location.search)}`,
+                  )
+                }
+                className="shrink-0 text-accent hover:underline font-medium"
+              >
+                See details
+              </button>
             </div>
           ))}
         </div>

@@ -9,7 +9,8 @@
 
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Modal, useToast } from "@cobblr/platform-web";
+import { X } from "lucide-react";
+import { useToast } from "@cobblr/platform-web";
 import { ApiError, api, type Location } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
@@ -95,9 +96,9 @@ export function LocationPicker({
     <>
       {body}
       {createOpen && (
-        <QuickCreateLocationModal
+        <QuickCreateLocation
           slug={activeSlug}
-          parents={list.data?.items ?? []}
+          all={list.data?.items ?? []}
           onClose={() => setCreateOpen(false)}
           onCreated={(loc) => {
             onChange(loc.id);
@@ -109,18 +110,33 @@ export function LocationPicker({
   );
 }
 
-// Minimal create modal — name + parent + kind, mirrors the full form
-// on /configuration/locations but trimmed for in-flight use. The
-// shared "edit a location" modal isn't extracted yet; if it gets
-// extracted, replace this body with that component.
-function QuickCreateLocationModal({
+/** The next globally-unique container number — max trailing integer across all
+ *  container locations, + 1. companion app convention: every container (bin/drawer/shelf)
+ *  carries a unique number you can label + scan, regardless of its word. */
+function nextContainerNumber(all: Location[]): number {
+  let max = 0;
+  for (const l of all) {
+    if (l.kind !== "container") continue;
+    const m = (l.name ?? "").match(/(\d+)\s*$/);
+    if (m) max = Math.max(max, parseInt(m[1]!, 10));
+  }
+  return max + 1;
+}
+
+const ENDS_WITH_NUMBER = /\d\s*$/;
+
+// Inline accordion — name + parent + kind, expanded right inside the parent
+// form (no nested modal; the author). Containers auto-append a globally-unique number
+// so "Bin" becomes "Bin 17". Mirrors the full form on /configuration/locations
+// but trimmed for in-flight use.
+function QuickCreateLocation({
   slug,
-  parents,
+  all,
   onClose,
   onCreated,
 }: {
   slug: string;
-  parents: Location[];
+  all: Location[];
   onClose: () => void;
   onCreated: (loc: Location) => void;
 }) {
@@ -131,10 +147,16 @@ function QuickCreateLocationModal({
   const [kind, setKind] = useState<"area" | "container">("container");
   const [parentId, setParentId] = useState<string>("");
 
+  const nextNum = nextContainerNumber(all);
+  // A container whose name is just a word ("Bin", "Office") gets the global
+  // number appended; an explicit "Bin 5" is left as typed.
+  const autoNumber = kind === "container" && name.trim().length > 0 && !ENDS_WITH_NUMBER.test(name);
+  const finalName = autoNumber ? `${name.trim()} ${nextNum}` : name.trim();
+
   const create = useMutation({
     mutationFn: () =>
       api.createLocation(slug, {
-        name: name.trim(),
+        name: finalName,
         short_name: shortName.trim() || null,
         kind,
         parent_id: parentId || null,
@@ -155,44 +177,54 @@ function QuickCreateLocationModal({
     create.mutate();
   }
 
+  const fieldCls =
+    "w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900";
+  const labelCls =
+    "block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
+
   return (
-    <Modal open onClose={onClose} title="New location">
-      <form onSubmit={submit} className="space-y-3">
+    <div className="mt-2 rounded-lg border border-line dark:border-slate-700 bg-subtle/50 dark:bg-slate-800/40 p-3">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[10px] font-mono uppercase tracking-widest text-accent">New location</span>
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-faint hover:text-content dark:hover:text-mortar-100 transition"
+          aria-label="Close"
+        >
+          <X size={13} />
+        </button>
+      </div>
+      {/* Not a <form> — this is nested inside the parent entity's <form>, and a
+          nested form is invalid HTML (the inner submit would bubble to the outer).
+          Enter-to-submit + the button both call create() directly. */}
+      <div className="space-y-2.5" onKeyDown={(e) => { if (e.key === "Enter") submit(e); }}>
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-            Name
-          </span>
+          <span className={labelCls}>Name</span>
           <input
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
             autoFocus
-            placeholder="e.g. Bin 17"
-            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+            placeholder="e.g. Bin, Office, Shelf"
+            className={fieldCls}
           />
+          {autoNumber && (
+            <span className="mt-1 block text-[10px] text-muted dark:text-slate-400">
+              → <span className="font-medium text-content dark:text-mortar-200">{finalName}</span>{" "}
+              (auto-numbered — containers get a unique number)
+            </span>
+          )}
         </label>
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-            Short name (optional)
-          </span>
-          <input
-            type="text"
-            value={shortName}
-            onChange={(e) => setShortName(e.target.value)}
-            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-          />
+          <span className={labelCls}>Short name (optional)</span>
+          <input type="text" value={shortName} onChange={(e) => setShortName(e.target.value)} className={fieldCls} />
         </label>
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-            Parent
-          </span>
-          <select
-            value={parentId}
-            onChange={(e) => setParentId(e.target.value)}
-            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-          >
+          <span className={labelCls}>Parent</span>
+          <select value={parentId} onChange={(e) => setParentId(e.target.value)} className={fieldCls}>
             <option value="">(top-level)</option>
-            {parents.map((p) => (
+            {all.map((p) => (
               <option key={p.id} value={p.id}>
                 {INDENT.repeat(p.depth)}
                 {p.short_name ?? p.name}
@@ -200,20 +232,35 @@ function QuickCreateLocationModal({
             ))}
           </select>
         </label>
-        <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-            Kind
-          </span>
-          <select
-            value={kind}
-            onChange={(e) => setKind(e.target.value as "area" | "container")}
-            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-          >
-            <option value="container">container (bin, drawer, shelf)</option>
-            <option value="area">area (room, corner, workshop)</option>
-          </select>
-        </label>
-        <div className="flex justify-end gap-2 pt-2">
+        <div>
+          <span className={labelCls}>Kind</span>
+          <div className="grid grid-cols-2 gap-2">
+            {([
+              { v: "container", title: "Container", hint: "bin, drawer, shelf" },
+              { v: "area", title: "Area", hint: "room, corner, workshop" },
+            ] as const).map((opt) => {
+              const on = kind === opt.v;
+              return (
+                <button
+                  key={opt.v}
+                  type="button"
+                  onClick={() => setKind(opt.v)}
+                  className={
+                    "rounded-md border px-2.5 py-1.5 text-left transition " +
+                    (on
+                      ? "border-cobble-500 bg-cobble-50 dark:bg-cobble-900/30 ring-1 ring-cobble-400"
+                      : "border-line dark:border-slate-600 hover:bg-surface dark:hover:bg-slate-900")
+                  }
+                  aria-pressed={on}
+                >
+                  <span className="block text-sm font-medium text-content dark:text-mortar-100">{opt.title}</span>
+                  <span className="block text-[10px] text-faint dark:text-slate-500">{opt.hint}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 pt-1">
           <button
             type="button"
             onClick={onClose}
@@ -222,14 +269,15 @@ function QuickCreateLocationModal({
             Cancel
           </button>
           <button
-            type="submit"
+            type="button"
+            onClick={() => submit(new Event("submit") as unknown as FormEvent)}
             disabled={!name.trim() || create.isPending}
             className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white"
           >
             {create.isPending ? "Creating…" : "Create"}
           </button>
         </div>
-      </form>
-    </Modal>
+      </div>
+    </div>
   );
 }

@@ -19,6 +19,7 @@ import { deregister, get as getRegisteredModule, getEntry as getRegistryEntry, r
 import { ABI_VERSION, SandboxedModuleManifestSchema, type SandboxedModuleManifest } from "./abi.js";
 import { invokeSandbox } from "./runtime.js";
 import { retireWorkersForWasmPath } from "./pool.js";
+import { setSandboxedModuleInfo, deleteSandboxedModuleInfo } from "./sandboxed-module-info.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SANDBOXED_MODULES_DIR = resolve(__dirname, "..", "..", "..", "sandboxed-modules");
@@ -118,6 +119,7 @@ export async function uninstallSandboxedModule(name: string): Promise<{
     const wasmPath = join(entry.rootPath, "module.wasm");
     retireWorkersForWasmPath(wasmPath);
   }
+  deleteSandboxedModuleInfo(name);
   const removedFromRegistry = deregister(name);
   return { removedFromRegistry, removedDir };
 }
@@ -141,6 +143,14 @@ export async function loadOneSandboxedModule(rootPath: string): Promise<Sandboxe
 }
 
 const SANDBOX_MAX_DEADLINE_MS = Number(process.env.SANDBOX_MAX_DEADLINE_MS ?? 30_000);
+// Default deadline for a route that doesn't declare its own. 1000ms is a fine
+// PROD latency budget, but the Forgejo CI runner (heavily contended under the
+// 8-fork suite) makes the host↔worker SharedArrayBuffer round-trip far slower,
+// so a legit op can blow 1000ms → spurious `sandbox_deadline` flakes (e.g.
+// url-archive's clear). Env-tunable so CI can be generous (same rationale as the
+// 60s testTimeout) while prod keeps the tight default. Previously hardcoded —
+// the env knob existed in pool.ts but never reached this route path.
+const SANDBOX_DEFAULT_DEADLINE_MS = Number(process.env.SANDBOX_DEFAULT_DEADLINE_MS ?? 1000);
 
 /** Flatten the manifest's `reads` map into a Set of fully-qualified
  *  table names the host can match in O(1). Example:
@@ -155,8 +165,9 @@ function buildAllowedReadTables(reads: Record<string, string[]> | undefined): Se
   return out;
 }
 
+
 function clampDeadline(requested: number | undefined): number {
-  if (requested === undefined) return 1000;
+  if (requested === undefined) return SANDBOX_DEFAULT_DEADLINE_MS;
   if (requested < 100) return 100;
   if (requested > SANDBOX_MAX_DEADLINE_MS) return SANDBOX_MAX_DEADLINE_MS;
   return requested;
@@ -225,6 +236,12 @@ async function tryParse(rootPath: string, entry: string): Promise<ParsedManifest
  *  Express router whose routes invoke the wasm. */
 async function registerAsModule(parsed: ParsedManifest): Promise<void> {
   const router = buildRouter(parsed);
+  // Record what the per-module Postgres role needs: this module's table
+  // prefix + the cross-module tables it may SELECT. (sandbox/module-role.ts)
+  setSandboxedModuleInfo(parsed.manifest.name, {
+    prefix: `${parsed.manifest.name.replace(/-/g, "_")}_`,
+    readsTables: [...(buildAllowedReadTables(parsed.manifest.reads) ?? new Set<string>())],
+  });
   // If the module ships migrations, advertise them on the synthetic
   // manifest so the existing tenant-migration runner (in enable.ts)
   // picks them up. Table prefix follows the module-name convention.
@@ -309,6 +326,12 @@ function buildRouter(parsed: ParsedManifest): Router {
           if (result.cpuQuotaExceeded) {
             status = 429;
             code = "cpu_quota_exceeded";
+          } else if (result.concurrencyExceeded) {
+            status = 429;
+            code = "concurrency_exceeded";
+          } else if (result.poolExhausted) {
+            status = 503;
+            code = "pool_exhausted";
           } else if (result.terminated) {
             status = 504;
             code = "sandbox_deadline";

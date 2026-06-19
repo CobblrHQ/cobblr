@@ -19,27 +19,38 @@ interface Props {
   kind: string;
   /** Tenant-DB UUID of the entity. */
   entityId: string;
+  /** Compact mode: an EMPTY section collapses to a small "+ Tag / + File /
+   *  + Link" add-pill (no header, no big dropzone) and only grows into the full
+   *  section once it has content — so a detail modal opens without a wall of
+   *  empty attachment boxes. Default off (unchanged for existing callers). */
+  compact?: boolean;
 }
 
-export function EntityAttachments({ kind, entityId }: Props) {
+export function EntityAttachments({ kind, entityId, compact = false }: Props) {
   const [moduleName, sourceType] = kind.split(":");
   if (!moduleName || !sourceType) return null;
   return (
-    <div className="space-y-4">
+    <div className={compact ? "flex flex-wrap items-start gap-2" : "space-y-4"}>
       <TagsSection
         sourceModule={moduleName}
         sourceType={sourceType}
         sourceId={entityId}
+        compact={compact}
       />
       <FilesSection
         sourceModule={moduleName}
         sourceType={sourceType}
         sourceId={entityId}
+        compact={compact}
       />
-      <PairingsSection kind={kind} entityId={entityId} />
+      <PairingsSection kind={kind} entityId={entityId} compact={compact} />
     </div>
   );
 }
+
+/** Shared small dashed add-pill used by the compact empty states. */
+const ADD_PILL =
+  "inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs border border-dashed border-line dark:border-slate-600 text-muted hover:border-cobble-500 hover:text-accent transition";
 
 /** Best-effort PATCH the entity's image_path to a given URL.
  *  Convention: `/orgs/<slug>/modules/<module>/<type>s/<id>` is the
@@ -64,10 +75,12 @@ function TagsSection({
   sourceModule,
   sourceType,
   sourceId,
+  compact = false,
 }: {
   sourceModule: string;
   sourceType: string;
   sourceId: string;
+  compact?: boolean;
 }) {
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
@@ -99,9 +112,11 @@ function TagsSection({
 
   return (
     <section>
-      <h3 className="text-xs font-medium text-muted uppercase tracking-wide mb-2">
-        Tags
-      </h3>
+      {!compact && (
+        <h3 className="text-xs font-medium text-muted uppercase tracking-wide mb-2">
+          Tags
+        </h3>
+      )}
       <div className="flex flex-wrap gap-2 items-center">
         {items.map((a) => (
           <span
@@ -254,10 +269,12 @@ function FilesSection({
   sourceModule,
   sourceType,
   sourceId,
+  compact = false,
 }: {
   sourceModule: string;
   sourceType: string;
   sourceId: string;
+  compact?: boolean;
 }) {
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
@@ -452,6 +469,19 @@ function FilesSection({
     }
   }
 
+  // Compact + empty → a small "+ File" pill (no header, no big dropzone). Grows
+  // into the full grid below once a file is attached.
+  if (compact && items.length === 0) {
+    return (
+      <>
+        <button onClick={() => fileInput.current?.click()} className={ADD_PILL}>
+          <Upload size={10} /> File
+        </button>
+        <input ref={fileInput} type="file" multiple className="hidden" onChange={(e) => void handleFiles(e.target.files)} />
+      </>
+    );
+  }
+
   return (
     <section
       onDragEnter={onDragEnter}
@@ -460,19 +490,22 @@ function FilesSection({
       onDrop={onDrop}
       className={
         "rounded-lg transition " +
+        (compact ? "w-full " : "") +
         (dragOver
           ? "ring-2 ring-cobble-400 ring-offset-2 dark:ring-offset-slate-900 bg-cobble-50/30 dark:bg-cobble-900/10"
           : "")
       }
     >
-      <h3 className="text-xs font-medium text-muted uppercase tracking-wide mb-2 flex items-center gap-2">
-        Files
-        {dragOver && (
-          <span className="text-accent font-normal normal-case tracking-normal">
-            drop to upload
-          </span>
-        )}
-      </h3>
+      {!compact && (
+        <h3 className="text-xs font-medium text-muted uppercase tracking-wide mb-2 flex items-center gap-2">
+          Files
+          {dragOver && (
+            <span className="text-accent font-normal normal-case tracking-normal">
+              drop to upload
+            </span>
+          )}
+        </h3>
+      )}
       <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
         {items.map((att) =>
           att.kind === "image" ? (
@@ -579,7 +612,7 @@ function FilesSection({
 // wire. UI-driven only; wires that subscribe to entity_pairings can
 // observe the link, but the link itself is just data.
 
-function PairingsSection({ kind, entityId }: { kind: string; entityId: string }) {
+function PairingsSection({ kind, entityId, compact = false }: { kind: string; entityId: string; compact?: boolean }) {
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
@@ -616,8 +649,31 @@ function PairingsSection({ kind, entityId }: { kind: string; entityId: string })
   const inRows = inbound.data?.items ?? [];
   const all = [...outRows, ...inRows];
 
+  // Compact + no links → a small "+ Link" pill. Grows into the full list once
+  // something is linked.
+  if (compact && all.length === 0) {
+    return (
+      <>
+        <button onClick={() => setPickerOpen(true)} className={ADD_PILL}>
+          <Link size={10} /> Link
+        </button>
+        {pickerOpen && (
+          <PairingCreateModal
+            fromKind={kind}
+            fromId={entityId}
+            onClose={() => setPickerOpen(false)}
+            onCreated={() => {
+              void qc.invalidateQueries({ queryKey: ["pairings", activeSlug, kind, entityId, "out"] });
+              setPickerOpen(false);
+            }}
+          />
+        )}
+      </>
+    );
+  }
+
   return (
-    <section>
+    <section className={compact ? "w-full" : undefined}>
       <div className="flex items-center justify-between mb-2">
         <h3 className="text-xs font-medium text-content dark:text-slate-300 flex items-center gap-1.5">
           <Link size={12} /> Linked entities

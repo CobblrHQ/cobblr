@@ -25,7 +25,7 @@ import { getTenantDb, releaseIdleTenantPool } from "./db/tenant.js";
 import { signAppToken } from "./auth/jwt.js";
 import { loadAllModules } from "./modules/loader.js";
 import { loadAllSandboxedModules } from "./sandbox/loader.js";
-import { syncTenantMigrations } from "./modules/enable.js";
+import { syncTenantMigrations, reconcileDefaultModules } from "./modules/enable.js";
 import { mountModules } from "./modules/mount.js";
 import * as activity from "./platform/activity.js";
 import * as actions from "./platform/actions.js";
@@ -55,6 +55,8 @@ import * as edgeImpl from "./platform/edge.js";
 import { syncManifestRegistries } from "./platform/registry-sync.js";
 import { syncInstalledModules } from "./platform/installed-modules.js";
 import { migrateLensModules } from "./platform/migrate-lens-modules.js";
+import { migrateLensBundlesToInstances } from "./platform/migrate-lens-bundles-to-instances.js";
+import { enableDigifabForMachineBundles } from "./platform/enable-digifab-for-machines.js";
 import { migrateInventoryLocations } from "./platform/migrate-inventory-locations.js";
 import { backfillDefaultBindings } from "./platform/seed-bindings.js";
 import { runOnBoot, runOnShutdown } from "./modules/lifecycle.js";
@@ -518,6 +520,24 @@ async function boot() {
       `[cobblr-api] lens-module → bundle migration: ${lensResult.orgsTouched} org(s), ${lensResult.bundlesInstalled} bundle(s) installed, ${lensResult.fieldsMoved} field def(s) moved`,
     );
   }
+  // Second-generation: convert still-lens-shaped machine bundles (provides_lens)
+  // into the instance shape (provides_instances) — provision the tab, re-key
+  // field defs to <name>:item, move existing machines into the instance, enable
+  // digifab. Self-heals the "Machines everywhere" state with no user reinstall.
+  // Runs AFTER migrate-lens-modules so it catches bundles it just created.
+  const lensInstResult = await migrateLensBundlesToInstances();
+  if (lensInstResult.orgsTouched > 0) {
+    console.log(
+      `[cobblr-api] lens-bundle → instance migration: ${lensInstResult.orgsTouched} org(s), ${lensInstResult.bundlesMigrated} bundle(s) converted, ${lensInstResult.machinesMoved} machine(s) moved`,
+    );
+  }
+  // Enable digifab (Print Manager) for machine-bundle orgs that predate the
+  // default-on "Connect to your machines" feature — so a printer can actually be
+  // connected without the user hunting in Configuration. Additive + idempotent.
+  const digifabResult = await enableDigifabForMachineBundles();
+  if (digifabResult.orgsEnabled > 0) {
+    console.log(`[cobblr-api] enabled digifab for ${digifabResult.orgsEnabled} machine-bundle org(s)`);
+  }
   // One-shot: move inventory_locations rows into core_locations_locations
   // (UUIDs preserved so cross-module location_id refs stay valid) and
   // drop the inventory_parts.location_id FK constraint that pinned the
@@ -529,6 +549,16 @@ async function boot() {
     console.log(
       `[cobblr-api] inventory_locations → core-locations: ${invLocResult.orgsTouched} org(s), ${invLocResult.rowsCopied} row(s) copied, ${invLocResult.fksDropped} FK(s) dropped`,
     );
+  }
+  // Self-heal: backfill foundational + autoEnable capabilities onto workspaces
+  // that predate them. Signup only enables what existed then, so an older
+  // workspace is missing newer capabilities' tables (e.g. core-devices owns
+  // `core_devices_connections`) and 500s on any op that touches them. Runs
+  // BEFORE syncTenantMigrations so a freshly-enabled module's row is caught up.
+  // Idempotent: complete orgs cost one in-memory check and open no tenant pool.
+  const reconciled = await reconcileDefaultModules();
+  if (reconciled.orgsHealed > 0) {
+    console.log(`[cobblr-api] default-module reconcile: ${reconciled.orgsHealed} workspace(s) healed, ${reconciled.modulesAdded} module(s) enabled`);
   }
   // Catch every (org, module) up to the latest module migration. A
   // module that ships a new migration after an org enabled it won't

@@ -3,7 +3,9 @@
 // inventory ONLY through the platform (lookup + the inventory:adjust-stock
 // action), never a table join — cross-module isolation.
 
+import { type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
+import type { BuildsDB } from "./db.js";
 
 export interface ComponentInput {
   part_id: string;
@@ -76,6 +78,91 @@ export function computeShortfall(
       return { part_id: c.part_id, name: c.name, required, available: c.available, short };
     })
     .filter((s) => s.short > 0);
+}
+
+/** A single component line as stored: EITHER a leaf part or a sub-assembly. */
+export interface RawComponentRow {
+  part_id: string | null;
+  sub_assembly_build_id: string | null;
+  quantity: number;
+  optional: boolean;
+}
+
+/** Pure BoM explosion — recursion + aggregation + cycle guard, independent of
+ *  the DB (so it's unit-testable). `load(buildId)` returns that build's direct
+ *  component rows. Nested sub-assemblies multiply through (Q of a sub-assembly
+ *  per build × the sub-assembly's own per-build quantities). A leaf is `optional`
+ *  only if EVERY path that reaches it is optional — required always wins.
+ *  Cycle-guarded: a sub-assembly already on the current path is skipped (logged),
+ *  so a self/mutual reference can't loop. */
+export async function explodeWith(
+  load: (buildId: string) => Promise<RawComponentRow[]> | RawComponentRow[],
+  rootBuildId: string,
+): Promise<ComponentInput[]> {
+  const leaves = new Map<string, { quantity: number; optional: boolean }>();
+
+  async function walk(bid: string, mult: number, optionalPath: boolean, path: Set<string>): Promise<void> {
+    if (path.has(bid)) {
+      console.error(`[builds] sub-assembly cycle detected at build ${bid} — skipping`);
+      return;
+    }
+    const nextPath = new Set(path).add(bid);
+    const rows = await load(bid);
+    for (const r of rows) {
+      const qty = (Number(r.quantity) || 0) * mult;
+      if (qty <= 0) continue;
+      const optional = optionalPath || r.optional;
+      if (r.part_id) {
+        const prev = leaves.get(r.part_id);
+        if (prev) {
+          prev.quantity += qty;
+          prev.optional = prev.optional && optional; // required wins
+        } else {
+          leaves.set(r.part_id, { quantity: qty, optional });
+        }
+      } else if (r.sub_assembly_build_id) {
+        await walk(r.sub_assembly_build_id, qty, optional, nextPath);
+      }
+    }
+  }
+
+  await walk(rootBuildId, 1, false, new Set());
+  return [...leaves.entries()].map(([part_id, v]) => ({
+    part_id,
+    quantity: v.quantity,
+    optional: v.optional,
+  }));
+}
+
+/** Explode a build's bill-of-materials down to aggregated leaf inventory-part
+ *  requirements, reading the builds tables through the platform. v1 semantic =
+ *  pure "make from leaves": a sub-assembly is always exploded to its raw parts,
+ *  never satisfied from its own output-part stock (make-or-buy is a later
+ *  refinement). Leaf stock is read separately, via the inventory API, by
+ *  readComponentStock. */
+export async function explodeLeafComponents(
+  orgId: string,
+  buildId: string,
+): Promise<ComponentInput[]> {
+  const db = (await platform().tenants.getDb(orgId)) as Kysely<BuildsDB>;
+  return explodeWith(
+    (bid) =>
+      db
+        .selectFrom("builds_components")
+        .select(["part_id", "sub_assembly_build_id", "quantity", "optional"])
+        .where("build_id", "=", bid)
+        .orderBy("created_at", "asc")
+        .execute()
+        .then((rows) =>
+          rows.map((r) => ({
+            part_id: r.part_id,
+            sub_assembly_build_id: r.sub_assembly_build_id,
+            quantity: Number(r.quantity) || 0,
+            optional: r.optional,
+          })),
+        ),
+    buildId,
+  );
 }
 
 /** Consume the components for `qty` builds via the inventory adjust-stock action.

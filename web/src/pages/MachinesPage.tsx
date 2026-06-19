@@ -9,12 +9,32 @@
 // flip it on with just a URL param read — the wiring is already
 // in place for `columns = base + lens.contributedFieldDefs`.
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Plus, Printer, Search, Tag as TagIcon, Trash2 } from "lucide-react";
 import { queueLabelsBulk } from "../lib/queue-label";
-import { ApiError, api, type Machine, type OrgModuleListItem, type PlatformFieldDef } from "../lib/api";
+import { ApiError, api, type Machine, type OrgModuleListItem, type PlatformFieldDef, type BambuDiscoveredDevice, type DigifabConnection } from "../lib/api";
+import { BambuConnectWizard } from "../components/BambuConnectWizard";
+import { resolvePrinterKind, hiddenPrinterFields } from "../lib/printerKind";
+
+// Printer "kind" options for the detail-modal selector (same ids as the
+// New-3D-printer picker). The kind drives which spec fields are relevant.
+const PRINTER_KIND_OPTIONS = [
+  { id: "bambu", label: "Bambu Lab" },
+  { id: "klipper", label: "Klipper" },
+  { id: "prusa", label: "Prusa" },
+  { id: "reprap", label: "RepRapFirmware (Duet)" },
+  { id: "marlin", label: "Marlin / other" },
+  { id: "other", label: "Other / not sure" },
+];
+
+// Machine state vocabulary — the lifecycle (kit → building → built → functional →
+// rebuilding → loaned → sold) plus the maintenance states. A dropdown, not free
+// text. An existing value outside this set is preserved (shown as the first option).
+const MACHINE_STATES = [
+  "functional", "needs maintenance", "broken", "building", "built", "kit", "rebuilding", "loaned", "sold", "decommissioned",
+];
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useFieldPresentation } from "../lib/useFieldPresentation";
 import { CustomFieldsPanel,
@@ -34,17 +54,38 @@ import { LocationPicker } from "../components/LocationPicker";
 
 const ENTITY_KIND = "machines:machine";
 
-export function MachinesPage() {
-  usePageTitle("Machines");
+export function MachinesPage({
+  instance,
+  displayName,
+  itemNoun,
+}: { instance?: string; displayName?: string; itemNoun?: string } = {}) {
+  // When `instance` is set we're rendering ONE named collection of machines
+  // (e.g. "3D Printers"), reached at the clean /<instance> URL. Same rich page
+  // as /machines — fields, detail/edit, digifab — just scoped to the instance's
+  // items. No lens/specialisation grouping (the instance IS the focus), and the
+  // detail modal opens via local state instead of a /machines/:id route.
+  usePageTitle(displayName ?? "Machines");
   const { activeSlug } = useActiveOrg();
   const navigate = useNavigate();
   const { id } = useParams<{ id?: string }>();
   const [searchParams] = useSearchParams();
-  const lensName = searchParams.get("lens");
+  const lensName = instance ? null : searchParams.get("lens");
+  const noun = itemNoun?.trim() || "machine";
+
+  const [localSel, setLocalSel] = useState<string | null>(null);
+  const selectedId = instance ? localSel : id ?? null;
+  const openDetail = (mid: string) => {
+    if (instance) setLocalSel(mid);
+    else navigate(`/machines/${mid}${searchParams.toString() ? `?${searchParams}` : ""}`);
+  };
+  const closeDetail = () => {
+    if (instance) setLocalSel(null);
+    else navigate(`/machines${searchParams.toString() ? `?${searchParams}` : ""}`);
+  };
 
   const machines = useQuery({
-    queryKey: ["machines", activeSlug],
-    queryFn: () => api.listMachines(activeSlug),
+    queryKey: ["machines", activeSlug, instance ?? null],
+    queryFn: () => api.listMachines(activeSlug, instance),
     enabled: !!activeSlug,
   });
   const fieldDefs = useQuery({
@@ -137,8 +178,12 @@ export function MachinesPage() {
     if (other?.length) sections.push({ key: "", label: "Unspecialised", rows: other });
   }
 
-  const rowClick = (mid: string) =>
-    navigate(`/machines/${mid}${searchParams.toString() ? `?${searchParams}` : ""}`);
+  const rowClick = openDetail;
+  // Is the digifab module on? Gates the per-machine "print manager" panel in the
+  // detail modal — a printer can be linked to an FDM Monster/OctoPrint device
+  // right from its own page when digifab is enabled (the 3D Printers bundle
+  // brings both modules under one roof).
+  const digifabEnabled = !!orgModules.data?.items.find((m) => m.name === "digifab")?.enabled;
 
   const [newOpen, setNewOpen] = useState(false);
   const [viewMode, setViewMode] = useViewMode("machines", "list");
@@ -149,7 +194,10 @@ export function MachinesPage() {
   const bulkDelete = useMutation({
     mutationFn: async (ids: string[]) => {
       for (const id of ids) {
-        await api.deleteMachine(activeSlug, id);
+        // Scope to the instance — an instance machine lives under
+        // /instances/<name>/items/:id, not the default machines table, so the
+        // un-scoped delete 404s ("not found").
+        await api.deleteMachine(activeSlug, id, instance);
       }
     },
     onSuccess: () => {
@@ -192,9 +240,9 @@ export function MachinesPage() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2 border-b border-line dark:border-slate-700 pb-3">
         <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
-          machines
+          {displayName ?? "machines"}
         </h1>
-        {lensModule && (
+        {!instance && lensModule && (
           <Link
             to="/machines"
             className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-cobble-100 text-accent dark:bg-cobble-700/40 dark:text-cobble-200 text-[10px] font-mono uppercase tracking-widest hover:bg-cobble-200 transition"
@@ -206,7 +254,7 @@ export function MachinesPage() {
         <span className="text-[10px] font-mono text-faint dark:text-slate-500">
           {filtered.length} of {allRows.length}
         </span>
-        {!lensName && availableLenses.length > 0 && (
+        {!instance && !lensName && availableLenses.length > 0 && (
           <select
             value=""
             onChange={(e) => {
@@ -238,18 +286,18 @@ export function MachinesPage() {
           onClick={() => setNewOpen(true)}
           className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
         >
-          <Plus size={14} /> New machine
+          <Plus size={14} /> New {noun}
         </button>
       </div>
 
       {filtered.length === 0 ? (
         <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-3 py-10 text-center text-xs text-faint italic">
           {allRows.length === 0
-            ? "No machines yet. Click + new to add one."
+            ? `No ${noun}s yet. Click + new to add one.`
             : "No matches with the current filters."}
         </div>
       ) : viewMode === "tiles" ? (
-        lensName ? (
+        instance || lensName ? (
           <MachineTileGrid rows={filtered} onRowClick={rowClick} />
         ) : (
           <div className="space-y-5">
@@ -264,7 +312,7 @@ export function MachinesPage() {
             ))}
           </div>
         )
-      ) : lensName ? (
+      ) : instance || lensName ? (
         <MachineTable
           rows={filtered}
           lensFieldDefs={lensFieldDefs}
@@ -304,13 +352,19 @@ export function MachinesPage() {
       )}
 
       <MachineDetailModal
-        machineId={id ?? null}
-        specialisations={availableLenses}
-        onClose={() => navigate(`/machines${searchParams.toString() ? `?${searchParams}` : ""}`)}
+        machineId={selectedId}
+        instance={instance}
+        digifabEnabled={digifabEnabled}
+        specialisations={instance ? [] : availableLenses}
+        onClose={closeDetail}
       />
       <NewMachineModal
         open={newOpen}
+        instance={instance}
+        noun={noun}
+        digifabEnabled={digifabEnabled}
         onClose={() => setNewOpen(false)}
+        onCreated={instance ? (mid) => setLocalSel(mid) : undefined}
       />
       <BulkActionBar
         count={selected.size}
@@ -576,10 +630,14 @@ function MachineTileGrid({
 
 function MachineDetailModal({
   machineId,
+  instance,
+  digifabEnabled,
   specialisations,
   onClose,
 }: {
   machineId: string | null;
+  instance?: string;
+  digifabEnabled?: boolean;
   specialisations: { name: string; label: string }[];
   onClose: () => void;
 }) {
@@ -589,22 +647,29 @@ function MachineDetailModal({
   const confirm = useConfirm();
   const machine = useQuery({
     queryKey: ["machine", activeSlug, machineId],
-    queryFn: () => api.getMachine(activeSlug, machineId!),
+    queryFn: () => api.getMachine(activeSlug, machineId!, instance),
     enabled: !!machineId,
   });
   const update = useMutation({
-    mutationFn: (patch: Partial<Machine>) => api.updateMachine(activeSlug, machineId!, patch),
+    mutationFn: (patch: Partial<Machine>) => api.updateMachine(activeSlug, machineId!, patch, instance),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["machine", activeSlug, machineId] });
       void qc.invalidateQueries({ queryKey: ["machines", activeSlug] });
     },
   });
+  // The machine ROW is always `machines:machine` (attachments, actions, native
+  // fields), but a bundle ships its custom field defs (hotend, firmware, …) and
+  // native overrides under the INSTANCE kind `<instance>:item` — that's where
+  // the install writes them (bundles.ts). So in an instance we read field
+  // presentation + custom fields from `<instance>:item`; values still live on
+  // the machine's metadata and commit through updateMachine.
+  const customKind = instance ? `${instance}:item` : ENTITY_KIND;
   // Native-field presentation: a bundle/config can relabel + show/hide these
   // native fields per workspace. No-op (fallback label, not hidden) until an
   // override exists. Same pattern as AssetsPage.
-  const fp = useFieldPresentation(ENTITY_KIND);
+  const fp = useFieldPresentation(customKind);
   const remove = useMutation({
-    mutationFn: () => api.deleteMachine(activeSlug, machineId!),
+    mutationFn: () => api.deleteMachine(activeSlug, machineId!, instance),
     onSuccess: () => {
       toast.success("Machine deleted.");
       void qc.invalidateQueries({ queryKey: ["machines", activeSlug] });
@@ -613,7 +678,30 @@ function MachineDetailModal({
     onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't delete."),
   });
 
+  const [notesOpen, setNotesOpen] = useState(false);
   const m = machine.data;
+  // Kind-aware fields: a closed-ecosystem printer (Bambu/Prusa) hides the
+  // DIY build-detail block (hotend/mainboard/firmware/local-IP…); an open one
+  // (Klipper/RepRap/Marlin) shows it. Resolved from metadata.printer_kind, with
+  // a manufacturer fallback so printers made before the kind was persisted still
+  // clean up. null kind → recognise as "not a printer" → no selector, hide nothing.
+  const printerKind = m ? resolvePrinterKind(m.metadata as Record<string, unknown>, m.manufacturer) : null;
+  const printerHidden = hiddenPrinterFields(printerKind);
+
+  // Auto-fetch a product photo for a printer that has none (e.g. one connected
+  // before this shipped) — once, the user does nothing; it appears on refresh.
+  const enrichFired = useRef(false);
+  useEffect(() => {
+    // Once per modal open; if no image lands (a transient failure), it simply
+    // retries the next time the printer is opened — no permanent "tried" flag.
+    if (!m || enrichFired.current) return;
+    if (printerKind === null || m.image_path) return;
+    const q = [m.manufacturer, m.family, "3D printer"].filter(Boolean).join(" ");
+    if (!q.replace("3D printer", "").trim()) return;
+    enrichFired.current = true;
+    void api.enrichEntityImage(activeSlug, { entity_kind: "machines:machine", entity_id: m.id, query: q, instance });
+  }, [m, printerKind, activeSlug, instance]);
+
   async function handleDelete() {
     if (!m) return;
     const ok = await confirm({
@@ -634,82 +722,99 @@ function MachineDetailModal({
       size="lg"
     >
       {m ? (
-        <div className="space-y-4">
+        <div className="space-y-3">
+          {/* Consolidated header: photo + actions + Kind/Specialisation share the
+              top row, so the thumbnail isn't floating next to empty space. */}
           <div className="flex items-start gap-4">
             <EntityThumb
               src={m.image_path}
               alt={m.name}
-              size={128}
-              className="ring-1 ring-line dark:ring-slate-700"
+              size={96}
+              className="ring-1 ring-line dark:ring-slate-700 shrink-0"
             />
-            <div className="flex-1 flex items-center gap-2">
+            <div className="flex-1 space-y-2">
               <EntityActionsBar entityKind={ENTITY_KIND} entityId={m.id} />
+              <div className="flex flex-wrap gap-3">
+                {printerKind !== null && (
+                  <label className="block">
+                    <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Kind</span>
+                    <select
+                      value={typeof m.metadata?.printer_kind === "string" ? (m.metadata.printer_kind as string) : printerKind}
+                      onChange={(e) => update.mutate({ metadata: { ...m.metadata, printer_kind: e.target.value } })}
+                      className="input !w-auto !py-1 text-xs"
+                    >
+                      {PRINTER_KIND_OPTIONS.map((k) => (<option key={k.id} value={k.id}>{k.label}</option>))}
+                    </select>
+                  </label>
+                )}
+                {specialisations.length > 0 && (
+                  <label className="block">
+                    <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Specialisation</span>
+                    <select
+                      value={typeof m.metadata?.specialisation === "string" ? (m.metadata.specialisation as string) : ""}
+                      onChange={(e) => update.mutate({ metadata: { ...m.metadata, specialisation: e.target.value || null } })}
+                      className="input !w-auto !py-1 text-xs"
+                    >
+                      <option value="">— unspecialised —</option>
+                      {specialisations.map((s) => (<option key={s.name} value={s.name}>{s.label}</option>))}
+                    </select>
+                  </label>
+                )}
+              </div>
             </div>
           </div>
 
-          {specialisations.length > 0 && (
-            <label className="block">
-              <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-                Specialisation
-              </span>
-              <select
-                value={
-                  typeof m.metadata?.specialisation === "string"
-                    ? (m.metadata.specialisation as string)
-                    : ""
-                }
-                onChange={(e) =>
-                  update.mutate({
-                    metadata: { ...m.metadata, specialisation: e.target.value || null },
-                  })
-                }
-                className="input !w-auto !py-1 text-xs"
-              >
-                <option value="">— unspecialised —</option>
-                {specialisations.map((s) => (
-                  <option key={s.name} value={s.name}>
-                    {s.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-
           <dl className="grid grid-cols-2 gap-3 text-xs">
             <EditField label={fp.label("name", "Name")} value={m.name} onCommit={(v) => update.mutate({ name: v })} />
-            {!fp.hidden("short_name") && <EditField label={fp.label("short_name", "Short name")} value={m.short_name ?? ""} onCommit={(v) => update.mutate({ short_name: v || null })} />}
+            {/* Short name + Type are low-signal — show only when set (keeps the default compact). */}
+            {!fp.hidden("short_name") && (m.short_name || !instance) && <EditField label={fp.label("short_name", "Short name")} value={m.short_name ?? ""} onCommit={(v) => update.mutate({ short_name: v || null })} />}
             {!fp.hidden("family") && <EditField label={fp.label("family", "Family")} value={m.family ?? ""} onCommit={(v) => update.mutate({ family: v || null })} />}
-            {!fp.hidden("type") && <EditField label={fp.label("type", "Type")} value={m.type ?? ""} onCommit={(v) => update.mutate({ type: v || null })} />}
+            {!fp.hidden("type") && (m.type || !instance) && <EditField label={fp.label("type", "Type")} value={m.type ?? ""} onCommit={(v) => update.mutate({ type: v || null })} />}
             {!fp.hidden("manufacturer") && <EditField label={fp.label("manufacturer", "Manufacturer")} value={m.manufacturer ?? ""} onCommit={(v) => update.mutate({ manufacturer: v || null })} />}
-            {!fp.hidden("state") && <EditField label={fp.label("state", "State")} value={m.state} onCommit={(v) => update.mutate({ state: v })} />}
-            {!fp.hidden("quantity") && <EditField label={fp.label("quantity", "Quantity")} value={String(m.quantity)} numeric onCommit={(v) => update.mutate({ quantity: Number(v) || 0 })} />}
-            <LocationPicker
-              label="Location"
-              value={m.location_id}
-              onChange={(id) => update.mutate({ location_id: id })}
-              size="sm"
-            />
+            {!fp.hidden("state") && (
+              <label className="block">
+                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">{fp.label("state", "State")}</span>
+                <select value={m.state} onChange={(e) => update.mutate({ state: e.target.value })} className="input">
+                  {m.state && !MACHINE_STATES.includes(m.state) && <option value={m.state}>{m.state}</option>}
+                  {MACHINE_STATES.map((st) => <option key={st} value={st}>{st}</option>)}
+                </select>
+              </label>
+            )}
+            {/* Quantity is an inventory-ism — a tracked machine (printer/laser/CNC) is one unit. Hide for specialised instances. */}
+            {!fp.hidden("quantity") && !instance && <EditField label={fp.label("quantity", "Quantity")} value={String(m.quantity)} numeric onCommit={(v) => update.mutate({ quantity: Number(v) || 0 })} />}
+            <LocationPicker label="Location" value={m.location_id} onChange={(id) => update.mutate({ location_id: id })} size="sm" />
           </dl>
 
-          <EntityAttachments kind={ENTITY_KIND} entityId={m.id} />
-
+          {/* Custom fields render inline (they self-collapse empty ones, and are
+              null entirely for a closed printer once hideNames strips them). */}
           <CustomFieldsPanel
-            entityKind={ENTITY_KIND}
+            entityKind={customKind}
             entityId={m.id}
             values={m.metadata}
-            onCommit={(name, value) =>
-              update.mutate({
-                metadata: { ...m.metadata, [name]: value },
-              })
-            }
+            hideNames={printerHidden}
+            onCommit={(name, value) => update.mutate({ metadata: { ...m.metadata, [name]: value } })}
           />
 
-          <EditField
-            label="Notes"
-            value={m.notes ?? ""}
-            multiline
-            onCommit={(v) => update.mutate({ notes: v || null })}
-          />
+          {digifabEnabled && <MachineDigifabPanel slug={activeSlug} machineId={m.id} machineName={m.name} />}
+
+          {/* Secondary stuff stays out of the way: small add-pills (Tag / File /
+              Link / Note) that only grow into full fields once used — so the
+              modal opens without a wall of empty boxes. */}
+          <div className="flex flex-wrap items-start gap-2">
+            <EntityAttachments kind={ENTITY_KIND} entityId={m.id} compact />
+            {!(m.notes || notesOpen) && (
+              <button
+                type="button"
+                onClick={() => setNotesOpen(true)}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs border border-dashed border-line dark:border-slate-600 text-muted hover:border-cobble-500 hover:text-accent transition"
+              >
+                <Plus size={10} /> Note
+              </button>
+            )}
+          </div>
+          {(m.notes || notesOpen) && (
+            <EditField label="Notes" value={m.notes ?? ""} multiline onCommit={(v) => update.mutate({ notes: v || null })} />
+          )}
 
           <div className="pt-3 border-t border-line dark:border-slate-700 flex items-center justify-between">
             <button
@@ -733,7 +838,21 @@ function MachineDetailModal({
   );
 }
 
-function NewMachineModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+function NewMachineModal({
+  open,
+  onClose,
+  instance,
+  noun,
+  onCreated,
+  digifabEnabled,
+}: {
+  open: boolean;
+  onClose: () => void;
+  instance?: string;
+  noun?: string;
+  onCreated?: (id: string) => void;
+  digifabEnabled?: boolean;
+}) {
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
@@ -742,28 +861,123 @@ function NewMachineModal({ open, onClose }: { open: boolean; onClose: () => void
   const [manufacturer, setManufacturer] = useState("");
   const [family, setFamily] = useState("");
   const [locationId, setLocationId] = useState<string | null>(null);
+  // The two-question printer flow: (1) what kind / how does it talk, (2) how to
+  // connect — flexible: directly (Bambu API today) OR through a manager.
+  const [view, setView] = useState<"form" | "bambu">("form");
+  const [kind, setKind] = useState("");
+  const [connect, setConnect] = useState<"later" | "bambu_direct" | "manager">("later");
+  const [bambuConn, setBambuConn] = useState<DigifabConnection | null>(null);
+  const [bambuDevices, setBambuDevices] = useState<BambuDiscoveredDevice[]>([]);
+  const [bambuDevId, setBambuDevId] = useState("");
+  const [mgrConnId, setMgrConnId] = useState("");
+  const [mgrDeviceId, setMgrDeviceId] = useState("");
   useEffect(() => {
     if (open) {
-      setName("");
-      setManufacturer("");
-      setFamily("");
-      setLocationId(null);
+      setName(""); setManufacturer(""); setFamily(""); setLocationId(null);
+      setView("form"); setKind(""); setConnect("later");
+      setBambuConn(null); setBambuDevices([]); setBambuDevId("");
+      setMgrConnId(""); setMgrDeviceId("");
     }
   }, [open]);
 
+  // Existing manager connections (for the "through a manager" path).
+  const conns = useQuery({
+    queryKey: ["digifab-connections", activeSlug],
+    queryFn: () => api.listDigifabConnections(activeSlug),
+    enabled: open && !!digifabEnabled,
+  });
+  const connections = conns.data?.items ?? [];
+  const mgrDevices = useQuery({
+    queryKey: ["digifab-devices", activeSlug, mgrConnId],
+    queryFn: () => api.listDigifabDevices(activeSlug, mgrConnId),
+    enabled: !!mgrConnId,
+  });
+
+  // One-click turn-on for the Print Manager (digifab) when it's off.
+  const enableDigifab = useMutation({
+    mutationFn: () => api.enableModule(activeSlug, "digifab"),
+    onSuccess: () => {
+      toast.success("Print Manager enabled.");
+      for (const k of ["org-modules", "modules", "nav-modules"]) {
+        void qc.invalidateQueries({ queryKey: [k, activeSlug] });
+      }
+    },
+    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't enable."),
+  });
+
+  const KINDS: { id: string; label: string; manufacturer?: string; sub: string }[] = [
+    { id: "bambu", label: "Bambu Lab", manufacturer: "Bambu Lab", sub: "Bambu's app / cloud" },
+    { id: "klipper", label: "Klipper", sub: "Voron, RatRig, most DIY" },
+    { id: "prusa", label: "Prusa", manufacturer: "Prusa", sub: "PrusaLink / Connect" },
+    { id: "reprap", label: "RepRapFirmware", sub: "Duet, via Duet Web Control" },
+    { id: "marlin", label: "Marlin / other", sub: "via OctoPrint" },
+    { id: "other", label: "Not sure", sub: "set it up later" },
+  ];
+  function pickKind(k: string) {
+    setKind(k);
+    const def = KINDS.find((x) => x.id === k);
+    if (def?.manufacturer && !manufacturer.trim()) setManufacturer(def.manufacturer);
+    setConnect(k === "bambu" ? "bambu_direct" : k === "other" ? "later" : "manager");
+  }
+  function onBambuConnected(c: DigifabConnection, devices: BambuDiscoveredDevice[]) {
+    setBambuConn(c);
+    setBambuDevices(devices);
+    const first = devices.find((d) => d.online)?.dev_id ?? devices[0]?.dev_id ?? "";
+    setBambuDevId(first);
+    prefillFromBambu(first, devices);
+    setConnect("bambu_direct");
+    setView("form");
+  }
+  function prefillFromBambu(devId: string, list = bambuDevices) {
+    const d = list.find((x) => x.dev_id === devId);
+    if (!d) return;
+    setName((n) => n.trim() || d.name);
+    setManufacturer("Bambu Lab");
+    if (d.model) setFamily((f) => f.trim() || d.model!);
+  }
+
   const create = useMutation({
-    mutationFn: () =>
-      api.createMachine(activeSlug, {
-        name: name.trim(),
-        manufacturer: manufacturer.trim() || null,
-        family: family.trim() || null,
-        location_id: locationId,
-      }),
+    mutationFn: async () => {
+      const m = await api.createMachine(
+        activeSlug,
+        {
+          name: name.trim(), manufacturer: manufacturer.trim() || null, family: family.trim() || null, location_id: locationId,
+          // Persist the chosen kind so the detail form can hide fields the kind
+          // doesn't need (a Bambu hides hotend/mainboard/firmware/local-IP).
+          ...(printerFlow && kind ? { metadata: { printer_kind: kind } } : {}),
+        },
+        instance,
+      );
+      // Apply the chosen print-manager link (best-effort — the machine is created
+      // regardless; a link failure is surfaced but doesn't lose the machine).
+      try {
+        if (connect === "bambu_direct" && bambuConn && bambuDevId) {
+          const dev = bambuDevices.find((d) => d.dev_id === bambuDevId);
+          await api.createDigifabLink(activeSlug, { connection_id: bambuConn.id, remote_device_id: bambuDevId, remote_device_name: dev?.name ?? null, machine_id: m.id, machine_label: name.trim() });
+        } else if (connect === "manager" && mgrConnId && mgrDeviceId) {
+          const dev = (mgrDevices.data?.items ?? []).find((d) => d.id === mgrDeviceId);
+          await api.createDigifabLink(activeSlug, { connection_id: mgrConnId, remote_device_id: mgrDeviceId, remote_device_name: dev?.name ?? null, machine_id: m.id, machine_label: name.trim() });
+        }
+      } catch (e) {
+        toast.error(`Printer created, but linking failed: ${e instanceof ApiError ? e.message : String(e)}`);
+      }
+      return m;
+    },
     onSuccess: (m) => {
-      toast.success("Machine added.");
+      toast.success(`${(noun ?? "machine").charAt(0).toUpperCase()}${(noun ?? "machine").slice(1)} added.`);
       void qc.invalidateQueries({ queryKey: ["machines", activeSlug] });
+      void qc.invalidateQueries({ queryKey: ["digifab-links", activeSlug] });
+      // Auto-fetch a product photo for a new printer — the user does nothing; it
+      // appears on the next refresh. Best-effort, only with something to search.
+      if (printerFlow && kind && kind !== "other") {
+        const q = [m.manufacturer, m.family, "3D printer"].filter(Boolean).join(" ");
+        if (q.replace("3D printer", "").trim()) {
+          void api.enrichEntityImage(activeSlug, { entity_kind: "machines:machine", entity_id: m.id, query: q, instance });
+        }
+      }
       onClose();
-      navigate(`/machines/${m.id}`);
+      if (onCreated) onCreated(m.id);
+      else navigate(`/machines/${m.id}`);
     },
     onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't create."),
   });
@@ -774,40 +988,134 @@ function NewMachineModal({ open, onClose }: { open: boolean; onClose: () => void
     create.mutate();
   }
 
+  const lblCls = "block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
+  const segBtn = (active: boolean) =>
+    "px-2.5 py-1 rounded border text-xs transition " + (active ? "border-cobble-500 text-accent bg-subtle dark:bg-slate-800" : "border-line dark:border-slate-600 text-muted hover:text-content");
+
+  // The Bambu cloud-login wizard takes over the modal body when launched.
+  if (view === "bambu") {
+    return (
+      <Modal open={open} onClose={onClose} title="Connect Bambu" size="sm">
+        <BambuConnectWizard onConnected={onBambuConnected} onCancel={() => setView("form")} />
+      </Modal>
+    );
+  }
+
+  const printerFlow = !!instance && !!digifabEnabled;
+  const connectOptions = (kind === "bambu"
+    ? [["bambu_direct", "Directly through Bambu API"], ["manager", "Through a manager"], ["later", "Set up later"]]
+    : [["manager", "Through a manager"], ["later", "Set up later"]]) as [typeof connect, string][];
+
   return (
-    <Modal open={open} onClose={onClose} title="New machine" size="sm">
+    <Modal open={open} onClose={onClose} title={`New ${noun ?? "machine"}`} size="sm">
       <form onSubmit={submit} className="space-y-3">
+        {printerFlow && (
+          <div>
+            <span className={lblCls}>What kind of printer is this?</span>
+            <div className="grid grid-cols-2 gap-1.5">
+              {KINDS.map((k) => (
+                <button key={k.id} type="button" onClick={() => pickKind(k.id)}
+                  className={"text-left px-2.5 py-1.5 rounded border transition " + (kind === k.id ? "border-cobble-500 bg-subtle dark:bg-slate-800" : "border-line dark:border-slate-600 hover:border-cobble-400")}>
+                  <div className="text-sm text-content dark:text-mortar-100">{k.label}</div>
+                  <div className="text-[10px] text-faint">{k.sub}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-            Name
-          </span>
+          <span className={lblCls}>Name</span>
           <input value={name} onChange={(e) => setName(e.target.value)} autoFocus className="input" />
         </label>
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-            Manufacturer
-          </span>
+          <span className={lblCls}>Manufacturer</span>
           <input value={manufacturer} onChange={(e) => setManufacturer(e.target.value)} className="input" />
         </label>
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-            Family (e.g. "Voron", "Railcore")
-          </span>
+          <span className={lblCls}>Family (e.g. "Voron", "Railcore")</span>
           <input value={family} onChange={(e) => setFamily(e.target.value)} className="input" />
         </label>
-        <LocationPicker
-          label="Location"
-          value={locationId}
-          onChange={setLocationId}
-        />
-        <p className="text-[10px] text-faint">
-          Want make/model fields — hotend, firmware, bed size, etc.? Add a
-          specialization for your machine type from the{" "}
-          <Link to="/bundles" className="text-accent hover:underline">
-            marketplace
-          </Link>{" "}
-          (e.g. “3D Printers”) and they’ll show up here.
-        </p>
+        <LocationPicker label="Location" value={locationId} onChange={setLocationId} />
+
+        {instance && !digifabEnabled && (
+          <div className="rounded-lg border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/30 p-3 space-y-1.5">
+            <div className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-widest text-accent">
+              <Printer size={12} /> Print manager
+            </div>
+            <p className="text-[11px] text-muted dark:text-slate-400">
+              Want to send prints to this {noun ?? "machine"}? Turn on the Print Manager to connect to Bambu, FDM Monster, or OctoPrint.
+            </p>
+            <button type="button" onClick={() => enableDigifab.mutate()} disabled={enableDigifab.isPending}
+              className="rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white text-xs px-2.5 py-1.5">
+              {enableDigifab.isPending ? "enabling…" : "Enable Print Manager"}
+            </button>
+          </div>
+        )}
+
+        {printerFlow && kind && (
+          <div className="rounded-lg border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/30 p-3 space-y-2">
+            <div className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-widest text-accent">
+              <Printer size={12} /> How do you want to connect?
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {connectOptions.map(([v, l]) => (
+                <button key={v} type="button" onClick={() => setConnect(v)} className={segBtn(connect === v)}>{l}</button>
+              ))}
+            </div>
+
+            {connect === "bambu_direct" && (
+              !bambuConn ? (
+                <button type="button" onClick={() => setView("bambu")} className="rounded bg-cobble-600 hover:bg-cobble-700 text-white text-xs px-2.5 py-1.5">
+                  Connect Bambu account →
+                </button>
+              ) : (
+                <label className="block">
+                  <span className={lblCls}>Which printer is this?</span>
+                  <select value={bambuDevId} onChange={(e) => { setBambuDevId(e.target.value); prefillFromBambu(e.target.value); }} className="input !py-1 !text-xs">
+                    {bambuDevices.map((d) => <option key={d.dev_id} value={d.dev_id}>{d.name}{d.model ? ` · ${d.model}` : ""}{d.online ? "" : " (offline)"}</option>)}
+                  </select>
+                  <span className="mt-1 block text-[10px] text-emerald-600 dark:text-emerald-400">✓ {bambuConn.label} connected — name & model pre-filled.</span>
+                </label>
+              )
+            )}
+
+            {connect === "manager" && (
+              connections.length === 0 ? (
+                <p className="text-[11px] text-muted dark:text-slate-400">
+                  No managers connected yet.{" "}
+                  <Link to="/digifab" className="text-accent hover:underline" onClick={onClose}>Set one up →</Link>
+                </p>
+              ) : (
+                <div className="flex flex-wrap items-end gap-2">
+                  <label className="block">
+                    <span className={lblCls}>Manager</span>
+                    <select value={mgrConnId} onChange={(e) => { setMgrConnId(e.target.value); setMgrDeviceId(""); }} className="input !py-1 !text-xs !w-auto">
+                      <option value="">choose…</option>
+                      {connections.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+                    </select>
+                  </label>
+                  {mgrConnId && (
+                    <label className="block">
+                      <span className={lblCls}>Printer</span>
+                      <select value={mgrDeviceId} onChange={(e) => setMgrDeviceId(e.target.value)} className="input !py-1 !text-xs !w-auto" disabled={mgrDevices.isLoading}>
+                        <option value="">{mgrDevices.isLoading ? "loading…" : "choose…"}</option>
+                        {(mgrDevices.data?.items ?? []).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                      </select>
+                    </label>
+                  )}
+                </div>
+              )
+            )}
+          </div>
+        )}
+
+        {!instance && (
+          <p className="text-[10px] text-faint">
+            Want make/model fields — hotend, firmware, bed size, etc.? Add a specialization for your machine type from the{" "}
+            <Link to="/bundles" className="text-accent hover:underline">marketplace</Link>{" "}
+            (e.g. “3D Printers”) and they’ll show up here.
+          </p>
+        )}
         <div className="flex items-center justify-end gap-2 pt-2 border-t border-line dark:border-slate-700">
           <button type="button" onClick={onClose} className="px-3 py-1.5 rounded-md text-sm font-medium text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800 transition">
             Cancel
@@ -818,6 +1126,160 @@ function NewMachineModal({ open, onClose }: { open: boolean; onClose: () => void
         </div>
       </form>
     </Modal>
+  );
+}
+
+/** Per-machine "Print manager" panel — shown in the detail modal when digifab
+ *  is enabled (the 3D Printers bundle brings both modules under one roof). Lets
+ *  you link THIS machine to a manager's device (FDM Monster / OctoPrint / …)
+ *  without leaving the machine's page, so a job routed to the machine goes to
+ *  the right printer. Mirrors the link model on the /digifab page. */
+function MachineDigifabPanel({
+  slug,
+  machineId,
+  machineName,
+}: {
+  slug: string;
+  machineId: string;
+  machineName: string;
+}) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const links = useQuery({
+    queryKey: ["digifab-links", slug],
+    queryFn: () => api.listDigifabLinks(slug),
+    enabled: !!slug,
+  });
+  const conns = useQuery({
+    queryKey: ["digifab-connections", slug],
+    queryFn: () => api.listDigifabConnections(slug),
+    enabled: !!slug,
+  });
+  const link = (links.data?.items ?? []).find((l) => l.machine_id === machineId);
+  const connections = conns.data?.items ?? [];
+
+  const [connId, setConnId] = useState("");
+  const devices = useQuery({
+    queryKey: ["digifab-devices", slug, connId],
+    queryFn: () => api.listDigifabDevices(slug, connId),
+    enabled: !!connId,
+  });
+  const [deviceId, setDeviceId] = useState("");
+
+  const invalidate = () => void qc.invalidateQueries({ queryKey: ["digifab-links", slug] });
+  const createLink = useMutation({
+    mutationFn: () => {
+      const dev = (devices.data?.items ?? []).find((d) => d.id === deviceId);
+      return api.createDigifabLink(slug, {
+        connection_id: connId,
+        remote_device_id: deviceId,
+        remote_device_name: dev?.name ?? null,
+        machine_id: machineId,
+        machine_label: machineName,
+      });
+    },
+    onSuccess: () => {
+      toast.success("Linked to print manager.");
+      setConnId("");
+      setDeviceId("");
+      invalidate();
+    },
+    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't link."),
+  });
+  const removeLink = useMutation({
+    mutationFn: (id: string) => api.deleteDigifabLink(slug, id),
+    onSuccess: () => {
+      toast.success("Unlinked from print manager.");
+      invalidate();
+    },
+    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't unlink."),
+  });
+
+  const conn = link ? connections.find((c) => c.id === link.connection_id) : undefined;
+
+  return (
+    <div className="rounded-lg border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/30 p-3 space-y-2">
+      <div className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-widest text-accent">
+        <Printer size={12} /> Print manager
+      </div>
+
+      {link ? (
+        <div className="flex items-center justify-between gap-2 text-sm">
+          <span className="text-content dark:text-mortar-100">
+            Linked to{" "}
+            <span className="font-medium">{conn?.label ?? "a manager"}</span>
+            {" · "}
+            <span className="font-mono text-xs text-muted">
+              {link.remote_device_name ?? link.remote_device_id}
+            </span>
+          </span>
+          <button
+            onClick={() => removeLink.mutate(link.id)}
+            disabled={removeLink.isPending}
+            className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-ember-500 transition flex items-center gap-1 disabled:opacity-50"
+          >
+            <Trash2 size={11} /> unlink
+          </button>
+        </div>
+      ) : connections.length === 0 ? (
+        <p className="text-xs text-muted dark:text-slate-400">
+          No print managers connected yet — add FDM Monster, OctoPrint, or Bambu.{" "}
+          <Link to="/digifab" className="text-accent hover:underline">
+            Set one up →
+          </Link>
+        </p>
+      ) : (
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="block">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
+              Manager
+            </span>
+            <select
+              value={connId}
+              onChange={(e) => {
+                setConnId(e.target.value);
+                setDeviceId("");
+              }}
+              className="input !py-1 !text-xs !w-auto"
+            >
+              <option value="">choose…</option>
+              {connections.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          {connId && (
+            <label className="block">
+              <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
+                Printer
+              </span>
+              <select
+                value={deviceId}
+                onChange={(e) => setDeviceId(e.target.value)}
+                className="input !py-1 !text-xs !w-auto"
+                disabled={devices.isLoading}
+              >
+                <option value="">{devices.isLoading ? "loading…" : "choose…"}</option>
+                {(devices.data?.items ?? []).map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <button
+            onClick={() => createLink.mutate()}
+            disabled={!connId || !deviceId || createLink.isPending}
+            className="rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white text-xs px-2.5 py-1.5"
+          >
+            {createLink.isPending ? "linking…" : "Link"}
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 

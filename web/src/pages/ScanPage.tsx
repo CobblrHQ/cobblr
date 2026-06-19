@@ -15,7 +15,7 @@
 // URL intake is deliberately absent: the API stores source_url but
 // nothing enriches it yet — a dead control is worse than none.
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -495,6 +495,51 @@ export function ScanPage() {
     staleTime: 60_000,
   });
   const hasLocations = locsEnabled && (locsQ.data?.items.length ?? 0) > 0;
+  // The caller's per-workspace receipt-forwarding address (only when the
+  // operator wired up the receipts@ Email Worker).
+  const receiptAddrQ = useQuery({
+    queryKey: ["receipt-address", activeSlug],
+    queryFn: () => api.getReceiptAddress(activeSlug),
+    enabled: !!activeSlug,
+    staleTime: 5 * 60_000,
+  });
+  const receiptAddress =
+    receiptAddrQ.data?.configured && receiptAddrQ.data.address ? receiptAddrQ.data.address : null;
+
+  // Receipt lines share a receipt_group_id; offer to roll a whole receipt up
+  // into one purchase order (only when the purchases module is on).
+  const purchasesEnabled = (modulesQ.data?.items ?? []).some(
+    (m) => m.name === "purchases" && m.enabled,
+  );
+  const receiptGroups = useMemo(() => {
+    const groups = new Map<string, { vendor: string | null; count: number }>();
+    for (const it of items) {
+      if (it.status === "resolved" || it.status === "discarded") continue;
+      const meta = it.suggested_metadata as Record<string, unknown> | undefined;
+      const gid = typeof meta?.receipt_group_id === "string" ? meta.receipt_group_id : null;
+      if (!gid) continue;
+      const g = groups.get(gid) ?? {
+        vendor: typeof meta?.receipt_vendor === "string" ? (meta.receipt_vendor as string) : null,
+        count: 0,
+      };
+      g.count += 1;
+      groups.set(gid, g);
+    }
+    return [...groups.entries()].map(([groupId, g]) => ({ groupId, ...g }));
+  }, [items]);
+  const confirmGroup = useMutation({
+    mutationFn: (groupId: string) => api.confirmReceiptGroup(activeSlug, groupId),
+    onSuccess: (r) => {
+      const n = r.confirmed.filter((c) => !c.error).length;
+      toast.success(
+        r.order_id
+          ? `Purchase order created — ${n} item${n === 1 ? "" : "s"}${r.vendor ? ` from ${r.vendor}` : ""}`
+          : `Confirmed ${n} item${n === 1 ? "" : "s"} (enable Purchases to group them into an order)`,
+      );
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
 
   const headerBtn =
     "inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-700 text-sm text-content hover:bg-subtle dark:hover:bg-slate-800/70 px-2.5 py-1.5 transition shrink-0";
@@ -553,7 +598,7 @@ export function ScanPage() {
           type="button"
           onClick={() => receiptRef.current?.click()}
           disabled={uploading}
-          title="Upload a receipt PDF or photo — we'll pull out the line items"
+          title="Upload a receipt — CSV, PDF, or a photo — we'll pull out the line items"
           className={headerBtn + (uploading ? " opacity-50" : "")}
         >
           <FileText size={15} /> Receipt
@@ -561,7 +606,7 @@ export function ScanPage() {
         <input
           ref={receiptRef}
           type="file"
-          accept="application/pdf,image/*"
+          accept="application/pdf,image/*,.csv,text/csv"
           className="hidden"
           onChange={(e) => {
             const f = e.target.files?.[0];
@@ -579,6 +624,26 @@ export function ScanPage() {
       </div>
 
       <AiOffNotice status={aiStatus} />
+
+      {receiptAddress && (
+        <div className="flex items-center gap-2 text-xs text-muted dark:text-slate-400">
+          <FileText size={13} className="text-faint shrink-0" />
+          <span className="shrink-0">Or email receipts to</span>
+          <code className="truncate rounded bg-mortar-100 dark:bg-slate-800 px-1.5 py-0.5 text-content dark:text-mortar-100">
+            {receiptAddress}
+          </code>
+          <button
+            type="button"
+            className="shrink-0 text-accent hover:underline"
+            onClick={() => {
+              void navigator.clipboard?.writeText(receiptAddress);
+              toast.success("Address copied");
+            }}
+          >
+            Copy
+          </button>
+        </div>
+      )}
 
       <ScanDrivePanel drive={scanDrive} />
 
@@ -604,6 +669,28 @@ export function ScanPage() {
           </div>
         </div>
       )}
+
+      {purchasesEnabled &&
+        receiptGroups.map((g) => (
+          <div
+            key={g.groupId}
+            className="flex items-center gap-2 rounded-md border border-cobble-400 dark:border-cobble-600 bg-cobble-50 dark:bg-cobble-900/30 px-3 py-2 text-sm"
+          >
+            <FileText size={15} className="text-accent shrink-0" />
+            <span className="text-content dark:text-mortar-100">
+              Receipt{g.vendor ? ` from ${g.vendor}` : ""} — {g.count} item{g.count === 1 ? "" : "s"} pending
+            </span>
+            <div className="flex-1" />
+            <button
+              type="button"
+              disabled={confirmGroup.isPending}
+              onClick={() => confirmGroup.mutate(g.groupId)}
+              className="inline-flex items-center rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2.5 py-1 text-sm transition disabled:opacity-50 shrink-0"
+            >
+              {confirmGroup.isPending ? "Creating…" : "Confirm as purchase order"}
+            </button>
+          </div>
+        ))}
 
       <div className="space-y-2">
         {items.map((item) => (

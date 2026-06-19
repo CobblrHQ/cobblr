@@ -20,6 +20,7 @@
 
 import { randomUUID } from "node:crypto";
 import { Router } from "express";
+import { sql } from "kysely";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { bearer, sessionUser, tenantContext, tenantDb } from "../db.js";
@@ -279,11 +280,13 @@ inboxRouter.post(
       res.status(422).json({ error: { code: "receipt_unparsed", message: result.reason } });
       return;
     }
-    const { receipt } = result;
+    const { receipt, method } = result;
 
     // One inbox row per line item, grouped by a shared receipt id so the UI can
     // show "<vendor> — N items" and triage them together. Vendor/date/currency
     // ride in metadata; the line price stays on the row for a later order rollup.
+    // parse_method records whether the line came from a deterministic parse
+    // (csv / pdf-table) or the AI fallback (ai-chat / ai-vision).
     const groupId = randomUUID();
     const baseMeta = {
       source: "receipt",
@@ -291,6 +294,7 @@ inboxRouter.post(
       receipt_vendor: receipt.vendor,
       receipt_date: receipt.date,
       receipt_currency: receipt.currency,
+      parse_method: method,
     };
 
     const rows: Array<{ id: string }> = [];
@@ -344,9 +348,150 @@ inboxRouter.post(
         currency: receipt.currency,
         total: receipt.total,
         item_count: rows.length,
+        method,
       },
       items: rows,
     });
+  }),
+);
+
+// ─────────────── POST /receipt-group/:groupId/confirm ───────────────
+// Collapse a parsed receipt's pending lines into ONE purchases order: create the
+// order (vendor + date + total from the group), then confirm EACH line through
+// the normal per-item /confirm (which creates/matches the part) and attach the
+// new part to the order as a line item. So a receipt becomes one purchase order
+// with N line items, not N orphan parts. The receipt_group_id stamped at parse
+// time is the join key. Lines already confirmed/discarded individually are
+// simply not pending, so they're skipped — you can still triage line-by-line
+// first, then roll up whatever remains.
+//
+// Degrades gracefully: if the purchases module isn't enabled (the order create
+// fails), the lines are still confirmed into parts — just without an order.
+
+const ReceiptGroupConfirm = z.object({
+  target_module: z.string().min(1).max(80).optional(),
+  target_kind: z.string().min(1).max(80).optional(),
+  instance: z.string().regex(/^[a-z0-9][a-z0-9-]*$/).max(80).optional(),
+  location_id: z.string().uuid().optional(),
+});
+
+inboxRouter.post(
+  "/receipt-group/:groupId/confirm",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const groupId = req.params.groupId;
+    if (!groupId) {
+      res.status(400).json({ error: { code: "missing_id", message: "groupId required" } });
+      return;
+    }
+    const parsed = ReceiptGroupConfirm.safeParse(req.body ?? {});
+    if (!parsed.success) return badBody(res, parsed.error);
+    const db = tenantDb(req);
+    const ctx = tenantContext(req);
+    const token = bearer(req);
+    if (!token) {
+      res.status(401).json({ error: { code: "no_auth", message: "Bearer token required" } });
+      return;
+    }
+    const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+
+    // The group's still-pending lines, oldest first (preserves receipt order).
+    const rows = await db
+      .selectFrom("core_scan_inbox_items")
+      .selectAll()
+      .where(sql<boolean>`suggested_metadata->>'receipt_group_id' = ${groupId}`)
+      .where("status", "in", ["pending", "enriching"])
+      .where("source_kind", "=", "receipt")
+      .orderBy("created_at", "asc")
+      .execute();
+    if (rows.length === 0) {
+      res.status(404).json({ error: { code: "empty_group", message: "No pending receipt lines in this group." } });
+      return;
+    }
+
+    const meta0 = (rows[0]!.suggested_metadata ?? {}) as Record<string, unknown>;
+    const vendor = typeof meta0.receipt_vendor === "string" ? meta0.receipt_vendor : null;
+    const orderedAt = typeof meta0.receipt_date === "string" ? meta0.receipt_date : null;
+    // Order total = sum of line totals (fall back to unit_price × qty per line).
+    let total = 0;
+    let sawAmount = false;
+    for (const row of rows) {
+      const m = (row.suggested_metadata ?? {}) as Record<string, unknown>;
+      const lt = typeof m.line_total === "number" ? m.line_total : null;
+      const up = typeof m.unit_price === "number" ? m.unit_price : null;
+      const qty = Number(row.quantity ?? 1);
+      const amount = lt ?? (up != null ? up * qty : null);
+      if (amount != null) {
+        total += amount;
+        sawAmount = true;
+      }
+    }
+
+    const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+
+    // Create the order (best-effort — skipped if purchases isn't enabled).
+    let orderId: string | null = null;
+    try {
+      const orderRes = await fetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/purchases/orders`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          vendor,
+          ordered_at: orderedAt,
+          status: "arrived", // a receipt is an already-fulfilled purchase
+          total_cost: sawAmount ? Number(total.toFixed(2)) : undefined,
+          notes: "Imported from a receipt.",
+          metadata: { receipt_group_id: groupId, source: "receipt" },
+        }),
+      });
+      if (orderRes.ok) {
+        orderId = ((await orderRes.json()) as { id: string }).id;
+      } else {
+        console.warn(`[core-scan] receipt PO create skipped (${orderRes.status}) — purchases disabled?`);
+      }
+    } catch (err) {
+      console.warn("[core-scan] receipt PO create threw:", (err as Error).message);
+    }
+
+    // Confirm each line into a part (reusing the per-item confirm), then attach
+    // the new part to the order.
+    const confirmed: Array<Record<string, unknown>> = [];
+    for (const row of rows) {
+      const confirmBody: Record<string, unknown> = {};
+      if (parsed.data.target_module && parsed.data.target_kind) {
+        confirmBody.target_module = parsed.data.target_module;
+        confirmBody.target_kind = parsed.data.target_kind;
+      }
+      if (parsed.data.instance) confirmBody.instance = parsed.data.instance;
+      if (parsed.data.location_id) confirmBody.location_id = parsed.data.location_id;
+
+      const cRes = await fetch(
+        `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/core-scan/inbox/${row.id}/confirm`,
+        { method: "POST", headers, body: JSON.stringify(confirmBody) },
+      );
+      if (!cRes.ok) {
+        confirmed.push({ itemId: row.id, error: `confirm_${cRes.status}` });
+        continue;
+      }
+      const created = ((await cRes.json()) as { created?: { id?: string } }).created;
+      const partId = created?.id ?? null;
+      if (orderId && partId) {
+        const m = (row.suggested_metadata ?? {}) as Record<string, unknown>;
+        await fetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/purchases/orders/${orderId}/items`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            part_id: partId,
+            description: row.suggested_name ?? undefined,
+            qty: Number(row.quantity ?? 1),
+            unit_cost: typeof m.unit_price === "number" ? m.unit_price : undefined,
+          }),
+        }).catch((err) => console.warn("[core-scan] receipt PO add-item threw:", (err as Error).message));
+      }
+      confirmed.push({ itemId: row.id, partId });
+    }
+
+    res.json({ order_id: orderId, vendor, confirmed });
   }),
 );
 

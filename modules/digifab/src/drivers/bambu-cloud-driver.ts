@@ -1,0 +1,118 @@
+// Cloud-Bambu MachineDriver — the live side of a "Bambu Lab" connection in
+// CLOUD mode. A connection is an ACCOUNT: listDevices returns EVERY printer on
+// the account (each linkable to a machine, the same model as FDM Monster).
+// Monitor-only by design: Bambu's Authorization Control gates remote
+// print-initiation behind their signed clients, so uploads/submits raise a clear
+// capability error pointing the user at LAN + Developer Mode (Phase 3). Status is
+// read over Bambu's cloud HTTP (`/bind` print_status). Phase 2 will prefer a
+// cached MQTT status (temps/progress) written by the hosted pump.
+//
+// All creds arrive via ManagerConfig.extra.creds (the encrypted blob):
+// { region, mode, token, mqttUser, account_email, devices: [{serial, accessCode, name, model}] }.
+
+import type {
+  MachineDriver, ManagerConfig, ConnectionResult, RemoteDevice,
+  UploadResult, SubmitArgs, SubmitResult, JobStatus, JobState, PlacementResolution,
+} from "./types.js";
+import { BambuCloud, BambuCloudError, type BambuRegion, BAMBU_REGIONS } from "./bambu-cloud.js";
+
+const CONTROL_BLOCKED =
+  "Cloud mode is monitor-only — Bambu's Authorization Control blocks third-party " +
+  "remote print control. Connect this printer in LAN + Developer Mode to send jobs.";
+
+/** Bambu cloud print_status → our JobState / device state. */
+export function mapCloudPrintStatus(status: string | undefined, online: boolean): string {
+  if (!online) return "offline";
+  switch (String(status ?? "").toUpperCase()) {
+    case "RUNNING": return "printing";
+    case "PREPARE":
+    case "SLICING": return "printing";
+    case "PAUSE": return "paused";
+    case "SUCCESS":
+    case "FINISH": return "completed";
+    case "FAILED": return "failed";
+    case "IDLE": return "operational";
+    default: return "operational";
+  }
+}
+
+function coerceRegion(v: unknown): BambuRegion {
+  const s = String(v ?? "");
+  return (BAMBU_REGIONS as readonly string[]).includes(s) ? (s as BambuRegion) : "North America";
+}
+
+interface StoredDevice { serial: string; name?: string; model?: string }
+
+export class BambuCloudDriver implements MachineDriver {
+  private region: BambuRegion;
+  private token: string;
+  private stored: StoredDevice[];
+  private cloud: BambuCloud;
+
+  constructor(cfg: ManagerConfig) {
+    const c = (cfg.extra?.creds ?? {}) as Record<string, unknown>;
+    this.region = coerceRegion(c.region);
+    this.token = String(c.token ?? "");
+    this.stored = Array.isArray(c.devices)
+      ? (c.devices as Record<string, unknown>[]).map((d) => ({ serial: String(d.serial ?? ""), name: typeof d.name === "string" ? d.name : undefined, model: typeof d.model === "string" ? d.model : undefined })).filter((d) => d.serial)
+      : [];
+    this.cloud = new BambuCloud(this.region);
+  }
+
+  async testConnection(): Promise<ConnectionResult> {
+    if (!this.token) return { ok: false, detail: "no cloud token stored", capabilities: { routing: false } };
+    try {
+      await this.cloud.listDevices(this.token);
+      return { ok: true, capabilities: { routing: false } };
+    } catch (e) {
+      const cf = e instanceof BambuCloudError && e.cloudflare;
+      return { ok: false, detail: cf ? "Blocked by Bambu's Cloudflare protection" : (e as Error).message, capabilities: { routing: false } };
+    }
+  }
+
+  /** Every printer on the account, with live cloud state. Falls back to the
+   *  stored device list (names/models, state unknown) if the cloud is briefly
+   *  unreachable, so links don't disappear from the cockpit. */
+  async listDevices(): Promise<RemoteDevice[]> {
+    try {
+      const devices = await this.cloud.listDevices(this.token);
+      if (devices.length) {
+        return devices.map((d) => ({
+          id: d.dev_id,
+          name: d.name,
+          enabled: true,
+          state: mapCloudPrintStatus(d.print_status, d.online),
+          tags: [],
+        }));
+      }
+    } catch {
+      // cloud momentarily unreachable → fall back to the stored set as unknown
+    }
+    return this.stored.map((d) => ({ id: d.serial, name: d.name ?? d.serial, enabled: true, state: "unknown", tags: [] }));
+  }
+
+  async setDeviceEnabled(): Promise<void> {
+    // No remote enable/disable over cloud; no-op keeps state-sync best-effort.
+  }
+
+  async getJobStatus(jobId: string): Promise<JobStatus> {
+    // jobId is the device serial (links carry remote_device_id = serial).
+    let state: JobState = "unknown";
+    try {
+      const devices = await this.cloud.listDevices(this.token);
+      const me = devices.find((d) => d.dev_id === jobId);
+      if (me) {
+        const s = mapCloudPrintStatus(me.print_status, me.online);
+        state = (["printing", "paused", "completed", "failed"].includes(s) ? s : "unknown") as JobState;
+      }
+    } catch { /* unknown on error */ }
+    return { jobId, state, deviceId: jobId };
+  }
+
+  // ── control (blocked in cloud mode) ──────────────────────────────────────
+  async uploadFile(): Promise<UploadResult> { throw new Error(CONTROL_BLOCKED); }
+  async submitJob(_args: SubmitArgs): Promise<SubmitResult> { throw new Error(CONTROL_BLOCKED); }
+  async resolvePlacement(): Promise<PlacementResolution> {
+    return { kind: "none", matchedName: null, deviceIds: [] };
+  }
+}

@@ -72,6 +72,23 @@ Claude Desktop `claude_desktop_config.json` (or Claude Code `.mcp.json`):
 | `cobblr_authoring_get_draft` | `GET …/core-authoring/drafts/:id` | no |
 | `cobblr_validate_bundle` | `POST …/bundles/validate` | no |
 | `cobblr_install_bundle` | `POST …/bundles/install` | **yes** |
+| `cobblr_list_record_kinds` | `GET …/entity-kinds` | no |
+| `cobblr_list_records` | `GET …/entities/:kind` | no |
+| `cobblr_get_record` | `GET …/entities/:kind/:id` | no |
+| `cobblr_list_actions` | `GET …/registered-actions` | no |
+| `cobblr_invoke_action` | `POST …/actions/invoke` | **yes** |
+
+(Plus the `cobblr_drive_*` browser-driving tools — see `docs/modules/mcp-server.md`.)
+
+### The operate loop (read + act on any app's data)
+
+A second loop, alongside authoring — generic over every module + every app the user built:
+
+1. `cobblr_list_record_kinds` → what kinds the workspace holds (`inventory:part`, …)
+2. `cobblr_list_records` / `cobblr_get_record` → read the data
+3. `cobblr_list_actions kind=<k>` → the verbs that apply + their args
+4. `cobblr_invoke_action` → do it (adjust stock, mark a task done, build one, …);
+   permission-checked server-side.
 
 ### The build loop the model follows
 
@@ -89,7 +106,13 @@ of which model produced it.
 ## Develop
 
 ```bash
-npm run dev   -w @cobblr/mcp-server   # tsx, stdio
-npm run build -w @cobblr/mcp-server   # tsc → dist/
+npm run dev      -w @cobblr/mcp-server   # tsx, stdio
+npm run dev:http -w @cobblr/mcp-server   # tsx, remote Streamable-HTTP (POST /mcp)
+npm run build    -w @cobblr/mcp-server   # tsc → dist/
 npm run typecheck -w @cobblr/mcp-server
 ```
+
+**Two transports, same tools:** `cobblr-mcp` (stdio, local Claude) and
+`cobblr-mcp-http` (remote Streamable HTTP — the surface claude.ai web needs; token
+arrives per-request as a Bearer header). See `docs/modules/mcp-server.md` →
+"Remote transport".

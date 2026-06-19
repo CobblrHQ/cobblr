@@ -18,6 +18,7 @@
 // chip so list rows stay aligned (no height jitter when some items
 // have photos and others don't).
 
+import { useEffect, useState } from "react";
 import { useImageSrc } from "./useImageSrc";
 
 interface Props {
@@ -38,9 +39,14 @@ const HEX = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i;
 
 export function EntityThumb({ src, alt, size, className, color }: Props) {
   const resolved = useImageSrc(src);
+  // A broken/404 image_path must degrade to the initial-letter chip, not the
+  // browser's broken-image icon. (useImageSrc only nulls out the bearer-fetch
+  // path on failure; a direct <img src> needs onError.)
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [resolved]);
   const s = { width: size, height: size } as const;
   const base = "rounded shrink-0 object-cover";
-  if (!resolved) {
+  if (!resolved || failed) {
     // Color swatch fallback (e.g. yarn): the square shows the colour itself.
     const hex = color && HEX.test(color.trim()) ? color.trim() : null;
     if (hex) {
@@ -74,6 +80,7 @@ export function EntityThumb({ src, alt, size, className, color }: Props) {
       style={s}
       className={base + (className ? ` ${className}` : "")}
       loading="lazy"
+      onError={() => setFailed(true)}
     />
   );
 }

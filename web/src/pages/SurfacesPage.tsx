@@ -220,12 +220,25 @@ function EditSurfaceModal({
     theme?: "auto" | "dark" | "light";
     layout?: "tiles" | "list";
     footer?: string;
+    refresh_seconds?: number;
+    epaper?: boolean;
   };
   const [theme, setTheme] = useState<"auto" | "dark" | "light">(
     cfg.theme ?? "auto",
   );
   const [layout, setLayout] = useState<"tiles" | "list">(cfg.layout ?? "tiles");
   const [footer, setFooter] = useState(cfg.footer ?? "");
+  const [refresh, setRefresh] = useState<number>(cfg.refresh_seconds ?? 60);
+  const [epaper, setEpaper] = useState<boolean>(cfg.epaper ?? false);
+  // The "E-paper" preset: reflective panels want light + no auto-refresh (no
+  // ghosting on a timer). One click sets all three; each stays editable.
+  function applyEpaper(on: boolean) {
+    setEpaper(on);
+    if (on) {
+      setTheme("light");
+      setRefresh(0);
+    }
+  }
 
   const save = useMutation({
     mutationFn: () => {
@@ -240,6 +253,10 @@ function EditSurfaceModal({
       else config.layout = layout;
       if (footer.trim()) config.footer = footer.trim();
       else delete config.footer;
+      if (refresh !== 60) config.refresh_seconds = refresh;
+      else delete config.refresh_seconds;
+      if (epaper) config.epaper = true;
+      else delete config.epaper;
       return api.updateSurface(slug, surface.id, {
         name: name.trim(),
         enabled,
@@ -364,6 +381,36 @@ function EditSurfaceModal({
               onChange={(e) => setFooter(e.target.value)}
               className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             />
+          </label>
+          <label className="block">
+            <div className="text-xs text-muted mb-1">Auto-refresh</div>
+            <select
+              value={refresh}
+              onChange={(e) => setRefresh(Number(e.target.value))}
+              className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+            >
+              <option value={0}>Off — static (e-paper)</option>
+              <option value={30}>Every 30 seconds</option>
+              <option value={60}>Every minute</option>
+              <option value={300}>Every 5 minutes</option>
+              <option value={900}>Every 15 minutes</option>
+              <option value={3600}>Every hour</option>
+            </select>
+          </label>
+          <label className="flex items-start gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={epaper}
+              onChange={(e) => applyEpaper(e.target.checked)}
+              className="mt-0.5"
+            />
+            <span>
+              <span className="block text-sm text-content dark:text-mortar-100">E-paper mode</span>
+              <span className="block text-xs text-faint">
+                Light (black-on-white) palette + auto-refresh off — for a reflective panel
+                in a cabinet that shouldn't ghost on a timer.
+              </span>
+            </span>
           </label>
         </div>
 

@@ -61,6 +61,7 @@ export async function buildDriverById(
       apiKey: (creds.apiKey as string | undefined) ?? null,
       username: (creds.username as string | undefined) ?? null,
       password: (creds.password as string | undefined) ?? null,
+      extra: { creds },
     },
     conn.id,
     relay,
@@ -120,11 +121,38 @@ export async function pollJob(
     error = `unreachable after ${errs} polls: ${error}`;
   }
   const terminal = TERMINAL.has(status);
-  await db
-    .updateTable("digifab_jobs")
-    .set({ status, progress, error, poll_errors: 0, last_polled_at: new Date(), updated_at: new Date() })
-    .where("id", "=", jobId)
-    .execute();
+  // F-1 ATOMIC: a terminal job's status flip and its bed-clear (needs_attention)
+  // row must commit TOGETHER. Otherwise an assign pass can observe the device as
+  // "no longer printing" (gone from the busy set, mock back to idle) in the gap
+  // BEFORE the attention row exists, and drip the next queued job straight onto
+  // the uncleared bed — the digifab-pools flake (3rd job not held; ≤2 cap blipped).
+  // One transaction closes that window: any pass reads both-after or both-before.
+  const markAttention = terminal && !wasTerminal && !!job.connection_id && !!job.target_device;
+  await db.transaction().execute(async (trx) => {
+    await trx
+      .updateTable("digifab_jobs")
+      .set({ status, progress, error, poll_errors: 0, last_polled_at: new Date(), updated_at: new Date() })
+      .where("id", "=", jobId)
+      .execute();
+    if (markAttention) {
+      await trx
+        .insertInto("digifab_device_attention")
+        .values({
+          connection_id: job.connection_id!,
+          remote_device_id: job.target_device!,
+          job_id: jobId,
+          reason: status === "completed" ? "print-completed" : "print-failed",
+        })
+        .onConflict((oc) =>
+          oc.columns(["connection_id", "remote_device_id"]).doUpdateSet({
+            job_id: jobId,
+            reason: status === "completed" ? "print-completed" : "print-failed",
+            created_at: new Date(),
+          }),
+        )
+        .execute();
+    }
+  });
 
   // ── Print-lifecycle notifications (the "post updates to Discord" flow) ──
   // A 25/50/75% milestone fires once as it's crossed (the stored progress is the
@@ -139,28 +167,9 @@ export async function pollJob(
   }
 
   if (terminal && !wasTerminal) {
-    // F-1: the print is over but the part is still on the bed — mark the device
-    // as needing a human to clear it before it can take new work. The assign
-    // worker skips devices with an open attention row; the fleet view surfaces
-    // it; POST …/ready clears it. Best-effort (only when we know which device).
-    if (job.connection_id && job.target_device) {
-      await db
-        .insertInto("digifab_device_attention")
-        .values({
-          connection_id: job.connection_id,
-          remote_device_id: job.target_device,
-          job_id: jobId,
-          reason: status === "completed" ? "print-completed" : "print-failed",
-        })
-        .onConflict((oc) =>
-          oc.columns(["connection_id", "remote_device_id"]).doUpdateSet({
-            job_id: jobId,
-            reason: status === "completed" ? "print-completed" : "print-failed",
-            created_at: new Date(),
-          }),
-        )
-        .execute();
-    }
+    // (F-1 bed-clear `needs_attention` was already written atomically with the
+    // status flip above — see the transaction — so an assign pass can never see
+    // the freed bed without the attention row.)
     // The marquee reactivity hook: a default wire can carry
     // print.completed → projects:set-dep-satisfied / mark task done /
     // bump stock, with neither module importing the other.

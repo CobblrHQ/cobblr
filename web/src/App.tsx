@@ -533,7 +533,23 @@ function ActiveOrgScopedRoutes() {
           <Route path="/files" element={<FilesPage />} />
           <Route path="/views" element={<ViewsPage />} />
           <Route path="/tags" element={<TagsPage />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
+          {/* Catch-all. The clean per-instance routes above (`/3d-printers`) are
+              registered from instancesQ, which is async — so on a FULL page load
+              (refresh / direct link) the instance route doesn't exist yet and the
+              URL would fall here and bounce to home before the query resolves.
+              While instances are still loading, wait instead of redirecting; once
+              loaded the instance route matches (or, if it's truly unknown, this
+              redirects). */}
+          <Route
+            path="*"
+            element={
+              instancesQ.isLoading ? (
+                <div className="p-8 text-sm text-muted dark:text-slate-400">Loading…</div>
+              ) : (
+                <Navigate to="/" replace />
+              )
+            }
+          />
         </Route>
         {/* Convenience deep-link: /w/:slug/app/:appSlug → the portal app
             player (so a bundle's "Open the X app" next-step + dashboard

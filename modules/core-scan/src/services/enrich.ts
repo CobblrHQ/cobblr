@@ -57,7 +57,7 @@ function isPrivateIp(ip: string): boolean {
     a === 0
   );
 }
-function assertSafeOutboundUrl(raw: string): void {
+export function assertSafeOutboundUrl(raw: string): void {
   const u = new URL(raw);
   if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("blocked non-http(s) URL");
   const host = u.hostname.toLowerCase();

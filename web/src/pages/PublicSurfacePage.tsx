@@ -68,6 +68,14 @@ interface SurfaceTheme {
   banner_image?: string;
   /** Optional footer text — copyright / "powered by" / etc. */
   footer?: string;
+  /** Auto-refresh cadence in seconds. Default 60. 0 = never re-fetch — for a
+   *  static panel (e-paper) that shouldn't flicker/ghost on a timer. */
+  refresh_seconds?: number;
+  /** E-paper mode: forces a light, high-contrast palette (reflective panels
+   *  need black-on-white) regardless of theme — for view/board surfaces here
+   *  AND app surfaces (passed to the App Player). Pairs with refresh_seconds=0
+   *  via the editor's "E-paper" preset. */
+  epaper?: boolean;
 }
 
 export function PublicSurfacePage() {
@@ -86,13 +94,20 @@ export function PublicSurfacePage() {
     },
     enabled: !!token,
     retry: false,
-    // Re-fetch every 60s so a TV mounted on a workshop wall picks up
-    // new items added by the owner without anyone touching the page.
-    refetchInterval: 60_000,
+    // Re-fetch so a wall-mounted screen picks up new items without anyone
+    // touching the page. Cadence is per-surface (config.refresh_seconds,
+    // default 60); 0 = never — for a static e-paper panel that mustn't ghost on
+    // a timer. Function form so it reads the just-fetched config.
+    refetchInterval: (query) => {
+      const cfg = (query.state.data?.surface.config ?? {}) as SurfaceTheme;
+      const secs = cfg.refresh_seconds ?? 60;
+      return secs <= 0 ? false : secs * 1000;
+    },
   });
 
-  const theme = (surface.data?.surface.config as SurfaceTheme | undefined)
-    ?? {};
+  const rawTheme = (surface.data?.surface.config as SurfaceTheme | undefined) ?? {};
+  // E-paper forces the light palette (reflective panels need black-on-white).
+  const theme: SurfaceTheme = rawTheme.epaper ? { ...rawTheme, theme: "light" } : rawTheme;
   // Theme.layout (publisher's choice) > ?view= (visitor's choice) > tiles.
   const layout: "list" | "tiles" =
     theme.layout ?? (params.get("view") === "list" ? "list" : "tiles");
@@ -129,7 +144,7 @@ export function PublicSurfacePage() {
   // scope_type "app" renders a full-bleed, themed, read-only App Player —
   // its own header/theme, no PublicShell chrome.
   if (data.surface.scope_type === "app" && data.app && data.data) {
-    return <PublicAppPlayer app={data.app} data={data.data} />;
+    return <PublicAppPlayer app={data.app} data={data.data} epaper={!!rawTheme.epaper} />;
   }
 
   return (

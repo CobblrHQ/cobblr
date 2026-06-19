@@ -430,17 +430,9 @@ export function BundleDetailModal(props: Props) {
       } catch (e) {
         if (!(e instanceof ApiError)) return;
         if (e.code === "needs_enable") {
-          const mods = (e.details as { needs_enable?: string[] } | undefined)?.needs_enable ?? [];
-          const list = mods.map((m) => m.charAt(0).toUpperCase() + m.slice(1)).join(", ");
-          const plural = mods.length > 1;
-          const ok = await confirm({
-            title: `Enable ${plural ? "modules" : "module"} for this bundle?`,
-            message: `"${name}" needs the ${list} module${plural ? "s" : ""}, which ${
-              plural ? "aren't" : "isn't"
-            } enabled in this workspace yet. Enable ${plural ? "them" : "it"} and install in one step?`,
-            confirmLabel: "Enable & install",
-          });
-          if (!ok) return;
+          // The detail page already lists the required modules (the "requires"
+          // accordion), so a second "enable this module?" confirm is redundant
+          // friction (the author). Just enable + install in one step.
           confirmEnable = true;
           continue;
         }

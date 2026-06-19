@@ -7,7 +7,7 @@
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { BuildsDB } from "../db.js";
-import { consumeComponents, type ComponentInput } from "../build-engine.js";
+import { consumeComponents, explodeLeafComponents } from "../build-engine.js";
 
 let registered = false;
 
@@ -36,17 +36,8 @@ export function registerBuildsActionHandlers(): void {
       .executeTakeFirst();
     if (!build) return { ok: false, skipped: "build not found" };
 
-    const compRows = await db
-      .selectFrom("builds_components")
-      .selectAll()
-      .where("build_id", "=", buildId)
-      .orderBy("created_at", "asc")
-      .execute();
-    const comps: ComponentInput[] = compRows.map((r) => ({
-      part_id: r.part_id,
-      quantity: Number(r.quantity) || 0,
-      optional: r.optional,
-    }));
+    // Explode nested sub-assemblies down to leaf inventory parts, then consume.
+    const comps = await explodeLeafComponents(ctx.orgId, buildId);
 
     const consumed = await consumeComponents(ctx.orgId, ctx.userId, buildId, comps, qty);
 
@@ -60,6 +51,21 @@ export function registerBuildsActionHandlers(): void {
       })
       .returning(["id"])
       .executeTakeFirstOrThrow();
+
+    // Genealogy (rung 8): record input + output edges for the wire-fired run too
+    // (no serial/lot — those come from the interactive build form).
+    if (consumed.length > 0) {
+      await db
+        .insertInto("builds_run_inputs")
+        .values(consumed.map((c) => ({ run_id: run.id, part_id: c.part_id, lot_code: null, quantity: String(c.quantity) })))
+        .execute();
+    }
+    if (build.output_part_id) {
+      await db
+        .insertInto("builds_run_outputs")
+        .values({ run_id: run.id, part_id: build.output_part_id, serial_code: null, quantity: String((Number(build.output_qty) || 1) * qty) })
+        .execute();
+    }
 
     if (build.output_part_id) {
       const made = (Number(build.output_qty) || 1) * qty;

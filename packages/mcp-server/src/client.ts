@@ -96,6 +96,55 @@ export class CobblrClient {
     return this.request("GET", "/orgs");
   }
 
+  // ── Operate any app's data (generic entity + action surface) ─────────
+  // These wrap the kernel's generic registry endpoints, so they cover EVERY
+  // module and every app a user builds — read records, discover the verbs that
+  // apply, and invoke them. No per-module code.
+  private orgBase(slug: string): string {
+    return `/orgs/${encodeURIComponent(slug)}`;
+  }
+
+  listEntityKinds(slug: string): Promise<{ items: unknown[] }> {
+    return this.request("GET", `${this.orgBase(slug)}/entity-kinds`);
+  }
+
+  listEntities(
+    slug: string,
+    kind: string,
+    opts?: { q?: string; limit?: number; filter?: Record<string, string> },
+  ): Promise<{ items: unknown[] }> {
+    const p = new URLSearchParams();
+    if (opts?.q) p.set("q", opts.q);
+    if (opts?.limit) p.set("limit", String(opts.limit));
+    if (opts?.filter) for (const [k, v] of Object.entries(opts.filter)) p.set(`filter[${k}]`, v);
+    const qs = p.toString();
+    // `kind` is `module:kind` — safe path chars, passed raw (matches the app's own usage).
+    return this.request("GET", `${this.orgBase(slug)}/entities/${kind}${qs ? `?${qs}` : ""}`);
+  }
+
+  getEntity(slug: string, kind: string, id: string): Promise<unknown> {
+    return this.request("GET", `${this.orgBase(slug)}/entities/${kind}/${encodeURIComponent(id)}`);
+  }
+
+  listActions(slug: string): Promise<{ items: unknown[] }> {
+    return this.request("GET", `${this.orgBase(slug)}/registered-actions`);
+  }
+
+  invokeAction(
+    slug: string,
+    actionId: string,
+    entityKind: string,
+    entityId: string,
+    args?: Record<string, unknown>,
+  ): Promise<unknown> {
+    return this.request("POST", `${this.orgBase(slug)}/actions/invoke`, {
+      actionId,
+      entityKind,
+      entityId,
+      args,
+    });
+  }
+
   // ── core-authoring (the AI app-builder) ──────────────────────────────
   private authoringBase(slug: string): string {
     return `/orgs/${encodeURIComponent(slug)}/modules/core-authoring`;

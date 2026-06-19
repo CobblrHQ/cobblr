@@ -24,6 +24,19 @@ interface CachedTenant {
 // the first, orphaning its connections (a slow leak under load).
 const cache = new Map<string, Promise<CachedTenant>>();
 
+// Last time getTenantDb handed out this org's Kysely. A background sweep
+// (recurrence scheduler / maintenance / scan-inbox calling releaseIdleDb)
+// must NOT end a pool that was handed out moments ago: getTenantDb returns the
+// Kysely, but the caller checks out a connection only when it runs its query —
+// in that gap the pool looks "all idle" (totalCount === idleCount, no waiters),
+// so the idle-guard alone would end it and the imminent query hits a dead pool
+// ("Cannot use a pool after calling end on the pool" — a real 500, and the CI
+// filament-upgrade flake). Requiring the pool to have been idle for a grace
+// window before eviction — standard idle-*timeout* behaviour, not evict-on-sight
+// — closes that gap (callers query within ms of getTenantDb).
+const lastAccess = new Map<string, number>();
+const RELEASE_GRACE_MS = 15_000;
+
 interface TenantCredentials {
   user: string;
   password: string;
@@ -78,6 +91,9 @@ async function openTenant(orgId: string): Promise<CachedTenant> {
 }
 
 export async function getTenantDb(orgId: string): Promise<Kysely<TenantDB>> {
+  // Stamp BEFORE the await: the grace window must cover from the moment we
+  // commit to handing out this pool, not from when the promise resolves.
+  lastAccess.set(orgId, Date.now());
   let entry = cache.get(orgId);
   if (!entry) {
     entry = openTenant(orgId);
@@ -122,7 +138,12 @@ export async function releaseIdleTenantPool(orgId: string): Promise<void> {
   // Snapshot + delete with no await gap: in-use → leave it for live traffic.
   if (cache.get(orgId) !== entry) return; // someone else churned it
   if (pool.totalCount !== pool.idleCount || pool.waitingCount > 0) return;
+  // Recently handed out? A request may hold the Kysely ref but not have checked
+  // out a connection yet (so the counts above look idle). Leave it; the next
+  // sweep will reclaim it once it's been quiet for the grace window.
+  if (Date.now() - (lastAccess.get(orgId) ?? 0) < RELEASE_GRACE_MS) return;
   cache.delete(orgId);
+  lastAccess.delete(orgId);
   try {
     await pool.end();
   } catch {
@@ -137,6 +158,7 @@ export async function evictTenantPool(orgId: string): Promise<void> {
   const entry = cache.get(orgId);
   if (!entry) return;
   cache.delete(orgId);
+  lastAccess.delete(orgId);
   try {
     const { pool } = await entry;
     await pool.end();

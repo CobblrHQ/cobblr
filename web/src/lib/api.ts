@@ -572,6 +572,10 @@ export const api = {
     request<Machine>("GET", `${primaryBase(slug, "machines/machines", instance)}/${id}`),
   createMachine: (slug: string, body: Partial<Machine>, instance?: string) =>
     request<Machine>("POST", primaryBase(slug, "machines/machines", instance), body),
+  /** Fire-and-forget: auto-fetch a web image for an entity (e.g. a 3D printer)
+   *  and set its image_path when it lands — the user does nothing. 202 = queued. */
+  enrichEntityImage: (slug: string, body: { entity_kind: string; entity_id: string; query: string; instance?: string | null }) =>
+    request<{ ok: boolean }>("POST", `/orgs/${slug}/modules/core-scan/entity-image`, body),
   updateMachine: (slug: string, id: string, body: Partial<Machine>, instance?: string) =>
     request<Machine>("PATCH", `${primaryBase(slug, "machines/machines", instance)}/${id}`, body),
   deleteMachine: (slug: string, id: string, instance?: string) =>
@@ -1386,6 +1390,17 @@ export const api = {
       password?: string;
     },
   ) => request<DigifabConnection>("POST", `/orgs/${slug}/modules/digifab/connections`, body),
+  // ── Bambu Lab cloud-login connect wizard ──────────────────────────────────
+  bambuLogin: (slug: string, body: { region: string; email: string; password: string }) =>
+    request<BambuLoginResponse>("POST", `/orgs/${slug}/modules/digifab/bambu/login`, body),
+  bambuCode: (slug: string, body: { session: string; code: string }) =>
+    request<BambuLoginResponse>("POST", `/orgs/${slug}/modules/digifab/bambu/code`, body),
+  bambuCreate: (slug: string, body: { session: string; mode: BambuMode; label?: string }) =>
+    request<{ connection: DigifabConnection; devices: BambuDiscoveredDevice[]; capabilities: BambuModeCapabilities }>(
+      "POST",
+      `/orgs/${slug}/modules/digifab/bambu/create`,
+      body,
+    ),
   testDigifabConnection: (slug: string, id: string) =>
     request<{ ok: boolean; detail?: string; capabilities: { routing: boolean } }>(
       "POST",
@@ -1909,8 +1924,16 @@ export const api = {
   // matchmaker identifies against the flagship bundle menu.
   scanNote: (slug: string, text: string) =>
     request<ScanInboxItem>("POST", `/orgs/${slug}/modules/core-scan/scan/note`, { text }),
-  // Parse an uploaded receipt PDF/photo (core-ai) into one inbox row per line
-  // item — each then triages into a part via the normal confirm flow.
+  // The caller's per-workspace receipt-forwarding address (null/unconfigured
+  // when the operator hasn't wired up the receipts@ Email Worker).
+  getReceiptAddress: (slug: string) =>
+    request<{ configured: boolean; address: string | null }>(
+      "GET",
+      `/orgs/${slug}/receipt-address`,
+    ),
+  // Parse an uploaded receipt (CSV / PDF / photo) into one inbox row per line
+  // item — each then triages into a part via the normal confirm flow. CSV and
+  // text-PDF tables parse deterministically (no AI); everything else falls to AI.
   scanReceipt: (slug: string, file_id: string) =>
     request<{
       receipt: {
@@ -1919,9 +1942,19 @@ export const api = {
         currency: string | null;
         total: number | null;
         item_count: number;
+        method: "csv" | "pdf-table" | "ai-chat" | "ai-vision";
       };
       items: ScanInboxItem[];
     }>("POST", `/orgs/${slug}/modules/core-scan/scan/receipt`, { file_id }),
+  // Collapse a receipt's pending lines into ONE purchases order (vendor + line
+  // items) instead of N orphan parts. Each line is still confirmed into a part;
+  // the order links them. Degrades to parts-only if purchases isn't enabled.
+  confirmReceiptGroup: (slug: string, groupId: string) =>
+    request<{
+      order_id: string | null;
+      vendor: string | null;
+      confirmed: Array<{ itemId: string; partId?: string | null; error?: string }>;
+    }>("POST", `/orgs/${slug}/modules/core-scan/receipt-group/${groupId}/confirm`, {}),
   // Pending captures grouped by the bundle they fit ("These look like yarn (3)").
   quickstart: (slug: string) =>
     request<QuickstartSuggestions>("GET", `/orgs/${slug}/quickstart`),
@@ -3302,6 +3335,14 @@ export interface DigifabDeviceTemp {
   actual: number;
   target?: number;
 }
+export type BambuMode = "cloud" | "lan" | "hybrid";
+export interface BambuModeCapabilities { monitor: boolean; control: boolean; available: boolean; note: string }
+export interface BambuDiscoveredDevice { dev_id: string; name: string; model?: string; online: boolean; print_status?: string }
+export type BambuLoginResponse =
+  | { status: "need_email_code"; session: string }
+  | { status: "need_tfa"; session: string }
+  | { status: "ready"; session: string; devices: BambuDiscoveredDevice[] };
+
 export interface DigifabFleetDevice {
   id: string;
   name: string;

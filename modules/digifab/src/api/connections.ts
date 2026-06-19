@@ -69,6 +69,7 @@ async function buildDriver(db: Kysely<DigifabDB>, orgId: string, row: DeviceConn
       apiKey: (creds.apiKey as string | undefined) ?? null,
       username: (creds.username as string | undefined) ?? null,
       password: (creds.password as string | undefined) ?? null,
+      extra: { creds },
     },
     row.id,
   );

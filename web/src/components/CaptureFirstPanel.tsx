@@ -14,6 +14,7 @@ import { useToast } from "@cobblr/platform-web";
 import { Camera, PenLine, Sparkles, ArrowRight, Loader2, Package, Search, Plus, Boxes, X } from "lucide-react";
 import { api } from "../lib/api";
 import { useBundleCatalog, type CatalogBundle } from "../lib/useBundleCatalog";
+import { fuzzyMatch } from "../lib/fuzzy";
 import { BundleDetailModal } from "./BundleDetailModal";
 
 /** Name a bare photo capture that couldn't be auto-identified (no vision) —
@@ -100,7 +101,7 @@ export function CaptureFirstPanel({ slug }: { slug: string }) {
     if (!q) return flagship;
     return catalog
       .filter((b) =>
-        `${b.manifest.name} ${b.blurb ?? ""} ${b.manifest.description ?? ""}`.toLowerCase().includes(q),
+        fuzzyMatch(`${b.manifest.name} ${b.blurb ?? ""} ${b.manifest.description ?? ""}`, q),
       )
       .sort(
         (a, b) =>
@@ -127,7 +128,7 @@ export function CaptureFirstPanel({ slug }: { slug: string }) {
         !m.enabled &&
         m.band === "stock" &&
         !m.name.startsWith("core-") &&
-        `${m.displayName} ${m.description} ${m.name}`.toLowerCase().includes(q),
+        fuzzyMatch(`${m.displayName} ${m.description} ${m.name}`, q),
     );
   }, [modulesQ.data, q]);
 
@@ -456,3 +457,5 @@ export function CaptureFirstPanel({ slug }: { slug: string }) {
     </section>
   );
 }
+
+// search uses fuzzyMatch (lib/fuzzy.ts) — typo-tolerant.

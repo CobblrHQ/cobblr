@@ -1,38 +1,33 @@
 // Receipt / invoice parsing — turn an uploaded receipt into line items.
 //
-// A receipt PDF (or a photo of one) → text → ONE metered core-ai call that
-// extracts the vendor, date, and per-line items as JSON. The caller drops one
-// scan-inbox row per line item (source_kind "receipt") so each line rides the
-// SAME matchmaker + confirm flow a barcode/photo scan does — a receipt becomes
-// N parts without retyping. Mirrors companion app's parseInvoice* → ParsedOrderDraft.
+// Tiered, deterministic-first (mirrors the barcode path's heuristic-floor →
+// AI-fallback shape):
 //
-// Two read paths: a text PDF goes via `pdf-parse` → core-ai `chat`; an image
-// goes straight to a vision `classify-image` call (OCR + structuring folded
-// into one). A scanned (image-only) PDF has no extractable text — we degrade
-// with a clear "upload a photo instead" message rather than guess.
+//   CSV          → parseCsvReceipt           (header-mapped, no AI)
+//   text PDF     → parsePdfTableReceipt      (pdf-parse getTable, no AI)
+//                  └ no usable table → core-ai `chat` on the text
+//   image        → core-ai `classify-image`  (vision OCR + structuring)
+//   scanned PDF  → no text → "upload a photo instead"
+//
+// The caller drops one scan-inbox row per line item (source_kind "receipt") so
+// each line rides the SAME matchmaker + confirm flow a barcode/photo scan does
+// — a receipt becomes N parts without retyping. Mirrors companion app's parseInvoice*.
 
 import { platform } from "@cobblr/platform-contract";
+import {
+  buildReceipt,
+  type ParsedReceipt,
+  type ReceiptResult,
+} from "./receipt-shared.js";
+import {
+  enrichReceiptMeta,
+  parseCsvReceipt,
+  parsePdfTableReceipt,
+} from "./receipt-deterministic.js";
 
-export interface ReceiptLine {
-  description: string;
-  qty: number;
-  unit_price: number | null;
-  line_total: number | null;
-}
-
-export interface ParsedReceipt {
-  vendor: string | null;
-  /** ISO YYYY-MM-DD when the receipt's date is parseable, else null. */
-  date: string | null;
-  /** ISO-4217 code, uppercased, when stated. */
-  currency: string | null;
-  total: number | null;
-  items: ReceiptLine[];
-}
-
-export type ReceiptResult =
-  | { ok: true; receipt: ParsedReceipt }
-  | { ok: false; reason: string };
+// Re-export the shared types + the pure shaper so existing importers (the route,
+// the unit test) keep their import site.
+export type { ReceiptLine, ParsedReceipt, ReceiptResult, ParseMethod } from "./receipt-shared.js";
 
 const SCHEMA_INSTRUCTION =
   "Reply with ONLY a JSON object, no prose:\n" +
@@ -44,32 +39,9 @@ const SCHEMA_INSTRUCTION =
   "no count is shown. Prices are numbers only (strip currency symbols and thousands " +
   "separators). Use null for anything not printed on the receipt.";
 
-function num(v: unknown): number | null {
-  if (typeof v === "number") return Number.isFinite(v) ? v : null;
-  if (typeof v === "string") {
-    const n = parseFloat(v.replace(/[^0-9.\-]/g, ""));
-    return Number.isFinite(n) ? n : null;
-  }
-  return null;
-}
-
-function str(v: unknown): string | null {
-  return typeof v === "string" && v.trim() ? v.trim() : null;
-}
-
-function isoDate(v: unknown): string | null {
-  const s = str(v);
-  if (!s) return null;
-  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
-  const t = Date.parse(s);
-  if (Number.isNaN(t)) return null;
-  return new Date(t).toISOString().slice(0, 10);
-}
-
 /** Shape a model's (possibly messy) JSON reply into a ParsedReceipt. Pure +
- *  tolerant (extracts the first JSON object, coerces price strings, drops
- *  blank lines) so it's unit-testable without an AI call. Returns null when
- *  the reply has no parseable line items. */
+ *  tolerant (first JSON object, price coercion, blank-line drop) so it's
+ *  unit-testable without an AI call. Returns null when there are no line items. */
 export function shapeReceipt(raw: string): ParsedReceipt | null {
   const m = raw.match(/\{[\s\S]*\}/);
   let parsed: Record<string, unknown>;
@@ -79,27 +51,13 @@ export function shapeReceipt(raw: string): ParsedReceipt | null {
     return null;
   }
   const itemsRaw = Array.isArray(parsed.items) ? parsed.items : [];
-  const items: ReceiptLine[] = [];
-  for (const it of itemsRaw) {
-    const o = (it ?? {}) as Record<string, unknown>;
-    const description = str(o.description);
-    if (!description) continue;
-    items.push({
-      description: description.slice(0, 300),
-      qty: num(o.qty) ?? 1,
-      unit_price: num(o.unit_price),
-      line_total: num(o.line_total),
-    });
-  }
-  if (items.length === 0) return null;
-  const currency = str(parsed.currency);
-  return {
-    vendor: str(parsed.vendor),
-    date: isoDate(parsed.date),
-    currency: currency ? currency.toUpperCase().slice(0, 3) : null,
-    total: num(parsed.total),
-    items,
-  };
+  return buildReceipt({
+    vendor: parsed.vendor,
+    date: parsed.date,
+    currency: parsed.currency,
+    total: parsed.total,
+    items: itemsRaw.map((it) => (it ?? {}) as Record<string, unknown>),
+  });
 }
 
 function aiText(r: { result: unknown }): string {
@@ -146,50 +104,91 @@ async function visionExtract(
   return aiText(r);
 }
 
-/** Parse a receipt file (PDF or image, already stored in core-files) into a
- *  ParsedReceipt. Never throws — every failure is a typed `{ ok:false, reason }`
- *  with a user-facing message. */
+function aiError(e: unknown): string {
+  const provider = e instanceof Error && /provider|capability|budget/i.test(e.message);
+  return provider
+    ? "No AI provider is set up for this workspace yet (Configuration → AI)."
+    : "AI is unavailable right now.";
+}
+
+/** Extract a text PDF's full text + discovered tables. Either may be empty. */
+async function readPdf(bytes: Buffer): Promise<{ text: string; tables: string[][][] } | null> {
+  try {
+    const { PDFParse } = await import("pdf-parse");
+    const parser = new PDFParse({ data: new Uint8Array(bytes) });
+    let tables: string[][][] = [];
+    try {
+      tables = (await parser.getTable()).mergedTables as string[][][];
+    } catch {
+      tables = [];
+    }
+    const text = (await parser.getText()).text ?? "";
+    await parser.destroy().catch(() => {});
+    return { text, tables };
+  } catch {
+    return null;
+  }
+}
+
+/** Parse a receipt file (CSV, PDF, or image, already stored in core-files) into
+ *  a ParsedReceipt. Deterministic tiers run first; AI is the fallback. Never
+ *  throws — every failure is a typed `{ ok:false, reason }`. */
 export async function parseReceipt(orgId: string, fileId: string): Promise<ReceiptResult> {
   const file = await platform().files.read(orgId, fileId, "original");
   if (!file) return { ok: false, reason: "Couldn't read that file." };
   const bytes = Buffer.from(file.bytes);
-  const isPdf =
-    file.mimeType === "application/pdf" || bytes.subarray(0, 5).toString("latin1").startsWith("%PDF");
+  const mime = file.mimeType || "";
+  const isPdf = mime === "application/pdf" || bytes.subarray(0, 5).toString("latin1").startsWith("%PDF");
+  const isImage = mime.startsWith("image/");
+  const looksCsv = /csv|excel|spreadsheet/.test(mime) || (!isPdf && !isImage);
 
-  let raw: string;
-  try {
-    if (isPdf) {
-      let text = "";
-      try {
-        const { PDFParse } = await import("pdf-parse");
-        const parser = new PDFParse({ data: new Uint8Array(bytes) });
-        text = (await parser.getText()).text ?? "";
-      } catch {
-        return { ok: false, reason: "Couldn't read that PDF." };
-      }
-      if (!text.trim()) {
-        return {
-          ok: false,
-          reason: "That PDF has no extractable text (a scan?). Upload a photo of the receipt instead.",
-        };
-      }
-      raw = await chatExtract(orgId, text, fileId);
-    } else if (file.mimeType.startsWith("image/")) {
-      raw = await visionExtract(orgId, bytes.toString("base64"), file.mimeType, fileId);
-    } else {
-      return { ok: false, reason: "Upload a PDF or a photo of the receipt." };
-    }
-  } catch (e) {
-    const provider = e instanceof Error && /provider|capability|budget/i.test(e.message);
-    return {
-      ok: false,
-      reason: provider
-        ? "No AI provider is set up for this workspace yet (Configuration → AI)."
-        : "AI is unavailable right now.",
-    };
+  // ── Tier 1: CSV (deterministic) ────────────────────────────────────────────
+  if (looksCsv && !isPdf && !isImage) {
+    const csv = parseCsvReceipt(bytes.toString("utf8"));
+    if (csv) return { ok: true, receipt: csv, method: "csv" };
+    // A text file that isn't a recognisable CSV → let AI read it as text below.
   }
 
-  const receipt = shapeReceipt(raw);
-  if (!receipt) return { ok: false, reason: "Couldn't find any line items on that receipt." };
-  return { ok: true, receipt };
+  // ── Tier 2: PDF — deterministic table first, AI on the text otherwise ───────
+  if (isPdf) {
+    const pdf = await readPdf(bytes);
+    if (!pdf) return { ok: false, reason: "Couldn't read that PDF." };
+    const table = parsePdfTableReceipt(pdf.tables);
+    if (table) {
+      return { ok: true, receipt: enrichReceiptMeta(table, pdf.text), method: "pdf-table" };
+    }
+    if (!pdf.text.trim()) {
+      return {
+        ok: false,
+        reason: "That PDF has no extractable text (a scan?). Upload a photo of the receipt instead.",
+      };
+    }
+    try {
+      const receipt = shapeReceipt(await chatExtract(orgId, pdf.text, fileId));
+      if (!receipt) return { ok: false, reason: "Couldn't find any line items on that receipt." };
+      return { ok: true, receipt, method: "ai-chat" };
+    } catch (e) {
+      return { ok: false, reason: aiError(e) };
+    }
+  }
+
+  // ── Tier 3: image → AI vision ──────────────────────────────────────────────
+  if (isImage) {
+    try {
+      const receipt = shapeReceipt(await visionExtract(orgId, bytes.toString("base64"), mime, fileId));
+      if (!receipt) return { ok: false, reason: "Couldn't find any line items on that receipt." };
+      return { ok: true, receipt, method: "ai-vision" };
+    } catch (e) {
+      return { ok: false, reason: aiError(e) };
+    }
+  }
+
+  // ── Non-CSV text file → AI on the raw text ─────────────────────────────────
+  try {
+    const receipt = shapeReceipt(await chatExtract(orgId, bytes.toString("utf8"), fileId));
+    if (!receipt) return { ok: false, reason: "Couldn't find any line items on that receipt." };
+    return { ok: true, receipt, method: "ai-chat" };
+  } catch (e) {
+    return { ok: false, reason: aiError(e) };
+  }
 }

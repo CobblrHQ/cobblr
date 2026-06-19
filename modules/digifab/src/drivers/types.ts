@@ -152,6 +152,11 @@ export interface ManagerConfig {
   apiKey?: string | null;
   username?: string | null;
   password?: string | null;
+  /** Driver-specific config + creds that don't fit the standard fields above
+   *  (e.g. the Bambu driver's region/serial/mode + cloud token/access code).
+   *  `config` is the connection's public config jsonb; `creds` is the decrypted
+   *  credential blob. Generic — the builder stays driver-agnostic. */
+  extra?: { config?: Record<string, unknown>; creds?: Record<string, unknown> };
 }
 
 export type MachineDriverFactory = (cfg: ManagerConfig) => MachineDriver;

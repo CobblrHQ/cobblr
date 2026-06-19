@@ -113,8 +113,30 @@ function ViewBlock({ block, data, theme }: { block: Extract<AppBlock, { type: "v
   );
 }
 
-export function PublicAppPlayer({ app, data }: { app: PublicAppPayload; data: PublicAppData }) {
-  const theme = app.theme ?? null;
+// A light, high-contrast palette for e-paper surfaces — reflective panels read
+// best as black-on-white. Overrides the app's own theme (keeps its font/radius)
+// so a dark-themed app (e.g. the spice cabinet) still renders crisp on e-paper.
+const EPAPER_THEME = (base: AppTheme | null): AppTheme => ({
+  ...(base ?? {}),
+  bg: "#ffffff",
+  surface: "#ffffff",
+  text: "#111111",
+  muted: "#555555",
+  border: "#999999",
+  accent: "#111111",
+  accent_text: "#ffffff",
+});
+
+export function PublicAppPlayer({
+  app,
+  data,
+  epaper,
+}: {
+  app: PublicAppPayload;
+  data: PublicAppData;
+  epaper?: boolean;
+}) {
+  const theme = epaper ? EPAPER_THEME(app.theme ?? null) : app.theme ?? null;
   const page = app.pages[0] ?? { slug: "", title: "", blocks: [] };
   const stats = (page.blocks ?? []).filter((b): b is Extract<AppBlock, { type: "stat" }> => b.type === "stat");
   const rest = (page.blocks ?? []).filter((b) => b.type !== "stat");

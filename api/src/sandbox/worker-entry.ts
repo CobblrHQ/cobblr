@@ -33,6 +33,7 @@ import {
   SAB_STATUS_READY,
   SAB_STATUS_TOO_BIG,
 } from "./abi.js";
+import { clampWasmMemoryMax } from "./wasm-limits.js";
 
 if (!parentPort) {
   throw new Error("worker-entry must be loaded as a worker_thread");
@@ -185,7 +186,12 @@ const imports = {
   },
 };
 
-const wasmBytes = readFileSync(init.wasmPath);
+const rawWasmBytes = new Uint8Array(readFileSync(init.wasmPath));
+// Clamp the module's declared linear-memory maximum to the manifest
+// ceiling BEFORE compiling, so `memory.grow` past it traps natively.
+// Without this the manifest ceiling was unenforced — a module could
+// grow to gigabytes and OOM the host. (Audit 2026-06-19 finding #2.)
+const wasmBytes = clampWasmMemoryMax(rawWasmBytes, init.maxMemoryPages);
 const wasmModule = new WebAssembly.Module(wasmBytes);
 const instance = new WebAssembly.Instance(wasmModule, imports);
 const exports = instance.exports as Record<string, unknown>;

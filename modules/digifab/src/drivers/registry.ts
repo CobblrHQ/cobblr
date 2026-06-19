@@ -11,12 +11,14 @@ import { fdmMonsterFactory } from "./fdm-monster.js";
 import { MockDriver } from "./mock.js";
 import { DeclarativeDriver } from "./declarative.js";
 import { EdgeAdapterDriver, type EdgeRelay } from "./edge-adapter.js";
+import { BambuCloudDriver } from "./bambu-cloud-driver.js";
 import { DriverManifest } from "./manifest.js";
 
 /** Built-in drivers — always available, ship in code, reference impls. */
 export const BUILTIN_DRIVERS = [
   { key: "fdm_monster", name: "FDM Monster", kind: "builtin" as const },
   { key: "edge_adapter", name: "Edge adapter (your bridge)", kind: "builtin" as const },
+  { key: "bambu", name: "Bambu Lab", kind: "builtin" as const },
   { key: "mock", name: "Mock (test)", kind: "builtin" as const },
 ];
 const BUILTIN_KEYS = new Set(BUILTIN_DRIVERS.map((d) => d.key));
@@ -37,6 +39,9 @@ export async function resolveDriver(
   // A tunnelled edge_adapter connection routes through the cloud→edge relay
   // (base_url cobblr-edge://); a direct one dials the bridge URL.
   if (type === "edge_adapter") return new EdgeAdapterDriver(cfg, relay ?? null);
+  // Bambu Lab: cloud-mode is monitor-only over Bambu's HTTP API (creds in
+  // cfg.extra.creds). LAN-mode control routes through edge_adapter (Phase 3).
+  if (type === "bambu") return new BambuCloudDriver(cfg);
   if (type === "mock") {
     let m = mockInstances.get(connectionId);
     if (!m) {
