@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1
 # Multi-stage Dockerfile for the cobblr-api service. Image is the
 # source of truth at runtime — no bind mounts in compose.
-# BuildKit is enabled in CI (docker-build.yml) so the npm-cache mount below
-# persists npm's download cache across builds — installs don't re-fetch tarballs.
+# BuildKit is enabled in CI (docker-build.yml) so the pnpm-store cache mount below
+# persists pnpm's content-addressable store across builds — installs don't re-fetch tarballs.
 
 # ─── builder ─────────────────────────────────────────────────────────
 FROM node:22-alpine AS builder
@@ -14,10 +14,10 @@ WORKDIR /app
 # a C++ compiler. Cheap insurance against "gyp ERR! find Python" build deaths.
 RUN apk add --no-cache python3 make g++
 
-# Copy every workspace's package.json before installing so npm can
+# Copy every workspace's package.json before installing so pnpm can
 # resolve the symlinks without redoing the install on every source
 # change. As new modules land, add their package.json copies here.
-COPY package.json package-lock.json* tsconfig.base.json ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY api/package.json ./api/
 COPY web/package.json ./web/
 COPY packages/platform-contract/package.json ./packages/platform-contract/
@@ -66,8 +66,9 @@ COPY modules/core-print/package.json ./modules/core-print/
 COPY packages/sandbox-sdk-as/package.json ./packages/sandbox-sdk-as/
 COPY sandboxed-modules/hello-as/package.json ./sandboxed-modules/hello-as/
 
-RUN --mount=type=cache,target=/root/.npm \
-    npm install --workspaces --include-workspace-root --no-audit --no-fund
+RUN corepack enable
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile
 
 # Source for every workspace the runtime needs.
 COPY packages/platform-contract ./packages/platform-contract
@@ -85,82 +86,82 @@ COPY packages/platform-web ./packages/platform-web
 # commit re-runs just the last few layers. When adding a module, drop its
 # COPY+RUN pair in (hot ones near the bottom).
 COPY modules/labels ./modules/labels
-RUN npm run --if-present build -w @cobblr/labels
+RUN pnpm --filter @cobblr/labels run --if-present build
 COPY modules/projects ./modules/projects
-RUN npm run --if-present build -w @cobblr/projects
+RUN pnpm --filter @cobblr/projects run --if-present build
 COPY modules/purchases ./modules/purchases
-RUN npm run --if-present build -w @cobblr/purchases
+RUN pnpm --filter @cobblr/purchases run --if-present build
 COPY modules/machines ./modules/machines
-RUN npm run --if-present build -w @cobblr/machines
+RUN pnpm --filter @cobblr/machines run --if-present build
 COPY modules/assets ./modules/assets
-RUN npm run --if-present build -w @cobblr/assets
+RUN pnpm --filter @cobblr/assets run --if-present build
 COPY modules/core-recurrence ./modules/core-recurrence
-RUN npm run --if-present build -w @cobblr/core-recurrence
+RUN pnpm --filter @cobblr/core-recurrence run --if-present build
 COPY modules/core-activity-log ./modules/core-activity-log
-RUN npm run --if-present build -w @cobblr/core-activity-log
+RUN pnpm --filter @cobblr/core-activity-log run --if-present build
 COPY modules/core-notifications ./modules/core-notifications
-RUN npm run --if-present build -w @cobblr/core-notifications
+RUN pnpm --filter @cobblr/core-notifications run --if-present build
 COPY modules/core-healthcheck ./modules/core-healthcheck
-RUN npm run --if-present build -w @cobblr/core-healthcheck
+RUN pnpm --filter @cobblr/core-healthcheck run --if-present build
 COPY modules/core-tags ./modules/core-tags
-RUN npm run --if-present build -w @cobblr/core-tags
+RUN pnpm --filter @cobblr/core-tags run --if-present build
 COPY modules/core-views ./modules/core-views
-RUN npm run --if-present build -w @cobblr/core-views
+RUN pnpm --filter @cobblr/core-views run --if-present build
 COPY modules/core-files ./modules/core-files
-RUN npm run --if-present build -w @cobblr/core-files
+RUN pnpm --filter @cobblr/core-files run --if-present build
 COPY modules/core-search ./modules/core-search
-RUN npm run --if-present build -w @cobblr/core-search
+RUN pnpm --filter @cobblr/core-search run --if-present build
 COPY modules/core-public-surfaces ./modules/core-public-surfaces
-RUN npm run --if-present build -w @cobblr/core-public-surfaces
+RUN pnpm --filter @cobblr/core-public-surfaces run --if-present build
 COPY modules/core-openapi ./modules/core-openapi
-RUN npm run --if-present build -w @cobblr/core-openapi
+RUN pnpm --filter @cobblr/core-openapi run --if-present build
 COPY modules/core-queue ./modules/core-queue
-RUN npm run --if-present build -w @cobblr/core-queue
+RUN pnpm --filter @cobblr/core-queue run --if-present build
 COPY modules/core-locations ./modules/core-locations
-RUN npm run --if-present build -w @cobblr/core-locations
+RUN pnpm --filter @cobblr/core-locations run --if-present build
 COPY modules/core-catalogs ./modules/core-catalogs
-RUN npm run --if-present build -w @cobblr/core-catalogs
+RUN pnpm --filter @cobblr/core-catalogs run --if-present build
 COPY modules/core-labels-qr ./modules/core-labels-qr
-RUN npm run --if-present build -w @cobblr/core-labels-qr
+RUN pnpm --filter @cobblr/core-labels-qr run --if-present build
 COPY modules/core-integrations ./modules/core-integrations
-RUN npm run --if-present build -w @cobblr/core-integrations
+RUN pnpm --filter @cobblr/core-integrations run --if-present build
 COPY modules/core-maintenance ./modules/core-maintenance
-RUN npm run --if-present build -w @cobblr/core-maintenance
+RUN pnpm --filter @cobblr/core-maintenance run --if-present build
 COPY modules/core-units ./modules/core-units
-RUN npm run --if-present build -w @cobblr/core-units
+RUN pnpm --filter @cobblr/core-units run --if-present build
 COPY modules/core-templates ./modules/core-templates
-RUN npm run --if-present build -w @cobblr/core-templates
+RUN pnpm --filter @cobblr/core-templates run --if-present build
 COPY modules/core-file-preview ./modules/core-file-preview
-RUN npm run --if-present build -w @cobblr/core-file-preview
+RUN pnpm --filter @cobblr/core-file-preview run --if-present build
 COPY modules/bricklink-connector ./modules/bricklink-connector
-RUN npm run --if-present build -w @cobblr/bricklink-connector
+RUN pnpm --filter @cobblr/bricklink-connector run --if-present build
 COPY modules/maker-scan ./modules/maker-scan
-RUN npm run --if-present build -w @cobblr/maker-scan
+RUN pnpm --filter @cobblr/maker-scan run --if-present build
 COPY modules/core-print ./modules/core-print
-RUN npm run --if-present build -w @cobblr/core-print
+RUN pnpm --filter @cobblr/core-print run --if-present build
 COPY modules/core-devices ./modules/core-devices
-RUN npm run --if-present build -w @cobblr/core-devices
+RUN pnpm --filter @cobblr/core-devices run --if-present build
 # ── actively-developed (hot) modules last — their edits rebuild fewest layers ──
 COPY modules/digifab ./modules/digifab
-RUN npm run --if-present build -w @cobblr/digifab
+RUN pnpm --filter @cobblr/digifab run --if-present build
 COPY modules/inventory ./modules/inventory
-RUN npm run --if-present build -w @cobblr/inventory
+RUN pnpm --filter @cobblr/inventory run --if-present build
 COPY modules/lists ./modules/lists
-RUN npm run --if-present build -w @cobblr/lists
+RUN pnpm --filter @cobblr/lists run --if-present build
 COPY modules/builds ./modules/builds
-RUN npm run --if-present build -w @cobblr/builds
+RUN pnpm --filter @cobblr/builds run --if-present build
 COPY modules/sales ./modules/sales
-RUN npm run --if-present build -w @cobblr/sales
+RUN pnpm --filter @cobblr/sales run --if-present build
 COPY modules/tracking ./modules/tracking
-RUN npm run --if-present build -w @cobblr/tracking
+RUN pnpm --filter @cobblr/tracking run --if-present build
 COPY modules/core-scan ./modules/core-scan
-RUN npm run --if-present build -w @cobblr/core-scan
+RUN pnpm --filter @cobblr/core-scan run --if-present build
 COPY modules/core-apps ./modules/core-apps
-RUN npm run --if-present build -w @cobblr/core-apps
+RUN pnpm --filter @cobblr/core-apps run --if-present build
 COPY modules/core-ai ./modules/core-ai
-RUN npm run --if-present build -w @cobblr/core-ai
+RUN pnpm --filter @cobblr/core-ai run --if-present build
 COPY modules/core-authoring ./modules/core-authoring
-RUN npm run --if-present build -w @cobblr/core-authoring
+RUN pnpm --filter @cobblr/core-authoring run --if-present build
 
 # Marketplace v2: fetch/verify registry-sourced modules + record the
 # manifest of every baked-in marketplace module. `source: "vendored"`
@@ -186,8 +187,12 @@ COPY api ./api
 # the frozen pre-cutover history.
 COPY CHANGELOG.md ./CHANGELOG.md
 COPY changelog.d ./changelog.d
-WORKDIR /app/api
-RUN npm run build
+# Build api from the workspace ROOT via --filter. Running `pnpm run build` from
+# inside /app/api makes pnpm re-verify deps and RE-INSTALL — re-downloading the
+# whole store (this step has no store cache mount), which is slow and once hung
+# the build outright. --filter from the root just runs tsc against the
+# already-installed tree.
+RUN pnpm --filter @cobblr/api run build
 
 # ─── runtime ─────────────────────────────────────────────────────────
 FROM node:22-alpine AS runtime
@@ -200,9 +205,11 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Bring over what we need at runtime: built artifacts + the hoisted
-# workspace node_modules. npm hoists into the root node_modules so
-# there's no per-workspace install to copy.
+# Bring over what we need at runtime: built artifacts + the root node_modules.
+# pnpm (nodeLinker: hoisted) hoists EXTERNAL deps here — but NOT the workspace
+# packages (@cobblr/*), which it links per-consumer, not at the root. Those are
+# re-symlinked further down (search "@cobblr") from the /app/modules + /app/packages
+# dirs we also copy; without that the api can't resolve its own workspace imports.
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/api/dist ./api/dist
 COPY --from=builder /app/api/migrations ./api/migrations
@@ -226,6 +233,22 @@ COPY --from=builder /app/changelog.d ./changelog.d
 # self-hoster, independent of the private GitHub registry. Lands at /app/bundles
 # (cwd is /app/api at runtime; the loader resolves ../bundles).
 COPY bundles ./bundles
+
+# pnpm (nodeLinker: hoisted) hoists EXTERNAL deps into the root node_modules, but
+# unlike npm's flat hoist it does NOT place the WORKSPACE packages (@cobblr/*)
+# there — so the api's static `import … from "@cobblr/<pkg>"` calls (platform-
+# contract, core-scan, every module) don't resolve at runtime and the container
+# crash-loops with ERR_MODULE_NOT_FOUND. Recreate those root symlinks from the
+# workspace dirs we already ship (/app/modules/* and /app/packages/*), restoring
+# npm-equivalent resolution. (CI builds/typechecks against the dev checkout and
+# never boots the image, so this gap shipped silently once — the build workflow's
+# boot smoke test now guards it.)
+RUN mkdir -p /app/node_modules/@cobblr \
+ && for d in /app/modules/* /app/packages/*; do \
+      [ -f "$d/package.json" ] || continue; \
+      n=$(node -p "require('$d/package.json').name" 2>/dev/null) || continue; \
+      case "$n" in @cobblr/*) ln -sfn "$d" "/app/node_modules/$n" ;; esac; \
+    done
 
 EXPOSE 4000
 

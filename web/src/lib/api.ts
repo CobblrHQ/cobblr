@@ -139,6 +139,9 @@ export interface OrgMembership {
    *  to see a finished app, not a toolkit. Softer than app_mode: the workspace
    *  stays navigable and any owner/admin flips it back (the upsell). */
   focused?: boolean;
+  /** Per-user switcher order (0-based). The orgs list arrives already sorted by
+   *  it; drag-to-reorder persists via reorderWorkspaces. */
+  position?: number;
 }
 
 /** True when the active workspace is a managed single-purpose app — the shell
@@ -419,7 +422,11 @@ export const api = {
   healthz: () => request<Healthz>("GET", "/healthz"),
   changelog: () => request<{ sections: ChangelogDay[] }>("GET", "/changelog"),
   authConfig: () =>
-    request<{ signup_enabled: boolean; self_serve_invites?: boolean }>("GET", "/auth/config"),
+    request<{ signup_enabled: boolean; self_serve_invites?: boolean; hosted?: boolean }>("GET", "/auth/config"),
+  // Mint an API token (plaintext returned ONCE). Used by the edge-bridge setup to
+  // generate a least-privilege devices:edge token in-flow — no trip to the tokens page.
+  createApiToken: (body: { name: string; scopes?: string[] }) =>
+    request<{ id: string; name: string; token: string; token_prefix: string }>("POST", "/me/api-tokens", body),
   signup: (body: {
     email: string;
     password: string;
@@ -553,6 +560,14 @@ export const api = {
   listOrgs: () => request<{ items: OrgMembership[] }>("GET", "/orgs"),
   createOrg: (name: string) =>
     request<{ org: OrgMembership; slug: string }>("POST", "/orgs", { name }),
+  /** Persist the signed-in user's switcher order (drag-to-reorder). `slugs` is
+   *  the user's workspaces in the desired order. */
+  reorderWorkspaces: (slugs: string[]) =>
+    request<{ ok: boolean; order: string[] }>("PATCH", "/me/workspaces/order", { slugs }),
+  /** Owner-only rename. `name` = display name (safe). `slug` = the URL handle
+   *  (risky — breaks existing links). Returns the new name + slug. */
+  renameOrg: (slug: string, body: { name?: string; slug?: string }) =>
+    request<{ name: string; slug: string }>("PATCH", `/orgs/${slug}`, body),
 
   // Per-org module enable/disable + listing
   orgModules: (slug: string) =>
@@ -575,7 +590,7 @@ export const api = {
   /** Fire-and-forget: auto-fetch a web image for an entity (e.g. a 3D printer)
    *  and set its image_path when it lands — the user does nothing. 202 = queued. */
   enrichEntityImage: (slug: string, body: { entity_kind: string; entity_id: string; query: string; instance?: string | null }) =>
-    request<{ ok: boolean }>("POST", `/orgs/${slug}/modules/core-scan/entity-image`, body),
+    request<{ image_path: string | null }>("POST", `/orgs/${slug}/modules/core-scan/entity-image`, body),
   updateMachine: (slug: string, id: string, body: Partial<Machine>, instance?: string) =>
     request<Machine>("PATCH", `${primaryBase(slug, "machines/machines", instance)}/${id}`, body),
   deleteMachine: (slug: string, id: string, instance?: string) =>
@@ -1388,6 +1403,9 @@ export const api = {
       api_key?: string;
       username?: string;
       password?: string;
+      /** Edge machine config (driver + host + key) — stored encrypted, ridden down
+       *  the tunnel so a dynamic-config bridge configures the driver on the fly. */
+      config?: Record<string, unknown>;
     },
   ) => request<DigifabConnection>("POST", `/orgs/${slug}/modules/digifab/connections`, body),
   // ── Bambu Lab cloud-login connect wizard ──────────────────────────────────
@@ -1401,6 +1419,8 @@ export const api = {
       `/orgs/${slug}/modules/digifab/bambu/create`,
       body,
     ),
+  getBambuCapabilities: (slug: string) =>
+    request<{ modes: Record<BambuMode, BambuModeCapabilities> }>("GET", `/orgs/${slug}/modules/digifab/bambu/capabilities`),
   testDigifabConnection: (slug: string, id: string) =>
     request<{ ok: boolean; detail?: string; capabilities: { routing: boolean } }>(
       "POST",
@@ -1414,6 +1434,28 @@ export const api = {
     ),
   deleteDigifabConnection: (slug: string, id: string) =>
     request<void>("DELETE", `/orgs/${slug}/modules/digifab/connections/${id}`),
+  // Edge tunnel: is an on-site bridge currently dialed in for this workspace?
+  getDigifabEdgeStatus: (slug: string) =>
+    request<{ connected: boolean; last_seen: number | null }>("GET", `/orgs/${slug}/modules/digifab/edge/status`),
+  // ── Edge-bridge machine sharing (owner side) ──────────────────────────────
+  listEdgeShares: (slug: string) =>
+    request<{ items: EdgeShare[] }>("GET", `/orgs/${slug}/modules/digifab/edge-shares`),
+  createEdgeShare: (slug: string, body: { label: string; scope: "read" | "write"; instance_ids: string[]; expires_in_days?: number }) =>
+    request<{ id: string; token: string; owner_org: string; scope: string; machine_count: number; expires_at: string | null }>(
+      "POST",
+      `/orgs/${slug}/modules/digifab/edge-shares`,
+      body,
+    ),
+  redeemEdgeShare: (slug: string, body: { owner_org: string; token: string }) =>
+    request<{ scope: string; machines: { id: string; label: string }[]; already?: boolean }>(
+      "POST",
+      `/orgs/${slug}/modules/digifab/edge-shares/redeem`,
+      body,
+    ),
+  revokeEdgeShare: (slug: string, id: string) =>
+    request<{ ok: boolean }>("POST", `/orgs/${slug}/modules/digifab/edge-shares/${id}/revoke`, {}),
+  getDigifabHistory: (slug: string, days = 30) =>
+    request<DigifabHistory>("GET", `/orgs/${slug}/modules/digifab/history?days=${days}`),
   // ── core-print (CUPS/IPP printers) ──────────────────────────────
   listPrinters: (slug: string) =>
     request<{ items: Printer[] }>("GET", `/orgs/${slug}/modules/core-print/printers`),
@@ -1444,6 +1486,13 @@ export const api = {
       "GET",
       `/orgs/${slug}/modules/digifab/drivers`,
     ),
+  // The "app store" shelf: ready-to-install firmware drivers that ship with
+  // digifab (Duet/OctoPrint/Klipper/PrusaLink/…) — one-click install, no JSON.
+  getDigifabDriverCatalog: (slug: string) =>
+    request<{
+      drivers: { id: string; name: string; summary: string; credentialHint: string; kind: string; manifest: unknown }[];
+      edgeAdapters: { id: string; name: string; summary: string; credentialHint: string; kind: string }[];
+    }>("GET", `/orgs/${slug}/modules/digifab/drivers/catalog`),
   installDigifabDriver: (slug: string, manifest: unknown) =>
     request<DigifabDriver>("POST", `/orgs/${slug}/modules/digifab/drivers`, manifest as object),
   deleteDigifabDriver: (slug: string, key: string) =>
@@ -1867,6 +1916,22 @@ export const api = {
     },
   ) =>
     request<ScanInboxItem>("POST", `/orgs/${slug}/modules/core-scan/scan`, body),
+  // External QR resolver (the redirect table for foreign labels). The camera
+  // reads the rules once to know whether to bother resolving; resolveExternal is
+  // the synchronous "is this a known foreign QR? where does it go?" call on a
+  // non-native scan. See docs/design-decisions/external-qr-resolver.md.
+  scanQrRules: (slug: string) =>
+    request<{ rules: ScanQrRule[] }>("GET", `/orgs/${slug}/modules/core-scan/qr-rules`),
+  createScanQrRule: (slug: string, body: Omit<ScanQrRule, "id" | "created_at" | "updated_at">) =>
+    request<{ rule: ScanQrRule }>("POST", `/orgs/${slug}/modules/core-scan/qr-rules`, body),
+  updateScanQrRule: (slug: string, id: string, body: Partial<ScanQrRule>) =>
+    request<{ rule: ScanQrRule }>("PATCH", `/orgs/${slug}/modules/core-scan/qr-rules/${id}`, body),
+  deleteScanQrRule: (slug: string, id: string) =>
+    request<void>("DELETE", `/orgs/${slug}/modules/core-scan/qr-rules/${id}`),
+  reorderScanQrRules: (slug: string, ids: string[]) =>
+    request<{ ok: true }>("POST", `/orgs/${slug}/modules/core-scan/qr-rules/reorder`, { ids }),
+  scanResolveExternal: (slug: string, value: string) =>
+    request<ScanResolveOutcome>("POST", `/orgs/${slug}/modules/core-scan/resolve-external`, { value }),
   listScanInbox: (
     slug: string,
     q: { status?: "pending" | "enriching" | "resolved" | "discarded"; batch_id?: string } = {},
@@ -2843,6 +2908,44 @@ export interface ScanEvalCase {
   created_at: string;
 }
 
+/** A rule in the external-QR resolver redirect table. See
+ *  docs/design-decisions/external-qr-resolver.md. */
+export interface ScanQrRule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  position: number;
+  match: { type: "url_prefix" | "url_base" | "regex" | "bare"; value?: string };
+  extract: {
+    source?: "path_segment_after_prefix" | "capture_group" | "whole_value";
+    group?: string | number;
+    type_from?: string | number;
+    transform?: Array<"trim" | "strip_leading_zeros" | "lowercase">;
+  };
+  resolve: { target_kind?: string; type_map?: Record<string, string>; key_field: string };
+  created_at: string;
+  updated_at: string;
+}
+
+/** Outcome of resolving a foreign scan against the redirect table. */
+export type ScanResolveOutcome =
+  | {
+      outcome: "resolved";
+      rule_id: string;
+      rule_name: string;
+      entity_kind: string;
+      entity_id: string;
+      detail_path: string;
+    }
+  | {
+      outcome: "recognized_no_match";
+      rule_id: string;
+      rule_name: string;
+      key: string;
+      target_kind: string | null;
+    }
+  | { outcome: "no_rule" };
+
 export interface ScanInboxItem {
   id: string;
   status: "pending" | "enriching" | "resolved" | "discarded";
@@ -3316,11 +3419,33 @@ export interface SurfaceRecord {
   public_url: string;
 }
 
+export interface DigifabHistory {
+  days: number;
+  summary: { total: number; completed: number; failed: number; cancelled: number; filament_g: number; hours: number };
+  by_device: { name: string; total: number; completed: number; failed: number; filament_g: number }[];
+  recent: { id: string; file_ref: string; device: string; status: string; filament_g: number | null; at: string }[];
+}
+
+export interface EdgeShare {
+  id: string;
+  label: string;
+  scope: "read" | "write";
+  status: "pending" | "active" | "revoked" | "expired";
+  machines: { id: string; label: string }[];
+  grantees: string[];
+  created_at: string;
+  expires_at: string | null;
+  revoked_at: string | null;
+  last_used_at: string | null;
+}
+
 export interface DigifabConnection {
   id: string;
   type: string;
   label: string;
   base_url: string;
+  /** Non-secret display config (e.g. a Bambu connection's `mode`). */
+  config?: Record<string, unknown>;
   enabled: boolean;
   capabilities: { routing?: boolean } & Record<string, unknown>;
   last_sync_at: string | null;
@@ -3367,6 +3492,9 @@ export interface DigifabFleetDevice {
   /** F-1: finished/failed a print — needs a human bed-clear before it's assignable. */
   needs_attention: { reason: string; since: string } | null;
   active_job: { id: string; file_ref: string; status: string; progress: number | null } | null;
+  /** Real-time print telemetry from the printer itself (e.g. Bambu cloud MQTT) —
+   *  for a print Cobblr didn't start, so there's no active_job to carry it. */
+  live: { progress: number | null; remaining_min: number | null; layer_num: number | null; total_layers: number | null } | null;
 }
 
 export interface DigifabFleetConnection {

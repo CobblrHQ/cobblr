@@ -9,13 +9,18 @@
 // flip it on with just a URL param read — the wiring is already
 // in place for `columns = base + lens.contributedFieldDefs`.
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Plus, Printer, Search, Tag as TagIcon, Trash2 } from "lucide-react";
 import { queueLabelsBulk } from "../lib/queue-label";
-import { ApiError, api, type Machine, type OrgModuleListItem, type PlatformFieldDef, type BambuDiscoveredDevice, type DigifabConnection } from "../lib/api";
+import { usePersistedState } from "../lib/use-persisted-state";
+import { ApiError, api, type Machine, type OrgModuleListItem, type PlatformFieldDef, type BambuDiscoveredDevice, type DigifabConnection, type DigifabDevice, type DigifabFleetDevice } from "../lib/api";
+import { DirectManagerConnect } from "../components/DirectManagerConnect";
+import { EntityImageEdit } from "../components/EntityImageEdit";
+import { FleetView, EdgeBridgeSetup } from "./DigifabPage";
 import { BambuConnectWizard } from "../components/BambuConnectWizard";
+import { BambuPrinterPicker } from "../components/BambuPrinterPicker";
 import { resolvePrinterKind, hiddenPrinterFields } from "../lib/printerKind";
 
 // Printer "kind" options for the detail-modal selector (same ids as the
@@ -186,6 +191,12 @@ export function MachinesPage({
   const digifabEnabled = !!orgModules.data?.items.find((m) => m.name === "digifab")?.enabled;
 
   const [newOpen, setNewOpen] = useState(false);
+  // 3D Printers (and any machines instance) with the Print Manager on get a live
+  // "Fleet" tab right here — the cockpit (temps/progress/jobs) that otherwise only
+  // lived under Configuration → Print Manager.
+  // Persisted so the tab you're on (items vs fleet) survives a refresh.
+  const [pageTab, setPageTab] = usePersistedState<"items" | "fleet">("machines.tab", "items");
+  const showFleetTab = !!instance && digifabEnabled;
   const [viewMode, setViewMode] = useViewMode("machines", "list");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const toastM = useToast();
@@ -254,6 +265,16 @@ export function MachinesPage({
         <span className="text-[10px] font-mono text-faint dark:text-slate-500">
           {filtered.length} of {allRows.length}
         </span>
+        {showFleetTab && (
+          <div className="inline-flex rounded-md border border-line dark:border-slate-600 overflow-hidden text-xs">
+            <button type="button" onClick={() => setPageTab("items")} className={"px-2.5 py-1 " + (pageTab === "items" ? "bg-cobble-600 text-white" : "text-muted hover:bg-subtle dark:hover:bg-slate-800")}>
+              {noun}s
+            </button>
+            <button type="button" onClick={() => setPageTab("fleet")} className={"px-2.5 py-1 " + (pageTab === "fleet" ? "bg-cobble-600 text-white" : "text-muted hover:bg-subtle dark:hover:bg-slate-800")}>
+              Fleet
+            </button>
+          </div>
+        )}
         {!instance && !lensName && availableLenses.length > 0 && (
           <select
             value=""
@@ -290,7 +311,9 @@ export function MachinesPage({
         </button>
       </div>
 
-      {filtered.length === 0 ? (
+      {pageTab === "fleet" ? (
+        <FleetView slug={activeSlug} />
+      ) : filtered.length === 0 ? (
         <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-3 py-10 text-center text-xs text-faint italic">
           {allRows.length === 0
             ? `No ${noun}s yet. Click + new to add one.`
@@ -691,6 +714,26 @@ function MachineDetailModal({
   // Auto-fetch a product photo for a printer that has none (e.g. one connected
   // before this shipped) — once, the user does nothing; it appears on refresh.
   const enrichFired = useRef(false);
+  const [autoBusy, setAutoBusy] = useState(false);
+  // Manual re-fetch (the "Auto" button on the image editor): grab a fresh product
+  // photo for this printer on demand, even if it already has one.
+  async function runAutoFetch() {
+    if (!m) return;
+    const q = [m.manufacturer, m.family, "3D printer"].filter(Boolean).join(" ");
+    if (!q.replace("3D printer", "").trim()) return;
+    setAutoBusy(true);
+    try {
+      const r = await api.enrichEntityImage(activeSlug, { entity_kind: "machines:machine", entity_id: m.id, query: q, instance }).catch(() => null);
+      if (r?.image_path) {
+        void qc.invalidateQueries({ queryKey: ["machine", activeSlug, machineId] });
+        void qc.invalidateQueries({ queryKey: ["machines", activeSlug] });
+      } else {
+        toast.error("Couldn't find a photo to auto-fetch.");
+      }
+    } finally {
+      setAutoBusy(false);
+    }
+  }
   useEffect(() => {
     // Once per modal open; if no image lands (a transient failure), it simply
     // retries the next time the printer is opened — no permanent "tried" flag.
@@ -699,8 +742,16 @@ function MachineDetailModal({
     const q = [m.manufacturer, m.family, "3D printer"].filter(Boolean).join(" ");
     if (!q.replace("3D printer", "").trim()) return;
     enrichFired.current = true;
-    void api.enrichEntityImage(activeSlug, { entity_kind: "machines:machine", entity_id: m.id, query: q, instance });
-  }, [m, printerKind, activeSlug, instance]);
+    // Await the result and refetch so the photo appears LIVE in the open modal —
+    // no need to close/refresh.
+    void (async () => {
+      const r = await api.enrichEntityImage(activeSlug, { entity_kind: "machines:machine", entity_id: m.id, query: q, instance }).catch(() => null);
+      if (r?.image_path) {
+        void qc.invalidateQueries({ queryKey: ["machine", activeSlug, machineId] });
+        void qc.invalidateQueries({ queryKey: ["machines", activeSlug] });
+      }
+    })();
+  }, [m, printerKind, activeSlug, instance, qc, machineId]);
 
   async function handleDelete() {
     if (!m) return;
@@ -726,11 +777,14 @@ function MachineDetailModal({
           {/* Consolidated header: photo + actions + Kind/Specialisation share the
               top row, so the thumbnail isn't floating next to empty space. */}
           <div className="flex items-start gap-4">
-            <EntityThumb
+            <EntityImageEdit
+              slug={activeSlug}
               src={m.image_path}
               alt={m.name}
               size={96}
-              className="ring-1 ring-line dark:ring-slate-700 shrink-0"
+              onChange={(image_path) => update.mutate({ image_path })}
+              onAutoFetch={printerKind !== null ? runAutoFetch : undefined}
+              autoBusy={autoBusy}
             />
             <div className="flex-1 space-y-2">
               <EntityActionsBar entityKind={ENTITY_KIND} entityId={m.id} />
@@ -863,22 +917,33 @@ function NewMachineModal({
   const [locationId, setLocationId] = useState<string | null>(null);
   // The two-question printer flow: (1) what kind / how does it talk, (2) how to
   // connect — flexible: directly (Bambu API today) OR through a manager.
-  const [view, setView] = useState<"form" | "bambu">("form");
+  const [view, setView] = useState<"form" | "bambu" | "direct" | "edge">("form");
   const [kind, setKind] = useState("");
-  const [connect, setConnect] = useState<"later" | "bambu_direct" | "manager">("later");
+  const [connect, setConnect] = useState<"later" | "bambu_direct" | "manager" | "direct" | "edge">("later");
   const [bambuConn, setBambuConn] = useState<DigifabConnection | null>(null);
   const [bambuDevices, setBambuDevices] = useState<BambuDiscoveredDevice[]>([]);
   const [bambuDevId, setBambuDevId] = useState("");
+  const [acctId, setAcctId] = useState(""); // selected Bambu account (when several are connected)
   const [mgrConnId, setMgrConnId] = useState("");
   const [mgrDeviceId, setMgrDeviceId] = useState("");
+  // Inline direct-connect (Duet/OctoPrint/Klipper/PrusaLink) — the just-created connection + its devices.
+  const [directConn, setDirectConn] = useState<DigifabConnection | null>(null);
+  const [directDevices, setDirectDevices] = useState<DigifabDevice[]>([]);
+  const [directDeviceId, setDirectDeviceId] = useState("");
   useEffect(() => {
     if (open) {
       setName(""); setManufacturer(""); setFamily(""); setLocationId(null);
       setView("form"); setKind(""); setConnect("later");
-      setBambuConn(null); setBambuDevices([]); setBambuDevId("");
+      setBambuConn(null); setBambuDevices([]); setBambuDevId(""); setAcctId("");
       setMgrConnId(""); setMgrDeviceId("");
+      setDirectConn(null); setDirectDevices([]); setDirectDeviceId("");
     }
   }, [open]);
+
+  // Printer kinds that connect over plain HTTP via a catalog (declarative) driver
+  // → an inline direct-connect flow (install + create + test), like Bambu's wizard.
+  const KIND_DRIVER: Record<string, string> = { klipper: "klipper-moonraker", prusa: "prusalink", reprap: "duet-rrf", marlin: "octoprint" };
+  const authCfgQ = useQuery({ queryKey: ["auth-config"], queryFn: () => api.authConfig(), staleTime: 5 * 60_000 });
 
   // Existing manager connections (for the "through a manager" path).
   const conns = useQuery({
@@ -892,6 +957,54 @@ function NewMachineModal({
     queryFn: () => api.listDigifabDevices(activeSlug, mgrConnId),
     enabled: !!mgrConnId,
   });
+
+  // Already signed into a Bambu account (e.g. when the first printer was added)?
+  // Reuse it — a Bambu connection IS the account; listDevices returns every
+  // printer on it — so a second printer never re-logs in; it just picks from the
+  // account's not-yet-added printers.
+  const printerFlow = !!instance && !!digifabEnabled;
+  // A Bambu connection IS an account. Multiple accounts can be connected at once
+  // (each login = its own connection), so the add-printer flow lets you choose
+  // WHICH account and then which of its not-yet-added printers.
+  const bambuConns = useMemo(() => connections.filter((c) => c.type === "bambu"), [connections]);
+  const reuseEnabled = open && printerFlow && connect === "bambu_direct" && bambuConns.length > 0;
+  useEffect(() => {
+    // Default to the first connected account once we enter the Bambu-direct path.
+    if (reuseEnabled && !acctId && !bambuConn && bambuConns[0]) setAcctId(bambuConns[0].id);
+  }, [reuseEnabled, acctId, bambuConn, bambuConns]);
+  const bambuAcctDevices = useQuery({
+    queryKey: ["digifab-devices", activeSlug, acctId],
+    queryFn: () => api.listDigifabDevices(activeSlug, acctId),
+    enabled: reuseEnabled && !!acctId,
+  });
+  const allLinks = useQuery({
+    queryKey: ["digifab-links", activeSlug],
+    queryFn: () => api.listDigifabLinks(activeSlug),
+    enabled: reuseEnabled,
+  });
+  // Adopt the SELECTED account's printers that aren't already linked to a machine
+  // — re-runs when you switch accounts. Skips the wizard-populated case (where
+  // bambuConn already matches acctId and carries richer model info). Maps into the
+  // same BambuDiscoveredDevice shape the wizard uses → picker/link/prefill unchanged.
+  useEffect(() => {
+    if (!reuseEnabled || !acctId) return;
+    if (bambuConn && bambuConn.id === acctId) return; // already adopted / wizard-set
+    if (bambuAcctDevices.isLoading || allLinks.isLoading) return;
+    // Token expired / account unreachable → don't fake "all added"; let the user re-login.
+    if (bambuAcctDevices.isError) return;
+    const chosen = bambuConns.find((c) => c.id === acctId);
+    if (!chosen) return;
+    const linked = new Set((allLinks.data?.items ?? []).filter((l) => l.connection_id === acctId).map((l) => l.remote_device_id));
+    const mapped: BambuDiscoveredDevice[] = (bambuAcctDevices.data?.items ?? [])
+      .filter((d) => !linked.has(d.id))
+      .map((d) => ({ dev_id: d.id, name: d.name, online: d.state ? !/offline/i.test(d.state) : true }));
+    setBambuConn(chosen);
+    setBambuDevices(mapped);
+    const first = mapped.find((d) => d.online)?.dev_id ?? mapped[0]?.dev_id ?? "";
+    setBambuDevId(first);
+    if (first) prefillFromBambu(first, mapped);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reuseEnabled, acctId, bambuConn, bambuAcctDevices.dataUpdatedAt, allLinks.dataUpdatedAt]);
 
   // One-click turn-on for the Print Manager (digifab) when it's off.
   const enableDigifab = useMutation({
@@ -913,15 +1026,55 @@ function NewMachineModal({
     { id: "marlin", label: "Marlin / other", sub: "via OctoPrint" },
     { id: "other", label: "Not sure", sub: "set it up later" },
   ];
+  // On a hosted Cobblr a LAN machine can't be reached directly → default those
+  // kinds to the edge-bridge path; on a self-hosted LAN, direct connect works.
+  const hosted = !!authCfgQ.data?.hosted;
   function pickKind(k: string) {
     setKind(k);
     const def = KINDS.find((x) => x.id === k);
     if (def?.manufacturer && !manufacturer.trim()) setManufacturer(def.manufacturer);
-    setConnect(k === "bambu" ? "bambu_direct" : k === "other" ? "later" : "manager");
+    setConnect(k === "bambu" ? "bambu_direct" : KIND_DRIVER[k] ? (hosted ? "edge" : "direct") : k === "other" ? "later" : "manager");
+  }
+  function onEdgeConnected(connId?: string) {
+    // The bridge is online + its connection exists — fall into the manager
+    // device-pick path (listDevices now runs over the tunnel) to finish + link.
+    if (connId) setMgrConnId(connId);
+    void qc.invalidateQueries({ queryKey: ["digifab-connections", activeSlug] });
+    setConnect("manager");
+    setView("form");
+  }
+  // When a manager + its printer resolve: auto-pick the printer if there's just
+  // one (so the link actually fires on Create — not left "loading…"), and
+  // back-propagate a name to the empty NAME field. For an edge bridge that's the
+  // name you gave the machine (the connection label); for a farm manager it's the
+  // printer's reported name.
+  useEffect(() => {
+    if (connect !== "manager" || !mgrConnId) return;
+    const devs = mgrDevices.data?.items ?? [];
+    if (!mgrDeviceId && devs.length === 1 && devs[0]) setMgrDeviceId(devs[0].id);
+    const conn = connections.find((c) => c.id === mgrConnId);
+    const dev = devs.find((d) => d.id === mgrDeviceId) ?? (devs.length === 1 ? devs[0] : undefined);
+    const candidate = conn?.type === "edge_adapter" ? conn?.label : dev?.name || conn?.label;
+    if (candidate) setName((n) => n.trim() || candidate);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connect, mgrConnId, mgrDeviceId, mgrDevices.dataUpdatedAt]);
+  function onDirectConnected(conn: DigifabConnection, devices: DigifabDevice[]) {
+    setDirectConn(conn);
+    setDirectDevices(devices);
+    const first = devices[0]?.id ?? "";
+    setDirectDeviceId(first);
+    const dev = devices.find((d) => d.id === first);
+    if (dev) setName((n) => n.trim() || dev.name);
+    setConnect("direct");
+    setView("form");
   }
   function onBambuConnected(c: DigifabConnection, devices: BambuDiscoveredDevice[]) {
     setBambuConn(c);
     setBambuDevices(devices);
+    setAcctId(c.id); // make the just-added account the selected one
+    // Surface the new account in the connections list (so the account dropdown
+    // includes it when there's now more than one).
+    void qc.invalidateQueries({ queryKey: ["digifab-connections", activeSlug] });
     const first = devices.find((d) => d.online)?.dev_id ?? devices[0]?.dev_id ?? "";
     setBambuDevId(first);
     prefillFromBambu(first, devices);
@@ -957,6 +1110,9 @@ function NewMachineModal({
         } else if (connect === "manager" && mgrConnId && mgrDeviceId) {
           const dev = (mgrDevices.data?.items ?? []).find((d) => d.id === mgrDeviceId);
           await api.createDigifabLink(activeSlug, { connection_id: mgrConnId, remote_device_id: mgrDeviceId, remote_device_name: dev?.name ?? null, machine_id: m.id, machine_label: name.trim() });
+        } else if (connect === "direct" && directConn && directDeviceId) {
+          const dev = directDevices.find((d) => d.id === directDeviceId);
+          await api.createDigifabLink(activeSlug, { connection_id: directConn.id, remote_device_id: directDeviceId, remote_device_name: dev?.name ?? null, machine_id: m.id, machine_label: name.trim() });
         }
       } catch (e) {
         toast.error(`Printer created, but linking failed: ${e instanceof ApiError ? e.message : String(e)}`);
@@ -972,7 +1128,13 @@ function NewMachineModal({
       if (printerFlow && kind && kind !== "other") {
         const q = [m.manufacturer, m.family, "3D printer"].filter(Boolean).join(" ");
         if (q.replace("3D printer", "").trim()) {
-          void api.enrichEntityImage(activeSlug, { entity_kind: "machines:machine", entity_id: m.id, query: q, instance });
+          void (async () => {
+            const r = await api.enrichEntityImage(activeSlug, { entity_kind: "machines:machine", entity_id: m.id, query: q, instance }).catch(() => null);
+            if (r?.image_path) {
+              void qc.invalidateQueries({ queryKey: ["machines", activeSlug] });
+              void qc.invalidateQueries({ queryKey: ["machine", activeSlug, m.id] });
+            }
+          })();
         }
       }
       onClose();
@@ -992,18 +1154,54 @@ function NewMachineModal({
   const segBtn = (active: boolean) =>
     "px-2.5 py-1 rounded border text-xs transition " + (active ? "border-cobble-500 text-accent bg-subtle dark:bg-slate-800" : "border-line dark:border-slate-600 text-muted hover:text-content");
 
+  const kindLabel = KINDS.find((x) => x.id === kind)?.label ?? "printer";
+
+  // A clear way back to the previous step in these multi-step sub-flows — distinct
+  // from Cancel/✕, which exit the whole New-machine modal.
+  const backToForm = (
+    <button type="button" onClick={() => setView("form")} className="-mt-1 mb-3 inline-flex items-center gap-1 text-xs text-accent hover:underline">
+      ← Back
+    </button>
+  );
   // The Bambu cloud-login wizard takes over the modal body when launched.
   if (view === "bambu") {
     return (
       <Modal open={open} onClose={onClose} title="Connect Bambu" size="sm">
-        <BambuConnectWizard onConnected={onBambuConnected} onCancel={() => setView("form")} />
+        {backToForm}
+        <BambuConnectWizard onConnected={onBambuConnected} onCancel={onClose} />
+      </Modal>
+    );
+  }
+  // Inline direct-connect for a network printer (Duet/OctoPrint/Klipper/PrusaLink).
+  if (view === "direct" && KIND_DRIVER[kind]) {
+    return (
+      <Modal open={open} onClose={onClose} title={`Connect ${kindLabel}`} size="sm">
+        {backToForm}
+        <DirectManagerConnect driverId={KIND_DRIVER[kind]} kindLabel={kindLabel} defaultLabel={name.trim() || kindLabel} onConnected={onDirectConnected} onCancel={onClose} />
+      </Modal>
+    );
+  }
+  // Install the on-site edge connector, inline — the smooth way to finish a LAN
+  // machine on a hosted Cobblr without leaving this flow.
+  if (view === "edge") {
+    // Pre-select the bridge driver from the kind (Klipper→moonraker, Prusa→prusalink, Duet→duet).
+    const KIND_BRIDGE: Record<string, string> = { klipper: "moonraker", prusa: "prusalink", reprap: "duet" };
+    return (
+      <Modal open={open} onClose={onClose} title="Install the edge connector" size="md">
+        {backToForm}
+        <EdgeBridgeSetup presetDriver={KIND_BRIDGE[kind]} onCreated={onEdgeConnected} onClose={onClose} />
       </Modal>
     );
   }
 
-  const printerFlow = !!instance && !!digifabEnabled;
+  // Order the connect choices so the one that actually works comes first: on a
+  // hosted Cobblr that's the edge bridge for a LAN kind; on self-host it's direct.
   const connectOptions = (kind === "bambu"
     ? [["bambu_direct", "Directly through Bambu API"], ["manager", "Through a manager"], ["later", "Set up later"]]
+    : KIND_DRIVER[kind]
+    ? (hosted
+        ? [["edge", "Via an edge bridge"], ["direct", "Direct (same network)"], ["manager", "Through a manager"], ["later", "Set up later"]]
+        : [["direct", "Connect directly"], ["edge", "Via an edge bridge"], ["manager", "Through a manager"], ["later", "Set up later"]])
     : [["manager", "Through a manager"], ["later", "Set up later"]]) as [typeof connect, string][];
 
   return (
@@ -1064,19 +1262,76 @@ function NewMachineModal({
             </div>
 
             {connect === "bambu_direct" && (
-              !bambuConn ? (
+              bambuConns.length === 0 && !bambuConn ? (
                 <button type="button" onClick={() => setView("bambu")} className="rounded bg-cobble-600 hover:bg-cobble-700 text-white text-xs px-2.5 py-1.5">
                   Connect Bambu account →
                 </button>
               ) : (
-                <label className="block">
-                  <span className={lblCls}>Which printer is this?</span>
-                  <select value={bambuDevId} onChange={(e) => { setBambuDevId(e.target.value); prefillFromBambu(e.target.value); }} className="input !py-1 !text-xs">
-                    {bambuDevices.map((d) => <option key={d.dev_id} value={d.dev_id}>{d.name}{d.model ? ` · ${d.model}` : ""}{d.online ? "" : " (offline)"}</option>)}
-                  </select>
-                  <span className="mt-1 block text-[10px] text-emerald-600 dark:text-emerald-400">✓ {bambuConn.label} connected — name & model pre-filled.</span>
-                </label>
+                <div className="space-y-1.5">
+                  {/* Several accounts connected → pick which one. A connection IS an account. */}
+                  {bambuConns.length > 1 && (
+                    <label className="block">
+                      <span className={lblCls}>Bambu account</span>
+                      <select value={acctId} onChange={(e) => { setAcctId(e.target.value); setBambuDevId(""); }} className="input !py-1 !text-xs">
+                        {bambuConns.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+                      </select>
+                    </label>
+                  )}
+                  {!bambuConn || bambuConn.id !== acctId ? (
+                    <p className="text-[11px] text-muted dark:text-slate-400">Loading your Bambu printers…</p>
+                  ) : bambuDevices.length === 0 ? (
+                    <p className="text-[11px] text-muted dark:text-slate-400">
+                      ✓ Using <span className="text-content dark:text-mortar-100">{bambuConn.label}</span> — every printer on this account is already added.
+                    </p>
+                  ) : (
+                    <div>
+                      <span className={lblCls}>Which printer is this?</span>
+                      {/* A single printer is pre-selected; pick one to select + pre-fill. */}
+                      <BambuPrinterPicker devices={bambuDevices} selectedDevId={bambuDevId} onSelect={(id) => { setBambuDevId(id); prefillFromBambu(id); }} />
+                      <span className="mt-1 block text-[10px] text-emerald-600 dark:text-emerald-400">✓ Using {bambuConn.label} — name pre-filled.</span>
+                    </div>
+                  )}
+                  <button type="button" onClick={() => setView("bambu")} className="text-[10px] text-accent hover:underline">
+                    + Connect another Bambu account
+                  </button>
+                </div>
               )
+            )}
+
+            {connect === "direct" && (
+              !directConn ? (
+                <button type="button" onClick={() => setView("direct")} className="rounded bg-cobble-600 hover:bg-cobble-700 text-white text-xs px-2.5 py-1.5">
+                  Connect your {kindLabel} →
+                </button>
+              ) : directDevices.length === 0 ? (
+                <p className="text-[11px] text-amber-600 dark:text-amber-400">
+                  Saved {directConn.label}, but Cobblr couldn't reach a printer there — it'll still create, and you can fix the address in the Print Manager.{" "}
+                  <button type="button" onClick={() => { setDirectConn(null); setView("direct"); }} className="text-accent hover:underline">Try again →</button>
+                </p>
+              ) : (
+                <div>
+                  {directDevices.length > 1 && (
+                    <label className="block">
+                      <span className={lblCls}>Which printer is this?</span>
+                      <select value={directDeviceId} onChange={(e) => { setDirectDeviceId(e.target.value); const d = directDevices.find((x) => x.id === e.target.value); if (d) setName((n) => n.trim() || d.name); }} className="input !py-1 !text-xs">
+                        {directDevices.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                      </select>
+                    </label>
+                  )}
+                  <span className="mt-1 block text-[10px] text-emerald-600 dark:text-emerald-400">✓ {directConn.label} connected.</span>
+                </div>
+              )
+            )}
+
+            {connect === "edge" && (
+              <div className="space-y-1">
+                <p className="text-[11px] text-muted dark:text-slate-400">
+                  Cobblr is hosted, so it can't reach this {kindLabel} on your network directly. Run a tiny bridge at your site — it dials out, no firewall changes.
+                </p>
+                <button type="button" onClick={() => setView("edge")} className="rounded bg-cobble-600 hover:bg-cobble-700 text-white text-xs px-2.5 py-1.5">
+                  Install the edge connector →
+                </button>
+              </div>
             )}
 
             {connect === "manager" && (
@@ -1134,6 +1389,27 @@ function NewMachineModal({
  *  you link THIS machine to a manager's device (FDM Monster / OctoPrint / …)
  *  without leaving the machine's page, so a job routed to the machine goes to
  *  the right printer. Mirrors the link model on the /digifab page. */
+// Live status chip for a linked machine — derived from the fleet's view of the
+// device. Falls back to "linked" before the fleet has reported (or for a device
+// the manager doesn't surface live).
+function digifabStatusChip(dev: DigifabFleetDevice | undefined): { label: string; dot: string } {
+  if (!dev) return { label: "linked", dot: "bg-emerald-500" };
+  if (dev.needs_attention) return { label: "needs clearing", dot: "bg-amber-500" };
+  if (dev.active_job?.status === "printing" || dev.state === "printing") {
+    const p = dev.active_job?.progress;
+    return { label: typeof p === "number" ? `printing ${Math.round(p * 100)}%` : "printing", dot: "bg-cobble-500" };
+  }
+  switch (dev.state) {
+    case "paused": return { label: "paused", dot: "bg-amber-500" };
+    case "idle": return { label: "idle", dot: "bg-emerald-500" };
+    case "completed": return { label: "done", dot: "bg-emerald-500" };
+    case "failed":
+    case "error": return { label: "error", dot: "bg-ember-500" };
+    case "offline": return { label: "offline", dot: "bg-slate-400 dark:bg-slate-500" };
+    default: return { label: "connected", dot: "bg-emerald-500" };
+  }
+}
+
 function MachineDigifabPanel({
   slug,
   machineId,
@@ -1157,6 +1433,17 @@ function MachineDigifabPanel({
   });
   const link = (links.data?.items ?? []).find((l) => l.machine_id === machineId);
   const connections = conns.data?.items ?? [];
+  // Live status of this machine's linked device (polls while the modal is open).
+  const fleet = useQuery({
+    queryKey: ["digifab-fleet", slug],
+    queryFn: () => api.getDigifabFleet(slug),
+    enabled: !!slug && !!link,
+    refetchInterval: 15_000,
+  });
+  const fleetDev = link
+    ? fleet.data?.connections.find((c) => c.connection_id === link.connection_id)?.devices.find((d) => d.id === link.remote_device_id)
+    : undefined;
+  const chip = digifabStatusChip(fleetDev);
 
   const [connId, setConnId] = useState("");
   const devices = useQuery({
@@ -1165,6 +1452,18 @@ function MachineDigifabPanel({
     enabled: !!connId,
   });
   const [deviceId, setDeviceId] = useState("");
+  // Not linked yet? Pre-choose the manager (when there's only one) and its printer
+  // (when there's only one) so the Print Manager isn't sitting on "choose…" — the
+  // user just clicks Link.
+  useEffect(() => {
+    if (link || connId) return;
+    if (connections.length === 1 && connections[0]) setConnId(connections[0].id);
+  }, [link, connId, connections]);
+  useEffect(() => {
+    const d = devices.data?.items ?? [];
+    if (!deviceId && d.length === 1 && d[0]) setDeviceId(d[0].id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [devices.dataUpdatedAt, deviceId]);
 
   const invalidate = () => void qc.invalidateQueries({ queryKey: ["digifab-links", slug] });
   const createLink = useMutation({
@@ -1199,8 +1498,16 @@ function MachineDigifabPanel({
 
   return (
     <div className="rounded-lg border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/30 p-3 space-y-2">
-      <div className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-widest text-accent">
-        <Printer size={12} /> Print manager
+      <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-widest text-accent">
+          <Printer size={12} /> Print manager
+        </div>
+        {link && (
+          <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-subtle dark:bg-slate-800 px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider text-content dark:text-mortar-200">
+            <span className={`w-1.5 h-1.5 rounded-full ${chip.dot}`} />
+            {chip.label}
+          </span>
+        )}
       </div>
 
       {link ? (
@@ -1250,26 +1557,26 @@ function MachineDigifabPanel({
               ))}
             </select>
           </label>
-          {connId && (
-            <label className="block">
-              <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
-                Printer
-              </span>
-              <select
-                value={deviceId}
-                onChange={(e) => setDeviceId(e.target.value)}
-                className="input !py-1 !text-xs !w-auto"
-                disabled={devices.isLoading}
-              >
-                <option value="">{devices.isLoading ? "loading…" : "choose…"}</option>
-                {(devices.data?.items ?? []).map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
+          {connId && (() => {
+            const devs = devices.data?.items ?? [];
+            // A direct driver (PrusaLink / Duet / a LAN Bambu) IS the one printer —
+            // exactly one device, nothing to pick. Only a true farm manager (FDM
+            // Monster / OctoPrint fronting several printers) needs a "which printer"
+            // step. So show the dropdown only for 2+; otherwise state the target.
+            if (devices.isLoading) return <span className="text-[11px] text-muted dark:text-slate-400 self-center">checking…</span>;
+            if (devices.isError) return <span className="text-[11px] text-rose-500 self-center">couldn't reach it — is the bridge + printer on?</span>;
+            if (devs.length === 0) return <span className="text-[11px] text-muted dark:text-slate-400 self-center">no printer found at this connection</span>;
+            if (devs.length === 1) return <span className="text-[11px] text-muted dark:text-slate-400 self-center">→ {devs[0]!.name} <span className="text-faint dark:text-slate-500">(direct)</span></span>;
+            return (
+              <label className="block">
+                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Printer</span>
+                <select value={deviceId} onChange={(e) => setDeviceId(e.target.value)} className="input !py-1 !text-xs !w-auto">
+                  <option value="">choose…</option>
+                  {devs.map((d) => (<option key={d.id} value={d.id}>{d.name}</option>))}
+                </select>
+              </label>
+            );
+          })()}
           <button
             onClick={() => createLink.mutate()}
             disabled={!connId || !deviceId || createLink.isPending}

@@ -293,6 +293,63 @@ orgsRouter.patch("/:slug/focused", requireAuth, withTenant, async (req, res, nex
   }
 });
 
+// PATCH /orgs/:slug — owner-only workspace rename. Two independent edits:
+//   • name  — the display name (safe; URLs/bookmarks/API paths are unaffected).
+//   • slug  — the URL handle (RISKY: every existing /w/<old-slug>/ link and any
+//             API token path keyed on the old slug breaks). The web gates this
+//             behind an explicit "advanced" opt-in. The slug stays the immutable
+//             identity unless deliberately changed here; it's normalised + checked
+//             for uniqueness against every other workspace.
+const normalizeSlug = (s: string) =>
+  s.toLowerCase().replace(/['’]s\b/g, "").replace(/['’`]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+const RenameBody = z
+  .object({ name: z.string().trim().min(1).max(120).optional(), slug: z.string().trim().min(1).max(60).optional() })
+  .refine((b) => b.name !== undefined || b.slug !== undefined, { message: "Provide a name and/or slug." });
+orgsRouter.patch("/:slug", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    if (req.tenant!.role !== "owner") {
+      res.status(403).json({ error: { code: "forbidden", message: "Only the workspace owner can rename it." } });
+      return;
+    }
+    const parsed = RenameBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues } });
+      return;
+    }
+    const orgId = req.tenant!.org.id;
+    const current = await meta.selectFrom("orgs").select(["name", "slug"]).where("id", "=", orgId).executeTakeFirstOrThrow();
+    const update: { name?: string; slug?: string; updated_at: Date } = { updated_at: new Date() };
+    if (parsed.data.name !== undefined) update.name = parsed.data.name.trim();
+    let newSlug = current.slug;
+    if (parsed.data.slug !== undefined) {
+      newSlug = normalizeSlug(parsed.data.slug);
+      if (!newSlug) {
+        res.status(400).json({ error: { code: "invalid_slug", message: "That URL is empty after cleanup — use letters, numbers, and dashes." } });
+        return;
+      }
+      if (newSlug !== current.slug) {
+        const taken = await meta.selectFrom("orgs").select("id").where("slug", "=", newSlug).where("id", "!=", orgId).executeTakeFirst();
+        if (taken) {
+          res.status(409).json({ error: { code: "slug_taken", message: `The URL "${newSlug}" is already in use — pick another.` } });
+          return;
+        }
+        update.slug = newSlug;
+      }
+    }
+    await meta.updateTable("orgs").set(update as never).where("id", "=", orgId).execute();
+    await activity.log({
+      orgId,
+      userId: req.session!.id,
+      action: "org_renamed",
+      ref: { module: null, entityType: "org", entityId: orgId },
+      diff: { name: { from: current.name, to: update.name ?? current.name }, slug: { from: current.slug, to: newSlug } },
+    });
+    res.json({ name: update.name ?? current.name, slug: newSlug });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /orgs/:slug/refresh-app — re-apply the latest published version of this
 // managed app's bundle if it's behind ("auto-update on use"). Owner/admin; safe
 // + idempotent (no-op when current). The web calls it once per session when a

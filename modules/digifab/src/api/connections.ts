@@ -15,6 +15,7 @@ import { platform } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { resolveDriver, availableDriverKeys } from "../drivers/registry.js";
+import { buildEdgeRelay } from "../jobs-core.js";
 import { assertSafeMachineUrl } from "../drivers/ssrf.js";
 import type { Kysely } from "kysely";
 import type { DigifabDB } from "../db.js";
@@ -72,6 +73,11 @@ async function buildDriver(db: Kysely<DigifabDB>, orgId: string, row: DeviceConn
       extra: { creds },
     },
     row.id,
+    // A cobblr-edge:// connection routes through the tunnel here too, so testing
+    // it + listing its devices works the moment the bridge is online — not just
+    // job send/poll (which already built the relay). Carries the machine config so
+    // a dynamic-config bridge configures the driver on the fly.
+    buildEdgeRelay(orgId, row.base_url, creds.edge as { driver?: unknown; config?: unknown } | undefined, creds.shared as { owner_org?: unknown } | undefined),
   );
 }
 
@@ -112,12 +118,16 @@ connectionsRouter.post(
       return void res.status(400).json({ error: { code: "unknown_driver", message: `no driver "${parsed.data.type}" installed` } });
     }
     if (!(await safeUrl(res, parsed.data.base_url))) return;
+    // For an edge_adapter machine, the config (driver + host + API key) is what
+    // the bridge needs to reach the machine — store it ENCRYPTED in creds (it can
+    // hold a printer API key), not the plaintext public config column.
+    const isEdge = parsed.data.type === "edge_adapter";
     const row = await store().create(ctx.org.id, {
       type: parsed.data.type,
       label: parsed.data.label,
       base_url: parsed.data.base_url,
-      creds: credsFrom(parsed.data),
-      config: parsed.data.config,
+      creds: { ...credsFrom(parsed.data), ...(isEdge && parsed.data.config ? { edge: parsed.data.config } : {}) },
+      config: isEdge ? undefined : parsed.data.config,
     });
     void platform().events.emit("digifab.connection.created", { orgId: ctx.org.id, rowId: row.id });
     res.status(201).json(row);

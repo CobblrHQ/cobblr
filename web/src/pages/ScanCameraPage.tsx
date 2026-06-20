@@ -145,6 +145,26 @@ export function ScanCameraPage() {
     enabled: !!activeSlug,
     staleTime: 60_000,
   });
+
+  // External QR resolver opt-in: only consult the redirect table on a scan if
+  // the workspace actually has enabled rules — a workspace without rules pays no
+  // round-trip and sees zero change. See docs/design-decisions/external-qr-resolver.md.
+  const hasQrRulesRef = useRef(false);
+  useEffect(() => {
+    if (!activeSlug) return;
+    let live = true;
+    api
+      .scanQrRules(activeSlug)
+      .then((r) => {
+        if (live) hasQrRulesRef.current = r.rules.some((rule) => rule.enabled);
+      })
+      .catch(() => {
+        /* no rules / not reachable → resolver stays off */
+      });
+    return () => {
+      live = false;
+    };
+  }, [activeSlug]);
   const areaName = useMemo(() => {
     if (!areaId) return null;
     const loc = (locations.data?.items ?? []).find((l) => l.id === areaId);
@@ -295,10 +315,44 @@ export function ScanCameraPage() {
         navigate(`/qr/${qrLabel[1]}`);
         return;
       }
+      // External QR resolver (the redirect table): a foreign label the workspace
+      // has taught Cobblr to read resolves to a native entity and then behaves
+      // exactly like a native scan. Opt-in — only consulted when rules exist.
+      // See docs/design-decisions/external-qr-resolver.md.
+      if (hasQrRulesRef.current) {
+        setPhase("idle"); // pause the camera while we resolve
+        void (async () => {
+          try {
+            const out = await api.scanResolveExternal(activeSlug, raw);
+            if (out.outcome === "resolved") {
+              navigate(out.detail_path); // identical to a native scan
+              return;
+            }
+            if (out.outcome === "recognized_no_match") {
+              // The format is a known rule (intent declared) but nothing here
+              // matches — a calm, specific note, NOT an error, and we do NOT fall
+              // through to web search. Re-arm the camera.
+              toast.info(
+                `Recognized this as “${out.rule_name}” (${out.key}), but nothing here matches it yet.`,
+              );
+              setPhase("scanning");
+              return;
+            }
+            // "no_rule" → not a resolver scan: the normal barcode/identify routine.
+            setPendingBarcode(raw);
+            setPhase("result");
+          } catch {
+            // A resolver hiccup must never swallow the scan — fall through.
+            setPendingBarcode(raw);
+            setPhase("result");
+          }
+        })();
+        return;
+      }
       setPendingBarcode(raw);
       setPhase("result");
     },
-    [setPhase, navigate],
+    [setPhase, navigate, activeSlug, toast],
   );
 
   // Start / stop the camera. Acquire ONE lens-locked stream and keep it alive

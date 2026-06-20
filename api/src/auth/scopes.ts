@@ -22,6 +22,18 @@ export interface TokenScopeDef {
 
 export const TOKEN_SCOPES: TokenScopeDef[] = [
   {
+    key: "devices:edge",
+    label: "Edge bridge",
+    description:
+      "Let an on-site edge bridge dial in and relay machine commands for this " +
+      "workspace (register / poll / respond / status). No other access — safe to " +
+      "hand to a bridge running on a Pi/NAS/mini-PC.",
+    allow: [
+      ["POST", /^\/orgs\/[^/]+\/modules\/digifab\/edge\/(register|respond)$/],
+      ["GET", /^\/orgs\/[^/]+\/modules\/digifab\/edge\/(poll|status)$/],
+    ],
+  },
+  {
     key: "feedback:triage",
     label: "Feedback triage",
     description:

@@ -132,6 +132,9 @@ export interface OrgMembershipsTable {
   org_id: string;
   role: OrgRole;
   joined_at: Generated<Date>;
+  /** Per-user switcher order (0-based). Set by PATCH /me/workspaces/order;
+   *  GET /me orders by it. Backfilled by joined_at in 20260620-060. */
+  position: Generated<number>;
 }
 
 export interface MigrationsTable {

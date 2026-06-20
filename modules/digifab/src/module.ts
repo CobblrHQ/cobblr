@@ -32,6 +32,10 @@ export default defineModule({
       registerPollWorker();
       const { registerAssignWorker } = await import("./assign-worker.js");
       registerAssignWorker();
+      // Live Bambu cloud telemetry — holds an MQTT subscription per cloud Bambu
+      // account and writes real-time temps/progress into digifab_bambu_status.
+      const { startBambuPump } = await import("./bambu-pump.js");
+      startBambuPump();
     },
   },
 

@@ -292,6 +292,10 @@ authRouter.get("/config", (_req, res) => {
   res.json({
     signup_enabled: publicSignupEnabled(),
     self_serve_invites: selfServeInvitesEnabled(),
+    // Hosted (cobblr.me / managed) vs self-hosted. Self-hosted by default; the
+    // managed/public-prod deployment sets COBBLR_HOSTED=true. Drives client hints
+    // such as "a hosted Cobblr can't reach your LAN device directly".
+    hosted: process.env.COBBLR_HOSTED === "true",
   });
 });
 

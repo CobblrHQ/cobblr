@@ -45,8 +45,10 @@ meRouter.get("/me", requireAuth, async (req, res) => {
     meta
       .selectFrom("org_memberships as m")
       .innerJoin("orgs as o", "o.id", "m.org_id")
-      .select((eb) => ["o.id", "o.name", "o.slug", "o.app_mode", "o.focused", "m.role", eb.selectFrom("org_memberships as om").innerJoin("users as ou", "ou.id", "om.user_id").select("ou.display_name").whereRef("om.org_id", "=", "o.id").where("om.role", "=", "owner").limit(1).as("owner_name")])
+      .select((eb) => ["o.id", "o.name", "o.slug", "o.app_mode", "o.focused", "m.role", "m.position", eb.selectFrom("org_memberships as om").innerJoin("users as ou", "ou.id", "om.user_id").select("ou.display_name").whereRef("om.org_id", "=", "o.id").where("om.role", "=", "owner").limit(1).as("owner_name")])
       .where("m.user_id", "=", userId)
+      .orderBy("m.position", "asc")
+      .orderBy("m.joined_at", "asc")
       .execute(),
   ]);
   const { email_verified_at, ...rest } = user;
@@ -63,6 +65,52 @@ meRouter.get("/me", requireAuth, async (req, res) => {
     },
     orgs,
   });
+});
+
+// PATCH /me/workspaces/order — set the signed-in user's switcher order. Body:
+// { slugs: [...] } — the user's workspaces in the desired order. Per-USER (each
+// person arranges their own switcher), so it writes org_memberships.position for
+// THIS user only. Slugs not belonging to the user are ignored; any of the user's
+// workspaces omitted from the list keep their relative order after the listed
+// ones (so a partial list — e.g. only the owned group — is safe).
+const ReorderBody = z.object({ slugs: z.array(z.string()).max(500) });
+meRouter.patch("/me/workspaces/order", requireAuth, async (req, res, next) => {
+  try {
+    const parsed = ReorderBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues } });
+      return;
+    }
+    const userId = req.session!.id;
+    // The user's memberships joined to slugs — the source of truth for what they
+    // may reorder. Keep current order as the tiebreak for anything not listed.
+    const mine = await meta
+      .selectFrom("org_memberships as m")
+      .innerJoin("orgs as o", "o.id", "m.org_id")
+      .select(["m.org_id", "o.slug"])
+      .where("m.user_id", "=", userId)
+      .orderBy("m.position", "asc")
+      .orderBy("m.joined_at", "asc")
+      .execute();
+    const idBySlug = new Map(mine.map((r) => [r.slug, r.org_id]));
+    // Final order: the requested slugs first (those the user actually has), then
+    // any of their workspaces the request didn't mention, in their existing order.
+    const requested = parsed.data.slugs.filter((s) => idBySlug.has(s));
+    const ordered = [...requested, ...mine.map((r) => r.slug).filter((s) => !requested.includes(s))];
+    await meta.transaction().execute(async (trx) => {
+      for (let i = 0; i < ordered.length; i++) {
+        await trx
+          .updateTable("org_memberships")
+          .set({ position: i })
+          .where("user_id", "=", userId)
+          .where("org_id", "=", idBySlug.get(ordered[i]!)!)
+          .execute();
+      }
+    });
+    res.json({ ok: true, order: ordered });
+  } catch (err) {
+    next(err);
+  }
 });
 
 // POST /me/verify-email/resend — re-send the email-verification link to the

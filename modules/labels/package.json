@@ -19,8 +19,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@cobblr/platform-contract": "*",
-    "@cobblr/platform-web": "*",
+    "@cobblr/platform-contract": "workspace:*",
+    "@cobblr/platform-web": "workspace:*",
     "express": "^4.21.2",
     "kysely": "^0.27.5",
     "pdf-lib": "^1.17.1",
@@ -33,9 +33,15 @@
     "react-router-dom": "^7"
   },
   "peerDependenciesMeta": {
-    "@tanstack/react-query": { "optional": true },
-    "react": { "optional": true },
-    "react-router-dom": { "optional": true }
+    "@tanstack/react-query": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "react-router-dom": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@tanstack/react-query": "^5.62.7",

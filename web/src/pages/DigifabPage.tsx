@@ -6,8 +6,8 @@
 
 import { useState, useMemo, useEffect, useRef } from "react";
 import { useMutation, useQuery, useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, Wifi, Printer, RefreshCw, Send, ListChecks, Boxes, AlertTriangle, Layers, X, ListPlus, Ban, Camera, Pause, Play, Thermometer } from "lucide-react";
-import { ApiError, api, fetchAuthBlobUrl, type DigifabConnection, type DigifabJob, type DigifabFleetDevice, type DigifabDeviceClass } from "../lib/api";
+import { Plus, Trash2, Wifi, Printer, RefreshCw, Send, ListChecks, Boxes, AlertTriangle, Layers, X, ListPlus, Ban, Camera, Pause, Play, Thermometer, ChevronRight, Share2 } from "lucide-react";
+import { ApiError, api, fetchAuthBlobUrl, type DigifabConnection, type DigifabJob, type DigifabFleetDevice, type DigifabDeviceClass, type BambuMode } from "../lib/api";
 import { BambuConnectWizard } from "../components/BambuConnectWizard";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
@@ -21,9 +21,16 @@ export function DigifabPage() {
   const confirm = useConfirm();
   const [createOpen, setCreateOpen] = useState(false);
   const [driversOpen, setDriversOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
-  const [printersFor, setPrintersFor] = useState<DigifabConnection | null>(null);
+  // Inline-expand a connection's printers as a children list (no modal) — fewer clicks, fewer overlays.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggleExpanded = (id: string) => setExpanded((prev) => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
 
   const list = useQuery({
     queryKey: ["digifab-connections", activeSlug],
@@ -52,6 +59,14 @@ export function DigifabPage() {
   });
 
   const items = list.data?.items ?? [];
+  // Per-mode capability table (cloud/lan/hybrid) so each Bambu connection can show
+  // what it can do — monitor vs control — instead of leaving it a mystery.
+  const bambuCaps = useQuery({
+    queryKey: ["bambu-capabilities", activeSlug],
+    queryFn: () => api.getBambuCapabilities(activeSlug),
+    enabled: !!activeSlug && items.some((c) => c.type === "bambu"),
+    staleTime: 60 * 60 * 1000,
+  });
 
   return (
     <div className="space-y-4">
@@ -79,6 +94,14 @@ export function DigifabPage() {
         >
           <Boxes size={14} /> Drivers
         </button>
+        {items.some((c) => c.type === "edge_adapter") && (
+          <button
+            onClick={() => setShareOpen(true)}
+            className="inline-flex items-center gap-2 rounded border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200 px-3 py-1.5 text-sm transition"
+          >
+            <Share2 size={14} /> Share machines
+          </button>
+        )}
         <button
           onClick={() => setCreateOpen(true)}
           className="inline-flex items-center gap-2 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm transition"
@@ -104,59 +127,80 @@ export function DigifabPage() {
       )}
 
       <ul className="border border-line dark:border-slate-700 rounded divide-y divide-line dark:divide-slate-800">
-        {items.map((c) => (
-          <li key={c.id} className="px-3 py-2.5 flex items-center gap-3">
-            <Printer size={16} className="text-faint shrink-0" />
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium text-content dark:text-mortar-100 truncate flex items-center gap-2">
-                {c.label}
-                <span className="text-[10px] font-mono uppercase tracking-wider text-faint">{c.type}</span>
-                {c.capabilities?.routing && (
-                  <span className="text-[10px] font-mono text-moss-600 dark:text-moss-400">routing</span>
+        {items.map((c) => {
+          const isOpen = expanded.has(c.id);
+          return (
+          <li key={c.id} className="px-3 py-2.5">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => toggleExpanded(c.id)}
+                title={isOpen ? "Hide printers" : "Show printers"}
+                className="text-faint hover:text-accent transition p-0.5 shrink-0"
+              >
+                <ChevronRight size={15} className={"transition-transform " + (isOpen ? "rotate-90" : "")} />
+              </button>
+              <Printer size={16} className="text-faint shrink-0" />
+              <div className="flex-1 min-w-0 cursor-pointer" onClick={() => toggleExpanded(c.id)}>
+                <div className="text-sm font-medium text-content dark:text-mortar-100 truncate flex items-center gap-2">
+                  {c.label}
+                  <span className="text-[10px] font-mono uppercase tracking-wider text-faint">{c.type === "bambu" ? "bambu" : c.type}</span>
+                  {c.capabilities?.routing && (
+                    <span className="text-[10px] font-mono text-moss-600 dark:text-moss-400">routing</span>
+                  )}
+                  {c.type === "bambu" && (() => {
+                    const mode = (typeof c.config?.mode === "string" ? c.config.mode : "cloud") as BambuMode;
+                    const caps = bambuCaps.data?.modes[mode];
+                    if (!caps) return null;
+                    return (
+                      <span title={caps.note} className={"text-[10px] font-mono px-1 rounded cursor-help " + (caps.control ? "text-moss-600 dark:text-moss-400" : "text-amber-600 dark:text-amber-400")}>
+                        {mode} · {caps.control ? "control" : "monitor only"}
+                      </span>
+                    );
+                  })()}
+                </div>
+                <div className="text-[11px] font-mono text-faint truncate">{c.base_url}</div>
+                {c.last_sync_status && (
+                  <div className={"text-[11px] " + (c.last_sync_status === "ok" ? "text-moss-600 dark:text-moss-400" : "text-ember-500")}>
+                    {c.last_sync_status === "ok" ? "✓ reachable" : c.last_sync_status}
+                  </div>
                 )}
               </div>
-              <div className="text-[11px] font-mono text-faint truncate">{c.base_url}</div>
-              {c.last_sync_status && (
-                <div className={"text-[11px] " + (c.last_sync_status === "ok" ? "text-moss-600 dark:text-moss-400" : "text-ember-500")}>
-                  {c.last_sync_status === "ok" ? "✓ reachable" : c.last_sync_status}
-                </div>
-              )}
+              <button
+                onClick={() => test.mutate(c.id)}
+                disabled={test.isPending}
+                title="Test connection"
+                className="text-faint hover:text-accent transition p-1.5 disabled:opacity-50"
+              >
+                {test.isPending && test.variables === c.id ? <RefreshCw size={15} className="animate-spin" /> : <Wifi size={15} />}
+              </button>
+              <button
+                onClick={async () => {
+                  const ok = await confirm({
+                    title: `Remove "${c.label}"?`,
+                    message: "Deletes the connection + its stored credentials. Print history isn't sent anywhere.",
+                    confirmLabel: "Remove",
+                    destructive: true,
+                  });
+                  if (ok) del.mutate(c.id);
+                }}
+                title="Remove"
+                className="text-faint hover:text-ember-500 transition p-1.5"
+              >
+                <Trash2 size={15} />
+              </button>
             </div>
-            <button
-              onClick={() => test.mutate(c.id)}
-              disabled={test.isPending}
-              title="Test connection"
-              className="text-faint hover:text-accent transition p-1.5 disabled:opacity-50"
-            >
-              {test.isPending && test.variables === c.id ? <RefreshCw size={15} className="animate-spin" /> : <Wifi size={15} />}
-            </button>
-            <button
-              onClick={() => setPrintersFor(c)}
-              title="List printers"
-              className="text-faint hover:text-accent transition p-1.5"
-            >
-              <Printer size={15} />
-            </button>
-            <button
-              onClick={async () => {
-                const ok = await confirm({
-                  title: `Remove "${c.label}"?`,
-                  message: "Deletes the connection + its stored credentials. Print history isn't sent anywhere.",
-                  confirmLabel: "Remove",
-                  destructive: true,
-                });
-                if (ok) del.mutate(c.id);
-              }}
-              title="Remove"
-              className="text-faint hover:text-ember-500 transition p-1.5"
-            >
-              <Trash2 size={15} />
-            </button>
+            {isOpen && (
+              <div className="mt-2 ml-7 border-l-2 border-line dark:border-slate-700 pl-3">
+                <ConnectionPrinters connection={c} />
+              </div>
+            )}
           </li>
-        ))}
+          );
+        })}
       </ul>
 
       {items.length > 0 && <PrintQueueSection connections={items} />}
+      {items.length > 0 && <PrintHistorySection slug={activeSlug} />}
 
       {createOpen && (
         <CreateConnectionModal
@@ -168,8 +212,8 @@ export function DigifabPage() {
           }}
         />
       )}
-      {printersFor && <PrintersModal connection={printersFor} onClose={() => setPrintersFor(null)} />}
       {driversOpen && <DriversModal onClose={() => setDriversOpen(false)} />}
+      {shareOpen && <ShareMachinesModal slug={activeSlug} edgeConns={items.filter((c) => c.type === "edge_adapter")} onClose={() => setShareOpen(false)} />}
       {importOpen && (
         <FdmmImportModal
           slug={activeSlug}
@@ -197,6 +241,122 @@ export function DigifabPage() {
 }
 
 // Install / list / remove machine-manager drivers. Built-ins ship in code;
+// Share a checklist of your edge-bridge machines with another Cobblr workspace.
+// Pick which machines, choose read (monitor) vs write (control), generate a
+// one-time link. The friend's workspace never gets your machine's credentials —
+// it's a scoped, revocable pointer through your bridge. Existing grants list with
+// live status + a one-click revoke.
+function ShareMachinesModal({ slug, edgeConns, onClose }: { slug: string; edgeConns: DigifabConnection[]; onClose: () => void }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [label, setLabel] = useState("");
+  const [scope, setScope] = useState<"read" | "write">("read");
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [expiry, setExpiry] = useState<"" | "7" | "30">("");
+  const [link, setLink] = useState<string | null>(null);
+  const shares = useQuery({ queryKey: ["edge-shares", slug], queryFn: () => api.listEdgeShares(slug) });
+  const create = useMutation({
+    mutationFn: () => api.createEdgeShare(slug, { label: label.trim(), scope, instance_ids: [...picked], ...(expiry ? { expires_in_days: Number(expiry) } : {}) }),
+    onSuccess: (r) => {
+      setLink(`${window.location.origin}/join-machines/${r.owner_org}/${r.token}`);
+      setLabel(""); setPicked(new Set());
+      void qc.invalidateQueries({ queryKey: ["edge-shares", slug] });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't create the share"),
+  });
+  const revoke = useMutation({
+    mutationFn: (id: string) => api.revokeEdgeShare(slug, id),
+    onSuccess: () => { toast.success("Access revoked"); void qc.invalidateQueries({ queryKey: ["edge-shares", slug] }); },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't revoke"),
+  });
+  const toggle = (id: string) => setPicked((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const field = "w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900";
+  const lbl = "block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
+  const shares_ = shares.data?.items ?? [];
+  return (
+    <Modal open onClose={onClose} title="Share machines" size="md">
+      <div className="space-y-3">
+        <p className="text-[13px] text-muted dark:text-slate-400">
+          Invite someone to machines on your bridge. You send a link; they choose which of their own
+          workspace(s) to add the machines to. Your printer's credentials never leave your workspace,
+          and one revoke cuts off every workspace that joined.
+        </p>
+        <label className="block">
+          <span className={lbl}>Name this share</span>
+          <input value={label} onChange={(e) => { setLabel(e.target.value); setLink(null); }} placeholder="e.g. a beta tester's club" className={field} autoFocus />
+        </label>
+        <div>
+          <span className={lbl}>Machines to share</span>
+          <div className="border border-line dark:border-slate-700 rounded divide-y divide-line dark:divide-slate-800 max-h-44 overflow-y-auto">
+            {edgeConns.map((c) => (
+              <label key={c.id} className="flex items-center gap-2 px-2.5 py-1.5 cursor-pointer hover:bg-subtle dark:hover:bg-slate-800/50">
+                <input type="checkbox" checked={picked.has(c.id)} onChange={() => { toggle(c.id); setLink(null); }} className="accent-cobble-600" />
+                <span className="text-sm text-content dark:text-mortar-100">{c.label}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+        <div>
+          <span className={lbl}>Permission</span>
+          <div className="grid grid-cols-2 gap-2">
+            {([
+              { id: "read", title: "Read only", note: "Watch status, temps & progress. Can't send or stop prints." },
+              { id: "write", title: "Read + write", note: "Full control — send, pause, cancel prints on your machines." },
+            ] as const).map((o) => (
+              <button key={o.id} type="button" onClick={() => { setScope(o.id); setLink(null); }}
+                className={"text-left rounded border p-2 transition " + (scope === o.id ? "border-cobble-500 bg-cobble-50/40 dark:bg-cobble-900/20" : "border-line dark:border-slate-600 hover:border-accent")}>
+                <div className="text-xs font-medium text-content dark:text-mortar-100">{o.title}</div>
+                <div className="text-[10px] text-muted dark:text-slate-400 mt-0.5 leading-snug">{o.note}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+        <label className="block">
+          <span className={lbl}>Link expires</span>
+          <select value={expiry} onChange={(e) => { setExpiry(e.target.value as "" | "7" | "30"); setLink(null); }} className={field + " !w-auto"}>
+            <option value="">Never</option>
+            <option value="7">In 7 days</option>
+            <option value="30">In 30 days</option>
+          </select>
+        </label>
+        {link ? (
+          <div className="rounded border border-moss-300 dark:border-moss-800 bg-moss-50/50 dark:bg-moss-900/20 p-2 space-y-1">
+            <div className="text-[10px] font-mono uppercase tracking-widest text-moss-700 dark:text-moss-400">Share link — copy it now, shown once</div>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 text-[11px] break-all text-content dark:text-mortar-200">{link}</code>
+              <button type="button" onClick={() => { void navigator.clipboard?.writeText(link); toast.success("Copied"); }} className="text-[10px] text-accent hover:underline shrink-0">Copy</button>
+            </div>
+          </div>
+        ) : (
+          <button type="button" onClick={() => create.mutate()} disabled={create.isPending || !label.trim() || picked.size === 0}
+            className="rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white text-sm px-3 py-1.5">
+            {create.isPending ? "Generating…" : `Generate link${picked.size ? ` (${picked.size} machine${picked.size > 1 ? "s" : ""})` : ""}`}
+          </button>
+        )}
+        {shares_.length > 0 && (
+          <div className="pt-2 border-t border-line dark:border-slate-700">
+            <span className={lbl}>Existing shares</span>
+            <ul className="space-y-1">
+              {shares_.map((s) => (
+                <li key={s.id} className="flex items-center gap-2 text-xs">
+                  <span className="flex-1 min-w-0">
+                    <span className="text-content dark:text-mortar-100">{s.label}</span>
+                    <span className="text-faint"> · {s.scope === "write" ? "control" : "read"} · {s.machines.length} machine{s.machines.length > 1 ? "s" : ""}{s.grantees.length ? ` · in ${s.grantees.length} workspace${s.grantees.length > 1 ? "s" : ""}` : ""}</span>
+                  </span>
+                  <span className={"font-mono text-[10px] " + (s.status === "active" ? "text-moss-600 dark:text-moss-400" : s.status === "pending" ? "text-amber-600 dark:text-amber-400" : "text-faint")}>{s.status}</span>
+                  {s.status !== "revoked" && s.status !== "expired" && (
+                    <button type="button" onClick={() => revoke.mutate(s.id)} disabled={revoke.isPending} className="text-[10px] text-ember-500 hover:underline disabled:opacity-50">revoke</button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 // a user installs a declarative-HTTP driver by pasting a manifest — no
 // deploy. Installed drivers then appear in the Add-connection dropdown.
 function DriversModal({ onClose }: { onClose: () => void }) {
@@ -211,20 +371,18 @@ function DriversModal({ onClose }: { onClose: () => void }) {
     queryFn: () => api.listDigifabDrivers(activeSlug),
     enabled: !!activeSlug,
   });
+  const catalog = useQuery({
+    queryKey: ["digifab-driver-catalog", activeSlug],
+    queryFn: () => api.getDigifabDriverCatalog(activeSlug),
+    enabled: !!activeSlug,
+  });
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["digifab-drivers", activeSlug] });
     void qc.invalidateQueries({ queryKey: ["digifab-connections", activeSlug] });
   };
-  const install = useMutation({
-    mutationFn: () => {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(manifest);
-      } catch {
-        throw new ApiError(400, "bad_json", "Manifest isn't valid JSON");
-      }
-      return api.installDigifabDriver(activeSlug, parsed);
-    },
+  // Generic install — used by both the one-click catalog and the paste box.
+  const installManifest = useMutation({
+    mutationFn: (m: unknown) => api.installDigifabDriver(activeSlug, m),
     onSuccess: (d) => {
       toast.success(`Installed "${d.name}"`);
       setManifest("");
@@ -232,6 +390,16 @@ function DriversModal({ onClose }: { onClose: () => void }) {
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
+  const installPasted = () => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(manifest);
+    } catch {
+      toast.error("Manifest isn't valid JSON");
+      return;
+    }
+    installManifest.mutate(parsed);
+  };
   const remove = useMutation({
     mutationFn: (key: string) => api.deleteDigifabDriver(activeSlug, key),
     onSuccess: () => { toast.success("Driver removed"); invalidate(); },
@@ -246,8 +414,8 @@ function DriversModal({ onClose }: { onClose: () => void }) {
     <Modal open onClose={onClose} title="Drivers" size="lg">
       <p className="text-sm text-muted dark:text-slate-400 mb-3">
         A driver connects digifab to the software that runs a machine. Built-ins ship with Cobblr;
-        install your own by pasting a declarative manifest — no deploy. Installed drivers appear in
-        the <span className="font-medium">Add connection</span> dropdown.
+        install a common one in a click from the catalog below, or paste a custom manifest — no
+        deploy. Installed drivers appear in the <span className="font-medium">Add connection</span> dropdown.
       </p>
 
       <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Built-in</div>
@@ -282,22 +450,52 @@ function DriversModal({ onClose }: { onClose: () => void }) {
         </ul>
       )}
 
-      <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Install a declarative driver</div>
+      {/* One-click catalog — the common managers (Duet/OctoPrint/Klipper/…)
+          install without pasting any JSON. */}
+      <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Available to install</div>
+      {(() => {
+        const have = new Set([...builtins.map((b) => b.key), ...installed.map((d) => d.key)]);
+        const shelf = (catalog.data?.drivers ?? []).filter((c) => !have.has(c.id));
+        if (catalog.isLoading) return <div className="text-[13px] text-muted italic mb-4">Loading catalog…</div>;
+        if (shelf.length === 0) return <div className="text-[13px] text-muted italic mb-4">All catalog drivers are installed.</div>;
+        return (
+          <ul className="space-y-1.5 mb-4">
+            {shelf.map((c) => (
+              <li key={c.id} className="flex items-start gap-3 p-2 rounded border border-line dark:border-slate-700">
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm text-content dark:text-mortar-100">{c.name} <span className="text-[11px] font-mono text-faint">{c.id}</span></div>
+                  <div className="text-[12px] text-muted dark:text-slate-400">{c.summary}</div>
+                  <div className="text-[11px] text-faint mt-0.5">Needs: {c.credentialHint}</div>
+                </div>
+                <button
+                  onClick={() => installManifest.mutate(c.manifest)}
+                  disabled={installManifest.isPending}
+                  className="shrink-0 px-2.5 py-1.5 text-xs rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white"
+                >
+                  Install
+                </button>
+              </li>
+            ))}
+          </ul>
+        );
+      })()}
+
+      <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Install a custom driver (paste a manifest)</div>
       <textarea
         value={manifest}
         onChange={(e) => setManifest(e.target.value)}
-        rows={8}
+        rows={6}
         placeholder={'{\n  "id": "octoprint",\n  "name": "OctoPrint",\n  "auth": { "kind": "header", "header": "X-Api-Key", "from": "apiKey" },\n  "test": { "method": "GET", "path": "/api/version" },\n  ...\n}'}
         className={field}
       />
       <div className="flex justify-end gap-2 pt-2">
         <button onClick={onClose} className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800">Close</button>
         <button
-          onClick={() => install.mutate()}
-          disabled={install.isPending || !manifest.trim()}
+          onClick={installPasted}
+          disabled={installManifest.isPending || !manifest.trim()}
           className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white"
         >
-          {install.isPending ? "Installing…" : "Install driver"}
+          {installManifest.isPending ? "Installing…" : "Install driver"}
         </button>
       </div>
     </Modal>
@@ -373,6 +571,80 @@ function ReassignControl({ job, slug, onDone }: { job: DigifabJob; slug: string;
         Assign
       </button>
       <button onClick={() => setOpen(false)} className="text-faint hover:text-content px-1.5 py-1 text-xs" title="Cancel">✕</button>
+    </div>
+  );
+}
+
+// Print history + at-a-glance stats — a read model over the jobs Cobblr sent +
+// tracked to completion. Collapsed by default; loads on open.
+function PrintHistorySection({ slug }: { slug: string }) {
+  const [open, setOpen] = useState(false);
+  const [days, setDays] = useState(30);
+  const hist = useQuery({ queryKey: ["digifab-history", slug, days], queryFn: () => api.getDigifabHistory(slug, days), enabled: open });
+  const s = hist.data?.summary;
+  const rate = s && s.total ? Math.round((s.completed / s.total) * 100) : null;
+  const stat = (label: string, value: string) => (
+    <div className="rounded border border-line dark:border-slate-700 px-2.5 py-1.5">
+      <div className="text-[10px] font-mono uppercase tracking-widest text-faint">{label}</div>
+      <div className="text-lg font-semibold text-content dark:text-mortar-100">{value}</div>
+    </div>
+  );
+  return (
+    <div className="pt-2">
+      <button type="button" onClick={() => setOpen((o) => !o)} className="flex items-center gap-1.5 text-sm font-semibold text-content dark:text-mortar-100">
+        <ChevronRight size={15} className={"transition-transform " + (open ? "rotate-90" : "")} /> Print history
+      </button>
+      {open && (
+        <div className="mt-2 space-y-3">
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-faint">Last</span>
+            <select value={days} onChange={(e) => setDays(Number(e.target.value))} className="input !py-0.5 !text-xs !w-auto">
+              <option value={7}>7 days</option><option value={30}>30 days</option><option value={90}>90 days</option>
+            </select>
+          </div>
+          {hist.isLoading ? <div className="text-xs text-muted">Loading…</div> : s && (
+            <>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {stat("Prints", String(s.total))}
+                {stat("Success", rate == null ? "—" : `${rate}%`)}
+                {stat("Filament", s.filament_g ? `${Math.round(s.filament_g)} g` : "—")}
+                {stat("Print time", s.hours ? `${s.hours} h` : "—")}
+              </div>
+              {(hist.data?.by_device.length ?? 0) > 0 && (
+                <div>
+                  <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">By printer</div>
+                  <ul className="text-xs space-y-0.5">
+                    {hist.data!.by_device.map((d, i) => (
+                      <li key={i} className="flex gap-2">
+                        <span className="flex-1 min-w-0 truncate text-content dark:text-mortar-100">{d.name}</span>
+                        <span className="text-faint shrink-0">{d.completed}/{d.total} ok{d.failed ? ` · ${d.failed} failed` : ""}{d.filament_g ? ` · ${Math.round(d.filament_g)}g` : ""}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <div>
+                <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Recent prints</div>
+                {hist.data!.recent.length === 0 ? (
+                  <div className="text-xs text-muted italic">No finished prints in this window.</div>
+                ) : (
+                  <ul className="divide-y divide-line dark:divide-slate-800 border border-line dark:border-slate-700 rounded">
+                    {hist.data!.recent.map((r) => (
+                      <li key={r.id} className="flex items-center gap-2 px-2 py-1 text-xs">
+                        <span className={"w-1.5 h-1.5 rounded-full shrink-0 " + (r.status === "completed" ? "bg-moss-500" : r.status === "failed" ? "bg-ember-500" : "bg-faint")} />
+                        <span className="flex-1 min-w-0 truncate text-content dark:text-mortar-100" title={r.file_ref}>{r.file_ref}</span>
+                        <span className="text-faint truncate max-w-[30%]" title={r.device}>{r.device}</span>
+                        {r.filament_g != null && <span className="text-faint shrink-0">{Math.round(r.filament_g)}g</span>}
+                        <span className="text-faint shrink-0">{new Date(r.at).toLocaleDateString()}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -886,6 +1158,9 @@ function CreateConnectionModal({
   const { activeSlug } = useActiveOrg();
   const toast = useToast();
   const [type, setType] = useState(types[0] ?? "fdm_monster");
+  // For a Bambu, the user chooses HOW it connects: cloud account (monitor) or LAN
+  // via the edge bridge (full control). They're different connection shapes.
+  const [bambuWay, setBambuWay] = useState<"cloud" | "lan">("cloud");
   const [label, setLabel] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [authMode, setAuthMode] = useState<"api_key" | "login">("api_key");
@@ -927,7 +1202,26 @@ function CreateConnectionModal({
           </select>
         </label>
         {type === "bambu" ? (
-          <BambuConnectWizard onConnected={() => onCreated()} onCancel={onClose} />
+          <div className="space-y-3">
+            {/* How a Bambu connects — the two genuinely different paths. */}
+            <div className="grid grid-cols-2 gap-2">
+              {([
+                { id: "cloud", title: "Cloud account", note: "Bambu login. Live status & temps — no remote control (Bambu blocks it)." },
+                { id: "lan", title: "LAN via edge bridge", note: "Developer Mode + your bridge. Full control: send, pause, cancel." },
+              ] as const).map((o) => (
+                <button key={o.id} type="button" onClick={() => setBambuWay(o.id)}
+                  className={"text-left rounded border p-2 transition " + (bambuWay === o.id ? "border-cobble-500 bg-cobble-50/40 dark:bg-cobble-900/20" : "border-line dark:border-slate-600 hover:border-accent")}>
+                  <div className="text-xs font-medium text-content dark:text-mortar-100">{o.title}</div>
+                  <div className="text-[10px] text-muted dark:text-slate-400 mt-0.5 leading-snug">{o.note}</div>
+                </button>
+              ))}
+            </div>
+            {bambuWay === "cloud"
+              ? <BambuConnectWizard onConnected={() => onCreated()} onCancel={onClose} />
+              : <EdgeBridgeSetup presetDriver="bambu" onCreated={onCreated} onClose={onClose} />}
+          </div>
+        ) : type === "edge_adapter" ? (
+          <EdgeBridgeSetup onCreated={onCreated} onClose={onClose} />
         ) : (
       <form
         onSubmit={(e) => {
@@ -990,7 +1284,212 @@ function CreateConnectionModal({
   );
 }
 
-function PrintersModal({ connection, onClose }: { connection: DigifabConnection; onClose: () => void }) {
+// Guided edge-bridge setup. A hosted Cobblr can't reach a machine on your LAN —
+// so you run a tiny bridge at your site that dials OUT and holds a tunnel open.
+// This shows the one command to run it, watches for it to dial in, then creates
+// the cobblr-edge:// connection that routes through the tunnel.
+// What the bridge can drive + the fields each needs. Mirrors the bridge's
+// built-in drivers (mock/moonraker/prusalink/duet/bambu/lightburn).
+const BRIDGE_DRIVERS: { key: string; label: string; fields: { key: string; label: string; placeholder?: string; optional?: boolean }[] }[] = [
+  { key: "mock", label: "Mock (test — no hardware)", fields: [] },
+  { key: "moonraker", label: "Klipper (Moonraker)", fields: [{ key: "host", label: "Printer IP / host", placeholder: "192.168.1.50" }, { key: "apiKey", label: "API key (only if locked down)", optional: true }] },
+  { key: "prusalink", label: "Prusa (PrusaLink)", fields: [{ key: "host", label: "Printer IP / host", placeholder: "192.168.1.213" }, { key: "apiKey", label: "PrusaLink API key" }] },
+  { key: "duet", label: "Duet (RepRapFirmware)", fields: [{ key: "host", label: "Printer IP / host", placeholder: "192.168.1.50" }] },
+  { key: "bambu", label: "Bambu Lab (LAN)", fields: [{ key: "host", label: "Printer IP" }, { key: "serial", label: "Serial" }, { key: "accessCode", label: "LAN access code" }] },
+  { key: "lightburn", label: "LightBurn laser", fields: [{ key: "host", label: "IP of the PC running LightBurn" }] },
+];
+
+type MachineDraft = { key: string; name: string; driver: string; cfg: Record<string, string> };
+let machineSeq = 0;
+const newMachine = (driver = "mock"): MachineDraft => ({ key: `m${++machineSeq}`, name: "", driver, cfg: {} });
+const defOf = (m: MachineDraft) => BRIDGE_DRIVERS.find((d) => d.key === m.driver) ?? BRIDGE_DRIVERS[0]!;
+
+export function EdgeBridgeSetup({ onCreated, onClose, presetDriver }: { onCreated: (connectionId?: string) => void; onClose: () => void; presetDriver?: string }) {
+  const { activeSlug } = useActiveOrg();
+  const toast = useToast();
+  const [label, setLabel] = useState("Edge bridge");
+  const [machines, setMachines] = useState<MachineDraft[]>(() => [newMachine(presetDriver && BRIDGE_DRIVERS.some((d) => d.key === presetDriver) ? presetDriver : "mock")]);
+  const [token, setToken] = useState<string | null>(null);
+  const [cmdMode, setCmdMode] = useState<"run" | "compose">("run");
+  const relayUrl = `${window.location.origin}/api/v1/orgs/${activeSlug}/modules/digifab/edge`;
+  const status = useQuery({
+    queryKey: ["digifab-edge-status", activeSlug],
+    queryFn: () => api.getDigifabEdgeStatus(activeSlug),
+    enabled: !!activeSlug,
+    refetchInterval: 3000,
+  });
+  const connected = !!status.data?.connected;
+
+  const updateMachine = (key: string, patch: Partial<MachineDraft>) => setMachines((ms) => ms.map((m) => (m.key === key ? { ...m, ...patch } : m)));
+  const setField = (key: string, fk: string, v: string) => setMachines((ms) => ms.map((m) => (m.key === key ? { ...m, cfg: { ...m.cfg, [fk]: v } } : m)));
+
+  // Unique instance ids (matched by the per-machine connection's cobblr-edge://<id>).
+  const withIds = (() => {
+    const seen = new Map<string, number>();
+    return machines.map((m, i) => {
+      let id = (m.name.trim() || m.driver).toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || `m${i + 1}`;
+      const n = seen.get(id) ?? 0; seen.set(id, n + 1); if (n) id = `${id}-${n + 1}`;
+      return { m, id };
+    });
+  })();
+  const missing = machines.flatMap((m) => defOf(m).fields.filter((f) => !f.optional && !m.cfg[f.key]?.trim()).map((f) => `${m.name.trim() || defOf(m).label}: ${f.label}`));
+
+  const mint = useMutation({
+    mutationFn: () => api.createApiToken({ name: `Edge bridge: ${label.trim() || "bridge"}`, scopes: ["devices:edge"] }),
+    onSuccess: (r) => setToken(r.token),
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't generate a token."),
+  });
+  // The command carries NOTHING machine-specific — just the relay token. The
+  // bridge installs once and stays open; machines are added below and ride down
+  // the tunnel per request (dynamic config), so the box never needs re-running.
+  const tok = token ?? "<generate the token first>";
+  const cmd = [
+    "docker run -d --name cobblr-edge-bridge --restart unless-stopped \\",
+    "  -e BRIDGE_MODE=tunnel \\",
+    `  -e BRIDGE_RELAY_URL=${relayUrl} \\`,
+    `  -e BRIDGE_RELAY_TOKEN=${tok} \\`,
+    "  git.example.com/cobblrhq/edge-bridge:latest",
+  ].join("\n");
+  const compose = [
+    "# docker-compose.yml — then: docker compose up -d",
+    "services:",
+    "  cobblr-edge-bridge:",
+    "    image: git.example.com/cobblrhq/edge-bridge:latest",
+    "    restart: unless-stopped",
+    "    environment:",
+    "      BRIDGE_MODE: tunnel",
+    `      BRIDGE_RELAY_URL: ${relayUrl}`,
+    `      BRIDGE_RELAY_TOKEN: ${tok}`,
+  ].join("\n");
+  const snippet = cmdMode === "compose" ? compose : cmd;
+  // One connection per machine — base_url cobblr-edge://<id> + the machine config
+  // stored on it (rides the tunnel). The first id is returned to link the printer.
+  const create = useMutation({
+    mutationFn: async () => {
+      let firstId: string | undefined;
+      for (const { m, id } of withIds) {
+        const config = { driver: m.driver, ...Object.fromEntries(defOf(m).fields.map((f) => [f.key, m.cfg[f.key]?.trim()]).filter(([, v]) => v)) };
+        const c = await api.createDigifabConnection(activeSlug, { type: "edge_adapter", label: m.name.trim() || defOf(m).label, base_url: `cobblr-edge://${id}`, config });
+        if (!firstId) firstId = c.id;
+      }
+      return firstId;
+    },
+    onSuccess: (firstId) => { toast.success(machines.length > 1 ? `${machines.length} machines connected.` : "Machine connected."); onCreated(firstId); },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't add the connection(s)."),
+  });
+  const lbl = "block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
+  const field = "w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900";
+  return (
+    <div className="space-y-3">
+      {/* If a bridge is ALREADY dialed in for this workspace, skip the whole
+          install flow — you just want to add another machine to it. */}
+      {connected ? (
+        <div className="flex items-center gap-2 text-sm rounded border border-moss-500/40 bg-moss-50 dark:bg-moss-950/30 p-2">
+          <span className="w-2 h-2 rounded-full bg-moss-500 shrink-0" />
+          <span className="text-moss-700 dark:text-moss-300">Your bridge is online ✓ — add a machine to it below. No reinstall needed.</span>
+        </div>
+      ) : (<>
+      <p className="text-[13px] text-muted dark:text-slate-400">
+        A hosted Cobblr can't reach a machine on your network directly. Run one tiny <strong>bridge</strong> on
+        any always-on box at your site (Pi, NAS, mini-PC) — it dials out and holds a tunnel open (no inbound
+        firewall hole). Install it once; <strong>add every machine at your site</strong> to it, anytime.
+      </p>
+      {/* STEP 1 — install the bridge (name + token; no machines needed yet). */}
+      <label className="block">
+        <span className={lbl}>1 · Name this bridge</span>
+        <input value={label} onChange={(e) => setLabel(e.target.value)} className={field} autoFocus />
+      </label>
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <span className={lbl}>2 · Install the bridge</span>
+          {token && (
+            <div className="flex items-center gap-2">
+              <div className="inline-flex rounded border border-line dark:border-slate-600 overflow-hidden text-[10px]">
+                {(["run", "compose"] as const).map((mode) => (
+                  <button key={mode} type="button" onClick={() => setCmdMode(mode)} className={"px-1.5 py-0.5 " + (cmdMode === mode ? "bg-cobble-600 text-white" : "text-muted hover:bg-subtle dark:hover:bg-slate-800")}>
+                    {mode === "run" ? "docker run" : "compose"}
+                  </button>
+                ))}
+              </div>
+              <button type="button" onClick={() => { void navigator.clipboard?.writeText(snippet); toast.success("Copied"); }} className="text-[10px] text-accent hover:underline">Copy</button>
+            </div>
+          )}
+        </div>
+        {!token ? (
+          <button type="button" onClick={() => mint.mutate()} disabled={mint.isPending || !label.trim()}
+            className="rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white text-xs px-2.5 py-1.5">
+            {mint.isPending ? "Generating…" : "Generate token & command"}
+          </button>
+        ) : (
+          <>
+            <pre className="text-[11px] leading-relaxed bg-subtle dark:bg-slate-950 border border-line dark:border-slate-700 rounded p-2 overflow-x-auto whitespace-pre text-content dark:text-mortar-200">{snippet}</pre>
+            <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">Run this on a box at your site. Token shown once — it can <strong>only</strong> run this bridge (scope <code>devices:edge</code>).</p>
+          </>
+        )}
+      </div>
+      <div>
+        <span className={lbl}>3 · Cobblr is watching for it</span>
+        <div className={"flex items-center gap-2 text-sm rounded border p-2 " + (connected ? "border-moss-500/40 bg-moss-50 dark:bg-moss-950/30" : "border-line dark:border-slate-700")}>
+          <span className={"w-2 h-2 rounded-full " + (connected ? "bg-moss-500" : "bg-amber-500 animate-pulse")} />
+          {connected ? <span className="text-moss-700 dark:text-moss-300">Bridge online — dialed in ✓</span> : <span className="text-muted dark:text-slate-400">Waiting for the bridge to dial in…</span>}
+        </div>
+      </div>
+      </>)}
+      {/* Add machines to the bridge (the only step once it's online). */}
+      <div className="space-y-2 pt-1 border-t border-line dark:border-slate-800">
+        <span className={lbl}>{connected ? "Add a machine" : "4 · Machines on this bridge"}</span>
+        {machines.map((m, i) => {
+          const def = defOf(m);
+          return (
+            <div key={m.key} className="rounded border border-line dark:border-slate-700 p-2.5 space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-faint">{i === 0 ? "First machine" : `Machine ${i + 1}`}</span>
+                <div className="flex-1" />
+                {machines.length > 1 && (
+                  <button type="button" onClick={() => setMachines((ms) => ms.filter((x) => x.key !== m.key))} title="Remove machine" className="text-faint hover:text-ember-500 transition">
+                    <Trash2 size={13} />
+                  </button>
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="block">
+                  <span className={lbl}>Name</span>
+                  <input value={m.name} onChange={(e) => updateMachine(m.key, { name: e.target.value })} placeholder={def.label} className={field} />
+                </label>
+                <label className="block">
+                  <span className={lbl}>Type</span>
+                  <select value={m.driver} onChange={(e) => updateMachine(m.key, { driver: e.target.value, cfg: {} })} className={field}>
+                    {BRIDGE_DRIVERS.map((d) => <option key={d.key} value={d.key}>{d.label}</option>)}
+                  </select>
+                </label>
+                {def.fields.map((f) => (
+                  <label key={f.key} className="block">
+                    <span className={lbl}>{f.label}{f.optional ? "" : " *"}</span>
+                    <input value={m.cfg[f.key] ?? ""} onChange={(e) => setField(m.key, f.key, e.target.value)} placeholder={f.placeholder} className={field} />
+                  </label>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+        <button type="button" onClick={() => setMachines((ms) => [...ms, newMachine()])} className="text-xs text-accent hover:underline">+ Add another machine</button>
+      </div>
+      <div className="flex justify-end gap-2 pt-1">
+        <button type="button" onClick={onClose} className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800">Cancel</button>
+        <button type="button" onClick={() => create.mutate()} disabled={create.isPending || !connected || missing.length > 0}
+          className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white"
+          title={!connected ? "Start the bridge first" : missing.length ? `Fill in: ${missing.join(", ")}` : ""}>
+          {create.isPending ? "Adding…" : machines.length > 1 ? `Add ${machines.length} machines` : "Add this machine"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// The connection's printers, rendered INLINE as a children list (expanded under
+// the connection row) — not a modal. Lists each farm printer + a link-to-machine
+// picker so a job linked to that machine routes to its printer automatically.
+function ConnectionPrinters({ connection }: { connection: DigifabConnection }) {
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
@@ -1030,11 +1529,11 @@ function PrintersModal({ connection, onClose }: { connection: DigifabConnection;
   );
 
   return (
-    <Modal open onClose={onClose} title={`${connection.label} — printers`} size="md">
-      {printers.isLoading && <div className="text-sm text-muted">Loading printers…</div>}
-      {printers.isError && <div className="text-sm text-ember-500">Couldn't reach the farm — test the connection.</div>}
+    <div>
+      {printers.isLoading && <div className="text-xs text-muted py-1">Loading printers…</div>}
+      {printers.isError && <div className="text-xs text-ember-500 py-1">Couldn't reach the farm — test the connection.</div>}
       {!printers.isLoading && !printers.isError && items.length === 0 && (
-        <div className="text-sm text-muted italic">No printers reported.</div>
+        <div className="text-xs text-muted italic py-1">No printers reported.</div>
       )}
       <ul className="divide-y divide-line dark:divide-slate-800">
         {items.map((p) => {
@@ -1081,10 +1580,10 @@ function PrintersModal({ connection, onClose }: { connection: DigifabConnection;
           );
         })}
       </ul>
-      <p className="mt-3 text-[11px] text-faint">
+      <p className="mt-2 text-[11px] text-faint">
         Link a farm printer to one of your machines — a job linked to that machine then routes to its printer automatically.
       </p>
-    </Modal>
+    </div>
   );
 }
 
@@ -1112,7 +1611,7 @@ function FleetStat({ dot, n, label }: { dot: string; n: number; label: string })
   );
 }
 
-function FleetView({ slug }: { slug: string }) {
+export function FleetView({ slug }: { slug: string }) {
   const fleet = useQuery({
     queryKey: ["digifab-fleet", slug],
     queryFn: () => api.getDigifabFleet(slug),
@@ -1202,6 +1701,14 @@ function tempLabel(t: { actual: number; target?: number } | null | undefined): s
   return t.target ? `${Math.round(t.actual)}/${Math.round(t.target)}°` : `${Math.round(t.actual)}°`;
 }
 
+/** Minutes → "13h 2m" / "45m" — readable remaining-time. */
+function fmtRemaining(mins: number): string {
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m ? `${h}h ${m}m` : `${h}h`;
+}
+
 // The relayed snapshot: auth-fetch the latest agent-pushed frame to a blob URL
 // and refresh it every few seconds (a near-live thumbnail for remote viewers).
 function RelaySnapshot({ slug, connId, deviceId, name }: { slug: string; connId: string; deviceId: string; name: string }) {
@@ -1226,7 +1733,11 @@ function DeviceCard({ d, connId, slug }: { d: DigifabFleetDevice; connId: string
   const qc = useQueryClient();
   const toast = useToast();
   const st = KLASS_STYLE[d.klass];
-  const pct = d.active_job?.progress != null ? Math.round(d.active_job.progress * 100) : null;
+  // Progress: a Cobblr job's (0–1) wins; otherwise the printer's own live percent
+  // (already 0–100, e.g. a Bambu print started from its own slicer).
+  const pct = d.active_job?.progress != null
+    ? Math.round(d.active_job.progress * 100)
+    : d.live?.progress != null ? Math.round(d.live.progress) : null;
   const invalidateFleet = () => void qc.invalidateQueries({ queryKey: ["digifab-fleet", slug] });
   const [camOpen, setCamOpen] = useState(false);
   const [camUrl, setCamUrl] = useState(d.camera_url ?? "");
@@ -1390,6 +1901,20 @@ function DeviceCard({ d, connId, slug }: { d: DigifabFleetDevice; connId: string
           )}
         </div>
       )}
+      {/* A print Cobblr didn't start (e.g. straight from Bambu Studio) — show the
+          printer's own live progress so the floor view isn't blank for it. */}
+      {!job && pct != null && d.live && (
+        <div className="mt-1.5">
+          <div className="h-1 rounded bg-line dark:bg-slate-700 overflow-hidden">
+            <div className="h-full transition-[width] bg-cobble-500" style={{ width: `${pct}%` }} />
+          </div>
+          <div className="text-[10px] font-mono text-faint mt-0.5 flex gap-2">
+            <span>{pct}%</span>
+            {d.live.layer_num != null && d.live.total_layers != null && <span>layer {d.live.layer_num}/{d.live.total_layers}</span>}
+            {d.live.remaining_min != null && d.live.remaining_min > 0 && <span>{fmtRemaining(d.live.remaining_min)} left</span>}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1454,9 +1979,11 @@ function PoolMemberAdder({
               return (
                 <li key={key}>
                   <label className="flex items-center gap-2 px-1 py-1 text-xs text-content dark:text-mortar-100 cursor-pointer hover:bg-subtle dark:hover:bg-slate-800 rounded">
-                    <input type="checkbox" checked={sel.has(key)} onChange={() => toggle(key)} />
-                    <span className="truncate">{d.name}</span>
-                    <span className="text-[10px] text-faint truncate ml-auto">{d.connLabel}</span>
+                    <input type="checkbox" checked={sel.has(key)} onChange={() => toggle(key)} className="shrink-0" />
+                    {/* The printer NAME gets priority; the connection it's on is
+                        secondary — capped + truncated first so the name reads. */}
+                    <span className="flex-1 min-w-0 truncate">{d.name}</span>
+                    <span className="text-[10px] text-faint truncate shrink-0 max-w-[38%]" title={d.connLabel}>{d.connLabel}</span>
                   </label>
                 </li>
               );

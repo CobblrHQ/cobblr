@@ -19,25 +19,33 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@cobblr/platform-contract": "*",
+    "@cobblr/platform-contract": "workspace:*",
     "express": "^4.21.2",
     "kysely": "^0.27.5",
     "zod": "^3.24.1"
   },
   "peerDependencies": {
-    "@cobblr/platform-web": "*",
+    "@cobblr/platform-web": "workspace:*",
     "@tanstack/react-query": "^5",
     "react": "^19",
     "react-router-dom": "^7"
   },
   "peerDependenciesMeta": {
-    "@cobblr/platform-web": { "optional": true },
-    "@tanstack/react-query": { "optional": true },
-    "react": { "optional": true },
-    "react-router-dom": { "optional": true }
+    "@cobblr/platform-web": {
+      "optional": true
+    },
+    "@tanstack/react-query": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "react-router-dom": {
+      "optional": true
+    }
   },
   "devDependencies": {
-    "@cobblr/platform-web": "*",
+    "@cobblr/platform-web": "workspace:*",
     "@types/express": "^4.17.21",
     "@types/react": "^19.0.2",
     "@tanstack/react-query": "^5.62.7",

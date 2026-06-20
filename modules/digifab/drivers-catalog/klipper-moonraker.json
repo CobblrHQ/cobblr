@@ -44,5 +44,10 @@
       },
       "progress": "$.result.status.virtual_sdcard.progress"
     }
+  },
+  "commands": {
+    "pause": { "method": "POST", "path": "/printer/print/pause" },
+    "resume": { "method": "POST", "path": "/printer/print/resume" },
+    "cancel": { "method": "POST", "path": "/printer/print/cancel" }
   }
 }

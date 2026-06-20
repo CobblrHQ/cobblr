@@ -1583,6 +1583,12 @@ export interface EdgeRequest {
   body?: unknown;
   /** Per-request budget (ms). The relay rejects if the edge doesn't answer. */
   timeoutMs?: number;
+  /** Dynamic-config edge bridge: the machine this call targets, carried WITH the
+   *  request so the bridge configures the driver on the fly — no static
+   *  BRIDGE_CONFIG, no restart. The bridge installs with just a token; machines
+   *  are added in Cobblr and ride down with each call. Absent for the AI channel
+   *  and for a statically-configured bridge. */
+  instance?: { id: string; driver: string; config: Record<string, unknown> };
 }
 
 export interface EdgeResponse {

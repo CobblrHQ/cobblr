@@ -9,7 +9,7 @@
     "build": "npm run vendor-sdk && asc assembly/index.ts --outFile module.wasm --runtime incremental --bindings raw --exportRuntime"
   },
   "dependencies": {
-    "@cobblr/sandbox-sdk-as": "*"
+    "@cobblr/sandbox-sdk-as": "workspace:*"
   },
   "devDependencies": {
     "assemblyscript": "^0.27.29"

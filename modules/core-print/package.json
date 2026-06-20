@@ -15,7 +15,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@cobblr/platform-contract": "*",
+    "@cobblr/platform-contract": "workspace:*",
     "express": "^4.21.2",
     "ipp": "^1.1.0",
     "kysely": "^0.27.5",

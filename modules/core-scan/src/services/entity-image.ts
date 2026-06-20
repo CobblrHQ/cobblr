@@ -11,6 +11,7 @@
 import { searchImages } from "./ddg-images.js";
 import { pickImage } from "./barcode-websearch.js";
 import { assertSafeOutboundUrl } from "./enrich.js";
+import { curatedImageUrl } from "./curated-images.js";
 
 const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -58,8 +59,13 @@ export async function enrichEntityImage(opts: {
   try {
     const [moduleName, type] = opts.entityKind.split(":");
     if (!moduleName || !type) return null;
-    const results = await searchImages(opts.query);
-    const imageUrl = pickImage(results, opts.query) ?? results[0]?.url ?? null;
+    // Curated catalog first (hand-picked, correct model); fall back to the DDG
+    // image search (best-effort, can guess the wrong model) only on a miss.
+    let imageUrl = await curatedImageUrl(opts.query);
+    if (!imageUrl) {
+      const results = await searchImages(opts.query);
+      imageUrl = pickImage(results, opts.query) ?? results[0]?.url ?? null;
+    }
     if (!imageUrl) return null;
     const fileId = await fetchAndStoreImage(opts.orgSlug, opts.bearer, imageUrl);
     if (!fileId) return null;

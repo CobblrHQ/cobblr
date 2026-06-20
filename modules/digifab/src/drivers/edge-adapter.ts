@@ -76,11 +76,20 @@ export class EdgeAdapterDriver implements MachineDriver {
   private base: string;
   private token: string | null;
   private relay: EdgeRelay | null;
+  /** Tunnel mode only: the instance segment ("/voron") parsed from a
+   *  `cobblr-edge://<instanceId>` base_url. ONE bridge fronts MANY machines, each
+   *  a named instance; the relay carries one channel per workspace, so requests
+   *  must say WHICH instance — we prefix the edge-adapter path with it. Empty for
+   *  a bare `cobblr-edge://` (single-instance bridge picks its only one). */
+  private tunnelPrefix: string;
   constructor(cfg: ManagerConfig, relay?: EdgeRelay | null) {
     this.base = cfg.baseUrl.replace(/\/+$/, "");
     // Optional shared-secret: sent as a Bearer if the connection stored an apiKey.
     this.token = cfg.apiKey ?? null;
     this.relay = relay ?? null;
+    const m = /^cobblr-edge:\/\/(.*)$/i.exec(this.base);
+    const id = (m?.[1] ?? "").replace(/^\/+|\/+$/g, "");
+    this.tunnelPrefix = id ? `/${id}` : "";
   }
 
   private headers(extra: Record<string, string> = {}): Record<string, string> {
@@ -95,8 +104,10 @@ export class EdgeAdapterDriver implements MachineDriver {
       const body = opts.file
         ? { filename: opts.file.filename, data_b64: Buffer.from(opts.file.bytes).toString("base64") }
         : opts.body;
-      const r = await this.relay({ method, path, body });
-      if (r.status >= 400) throw new Error(`adapter ${method} ${path} → ${r.status} (tunnel)`);
+      // Prefix the instance so one bridge (one workspace channel) routes the call
+      // to the right machine: "/voron" + "/devices" → "/voron/devices".
+      const r = await this.relay({ method, path: this.tunnelPrefix + path, body });
+      if (r.status >= 400) throw new Error(`adapter ${method} ${this.tunnelPrefix + path} → ${r.status} (tunnel)`);
       return r.body ?? null;
     }
     await assertSafeMachineUrl(this.base + path);

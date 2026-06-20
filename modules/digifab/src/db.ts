@@ -129,6 +129,50 @@ export interface DigifabDB {
   digifab_device_attention: DigifabDeviceAttentionTable;
   digifab_device_settings: DigifabDeviceSettingsTable;
   digifab_device_snapshots: DigifabDeviceSnapshotsTable;
+  digifab_bambu_status: DigifabBambuStatusTable;
+  digifab_edge_shares: DigifabEdgeSharesTable;
+}
+
+/** A scoped grant of edge-bridge machines, redeemable into the recipient's
+ *  chosen workspace(s). One revoke cuts off every redemption (relay checks the
+ *  grant live). */
+export interface EdgeShareRedeemer {
+  org: string;
+  label: string;
+  at: string;
+}
+export interface DigifabEdgeSharesTable {
+  id: Generated<string>;
+  label: string;
+  scope: string; // 'read' | 'write'
+  instances: Generated<string[]>; // owner edge_adapter connection ids
+  token_hash: string | null;
+  grantee_orgs: Generated<EdgeShareRedeemer[]>;
+  created_at: Generated<Date>;
+  expires_at: Date | null;
+  redeemed_at: Date | null;
+  revoked_at: Date | null;
+  last_used_at: Date | null;
+}
+
+/** Live cloud-MQTT telemetry per Bambu printer, written by the bambu-pump and
+ *  read (fresh) by the fleet. One row per (connection, serial). */
+export interface DigifabBambuStatusTable {
+  connection_id: string;
+  serial: string;
+  state: string | null;
+  stage: string | null;
+  nozzle_actual: number | null;
+  nozzle_target: number | null;
+  bed_actual: number | null;
+  bed_target: number | null;
+  chamber_actual: number | null;
+  chamber_target: number | null;
+  progress: number | null;
+  remaining_min: number | null;
+  layer_num: number | null;
+  total_layers: number | null;
+  updated_at: Generated<Date>;
 }
 
 export type OrgRole = "owner" | "admin" | "member" | "guest";

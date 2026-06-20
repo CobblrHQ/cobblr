@@ -47,5 +47,10 @@
       },
       "progress": "$.fractionPrinted"
     }
+  },
+  "commands": {
+    "pause": { "method": "GET", "path": "/rr_gcode?gcode=M25" },
+    "resume": { "method": "GET", "path": "/rr_gcode?gcode=M24" },
+    "cancel": { "method": "GET", "path": "/rr_gcode?gcode=M0" }
   }
 }

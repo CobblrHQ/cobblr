@@ -1,0 +1,35 @@
+nodeLinker: hoisted
+
+# Don't re-verify/re-install deps before running a script. In the CI docker
+# build, install runs against package.json-only module dirs, then source is
+# COPYed in — which pnpm reads as dep "drift", so it RE-INSTALLS (re-resolving +
+# pruning the whole tree, "+5 -207") before the final api/web build step. The
+# deps are actually fine; the drift is a false positive. Turning this off makes
+# `pnpm --filter X run build` just run the build, no install. (Local dev is
+# unaffected — deps there are genuinely in sync; CI/e2e run `pnpm install`
+# explicitly.)
+verifyDepsBeforeRun: false
+
+# Network resilience for installs (esp. in CI docker builds): a slow/half-open
+# tarball fetch should time out and retry rather than wedge — once a fetch stall
+# left an image build hanging ~40 min. The build job's timeout-minutes is the
+# hard backstop; these make a single bad socket recover on its own.
+fetchRetries: 3
+fetchTimeout: 60000
+
+packages:
+  - api
+  - web
+  - packages/*
+  - modules/*
+  - sandboxed-modules/hello-as
+  - sandboxed-modules/url-archive
+  - sandboxed-modules/bricklink-sandboxed
+
+# Postinstall/native build scripts pnpm blocks by default (security gate). These
+# MUST build or the app breaks: bcrypt (password hashing), sharp (image
+# processing), esbuild (bundling). Explicitly allow them.
+allowBuilds:
+  bcrypt: true
+  esbuild: true
+  sharp: true

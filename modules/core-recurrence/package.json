@@ -15,7 +15,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@cobblr/platform-contract": "*",
+    "@cobblr/platform-contract": "workspace:*",
     "rrule": "^2.8.1"
   },
   "devDependencies": {

@@ -72,11 +72,31 @@ export interface CoreScanEvalCasesTable {
   created_at: Generated<Date>;
 }
 
+/** External QR resolver rules — the per-workspace redirect table. A scanned
+ *  foreign QR payload is matched against these (ordered by position); the first
+ *  match extracts a key + resolves it to a Cobblr entity. See
+ *  services/qr-resolver.ts + docs/design-decisions/external-qr-resolver.md. */
+export interface CoreScanQrRulesTable {
+  id: Generated<string>;
+  name: string;
+  enabled: Generated<boolean>;
+  position: Generated<number>;
+  /** { type: 'url_prefix'|'regex'|'bare', value?: string } */
+  match_spec: Record<string, unknown>;
+  /** { source?, group?, type_from?, transform?: string[] } */
+  extract_spec: Generated<Record<string, unknown>>;
+  /** { target_kind?, type_map?, key_field } */
+  resolve_spec: Record<string, unknown>;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
 export interface CoreScanDB {
   core_scan_inbox_items: CoreScanInboxItemsTable;
   core_scan_batches: CoreScanBatchesTable;
   core_scan_barcode_cache: CoreScanBarcodeCacheTable;
   core_scan_eval_cases: CoreScanEvalCasesTable;
+  core_scan_qr_rules: CoreScanQrRulesTable;
 }
 
 export type OrgRole = "owner" | "admin" | "member" | "guest";

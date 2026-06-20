@@ -154,16 +154,43 @@ bambuRouter.post("/create", asyncHandler(async (req, res) => {
   const mode = parsed.data.mode;
   const credDevices = s.devices.map((d) => ({ serial: d.dev_id, accessCode: d.access_code ?? "", name: d.name, model: d.model ?? "" }));
   const configDevices = s.devices.map((d) => ({ serial: d.dev_id, name: d.name, model: d.model ?? null, online: d.online }));
-  const row = await platform().devices.connections().create(ctx.org.id, {
-    type: "bambu",
-    label: parsed.data.label?.trim() || `Bambu (${s.email})`,
-    base_url: "bambu-cloud://account",
-    // Secrets + per-device access codes ride in the encrypted creds blob.
-    creds: { token: s.token, mqttUser: s.username ?? "", region: s.region, mode, account_email: s.email, devices: credDevices },
-    // Non-secret display copy for the UI (no access codes).
-    config: { mode, region: s.region, account_email: s.email, devices: configDevices },
-  });
+  const creds = { token: s.token, mqttUser: s.username ?? "", region: s.region, mode, account_email: s.email, devices: credDevices };
+  const config = { mode, region: s.region, account_email: s.email, devices: configDevices };
+  const store = platform().devices.connections();
+
+  // Idempotent on the account: signing into the SAME Bambu account again refreshes
+  // its existing connection (new token + device list, id preserved so machine
+  // links survive) instead of spawning a duplicate that would split the fleet view
+  // and clutter the account picker. Matched on the non-secret account_email.
+  const email = s.email.toLowerCase();
+  const existing = (await store.list(ctx.org.id))
+    .find((c) => c.type === "bambu" && String((c.config as { account_email?: string }).account_email ?? "").toLowerCase() === email);
+
+  let row;
+  if (existing) {
+    // Keep the user's chosen label + the same id; refresh secrets, mode, devices.
+    row = await store.update(ctx.org.id, existing.id, { config, creds: creds as unknown as Record<string, string | null> });
+    if (!row) return void res.status(500).json({ error: { code: "update_failed", message: "Couldn't refresh the Bambu connection" } });
+  } else {
+    row = await store.create(ctx.org.id, {
+      type: "bambu",
+      label: parsed.data.label?.trim() || `Bambu (${s.email})`,
+      base_url: "bambu-cloud://account",
+      // Secrets + per-device access codes ride in the encrypted creds blob;
+      // config is the non-secret display copy (no access codes).
+      creds,
+      config,
+    });
+    void platform().events.emit("digifab.connection.created", { orgId: ctx.org.id, rowId: row.id });
+  }
   sessions.delete(parsed.data.session); // one-shot
-  void platform().events.emit("digifab.connection.created", { orgId: ctx.org.id, rowId: row.id });
-  res.status(201).json({ connection: row, devices: publicDevices(s.devices), capabilities: caps });
+  res.status(existing ? 200 : 201).json({ connection: row, devices: publicDevices(s.devices), capabilities: caps });
+}));
+
+// ── GET /capabilities — the per-mode capability table, one source of truth ────
+// So the UI can show what a connection can do (monitor/control) + WHY, and which
+// modes are actually available, without duplicating the rules client-side.
+bambuRouter.get("/capabilities", asyncHandler(async (req, res) => {
+  if (!requireRole(req, res, "owner", "admin", "member")) return;
+  res.json({ modes: { cloud: modeCapabilities("cloud"), lan: modeCapabilities("lan"), hybrid: modeCapabilities("hybrid") } });
 }));

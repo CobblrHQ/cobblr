@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Multi-stage Dockerfile for the cobblr-web service. Vite build →
 # nginx serves the static SPA + proxies /api to the api container.
-# BuildKit (enabled in CI) makes the npm-cache mount below persist npm's
+# BuildKit (enabled in CI) makes the pnpm-store cache mount below persists pnpm's
 # download cache across builds.
 
 # ─── builder ─────────────────────────────────────────────────────────
@@ -18,7 +18,7 @@ WORKDIR /app
 # on "gyp ERR! find Python" whenever the prebuilt fetch hiccups.
 RUN apk add --no-cache python3 make g++
 
-COPY package.json package-lock.json* tsconfig.base.json ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY web/package.json ./web/
 COPY api/package.json ./api/
 COPY packages/platform-contract/package.json ./packages/platform-contract/
@@ -35,8 +35,9 @@ COPY modules/sales/package.json ./modules/sales/
 COPY modules/tracking/package.json ./modules/tracking/
 COPY modules/core-file-preview/package.json ./modules/core-file-preview/
 
-RUN --mount=type=cache,target=/root/.npm \
-    npm install --workspaces --include-workspace-root --no-audit --no-fund
+RUN corepack enable
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile
 
 COPY packages/platform-contract ./packages/platform-contract
 COPY packages/platform-web ./packages/platform-web
@@ -55,8 +56,9 @@ COPY modules/tracking ./modules/tracking
 COPY modules/core-file-preview ./modules/core-file-preview
 COPY web ./web
 
-WORKDIR /app/web
-RUN npm run build
+# Build web from the workspace ROOT via --filter (NOT `pnpm run build` from inside
+# /app/web, which re-installs/re-downloads the whole store). Just runs the build.
+RUN pnpm --filter @cobblr/web run build
 
 # Sandboxed module UIs. Each module that ships a `ui/` dir gets
 # its assets served at /sandboxed/<name>/ alongside the main SPA.

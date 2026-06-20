@@ -8,6 +8,7 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Printer } from "lucide-react";
+import { BambuPrinterPicker } from "./BambuPrinterPicker";
 import { useToast } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ApiError, api, type BambuDiscoveredDevice, type DigifabConnection, type BambuLoginResponse } from "../lib/api";
@@ -112,15 +113,7 @@ export function BambuConnectWizard({
             {devices.length === 0 ? (
               <p className="text-sm text-muted">No printers found on this account.</p>
             ) : (
-              <div className="space-y-1">
-                {devices.map((d) => (
-                  <div key={d.dev_id} className="flex items-center gap-2 px-2 py-1.5 rounded border border-line dark:border-slate-600">
-                    <Printer size={13} className="text-faint" />
-                    <span className="text-sm text-content flex-1">{d.name}{d.model ? ` · ${d.model}` : ""}</span>
-                    <span className={"text-[10px] font-mono uppercase " + (d.online ? "text-emerald-500" : "text-faint")}>{d.online ? "online" : "offline"}</span>
-                  </div>
-                ))}
-              </div>
+              <BambuPrinterPicker devices={devices} />
             )}
           </div>
           <p className="text-[11px] text-faint">Cloud mode gives live status & temps. Remote start/pause isn't possible over the cloud (Bambu blocks third-party control) — that needs LAN + Developer Mode, coming soon.</p>

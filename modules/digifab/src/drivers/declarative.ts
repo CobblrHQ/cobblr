@@ -26,8 +26,28 @@ const JOB_STATES = new Set<JobState>([
 
 export class DeclarativeDriver implements MachineDriver {
   private base: string;
+  // Live-control of a running print. Defined ONLY when the manifest carries the
+  // matching command, so a manager without it stays cleanly "unsupported" (the
+  // API 501s on a missing method) instead of failing at call time. A manifest
+  // adds pause/resume/cancel by declaring `commands.{pause,resume,cancel}`.
+  pauseJob?: (jobId: string) => Promise<void>;
+  resumeJob?: (jobId: string) => Promise<void>;
+  cancelJob?: (jobId: string) => Promise<void>;
   constructor(private manifest: DriverManifest, private cfg: ManagerConfig) {
     this.base = cfg.baseUrl.replace(/\/+$/, "");
+    const cmds = this.manifest.commands ?? {};
+    if (cmds.pause) this.pauseJob = (jobId) => this.runJobCommand("pause", jobId);
+    if (cmds.resume) this.resumeJob = (jobId) => this.runJobCommand("resume", jobId);
+    if (cmds.cancel) this.cancelJob = (jobId) => this.runJobCommand("cancel", jobId);
+  }
+
+  /** Run a job-control command (pause/resume/cancel) from the manifest. The job's
+   *  ref is exposed as {jobId} + {fileId} so a manager that needs it in the path/
+   *  body can template it; static commands ignore them. Throws on a non-ok manager
+   *  response so the API surfaces the failure rather than a silent no-op. */
+  private async runJobCommand(name: string, jobId: string): Promise<void> {
+    const r = await this.runCommand(name, { jobId, fileId: jobId });
+    if (!r.ok) throw new Error(r.detail ?? `${name} not accepted by the manager`);
   }
 
   // ── helpers ──────────────────────────────────────────────────────────

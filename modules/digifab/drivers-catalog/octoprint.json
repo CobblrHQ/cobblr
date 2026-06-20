@@ -46,5 +46,10 @@
       },
       "progress": "$.progress.completion"
     }
+  },
+  "commands": {
+    "pause": { "method": "POST", "path": "/api/job", "body": { "command": "pause", "action": "pause" } },
+    "resume": { "method": "POST", "path": "/api/job", "body": { "command": "pause", "action": "resume" } },
+    "cancel": { "method": "POST", "path": "/api/job", "body": { "command": "cancel" } }
   }
 }

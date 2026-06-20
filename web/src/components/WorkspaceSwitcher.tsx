@@ -2,12 +2,32 @@
 // to open a popover listing every org the user belongs to (active
 // one checkmarked) plus a "Create new workspace" footer that
 // launches the CreateWorkspaceModal.
+//
+// Your OWNED workspaces are drag-to-reorder (a per-user order persisted via
+// PATCH /me/workspaces/order) and renamable (owner-only; display name is safe,
+// the URL slug is an advanced/risky opt-in). Shared workspaces stay grouped
+// below in their persisted order.
 
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
 import { useMutation } from "@tanstack/react-query";
-import { Check, ChevronDown, Plus, Users } from "lucide-react";
-import { ApiError, api } from "../lib/api";
+import { Check, ChevronDown, GripVertical, Pencil, Plus, Users } from "lucide-react";
+import {
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { ApiError, api, type OrgMembership } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { displaySlug } from "../lib/workspaceSlug";
@@ -15,17 +35,22 @@ import { Modal, useToast } from "@cobblr/platform-web";
 import { MembersModal } from "./MembersModal";
 
 export function WorkspaceSwitcher() {
-  const { orgs } = useAuth();
+  const { orgs, setOrgs, refreshMe } = useAuth();
   const { activeOrg, activeSlug, setActiveSlug } = useActiveOrg();
+  const toast = useToast();
   const [open, setOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [manageSlug, setManageSlug] = useState<string | null>(null);
+  const [renameSlug, setRenameSlug] = useState<string | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   // The menu is portaled to <body> so the header's `overflow-x-clip` (which
   // also clips vertically per spec) + backdrop-blur don't hide it. Positioned
   // with `fixed` from the button's rect.
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+
+  // Drag only after a 6px move so a plain click on a row still selects it.
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -79,6 +104,42 @@ export function WorkspaceSwitcher() {
     window.location.assign(`/w/${slug}/dashboard`);
   }
 
+  const owned = orgs.filter((o) => o.role === "owner");
+  const shared = orgs.filter((o) => o.role !== "owner");
+
+  // Persist a new order for the OWNED group. We optimistically reorder locally,
+  // then persist the full sequence (owned-then-shared) so positions are stable.
+  async function persistOrder(nextOwned: OrgMembership[]) {
+    const next = [...nextOwned, ...shared];
+    setOrgs(next);
+    try {
+      await api.reorderWorkspaces(next.map((o) => o.slug));
+    } catch {
+      toast.error("Couldn't save the new order.");
+      await refreshMe(); // revert to the server's truth
+    }
+  }
+
+  function onDragEnd(e: DragEndEvent) {
+    const { active, over } = e;
+    if (!over || active.id === over.id) return;
+    const from = owned.findIndex((o) => o.slug === active.id);
+    const to = owned.findIndex((o) => o.slug === over.id);
+    if (from < 0 || to < 0) return;
+    void persistOrder(arrayMove(owned, from, to));
+  }
+
+  const header = (label: string, border: boolean) => (
+    <li
+      className={
+        "px-3 pt-2 pb-1 text-[9px] font-mono uppercase tracking-widest text-muted dark:text-slate-500 " +
+        (border ? "border-t border-line dark:border-slate-800 mt-1" : "")
+      }
+    >
+      {label}
+    </li>
+  );
+
   // min-w-0 here AND on the button so the name actually truncates to the space
   // left after the icons — otherwise on a narrow (mobile) header the full
   // workspace name renders and the action icons overlap it.
@@ -100,77 +161,33 @@ export function WorkspaceSwitcher() {
           className="w-72 max-w-[calc(100vw-1rem)] rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg z-[100] overflow-hidden"
         >
           <ul className="max-h-80 overflow-y-auto">
-            {(() => {
-              const owned = orgs.filter((o) => o.role === "owner");
-              const shared = orgs.filter((o) => o.role !== "owner");
-              const header = (label: string, border: boolean) => (
-                <li
-                  className={
-                    "px-3 pt-2 pb-1 text-[9px] font-mono uppercase tracking-widest text-muted dark:text-slate-500 " +
-                    (border ? "border-t border-line dark:border-slate-800 mt-1" : "")
-                  }
-                >
-                  {label}
-                </li>
-              );
-              const row = (o: (typeof orgs)[number]) => {
-                // Only owners/admins manage members — editors/members can't.
-                const canManage = o.role === "owner" || o.role === "admin";
-                return (
-                  <li key={o.id} className="group flex items-stretch hover:bg-subtle dark:hover:bg-slate-800 transition">
-                    <button
-                      onClick={() => pick(o.slug)}
-                      className="flex-1 text-left px-3 py-2 flex items-center gap-2 min-w-0"
-                    >
-                      <Check
-                        size={12}
-                        className={o.slug === activeSlug ? "text-accent dark:text-cobble-300" : "text-transparent"}
-                      />
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm text-content dark:text-mortar-100 truncate flex items-center gap-1.5">
-                          <span className="truncate">{o.name}</span>
-                          {/* On a workspace you don't own, your role is the key
-                              signal ("I'm an editor here") — show it as a badge. */}
-                          {o.role !== "owner" && (
-                            <span className="shrink-0 text-[9px] font-mono uppercase tracking-wide px-1 py-0.5 rounded bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300">
-                              {o.role}
-                            </span>
-                          )}
-                        </div>
-                        {/* On a workspace you don't own, name the owner — that's
-                            what resolves "whose 'Yarn' is this?". The unique slug
-                            disambiguates further. */}
-                        <div className="text-[10px] font-mono text-faint dark:text-slate-500 truncate">
-                          {o.role !== "owner" && o.owner_name ? `owner: ${o.owner_name} · ` : ""}
-                          {displaySlug(o.slug)}
-                        </div>
-                      </div>
-                    </button>
-                    {canManage && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setOpen(false);
-                          setManageSlug(o.slug);
-                        }}
-                        className="px-3 text-faint dark:text-slate-500 hover:text-accent dark:hover:text-cobble-300 opacity-0 group-hover:opacity-100 focus:opacity-100 transition"
-                        title={`Manage members + invites for ${o.name}`}
-                      >
-                        <Users size={13} />
-                      </button>
-                    )}
-                  </li>
-                );
-              };
-              return (
-                <>
-                  {owned.length > 0 && header("your workspaces", false)}
-                  {owned.map(row)}
-                  {shared.length > 0 && header("shared with you", owned.length > 0)}
-                  {shared.map(row)}
-                </>
-              );
-            })()}
+            {owned.length > 0 && header("your workspaces", false)}
+            {owned.length > 0 && (
+              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+                <SortableContext items={owned.map((o) => o.slug)} strategy={verticalListSortingStrategy}>
+                  {owned.map((o) => (
+                    <SortableRow
+                      key={o.id}
+                      org={o}
+                      active={o.slug === activeSlug}
+                      onPick={() => pick(o.slug)}
+                      onManage={() => { setOpen(false); setManageSlug(o.slug); }}
+                      onRename={() => { setOpen(false); setRenameSlug(o.slug); }}
+                    />
+                  ))}
+                </SortableContext>
+              </DndContext>
+            )}
+            {shared.length > 0 && header("shared with you", owned.length > 0)}
+            {shared.map((o) => (
+              <WorkspaceRow
+                key={o.id}
+                org={o}
+                active={o.slug === activeSlug}
+                onPick={() => pick(o.slug)}
+                onManage={o.role === "admin" ? () => { setOpen(false); setManageSlug(o.slug); } : undefined}
+              />
+            ))}
           </ul>
           <button
             onClick={openCreate}
@@ -192,7 +209,228 @@ export function WorkspaceSwitcher() {
         onClose={() => setManageSlug(null)}
         slug={manageSlug ?? ""}
       />
+      <RenameWorkspaceModal
+        open={!!renameSlug}
+        org={orgs.find((o) => o.slug === renameSlug) ?? null}
+        isActive={renameSlug === activeSlug}
+        onClose={() => setRenameSlug(null)}
+      />
     </div>
+  );
+}
+
+/** One workspace row. `dragHandle` is supplied by SortableRow for owned rows. */
+function WorkspaceRow({
+  org: o,
+  active,
+  onPick,
+  onManage,
+  onRename,
+  dragHandle,
+}: {
+  org: OrgMembership;
+  active: boolean;
+  onPick: () => void;
+  onManage?: () => void;
+  onRename?: () => void;
+  dragHandle?: React.ReactNode;
+}) {
+  return (
+    <li className="group flex items-stretch hover:bg-subtle dark:hover:bg-slate-800 transition">
+      {dragHandle}
+      <button onClick={onPick} className="flex-1 text-left px-3 py-2 flex items-center gap-2 min-w-0">
+        <Check size={12} className={active ? "text-accent dark:text-cobble-300" : "text-transparent"} />
+        <div className="flex-1 min-w-0">
+          <div className="text-sm text-content dark:text-mortar-100 truncate flex items-center gap-1.5">
+            <span className="truncate">{o.name}</span>
+            {/* On a workspace you don't own, your role is the key signal. */}
+            {o.role !== "owner" && (
+              <span className="shrink-0 text-[9px] font-mono uppercase tracking-wide px-1 py-0.5 rounded bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300">
+                {o.role}
+              </span>
+            )}
+          </div>
+          <div className="text-[10px] font-mono text-faint dark:text-slate-500 truncate">
+            {o.role !== "owner" && o.owner_name ? `owner: ${o.owner_name} · ` : ""}
+            {displaySlug(o.slug)}
+          </div>
+        </div>
+      </button>
+      {onRename && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onRename(); }}
+          className="px-2 text-faint dark:text-slate-500 hover:text-accent dark:hover:text-cobble-300 opacity-0 group-hover:opacity-100 focus:opacity-100 transition"
+          title={`Rename ${o.name}`}
+        >
+          <Pencil size={13} />
+        </button>
+      )}
+      {onManage && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onManage(); }}
+          className="px-3 text-faint dark:text-slate-500 hover:text-accent dark:hover:text-cobble-300 opacity-0 group-hover:opacity-100 focus:opacity-100 transition"
+          title={`Manage members + invites for ${o.name}`}
+        >
+          <Users size={13} />
+        </button>
+      )}
+    </li>
+  );
+}
+
+/** An owned row wrapped for drag-to-reorder (grip handle on the left). */
+function SortableRow(props: {
+  org: OrgMembership;
+  active: boolean;
+  onPick: () => void;
+  onManage: () => void;
+  onRename: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: props.org.slug });
+  return (
+    <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.6 : 1 }}>
+      <WorkspaceRow
+        {...props}
+        onManage={props.org.role === "owner" || props.org.role === "admin" ? props.onManage : undefined}
+        dragHandle={
+          <button
+            type="button"
+            {...attributes}
+            {...listeners}
+            className="px-1.5 flex items-center text-faint dark:text-slate-600 hover:text-muted dark:hover:text-slate-400 cursor-grab active:cursor-grabbing touch-none"
+            title="Drag to reorder"
+            aria-label="Drag to reorder"
+          >
+            <GripVertical size={13} />
+          </button>
+        }
+      />
+    </div>
+  );
+}
+
+/** Owner-only rename. Display name is the safe, recommended path; changing the
+ *  URL slug is an explicit "advanced" opt-in (it breaks existing links). */
+export function RenameWorkspaceModal({
+  open,
+  org,
+  isActive,
+  onClose,
+}: {
+  open: boolean;
+  org: OrgMembership | null;
+  isActive: boolean;
+  onClose: () => void;
+}) {
+  const { refreshMe } = useAuth();
+  const toast = useToast();
+  const [name, setName] = useState("");
+  const [advanced, setAdvanced] = useState(false);
+  const [slug, setSlug] = useState("");
+
+  useEffect(() => {
+    if (open && org) {
+      setName(org.name);
+      setSlug(displaySlug(org.slug));
+      setAdvanced(false);
+    }
+  }, [open, org]);
+
+  const rename = useMutation({
+    mutationFn: () => {
+      const body: { name?: string; slug?: string } = {};
+      if (org && name.trim() && name.trim() !== org.name) body.name = name.trim();
+      if (org && advanced && slug.trim() && slug.trim() !== displaySlug(org.slug)) body.slug = slug.trim();
+      return api.renameOrg(org!.slug, body);
+    },
+    onSuccess: async (r) => {
+      toast.success("Workspace renamed.");
+      onClose();
+      // If the slug changed for the workspace we're currently in, the URL
+      // basename is now stale — hard-navigate to the new one. Otherwise just
+      // refresh the orgs list so the new name shows in the switcher.
+      if (org && r.slug !== org.slug && isActive) {
+        window.location.assign(`/w/${r.slug}/dashboard`);
+      } else {
+        await refreshMe();
+      }
+    },
+    onError: (e: unknown) => {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't rename the workspace.");
+    },
+  });
+
+  const slugChanged = !!org && advanced && slug.trim() !== "" && slug.trim() !== displaySlug(org.slug);
+  const nameChanged = !!org && name.trim() !== "" && name.trim() !== org.name;
+  const canSave = !!org && (nameChanged || slugChanged) && !rename.isPending;
+
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    if (!canSave) return;
+    rename.mutate();
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title="Rename workspace" size="sm">
+      <form onSubmit={submit} className="space-y-4">
+        <label className="block">
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+            Workspace name
+          </span>
+          <input value={name} onChange={(e) => setName(e.target.value)} className="input" autoFocus maxLength={120} />
+          <span className="mt-1 block text-[11px] text-muted dark:text-slate-400">
+            Safe to change anytime — only the display name updates. Links keep working.
+          </span>
+        </label>
+
+        {!advanced ? (
+          <button
+            type="button"
+            onClick={() => setAdvanced(true)}
+            className="text-[11px] text-faint dark:text-slate-500 hover:text-accent transition"
+          >
+            Advanced — change the URL too →
+          </button>
+        ) : (
+          <label className="block">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+              URL handle
+            </span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-mono text-faint dark:text-slate-500 shrink-0">/w/</span>
+              <input
+                value={slug}
+                onChange={(e) => setSlug(e.target.value)}
+                className="input font-mono"
+                maxLength={60}
+                placeholder="my-workspace"
+              />
+            </div>
+            <span className="mt-1 block text-[11px] text-ember-600 dark:text-ember-400">
+              ⚠ Risky — every existing bookmark, shared link, and API token that
+              uses the old URL will break. Only change this if you know what you're doing.
+            </span>
+          </label>
+        )}
+
+        <div className="flex items-center justify-end gap-2 pt-2 border-t border-line dark:border-slate-700">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-3 py-1.5 rounded-md text-sm font-medium text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800 transition"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={!canSave}
+            className="px-3 py-1.5 rounded-md text-sm font-medium bg-slate-700 hover:bg-slate-600 text-mortar-50 transition disabled:opacity-50"
+          >
+            {rename.isPending ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 

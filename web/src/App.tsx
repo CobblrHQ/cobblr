@@ -31,6 +31,7 @@ import { FeedbackWidget } from "./components/FeedbackWidget";
 import { Dashboard } from "./pages/Dashboard";
 import { InviteAcceptPage } from "./pages/InviteAcceptPage";
 import { JoinPage } from "./pages/JoinPage";
+import { JoinMachinesPage } from "./pages/JoinMachinesPage";
 import { PublicSurfacePage } from "./pages/PublicSurfacePage";
 import { ChangelogPage } from "./pages/ChangelogPage";
 import { QrResolvePage } from "./pages/QrResolvePage";
@@ -73,6 +74,7 @@ const UnitsPage = lazy(() => import("./pages/UnitsPage").then((m) => ({ default:
 const BackupPage = lazy(() => import("./pages/BackupPage").then((m) => ({ default: m.BackupPage })));
 const CalendarPage = lazy(() => import("./pages/CalendarPage").then((m) => ({ default: m.CalendarPage })));
 const QrTokensPage = lazy(() => import("./pages/QrTokensPage").then((m) => ({ default: m.QrTokensPage })));
+const ScanRulesPage = lazy(() => import("./pages/ScanRulesPage").then((m) => ({ default: m.ScanRulesPage })));
 const HealthPage = lazy(() => import("./pages/HealthPage").then((m) => ({ default: m.HealthPage })));
 const OpenApiPage = lazy(() => import("./pages/OpenApiPage").then((m) => ({ default: m.OpenApiPage })));
 const QueuePage = lazy(() => import("./pages/QueuePage").then((m) => ({ default: m.QueuePage })));
@@ -206,6 +208,9 @@ function PublicRoutes() {
       {/* /join/:token — redeem a single-use signup invite into a NEW
           account + workspace, even when public signup is disabled. */}
       <Route path="/join/:token" element={<JoinPage />} />
+      {/* /join-machines/:ownerOrg/:token — accept an invite to another
+          workspace's edge-bridge machines; pick which of your workspaces. */}
+      <Route path="/join-machines/:ownerOrg/:token" element={<JoinMachinesPage />} />
       {/* Password reset + email verification from emailed links — public,
           the token is the secret. */}
       <Route path="/reset/:token" element={<ResetPasswordPage />} />
@@ -478,6 +483,10 @@ function ActiveOrgScopedRoutes() {
           <Route path="/configuration/form-builder" element={<FormBuilderPage />} />
           <Route path="/configuration/tokens" element={<ApiTokensPage />} />
           <Route path="/configuration/surfaces" element={<SurfacesPage />} />
+          {/* digifab is a domain (bare module name) → the navbar links to its
+              top path `/digifab`. Route it there as well as the Configuration
+              deep-link, or the nav entry falls through to the home redirect. */}
+          <Route path="/digifab" element={<DigifabPage />} />
           <Route path="/configuration/digifab" element={<DigifabPage />} />
           <Route path="/configuration/print" element={<PrintPage />} />
           <Route path="/configuration/maintenance" element={<MaintenancePage />} />
@@ -485,6 +494,7 @@ function ActiveOrgScopedRoutes() {
           <Route path="/configuration/backup" element={<BackupPage />} />
           <Route path="/calendar" element={<CalendarPage />} />
           <Route path="/configuration/qr-tokens" element={<QrTokensPage />} />
+          <Route path="/configuration/scan-rules" element={<ScanRulesPage />} />
           <Route path="/configuration/health" element={<HealthPage />} />
           <Route path="/configuration/locations" element={<LocationsPage />} />
           <Route path="/configuration/locations/:id" element={<LocationDetailPage />} />

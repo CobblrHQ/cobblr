@@ -43,16 +43,6 @@ export async function buildDriverById(
   if (conn.credentials_enc) {
     creds = await platform().integrations.decryptCredentials(orgId, conn.credentials_enc);
   }
-  // A "cobblr-edge://" base_url means this edge_adapter connection is reached via
-  // the cloud→edge TUNNEL (the agent dials out) rather than a direct bridge URL.
-  // Build the relay closure here, where platform().edge + orgId are in hand, so
-  // the pure driver stays platform-free. The relay errors if no agent is connected.
-  const relay: EdgeRelay | null = /^cobblr-edge:/i.test(conn.base_url)
-    ? async (r) => {
-        const res = await platform().edge.send(orgId, { path: r.path, method: r.method === "POST" ? "POST" : "GET", body: r.body });
-        return { status: res.status, body: res.body };
-      }
-    : null;
   return resolveDriver(
     db,
     conn.type,
@@ -64,8 +54,93 @@ export async function buildDriverById(
       extra: { creds },
     },
     conn.id,
-    relay,
+    buildEdgeRelay(orgId, conn.base_url, creds.edge as { driver?: unknown; config?: unknown } | undefined, creds.shared as { owner_org?: unknown } | undefined),
   );
+}
+
+/** The driver config to ship down the tunnel for an edge instance. `creds.edge`
+ *  is stored FLAT by connections.ts — `{ driver, host, apiKey, … }` — so the
+ *  driver's config is every field EXCEPT `driver`. (A bug shipped where this read
+ *  a nested `edge.config` that's never written, so `host` was dropped and the
+ *  bridge looped "prusalink driver needs host".) Tolerates a nested `{ config }`
+ *  too, for forward-compat. */
+function edgeDriverConfig(edge: { driver?: unknown; config?: unknown }): Record<string, unknown> {
+  if (edge.config && typeof edge.config === "object") return edge.config as Record<string, unknown>;
+  const rest: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(edge as Record<string, unknown>)) {
+    if (k !== "driver") rest[k] = v;
+  }
+  return rest;
+}
+
+/** The cloud→edge tunnel relay closure for a `cobblr-edge://` connection: routes
+ *  every edge-adapter call through the agent that dialed out (platform().edge),
+ *  so the cloud never fetches a private IP (no SSRF surface). Null for a direct
+ *  `http(s)://` bridge URL. Shared by every driver-build path (jobs, fleet,
+ *  connection test/listDevices) so the tunnel works end to end, not just for jobs. */
+export function buildEdgeRelay(
+  orgId: string,
+  baseUrl: string,
+  edge?: { driver?: unknown; config?: unknown } | null,
+  shared?: { owner_org?: unknown; owner_conn_id?: unknown; share_id?: unknown; scope?: unknown } | null,
+): EdgeRelay | null {
+  if (!/^cobblr-edge:/i.test(baseUrl)) return null;
+  const id = (/^cobblr-edge:\/\/(.*)$/i.exec(baseUrl)?.[1] ?? "").replace(/^\/+|\/+$/g, "");
+
+  // SHARED pointer (this connection was redeemed from another workspace's invite).
+  // Route through the OWNER's bridge channel, assembling the request from the
+  // owner's machine config SERVER-SIDE (their creds never reach this workspace),
+  // and enforce the grant LIVE on every call: revoked/expired → blocked; read
+  // scope → GET only, so every upload/submit/command/pause (POST) is refused.
+  const ownerOrg = typeof shared?.owner_org === "string" ? shared.owner_org : null;
+  const ownerConnId = typeof shared?.owner_conn_id === "string" ? shared.owner_conn_id : null;
+  const shareId = typeof shared?.share_id === "string" ? shared.share_id : null;
+  if (ownerOrg && ownerConnId && shareId) {
+    const scope = shared?.scope === "write" ? "write" : "read";
+    return async (r) => {
+      const method = r.method === "POST" ? "POST" : "GET";
+      if (scope === "read" && method !== "GET") {
+        return { status: 403, body: { error: { code: "read_only", message: "This shared machine is read-only." } } };
+      }
+      const odb = (await platform().tenants.getDb(ownerOrg)) as Kysely<DigifabDB>;
+      try {
+        const grant = await odb
+          .selectFrom("digifab_edge_shares")
+          .select(["revoked_at", "expires_at"])
+          .where("id", "=", shareId)
+          .executeTakeFirst();
+        if (!grant || grant.revoked_at || (grant.expires_at && new Date(grant.expires_at).getTime() < Date.now())) {
+          return { status: 403, body: { error: { code: "revoked", message: "Access to this shared machine was revoked." } } };
+        }
+        const oc = await platform().devices.connections().getInternal(ownerOrg, ownerConnId);
+        if (!oc?.credentials_enc) return { status: 502, body: { error: { code: "unavailable", message: "Shared machine unavailable." } } };
+        const ownerCreds = (await platform().integrations.decryptCredentials(ownerOrg, oc.credentials_enc)) as { edge?: { driver?: unknown; config?: unknown } };
+        const oe = ownerCreds.edge;
+        const instance = id && oe && typeof oe.driver === "string" && oe.driver ? { id, driver: oe.driver, config: edgeDriverConfig(oe) } : undefined;
+        const res = await platform().edge.send(ownerOrg, { path: r.path, method, body: r.body, ...(instance ? { instance } : {}) });
+        void odb.updateTable("digifab_edge_shares").set({ last_used_at: new Date() }).where("id", "=", shareId).execute().catch(() => {});
+        return { status: res.status, body: res.body };
+      } finally {
+        await platform().tenants.releaseIdleDb(ownerOrg);
+      }
+    };
+  }
+
+  // OWNER's own machine: the instance segment + the machine's config (driver +
+  // host + key) ride WITH the request so a dynamic-config bridge configures the
+  // driver on the fly. Omitted if no config stored (a static bridge routes by path).
+  const instance = id && edge && typeof edge.driver === "string" && edge.driver
+    ? { id, driver: edge.driver, config: edgeDriverConfig(edge) }
+    : undefined;
+  return async (r) => {
+    const res = await platform().edge.send(orgId, {
+      path: r.path,
+      method: r.method === "POST" ? "POST" : "GET",
+      body: r.body,
+      ...(instance ? { instance } : {}),
+    });
+    return { status: res.status, body: res.body };
+  };
 }
 
 /** Poll one job: getJobStatus → persist → emit on terminal. Returns the

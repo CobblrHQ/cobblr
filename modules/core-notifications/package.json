@@ -15,7 +15,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@cobblr/platform-contract": "*"
+    "@cobblr/platform-contract": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.2"

@@ -35,6 +35,7 @@ import {
   Plug,
   Printer,
   QrCode,
+  ScanLine,
   Ruler,
   Search,
   Sliders,
@@ -318,6 +319,14 @@ export function ConfigurationPage() {
         "Every QR token the workspace has minted — what each points at, whether it's public, when it expires. Copy a scan URL or revoke a token whose printed label walked off.",
       to: "/configuration/qr-tokens",
     },
+    {
+      group: "data",
+      icon: ScanLine,
+      label: "External QR rules",
+      description:
+        "Teach the scanner to read QR labels printed by another app (a companion app URL, a bare Homebox number, …) and open the matching item here — so labels you already printed keep working without a reprint.",
+      to: "/configuration/scan-rules",
+    },
     // ── people + access ────────────────────────────────────────────
     {
       group: "access",
@@ -383,14 +392,6 @@ export function ConfigurationPage() {
       description:
         "Connect to Slack, Discord, email, or any webhook — outbound and inbound. Wire entity events to messages, or accept external webhooks as platform events.",
       to: "/configuration/integrations",
-    },
-    {
-      group: "extend",
-      icon: Printer,
-      label: "Digital Fabrication",
-      description:
-        "Send a design file to the software that runs your machine — FDM Monster, OctoPrint + — and track the job to completion. Map its printers to your machines and route files to them. Sends files; never drives hardware.",
-      to: "/configuration/digifab",
     },
     {
       group: "extend",

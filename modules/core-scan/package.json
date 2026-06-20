@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/core-scan",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "main": "dist/module.js",
@@ -27,7 +27,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@cobblr/platform-contract": "*",
+    "@cobblr/platform-contract": "workspace:*",
     "express": "^4.21.2",
     "kysely": "^0.27.5",
     "pdf-parse": "^2.4.5",

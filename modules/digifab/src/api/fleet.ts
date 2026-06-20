@@ -16,6 +16,7 @@ import { platform } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext } from "../db.js";
 import { asyncHandler, requireRole } from "./util.js";
 import { putSnapshot, getSnapshot, freshSnapshotKeys } from "../snapshot-store.js";
+import { getBambuStatusMap } from "../bambu-status-store.js";
 import { buildDriverById } from "../jobs-core.js";
 import { availableDriverKeys } from "../drivers/registry.js";
 import { classify } from "../state.js";
@@ -139,13 +140,17 @@ fleetRouter.get(
             return { connection_id: c.id, label: c.label, type: c.type, error: "driver unavailable", fetched_at: null, devices: [] };
           }
           const { devices, at } = await fetchDevicesCached(driver, c.id);
+          // For a cloud Bambu, prefer the live MQTT telemetry the pump caches
+          // (real-time temps/progress/state) over the slower HTTP list.
+          const bambuLive = c.type === "bambu" ? await getBambuStatusMap(db, c.id) : null;
           const mapped = devices.map((d) => {
             const job = jobs.find((j) => j.connection_id === c.id && j.target_device === d.id) ?? null;
             const link = links.find((l) => l.connection_id === c.id && l.remote_device_id === d.id) ?? null;
             const pool = poolRows.find((p) => p.connection_id === c.id && p.remote_device_id === d.id) ?? null;
             const att = attention.find((a) => a.connection_id === c.id && a.remote_device_id === d.id) ?? null;
             const setting = settings.find((s) => s.connection_id === c.id && s.remote_device_id === d.id) ?? null;
-            const state = d.state ?? "unknown";
+            const live = bambuLive?.get(d.id) ?? null;
+            const state = live?.state ?? d.state ?? "unknown";
             return {
               id: d.id,
               name: d.name,
@@ -156,12 +161,17 @@ fleetRouter.get(
               linked_machine_id: link?.machine_id ?? null,
               pool_id: pool?.pool_id ?? null,
               pool_name: pool?.pool_name ?? null,
-              // Cockpit: live temps (driver-reported) + a camera stream URL
-              // (manual override wins over driver-reported). Embed-only.
-              temps: d.temps ?? null,
+              // Cockpit: live temps — the Bambu cloud-MQTT pump's reading wins
+              // over the slower driver-reported one when fresh. Embed-only.
+              temps: live?.temps ?? d.temps ?? null,
               // Current job sub-stage (preheating/leveling/…) when reported —
               // answers "why isn't it printing yet". Display-only.
-              stage: d.stage ?? null,
+              stage: live?.stage ?? d.stage ?? null,
+              // Real-time print progress straight from the printer (Bambu cloud
+              // MQTT), for a print Cobblr didn't start so there's no active_job.
+              live: live
+                ? { progress: live.progress, remaining_min: live.remaining_min, layer_num: live.layer_num, total_layers: live.total_layers }
+                : null,
               camera_url: setting?.camera_url ?? d.camera_url ?? null,
               // Snapshot relay (opt-in, off by default). When on AND a fresh
               // agent-pushed frame exists, the web auth-fetches it from the
