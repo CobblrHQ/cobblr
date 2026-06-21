@@ -4,13 +4,15 @@
 // queue. Sending a file to be made is a deliberate action — the Send
 // button is behind an explicit confirm. We send files, never drive hardware.
 
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect, useRef, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useMutation, useQuery, useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, Wifi, Printer, RefreshCw, Send, ListChecks, Boxes, AlertTriangle, Layers, X, ListPlus, Ban, Camera, Pause, Play, Thermometer, ChevronRight, Share2 } from "lucide-react";
-import { ApiError, api, fetchAuthBlobUrl, type DigifabConnection, type DigifabJob, type DigifabFleetDevice, type DigifabDeviceClass, type BambuMode } from "../lib/api";
+import { Plus, Trash2, Wifi, Printer, RefreshCw, Send, ListChecks, Boxes, AlertTriangle, Layers, X, ListPlus, Ban, Camera, Pause, Play, Thermometer, ChevronRight, Share2, Sliders } from "lucide-react";
+import { ApiError, api, fetchAuthBlobUrl, type DigifabConnection, type DigifabJob, type DigifabFleetDevice, type DigifabDeviceClass, type BambuMode, type DigifabLibraryItem, type DigifabHistory, type DigifabDeviceDetail } from "../lib/api";
 import { BambuConnectWizard } from "../components/BambuConnectWizard";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { PrintUpdatesPanel } from "./PrintUpdatesPanel";
+import { Modal, useToast, useConfirm, usePageTitle, useImageSrc } from "@cobblr/platform-web";
 import { Combobox } from "../components/Combobox";
 
 export function DigifabPage() {
@@ -117,6 +119,8 @@ export function DigifabPage() {
 
       {items.length > 0 && <FleetView slug={activeSlug} />}
       {items.length > 0 && <PoolsSection slug={activeSlug} />}
+      {items.length > 0 && <LibrarySection slug={activeSlug} />}
+      {items.length > 0 && <PrintUpdatesPanel slug={activeSlug} />}
 
       <h2 className="text-sm font-semibold text-content dark:text-mortar-100 pt-2">Connections</h2>
       {list.isLoading && <div className="text-sm text-muted">Loading…</div>}
@@ -580,6 +584,8 @@ function ReassignControl({ job, slug, onDone }: { job: DigifabJob; slug: string;
 function PrintHistorySection({ slug }: { slug: string }) {
   const [open, setOpen] = useState(false);
   const [days, setDays] = useState(30);
+  const [printOpen, setPrintOpen] = useState<DigifabHistory["recent"][number] | null>(null);
+  const [lightbox, setLightbox] = useState<string | null>(null);
   const hist = useQuery({ queryKey: ["digifab-history", slug, days], queryFn: () => api.getDigifabHistory(slug, days), enabled: open });
   const s = hist.data?.summary;
   const rate = s && s.total ? Math.round((s.completed / s.total) * 100) : null;
@@ -629,20 +635,38 @@ function PrintHistorySection({ slug }: { slug: string }) {
                   <div className="text-xs text-muted italic">No finished prints in this window.</div>
                 ) : (
                   <ul className="divide-y divide-line dark:divide-slate-800 border border-line dark:border-slate-700 rounded">
-                    {hist.data!.recent.map((r) => (
-                      <li key={r.id} className="flex items-center gap-2 px-2 py-1 text-xs">
-                        <span className={"w-1.5 h-1.5 rounded-full shrink-0 " + (r.status === "completed" ? "bg-moss-500" : r.status === "failed" ? "bg-ember-500" : "bg-faint")} />
-                        <span className="flex-1 min-w-0 truncate text-content dark:text-mortar-100" title={r.file_ref}>{r.file_ref}</span>
-                        <span className="text-faint truncate max-w-[30%]" title={r.device}>{r.device}</span>
-                        {r.filament_g != null && <span className="text-faint shrink-0">{Math.round(r.filament_g)}g</span>}
-                        <span className="text-faint shrink-0">{new Date(r.at).toLocaleDateString()}</span>
-                      </li>
-                    ))}
+                    {hist.data!.recent.map((r) => {
+                      const durMin = r.duration_s ? Math.round(r.duration_s / 60) : 0;
+                      const dur = durMin >= 60 ? `${Math.floor(durMin / 60)}h ${durMin % 60}m` : durMin > 0 ? `${durMin}m` : null;
+                      return (
+                        <li key={r.id}>
+                        <button type="button" onClick={() => setPrintOpen(r)} className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-left hover:bg-subtle dark:hover:bg-slate-800">
+                          {r.cover ? (
+                            <img src={r.cover} alt="" loading="lazy" className="w-9 h-9 rounded object-cover bg-subtle shrink-0" />
+                          ) : (
+                            <span className={"w-9 h-9 rounded shrink-0 flex items-center justify-center " + (r.status === "completed" ? "bg-moss-500/15" : r.status === "failed" ? "bg-ember-500/15" : "bg-subtle")}>
+                              <span className={"w-1.5 h-1.5 rounded-full " + (r.status === "completed" ? "bg-moss-500" : r.status === "failed" ? "bg-ember-500" : "bg-faint")} />
+                            </span>
+                          )}
+                          <span className="flex-1 min-w-0">
+                            <span className="block truncate text-content dark:text-mortar-100" title={r.file_ref}>{r.file_ref}</span>
+                            {r.sub_label && r.sub_label !== r.file_ref && <span className="block truncate text-faint text-[10px]" title={r.sub_label}>{r.sub_label}</span>}
+                          </span>
+                          <span className="text-faint truncate max-w-[22%] shrink-0" title={r.device}>{r.device}</span>
+                          {dur && <span className="text-faint shrink-0">{dur}</span>}
+                          {r.filament_g != null && <span className="text-faint shrink-0">{Math.round(r.filament_g)}g</span>}
+                          <span className="text-faint shrink-0">{new Date(r.at).toLocaleDateString()}</span>
+                        </button>
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
               </div>
             </>
           )}
+          {printOpen && <PrintDetailModal item={printOpen} onClose={() => setPrintOpen(null)} onZoom={setLightbox} />}
+          {lightbox && <Lightbox src={lightbox} onClose={() => setLightbox(null)} />}
         </div>
       )}
     </div>
@@ -951,6 +975,8 @@ function NewJobModal({
   const [fileId, setFileId] = useState("");
   const [materialPartId, setMaterialPartId] = useState("");
   const [materialGrams, setMaterialGrams] = useState("");
+  const [priority, setPriority] = useState(0);
+  const [maxAttempts, setMaxAttempts] = useState(1);
 
   const pools = useQuery({
     queryKey: ["digifab-pools", activeSlug],
@@ -965,8 +991,8 @@ function NewJobModal({
   });
 
   const machines = useQuery({
-    queryKey: ["machines", activeSlug],
-    queryFn: () => api.listMachines(activeSlug),
+    queryKey: ["digifab-all-machines", activeSlug],
+    queryFn: () => fetchAllMachines(activeSlug),
     enabled: !!activeSlug && routeBy === "machine",
   });
   const printers = useQuery({
@@ -994,6 +1020,8 @@ function NewJobModal({
         material_grams: materialPartId && materialGrams ? Number(materialGrams) : null,
         file_id: fileId || null,
         linked_machine_id: routeBy === "machine" ? machineId || null : null,
+        priority,
+        max_attempts: maxAttempts,
       }),
     onSuccess: () => {
       toast.success(routeBy === "pool" ? "Queued to the pool — auto-assigns to a free printer" : "Job queued");
@@ -1084,6 +1112,27 @@ function NewJobModal({
           </div>
           <span className="text-[11px] text-faint">When the print completes, this many grams is deducted from that spool's stock.</span>
         </label>
+        <div className="grid grid-cols-2 gap-2">
+          <label className="block">
+            <span className={lbl}>Priority</span>
+            <select value={priority} onChange={(e) => setPriority(Number(e.target.value))} className={field}>
+              <option value={0}>Normal</option>
+              <option value={10}>High</option>
+              <option value={20}>Urgent</option>
+            </select>
+            <span className="text-[11px] text-faint">Higher-priority queued jobs assign to a free printer first.</span>
+          </label>
+          <label className="block">
+            <span className={lbl}>Auto-retry on fail</span>
+            <select value={maxAttempts} onChange={(e) => setMaxAttempts(Number(e.target.value))} className={field}>
+              <option value={1}>No retry</option>
+              <option value={2}>1 retry</option>
+              <option value={3}>2 retries</option>
+              <option value={4}>3 retries</option>
+            </select>
+            <span className="text-[11px] text-faint">A failed print re-queues and re-sends up to this many times.</span>
+          </label>
+        </div>
         <label className="block">
           <span className={lbl}>Route by</span>
           <select value={routeBy} onChange={(e) => setRouteBy(e.target.value as typeof routeBy)} className={field}>
@@ -1112,7 +1161,7 @@ function NewJobModal({
             <Combobox
               value={machineId}
               onChange={setMachineId}
-              options={machineList.map((m) => ({ value: m.id, label: m.name }))}
+              options={machineList.map((m) => ({ value: m.id, label: m.instLabel ? `${m.name} · ${m.instLabel}` : m.name }))}
               placeholder="— pick a machine —"
             />
             <span className="text-[11px] text-faint">Routes to the farm printer that machine is linked to.</span>
@@ -1304,17 +1353,26 @@ let machineSeq = 0;
 const newMachine = (driver = "mock"): MachineDraft => ({ key: `m${++machineSeq}`, name: "", driver, cfg: {} });
 const defOf = (m: MachineDraft) => BRIDGE_DRIVERS.find((d) => d.key === m.driver) ?? BRIDGE_DRIVERS[0]!;
 
-export function EdgeBridgeSetup({ onCreated, onClose, presetDriver }: { onCreated: (connectionId?: string) => void; onClose: () => void; presetDriver?: string }) {
+export function EdgeBridgeSetup({ onCreated, onClose, presetDriver, presetName }: { onCreated: (connectionId?: string) => void; onClose: () => void; presetDriver?: string; presetName?: string }) {
   const { activeSlug } = useActiveOrg();
   const toast = useToast();
   const [label, setLabel] = useState("Edge bridge");
-  const [machines, setMachines] = useState<MachineDraft[]>(() => [newMachine(presetDriver && BRIDGE_DRIVERS.some((d) => d.key === presetDriver) ? presetDriver : "mock")]);
+  const [bridgeId, setBridgeId] = useState("");
+  const [machines, setMachines] = useState<MachineDraft[]>(() => {
+    const m = newMachine(presetDriver && BRIDGE_DRIVERS.some((d) => d.key === presetDriver) ? presetDriver : "mock");
+    if (presetName?.trim()) m.name = presetName.trim(); // carry the name from the New-printer form
+    return [m];
+  });
   const [token, setToken] = useState<string | null>(null);
-  const [cmdMode, setCmdMode] = useState<"run" | "compose">("run");
+  const [cmdMode, setCmdMode] = useState<"run" | "compose">("compose");
+  const bid = bridgeId.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+  // Name the bridge the status box is reporting on — you may run several, so
+  // "your bridge is online" is ambiguous. Blank → the default/main bridge.
+  const bridgeLabel = bid ? `the "${bid}" bridge` : "your main bridge";
   const relayUrl = `${window.location.origin}/api/v1/orgs/${activeSlug}/modules/digifab/edge`;
   const status = useQuery({
-    queryKey: ["digifab-edge-status", activeSlug],
-    queryFn: () => api.getDigifabEdgeStatus(activeSlug),
+    queryKey: ["digifab-edge-status", activeSlug, bid],
+    queryFn: () => api.getDigifabEdgeStatus(activeSlug, bid || undefined),
     enabled: !!activeSlug,
     refetchInterval: 3000,
   });
@@ -1348,18 +1406,29 @@ export function EdgeBridgeSetup({ onCreated, onClose, presetDriver }: { onCreate
     "  -e BRIDGE_MODE=tunnel \\",
     `  -e BRIDGE_RELAY_URL=${relayUrl} \\`,
     `  -e BRIDGE_RELAY_TOKEN=${tok} \\`,
+    ...(bid ? [`  -e BRIDGE_ID=${bid} \\`] : []),
     "  git.example.com/cobblrhq/edge-bridge:latest",
   ].join("\n");
   const compose = [
     "# docker-compose.yml — then: docker compose up -d",
+    "# Self-updating: watchtower auto-pulls new bridge versions (no manual updates).",
     "services:",
     "  cobblr-edge-bridge:",
     "    image: git.example.com/cobblrhq/edge-bridge:latest",
     "    restart: unless-stopped",
+    "    labels:",
+    "      - com.centurylinklabs.watchtower.enable=true",
     "    environment:",
     "      BRIDGE_MODE: tunnel",
     `      BRIDGE_RELAY_URL: ${relayUrl}`,
     `      BRIDGE_RELAY_TOKEN: ${tok}`,
+    ...(bid ? [`      BRIDGE_ID: ${bid}`] : []),
+    "  watchtower: # keeps the bridge updated automatically",
+    "    image: containrrr/watchtower",
+    "    restart: unless-stopped",
+    "    volumes:",
+    "      - /var/run/docker.sock:/var/run/docker.sock",
+    "    command: --label-enable --cleanup --interval 3600",
   ].join("\n");
   const snippet = cmdMode === "compose" ? compose : cmd;
   // One connection per machine — base_url cobblr-edge://<id> + the machine config
@@ -1368,7 +1437,7 @@ export function EdgeBridgeSetup({ onCreated, onClose, presetDriver }: { onCreate
     mutationFn: async () => {
       let firstId: string | undefined;
       for (const { m, id } of withIds) {
-        const config = { driver: m.driver, ...Object.fromEntries(defOf(m).fields.map((f) => [f.key, m.cfg[f.key]?.trim()]).filter(([, v]) => v)) };
+        const config = { driver: m.driver, ...(bid ? { bridge: bid } : {}), ...Object.fromEntries(defOf(m).fields.map((f) => [f.key, m.cfg[f.key]?.trim()]).filter(([, v]) => v)) };
         const c = await api.createDigifabConnection(activeSlug, { type: "edge_adapter", label: m.name.trim() || defOf(m).label, base_url: `cobblr-edge://${id}`, config });
         if (!firstId) firstId = c.id;
       }
@@ -1381,12 +1450,26 @@ export function EdgeBridgeSetup({ onCreated, onClose, presetDriver }: { onCreate
   const field = "w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900";
   return (
     <div className="space-y-3">
-      {/* If a bridge is ALREADY dialed in for this workspace, skip the whole
-          install flow — you just want to add another machine to it. */}
+      {/* Multi-bridge: a SECOND bridge at another site (or LightBurn, which must
+          run its own bridge on the LightBurn PC) gets a distinct id so it has its
+          own channel instead of colliding with the main bridge. Above the
+          already-connected check so you can add a 2nd bridge even when the main
+          one's online — typing an id flips the view to that bridge's install. */}
+      <label className="block">
+        <span className={lbl}>Bridge <span className="normal-case text-faint/70">— must match the bridge's installed id</span></span>
+        <input value={bridgeId} onChange={(e) => setBridgeId(e.target.value)} placeholder="blank for your main bridge · e.g. garage, lightburn-pc" className={field} />
+        <span className="text-[11px] text-faint">
+          {bid
+            ? <>Talking to <code>{bid}</code> — this must match that bridge's <code>BRIDGE_ID</code>. A 2nd+ bridge (another site, or LightBurn's PC) <strong>must</strong> be named so it gets its own channel.</>
+            : <>Blank = your <strong>main</strong> bridge (installed without a <code>BRIDGE_ID</code>). If you gave even your first bridge an id, type it here. Extra bridges always need a name.</>}
+        </span>
+      </label>
+      {/* If THIS bridge is already dialed in, skip the install flow — just add a
+          machine to it. (Keyed to the bridge id above.) */}
       {connected ? (
         <div className="flex items-center gap-2 text-sm rounded border border-moss-500/40 bg-moss-50 dark:bg-moss-950/30 p-2">
           <span className="w-2 h-2 rounded-full bg-moss-500 shrink-0" />
-          <span className="text-moss-700 dark:text-moss-300">Your bridge is online ✓ — add a machine to it below. No reinstall needed.</span>
+          <span className="text-moss-700 dark:text-moss-300">{bid ? <><code>{bid}</code></> : "Your main bridge"} is online ✓ — add a machine to it below. No reinstall needed.</span>
         </div>
       ) : (<>
       <p className="text-[13px] text-muted dark:text-slate-400">
@@ -1424,6 +1507,7 @@ export function EdgeBridgeSetup({ onCreated, onClose, presetDriver }: { onCreate
           <>
             <pre className="text-[11px] leading-relaxed bg-subtle dark:bg-slate-950 border border-line dark:border-slate-700 rounded p-2 overflow-x-auto whitespace-pre text-content dark:text-mortar-200">{snippet}</pre>
             <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">Run this on a box at your site. Token shown once — it can <strong>only</strong> run this bridge (scope <code>devices:edge</code>).</p>
+            <p className="text-[11px] text-faint mt-0.5">{cmdMode === "compose" ? "Compose includes Watchtower — the bridge auto-updates itself, no manual pulls ever." : "Tip: use compose instead — it bundles auto-updates so you never pull a new version by hand."}</p>
           </>
         )}
       </div>
@@ -1431,7 +1515,7 @@ export function EdgeBridgeSetup({ onCreated, onClose, presetDriver }: { onCreate
         <span className={lbl}>3 · Cobblr is watching for it</span>
         <div className={"flex items-center gap-2 text-sm rounded border p-2 " + (connected ? "border-moss-500/40 bg-moss-50 dark:bg-moss-950/30" : "border-line dark:border-slate-700")}>
           <span className={"w-2 h-2 rounded-full " + (connected ? "bg-moss-500" : "bg-amber-500 animate-pulse")} />
-          {connected ? <span className="text-moss-700 dark:text-moss-300">Bridge online — dialed in ✓</span> : <span className="text-muted dark:text-slate-400">Waiting for the bridge to dial in…</span>}
+          {connected ? <span className="text-moss-700 dark:text-moss-300">{bid ? <><code>{bid}</code> online</> : "Main bridge online"} — dialed in ✓</span> : <span className="text-muted dark:text-slate-400">Waiting for {bridgeLabel} to dial in…</span>}
         </div>
       </div>
       </>)}
@@ -1489,6 +1573,33 @@ export function EdgeBridgeSetup({ onCreated, onClose, presetDriver }: { onCreate
 // The connection's printers, rendered INLINE as a children list (expanded under
 // the connection row) — not a modal. Lists each farm printer + a link-to-machine
 // picker so a job linked to that machine routes to its printer automatically.
+// Machines live in INSTANCES — a workspace's printers are usually under a
+// "3D Printers" instance, lasers under "Laser cutters", etc., not the default
+// collection. So a link/route picker that reads only the default finds nothing
+// ("no matches"). This gathers machines across EVERY instance of the machines
+// module (+ the default), tagging each with its instance for clarity.
+type LinkableMachine = { id: string; name: string; instLabel: string | null; image: string | null };
+async function fetchAllMachines(slug: string): Promise<{ items: LinkableMachine[] }> {
+  let insts: { instance_name: string; display_name: string; is_default: boolean }[] = [];
+  try {
+    insts = (await api.listInstances(slug, "machines")).items.map((i) => ({ instance_name: i.instance_name, display_name: i.display_name, is_default: i.is_default }));
+  } catch {
+    /* module may be single-instance — fall back to the default collection */
+  }
+  const sources: { name: string | undefined; label: string | null }[] = insts.length
+    ? insts.map((i) => ({ name: i.is_default ? undefined : i.instance_name, label: i.is_default ? null : i.display_name }))
+    : [{ name: undefined, label: null }];
+  const lists = await Promise.all(
+    sources.map((s) =>
+      api.listMachines(slug, s.name).then((r) => r.items.map((m) => ({ id: m.id, name: m.name, instLabel: s.label, image: m.image_path ?? null }))).catch(() => [] as LinkableMachine[]),
+    ),
+  );
+  const seen = new Set<string>();
+  const items: LinkableMachine[] = [];
+  for (const m of lists.flat()) if (!seen.has(m.id)) { seen.add(m.id); items.push(m); }
+  return { items };
+}
+
 function ConnectionPrinters({ connection }: { connection: DigifabConnection }) {
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
@@ -1498,8 +1609,8 @@ function ConnectionPrinters({ connection }: { connection: DigifabConnection }) {
     queryFn: () => api.listDigifabDevices(activeSlug, connection.id),
   });
   const machines = useQuery({
-    queryKey: ["machines", activeSlug],
-    queryFn: () => api.listMachines(activeSlug),
+    queryKey: ["digifab-all-machines", activeSlug],
+    queryFn: () => fetchAllMachines(activeSlug),
     enabled: !!activeSlug,
   });
   const links = useQuery({
@@ -1561,7 +1672,7 @@ function ConnectionPrinters({ connection }: { connection: DigifabConnection }) {
                 value={linked?.machine_id ?? ""}
                 allowClear
                 placeholder="— link to machine —"
-                options={machineList.map((m) => ({ value: m.id, label: m.name }))}
+                options={machineList.map((m) => ({ value: m.id, label: m.instLabel ? `${m.name} · ${m.instLabel}` : m.name }))}
                 onChange={(machineId) => {
                   if (!machineId) {
                     if (linked) unlink.mutate(linked.id);
@@ -1611,6 +1722,143 @@ function FleetStat({ dot, n, label }: { dot: string; n: number; label: string })
   );
 }
 
+// ── File library — stored 3MF/gcode with slicer thumbnails, send to a machine ──
+function LibrarySection({ slug }: { slug: string }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const lib = useQuery({ queryKey: ["digifab-library", slug], queryFn: () => api.listDigifabLibrary(slug), enabled: !!slug });
+  const upload = useMutation({
+    mutationFn: (file: File) => api.uploadDigifabLibrary(slug, file),
+    onSuccess: () => { toast.success("Added to library"); void qc.invalidateQueries({ queryKey: ["digifab-library", slug] }); },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Upload failed"),
+  });
+  const itemsL = lib.data?.items ?? [];
+  return (
+    <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-3">
+      <div className="flex items-center gap-3">
+        <h2 className="text-sm font-semibold text-content dark:text-mortar-100">Library</h2>
+        <span className="text-xs text-faint">{itemsL.length} file{itemsL.length === 1 ? "" : "s"}</span>
+        <div className="flex-1" />
+        <input ref={fileRef} type="file" accept=".3mf,.gcode,.gco,.g" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) upload.mutate(f); e.target.value = ""; }} />
+        <button onClick={() => fileRef.current?.click()} disabled={upload.isPending} className="inline-flex items-center gap-1.5 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2.5 py-1 text-xs disabled:opacity-50">
+          <Plus size={13} /> {upload.isPending ? "Uploading…" : "Upload file"}
+        </button>
+      </div>
+      {itemsL.length === 0 ? (
+        <div className="text-xs text-muted dark:text-slate-400 italic">No files yet. Upload a .3mf or .gcode — Cobblr pulls out the slicer's plate preview, and you can send it to any machine.</div>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+          {itemsL.map((it) => <LibraryCard key={it.id} item={it} slug={slug} />)}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function LibraryCard({ item, slug }: { item: DigifabLibraryItem; slug: string }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const confirm = useConfirm();
+  const [sendOpen, setSendOpen] = useState(false);
+  const thumb = useImageSrc(item.thumbnail_file_id ? api.fileRawUrl(slug, item.thumbnail_file_id) : null);
+  const del = useMutation({
+    mutationFn: () => api.deleteDigifabLibrary(slug, item.id),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["digifab-library", slug] }),
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Delete failed"),
+  });
+  const size = item.size_bytes > 1_048_576 ? `${(item.size_bytes / 1_048_576).toFixed(1)} MB` : `${Math.max(1, Math.round(item.size_bytes / 1024))} KB`;
+  return (
+    <div className="rounded-lg border border-line dark:border-slate-700 overflow-hidden flex flex-col">
+      <div className="aspect-square bg-subtle dark:bg-slate-800 flex items-center justify-center">
+        {thumb ? <img src={thumb} alt="" className="w-full h-full object-contain" /> : <Boxes size={26} className="text-faint" />}
+      </div>
+      <div className="p-2 space-y-1 flex-1 flex flex-col">
+        <div className="text-xs text-content dark:text-mortar-100 truncate" title={item.name}>{item.name}</div>
+        <div className="flex items-center gap-1 text-[10px] text-faint flex-wrap">
+          <span className="uppercase font-mono">{item.kind}</span>
+          {item.plate_count > 1 && <span>· {item.plate_count} plates</span>}
+          <span>· {size}</span>
+        </div>
+        <div className="flex items-center gap-1.5 pt-1 mt-auto">
+          <button onClick={() => setSendOpen(true)} className="flex-1 inline-flex items-center justify-center gap-1 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2 py-1 text-[11px]"><Send size={11} /> Send</button>
+          <button
+            onClick={async () => { if (await confirm({ title: `Delete "${item.name}"?`, message: "Removes it from the library (doesn't touch any printer).", confirmLabel: "Delete", destructive: true })) del.mutate(); }}
+            disabled={del.isPending}
+            className="text-faint hover:text-ember-500 p-1 disabled:opacity-50"
+            title="Delete"
+          ><Trash2 size={13} /></button>
+        </div>
+      </div>
+      {sendOpen && <LibrarySendModal item={item} slug={slug} onClose={() => setSendOpen(false)} />}
+    </div>
+  );
+}
+
+function LibrarySendModal({ item, slug, onClose }: { item: DigifabLibraryItem; slug: string; onClose: () => void }) {
+  const toast = useToast();
+  const [mode, setMode] = useState<"printer" | "pool">("printer");
+  const [connectionId, setConnectionId] = useState("");
+  const [deviceId, setDeviceId] = useState("");
+  const [poolId, setPoolId] = useState("");
+  const conns = useQuery({ queryKey: ["digifab-connections", slug], queryFn: () => api.listDigifabConnections(slug), enabled: !!slug });
+  const pools = useQuery({ queryKey: ["digifab-pools", slug], queryFn: () => api.listDigifabPools(slug), enabled: !!slug });
+  const devices = useQuery({ queryKey: ["digifab-printers", slug, connectionId], queryFn: () => api.listDigifabDevices(slug, connectionId), enabled: !!connectionId && mode === "printer" });
+  const send = useMutation({
+    mutationFn: () => api.sendDigifabLibrary(slug, item.id, mode === "pool" ? { target_pool: poolId } : { connection_id: connectionId, target_device: deviceId || null }),
+    onSuccess: (r) => { toast.success(mode === "pool" ? "Queued to the pool — auto-assigns to a free printer" : `Sent — ${r.status}`); onClose(); },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Send failed"),
+  });
+  const connList = conns.data?.items ?? [];
+  const poolList = pools.data?.items ?? [];
+  const deviceList = devices.data?.items ?? [];
+  const field = "w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900";
+  const lbl = "block text-[10px] font-mono uppercase tracking-widest text-faint mb-1";
+  const ready = mode === "pool" ? !!poolId : !!connectionId && !!deviceId;
+  return (
+    <Modal open onClose={onClose} title={`Send "${item.name}"`} size="sm">
+      <div className="space-y-3">
+        <div className="flex gap-1.5">
+          <button type="button" onClick={() => setMode("printer")} className={"flex-1 text-xs px-2 py-1 rounded border " + (mode === "printer" ? "border-accent text-accent" : "border-line dark:border-slate-600 text-muted")}>A printer</button>
+          <button type="button" onClick={() => setMode("pool")} className={"flex-1 text-xs px-2 py-1 rounded border " + (mode === "pool" ? "border-accent text-accent" : "border-line dark:border-slate-600 text-muted")}>A pool</button>
+        </div>
+        {mode === "printer" ? (
+          <>
+            <label className="block">
+              <span className={lbl}>Connection</span>
+              <select value={connectionId} onChange={(e) => { setConnectionId(e.target.value); setDeviceId(""); }} className={field}>
+                <option value="">— pick —</option>
+                {connList.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+              </select>
+            </label>
+            <label className="block">
+              <span className={lbl}>Printer</span>
+              <select value={deviceId} onChange={(e) => setDeviceId(e.target.value)} disabled={!connectionId} className={field + " disabled:opacity-50"}>
+                <option value="">{devices.isLoading ? "Loading…" : "— pick —"}</option>
+                {deviceList.map((d) => <option key={d.id} value={d.id}>{d.name || d.id}</option>)}
+              </select>
+            </label>
+          </>
+        ) : (
+          <label className="block">
+            <span className={lbl}>Pool</span>
+            <select value={poolId} onChange={(e) => setPoolId(e.target.value)} className={field}>
+              <option value="">— pick —</option>
+              {poolList.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+            <span className="text-[11px] text-faint">Drips onto the next free printer in the pool.</span>
+          </label>
+        )}
+        <p className="text-[11px] text-faint">Bambu over the cloud can't accept an arbitrary file — send works on FDM Monster / OctoPrint / Klipper / edge-bridge machines (Bambu LAN later).</p>
+        <div className="flex justify-end gap-2 pt-1">
+          <button onClick={onClose} className="px-3 py-1.5 text-sm rounded border border-line dark:border-slate-600">Cancel</button>
+          <button onClick={() => send.mutate()} disabled={!ready || send.isPending} className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 text-white disabled:opacity-50">{send.isPending ? "Sending…" : "Send"}</button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 export function FleetView({ slug }: { slug: string }) {
   const fleet = useQuery({
     queryKey: ["digifab-fleet", slug],
@@ -1640,11 +1888,11 @@ export function FleetView({ slug }: { slug: string }) {
         // Group machines by POOL (a pool reads as one farm even across
         // connections); unpooled machines fall back to their connection. A
         // dead manager keeps its own error row.
-        type FDev = DigifabFleetDevice & { connLabel: string; connId: string };
+        type FDev = DigifabFleetDevice & { connLabel: string; connId: string; connType: string };
         const errored = data.connections.filter((c) => c.error);
         const all: FDev[] = data.connections
           .filter((c) => !c.error)
-          .flatMap((c) => c.devices.map((d) => ({ ...d, connLabel: c.label, connId: c.connection_id })));
+          .flatMap((c) => c.devices.map((d) => ({ ...d, connLabel: c.label, connId: c.connection_id, connType: c.type })));
         const pools = new Map<string, { name: string; devices: FDev[] }>();
         const unpooled = new Map<string, FDev[]>();
         for (const d of all) {
@@ -1769,6 +2017,10 @@ function DeviceCard({ d, connId, slug }: { d: DigifabFleetDevice; connId: string
     onSuccess: (_r, enabled) => { toast.success(enabled ? "Snapshot relay on" : "Snapshot relay off"); invalidateFleet(); },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
+  // EXPERIMENTAL cloud control: publish a command to a Bambu over the pump's MQTT
+  // (same broker the app uses). The printer may reject it (Authorization Control)
+  // — so we lead with the harmless visible ones (light / nudge) to confirm it works.
+  const [detailOpen, setDetailOpen] = useState(false);
   const att = d.needs_attention;
   const nozzle = tempLabel(d.temps?.nozzle);
   const bed = tempLabel(d.temps?.bed);
@@ -1791,7 +2043,7 @@ function DeviceCard({ d, connId, slug }: { d: DigifabFleetDevice; connId: string
       ) : null}
       <div className="flex items-center gap-1.5">
         <span className={`w-2 h-2 rounded-full shrink-0 ${st.dot} ${d.klass === "printing" ? "animate-pulse" : ""}`} />
-        <div className="text-sm font-medium text-content dark:text-mortar-100 truncate" title={d.name}>{d.name}</div>
+        <button type="button" onClick={() => setDetailOpen(true)} className="text-sm font-medium text-content dark:text-mortar-100 truncate hover:text-accent text-left" title={`${d.name} — open details`}>{d.name}</button>
         <div className="flex-1" />
         <button
           onClick={() => { setCamUrl(d.camera_url ?? ""); setCamOpen((o) => !o); }}
@@ -1878,6 +2130,14 @@ function DeviceCard({ d, connId, slug }: { d: DigifabFleetDevice; connId: string
             <div className="flex-1 min-w-0 text-[11px] text-muted dark:text-slate-400 truncate" title={job.file_ref}>
               {job.file_ref}
             </div>
+            {job.priority > 0 && (
+              <span className={"text-[9px] font-mono uppercase px-1 rounded shrink-0 " + (job.priority >= 20 ? "bg-ember-500/15 text-ember-600" : "bg-amber-500/15 text-amber-600")}>
+                {job.priority >= 20 ? "urgent" : "high"}
+              </span>
+            )}
+            {job.max_attempts > 1 && (
+              <span className="text-[9px] text-faint shrink-0" title={`auto-retry on fail (${job.attempts}/${job.max_attempts - 1} used)`}>↻{job.attempts}/{job.max_attempts - 1}</span>
+            )}
             {/* Cockpit live-control: pause / resume the running print. */}
             {job.status === "printing" && (
               <button onClick={() => ctrl.mutate("pause")} disabled={ctrl.isPending} title="Pause print" className="text-faint hover:text-accent transition p-0.5 disabled:opacity-50">
@@ -1915,7 +2175,455 @@ function DeviceCard({ d, connId, slug }: { d: DigifabFleetDevice; connId: string
           </div>
         </div>
       )}
+      {/* Open the full printer modal — identity, live telemetry, controls,
+          link-to-machine, and this printer's history, all in one place. */}
+      <div className="mt-1.5 pt-1.5 border-t border-line dark:border-slate-700/60">
+        <button type="button" onClick={() => setDetailOpen(true)} className="text-[10px] text-accent hover:underline flex items-center gap-1">
+          <Sliders size={11} /> Details &amp; controls
+        </button>
+      </div>
+      {detailOpen && <PrinterDetailModal slug={slug} connId={connId} device={d} onClose={() => setDetailOpen(false)} />}
     </div>
+  );
+}
+
+// Generic control panel — fetches the controls the driver DECLARES for this
+// device and renders by kind (action buttons, a light toggle, a jog pad, number
+// inputs), grouped. Only declared controls appear, so a printer shows exactly
+// what it can do. Works across managers (Bambu cloud/LAN, Moonraker, OctoPrint,
+// Duet, edge-bridge) — each declares its own set.
+function ControlsPanel({ slug, connId, deviceId, name, telemetry, lanActive }: { slug: string; connId: string; deviceId: string; name: string; telemetry?: DigifabDeviceDetail["telemetry"] | null; lanActive?: boolean }) {
+  const toast = useToast();
+  const confirm = useConfirm();
+  const [jogStep, setJogStep] = useState(10);
+  const [nums, setNums] = useState<Record<string, string>>({});
+  // Map a temperature control to its live actual/target so the input reflects
+  // reality (pre-filled to the current target — so it "persists" across reopen)
+  // and shows actual → target next to it.
+  const tempFor = (id: string): { actual: number | null; target: number | null } | null => {
+    if (!telemetry) return null;
+    if (id === "nozzle_temp") return { actual: telemetry.nozzle, target: telemetry.nozzle_target };
+    if (id === "bed_temp") return { actual: telemetry.bed, target: telemetry.bed_target };
+    return null;
+  };
+  const ctrls = useQuery({ queryKey: ["digifab-controls", slug, connId, deviceId], queryFn: () => api.getDigifabControls(slug, connId, deviceId) });
+  const run = useMutation({
+    mutationFn: ({ id, params }: { id: string; params?: Record<string, unknown> }) => api.runDigifabControl(slug, connId, deviceId, id, params),
+    onSuccess: () => toast.success("Sent — watch the printer"),
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't send"),
+  });
+  const controls = ctrls.data?.controls ?? [];
+  const doRun = async (c: typeof controls[number], params?: Record<string, unknown>) => {
+    if (c.destructive && !(await confirm({ title: `${c.label} — ${name}?`, message: "This affects the running print.", confirmLabel: c.label, destructive: true }))) return;
+    run.mutate({ id: c.id, params });
+  };
+  const groups: { key: string; label: string }[] = [
+    { key: "print", label: "Print" }, { key: "motion", label: "Motion" }, { key: "temperature", label: "Temperature" }, { key: "accessory", label: "Accessory" },
+  ];
+  const btn = "text-xs px-2 py-1 rounded border border-line dark:border-slate-600 hover:border-accent disabled:opacity-50";
+  return (
+    <>
+      {ctrls.isLoading ? (
+        <div className="text-sm text-muted">Loading…</div>
+      ) : controls.length === 0 ? (
+        <div className="text-sm text-muted dark:text-slate-400 italic">This printer reports no live controls.</div>
+      ) : (
+        <div className="space-y-3">
+          {groups.map((g) => {
+            const cs = controls.filter((c) => (c.group ?? "accessory") === g.key);
+            if (cs.length === 0) return null;
+            return (
+              <div key={g.key}>
+                <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">{g.label}</div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {cs.map((c) =>
+                    c.kind === "action" ? (
+                      <button key={c.id} type="button" onClick={() => doRun(c)} disabled={run.isPending} className={c.destructive ? "text-xs px-2 py-1 rounded border border-ember-400 text-ember-600 hover:bg-ember-50 dark:hover:bg-ember-950/30 disabled:opacity-50" : btn}>{c.label}</button>
+                    ) : c.kind === "toggle" ? (
+                      <span key={c.id} className="inline-flex items-center gap-1 text-xs">
+                        <span className="text-muted dark:text-slate-400">{c.label}</span>
+                        <button type="button" onClick={() => doRun(c, { on: true })} disabled={run.isPending} className={btn}>on</button>
+                        <button type="button" onClick={() => doRun(c, { on: false })} disabled={run.isPending} className={btn}>off</button>
+                      </span>
+                    ) : c.kind === "jog" ? (
+                      <div key={c.id} className="flex items-center gap-1.5 w-full flex-wrap">
+                        <span className="text-xs text-muted dark:text-slate-400">{c.label}</span>
+                        <select value={jogStep} onChange={(e) => setJogStep(Number(e.target.value))} className="input !py-0.5 !text-xs !w-auto">{(c.steps ?? [1, 10]).map((s) => <option key={s} value={s}>{s}mm</option>)}</select>
+                        {(c.axes ?? ["z"]).map((ax) => (
+                          <span key={ax} className="inline-flex items-center gap-0.5">
+                            <button type="button" onClick={() => doRun(c, { axis: ax, dist: jogStep })} disabled={run.isPending} className={btn}>{ax.toUpperCase()}+</button>
+                            <button type="button" onClick={() => doRun(c, { axis: ax, dist: -jogStep })} disabled={run.isPending} className={btn}>{ax.toUpperCase()}−</button>
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      (() => {
+                        const tm = tempFor(c.id);
+                        return (
+                          <div key={c.id} className="flex items-center gap-1.5">
+                            <span className="text-xs text-muted dark:text-slate-400">{c.label}</span>
+                            {tm && (
+                              <span className="text-[11px] font-mono text-faint">
+                                {tm.actual != null ? `${Math.round(tm.actual)}°` : "—"} live · {tm.target ? `${Math.round(tm.target)}°` : "off"} set
+                              </span>
+                            )}
+                            <input
+                              value={nums[c.id] ?? (tm && tm.target != null ? String(Math.round(tm.target)) : "")}
+                              onChange={(e) => setNums((nv) => ({ ...nv, [c.id]: e.target.value }))}
+                              placeholder={c.unit}
+                              className="input !py-0.5 !text-xs !w-16"
+                            />
+                            <button type="button" onClick={() => doRun(c, { value: Number(nums[c.id] ?? (tm?.target ?? 0)) || 0 })} disabled={run.isPending} className={btn}>Set</button>
+                          </div>
+                        );
+                      })()
+                    ),
+                  )}
+                </div>
+              </div>
+            );
+          })}
+          <p className="text-[10px] text-faint">{lanActive ? "Commands route over your LAN bridge." : "Some printers reject third-party commands (e.g. Bambu Authorization Control). If nothing happens, that printer needs LAN control."}</p>
+        </div>
+      )}
+    </>
+  );
+}
+
+// A full-screen image viewer — click anywhere to close. Portals to body so the
+// header's backdrop-blur can't trap it.
+function Lightbox({ src, onClose }: { src: string; onClose: () => void }) {
+  return createPortal(
+    <div className="fixed inset-0 z-[120] bg-black/80 flex items-center justify-center p-6 cursor-zoom-out" onClick={onClose}>
+      <img src={src} alt="" className="max-w-full max-h-full object-contain rounded shadow-2xl" />
+    </div>,
+    document.body,
+  );
+}
+
+// Live LAN camera — the Bambu chamber camera, grabbed frame-by-frame over the
+// bridge (one JPEG every ~3s; a refreshing still, not a stream).
+function LanCameraView({ slug, connId, deviceId, name, onZoom }: { slug: string; connId: string; deviceId: string; name: string; onZoom?: (src: string) => void }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    let current: string | null = null;
+    // Instant: show the last cached frame (server-cached on the previous grab) so
+    // there's no "connecting" gap on open; the live poll below replaces it the
+    // moment a fresh frame decodes.
+    void fetchAuthBlobUrl(api.digifabSnapshotPath(slug, connId, deviceId)).then((cached) => {
+      if (!alive) { if (cached) URL.revokeObjectURL(cached); return; }
+      if (cached && !current) { setUrl(cached); current = cached; }
+      else if (cached) URL.revokeObjectURL(cached);
+    });
+    const tick = async () => {
+      const next = await fetchAuthBlobUrl(api.digifabCameraPath(slug, connId, deviceId));
+      if (!alive) { if (next) URL.revokeObjectURL(next); return; }
+      if (!next) { if (!current) setFailed(true); return; }
+      // Double-buffer: decode the new frame OFF-SCREEN, then swap. Swapping the
+      // <img> src directly let it flash empty between frames — the refresh
+      // flicker. We only show the new blob once it's fully decoded.
+      const probe = new Image();
+      probe.onload = () => {
+        if (!alive) { URL.revokeObjectURL(next); return; }
+        setUrl(next); setFailed(false);
+        if (current) URL.revokeObjectURL(current);
+        current = next;
+      };
+      probe.onerror = () => { URL.revokeObjectURL(next); if (!current) setFailed(true); };
+      probe.src = next;
+    };
+    void tick();
+    const id = setInterval(tick, 3000);
+    return () => { alive = false; clearInterval(id); if (current) URL.revokeObjectURL(current); };
+  }, [slug, connId, deviceId]);
+  if (failed && !url) return <div className="text-[11px] text-faint italic">Camera not reachable over LAN yet (bridge online + LAN access on the printer?).</div>;
+  if (!url) return <div className="text-[11px] text-faint">Connecting to the camera…</div>;
+  return <img src={url} alt={`${name} camera`} className="w-full max-h-72 object-contain rounded bg-black/30 cursor-zoom-in" onClick={() => onZoom?.(url)} />;
+}
+
+// Per-printer Bambu LAN access (hybrid). Cloud keeps doing telemetry; enabling
+// LAN here routes file-push + control through your on-site bridge. Bambu-only.
+function LanAccessPanel({ slug, connId, deviceId, lan }: { slug: string; connId: string; deviceId: string; lan?: { applicable: boolean; configured: boolean; host?: string; mode?: "cloud" | "prefer_lan" | "lan_only" } }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [host, setHost] = useState("");
+  const [code, setCode] = useState("");
+  // The corner shows a tiny affordance; the actual config (mode picker / setup /
+  // remove) opens in a roomy modal — cramming the mode cards into the narrow
+  // header column looked bad.
+  const [open, setOpen] = useState(false);
+  const inval = () => void qc.invalidateQueries({ queryKey: ["digifab-device-detail", slug, connId, deviceId] });
+  const save = useMutation({
+    mutationFn: () => api.setBambuLan(slug, connId, deviceId, { host: host.trim(), access_code: code.trim() }),
+    onSuccess: () => { toast.success("LAN access saved"); setCode(""); inval(); },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't save LAN access"),
+  });
+  const clear = useMutation({
+    mutationFn: () => api.clearBambuLan(slug, connId, deviceId),
+    onSuccess: () => { toast.success("LAN access removed"); setOpen(false); inval(); },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't remove LAN access"),
+  });
+  const setMode = useMutation({
+    mutationFn: (mode: "cloud" | "prefer_lan" | "lan_only") => api.setBambuLan(slug, connId, deviceId, { mode }),
+    onSuccess: () => { toast.success("Mode updated"); setOpen(false); inval(); },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't update mode"),
+  });
+  const MODES: { key: "cloud" | "prefer_lan" | "lan_only"; label: string; desc: string }[] = [
+    { key: "cloud", label: "All cloud", desc: "Status, control & history via Bambu's cloud. Works anywhere; no bridge." },
+    { key: "prefer_lan", label: "Prefer LAN", desc: "Status, control & file-push over your LAN/bridge; cloud fills in print-history names. Cloud is the fallback." },
+    { key: "lan_only", label: "LAN only", desc: "Everything local, cloud off — no internet needed, max privacy. You lose cloud-only print-history names/covers." },
+  ];
+  if (!lan?.applicable) return null;
+  const field = "px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900";
+  const modeLabel = MODES.find((m) => m.key === (lan.mode ?? "cloud"))?.label ?? "All cloud";
+
+  return (
+    <>
+      {/* Tiny corner affordance — opens the roomy config modal. */}
+      {lan.configured ? (
+        <button type="button" onClick={() => setOpen(true)} title="LAN access settings" className="flex items-center gap-1.5 text-faint hover:text-content dark:hover:text-mortar-100 transition">
+          <span className="w-1.5 h-1.5 rounded-full bg-moss-500 shrink-0" />
+          <span className="text-content dark:text-mortar-200">{modeLabel}</span>
+          <Sliders size={11} />
+        </button>
+      ) : (
+        <button type="button" onClick={() => setOpen(true)} className="flex items-center gap-1 text-accent hover:underline">
+          <Wifi size={11} /> Set up LAN access
+        </button>
+      )}
+      <Modal open={open} onClose={() => setOpen(false)} title="LAN access" subtitle="file-push + control via your bridge" size="sm">
+        {lan.configured ? (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 text-xs">
+              <span className="w-1.5 h-1.5 rounded-full bg-moss-500 shrink-0" />
+              <span className="text-content dark:text-mortar-100">Connected via <span className="font-mono">{lan.host}</span></span>
+              <div className="flex-1" />
+              <button type="button" onClick={() => clear.mutate()} disabled={clear.isPending} className="text-faint hover:text-ember-500">Remove</button>
+            </div>
+            <div className="space-y-1.5">
+              {MODES.map((m) => (
+                <button
+                  key={m.key}
+                  type="button"
+                  onClick={() => setMode.mutate(m.key)}
+                  disabled={setMode.isPending || lan.mode === m.key}
+                  className={"w-full text-left rounded border px-3 py-2 " + (lan.mode === m.key ? "border-accent bg-accent/5" : "border-line dark:border-slate-700 hover:border-accent/50")}
+                >
+                  <div className="flex items-center gap-2 text-sm">
+                    <span className={"w-3.5 h-3.5 rounded-full border shrink-0 " + (lan.mode === m.key ? "border-accent bg-accent" : "border-line dark:border-slate-600")} />
+                    <span className="text-content dark:text-mortar-100 font-medium">{m.label}</span>
+                  </div>
+                  <div className="text-faint text-xs pl-[1.375rem] mt-0.5">{m.desc}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <div className="flex gap-1.5">
+              <input value={host} onChange={(e) => setHost(e.target.value)} placeholder="Printer IP — 192.168.1.x" className={field + " flex-1"} />
+              <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Access code" className={field + " w-32"} />
+              <button type="button" onClick={() => save.mutate()} disabled={save.isPending || !host.trim() || !code.trim()} className="px-2.5 py-1 text-xs rounded bg-cobble-600 hover:bg-cobble-700 text-white disabled:opacity-50">{save.isPending ? "…" : "Enable"}</button>
+            </div>
+            <span className="text-[11px] text-faint">On the printer: Settings → network for its IP + Access Code. Needs your edge bridge online on the same LAN.</span>
+          </div>
+        )}
+      </Modal>
+    </>
+  );
+}
+
+// A temperature read-out: the LIVE value on top, the SET target below, each
+// labelled so there's no "which number is which" ambiguity (no bare arrow). The
+// "live"/"set" tags only show when there's a target to disambiguate against
+// (chamber has none → just the current reading).
+function TempStat({ label, actual, target }: { label: string; actual: number | null | undefined; target?: number | null }) {
+  return (
+    <div className="rounded border border-line dark:border-slate-700 p-1.5">
+      <div className="text-faint text-[10px]">{label}</div>
+      <div className="text-content dark:text-mortar-100 leading-tight">
+        {actual == null ? "—" : `${Math.round(actual)}°`}
+        {actual != null && target != null && <span className="text-faint text-[10px] ml-1">live</span>}
+      </div>
+      {target != null && target > 0 && (
+        <div className="text-faint leading-tight">{Math.round(target)}° <span className="text-[10px]">set</span></div>
+      )}
+    </div>
+  );
+}
+
+// The full printer modal — identity + image, live telemetry (temps/AMS/light/
+// firmware), controls, link-to-machine, and THIS printer's history, in one place.
+function PrinterDetailModal({ slug, connId, device, onClose }: { slug: string; connId: string; device: DigifabFleetDevice; onClose: () => void }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [lightbox, setLightbox] = useState<string | null>(null);
+  const [printOpen, setPrintOpen] = useState<DigifabHistory["recent"][number] | null>(null);
+  const [linkEdit, setLinkEdit] = useState(false);
+  const detail = useQuery({ queryKey: ["digifab-device-detail", slug, connId, device.id], queryFn: () => api.getDigifabDeviceDetail(slug, connId, device.id), refetchInterval: 10_000 });
+  const machines = useQuery({ queryKey: ["digifab-all-machines", slug], queryFn: () => fetchAllMachines(slug) });
+  const links = useQuery({ queryKey: ["digifab-links", slug], queryFn: () => api.listDigifabLinks(slug) });
+  const history = useQuery({ queryKey: ["digifab-history", slug, 365], queryFn: () => api.getDigifabHistory(slug, 365) });
+  const invalidate = () => { void qc.invalidateQueries({ queryKey: ["digifab-links", slug] }); void qc.invalidateQueries({ queryKey: ["digifab-fleet", slug] }); };
+  const link = useMutation({
+    mutationFn: async (m: LinkableMachine | null): Promise<void> => {
+      const cur = (links.data?.items ?? []).find((l) => l.connection_id === connId && l.remote_device_id === device.id);
+      if (!m) { if (cur) await api.deleteDigifabLink(slug, cur.id); return; }
+      await api.createDigifabLink(slug, { connection_id: connId, remote_device_id: device.id, remote_device_name: device.name, machine_id: m.id, machine_label: m.name });
+    },
+    onSuccess: () => { toast.success("Updated machine link"); invalidate(); },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't update link"),
+  });
+
+  const t = detail.data?.telemetry;
+  const machineList = machines.data?.items ?? [];
+  const linkedId = device.linked_machine_id;
+  const linkedMachine = machineList.find((m) => m.id === linkedId) ?? null;
+  const machineImg = useImageSrc(linkedMachine?.image ? (/^https?:/i.test(linkedMachine.image) ? linkedMachine.image : api.fileRawUrl(slug, linkedMachine.image)) : null);
+  const mine = (history.data?.recent ?? []).filter((r) => r.device === device.name).slice(0, 12);
+  const lbl = "text-[10px] font-mono uppercase tracking-widest text-faint";
+
+  return (
+    <>
+      <Modal open onClose={onClose} title={device.name} size="lg">
+        <div className="space-y-4">
+          <div className="flex gap-4">
+            {/* Left — identity + live status. */}
+            <div className="flex gap-3 flex-1 min-w-0">
+              {/* Only show the image when the linked machine actually has one —
+                  an empty placeholder box just wastes space (upload a photo on the
+                  machine record to fill it). */}
+              {machineImg && (
+                <div className="w-28 h-28 shrink-0 rounded-lg border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 overflow-hidden">
+                  <img src={machineImg} alt={device.name} className="w-full h-full object-cover cursor-zoom-in" onClick={() => setLightbox(machineImg)} />
+                </div>
+              )}
+              <div className="min-w-0 text-xs space-y-1.5">
+                <div className="flex flex-wrap gap-1.5">
+                  <span className="px-1.5 py-0.5 rounded bg-subtle dark:bg-slate-800 text-content dark:text-mortar-100">{device.state}</span>
+                  {device.pool_name && <span className="px-1.5 py-0.5 rounded bg-accent/10 text-accent">{device.pool_name}</span>}
+                  {!device.enabled && <span className="px-1.5 py-0.5 rounded bg-ember-500/10 text-ember-600">disabled</span>}
+                  {t?.firmware_update && <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600">firmware update</span>}
+                  {t && t.hms_count > 0 && <span className="px-1.5 py-0.5 rounded bg-ember-500/15 text-ember-600">{t.hms_count} alert{t.hms_count > 1 ? "s" : ""}</span>}
+                </div>
+                {/* Read-only quick facts stay on the left with the status. */}
+                {t && (t.nozzle_diameter || t.nozzle_type) && <div className="text-faint">Nozzle {t.nozzle_diameter}mm {t.nozzle_type?.replace(/_/g, " ")}</div>}
+                {t?.wifi && <div className="text-faint">Wi-Fi {t.wifi}</div>}
+              </div>
+            </div>
+            {/* Right — just the config ACTIONS (link + LAN), minimal; one-and-done so it stays out of the way. */}
+            <div className="w-56 shrink-0 text-xs space-y-1.5">
+              <div className="text-muted dark:text-slate-400">
+                {linkedMachine ? <>Linked to <span className="text-accent">{linkedMachine.name}{linkedMachine.instLabel ? ` · ${linkedMachine.instLabel}` : ""}</span></> : <span className="text-faint italic">Not linked to a machine</span>}
+                <button type="button" onClick={() => setLinkEdit((v) => !v)} className="text-accent hover:underline ml-1.5">{linkEdit ? "close" : linkedMachine ? "change" : "link"}</button>
+              </div>
+              {linkEdit && (
+                <Combobox
+                  value={linkedId ?? ""}
+                  allowClear
+                  placeholder="— link to a machine —"
+                  options={machineList.map((m) => ({ value: m.id, label: m.instLabel ? `${m.name} · ${m.instLabel}` : m.name }))}
+                  onChange={(id) => { link.mutate(id ? (machineList.find((m) => m.id === id) ?? null) : null); setLinkEdit(false); }}
+                />
+              )}
+              {detail.data?.lan?.applicable && (
+                <LanAccessPanel slug={slug} connId={connId} deviceId={device.id} lan={detail.data?.lan} />
+              )}
+            </div>
+          </div>
+
+          {t && (
+            <div>
+              <div className={lbl + " mb-1"}>Live</div>
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                <TempStat label="Nozzle" actual={t.nozzle} target={t.nozzle_target} />
+                <TempStat label="Bed" actual={t.bed} target={t.bed_target} />
+                <TempStat label="Chamber" actual={t.chamber} />
+              </div>
+              {t.ams.length > 0 && (
+                <div className="mt-2">
+                  <div className={lbl + " mb-1"}>Filament (AMS)</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {t.ams.map((s) => (
+                      <span key={s.id} className="inline-flex items-center gap-1.5 text-[11px] rounded border border-line dark:border-slate-700 px-1.5 py-0.5">
+                        <span className="w-3 h-3 rounded-full border border-black/20" style={{ backgroundColor: s.color ?? "transparent" }} />
+                        <span className="text-content dark:text-mortar-100">{s.type ?? "?"}</span>
+                        {s.remain != null && s.remain > 0 && <span className="text-faint">{s.remain}%</span>}
+                        {s.id === "ext" && <span className="text-faint text-[10px]">ext</span>}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          {detail.data && detail.data.live === false && <div className="text-[11px] text-faint italic">No live cloud telemetry for this printer.</div>}
+
+          {detail.data?.lan?.camera && (
+            <div>
+              <div className={lbl + " mb-1"}>Camera <span className="normal-case text-faint/70">— live over LAN</span></div>
+              <LanCameraView slug={slug} connId={connId} deviceId={device.id} name={device.name} onZoom={setLightbox} />
+            </div>
+          )}
+
+          <div>
+            <div className={lbl + " mb-1.5"}>Controls</div>
+            <ControlsPanel slug={slug} connId={connId} deviceId={device.id} name={device.name} telemetry={t} lanActive={!!detail.data?.lan?.configured && detail.data?.lan?.mode !== "cloud"} />
+          </div>
+
+          <div>
+            <div className={lbl + " mb-1"}>Recent prints on {device.name}</div>
+            {mine.length === 0 ? (
+              <div className="text-xs text-muted dark:text-slate-400 italic">No finished prints recorded for this printer.</div>
+            ) : (
+              <ul className="divide-y divide-line dark:divide-slate-800 border border-line dark:border-slate-700 rounded">
+                {mine.map((r) => (
+                  <li key={r.id}>
+                    <button type="button" onClick={() => setPrintOpen(r)} className="w-full flex items-center gap-2 px-2 py-1.5 text-xs hover:bg-subtle dark:hover:bg-slate-800 text-left">
+                      {r.cover ? (
+                        <img src={r.cover} alt="" loading="lazy" className="w-8 h-8 rounded object-cover bg-subtle shrink-0" />
+                      ) : (
+                        <span className={"w-8 h-8 rounded shrink-0 flex items-center justify-center " + (r.status === "completed" ? "bg-moss-500/15" : "bg-ember-500/15")}><span className={"w-1.5 h-1.5 rounded-full " + (r.status === "completed" ? "bg-moss-500" : "bg-ember-500")} /></span>
+                      )}
+                      <span className="flex-1 min-w-0"><span className="block truncate text-content dark:text-mortar-100">{r.file_ref}</span>{r.sub_label && r.sub_label !== r.file_ref && <span className="block truncate text-faint text-[10px]">{r.sub_label}</span>}</span>
+                      <span className="text-faint shrink-0">{new Date(r.at).toLocaleDateString()}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      </Modal>
+      {lightbox && <Lightbox src={lightbox} onClose={() => setLightbox(null)} />}
+      {printOpen && <PrintDetailModal item={printOpen} onClose={() => setPrintOpen(null)} onZoom={setLightbox} />}
+    </>
+  );
+}
+
+// A single print's detail — large cover (click to zoom) + the metadata.
+function PrintDetailModal({ item, onClose, onZoom }: { item: DigifabHistory["recent"][number]; onClose: () => void; onZoom?: (src: string) => void }) {
+  const durMin = item.duration_s ? Math.round(item.duration_s / 60) : 0;
+  const dur = durMin >= 60 ? `${Math.floor(durMin / 60)}h ${durMin % 60}m` : durMin > 0 ? `${durMin}m` : null;
+  const row = (k: string, v: ReactNode) => (v ? <div className="flex justify-between gap-3 text-xs py-1 border-b border-line dark:border-slate-800 last:border-0"><span className="text-faint">{k}</span><span className="text-content dark:text-mortar-100 text-right">{v}</span></div> : null);
+  return (
+    <Modal open onClose={onClose} title={item.file_ref} size="md">
+      <div className="space-y-3">
+        {item.cover && (
+          <img src={item.cover} alt="" className="w-full max-h-72 object-contain rounded bg-subtle dark:bg-slate-800 cursor-zoom-in" onClick={() => onZoom?.(item.cover!)} />
+        )}
+        <div>
+          {row("Status", <span className={item.status === "completed" ? "text-moss-600" : item.status === "failed" ? "text-ember-600" : ""}>{item.status}</span>)}
+          {row("Profile", item.sub_label)}
+          {row("Printer", item.device)}
+          {row("Filament", item.filament_g != null ? `${Math.round(item.filament_g)} g` : null)}
+          {row("Print time", dur)}
+          {row("When", new Date(item.at).toLocaleString())}
+        </div>
+      </div>
+    </Modal>
   );
 }
 

@@ -27,9 +27,10 @@ import { bearer, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { downloadCatalogImage, enrichBarcodeItem } from "../services/enrich.js";
 import { enrichPhotoItem, observeScanPhoto } from "../services/enrich-photo.js";
-import { searchImages } from "../services/ddg-images.js";
+import { searchImages, rankImageOptions } from "../services/ddg-images.js";
 import { assembleScanMenu, assembleMergedMenu, runMatchmaker } from "../services/matchmaker.js";
 import { parseReceipt } from "../services/receipt.js";
+import { reportBarcodeCorrection } from "../services/barcode-corrections.js";
 
 export const inboxRouter = Router({ mergeParams: true });
 
@@ -98,6 +99,68 @@ inboxRouter.post(
     const scanArea =
       body.scan_area ??
       (typeof defaults.scan_area === "string" ? defaults.scan_area : null);
+
+    // Dedup repeated scans of the SAME barcode (the companion app behavior): rather than
+    // pile up a new row per scan, bump the quantity on the pending entry that's
+    // already there. Scoped to the same batch + same scan_area so two physically
+    // separate piles stay separate; only for barcode scans (photos/notes/receipts
+    // are each distinct). A re-scan after the item was committed/dismissed starts
+    // fresh — we only match `pending`.
+    if (body.source_kind === "barcode" && body.barcode) {
+      const existing = await db
+        .selectFrom("core_scan_inbox_items")
+        .select("id")
+        .where("status", "=", "pending")
+        .where("barcode_text", "=", body.barcode)
+        .where((eb) =>
+          body.scan_batch_id
+            ? eb("scan_batch_id", "=", body.scan_batch_id)
+            : eb("scan_batch_id", "is", null),
+        )
+        .where((eb) => (scanArea ? eb("scan_area", "=", scanArea) : eb("scan_area", "is", null)))
+        .orderBy("created_at", "desc")
+        .executeTakeFirst();
+      if (existing) {
+        const bumped = await db
+          .updateTable("core_scan_inbox_items")
+          .set({ quantity: sql`quantity + 1`, updated_at: sql`now()` })
+          .where("id", "=", existing.id)
+          .returningAll()
+          .executeTakeFirstOrThrow();
+        void platform().events.emit("core-scan.scan.received", {
+          orgId: ctx.org.id,
+          itemId: bumped.id,
+          barcode: body.barcode,
+          sourceKind: "barcode",
+        });
+        // Re-scanning a still-UNIDENTIFIED item means "try again" — re-run
+        // enrichment through the current pipeline (detached, force) instead of
+        // leaving it frozen in a stale state. Without this, an item that failed
+        // before a fix shipped (e.g. a pre-router rate-limited FNSKU) stays stuck
+        // forever: the auto-retry gives up and every re-scan only bumps quantity.
+        // A resolved item just counts up.
+        const token = bearer(req);
+        if (!bumped.suggested_name && body.barcode && token) {
+          const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+          void enrichBarcodeItem({
+            db,
+            orgId: ctx.org.id,
+            itemId: bumped.id,
+            orgSlug: ctx.org.slug,
+            bearer: token,
+            baseUrl,
+            upc: body.barcode,
+            force: true,
+          })
+            .catch((err) => console.error("[core-scan] re-scan re-enrich threw:", (err as Error).message))
+            .then(() =>
+              platform().events.emit("core-scan.scan.enriched", { orgId: ctx.org.id, itemId: bumped.id }),
+            );
+        }
+        res.status(200).json(bumped);
+        return;
+      }
+    }
 
     const inserted = await db
       .insertInto("core_scan_inbox_items")
@@ -574,6 +637,17 @@ inboxRouter.patch(
     if (parsed.data.quantity !== undefined) patch.quantity = parsed.data.quantity;
     if (parsed.data.name !== undefined) patch.suggested_name = parsed.data.name;
     const db = tenantDb(req);
+    // Capture the prior name first: renaming a barcode item is a correction we
+    // feed back to the shared Barcode Intelligence DB (below), and we need the
+    // value the resolver gave to record what was wrong.
+    const prior =
+      parsed.data.name !== undefined
+        ? await db
+            .selectFrom("core_scan_inbox_items")
+            .select(["barcode_text", "suggested_name"])
+            .where("id", "=", id)
+            .executeTakeFirst()
+        : undefined;
     const row = await db
       .updateTable("core_scan_inbox_items")
       .set(patch)
@@ -583,6 +657,21 @@ inboxRouter.patch(
     if (!row) {
       res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
       return;
+    }
+
+    // An inline rename of a barcode item ALSO propagates to the Barcode
+    // Intelligence DB — the resolver's name was wrong and the human's is truth,
+    // so the next scan of this UPC (any workspace) gets the fix. Mirrors the
+    // confirm-time report; reportBarcodeCorrection guards trivial edits. Inert
+    // unless the resolver + a correction token are configured.
+    if (prior?.barcode_text && parsed.data.name !== undefined && parsed.data.name.trim()) {
+      void reportBarcodeCorrection({
+        upc: prior.barcode_text,
+        field: "title",
+        was: prior.suggested_name,
+        now: parsed.data.name.trim(),
+        userId: sessionUser(req).id,
+      });
     }
 
     // Manual-name fallback: when the user NAMES a previously-unidentified item
@@ -783,20 +872,45 @@ inboxRouter.post(
     const createUrl = parsed.data.instance
       ? `${baseUrl}/api/v1/orgs/${ctx.org.slug}/instances/${parsed.data.instance}/items`
       : `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/${createPath}`;
-    const createRes = await fetch(createUrl, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    });
+    const doCreate = () =>
+      fetch(createUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+    let createRes = await doCreate();
+    // Capture-first "one-tap materialize": you can scan into a flagship-bundle
+    // shape before its module is enabled. If the create dead-ends on the
+    // module-not-enabled gate, enable the target module (idempotent) and retry
+    // once — so a scan files itself instead of erroring on a 409.
+    if (createRes.status === 409) {
+      const peek = await createRes.clone().text();
+      if (/module_not_enabled/.test(peek)) {
+        await fetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/${target.module}/enable`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: "{}",
+        }).catch(() => {});
+        createRes = await doCreate();
+      }
+    }
     if (!createRes.ok) {
       const errText = await createRes.text();
+      // Surface the TARGET's own message (e.g. "Enable Inventory in Configuration
+      // → Modules"), not just the bare status, so the error is actionable.
+      let targetMsg: string | undefined;
+      try {
+        targetMsg = (JSON.parse(errText) as { error?: { message?: string } }).error?.message;
+      } catch {
+        /* non-JSON body */
+      }
       res.status(createRes.status).json({
         error: {
           code: "create_failed",
-          message: `Target create returned ${createRes.status}`,
+          message: targetMsg ?? `Target create returned ${createRes.status}`,
           details: errText,
         },
       });
@@ -873,6 +987,22 @@ inboxRouter.post(
     // golden set grows from real triage rather than hand-authoring. A capture
     // failure must never fail the commit. See docs/operations/ai-prompt-eval-harness.md.
     const sess = sessionUser(req);
+
+    // Feed a scan-triage correction back to the shared Barcode Intelligence DB:
+    // a barcode item renamed away from what the resolver returned means the
+    // lookup was wrong (or missing) and the human's name is the truth. The next
+    // scan of this UPC, in any workspace, then gets the fix. Fire-and-forget;
+    // inert unless the resolver + a correction token are configured.
+    if (row.barcode_text) {
+      void reportBarcodeCorrection({
+        upc: row.barcode_text,
+        field: "title",
+        was: row.suggested_name,
+        now: String(body.name ?? ""),
+        userId: sess.id,
+      });
+    }
+
     if (parsed.data.save_eval_case && sess.is_platform_admin) {
       try {
         const menu = await assembleMergedMenu(baseUrl, ctx.org.slug, token);
@@ -940,6 +1070,35 @@ inboxRouter.post(
   }),
 );
 
+// ─────────────────────── POST /inbox/:id/restore ──────────────────
+// Un-discard a soft-deleted scan back into the pending queue (the "recently
+// deleted" undo). Only acts on a discarded row; its enriched data was preserved
+// by the soft delete, so it comes back exactly as it left.
+inboxRouter.post(
+  "/inbox/:id/restore",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const id = req.params.id;
+    if (!id) {
+      res.status(400).json({ error: { code: "missing_id", message: "id required" } });
+      return;
+    }
+    const db = tenantDb(req);
+    const row = await db
+      .updateTable("core_scan_inbox_items")
+      .set({ status: "pending", updated_at: new Date() })
+      .where("id", "=", id)
+      .where("status", "=", "discarded")
+      .returningAll()
+      .executeTakeFirst();
+    if (!row) {
+      res.status(404).json({ error: { code: "not_found", message: "discarded inbox item not found" } });
+      return;
+    }
+    res.json(row);
+  }),
+);
+
 // ─────────────────────── POST /inbox/:id/rerun-ai ─────────────────
 
 const RerunBody = z.object({
@@ -976,28 +1135,30 @@ inboxRouter.post(
       return;
     }
     if (!row.barcode_text) {
-      // Photo-only path → re-run the vision identify (awaited here so the
-      // response reflects the fresh result, unlike the detached POST).
+      // Photo-only path → re-run the vision identify. The vision+match pass runs
+      // tens of seconds over the edge relay, so we DON'T hold the request for it
+      // (holding past ~100s 524s behind cobblr.me's Cloudflare tunnel). Instead we
+      // kick the work off detached and return immediately; the web shows a local
+      // "AI reading…" state on this card and the inbox poll surfaces the result.
+      // The detached work runs on its OWN freshly-acquired tenant db (the request
+      // pool is gone once we respond) — enrichPhotoItem re-acquires after its
+      // vision call and matchItem re-acquires its own, so neither touches a reaped
+      // pool.
       if (!row.image_file_id) {
         res.status(400).json({ error: { code: "no_input", message: "item has neither a barcode nor a photo" } });
         return;
       }
-      await enrichPhotoItem({ db, orgId: ctx.org.id, itemId: id, imageFileId: row.image_file_id });
-      void platform().events.emit("core-scan.scan.enriched", { orgId: ctx.org.id, itemId: id });
-      await matchItem({
-        orgId: ctx.org.id,
-        orgSlug: ctx.org.slug,
-        token,
-        baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API,
-        itemId: id,
-        force: true,
+      const imageFileId = row.image_file_id;
+      const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+      void (async () => {
+        const workDb = (await platform().tenants.getDb(ctx.org.id)) as unknown as typeof db;
+        await enrichPhotoItem({ db: workDb, orgId: ctx.org.id, itemId: id, imageFileId });
+        void platform().events.emit("core-scan.scan.enriched", { orgId: ctx.org.id, itemId: id });
+        await matchItem({ orgId: ctx.org.id, orgSlug: ctx.org.slug, token, baseUrl, itemId: id, force: true });
+      })().catch((err) => {
+        console.error("[core-scan] photo rerun-ai work failed:", (err as Error)?.message ?? err);
       });
-      const freshPhoto = await db
-        .selectFrom("core_scan_inbox_items")
-        .selectAll()
-        .where("id", "=", id)
-        .executeTakeFirstOrThrow();
-      res.json(freshPhoto);
+      res.json(row);
       return;
     }
 
@@ -1081,7 +1242,7 @@ inboxRouter.get(
     const db = tenantDb(req);
     const row = await db
       .selectFrom("core_scan_inbox_items")
-      .select(["suggested_name", "barcode_text"])
+      .select(["suggested_name", "suggested_manufacturer", "barcode_text"])
       .where("id", "=", id ?? "")
       .executeTakeFirst();
     const q = row?.suggested_name ?? row?.barcode_text;
@@ -1089,7 +1250,11 @@ inboxRouter.get(
       res.json({ items: [] });
       return;
     }
-    const items = await searchImages(q, 8).catch(() => []);
+    // Rank a LARGER pool by catalog quality (retail/brand domain + square-ish),
+    // then return the best — so the clean studio shot is at the front instead of
+    // the recipe-blog / social photo DDG happened to put first.
+    const pool = await searchImages(q, 24).catch(() => []);
+    const items = rankImageOptions(pool, row?.suggested_manufacturer).slice(0, 12);
     res.json({ items });
   }),
 );
@@ -1117,7 +1282,7 @@ inboxRouter.post(
     }
     const row = await db
       .selectFrom("core_scan_inbox_items")
-      .select("id")
+      .select(["id", "barcode_text", "catalog_image_url"])
       .where("id", "=", id ?? "")
       .executeTakeFirst();
     if (!row) {
@@ -1133,6 +1298,19 @@ inboxRouter.post(
       { db, orgSlug: ctx.org.slug, bearer: token, itemId: row.id },
       parsed.data.url,
     );
+    // Picking a better catalog photo for a BARCODE item is the truth — feed it
+    // back to the shared Barcode Intelligence DB as an image_url correction, so
+    // the next scan of this UPC (any workspace) gets YOUR clean image, beating
+    // whatever Open Food Facts / a provider had (or filling a missing image).
+    if (row.barcode_text) {
+      void reportBarcodeCorrection({
+        upc: row.barcode_text,
+        field: "image_url",
+        was: row.catalog_image_url,
+        now: parsed.data.url,
+        userId: sessionUser(req).id,
+      });
+    }
     const fresh = await db
       .selectFrom("core_scan_inbox_items")
       .selectAll()
@@ -1235,6 +1413,15 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
     // pre-call handle is the classic "pool after end" (see /scan read-back).
     const dbAfter = (await platform().tenants.getDb(opts.orgId)) as unknown as ReturnType<typeof tenantDb>;
     const top = candidates[0];
+    // A barcode item a curated PROVIDER already identified keeps its "Resolved
+    // via {source}" provenance + identification confidence — the matchmaker's
+    // keyword-routing note ("Matched by keywords (no AI)…") must not clobber the
+    // identification headline (the routing still shows via the candidate chips).
+    // Photos/notes have no such provenance → the matchmaker's note IS the
+    // identification, so it stands.
+    const idSource = ((row.suggested_metadata ?? {}) as { source?: string }).source ?? "";
+    const REAL_BARCODE_SOURCES = new Set(["go-upc", "openfoodfacts", "openproductsfacts", "upcitemdb"]);
+    const barcodeIdentified = !!row.barcode_text && !!row.suggested_name && REAL_BARCODE_SOURCES.has(idSource);
     await dbAfter
       .updateTable("core_scan_inbox_items")
       .set({
@@ -1244,7 +1431,7 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
           ...(photoObservations ? { photo_observations: photoObservations } : {}),
           matched_at: new Date().toISOString(),
         }) as never,
-        ...(top && typeof top === "object" && "notes" in top && (top as { notes?: string }).notes
+        ...(top && typeof top === "object" && "notes" in top && (top as { notes?: string }).notes && !barcodeIdentified
           ? {
               ai_notes: (top as { notes: string }).notes,
               ai_confidence: String((top as { confidence: number }).confidence),

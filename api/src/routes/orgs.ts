@@ -24,6 +24,7 @@ import { provisionOrgForUser } from "./auth.js";
 import { provisionAppWorkspace, ProvisionAppError, refreshManagedApp, importAppData } from "../platform/provision-app.js";
 import { checkEntitlement } from "../platform/hosted-seams.js";
 import { disableModuleForOrg, enableModuleForOrg } from "../modules/enable.js";
+import { recordClaim, USER_SOURCE } from "../platform/bundle-claims.js";
 import { getEntry as getModuleEntry } from "../modules/registry.js";
 
 export const orgsRouter = Router();
@@ -134,6 +135,9 @@ orgsRouter.post(
       const result = await enableModuleForOrg(req.tenant!.org.id, name, {
         userId: req.session!.id,
       });
+      // Pin the module with a 'user' claim so a later bundle uninstall never
+      // auto-disables a module the user turned on themselves. Idempotent.
+      await recordClaim(req.tenant!.org.id, USER_SOURCE, "module", name);
       res.status(result.alreadyEnabled ? 200 : 201).json({
         module: name,
         already_enabled: result.alreadyEnabled,

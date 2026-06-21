@@ -21,6 +21,7 @@ import { UserMenu } from "./UserMenu";
 import { MobileNav } from "./MobileNav";
 import { EmailVerifyBanner } from "./EmailVerifyBanner";
 import { ChatWidget } from "./ChatWidget";
+import { GlobalScanWedge } from "./GlobalScanWedge";
 import { SearchBar } from "./SearchBar";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { api } from "../lib/api";
@@ -228,6 +229,10 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           </ErrorBoundary>
         </div>
       </main>
+      {/* App-wide hardware-scanner intake: a physical barcode scan registers
+          from any screen (off the Scan tab) and always toasts — no silent drop.
+          Stands down on the Scan page, which owns the wedge there. */}
+      {activeSlug ? <GlobalScanWedge activeSlug={activeSlug} /> : null}
       {/* Feature 3: the drive prompt + green/red indicator (renders only when a
           drive grant is set and a session is live). */}
       <DriveBanner />

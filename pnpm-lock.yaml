@@ -766,6 +766,9 @@ importers:
       mqtt:
         specifier: ^5.10.1
         version: 5.15.1
+      multer:
+        specifier: ^2.0.0
+        version: 2.1.1
       zod:
         specifier: ^3.24.1
         version: 3.25.76
@@ -773,6 +776,9 @@ importers:
       '@types/express':
         specifier: ^4.17.21
         version: 4.17.25
+      '@types/multer':
+        specifier: ^1.4.12
+        version: 1.4.13
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
@@ -914,22 +920,6 @@ importers:
       zod:
         specifier: ^3.24.1
         version: 3.25.76
-    devDependencies:
-      '@types/express':
-        specifier: ^4.17.21
-        version: 4.17.25
-      typescript:
-        specifier: ^5.7.2
-        version: 5.9.3
-
-  modules/maker-scan:
-    dependencies:
-      '@cobblr/platform-contract':
-        specifier: workspace:*
-        version: link:../../packages/platform-contract
-      express:
-        specifier: ^4.21.2
-        version: 4.22.2
     devDependencies:
       '@types/express':
         specifier: ^4.17.21

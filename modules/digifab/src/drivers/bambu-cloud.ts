@@ -23,6 +23,7 @@ const BAMBU_URLS = {
   emailCode: "https://api.bambulab.com/v1/user-service/user/sendemail/code",
   bind: "https://api.bambulab.com/v1/iot-service/api/user/bind",
   preference: "https://api.bambulab.com/v1/design-user-service/my/preference",
+  tasks: "https://api.bambulab.com/v1/user-service/my/tasks",
 } as const;
 type BambuUrlKey = keyof typeof BAMBU_URLS;
 
@@ -188,6 +189,14 @@ export class BambuCloud {
     const res = await bambuGet(bambuUrl("bind", this.region), token);
     if (!res.ok) throw new BambuCloudError(`Couldn't list printers (${res.status})`);
     return parseDevices(await res.json().catch(() => ({})));
+  }
+
+  /** Raw cloud print-history (model name, cover, weight, time, status, …). Full
+   *  JSON kept verbatim — best-effort; returns { error } on a non-ok response. */
+  async rawTasks(token: string, limit = 30): Promise<unknown> {
+    const res = await bambuGet(`${bambuUrl("tasks", this.region)}?limit=${limit}`, token);
+    if (!res.ok) return { error: res.status, where: "tasks" };
+    return (await res.json().catch(() => ({}))) as unknown;
   }
 
   /** Resolve the MQTT username (`u_<uid>`) for the Phase-2 cloud pump. */

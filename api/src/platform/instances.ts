@@ -8,6 +8,8 @@
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { getEntry } from "../modules/registry.js";
+import { getTenantDb } from "../db/tenant.js";
+import { deleteOverride } from "./entity-kind-overrides.js";
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/;
 
@@ -149,6 +151,39 @@ export async function deleteInstance(
     .deleteFrom("workspace_module_instances")
     .where("id", "=", row.id)
     .execute();
+}
+
+/** Full teardown of a NON-default instance: its tenant-side data rows, its
+ *  `workspace_module_instances` row, and its nav/presentation override. Shared by
+ *  the DELETE /instances/:name route AND bundle uninstall (refcount teardown).
+ *  Best-effort on the tenant data (orphaned rows beat a half-deleted instance).
+ *  No-op when the instance is missing or is the default. */
+export async function tearDownInstance(orgId: string, instanceName: string): Promise<void> {
+  const inst = await getInstance(orgId, instanceName);
+  if (!inst || inst.is_default) return;
+  const entry = getEntry(inst.module_name);
+  if (entry?.manifest.schema) {
+    const prefix = entry.manifest.schema.tablePrefix;
+    try {
+      const tdb = (await getTenantDb(orgId)) as unknown as {
+        executeQuery: (s: unknown) => Promise<{ rows: Array<{ table_name: string }> }>;
+      };
+      const { rows } = await tdb.executeQuery(
+        sql`select table_name from information_schema.tables where table_schema='public' and table_name like ${prefix + "%"}`.compile(
+          tdb as never,
+        ),
+      );
+      for (const r of rows) {
+        await (tdb as unknown as { executeQuery: (s: unknown) => Promise<unknown> }).executeQuery(
+          sql.raw(`delete from "${r.table_name}" where instance = '${instanceName}'`).compile(tdb as never),
+        );
+      }
+    } catch (err) {
+      console.error(`[instances] tenant cleanup for ${inst.module_name}/${instanceName} failed:`, err);
+    }
+  }
+  await meta.deleteFrom("workspace_module_instances").where("id", "=", inst.id).execute();
+  await deleteOverride(orgId, "instance", `${inst.module_name}:${instanceName}`);
 }
 
 /** Build the display name from a slug, used when the user doesn't

@@ -1189,7 +1189,7 @@ function NewMachineModal({
     return (
       <Modal open={open} onClose={onClose} title="Install the edge connector" size="md">
         {backToForm}
-        <EdgeBridgeSetup presetDriver={KIND_BRIDGE[kind]} onCreated={onEdgeConnected} onClose={onClose} />
+        <EdgeBridgeSetup presetDriver={KIND_BRIDGE[kind]} presetName={name} onCreated={onEdgeConnected} onClose={onClose} />
       </Modal>
     );
   }

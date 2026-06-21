@@ -17,7 +17,7 @@ import { tenantDb, tenantContext } from "../db.js";
 import { asyncHandler, requireRole } from "./util.js";
 import { putSnapshot, getSnapshot, freshSnapshotKeys } from "../snapshot-store.js";
 import { getBambuStatusMap } from "../bambu-status-store.js";
-import { buildDriverById } from "../jobs-core.js";
+import { buildDriverById, bambuLanDriverFor, parseBambuLan, bambuLanMode, type BambuLan } from "../jobs-core.js";
 import { availableDriverKeys } from "../drivers/registry.js";
 import { classify } from "../state.js";
 import type { MachineDriver, RemoteDevice } from "../drivers/types.js";
@@ -99,7 +99,7 @@ fleetRouter.get(
     // (connection, target_device). One active job per device shown.
     const jobs = await db
       .selectFrom("digifab_jobs")
-      .select(["id", "connection_id", "target_device", "file_ref", "status", "progress"])
+      .select(["id", "connection_id", "target_device", "file_ref", "status", "progress", "priority", "attempts", "max_attempts"])
       .where("status", "not in", TERMINAL)
       .execute();
 
@@ -181,7 +181,7 @@ fleetRouter.get(
               // F-1: needs a bed-clear ack before it's assignable again.
               needs_attention: att ? { reason: att.reason, since: att.created_at } : null,
               active_job: job
-                ? { id: job.id, file_ref: job.file_ref, status: job.status, progress: job.progress }
+                ? { id: job.id, file_ref: job.file_ref, status: job.status, progress: job.progress, priority: job.priority, attempts: job.attempts, max_attempts: job.max_attempts }
                 : null,
             };
           });
@@ -381,5 +381,169 @@ fleetRouter.get(
     res.setHeader("content-type", "image/jpeg");
     res.setHeader("cache-control", "no-store");
     res.send(jpeg);
+  }),
+);
+
+// ── Generic live controls ────────────────────────────────────────────────────
+// The driver DECLARES what a device can do (pause/resume/stop/jog/light/temps +
+// custom); the UI renders only those + runs them here. So a printer shows exactly
+// what it supports, across every manager.
+fleetRouter.get(
+  "/:connectionId/:deviceId/controls",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const orgId = tenantContext(req).org.id;
+    const driver = await buildDriverById(tenantDb(req), orgId, req.params.connectionId!);
+    const controls = driver?.listControls ? await driver.listControls(req.params.deviceId!) : [];
+    res.json({ controls });
+  }),
+);
+
+const ControlBody = z.object({ id: z.string().min(1).max(60), params: z.record(z.unknown()).optional() });
+fleetRouter.post(
+  "/:connectionId/:deviceId/control",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const parsed = ControlBody.safeParse(req.body);
+    if (!parsed.success) return void res.status(400).json({ error: { code: "bad_body", message: "control id required" } });
+    const orgId = tenantContext(req).org.id;
+    // Prefer the LAN driver when this printer has LAN configured (more reliable
+    // than cloud, and the only path that works if cloud rejects the command).
+    const lan = await bambuLanDriverFor(orgId, req.params.connectionId!, req.params.deviceId!);
+    const driver = lan ?? (await buildDriverById(tenantDb(req), orgId, req.params.connectionId!));
+    if (!driver?.runControl) return void res.status(501).json({ error: { code: "unsupported", message: "this printer can't be controlled here" } });
+    const r = await driver.runControl(req.params.deviceId!, parsed.data.id, parsed.data.params ?? {});
+    if (!r.ok) return void res.status(502).json({ error: { code: "control_failed", message: r.detail ?? "command not accepted by the printer" } });
+    res.json({ ok: true, ref: r.ref });
+  }),
+);
+
+// ── Per-printer Bambu LAN access (hybrid) — store host + access code so the
+// on-site bridge can push files / control over the printer's LAN, while cloud
+// keeps doing telemetry. The access code is a credential → stored encrypted in
+// the connection's creds (creds.bambu_lan = { serial: { host, access_code } }).
+const LanBody = z.object({
+  host: z.string().max(200).optional(),
+  access_code: z.string().max(64).optional(),
+  mode: z.enum(["cloud", "prefer_lan", "lan_only"]).optional(),
+});
+async function readLanMap(orgId: string, connId: string): Promise<{ conn: { id: string; type: string; credentials_enc: string | null } | null; map: Record<string, BambuLan> }> {
+  const conn = await platform().devices.connections().getInternal(orgId, connId);
+  if (!conn) return { conn: null, map: {} };
+  const creds = conn.credentials_enc ? await platform().integrations.decryptCredentials(orgId, conn.credentials_enc) : {};
+  return { conn: { id: conn.id, type: conn.type, credentials_enc: conn.credentials_enc }, map: parseBambuLan(creds) };
+}
+fleetRouter.put(
+  "/:connectionId/:deviceId/lan",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const parsed = LanBody.safeParse(req.body);
+    if (!parsed.success) return void res.status(400).json({ error: { code: "bad_body", message: "host + access_code required" } });
+    const orgId = tenantContext(req).org.id;
+    const { conn, map } = await readLanMap(orgId, req.params.connectionId!);
+    if (!conn || conn.type !== "bambu") return void res.status(400).json({ error: { code: "not_bambu", message: "LAN access is for Bambu connections" } });
+    // Merge — host/access_code on first enable; mode can change on its own later.
+    const prev = map[req.params.deviceId!] ?? { host: "", access_code: "" };
+    const host = (parsed.data.host ?? prev.host).trim();
+    const access_code = (parsed.data.access_code ?? prev.access_code).trim();
+    if (!host || !access_code) return void res.status(400).json({ error: { code: "incomplete", message: "host + access_code required to enable LAN" } });
+    map[req.params.deviceId!] = { host, access_code, mode: parsed.data.mode ?? prev.mode ?? "prefer_lan" };
+    await platform().devices.connections().update(orgId, conn.id, { creds: { bambu_lan: JSON.stringify(map) } });
+    res.json({ ok: true, host, mode: map[req.params.deviceId!]!.mode });
+  }),
+);
+fleetRouter.delete(
+  "/:connectionId/:deviceId/lan",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const orgId = tenantContext(req).org.id;
+    const { conn, map } = await readLanMap(orgId, req.params.connectionId!);
+    if (!conn) return void res.status(404).json({ error: { code: "not_found", message: "no such connection" } });
+    delete map[req.params.deviceId!];
+    await platform().devices.connections().update(orgId, conn.id, { creds: { bambu_lan: JSON.stringify(map) } });
+    res.json({ ok: true });
+  }),
+);
+
+// GET …/camera — one JPEG frame from the printer's LAN camera, over the bridge
+// (Bambu A1/P1 chamber camera). A refreshing still; the modal polls it. LAN-only.
+fleetRouter.get(
+  "/:connectionId/:deviceId/camera",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const orgId = tenantContext(req).org.id;
+    const driver = await bambuLanDriverFor(orgId, req.params.connectionId!, req.params.deviceId!);
+    if (!driver?.getCameraFrame) return void res.status(501).json({ error: { code: "no_camera", message: "no LAN camera for this printer" } });
+    const jpeg = await driver.getCameraFrame();
+    if (!jpeg || jpeg.length === 0) return void res.status(502).json({ error: { code: "camera_failed", message: "couldn't grab a camera frame" } });
+    // Cache the frame so the next modal-open can show it INSTANTLY (via /snapshot)
+    // instead of 3s of "connecting" while the live grab runs. Best-effort.
+    void putSnapshot(tenantDb(req), req.params.connectionId!, req.params.deviceId!, jpeg).catch(() => {});
+    res.set("Content-Type", "image/jpeg").set("Cache-Control", "no-store").send(jpeg);
+  }),
+);
+
+// ── Rich live detail — the captured Bambu MQTT report, distilled for the printer
+// modal: AMS filament slots (color/material/remaining), chamber light, firmware
+// update, HMS error count, temps. Empty for non-Bambu / no live stream.
+function bHex(c: unknown): string | null {
+  if (typeof c !== "string" || !/^[0-9a-fA-F]{6,8}$/.test(c)) return null;
+  const rgb = c.slice(0, 6).toUpperCase();
+  return rgb === "000000" && c.length === 8 && c.slice(6).toUpperCase() === "00" ? null : `#${rgb}`;
+}
+function bNum(v: unknown): number | null {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+fleetRouter.get(
+  "/:connectionId/:deviceId/detail",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    // LAN config for this printer (hybrid) — surfaced so the modal can show the
+    // "LAN access" state. Host only; never the access code.
+    const { conn: lanConn, map: lanMap } = await readLanMap(tenantContext(req).org.id, req.params.connectionId!);
+    const lanCfg = lanMap[req.params.deviceId!];
+    // Camera available when LAN is configured (Bambu chamber cam via the bridge).
+    const lan = { applicable: lanConn?.type === "bambu", configured: !!lanCfg, host: lanCfg?.host, mode: bambuLanMode(lanCfg), camera: !!lanCfg && bambuLanMode(lanCfg) !== "cloud" };
+    const row = await tenantDb(req)
+      .selectFrom("digifab_bambu_status")
+      .select(["report", "updated_at"])
+      .where("connection_id", "=", req.params.connectionId!)
+      .where("serial", "=", req.params.deviceId!)
+      .executeTakeFirst();
+    if (!row?.report) return void res.json({ live: false, telemetry: null, lan });
+    const p = row.report as Record<string, unknown>;
+    const slots: { id: string; type: string | null; color: string | null; remain: number | null; brand: string | null }[] = [];
+    const amsUnits = Array.isArray((p.ams as { ams?: unknown })?.ams) ? ((p.ams as { ams: Record<string, unknown>[] }).ams) : [];
+    for (const unit of amsUnits) {
+      const trays = Array.isArray(unit.tray) ? (unit.tray as Record<string, unknown>[]) : [];
+      for (const t of trays) {
+        if (!t.tray_type) continue; // empty slot
+        slots.push({ id: `${unit.id}-${t.id}`, type: (t.tray_type as string) || null, color: bHex(t.tray_color), remain: bNum(t.remain), brand: (t.tray_sub_brands as string) || null });
+      }
+    }
+    const vt = p.vt_tray as Record<string, unknown> | undefined;
+    if (vt?.tray_type) slots.push({ id: "ext", type: (vt.tray_type as string) || null, color: bHex(vt.tray_color), remain: bNum(vt.remain), brand: (vt.tray_sub_brands as string) || null });
+    const lights = Array.isArray(p.lights_report) ? (p.lights_report as { node?: string; mode?: string }[]) : [];
+    const fwList = Array.isArray((p.upgrade_state as { new_ver_list?: unknown })?.new_ver_list) ? ((p.upgrade_state as { new_ver_list: { cur_ver?: string; new_ver?: string }[] }).new_ver_list) : [];
+    res.json({
+      live: true,
+      updated_at: new Date(row.updated_at).toISOString(),
+      telemetry: {
+        nozzle: bNum(p.nozzle_temper), nozzle_target: bNum(p.nozzle_target_temper),
+        bed: bNum(p.bed_temper), bed_target: bNum(p.bed_target_temper),
+        chamber: bNum(p.chamber_temper),
+        light: lights.find((l) => l.node === "chamber_light")?.mode ?? null,
+        speed_level: bNum(p.spd_lvl),
+        nozzle_diameter: (p.nozzle_diameter as string) ?? null,
+        nozzle_type: (p.nozzle_type as string) ?? null,
+        wifi: (p.wifi_signal as string) ?? null,
+        gcode_state: (p.gcode_state as string) ?? null,
+        firmware_update: fwList.some((v) => v.new_ver && v.cur_ver && v.new_ver !== v.cur_ver),
+        hms_count: Array.isArray(p.hms) ? (p.hms as unknown[]).length : 0,
+        ams: slots,
+      },
+      lan,
+    });
   }),
 );

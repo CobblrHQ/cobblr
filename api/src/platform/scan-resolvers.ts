@@ -2,13 +2,14 @@
 // encodes a SPECIFIC product (a Polar Filament spool → `3dqr.co/?i=<serial>`).
 // Treated as a barcode it triggers the generic web-search path, which finds
 // the maker's *marketing* page, not the product. So the platform holds a
-// registry: a connector module (maker-scan) registers one matcher+resolver
-// per vendor via platform().scan.registerUrlResolver, and core-scan's
-// enrichBarcodeItem asks platform().scan.resolveUrl(value) as step 0.
+// registry of matcher+resolvers via platform().scan.registerUrlResolver, and
+// core-scan's enrichBarcodeItem asks platform().scan.resolveUrl(value) as step 0.
 //
-// Same modular seam as registerComputedContext: a module populates it at
-// boot, the platform reads it, and neither core-scan nor the kernel imports
-// any specific vendor. The vendor list lives entirely in the connector.
+// In practice one resolver is registered: the DECLARATIVE vendor resolver
+// (api/src/platform/scan-url-resolvers/), which consults a data manifest LIST —
+// built-in (Polar) + operator-added — rather than a code module per vendor.
+// (A code resolver can still register here directly as an escape hatch.) The
+// kernel imports no specific vendor; the vendor list is data.
 
 import type { ScanUrlResolver, ScanUrlResolution } from "@cobblr/platform-contract";
 

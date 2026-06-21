@@ -2097,11 +2097,13 @@ export type AuthEmailSender = (msg: AuthEmailMessage) => Promise<void>;
 // A scanned QR is often a URL on a maker's site that encodes a SPECIFIC
 // product (a Polar Filament spool → `3dqr.co/?i=<serial>`). Treated as a
 // barcode it triggers the generic web-search path, which finds the maker's
-// *marketing* page, not the product. So the platform exposes a registry: a
-// connector module (maker-scan) registers one matcher+resolver per vendor via
+// *marketing* page, not the product. So the platform exposes a registry via
 // platform().scan.registerUrlResolver, and the scan pipeline asks
-// platform().scan.resolveUrl(value). The kernel/core-scan never imports a
-// vendor — the same modular seam as registerComputedContext / registerHandler.
+// platform().scan.resolveUrl(value). In practice the registered resolver is the
+// DECLARATIVE vendor resolver, which consults a data manifest LIST (built-in +
+// operator-added) — adding a maker is a data entry, not a code module. The
+// kernel/core-scan never imports a vendor — the same modular seam as
+// registerComputedContext / registerHandler.
 
 export interface ScanUrlResolution {
   /** Provenance for the inbox row + cache, e.g. "polar-3dqr". */

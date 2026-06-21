@@ -19,6 +19,7 @@ import {
   MessageSquare,
   Megaphone,
   Eye,
+  ScanLine,
 } from "lucide-react";
 
 export type AdminSectionId =
@@ -36,6 +37,7 @@ export type AdminSectionId =
   | "barcodes"
   | "tokens"
   | "scaneval"
+  | "scan-resolvers"
   | "impersonation"
   | "health";
 
@@ -58,6 +60,7 @@ export const ADMIN_SECTIONS: Array<{
   { id: "barcodes", label: "Barcodes", icon: Barcode },
   { id: "tokens", label: "Tokens", icon: KeyRound },
   { id: "scaneval", label: "Scan Eval", icon: FlaskConical },
+  { id: "scan-resolvers", label: "Scan Resolvers", icon: ScanLine },
   { id: "impersonation", label: "View-as Log", icon: Eye },
   { id: "health", label: "Health", icon: HeartPulse },
 ];

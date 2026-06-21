@@ -16,6 +16,7 @@
 
 import type {
   CommandResult,
+  ControlDef,
   ConnectionResult,
   ManagerConfig,
   MachineDriver,
@@ -96,6 +97,38 @@ export class EdgeAdapterDriver implements MachineDriver {
     return this.token ? { ...extra, authorization: `Bearer ${this.token}` } : extra;
   }
 
+  /** The live controls the bridge's driver declares (pause/resume/stop + …).
+   *  Best-effort — [] if the bridge/driver has none. */
+  async listControls(): Promise<ControlDef[]> {
+    try {
+      const data = (await this.req("GET", "/controls")) as ControlDef[];
+      return Array.isArray(data) ? data : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** Run a declared control through the bridge. */
+  async runControl(_deviceId: string, id: string, params: Record<string, unknown>): Promise<CommandResult> {
+    try {
+      const r = (await this.req("POST", "/control", { body: { id, params } })) as { ok?: boolean; ref?: string; detail?: string };
+      return r?.ok ? { ok: true, ref: r.ref ?? id } : { ok: false, detail: r?.detail ?? "control not accepted" };
+    } catch (e) {
+      return { ok: false, detail: (e as Error).message };
+    }
+  }
+
+  /** Grab one JPEG camera frame (the bridge returns it base64 over the JSON
+   *  contract). Best-effort — null if the driver/printer has no camera. */
+  async getCameraFrame(): Promise<Buffer | null> {
+    try {
+      const data = (await this.req("GET", "/camera")) as { jpeg_b64?: string };
+      return data?.jpeg_b64 ? Buffer.from(data.jpeg_b64, "base64") : null;
+    } catch {
+      return null;
+    }
+  }
+
   /** One transport for every contract call. Tunnel mode routes through the relay
    *  (the body is JSON; an upload rides as { filename, data_b64 }); direct mode
    *  dials the bridge (an upload is multipart). */
@@ -145,6 +178,7 @@ export class EdgeAdapterDriver implements MachineDriver {
       tags: [],
       temps: coerceTemps(d.temps),
       stage: typeof d.stage === "string" && d.stage ? d.stage : null,
+      raw: d.raw && typeof d.raw === "object" ? (d.raw as Record<string, unknown>) : null,
     }));
   }
 

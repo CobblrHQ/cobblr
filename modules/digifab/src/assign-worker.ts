@@ -51,6 +51,7 @@ export async function assignPoolJobs(db: Kysely<DigifabDB>, orgId: string): Prom
     .selectAll()
     .where("status", "=", "queued")
     .where("target_pool", "is not", null)
+    .orderBy("priority", "desc")
     .orderBy("created_at", "asc")
     .execute();
   if (!queued.length) return 0;

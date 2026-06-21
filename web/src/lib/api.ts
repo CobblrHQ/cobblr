@@ -207,6 +207,25 @@ export interface WaitlistEntry {
   invite_status?: "open" | "consumed" | "expired" | "revoked" | null;
 }
 
+export interface ScanUrlResolverRow {
+  resolver_id: string;
+  label: string;
+  enabled: boolean;
+  position: number;
+  manifest: unknown;
+  builtin: boolean;
+}
+
+export interface ScanUrlResolution {
+  source: string;
+  name: string;
+  brand: string | null;
+  category: string | null;
+  entityType: string | null;
+  fields: Record<string, unknown>;
+  imageUrl?: string | null;
+}
+
 export interface FeedbackItem {
   id: string;
   type: string;
@@ -450,6 +469,21 @@ export const api = {
     request<{ items: SignupInvite[] }>("GET", "/super-admin/signup-invites"),
   revokeSignupInvite: (id: string) =>
     request<void>("POST", `/super-admin/signup-invites/${id}/revoke`),
+  // Superadmin: vendor scan-URL resolvers — the global list (built-in + operator).
+  scanResolvers: () =>
+    request<{ items: ScanUrlResolverRow[] }>("GET", "/super-admin/scan-url-resolvers"),
+  saveScanResolver: (manifest: unknown, position?: number) =>
+    request<{ ok: true }>("POST", "/super-admin/scan-url-resolvers", { manifest, position }),
+  patchScanResolver: (id: string, body: { enabled?: boolean; label?: string; manifest?: unknown }) =>
+    request<{ ok: true }>("PATCH", `/super-admin/scan-url-resolvers/${encodeURIComponent(id)}`, body),
+  deleteScanResolver: (id: string) =>
+    request<void>("DELETE", `/super-admin/scan-url-resolvers/${encodeURIComponent(id)}`),
+  testScanResolver: (url: string) =>
+    request<{ matched: boolean; resolution: ScanUrlResolution | null }>(
+      "POST",
+      "/super-admin/scan-url-resolvers/test",
+      { url },
+    ),
   // Superadmin: marketing-site waitlist — list, approve (mints an invite), dismiss.
   listWaitlist: () => request<{ items: WaitlistEntry[] }>("GET", "/super-admin/waitlist"),
   approveWaitlist: (id: string, body?: { note?: string; expires_in_days?: number }) =>
@@ -900,6 +934,14 @@ export const api = {
     request<BundleValidation>("POST", `/orgs/${slug}/bundles/validate`, { manifest }),
   uninstallBundle: (slug: string, id: string) =>
     request<void>("DELETE", `/orgs/${slug}/bundles/${id}`),
+  /** What uninstalling this bundle would tear down: its instances no other source
+   *  still claims (with item counts) + modules that would be turned off. Powers
+   *  the uninstall-confirm warning. */
+  bundleUninstallPreview: (slug: string, id: string) =>
+    request<{
+      instances: { name: string; display_name: string; item_count: number }[];
+      modules: string[];
+    }>("GET", `/orgs/${slug}/bundles/${id}/uninstall-preview`),
 
   // ─── extension registry (the marketplace index — HACS-style) ───────
   // The curated cobblr-extensions index over all three lanes, merged with
@@ -1421,6 +1463,46 @@ export const api = {
     ),
   getBambuCapabilities: (slug: string) =>
     request<{ modes: Record<BambuMode, BambuModeCapabilities> }>("GET", `/orgs/${slug}/modules/digifab/bambu/capabilities`),
+  sendBambuCommand: (slug: string, body: { connection_id: string; serial: string; command: "pause" | "resume" | "stop" | "light_on" | "light_off" | "nudge" }) =>
+    request<{ sent: boolean }>("POST", `/orgs/${slug}/modules/digifab/bambu/command`, body),
+  // ── Generic live controls (driver-declared) ───────────────────────────────
+  getDigifabControls: (slug: string, connId: string, deviceId: string) =>
+    request<{ controls: DigifabControl[] }>("GET", `/orgs/${slug}/modules/digifab/fleet/${connId}/${encodeURIComponent(deviceId)}/controls`),
+  getDigifabDeviceDetail: (slug: string, connId: string, deviceId: string) =>
+    request<DigifabDeviceDetail>("GET", `/orgs/${slug}/modules/digifab/fleet/${connId}/${encodeURIComponent(deviceId)}/detail`),
+  // NB: a PATH (no /api/v1) — fetchAuthBlobUrl prepends /api/v1. Including it here
+  // double-prefixed the URL → /api/v1/api/v1/… → 404 (the "camera not reachable" bug).
+  digifabCameraPath: (slug: string, connId: string, deviceId: string) =>
+    `/orgs/${slug}/modules/digifab/fleet/${connId}/${encodeURIComponent(deviceId)}/camera`,
+  setBambuLan: (slug: string, connId: string, deviceId: string, body: { host?: string; access_code?: string; mode?: "cloud" | "prefer_lan" | "lan_only" }) =>
+    request<{ ok: boolean; host: string; mode: string }>("PUT", `/orgs/${slug}/modules/digifab/fleet/${connId}/${encodeURIComponent(deviceId)}/lan`, body),
+  clearBambuLan: (slug: string, connId: string, deviceId: string) =>
+    request<{ ok: boolean }>("DELETE", `/orgs/${slug}/modules/digifab/fleet/${connId}/${encodeURIComponent(deviceId)}/lan`),
+  // ── Print-update rules: channels (destinations) + rules ──
+  listDigifabChannels: (slug: string) =>
+    request<{ items: DigifabChannel[] }>("GET", `/orgs/${slug}/modules/digifab/print-rules/channels`),
+  createDigifabChannel: (slug: string, body: { label: string; webhook_url: string }) =>
+    request<DigifabChannel>("POST", `/orgs/${slug}/modules/digifab/print-rules/channels`, body),
+  patchDigifabChannel: (slug: string, id: string, body: { label?: string; webhook_url?: string; enabled?: boolean }) =>
+    request<DigifabChannel>("PATCH", `/orgs/${slug}/modules/digifab/print-rules/channels/${id}`, body),
+  deleteDigifabChannel: (slug: string, id: string) =>
+    request<void>("DELETE", `/orgs/${slug}/modules/digifab/print-rules/channels/${id}`),
+  testDigifabChannel: (slug: string, id: string) =>
+    request<{ ok: boolean }>("POST", `/orgs/${slug}/modules/digifab/print-rules/channels/${id}/test`, {}),
+  listDigifabRules: (slug: string) =>
+    request<{ items: DigifabRule[] }>("GET", `/orgs/${slug}/modules/digifab/print-rules/rules`),
+  createDigifabRule: (slug: string, body: Partial<Omit<DigifabRule, "id" | "created_at">>) =>
+    request<DigifabRule>("POST", `/orgs/${slug}/modules/digifab/print-rules/rules`, body),
+  patchDigifabRule: (slug: string, id: string, body: Partial<Omit<DigifabRule, "id" | "created_at">>) =>
+    request<DigifabRule>("PATCH", `/orgs/${slug}/modules/digifab/print-rules/rules/${id}`, body),
+  deleteDigifabRule: (slug: string, id: string) =>
+    request<void>("DELETE", `/orgs/${slug}/modules/digifab/print-rules/rules/${id}`),
+  previewDigifabRule: (slug: string, body: { title?: string; body?: string }) =>
+    request<{ title: string; body: string }>("POST", `/orgs/${slug}/modules/digifab/print-rules/preview`, body),
+  testFireDigifabRule: (slug: string, body: { channel_id: string; message?: { title?: string; body?: string; photo?: boolean }; scope_type?: string; scope_value?: string | null; pre_actions?: DigifabStep[]; post_actions?: DigifabStep[] }) =>
+    request<{ ok: boolean; printer: string }>("POST", `/orgs/${slug}/modules/digifab/print-rules/test-fire`, body),
+  runDigifabControl: (slug: string, connId: string, deviceId: string, id: string, params?: Record<string, unknown>) =>
+    request<{ ok: boolean; ref?: string }>("POST", `/orgs/${slug}/modules/digifab/fleet/${connId}/${encodeURIComponent(deviceId)}/control`, { id, params }),
   testDigifabConnection: (slug: string, id: string) =>
     request<{ ok: boolean; detail?: string; capabilities: { routing: boolean } }>(
       "POST",
@@ -1435,8 +1517,8 @@ export const api = {
   deleteDigifabConnection: (slug: string, id: string) =>
     request<void>("DELETE", `/orgs/${slug}/modules/digifab/connections/${id}`),
   // Edge tunnel: is an on-site bridge currently dialed in for this workspace?
-  getDigifabEdgeStatus: (slug: string) =>
-    request<{ connected: boolean; last_seen: number | null }>("GET", `/orgs/${slug}/modules/digifab/edge/status`),
+  getDigifabEdgeStatus: (slug: string, bridge?: string) =>
+    request<{ connected: boolean; last_seen: number | null }>("GET", `/orgs/${slug}/modules/digifab/edge/status${bridge ? `?bridge=${encodeURIComponent(bridge)}` : ""}`),
   // ── Edge-bridge machine sharing (owner side) ──────────────────────────────
   listEdgeShares: (slug: string) =>
     request<{ items: EdgeShare[] }>("GET", `/orgs/${slug}/modules/digifab/edge-shares`),
@@ -1456,6 +1538,26 @@ export const api = {
     request<{ ok: boolean }>("POST", `/orgs/${slug}/modules/digifab/edge-shares/${id}/revoke`, {}),
   getDigifabHistory: (slug: string, days = 30) =>
     request<DigifabHistory>("GET", `/orgs/${slug}/modules/digifab/history?days=${days}`),
+  // ── File library (stored 3MF/gcode + send-to-machine) ─────────────────────
+  listDigifabLibrary: (slug: string) =>
+    request<{ items: DigifabLibraryItem[] }>("GET", `/orgs/${slug}/modules/digifab/library`),
+  uploadDigifabLibrary: async (slug: string, file: File, name?: string): Promise<DigifabLibraryItem> => {
+    const form = new FormData();
+    form.set("file", file);
+    if (name) form.set("name", name);
+    const token = getToken();
+    const headers: Record<string, string> = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const res = await fetch(`/api/v1/orgs/${slug}/modules/digifab/library`, { method: "POST", headers, body: form });
+    if (!res.ok) throw new ApiError(res.status, "upload_failed", await res.text());
+    return (await res.json()) as DigifabLibraryItem;
+  },
+  renameDigifabLibrary: (slug: string, id: string, body: { name?: string; notes?: string | null }) =>
+    request<DigifabLibraryItem>("PATCH", `/orgs/${slug}/modules/digifab/library/${id}`, body),
+  deleteDigifabLibrary: (slug: string, id: string) =>
+    request<{ ok: boolean }>("DELETE", `/orgs/${slug}/modules/digifab/library/${id}`),
+  sendDigifabLibrary: (slug: string, id: string, body: { connection_id?: string; target_device?: string | null; target_pool?: string | null }) =>
+    request<{ job_id: string; status: string }>("POST", `/orgs/${slug}/modules/digifab/library/${id}/send`, body),
   // ── core-print (CUPS/IPP printers) ──────────────────────────────
   listPrinters: (slug: string) =>
     request<{ items: Printer[] }>("GET", `/orgs/${slug}/modules/core-print/printers`),
@@ -1541,8 +1643,12 @@ export const api = {
       file_id?: string | null;
       linked_machine_id?: string | null;
       linked_task_id?: string | null;
+      priority?: number;
+      max_attempts?: number;
     },
   ) => request<DigifabJob>("POST", `/orgs/${slug}/modules/digifab/jobs`, body),
+  updateDigifabJob: (slug: string, id: string, body: { priority?: number; max_attempts?: number }) =>
+    request<DigifabJob>("PATCH", `/orgs/${slug}/modules/digifab/jobs/${id}`, body),
   // ── Pools: a Cobblr-native set of devices to queue jobs onto (auto-assigned). ──
   listDigifabPools: (slug: string) =>
     request<{ items: DigifabPool[] }>("GET", `/orgs/${slug}/modules/digifab/pools`),
@@ -1984,6 +2090,11 @@ export const api = {
     request<ScanInboxItem>(
       "POST",
       `/orgs/${slug}/modules/core-scan/inbox/${id}/discard`,
+    ),
+  restoreScanItem: (slug: string, id: string) =>
+    request<ScanInboxItem>(
+      "POST",
+      `/orgs/${slug}/modules/core-scan/inbox/${id}/restore`,
     ),
   // Capture-first "write something down": free text → a note capture the
   // matchmaker identifies against the flagship bundle menu.
@@ -2496,6 +2607,25 @@ export const api = {
       hits: number;
       upcitemdb_today: { date: string; used: number; budget: number; blocked_until: number | null };
     }>("GET", `/super-admin/barcode-resolver-stats`),
+  // Proposed barcode corrections awaiting review (the public approval queue).
+  superAdminBarcodeCorrections: () =>
+    request<{
+      items: Array<{
+        id: string;
+        upc: string;
+        field: string;
+        proposed_value: unknown;
+        reason: string | null;
+        source_context: string | null;
+        corrected_by: string | null;
+        created_at: string;
+        current: { title: string | null; brand: string | null; category: string | null; provider_found: boolean };
+      }>;
+    }>("GET", `/super-admin/barcode-corrections`),
+  superAdminVerifyBarcodeCorrection: (id: string) =>
+    request<{ ok: boolean }>("POST", `/super-admin/barcode-corrections/${id}/verify`, {}),
+  superAdminRejectBarcodeCorrection: (id: string) =>
+    request<{ ok: boolean }>("POST", `/super-admin/barcode-corrections/${id}/reject`, {}),
   superAdminWorkspaces: () =>
     request<{ items: SuperAdminWorkspace[] }>(
       "GET",
@@ -3423,7 +3553,51 @@ export interface DigifabHistory {
   days: number;
   summary: { total: number; completed: number; failed: number; cancelled: number; filament_g: number; hours: number };
   by_device: { name: string; total: number; completed: number; failed: number; filament_g: number }[];
-  recent: { id: string; file_ref: string; device: string; status: string; filament_g: number | null; at: string }[];
+  recent: { id: string; file_ref: string; sub_label?: string | null; cover?: string | null; device: string; status: string; filament_g: number | null; at: string; duration_s?: number }[];
+}
+
+export interface DigifabLibraryItem {
+  id: string;
+  name: string;
+  file_id: string;
+  thumbnail_file_id: string | null;
+  kind: string;
+  size_bytes: number;
+  plate_count: number;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DigifabAmsSlot { id: string; type: string | null; color: string | null; remain: number | null; brand: string | null }
+export interface DigifabDeviceDetail {
+  live: boolean;
+  updated_at?: string;
+  lan?: { applicable: boolean; configured: boolean; host?: string; mode?: "cloud" | "prefer_lan" | "lan_only"; camera?: boolean };
+  telemetry: {
+    nozzle: number | null; nozzle_target: number | null;
+    bed: number | null; bed_target: number | null;
+    chamber: number | null;
+    light: string | null;
+    speed_level: number | null;
+    nozzle_diameter: string | null; nozzle_type: string | null;
+    wifi: string | null; gcode_state: string | null;
+    firmware_update: boolean; hms_count: number;
+    ams: DigifabAmsSlot[];
+  } | null;
+}
+
+export interface DigifabControl {
+  id: string;
+  label: string;
+  kind: "action" | "toggle" | "jog" | "number";
+  group?: "print" | "motion" | "temperature" | "accessory";
+  destructive?: boolean;
+  axes?: string[];
+  steps?: number[];
+  unit?: string;
+  min?: number;
+  max?: number;
 }
 
 export interface EdgeShare {
@@ -3491,7 +3665,7 @@ export interface DigifabFleetDevice {
   snapshot_fresh: boolean;
   /** F-1: finished/failed a print — needs a human bed-clear before it's assignable. */
   needs_attention: { reason: string; since: string } | null;
-  active_job: { id: string; file_ref: string; status: string; progress: number | null } | null;
+  active_job: { id: string; file_ref: string; status: string; progress: number | null; priority: number; attempts: number; max_attempts: number } | null;
   /** Real-time print telemetry from the printer itself (e.g. Bambu cloud MQTT) —
    *  for a print Cobblr didn't start, so there's no active_job to carry it. */
   live: { progress: number | null; remaining_min: number | null; layer_num: number | null; total_layers: number | null } | null;
@@ -3573,6 +3747,32 @@ export interface DigifabLink {
   created_at: string;
 }
 
+// Print-update rules — channels (destinations) + rules (scope→cadence→message).
+export interface DigifabChannel {
+  id: string;
+  label: string;
+  kind: string;
+  enabled: boolean;
+  created_at: string;
+}
+export type DigifabCadence = { type: "percent" | "minutes" | "layers"; every: number };
+export type DigifabStep = { control: string; params?: Record<string, unknown> } | { wait_ms: number };
+export interface DigifabRule {
+  id: string;
+  label: string;
+  scope_type: "all" | "printer" | "tag" | "family";
+  scope_value: string | null;
+  channel_id: string;
+  events: { started?: boolean; progress?: boolean; completed?: boolean; failed?: boolean };
+  cadence: DigifabCadence[];
+  cap_minutes: number | null;
+  message: { title?: string; body?: string; photo?: boolean };
+  pre_actions: DigifabStep[];
+  post_actions: DigifabStep[];
+  enabled: boolean;
+  created_at: string;
+}
+
 export interface DigifabJob {
   id: string;
   connection_id: string | null;
@@ -3585,6 +3785,9 @@ export interface DigifabJob {
   remote_file_id: string | null;
   remote_job_id: string | null;
   status: string;
+  priority: number;
+  attempts: number;
+  max_attempts: number;
   progress: number | null;
   error: string | null;
   file_id: string | null;

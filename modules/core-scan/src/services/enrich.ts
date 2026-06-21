@@ -15,6 +15,8 @@ import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { lookupBarcode, type BarcodeHit } from "./barcode-lookup.js";
 import { resolveBarcodeViaWebSearch } from "./barcode-websearch.js";
+import { classifyScanCode, resolveIsbn, resolveAsin } from "./scan-router.js";
+import { crossCheckScanPhoto } from "./enrich-photo.js";
 import type { CoreScanDB } from "../db.js";
 
 // Cross-tenant barcode cache namespace + value shape. A UPC means the same
@@ -35,6 +37,17 @@ interface BarcodeCacheValue {
   image_url: string | null;
   raw: Record<string, unknown>;
 }
+
+// Human-readable provider names for the "Resolved via …" provenance note (the
+// raw tier ids — openfoodfacts, go-upc — aren't friendly to a user).
+const SOURCE_LABEL: Record<string, string> = {
+  "go-upc": "go-upc",
+  upcitemdb: "UPCitemdb",
+  openfoodfacts: "Open Food Facts",
+  openproductsfacts: "Open Products Facts",
+  "web-search": "a web search",
+};
+const sourceLabel = (s: string): string => SOURCE_LABEL[s] ?? s;
 
 // The catalog-image upload re-uses the caller's bearer token, so it MUST
 // target our own API — never a caller-influenced base URL, or the token
@@ -132,6 +145,30 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
     return;
   }
 
+  // 0b. Route by code TYPE. Only a real product barcode (UPC/EAN) belongs in the
+  // go-upc/upcitemdb chain; an Amazon FNSKU/ASIN, an ISBN, or a URL would just
+  // waste it — and a throttled budget would then falsely mark them "rate-limited"
+  // and loop forever instead of giving up. See scan-router.
+  const codeClass = classifyScanCode(ctx.upc);
+  if (codeClass.type === "fnsku") {
+    // An Amazon fulfillment label identifies a unit only inside Amazon's
+    // warehouse — no public database can resolve it. Go straight to manual
+    // naming, and stamp ai_suggested_at so it's FINAL (not stuck in the
+    // rate-limit retry loop) and the matchmaker stops promising a re-route.
+    await ctx.db
+      .updateTable("core_scan_inbox_items")
+      .set({
+        ai_confidence: "0",
+        ai_notes:
+          "Amazon fulfillment label (FNSKU) — it identifies a unit only inside Amazon's warehouse, so it can't be looked up. Name it manually, or scan the product's own UPC barcode.",
+        ai_suggested_at: new Date(),
+        updated_at: new Date(),
+      })
+      .where("id", "=", ctx.itemId)
+      .execute();
+    return;
+  }
+
   // 1a. Per-tenant cache first (local, fastest). force → skip straight to
   // a live lookup (rerun must actually re-ask the providers).
   const tenantRow = ctx.force
@@ -191,7 +228,7 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
       image_url: cacheVal.image_url,
       raw: cacheVal.raw,
     };
-  } else {
+  } else if (codeClass.type === "upc") {
     const result = await lookupBarcode(ctx.upc);
     if (result.outcome === "hit") hit = result.hit;
     if (result.outcome === "rate_limited") rateLimited = true;
@@ -221,7 +258,15 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
         .sharedCache.put(BARCODE_NS, ctx.upc, value, value.found ? undefined : GLOBAL_MISS_TTL_SEC)
         .catch((err) => console.error("[core-scan] shared cache write failed:", (err as Error).message));
     }
+  } else if (codeClass.type === "isbn") {
+    // A book → Open Library (free, no key). A miss falls through to web search.
+    hit = await resolveIsbn(codeClass.code).catch(() => null);
+  } else if (codeClass.type === "asin") {
+    // A real Amazon ASIN → best-effort product-page title. Amazon often blocks
+    // automation, so a miss falls through to web search (which finds the listing).
+    hit = await resolveAsin(codeClass.code).catch(() => null);
   }
+  // url / unknown → no dedicated lookup; hit stays null → web search below.
 
   if (!hit) {
     // Catalog DBs have nothing — fall back to web search (what a person
@@ -279,17 +324,29 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
       .updateTable("core_scan_inbox_items")
       .set({
         ai_notes: rateLimited
-          ? "The barcode service is briefly rate-limited — re-scan in a moment to retry the lookup."
+          ? "Barcode service is rate-limited — retrying automatically in a moment."
           : "No catalog hit for this barcode, and web search turned up nothing. Fill in manually.",
-        // On a rate-limit, leave ai_suggested_at NULL so the autonomous sort can
-        // pick the item back up and retry rather than treating it as finished.
-        ...(rateLimited ? {} : { ai_suggested_at: new Date() }),
+        // On a rate-limit, leave ai_suggested_at NULL (reads as unfinished) AND
+        // tag the row so the client shows a distinct "retrying" state and paces
+        // an auto-retry. The lookup wasn't cached, so retrying once the go-upc /
+        // upcitemdb gate frees will resolve it — no need to re-scan the item.
+        ...(rateLimited
+          ? { suggested_metadata: sql`${JSON.stringify({ rate_limited: true })}::jsonb` as never }
+          : { ai_suggested_at: new Date() }),
         updated_at: new Date(),
       })
       .where("id", "=", ctx.itemId)
       .execute();
     return;
   }
+
+  // A short barcode (EAN-8 / UPC-E / a store-local or truncated code, < 12
+  // digits) is far more collision-prone than a full UPC-A/EAN-13: the global
+  // catalogs can return a confidently-wrong product that merely shares the digits
+  // (the classic Trader Joe's store-code mismatch — an 8-digit code resolving to
+  // an unrelated item). Flag these so the user double-checks instead of trusting
+  // blindly, and damp the confidence so nothing auto-commits on a shaky match.
+  const lowTrust = codeClass.type === "upc" && ctx.upc.replace(/\D/g, "").length < 12;
 
   // 2. Stash the catalog image URL on the row immediately; the
   // actual file download happens next and may take a moment.
@@ -307,9 +364,14 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
         category: hit.category,
         description: hit.description,
         raw: hit.raw,
+        low_trust: lowTrust || undefined,
       })}::jsonb` as never,
-      ai_confidence: hit.title ? "0.85" : null,
-      ai_notes: `Resolved via ${hit.source}.`,
+      ai_confidence: hit.title ? (lowTrust ? "0.6" : "0.85") : null,
+      ai_notes: hit.title
+        ? `Identified via ${sourceLabel(hit.source)}.${
+            lowTrust ? " ⚠ Short barcode — double-check this is the right product." : ""
+          }`
+        : `Resolved via ${sourceLabel(hit.source)}.`,
       ai_suggested_at: new Date(),
       updated_at: new Date(),
     })
@@ -318,6 +380,16 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
 
   // 3. Download the catalog image into core-files (best-effort).
   if (hit.image_url) await downloadCatalogImage(ctx, hit.image_url);
+
+  // 4. Cross-check the resolved name against the user's scan photo (#3d) — catches
+  // a confidently-wrong barcode (store-local/reused code → unrelated product) that
+  // the catalog lookup can't. Detached + best-effort: the named item is already
+  // written; a clear mismatch flags asynchronously. No-op without a scan photo.
+  if (hit.title) {
+    void crossCheckScanPhoto(ctx.orgId, ctx.itemId, hit.title).catch((e) =>
+      console.error("[core-scan] photo cross-check failed:", (e as Error).message),
+    );
+  }
 }
 
 /** Upsert the per-tenant barcode cache row for this UPC. Upsert (not

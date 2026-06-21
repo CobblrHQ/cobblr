@@ -23,6 +23,10 @@ export interface RemoteDevice {
    *  exposes one. Cobblr only embeds the URL — it never proxies the video
    *  (coordinate-not-control). A user can also set one manually per device. */
   camera_url?: string | null;
+  /** OPTIONAL — the full raw status report, when the driver can provide it (the
+   *  Bambu LAN driver attaches its MQTT report). Lets the cloud ingest LAN
+   *  telemetry as the source of truth for LAN-only / prefer-LAN modes. */
+  raw?: Record<string, unknown> | null;
 }
 
 /** Live temperatures (°C). `actual` is the reading; `target` the setpoint. */
@@ -133,6 +137,17 @@ export interface MachineDriver {
    *  leave this undefined; a wire reaches it through the digifab:run-command
    *  action. See docs/BACKLOG.md "Outbound device COMMANDS". */
   runCommand?(command: string, params: Record<string, unknown>): Promise<CommandResult>;
+  /** OPTIONAL — declare the live CONTROLS this driver supports for a device
+   *  (pause/resume/stop/home/jog/light/temps + custom). The UI renders exactly
+   *  these — only what the printer can do — and runs them via runControl.
+   *  Drivers that can't control a device leave this undefined / return []. */
+  listControls?(deviceId: string): ControlDef[] | Promise<ControlDef[]>;
+  /** OPTIONAL — execute a declared control. `params` matches the ControlDef
+   *  kind: action {}, toggle {on:boolean}, jog {axis,dist}, number {value}. */
+  runControl?(deviceId: string, id: string, params: Record<string, unknown>): Promise<CommandResult>;
+  /** OPTIONAL — grab one JPEG camera frame (e.g. Bambu LAN chamber camera over
+   *  the bridge). A refreshing still, not a stream. Undefined → no camera. */
+  getCameraFrame?(): Promise<Buffer | null>;
 }
 
 /** Ack of a command-and-forget actuator call. No job to poll. */
@@ -142,6 +157,27 @@ export interface CommandResult {
   ref?: string;
   /** Optional detail (e.g. an error reason). */
   detail?: string;
+}
+
+/** A live control a printer supports, declared by its driver. The UI renders by
+ *  `kind` and shows only declared controls. Generic across managers; custom
+ *  abilities (a chamber light, a purge macro) are just controls with their own id. */
+export interface ControlDef {
+  /** "pause" | "resume" | "stop" | "home" | "light" | "jog" | "nozzle_temp" | … or a custom id. */
+  id: string;
+  label: string;
+  kind: "action" | "toggle" | "jog" | "number";
+  /** UI grouping. */
+  group?: "print" | "motion" | "temperature" | "accessory";
+  /** Confirm before running (e.g. stop). */
+  destructive?: boolean;
+  /** jog: which axes + the step options (mm). */
+  axes?: string[];
+  steps?: number[];
+  /** number: unit + bounds for the input. */
+  unit?: string;
+  min?: number;
+  max?: number;
 }
 
 /** Config a driver is constructed from (creds decrypted by the caller).

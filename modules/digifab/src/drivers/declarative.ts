@@ -7,6 +7,7 @@
 import type {
   CommandResult,
   ConnectionResult,
+  ControlDef,
   ManagerConfig,
   MachineDriver,
   JobState,
@@ -17,6 +18,19 @@ import type {
   SubmitResult,
   UploadResult,
 } from "./types.js";
+
+// Known control ids → their UI shape. A manifest command whose name matches gets
+// the right label/grouping; any OTHER command shows as a generic action button
+// (custom abilities — a purge macro, a relay — are just commands).
+const KNOWN_CONTROLS: Record<string, ControlDef> = {
+  pause: { id: "pause", label: "Pause", kind: "action", group: "print" },
+  resume: { id: "resume", label: "Resume", kind: "action", group: "print" },
+  cancel: { id: "cancel", label: "Stop", kind: "action", group: "print", destructive: true },
+  stop: { id: "stop", label: "Stop", kind: "action", group: "print", destructive: true },
+  home: { id: "home", label: "Home all", kind: "action", group: "motion" },
+  light_on: { id: "light_on", label: "Light on", kind: "action", group: "accessory" },
+  light_off: { id: "light_off", label: "Light off", kind: "action", group: "accessory" },
+};
 import type { DriverManifest } from "./manifest.js";
 import { assertSafeMachineUrl } from "./ssrf.js";
 
@@ -236,6 +250,18 @@ export class DeclarativeDriver implements MachineDriver {
     } catch (e) {
       return { ok: false, detail: (e as Error).message };
     }
+  }
+
+  // The controls a declarative manager exposes ARE its manifest commands — so a
+  // manifest declaring pause/resume/cancel gets those, and a custom command
+  // (a purge macro, a relay) auto-appears. runControl runs the command.
+  listControls(): ControlDef[] {
+    const cmds = this.manifest.commands ?? {};
+    return Object.keys(cmds).map((id) => KNOWN_CONTROLS[id] ?? { id, label: id.replace(/_/g, " "), kind: "action" as const, group: "accessory" as const });
+  }
+
+  async runControl(_deviceId: string, id: string, params: Record<string, unknown>): Promise<CommandResult> {
+    return this.runCommand(id, params);
   }
 }
 

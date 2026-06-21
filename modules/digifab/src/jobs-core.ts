@@ -6,10 +6,14 @@ import { platform } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import type { DigifabDB } from "./db.js";
 import { resolveDriver } from "./drivers/registry.js";
-import type { EdgeRelay } from "./drivers/edge-adapter.js";
+import { EdgeAdapterDriver, type EdgeRelay } from "./drivers/edge-adapter.js";
 import type { MachineDriver, RemoteDevice, SubmitResult } from "./drivers/types.js";
 import { isAssignable } from "./state.js";
 import { notifyPrint, progressBucket } from "./notify.js";
+// Call-time only (reprint-on-fail re-queue) — both modules import from this one,
+// so these are lazy/circular by design; ESM resolves them when the retry fires.
+import { kickAssign } from "./assign-worker.js";
+import { enqueuePoll } from "./poll-worker.js";
 
 /** The manual camera URL set for a device (for the "Live view" link in print
  *  notifications). Null when none or no device. */
@@ -68,9 +72,66 @@ function edgeDriverConfig(edge: { driver?: unknown; config?: unknown }): Record<
   if (edge.config && typeof edge.config === "object") return edge.config as Record<string, unknown>;
   const rest: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(edge as Record<string, unknown>)) {
-    if (k !== "driver") rest[k] = v;
+    // `driver` selects the driver; `bridge` is routing metadata (which bridge
+    // serves this connection) — neither is part of the driver's own config.
+    if (k !== "driver" && k !== "bridge") rest[k] = v;
   }
   return rest;
+}
+
+/** The edge channel key. Multi-bridge: a workspace can run more than one bridge
+ *  (separate buildings/VLANs, or LightBurn which must run on the LightBurn PC).
+ *  Each named bridge gets its own channel; a connection with no bridge id routes
+ *  to the workspace's DEFAULT channel — byte-identical to the single-bridge path,
+ *  so existing bridges are untouched. The agent announces the same id via
+ *  `?bridge=` on register/poll/respond. */
+export function edgeChannelKey(orgId: string, bridge?: string | null): string {
+  return bridge ? `${orgId}::${bridge}` : orgId;
+}
+
+/** Per-printer Bambu LAN config — `creds.bambu_lan` is a JSON map of
+ *  serial → { host, access_code } (the access code is a credential, so it lives
+ *  encrypted in creds, not plaintext config). HYBRID: a Bambu connection keeps
+ *  its cloud telemetry AND, for any printer with LAN config here, routes
+ *  file-push + control through the on-site bridge's `bambu` (LAN) driver. */
+/** Per-printer transport mode: all cloud / prefer LAN (cloud fallback) / LAN only
+ *  (cloud off, accept losing cloud-only history). Default = prefer_lan once LAN
+ *  is configured. */
+export type BambuLanMode = "cloud" | "prefer_lan" | "lan_only";
+export type BambuLan = { host: string; access_code: string; mode?: BambuLanMode };
+export function bambuLanMode(lan: BambuLan | undefined): BambuLanMode {
+  return lan?.mode ?? (lan?.host ? "prefer_lan" : "cloud");
+}
+export function parseBambuLan(creds: Record<string, unknown>): Record<string, BambuLan> {
+  try {
+    const m = JSON.parse(String(creds.bambu_lan ?? "{}")) as Record<string, BambuLan>;
+    return m && typeof m === "object" ? m : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Build the edge-routed `bambu` LAN driver for one printer — the bridge dials
+ *  the printer over `mqtts://host:8883` (+ FTPS file push) using the access code.
+ *  Each printer is its own bridge instance (`bambu-<serial>`); rides the org's
+ *  default bridge channel (same bridge that serves the workspace's other LAN
+ *  machines). */
+export function buildBambuLanDriver(orgId: string, serial: string, lan: BambuLan, bridge?: string | null): MachineDriver {
+  const baseUrl = `cobblr-edge://bambu-${serial}`;
+  const relay = buildEdgeRelay(orgId, baseUrl, { driver: "bambu", transport: "lan", host: lan.host, serial, accessCode: lan.access_code, ...(bridge ? { bridge } : {}) } as Record<string, unknown>, null);
+  return new EdgeAdapterDriver({ baseUrl, apiKey: null, username: null, password: null, extra: {} }, relay);
+}
+
+/** If this connection is Bambu AND `deviceId` has LAN config, return the LAN
+ *  driver (for file-push/control); else null (cloud handles it). */
+export async function bambuLanDriverFor(orgId: string, connectionRef: string, deviceId: string): Promise<MachineDriver | null> {
+  const conn = await platform().devices.connections().getInternal(orgId, connectionRef);
+  if (!conn || conn.type !== "bambu" || !conn.credentials_enc) return null;
+  const creds = await platform().integrations.decryptCredentials(orgId, conn.credentials_enc);
+  const lan = parseBambuLan(creds)[deviceId];
+  // "All cloud" mode ignores LAN even if the host/code are stored.
+  if (!lan?.host || !lan?.access_code || bambuLanMode(lan) === "cloud") return null;
+  return buildBambuLanDriver(orgId, deviceId, lan);
 }
 
 /** The cloud→edge tunnel relay closure for a `cobblr-edge://` connection: routes
@@ -117,7 +178,8 @@ export function buildEdgeRelay(
         const ownerCreds = (await platform().integrations.decryptCredentials(ownerOrg, oc.credentials_enc)) as { edge?: { driver?: unknown; config?: unknown } };
         const oe = ownerCreds.edge;
         const instance = id && oe && typeof oe.driver === "string" && oe.driver ? { id, driver: oe.driver, config: edgeDriverConfig(oe) } : undefined;
-        const res = await platform().edge.send(ownerOrg, { path: r.path, method, body: r.body, ...(instance ? { instance } : {}) });
+        const oeBridge = typeof (oe as { bridge?: unknown } | undefined)?.bridge === "string" ? ((oe as { bridge?: string }).bridge as string) : null;
+        const res = await platform().edge.send(edgeChannelKey(ownerOrg, oeBridge), { path: r.path, method, body: r.body, ...(instance ? { instance } : {}) });
         void odb.updateTable("digifab_edge_shares").set({ last_used_at: new Date() }).where("id", "=", shareId).execute().catch(() => {});
         return { status: res.status, body: res.body };
       } finally {
@@ -132,8 +194,11 @@ export function buildEdgeRelay(
   const instance = id && edge && typeof edge.driver === "string" && edge.driver
     ? { id, driver: edge.driver, config: edgeDriverConfig(edge) }
     : undefined;
+  // Which bridge serves this connection (null = the workspace default bridge).
+  const ownBridge = typeof (edge as { bridge?: unknown } | undefined)?.bridge === "string" ? ((edge as { bridge?: string }).bridge as string) : null;
+  const ownKey = edgeChannelKey(orgId, ownBridge);
   return async (r) => {
-    const res = await platform().edge.send(orgId, {
+    const res = await platform().edge.send(ownKey, {
       path: r.path,
       method: r.method === "POST" ? "POST" : "GET",
       body: r.body,
@@ -195,6 +260,33 @@ export async function pollJob(
     status = "failed";
     error = `unreachable after ${errs} polls: ${error}`;
   }
+
+  // Reprint-on-fail — a failed print with attempts left goes BACK to the queue
+  // and re-sends instead of going terminal (no failed event, no bed-clear yet).
+  // Pool jobs clear their device and re-drip; device-targeted jobs re-send to the
+  // same printer. Out of attempts → fall through to the terminal path below.
+  if (status === "failed") {
+    const att = (job.attempts ?? 0) + 1;
+    const max = job.max_attempts ?? 1;
+    if (att < max) {
+      const note = `auto-retry ${att}/${max}: ${error ?? "failed"}`.slice(0, 300);
+      const base = { status: "queued", attempts: att, remote_job_id: null, remote_file_id: null, progress: 0, error: note, poll_errors: 0, last_polled_at: new Date(), updated_at: new Date() };
+      if (job.target_pool) {
+        await db.updateTable("digifab_jobs").set({ ...base, connection_id: null, target_device: null }).where("id", "=", jobId).execute();
+        await kickAssign(orgId);
+      } else {
+        await db.updateTable("digifab_jobs").set(base).where("id", "=", jobId).execute();
+        try {
+          const r = await sendJob(db, orgId, jobId);
+          if (r.ok && r.shouldPoll) await enqueuePoll(orgId, jobId);
+        } catch {
+          /* leave it queued for a manual retry */
+        }
+      }
+      return { status: "queued", terminal: false };
+    }
+  }
+
   const terminal = TERMINAL.has(status);
   // F-1 ATOMIC: a terminal job's status flip and its bed-clear (needs_attention)
   // row must commit TOGETHER. Otherwise an assign pass can observe the device as
@@ -378,8 +470,18 @@ export async function sendJob(
     }
   }
 
-  const up = await driver.uploadFile(fileBytes, uploadName);
-  const sub = await driver.submitJob({ fileId: up.fileId, deviceId, tag: job.target_tag });
+  // HYBRID Bambu LAN: the cloud can't accept an arbitrary file, but the on-site
+  // bridge can push it over the printer's LAN. If this Bambu printer has LAN
+  // configured, route the upload + submit through the bridge's `bambu` driver
+  // (cloud `driver` is still used above for listDevices/validation).
+  let sendDriver = driver;
+  if (deviceId) {
+    const lan = await bambuLanDriverFor(orgId, job.connection_id, deviceId);
+    if (lan) sendDriver = lan;
+  }
+
+  const up = await sendDriver.uploadFile(fileBytes, uploadName);
+  const sub = await sendDriver.submitJob({ fileId: up.fileId, deviceId, tag: job.target_tag });
   const status = sub.queued ? "sent" : "awaiting-assignment";
   await db
     .updateTable("digifab_jobs")

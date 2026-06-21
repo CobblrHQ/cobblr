@@ -59,6 +59,11 @@ import { migrateLensBundlesToInstances } from "./platform/migrate-lens-bundles-t
 import { enableDigifabForMachineBundles } from "./platform/enable-digifab-for-machines.js";
 import { migrateInventoryLocations } from "./platform/migrate-inventory-locations.js";
 import { backfillDefaultBindings } from "./platform/seed-bindings.js";
+import { backfillBundleClaims } from "./platform/backfill-bundle-claims.js";
+import {
+  registerDeclarativeScanResolver,
+  refreshScanUrlManifests,
+} from "./platform/scan-url-resolvers/register.js";
 import { runOnBoot, runOnShutdown } from "./modules/lifecycle.js";
 import { registerBackupCron, seedBackupSchedules } from "./platform/backup-destinations.js";
 import { completeApp, createApp } from "./server.js";
@@ -500,6 +505,10 @@ async function boot() {
   // accurate metadata. Done AFTER load so module-side resolver /
   // handler registrations land first.
   await syncManifestRegistries();
+  // Register the single generic vendor scan-URL resolver (built-in manifests like
+  // Polar + operator-added rows). Replaces the old per-vendor maker-scan module.
+  // The DB rows are loaded by refreshScanUrlManifests() after migrations below.
+  registerDeclarativeScanResolver();
   // Marketplace v2: snapshot the runtime module set into
   // installed_modules so super-admin / workspace-admin can see what
   // code is present + version + signature. See
@@ -569,11 +578,21 @@ async function boot() {
   if (touched > 0) {
     console.log(`[cobblr-api] tenant migrations: ${touched} tenant(s) caught up`);
   }
+  // Load operator-added vendor scan-URL resolvers now the table exists (migration
+  // 069 ran above). Built-ins work without this; this folds in DB rows/overrides.
+  await refreshScanUrlManifests();
   // Top up default bindings for orgs created before Phase 4 introduced
   // the seed-on-signup path. Idempotent per (org, source_kind, action_id,
   // trigger_event), so repeated boots are safe.
   const seeded = await backfillDefaultBindings();
   console.log(`[cobblr-api] default bindings backfilled: ${seeded} added`);
+
+  // Self-heal the bundle-resource-claims ledger for installs that predate it,
+  // so a bundle uninstall can refcount correctly. Once per org, idempotent.
+  const claimsOrgs = await backfillBundleClaims();
+  if (claimsOrgs > 0) {
+    console.log(`[cobblr-api] bundle-resource claims backfilled for ${claimsOrgs} org(s)`);
+  }
 
   const { app } = createApp();
   await mountModules(app);

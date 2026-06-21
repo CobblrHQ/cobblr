@@ -16,7 +16,7 @@
 //      name stands.
 
 import { platform } from "@cobblr/platform-contract";
-import { searchImages, type DdgImageResult } from "./ddg-images.js";
+import { searchImages, rankImageOptions, type DdgImageResult } from "./ddg-images.js";
 
 export interface WebSearchProduct {
   name: string;
@@ -233,8 +233,11 @@ export async function resolveBarcodeViaWebSearch(orgId: string, upc: string): Pr
   let imageUrl = titled.length ? pickImage(titled, name) : null;
   if (!imageUrl) {
     try {
-      const byName = await searchImages(name, 6);
-      imageUrl = byName.find((r) => r.url)?.url ?? null;
+      // Rank by catalog quality (retail/brand domain + square-ish) and take the
+      // best — NOT the first DDG hit, which is often a recipe-blog / social /
+      // styled photo. The clean studio shot is usually buried a few results down.
+      const byName = await searchImages(name, 24);
+      imageUrl = rankImageOptions(byName, llm?.brand)[0]?.url ?? null;
     } catch {
       imageUrl = null; // best-effort; the row is still useful without a photo
     }

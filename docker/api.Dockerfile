@@ -58,7 +58,6 @@ COPY modules/digifab/package.json ./modules/digifab/
 COPY modules/core-devices/package.json ./modules/core-devices/
 COPY modules/core-file-preview/package.json ./modules/core-file-preview/
 COPY modules/bricklink-connector/package.json ./modules/bricklink-connector/
-COPY modules/maker-scan/package.json ./modules/maker-scan/
 COPY modules/core-print/package.json ./modules/core-print/
 # v0.3 sandbox SDK + AS sample module. Workspace-resolved so the
 # AS author repo (sandboxed-modules/hello-as) sees the SDK at build
@@ -135,8 +134,6 @@ COPY modules/core-file-preview ./modules/core-file-preview
 RUN pnpm --filter @cobblr/core-file-preview run --if-present build
 COPY modules/bricklink-connector ./modules/bricklink-connector
 RUN pnpm --filter @cobblr/bricklink-connector run --if-present build
-COPY modules/maker-scan ./modules/maker-scan
-RUN pnpm --filter @cobblr/maker-scan run --if-present build
 COPY modules/core-print ./modules/core-print
 RUN pnpm --filter @cobblr/core-print run --if-present build
 COPY modules/core-devices ./modules/core-devices

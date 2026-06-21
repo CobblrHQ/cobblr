@@ -37,6 +37,11 @@ export interface DigifabJobsTable {
   remote_file_id: string | null;
   remote_job_id: string | null;
   status: Generated<string>;
+  /** Higher sorts sooner in the assignment queue. */
+  priority: Generated<number>;
+  /** Reprint-on-fail: times (re)sent + the cap before a failure goes terminal. */
+  attempts: Generated<number>;
+  max_attempts: Generated<number>;
   progress: number | null;
   error: string | null;
   /** Consecutive poll errors (F-12) — reset to 0 on a successful poll; a job is
@@ -119,7 +124,51 @@ export interface DigifabDeviceSnapshotsTable {
   updated_at: Generated<Date>;
 }
 
+/** A notification destination (a Discord channel = its webhook), defined once
+ *  and referenced by many print-update rules. */
+export interface DigifabChannelsTable {
+  id: Generated<string>;
+  label: string;
+  kind: Generated<string>; // 'discord'
+  credentials_enc: string; // AES-GCM webhook URL
+  enabled: Generated<boolean>;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+/** A print-update rule: scope → channel → cadence → message template. */
+export interface DigifabPrintRulesTable {
+  id: Generated<string>;
+  label: string;
+  scope_type: Generated<string>; // 'all' | 'printer' | 'tag' | 'family'
+  scope_value: string | null;
+  channel_id: string;
+  events: Generated<Record<string, boolean>>;
+  cadence: Generated<Array<{ type: "percent" | "minutes" | "layers"; every: number }>>;
+  cap_minutes: number | null;
+  message: Generated<{ title?: string; body?: string; photo?: boolean }>;
+  /** Pre/post hook steps run around the fire (control a printer / wait). */
+  pre_actions: Generated<Array<{ control: string; params?: Record<string, unknown> } | { wait_ms: number }>>;
+  post_actions: Generated<Array<{ control: string; params?: Record<string, unknown> } | { wait_ms: number }>>;
+  enabled: Generated<boolean>;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+/** Per (rule, printer) fire bookkeeping — thresholds fire once, cap enforced. */
+export interface DigifabPrintRuleStateTable {
+  rule_id: string;
+  serial: string;
+  job_key: string | null;
+  last_percent: number | null;
+  last_layer: number | null;
+  last_fire_at: Date | null;
+}
+
 export interface DigifabDB {
+  digifab_channels: DigifabChannelsTable;
+  digifab_print_rules: DigifabPrintRulesTable;
+  digifab_print_rule_state: DigifabPrintRuleStateTable;
   digifab_connections: DigifabConnectionsTable;
   digifab_jobs: DigifabJobsTable;
   digifab_device_links: DigifabDeviceLinksTable;
@@ -131,6 +180,46 @@ export interface DigifabDB {
   digifab_device_snapshots: DigifabDeviceSnapshotsTable;
   digifab_bambu_status: DigifabBambuStatusTable;
   digifab_edge_shares: DigifabEdgeSharesTable;
+  digifab_observed_prints: DigifabObservedPrintsTable;
+  digifab_bambu_tasks: DigifabBambuTasksTable;
+  digifab_library: DigifabLibraryTable;
+}
+
+/** A stored 3MF/gcode file you send to machines, with the slicer-embedded plate
+ *  thumbnail extracted. Bytes live in core-files (file_id); thumbnail is its own
+ *  small core-files image. */
+export interface DigifabLibraryTable {
+  id: Generated<string>;
+  name: string;
+  file_id: string;
+  thumbnail_file_id: string | null;
+  kind: string; // '3mf' | 'gcode'
+  size_bytes: Generated<number>;
+  plate_count: Generated<number>;
+  notes: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+/** The full cloud print-history entry per task (raw JSON kept verbatim). */
+export interface DigifabBambuTasksTable {
+  connection_id: string;
+  task_id: string;
+  raw: Record<string, unknown>;
+  captured_at: Generated<Date>;
+}
+
+/** A finished print Cobblr didn't start (no job row) but watched complete via
+ *  live telemetry — e.g. a Bambu print kicked off from Bambu Studio. */
+export interface DigifabObservedPrintsTable {
+  id: Generated<string>;
+  connection_id: string;
+  serial: string;
+  file_ref: string | null;
+  status: string; // 'completed' | 'failed'
+  started_at: Date | null;
+  ended_at: Generated<Date>;
+  created_at: Generated<Date>;
 }
 
 /** A scoped grant of edge-bridge machines, redeemable into the recipient's
@@ -172,6 +261,8 @@ export interface DigifabBambuStatusTable {
   remaining_min: number | null;
   layer_num: number | null;
   total_layers: number | null;
+  /** The full live MQTT `print` object, raw. */
+  report: Record<string, unknown> | null;
   updated_at: Generated<Date>;
 }
 

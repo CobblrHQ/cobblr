@@ -13,8 +13,24 @@
 import type {
   MachineDriver, ManagerConfig, ConnectionResult, RemoteDevice,
   UploadResult, SubmitArgs, SubmitResult, JobStatus, JobState, PlacementResolution,
+  ControlDef, CommandResult,
 } from "./types.js";
 import { BambuCloud, BambuCloudError, type BambuRegion, BAMBU_REGIONS } from "./bambu-cloud.js";
+import { publishBambu } from "../bambu-pump.js";
+
+/** Live controls a cloud Bambu exposes over MQTT. The printer's Authorization
+ *  Control may still reject them (a printer-side decision); declaring them lets
+ *  the UI offer them — a `send` succeeds, "obeyed" is up to the printer. */
+const BAMBU_CONTROLS: ControlDef[] = [
+  { id: "pause", label: "Pause", kind: "action", group: "print" },
+  { id: "resume", label: "Resume", kind: "action", group: "print" },
+  { id: "stop", label: "Stop", kind: "action", group: "print", destructive: true },
+  { id: "light", label: "Chamber light", kind: "toggle", group: "accessory" },
+  { id: "home", label: "Home all", kind: "action", group: "motion" },
+  { id: "jog", label: "Move", kind: "jog", group: "motion", axes: ["x", "y", "z"], steps: [1, 10, 50] },
+  { id: "nozzle_temp", label: "Nozzle", kind: "number", group: "temperature", unit: "°C", min: 0, max: 300 },
+  { id: "bed_temp", label: "Bed", kind: "number", group: "temperature", unit: "°C", min: 0, max: 120 },
+];
 
 const CONTROL_BLOCKED =
   "Cloud mode is monitor-only — Bambu's Authorization Control blocks third-party " +
@@ -49,7 +65,7 @@ export class BambuCloudDriver implements MachineDriver {
   private stored: StoredDevice[];
   private cloud: BambuCloud;
 
-  constructor(cfg: ManagerConfig) {
+  constructor(cfg: ManagerConfig, private connId = "") {
     const c = (cfg.extra?.creds ?? {}) as Record<string, unknown>;
     this.region = coerceRegion(c.region);
     this.token = String(c.token ?? "");
@@ -114,5 +130,36 @@ export class BambuCloudDriver implements MachineDriver {
   async submitJob(_args: SubmitArgs): Promise<SubmitResult> { throw new Error(CONTROL_BLOCKED); }
   async resolvePlacement(): Promise<PlacementResolution> {
     return { kind: "none", matchedName: null, deviceIds: [] };
+  }
+
+  // Live control over the cloud MQTT the pump holds. STARTING a print is still
+  // blocked (file upload is gated) — but pause/resume/stop/jog/light/temps are
+  // simple commands the app sends on the same broker, so we offer them.
+  listControls(): ControlDef[] {
+    return BAMBU_CONTROLS;
+  }
+
+  async runControl(deviceId: string, id: string, params: Record<string, unknown>): Promise<CommandResult> {
+    const seq = String(Date.now() % 100000);
+    const gcode = (g: string) => ({ print: { sequence_id: seq, command: "gcode_line", param: `${g}\n` } });
+    let payload: Record<string, unknown> | null = null;
+    switch (id) {
+      case "pause": payload = { print: { sequence_id: seq, command: "pause" } }; break;
+      case "resume": payload = { print: { sequence_id: seq, command: "resume" } }; break;
+      case "stop": payload = { print: { sequence_id: seq, command: "stop" } }; break;
+      case "light": payload = { system: { sequence_id: seq, command: "ledctrl", led_node: "chamber_light", led_mode: params.on ? "on" : "off" } }; break;
+      case "home": payload = gcode("G28"); break;
+      case "jog": {
+        const axis = String(params.axis ?? "z").toUpperCase();
+        const dist = Number(params.dist) || 0;
+        payload = gcode(`G91\nG1 ${axis}${dist} F3000\nG90`);
+        break;
+      }
+      case "nozzle_temp": payload = gcode(`M104 S${Math.round(Number(params.value) || 0)}`); break;
+      case "bed_temp": payload = gcode(`M140 S${Math.round(Number(params.value) || 0)}`); break;
+      default: return { ok: false, detail: `unknown control "${id}"` };
+    }
+    const sent = publishBambu(this.connId, deviceId, payload);
+    return sent ? { ok: true, ref: id } : { ok: false, detail: "no live cloud stream for this printer" };
   }
 }

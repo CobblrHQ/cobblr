@@ -27,6 +27,9 @@ const JOB_COLS = [
   "remote_file_id",
   "remote_job_id",
   "status",
+  "priority",
+  "attempts",
+  "max_attempts",
   "progress",
   "error",
   "file_id",
@@ -50,6 +53,8 @@ const JobCreate = z.object({
   file_id: z.string().uuid().nullable().optional(),
   linked_machine_id: z.string().max(200).nullable().optional(),
   linked_task_id: z.string().max(200).nullable().optional(),
+  priority: z.number().int().min(0).max(100).optional(),
+  max_attempts: z.number().int().min(1).max(10).optional(),
 });
 
 // F-5: cursor-paginated + status-filterable, so a busy farm's older jobs don't
@@ -105,6 +110,8 @@ jobsRouter.post(
         file_id: parsed.data.file_id ?? null,
         linked_machine_id: parsed.data.linked_machine_id ?? null,
         linked_task_id: parsed.data.linked_task_id ?? null,
+        priority: parsed.data.priority ?? 0,
+        max_attempts: parsed.data.max_attempts ?? 1,
       })
       .returning(JOB_COLS)
       .executeTakeFirstOrThrow();
@@ -126,6 +133,31 @@ jobsRouter.get(
       .where("id", "=", req.params.id!)
       .executeTakeFirst();
     if (!row) return void res.status(404).json({ error: { code: "not_found", message: "no such job" } });
+    res.json(row);
+  }),
+);
+
+// PATCH — re-prioritize or change the retry cap of a job (e.g. bump a queued job
+// to the front). Re-kicks assignment so a freshly-prioritized pool job re-sorts now.
+const JobPatch = z.object({
+  priority: z.number().int().min(0).max(100).optional(),
+  max_attempts: z.number().int().min(1).max(10).optional(),
+});
+jobsRouter.patch(
+  "/:id",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const parsed = JobPatch.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const patch: Record<string, unknown> = { updated_at: new Date() };
+    if (parsed.data.priority != null) patch.priority = parsed.data.priority;
+    if (parsed.data.max_attempts != null) patch.max_attempts = parsed.data.max_attempts;
+    const row = await tenantDb(req).updateTable("digifab_jobs").set(patch).where("id", "=", req.params.id!).returning(JOB_COLS).executeTakeFirst();
+    if (!row) return void res.status(404).json({ error: { code: "not_found", message: "no such job" } });
+    if (parsed.data.priority != null && row.target_pool && row.status === "queued") {
+      const { kickAssign } = await import("../assign-worker.js");
+      await kickAssign(tenantContext(req).org.id);
+    }
     res.json(row);
   }),
 );

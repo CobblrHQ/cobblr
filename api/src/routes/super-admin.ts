@@ -15,6 +15,7 @@ import { sql } from "kysely";
 import { z } from "zod";
 import { randomBytes } from "node:crypto";
 import { requireAuth, requirePlatformAdmin, isPlatformAdmin } from "../auth/middleware.js";
+import { scanResolversRouter } from "./super-admin-scan-resolvers.js";
 import { signImpersonation } from "../auth/jwt.js";
 import { log as activityLog } from "../platform/activity.js";
 import { meta } from "../db/meta.js";
@@ -70,6 +71,10 @@ export const superAdminRouter = Router();
 // Every route below requires platform admin. The composition
 // `requireAuth → requirePlatformAdmin` lands here.
 superAdminRouter.use(requireAuth, requirePlatformAdmin);
+
+// Vendor scan-URL resolver list (built-in + operator-added). See
+// super-admin-scan-resolvers.ts.
+superAdminRouter.use("/scan-url-resolvers", scanResolversRouter);
 
 // GET /super-admin/overview — the dashboard landing. Counts +
 // at-a-glance numbers. Cheap; safe to poll.
@@ -257,6 +262,50 @@ superAdminRouter.get("/barcode-resolver-stats", async (_req, res) => {
   } catch (err) {
     res.status(502).json({ error: { code: "resolver_unreachable", message: (err as Error).message } });
   }
+});
+
+// Barcode correction review (the human-verified-correction approval queue). The
+// operator approves/rejects corrections that untrusted instances PROPOSED
+// (verified=false). These proxy the box resolver's review endpoints with the
+// REVIEW token (the resolver's write-token) — kept server-side, super-admin only;
+// it never reaches the browser. See CobblrHQ/barcode-intelligence/docs/correction-feedback.md.
+async function resolverReview(
+  method: "GET" | "POST",
+  pathAndQuery: string,
+  body: unknown,
+  res: import("express").Response,
+): Promise<void> {
+  const base = (process.env.COBBLR_BARCODE_RESOLVER_URL ?? "").replace(/\/+$/, "");
+  const tok = process.env.COBBLR_BARCODE_RESOLVER_REVIEW_TOKEN ?? "";
+  if (!base || !tok) {
+    res.status(503).json({ error: { code: "not_configured", message: "No barcode-correction review token on this instance." } });
+    return;
+  }
+  try {
+    const r = await fetch(`${base}${pathAndQuery}`, {
+      method,
+      headers: { authorization: `Bearer ${tok}`, ...(body ? { "content-type": "application/json" } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(8000),
+    });
+    const data = await r.json().catch(() => ({}));
+    res.status(r.ok ? 200 : r.status === 401 ? 502 : r.status).json(data);
+  } catch (err) {
+    res.status(502).json({ error: { code: "resolver_unreachable", message: (err as Error).message } });
+  }
+}
+
+// GET /super-admin/barcode-corrections — pending proposed corrections to review.
+superAdminRouter.get("/barcode-corrections", async (req, res) => {
+  const limit = String(req.query.limit ?? "100").replace(/[^0-9]/g, "") || "100";
+  await resolverReview("GET", `/proposed?limit=${limit}`, null, res);
+});
+// POST /super-admin/barcode-corrections/:id/verify|reject — approve / reject.
+superAdminRouter.post("/barcode-corrections/:id/verify", async (req, res) => {
+  await resolverReview("POST", "/verify", { id: String(req.params.id) }, res);
+});
+superAdminRouter.post("/barcode-corrections/:id/reject", async (req, res) => {
+  await resolverReview("POST", "/reject", { id: String(req.params.id) }, res);
 });
 
 // GET /super-admin/workspaces — list every workspace with owner +

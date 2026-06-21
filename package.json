@@ -2,7 +2,7 @@
   "name": "cobblr",
   "version": "0.0.1",
   "private": true,
-  "description": "Cobblr — modular workflow platform for niche workflows.",
+  "description": "Cobblr \u2014 modular workflow platform for niche workflows.",
   "workspaces": [
     "api",
     "web",
@@ -30,7 +30,8 @@
     "dev:web": "npm run dev -w web",
     "test": "pnpm -r run --if-present test",
     "prepare": "git config core.hooksPath scripts/git-hooks 2>/dev/null || true",
-    "typecheck:fast": "pnpm -r run --if-present typecheck:fast"
+    "typecheck:fast": "pnpm -r run --if-present typecheck:fast",
+    "embed:bridge": "node scripts/embed-bridge-bundle.mjs"
   },
   "devDependencies": {
     "playwright": "^1.60.0",

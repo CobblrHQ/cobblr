@@ -41,7 +41,7 @@ export async function resolveDriver(
   if (type === "edge_adapter") return new EdgeAdapterDriver(cfg, relay ?? null);
   // Bambu Lab: cloud-mode is monitor-only over Bambu's HTTP API (creds in
   // cfg.extra.creds). LAN-mode control routes through edge_adapter (Phase 3).
-  if (type === "bambu") return new BambuCloudDriver(cfg);
+  if (type === "bambu") return new BambuCloudDriver(cfg, connectionId);
   if (type === "mock") {
     let m = mockInstances.get(connectionId);
     if (!m) {

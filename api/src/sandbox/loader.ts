@@ -34,13 +34,26 @@ interface ParsedManifest {
   wasmPath: string;
 }
 
+/** The repo's baked-in `sandboxed-modules/` are DEMOS/fixtures (hello-as,
+ *  hello-wasm, url-archive, bricklink-sandboxed) that exist to exercise the wasm
+ *  sandbox path — not modules for real workspaces. Loading them in a real instance
+ *  just clutters the Modules view and mounts demo routes, so they load ONLY behind
+ *  an explicit opt-in: `COBBLR_LOAD_EXAMPLE_MODULES=1`. CI's test job sets it (the
+ *  sandbox integration tests hit the built api as a plain `node` process, where
+ *  VITEST/NODE_ENV aren't "test"); dev sets it to tinker. Real user-installed
+ *  sandbox modules live in RUNTIME_INSTALL_DIR and always load. (An already-enabled
+ *  demo row in an org is harmless once unregistered: the modules API joins on the
+ *  registry and migrations skip unknown modules, so it just drops out of view.) */
+const LOAD_EXAMPLE_MODULES = process.env.COBBLR_LOAD_EXAMPLE_MODULES === "1";
+
 export async function loadAllSandboxedModules(): Promise<{ count: number; names: string[] }> {
   const loaded: string[] = [];
-  // Two paths: the image-baked dir (the repo's sandboxed-modules/)
-  // and the persistent runtime-install dir (mounted as a volume in
-  // prod). Workspace-admin installs via the marketplace UI write to
-  // the runtime dir; both get scanned at boot.
-  for (const dir of [SANDBOXED_MODULES_DIR, RUNTIME_INSTALL_DIR]) {
+  // The persistent runtime-install dir (marketplace installs, mounted as a volume
+  // in prod) always loads; the repo demo dir only under test/dev opt-in.
+  const dirs = LOAD_EXAMPLE_MODULES
+    ? [SANDBOXED_MODULES_DIR, RUNTIME_INSTALL_DIR]
+    : [RUNTIME_INSTALL_DIR];
+  for (const dir of dirs) {
     const scanned = await scanDir(dir);
     for (const name of scanned) loaded.push(name);
   }

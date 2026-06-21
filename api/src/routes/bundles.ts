@@ -16,6 +16,14 @@ import { enableModuleForOrg } from "../modules/enable.js";
 import { getEntry } from "../modules/registry.js";
 import { upsertOverride, deleteOverride } from "../platform/entity-kind-overrides.js";
 import { createInstance, getInstance } from "../platform/instances.js";
+import { tearDownInstance, countInstanceItems } from "../platform/instances.js";
+import { disableModuleForOrg } from "../modules/enable.js";
+import {
+  recordClaims,
+  removeClaimsForSource,
+  claimsForSource,
+  countClaimsFor,
+} from "../platform/bundle-claims.js";
 
 // Cross-module table type for the tenant-DB writes. core-views owns
 // `core_views_views`; bundles install rows into it tagged with
@@ -1170,6 +1178,20 @@ export async function applyValidatedBundle(
     }
   }
 
+  // Provenance claims so uninstall can refcount: this bundle owns each instance
+  // it ships + the module each instance lives on. Idempotent — a re-install or
+  // upgrade re-records harmlessly. See platform/bundle-claims.ts.
+  if (m.provides_instances.length > 0) {
+    await recordClaims(
+      orgId,
+      m.id,
+      m.provides_instances.flatMap((inst) => [
+        { resource_type: "instance" as const, resource_key: inst.instance_name },
+        { resource_type: "module" as const, resource_key: inst.module },
+      ]),
+    );
+  }
+
   // (Field-def collisions are checked inside validateBundle above.)
 
   const inserted = await meta.transaction().execute(async (trx) => {
@@ -1710,6 +1732,62 @@ bundlesRouter.post(
   },
 );
 
+// GET /:id/uninstall-preview — what an uninstall WOULD remove: the bundle's
+// instances no other source still claims (with item counts) + the modules that
+// would be disabled. Powers the uninstall-confirm warning so a user knows data
+// is about to be deleted before they confirm.
+bundlesRouter.get(
+  "/:id/uninstall-preview",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      if (!requireRole(req, res, "owner", "admin")) return;
+      const bundle = await meta
+        .selectFrom("bundles")
+        .select(["id", "external_id"])
+        .where("id", "=", req.params.id ?? "")
+        .where("org_id", "=", req.tenant!.org.id)
+        .executeTakeFirst();
+      if (!bundle) {
+        res.status(404).json({ error: { code: "not_found", message: "bundle not found" } });
+        return;
+      }
+      res.json(await previewBundleUninstall(req.tenant!.org.id, bundle.external_id));
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+/** The instances (no other source claims them) + modules that an uninstall of
+ *  this bundle would tear down — same refcount the teardown uses (<= 1 claim ⇒
+ *  only this bundle ⇒ removed). */
+async function previewBundleUninstall(
+  orgId: string,
+  externalId: string,
+): Promise<{ instances: { name: string; display_name: string; item_count: number }[]; modules: string[] }> {
+  const claims = await claimsForSource(orgId, externalId);
+  const instances: { name: string; display_name: string; item_count: number }[] = [];
+  for (const c of claims.filter((x) => x.resource_type === "instance")) {
+    if ((await countClaimsFor(orgId, "instance", c.resource_key)) <= 1) {
+      const inst = await getInstance(orgId, c.resource_key);
+      if (inst && !inst.is_default) {
+        instances.push({
+          name: c.resource_key,
+          display_name: inst.display_name ?? c.resource_key,
+          item_count: (await countInstanceItems(orgId, inst.module_name, c.resource_key)) ?? 0,
+        });
+      }
+    }
+  }
+  const modules: string[] = [];
+  for (const c of claims.filter((x) => x.resource_type === "module")) {
+    if ((await countClaimsFor(orgId, "module", c.resource_key)) <= 1) modules.push(c.resource_key);
+  }
+  return { instances, modules };
+}
+
 bundlesRouter.delete(
   "/:id",
   requireAuth,
@@ -1732,7 +1810,7 @@ bundlesRouter.delete(
         res.status(404).json({ error: { code: "not_found", message: "bundle not found" } });
         return;
       }
-      await uninstallBundleId(bundle.id);
+      await uninstallBundleId(bundle.id, { teardownResources: true });
       await activity.log({
         orgId: req.tenant!.org.id,
         action: "bundle_uninstalled",
@@ -1745,7 +1823,10 @@ bundlesRouter.delete(
   },
 );
 
-async function uninstallBundleId(bundleId: string): Promise<void> {
+async function uninstallBundleId(
+  bundleId: string,
+  opts?: { teardownResources?: boolean },
+): Promise<void> {
   // v1.5: bundles can also have installed saved views in the
   // tenant DB. Delete those FIRST (so they're gone whether or not
   // the meta-side delete succeeds), then drop the meta-side rows
@@ -1823,4 +1904,31 @@ async function uninstallBundleId(bundleId: string): Promise<void> {
       .where("id", "=", bundleId)
       .execute();
   });
+
+  // Refcount teardown — ONLY on a real uninstall, NOT the upgrade-path cleanup
+  // (applyValidatedBundle calls this to drop a prior version before reinstalling;
+  // tearing resources down there would delete instance data mid-upgrade). Drop
+  // this bundle's provenance claims, then tear down each resource no OTHER source
+  // (another bundle, or the user) still claims. Instances first (so a now-unused
+  // module is left with no named instances), then modules.
+  if (opts?.teardownResources && bundleRow) {
+    const claims = await claimsForSource(bundleRow.org_id, bundleRow.external_id);
+    await removeClaimsForSource(bundleRow.org_id, bundleRow.external_id);
+    for (const c of claims.filter((x) => x.resource_type === "instance")) {
+      if ((await countClaimsFor(bundleRow.org_id, "instance", c.resource_key)) === 0) {
+        await tearDownInstance(bundleRow.org_id, c.resource_key);
+      }
+    }
+    for (const c of claims.filter((x) => x.resource_type === "module")) {
+      if ((await countClaimsFor(bundleRow.org_id, "module", c.resource_key)) === 0) {
+        try {
+          await disableModuleForOrg(bundleRow.org_id, c.resource_key);
+        } catch (err) {
+          // disableModuleForOrg refuses foundational / dependency-pinned modules —
+          // leave those enabled; not an error for the uninstall.
+          console.error(`[bundle-uninstall] could not disable ${c.resource_key}:`, err);
+        }
+      }
+    }
+  }
 }

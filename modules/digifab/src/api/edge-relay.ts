@@ -20,8 +20,21 @@ import { Router } from "express";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { platform, type EdgeRequest, type EdgeResponse } from "@cobblr/platform-contract";
+import type { Request } from "express";
 import { tenantContext } from "../db.js";
 import { asyncHandler, requireRole } from "./util.js";
+import { edgeChannelKey } from "../jobs-core.js";
+import { BRIDGE_BUNDLE_VERSION, BRIDGE_BUNDLE_SHA256, bridgeBundleJs } from "../edge-bridge-bundle.js";
+
+// Multi-bridge: a workspace can run more than one bridge (separate sites/VLANs,
+// or LightBurn which must run its bridge on the LightBurn PC). Each bridge polls
+// with `?bridge=<id>` and gets its own channel; no `bridge` → the workspace's
+// default channel, byte-identical to the single-bridge path. The id must match
+// the connection's stored bridge (creds.edge.bridge) so send() routes to it.
+function channelKeyOf(req: Request): string {
+  const b = req.query.bridge;
+  return edgeChannelKey(tenantContext(req).org.id, typeof b === "string" && b ? b.slice(0, 60) : null);
+}
 
 export const edgeRelayRouter = Router({ mergeParams: true });
 
@@ -44,8 +57,8 @@ const orgs = new Map<string, OrgRelay>();
 
 /** Get-or-create the per-workspace relay state, registering the edge channel the
  *  first time. Refreshes lastSeen so the reaper knows the bridge is alive. */
-function ensureOrg(orgId: string): OrgRelay {
-  const existing = orgs.get(orgId);
+function ensureOrg(key: string): OrgRelay {
+  const existing = orgs.get(key);
   if (existing) {
     existing.lastSeen = Date.now();
     return existing;
@@ -53,7 +66,7 @@ function ensureOrg(orgId: string): OrgRelay {
   const relay: OrgRelay = { queue: [], pending: new Map(), poller: null, lastSeen: Date.now(), unregister: () => {} };
   // send() (called by the edge_adapter relay closure) enqueues a request + parks
   // a promise; /respond resolves it, or it times out.
-  relay.unregister = platform().edge.registerChannel(orgId, (req: EdgeRequest): Promise<EdgeResponse> => {
+  relay.unregister = platform().edge.registerChannel(key, (req: EdgeRequest): Promise<EdgeResponse> => {
     return new Promise<EdgeResponse>((resolve, reject) => {
       const id = randomUUID();
       const timer = setTimeout(() => {
@@ -71,13 +84,13 @@ function ensureOrg(orgId: string): OrgRelay {
       }
     });
   });
-  orgs.set(orgId, relay);
+  orgs.set(key, relay);
   return relay;
 }
 
-/** Tear down a workspace's channel — bridge gone. Fails any in-flight requests. */
-function dropOrg(orgId: string): void {
-  const o = orgs.get(orgId);
+/** Tear down a channel — bridge gone. Fails any in-flight requests. */
+function dropOrg(key: string): void {
+  const o = orgs.get(key);
   if (!o) return;
   o.unregister();
   for (const p of o.pending.values()) {
@@ -90,28 +103,28 @@ function dropOrg(orgId: string): void {
     o.poller = null;
     deliver(null);
   }
-  orgs.delete(orgId);
+  orgs.delete(key);
 }
 
 // Reap channels whose bridge stopped polling (crash / network drop), so
 // platform().edge.hasChannel goes false and send() errors clearly.
 const reaper = setInterval(() => {
   const now = Date.now();
-  for (const [orgId, o] of orgs) if (now - o.lastSeen > STALE_MS) dropOrg(orgId);
+  for (const [key, o] of orgs) if (now - o.lastSeen > STALE_MS) dropOrg(key);
 }, 30_000);
 reaper.unref?.();
 
 // POST /register — the bridge announces itself (Bearer = a workspace API token).
 edgeRelayRouter.post("/register", asyncHandler(async (req, res) => {
   if (!requireRole(req, res, "owner", "admin", "member")) return;
-  ensureOrg(tenantContext(req).org.id);
+  ensureOrg(channelKeyOf(req));
   res.json({ ok: true });
 }));
 
 // GET /poll — long-poll for the next queued request; 204 keep-alive on timeout.
 edgeRelayRouter.get("/poll", asyncHandler(async (req, res) => {
   if (!requireRole(req, res, "owner", "admin", "member")) return;
-  const o = ensureOrg(tenantContext(req).org.id);
+  const o = ensureOrg(channelKeyOf(req));
   const ready = o.queue.shift();
   if (ready) {
     res.json(ready);
@@ -142,7 +155,7 @@ edgeRelayRouter.get("/poll", asyncHandler(async (req, res) => {
 const Respond = z.object({ id: z.string().min(1), status: z.number().int(), body: z.unknown().optional() });
 edgeRelayRouter.post("/respond", asyncHandler(async (req, res) => {
   if (!requireRole(req, res, "owner", "admin", "member")) return;
-  const o = orgs.get(tenantContext(req).org.id);
+  const o = orgs.get(channelKeyOf(req));
   const parsed = Respond.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: { code: "bad_body", message: "id + numeric status required" } });
@@ -160,6 +173,19 @@ edgeRelayRouter.post("/respond", asyncHandler(async (req, res) => {
 // GET /status — is a bridge connected for this workspace right now?
 edgeRelayRouter.get("/status", asyncHandler(async (req, res) => {
   if (!requireRole(req, res, "owner", "admin", "member")) return;
-  const orgId = tenantContext(req).org.id;
-  res.json({ connected: platform().edge.hasChannel(orgId), last_seen: orgs.get(orgId)?.lastSeen ?? null });
+  const key = channelKeyOf(req);
+  res.json({ connected: platform().edge.hasChannel(key), last_seen: orgs.get(key)?.lastSeen ?? null });
+}));
+
+// ── Self-update — the bridge fetches its OWN code from here (no Docker registry,
+// no PAT). GET /release returns the current version; the loader downloads
+// /release/bundle only when its running version differs, verifies the sha256, and
+// restarts onto it. See edge-bridge src/loader.ts.
+edgeRelayRouter.get("/release", asyncHandler(async (req, res) => {
+  if (!requireRole(req, res, "owner", "admin", "member")) return;
+  res.set("Cache-Control", "no-store").json({ version: BRIDGE_BUNDLE_VERSION, sha256: BRIDGE_BUNDLE_SHA256 });
+}));
+edgeRelayRouter.get("/release/bundle", asyncHandler(async (req, res) => {
+  if (!requireRole(req, res, "owner", "admin", "member")) return;
+  res.set("Content-Type", "application/javascript").set("Cache-Control", "no-store").send(bridgeBundleJs());
 }));

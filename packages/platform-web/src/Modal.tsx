@@ -1,5 +1,13 @@
-// Generic modal primitive. Backdrop click + Esc close; backdrop is
-// stationary while a child content panel scrolls if it overflows.
+// Generic modal primitive. A backdrop click closes it — UNLESS you've started
+// entering data inside it, in which case the backdrop is inert so a stray click
+// can't discard your work (Esc + the explicit close/cancel always work).
+//
+// The distinction is automatic: viewing a detail modal? click outside to close.
+// The instant you type into / change any field within, the modal flags itself
+// "dirty" and the backdrop stops dismissing. So we never have to hand-tag which
+// modals are "forms" vs "views" (and never miss one, reintroducing data loss).
+// `dismissOnBackdrop={false}` is a HARD override for the rare modal that should
+// never close on a backdrop click even when untouched.
 // Used by detail/edit modals across the app — never a new page when
 // a modal will do.
 //
@@ -10,7 +18,7 @@
 // navbar (which uses backdrop-blur) would otherwise position
 // relative to the navbar strip and intercept clicks only there.
 
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 
@@ -26,9 +34,10 @@ interface Props {
   size?: "sm" | "md" | "lg" | "xl";
   /** Tints the header to signal a destructive context. */
   destructive?: boolean;
-  /** Whether a click on the backdrop closes the modal. Default true. Set false
-   *  for DATA-ENTRY forms so a stray outside-click can't discard unsaved input
-   *  (Esc + the explicit close/cancel still work). */
+  /** Whether a backdrop click can close the modal. **Default true**, but a click
+   *  is ignored while the modal is "dirty" (you've typed into / changed a field),
+   *  so unsaved input is never lost to a stray click. Set **false** to forbid
+   *  backdrop-close entirely, even when untouched. */
   dismissOnBackdrop?: boolean;
 }
 
@@ -40,6 +49,24 @@ const SIZE: Record<NonNullable<Props["size"]>, string> = {
 };
 
 export function Modal({ open, onClose, title, subtitle, children, size = "md", destructive, dismissOnBackdrop = true }: Props) {
+  // "Dirty" = the user has entered/changed something inside this modal. Tracked
+  // by listening (capture) for input/change events bubbling from any descendant
+  // field — so we never have to know in advance whether a modal is a form. Only
+  // real user interaction trips it (programmatic value changes / pre-filled
+  // fields don't fire these), so a view modal with pre-filled controls still
+  // closes on a backdrop click until you actually touch something.
+  const dirtyRef = useRef(false);
+  useEffect(() => {
+    if (open) dirtyRef.current = false; // reset each time it opens
+  }, [open]);
+  const handleBackdrop = () => {
+    if (!dismissOnBackdrop || dirtyRef.current) return;
+    onClose();
+  };
+  const markDirty = () => {
+    dirtyRef.current = true;
+  };
+
   useEffect(() => {
     if (!open) return;
     function onKey(e: KeyboardEvent) {
@@ -63,7 +90,7 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
   return createPortal(
     <div
       className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto"
-      onClick={dismissOnBackdrop ? onClose : undefined}
+      onClick={handleBackdrop}
       role="dialog"
       aria-modal="true"
     >
@@ -81,6 +108,12 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
             : "border-line dark:border-slate-700")
         }
         onClick={(e) => e.stopPropagation()}
+        // Any keystroke / change in a descendant field marks the modal dirty, so
+        // the backdrop stops dismissing (protects unsaved input). Capture not
+        // needed — these bubble — but onInput catches typing, onChange catches
+        // selects/checkboxes/radios/files.
+        onInput={markDirty}
+        onChange={markDirty}
       >
         {(title || subtitle) && (
           <div

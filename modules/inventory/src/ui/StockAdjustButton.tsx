@@ -4,6 +4,7 @@
 
 import { useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Modal } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 
 export function StockAdjustButton({ partId }: { partId: string }) {
@@ -41,19 +42,11 @@ export function StockAdjustButton({ partId }: { partId: string }) {
       >
         Adjust
       </button>
-      {open && (
-        <div
-          className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4"
-          onClick={() => setOpen(false)}
-        >
-          <form
-            onSubmit={submit}
-            onClick={(e) => e.stopPropagation()}
-            className="bg-surface dark:bg-slate-900 rounded-xl border border-line dark:border-slate-700 max-w-sm w-full p-5 shadow-2xl space-y-3"
-          >
-            <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
-              // stock adjust
-            </div>
+      {/* Shared Modal → inherits the smart backdrop rule (closes when untouched,
+          protects once you've typed a delta/reason). Was a hand-rolled overlay
+          that closed on any outside click — a data-loss trap on a started edit. */}
+      <Modal open={open} onClose={() => setOpen(false)} title="Adjust stock" size="sm">
+        <form onSubmit={submit} className="space-y-3">
             <label className="block">
               <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                 Delta (signed)
@@ -94,9 +87,8 @@ export function StockAdjustButton({ partId }: { partId: string }) {
                 {adjust.isPending ? "…" : "Apply"}
               </button>
             </div>
-          </form>
-        </div>
-      )}
+        </form>
+      </Modal>
     </>
   );
 }

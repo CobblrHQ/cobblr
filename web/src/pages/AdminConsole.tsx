@@ -37,6 +37,7 @@ import {
 } from "../lib/api";
 import { ADMIN_SECTIONS, isAdminSection, type AdminSectionId } from "../lib/adminSections";
 import { TokenManager } from "../components/TokenManager";
+import { ScanResolversTab } from "../components/ScanResolversTab";
 
 // The console content — one routed section at a time. The shell (AdminLayout)
 // owns the operator chrome + the section nav; this just dispatches /admin/:section
@@ -64,6 +65,7 @@ export function AdminConsole() {
       {active === "barcodes" && <BarcodeCacheTab />}
       {active === "tokens" && <TokenManager variant="operator" />}
       {active === "scaneval" && <ScanEvalTab />}
+      {active === "scan-resolvers" && <ScanResolversTab />}
       {active === "impersonation" && <ImpersonationLogTab />}
       {active === "health" && <HealthTab />}
     </div>
@@ -1519,8 +1521,85 @@ function AiActivityDetailModal({ item, onClose }: { item: SuperAdminAiActivityIt
 // Each row is a platform admin's corrected scan commit (input + menu the model
 // saw + the route/fields they committed). The e2e import script pulls these into
 // e2e/fixtures/scan-eval/ as golden cases. See docs/operations/ai-prompt-eval-harness.md.
+// The public approval queue: corrections that UNTRUSTED instances proposed
+// (verified=false). Approve → it becomes the verified answer for every workspace;
+// reject → drop it. Needs COBBLR_BARCODE_RESOLVER_REVIEW_TOKEN on this instance.
+function BarcodeReviewSection() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const q = useQuery({
+    queryKey: ["sa-barcode-corrections"],
+    queryFn: () => api.superAdminBarcodeCorrections(),
+  });
+  const items = q.data?.items ?? [];
+  const act = useMutation({
+    mutationFn: ({ id, action }: { id: string; action: "verify" | "reject" }) =>
+      action === "verify" ? api.superAdminVerifyBarcodeCorrection(id) : api.superAdminRejectBarcodeCorrection(id),
+    onSuccess: (_d, v) => {
+      toast.success(v.action === "verify" ? "Approved — now the answer for every workspace" : "Rejected");
+      void qc.invalidateQueries({ queryKey: ["sa-barcode-corrections"] });
+    },
+    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+
+  if (q.error) {
+    return (
+      <p className="text-sm text-faint">
+        Review queue unavailable — this instance has no <code>COBBLR_BARCODE_RESOLVER_REVIEW_TOKEN</code> set.
+      </p>
+    );
+  }
+  return (
+    <div className="space-y-2">
+      <p className="text-sm text-muted">
+        User-proposed corrections from untrusted instances (e.g. public scans). Approve to make it the
+        verified answer every workspace's next scan sees; reject to drop it.
+      </p>
+      {q.isLoading && <p className="text-sm text-faint">loading…</p>}
+      {!q.isLoading && items.length === 0 && (
+        <div className="rounded-md border border-dashed border-line dark:border-slate-700 p-6 text-center text-sm text-faint">
+          No proposed corrections to review.
+        </div>
+      )}
+      {items.map((c) => {
+        const cur =
+          c.field === "title" ? c.current.title : c.field === "brand" ? c.current.brand : c.field === "category" ? c.current.category : null;
+        return (
+          <div key={c.id} className="rounded-lg border border-line dark:border-slate-700 p-3 flex items-start gap-3 text-sm">
+            <div className="min-w-0 flex-1 space-y-1">
+              <div className="font-mono text-[11px] text-muted">
+                {c.upc} · {c.field} · {new Date(c.created_at).toLocaleString()}
+                {c.source_context ? ` · ${c.source_context}` : ""}
+              </div>
+              <div className="text-faint line-through truncate">{cur ?? (c.current.provider_found ? "—" : "(providers found nothing)")}</div>
+              <div className="text-content dark:text-mortar-100 font-medium truncate">→ {String(c.proposed_value)}</div>
+              {c.reason && <div className="text-xs text-muted">“{c.reason}”</div>}
+            </div>
+            <div className="flex gap-2 shrink-0">
+              <button
+                disabled={act.isPending}
+                onClick={() => act.mutate({ id: c.id, action: "verify" })}
+                className="rounded bg-moss-600 hover:bg-moss-700 text-white text-xs px-2.5 py-1.5 transition disabled:opacity-50"
+              >
+                Approve
+              </button>
+              <button
+                disabled={act.isPending}
+                onClick={() => act.mutate({ id: c.id, action: "reject" })}
+                className="rounded border border-line dark:border-slate-700 text-faint hover:text-red-500 text-xs px-2.5 py-1.5 transition disabled:opacity-50"
+              >
+                Reject
+              </button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function BarcodeCacheTab() {
-  const [layer, setLayer] = useState<"shared" | "workspaces">("shared");
+  const [layer, setLayer] = useState<"shared" | "workspaces" | "review">("shared");
   const [qText, setQText] = useState("");
   const [org, setOrg] = useState("");
   const [source, setSource] = useState("");
@@ -1530,7 +1609,8 @@ function BarcodeCacheTab() {
 
   const q = useQuery({
     queryKey: ["sa-barcode-cache", layer, filters],
-    queryFn: () => api.superAdminBarcodeCache({ ...filters, layer, limit: 300 }),
+    queryFn: () => api.superAdminBarcodeCache({ ...filters, layer: layer as "shared" | "workspaces", limit: 300 }),
+    enabled: layer !== "review",
   });
   const items = q.data?.items ?? [];
 
@@ -1552,7 +1632,7 @@ function BarcodeCacheTab() {
         field we captured, including the raw provider payload.
       </p>
       <div className="inline-flex rounded-lg border border-line dark:border-slate-700 overflow-hidden text-xs">
-        {([["shared", "Instance-wide (deduped)"], ["workspaces", "Per-workspace mirrors"]] as const).map(([id, label]) => (
+        {([["shared", "Instance-wide (deduped)"], ["workspaces", "Per-workspace mirrors"], ["review", "Proposed corrections"]] as const).map(([id, label]) => (
           <button
             key={id}
             type="button"
@@ -1568,6 +1648,8 @@ function BarcodeCacheTab() {
           </button>
         ))}
       </div>
+      {layer === "review" && <BarcodeReviewSection />}
+      {layer !== "review" && (<>
       <div className="flex flex-wrap items-end gap-2">
         <FilterInput label="Search (UPC / title / brand)" value={qText} onChange={setQText} placeholder="784297 or southwire" />
         {layer === "workspaces" && (
@@ -1645,6 +1727,7 @@ function BarcodeCacheTab() {
           </tbody>
         </table>
       </div>
+      </>)}
 
       <Modal open={!!detail} onClose={() => setDetail(null)} title={detail?.title ?? detail?.upc ?? ""} size="lg">
         {detail && (

@@ -16,6 +16,7 @@ import { platform } from "@cobblr/platform-contract";
 import { tenantContext } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { BambuCloud, BambuCloudError, BAMBU_REGIONS, type BambuRegion, type BambuCloudDevice } from "../drivers/bambu-cloud.js";
+import { sendBambuCommand } from "../bambu-pump.js";
 
 export const bambuRouter = Router({ mergeParams: true });
 
@@ -53,7 +54,7 @@ function publicDevices(devices: BambuCloudDevice[]): Array<{ dev_id: string; nam
 export function modeCapabilities(mode: string): { monitor: boolean; control: boolean; available: boolean; note: string } {
   switch (mode) {
     case "cloud":
-      return { monitor: true, control: false, available: true, note: "Live status, temps & progress. Remote start/pause isn't possible over the cloud — Bambu blocks third-party control." };
+      return { monitor: true, control: true, available: true, note: "Live status, temps & progress, plus chamber light and pause/resume/stop over the cloud. Jog, home and set-temp need LAN control — Bambu blocks raw G-code over the cloud. Starting a print also needs LAN." };
     case "lan":
       return { monitor: true, control: true, available: false, note: "Full control (start/pause/cancel) — needs Developer Mode on the printer + the Cobblr edge-bridge on your network. Coming soon." };
     case "hybrid":
@@ -193,4 +194,25 @@ bambuRouter.post("/create", asyncHandler(async (req, res) => {
 bambuRouter.get("/capabilities", asyncHandler(async (req, res) => {
   if (!requireRole(req, res, "owner", "admin", "member")) return;
   res.json({ modes: { cloud: modeCapabilities("cloud"), lan: modeCapabilities("lan"), hybrid: modeCapabilities("hybrid") } });
+}));
+
+// ── POST /command — send a control command to a cloud Bambu over the MQTT the
+// pump already holds (same broker the app uses). EXPERIMENTAL: the printer's
+// Authorization Control may reject it; `sent:true` means published, not obeyed.
+// Start with a harmless visible one (light_on/off, nudge) to confirm it works
+// before pause/resume/stop.
+const CommandBody = z.object({
+  connection_id: z.string().min(1),
+  serial: z.string().min(1),
+  command: z.enum(["pause", "resume", "stop", "light_on", "light_off", "nudge"]),
+});
+bambuRouter.post("/command", asyncHandler(async (req, res) => {
+  if (!requireRole(req, res, "owner", "admin")) return;
+  const parsed = CommandBody.safeParse(req.body);
+  if (!parsed.success) return badBody(res, parsed.error);
+  const sent = sendBambuCommand(parsed.data.connection_id, parsed.data.serial, parsed.data.command);
+  if (!sent) {
+    return void res.status(503).json({ error: { code: "no_pump", message: "No live cloud stream for that printer right now — try again in a moment." } });
+  }
+  res.json({ sent: true });
 }));

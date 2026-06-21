@@ -247,9 +247,30 @@ export function BundleDetailModal(props: Props) {
         : props.mode === "featured"
           ? props.manifest?.name ?? "this bundle"
           : "this bundle";
+    // Fetch what the uninstall will actually tear down — the bundle's own
+    // instances (and their items) that nothing else still needs, plus modules it
+    // will turn off. Best-effort: a failed preview falls back to the generic note.
+    let removal = "";
+    if (props.mode === "installed") {
+      try {
+        const p = await api.bundleUninstallPreview(slug, uninstallId);
+        const instBits = p.instances.map((i) =>
+          i.item_count > 0
+            ? `${i.display_name} (${i.item_count} item${i.item_count === 1 ? "" : "s"})`
+            : i.display_name,
+        );
+        const cap = (s: string) => s.replace(/(^|[\s-])\w/g, (c) => c.toUpperCase());
+        const parts: string[] = [];
+        if (instBits.length) parts.push(`deletes ${instBits.join(", ")}`);
+        if (p.modules.length) parts.push(`turns off ${p.modules.map(cap).join(", ")}`);
+        if (parts.length) removal = `This ${parts.join(" and ")}. `;
+      } catch {
+        /* preview is best-effort — fall through to the generic message */
+      }
+    }
     const ok = await confirm({
       title: `Remove ${bundleName}?`,
-      message: `This removes the bundle's wires and custom fields. Your data (parts, tasks, etc.) is untouched — only the bundle-installed customisations go.`,
+      message: `${removal}It also removes the bundle's wires and custom fields. Anything else you've added is untouched.`,
       confirmLabel: "Remove",
       destructive: true,
     });

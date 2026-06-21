@@ -151,6 +151,33 @@ export interface OrgModulesTable {
   last_migration: string | null;
 }
 
+/** Provenance/refcount for what each bundle (or the user) "owns" — so a bundle
+ *  uninstall disables a module / deletes an instance ONLY when no source still
+ *  claims it. `source` = a bundle external_id or the literal 'user'. See
+ *  api/src/platform/bundle-claims.ts + docs/design-decisions/bundle-uninstall-refcount.md. */
+export interface BundleResourceClaimsTable {
+  id: Generated<string>;
+  org_id: string;
+  source: string;
+  resource_type: "module" | "instance";
+  resource_key: string;
+  created_at: Generated<Date>;
+}
+
+/** Operator-managed vendor scan-URL resolver manifests (global; not org-scoped).
+ *  Built-in vendors ship in code; these are operator additions/overrides. See
+ *  api/src/platform/scan-url-resolvers/. */
+export interface ScanUrlResolversTable {
+  id: Generated<string>;
+  resolver_id: string;
+  label: string;
+  enabled: Generated<boolean>;
+  position: Generated<number>;
+  manifest: unknown;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
 export interface EntityPairingsTable {
   id: Generated<string>;
   org_id: string;
@@ -814,6 +841,8 @@ export interface MetaDB {
   org_memberships: OrgMembershipsTable;
   migrations: MigrationsTable;
   org_modules: OrgModulesTable;
+  bundle_resource_claims: BundleResourceClaimsTable;
+  scan_url_resolvers: ScanUrlResolversTable;
   workspace_invites: WorkspaceInvitesTable;
   signup_invites: SignupInvitesTable;
   waitlist: WaitlistTable;

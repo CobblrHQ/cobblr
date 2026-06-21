@@ -24,6 +24,7 @@ import {
   ChevronDown,
   ExternalLink,
   FileText,
+  Loader2,
   MapPin,
   MonitorSmartphone,
   RotateCcw,
@@ -32,7 +33,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { Modal, useConfirm, useImageSrc, useToast, usePageTitle } from "@cobblr/platform-web";
+import { Modal, useImageSrc, useToast, usePageTitle } from "@cobblr/platform-web";
 import {
   type AiStatus,
   ApiError,
@@ -355,6 +356,61 @@ function NameItInline({ slug, itemId }: { slug: string; itemId: string }) {
   );
 }
 
+/** Inline corrector for a barcode item whose resolved name is wrong. PATCHes the
+ *  name (which, server-side, reports the fix to the shared Barcode Intelligence
+ *  DB so the next scan of this UPC is right everywhere). Pre-filled with the
+ *  current name so it's a quick edit, not a retype. */
+function CorrectNameInline({
+  slug,
+  itemId,
+  initial,
+  onDone,
+}: {
+  slug: string;
+  itemId: string;
+  initial: string;
+  onDone: () => void;
+}) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [name, setName] = useState(initial);
+  const mut = useMutation({
+    mutationFn: () => api.updateScanItem(slug, itemId, { name: name.trim() }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", slug] });
+      toast.success("Fixed — thanks, that sharpens future scans of this barcode.");
+      onDone();
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+  return (
+    <div className="mt-1 flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+      <input
+        value={name}
+        autoFocus
+        onChange={(e) => setName(e.target.value)}
+        aria-label="Correct the product name"
+        className="input !py-1 !text-xs flex-1"
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && name.trim()) mut.mutate();
+          if (e.key === "Escape") onDone();
+        }}
+      />
+      <button
+        type="button"
+        disabled={!name.trim() || mut.isPending}
+        onClick={() => mut.mutate()}
+        className="shrink-0 rounded bg-amber-600 text-white text-xs font-medium px-2.5 py-1 hover:bg-amber-700 transition disabled:opacity-50"
+      >
+        Fix
+      </button>
+      <button type="button" onClick={onDone} className="shrink-0 text-xs text-faint px-1.5 py-1">
+        Cancel
+      </button>
+    </div>
+  );
+}
+
 /** Where scans confirm into — a module instance (e.g. the "yarn" inventory
  *  instance), passed via the URL when you scan from an instance's table. */
 export type ScanTarget = { instance: string; module: string; kind: string; label: string };
@@ -434,10 +490,69 @@ export function ScanPage() {
   const aiStatus = useAiStatus();
   const items = list.data?.items ?? [];
 
+  // Auto-retry rate-limited scans, one at a time, paced. Rapid scanning throttles
+  // the resolver (go-upc gate / upcitemdb burst); those rows are tagged
+  // `rate_limited` and were deliberately NOT cached, so a retry once the gate
+  // frees resolves them — the user shouldn't have to re-scan the item. Paced (one
+  // per 15s tick, capped at 2 tries each) so we don't re-exhaust the very limit
+  // we're waiting on. Reads live cache inside the tick so the interval stays
+  // stable (no reschedule churn from the 8s poll).
+  const rlAttempts = useRef<Map<string, number>>(new Map());
+  useEffect(() => {
+    if (!activeSlug) return;
+    const MAX_RETRIES = 2;
+    const tick = setInterval(() => {
+      const cur =
+        qc.getQueryData<{ items: ScanInboxItem[] }>(["scan-inbox", activeSlug, batchId])?.items ?? [];
+      const target = cur.find(
+        (i) =>
+          i.status === "pending" &&
+          !i.suggested_name &&
+          !i.ai_suggested_at &&
+          (i.suggested_metadata as { rate_limited?: boolean } | null)?.rate_limited &&
+          (rlAttempts.current.get(i.id) ?? 0) < MAX_RETRIES,
+      );
+      if (!target) return;
+      rlAttempts.current.set(target.id, (rlAttempts.current.get(target.id) ?? 0) + 1);
+      void api
+        .rerunScanAi(activeSlug, target.id)
+        .catch(() => {})
+        .finally(() => void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] }));
+    }, 15_000);
+    return () => clearInterval(tick);
+  }, [activeSlug, batchId, qc]);
+
+  // Recently deleted: discarding is a soft-delete (the row + its enriched data are
+  // kept), so a mistaken X is recoverable from here — no confirm needed on delete.
+  const discardedQ = useQuery({
+    queryKey: ["scan-inbox-discarded", activeSlug],
+    queryFn: () => api.listScanInbox(activeSlug, { status: "discarded" }),
+    enabled: !!activeSlug,
+  });
+  const recentlyDeleted = (discardedQ.data?.items ?? [])
+    .slice()
+    .sort((a, b) => String(b.updated_at ?? "").localeCompare(String(a.updated_at ?? "")))
+    .slice(0, 20);
+  const [showDeleted, setShowDeleted] = useState(false);
+  const restore = useMutation({
+    mutationFn: (id: string) => api.restoreScanItem(activeSlug, id),
+    onSuccess: () => {
+      toast.success("Restored.");
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      void qc.invalidateQueries({ queryKey: ["scan-inbox-discarded", activeSlug] });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+
   // Hardware barcode scanners (USB/Bluetooth HID, 1D or 2D) "type" the code +
   // Enter. Capture that burst page-wide so a physical scan intakes a barcode
   // hands-free — no need to open the UPC modal first. Keystrokes aimed at a real
   // input (the UPC field, search…) pass through untouched (see useBarcodeWedge).
+  // Optimistic feedback for a hardware scan: a phantom row with a spinner shows
+  // at the top of the inbox the instant you scan, so you know it registered while
+  // the lookup (a few seconds) runs — then it's swapped for the real (or
+  // quantity-bumped) row once the refetch lands.
+  const [pendingScans, setPendingScans] = useState<{ id: string; code: string }[]>([]);
   const wedgeScan = useMutation({
     mutationFn: (code: string) =>
       api.scanBarcode(activeSlug, {
@@ -445,11 +560,21 @@ export function ScanPage() {
         source_kind: "barcode",
         scan_batch_id: batchId ?? undefined,
       }),
+    onMutate: (code: string) => {
+      const id = `pending-${performance.now()}`;
+      setPendingScans((p) => [{ id, code }, ...p]);
+      return { id };
+    },
     onSuccess: (item) => {
       toast.success(`Scanned: ${item.suggested_name ?? `Barcode ${item.barcode_text}`}`);
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+    onSettled: async (_data, _err, _code, ctx) => {
+      // Wait for the refetch so the real row is present before dropping the
+      // phantom — no flicker-gap between the two.
+      await qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      if (ctx?.id) setPendingScans((p) => p.filter((x) => x.id !== ctx.id));
+    },
   });
 
   // ── scan-drives-screen (Phase 1): a scan is a DRIVER ─────────────────────────
@@ -693,6 +818,20 @@ export function ScanPage() {
         ))}
 
       <div className="space-y-2">
+        {pendingScans.map((p) => (
+          <div
+            key={p.id}
+            className="flex items-center gap-3 rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-800/40 px-3 py-3"
+          >
+            <div className="w-10 h-10 rounded bg-black/10 dark:bg-white/5 shrink-0 flex items-center justify-center">
+              <Loader2 size={16} className="animate-spin text-accent" />
+            </div>
+            <div className="min-w-0">
+              <div className="font-medium text-content dark:text-mortar-100">Scanning…</div>
+              <div className="text-[11px] font-mono text-faint truncate">{p.code}</div>
+            </div>
+          </div>
+        ))}
         {items.map((item) => (
           <InboxCard
             key={item.id}
@@ -703,6 +842,46 @@ export function ScanPage() {
           />
         ))}
       </div>
+
+      {recentlyDeleted.length > 0 && (
+        <div className="mt-3">
+          <button
+            type="button"
+            onClick={() => setShowDeleted((s) => !s)}
+            className="flex items-center gap-1.5 text-xs text-faint hover:text-muted"
+          >
+            <ChevronDown size={13} className={`transition ${showDeleted ? "rotate-180" : ""}`} />
+            Recently deleted ({recentlyDeleted.length})
+          </button>
+          {showDeleted && (
+            <div className="mt-2 space-y-1.5">
+              {recentlyDeleted.map((d) => (
+                <div
+                  key={d.id}
+                  className="flex items-center gap-2 rounded-md border border-line dark:border-slate-700 bg-surface/50 dark:bg-slate-800/30 px-3 py-2"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm text-muted truncate">
+                      {d.suggested_name ?? d.barcode_text ?? "Unknown scan"}
+                    </div>
+                    {d.barcode_text && d.suggested_name && (
+                      <div className="text-[10px] font-mono text-faint truncate">{d.barcode_text}</div>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => restore.mutate(d.id)}
+                    disabled={restore.isPending}
+                    className="shrink-0 inline-flex items-center gap-1 text-xs rounded border border-line px-2 py-1 text-muted hover:text-content disabled:opacity-50"
+                  >
+                    <RotateCcw size={12} /> Restore
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {upcOpen && <UpcModal onClose={() => setUpcOpen(false)} />}
     </div>
@@ -792,7 +971,6 @@ function InboxCard({
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
-  const confirm = useConfirm();
 
   // The expansion's confirm context: which table/instance the form commits
   // into + the matchmaker's pre-filled fields. Keyed into ConfirmForm so
@@ -846,30 +1024,86 @@ function InboxCard({
     candidates.length === 0 &&
     !(item.suggested_metadata as { matched_at?: string } | null)?.matched_at &&
     !needsName;
+  // Rate-limited: rapid scanning exhausted the go-upc gate / upcitemdb burst, so
+  // the resolver was throttled. The row is tagged + left unfinished (no name, no
+  // ai_suggested_at). Show a distinct "retrying" state — NOT a passive "awaiting
+  // lookup" that reads like a miss — and the list auto-retries it (paced).
+  const rateLimited =
+    item.status === "pending" &&
+    !item.suggested_name &&
+    !item.ai_suggested_at &&
+    !!(item.suggested_metadata as { rate_limited?: boolean } | null)?.rate_limited;
+  // Low-trust hit: a short/ambiguous barcode the catalogs may have mis-matched
+  // (set in enrich.ts). Surface a ⚠ note + an obvious one-tap corrector so a
+  // wrong match is easy to catch and fix — the fix feeds the shared Barcode
+  // Intelligence DB and improves the next scan of this UPC everywhere.
+  const lowTrust = !!(item.suggested_metadata as { low_trust?: boolean } | null)?.low_trust;
+  const barcodeIdentified = !!item.barcode_text && !!item.suggested_name;
+  const [correcting, setCorrecting] = useState(false);
 
   const discard = useMutation({
     mutationFn: () => api.discardScanItem(activeSlug, item.id),
     onSuccess: () => {
-      toast.success("Discarded.");
+      toast.success("Discarded — undo from Recently deleted.");
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      void qc.invalidateQueries({ queryKey: ["scan-inbox-discarded", activeSlug] });
     },
   });
-  // The rerun endpoint runs the WHOLE chain server-side (re-enrich +
-  // re-match) before responding — one await, one honest spinner, one toast.
+  // Adjust the pending item's quantity in place (e.g. an over-counted dedup) —
+  // a PATCH that keeps it in the inbox; no commit.
+  const qtyPatch = useMutation({
+    mutationFn: (q: number) => api.updateScanItem(activeSlug, item.id, { quantity: q }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] }),
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+  // A barcode rerun resolves inline server-side (so its toast can assert the
+  // result). A PHOTO rerun is fire-and-forget now: the vision+match runs detached
+  // so the request can't be held past Cloudflare's ~100s timeout (which 524s).
+  // For photos, track a local "reading" pulse from the moment we fire until the
+  // server stamps a fresh ai_suggested_at — the 8s list poll surfaces it — so the
+  // card keeps a live "AI reading…" state instead of snapping back to its old one.
+  const isPhotoItem = !item.barcode_text && !!item.image_file_id;
+  const [reading, setReading] = useState(false);
+  const readingSnapshot = useRef<string | null>(null);
   const rerun = useMutation({
     mutationFn: (hint?: string) => api.rerunScanAi(activeSlug, item.id, hint),
+    onMutate: () => {
+      if (isPhotoItem) {
+        readingSnapshot.current = item.ai_suggested_at ?? null;
+        setReading(true);
+      }
+    },
     onSuccess: (fresh) => {
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      if (isPhotoItem) {
+        // Detached on the server — the result isn't ready yet; the poll shows it.
+        toast.success("Reading the photo with AI…");
+        return;
+      }
       toast.success(
         fresh.suggested_name
           ? `Lookup updated: ${fresh.suggested_name}`
           : "Re-ran — still no match. Fill it in manually.",
       );
     },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+    onError: (e) => {
+      setReading(false);
+      toast.error(e instanceof ApiError ? e.message : String(e));
+    },
   });
-  const rerunning = rerun.isPending;
-  const aiWorking = rerun.isPending || serverMatching;
+  // Clear the local pulse once the server stamps a newer ai_suggested_at (the
+  // identify finished — named or a "couldn't identify" note); cap it so a dropped
+  // enrich can't pulse forever.
+  useEffect(() => {
+    if (reading && (item.ai_suggested_at ?? null) !== readingSnapshot.current) setReading(false);
+  }, [item.ai_suggested_at, reading]);
+  useEffect(() => {
+    if (!reading) return;
+    const t = setTimeout(() => setReading(false), 95_000);
+    return () => clearTimeout(t);
+  }, [reading]);
+  const rerunning = rerun.isPending || reading;
+  const aiWorking = rerunning || serverMatching;
 
   // Internal /api/v1 file URLs need the Bearer token a bare <img> can't
   // send — useImageSrc blob-loads those; external URLs pass through.
@@ -923,10 +1157,48 @@ function InboxCard({
               <span className="text-accent animate-pulse">Re-running the lookup…</span>
             ) : serverMatching ? (
               <span className="text-accent animate-pulse">AI is reading the details…</span>
+            ) : rateLimited ? (
+              <span className="inline-flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
+                <Loader2 size={13} className="animate-spin shrink-0" />
+                Rate-limited — retrying…
+              </span>
             ) : needsName ? (
               <span className="text-muted">Couldn’t identify this photo — name it:</span>
             ) : (
               <span className="text-faint italic">Awaiting lookup…</span>
+            )}
+            {(item.quantity ?? 1) > 1 && (
+              <span className="shrink-0 inline-flex items-center rounded-full bg-cobble-600 text-white text-[11px] font-semibold overflow-hidden">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    qtyPatch.mutate(Math.max(1, (item.quantity ?? 1) - 1));
+                  }}
+                  disabled={qtyPatch.isPending}
+                  className="px-1.5 py-0.5 hover:bg-cobble-700 disabled:opacity-50"
+                  title="Decrease quantity"
+                  aria-label="Decrease quantity"
+                >
+                  −
+                </button>
+                <span className="px-1 tabular-nums" title="Quantity (scanned this many times)">
+                  ×{item.quantity}
+                </span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    qtyPatch.mutate((item.quantity ?? 1) + 1);
+                  }}
+                  disabled={qtyPatch.isPending}
+                  className="px-1.5 py-0.5 hover:bg-cobble-700 disabled:opacity-50"
+                  title="Increase quantity"
+                  aria-label="Increase quantity"
+                >
+                  +
+                </button>
+              </span>
             )}
           </div>
           <div className="text-[11px] font-mono text-faint dark:text-slate-500 truncate">
@@ -936,9 +1208,43 @@ function InboxCard({
             {item.scan_area && ` · 📍${item.scan_area}`}
           </div>
           {!expanded && item.ai_notes && (
-            <div className="text-[11px] text-muted mt-0.5 line-clamp-1">{item.ai_notes}</div>
+            <div
+              className={`text-[11px] mt-0.5 line-clamp-1 ${
+                rateLimited || lowTrust ? "text-amber-600 dark:text-amber-400" : "text-muted"
+              }`}
+            >
+              {item.ai_notes}
+            </div>
           )}
           {needsName && <NameItInline slug={activeSlug} itemId={item.id} />}
+          {/* One-tap correction: a barcode whose name looks wrong (always
+              available, nudged for low-trust short codes). Renaming reports the
+              fix to the shared Barcode Intelligence DB so the next scan is right. */}
+          {barcodeIdentified &&
+            !expanded &&
+            (correcting ? (
+              <CorrectNameInline
+                slug={activeSlug}
+                itemId={item.id}
+                initial={item.suggested_name ?? ""}
+                onDone={() => setCorrecting(false)}
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setCorrecting(true);
+                }}
+                className={`mt-0.5 text-[11px] underline decoration-dotted underline-offset-2 ${
+                  lowTrust
+                    ? "text-amber-600 dark:text-amber-400"
+                    : "text-faint hover:text-amber-600 dark:hover:text-amber-400"
+                }`}
+              >
+                {lowTrust ? "Double-check — fix the name" : "Not right? Fix the name"}
+              </button>
+            ))}
           {/* Matchmaker chips — the best-fitting tables, their fields
               pre-filled. Tap one to expand straight into that table's form. */}
           {candidates.length > 0 ? (
@@ -986,17 +1292,10 @@ function InboxCard({
           </button>
           <button
             type="button"
-            onClick={async () => {
-              const ok = await confirm({
-                title: "Discard this scan?",
-                message: `${item.suggested_name ?? item.barcode_text ?? "Unknown"} will be removed from the inbox.`,
-                confirmLabel: "Discard",
-                destructive: true,
-              });
-              if (ok) discard.mutate();
-            }}
-            className="text-faint hover:text-ember-500 p-1.5"
-            title="Discard"
+            onClick={() => discard.mutate()}
+            disabled={discard.isPending}
+            className="text-faint hover:text-ember-500 p-1.5 disabled:opacity-30"
+            title="Discard (recoverable from Recently deleted)"
           >
             <X size={14} />
           </button>

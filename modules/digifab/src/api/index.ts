@@ -14,6 +14,8 @@ import { bambuRouter } from "./bambu.js";
 import { edgeRelayRouter } from "./edge-relay.js";
 import { edgeSharesRouter } from "./edge-shares.js";
 import { historyRouter } from "./history.js";
+import { libraryRouter } from "./library.js";
+import { printRulesRouter } from "./print-rules.js";
 import { registerFarmResolvers } from "./resolvers.js";
 import { registerDeviceSeam } from "./device-provider.js";
 
@@ -33,5 +35,7 @@ router.use("/bambu", bambuRouter);
 router.use("/edge", edgeRelayRouter); // cloud↔on-site bridge tunnel (register/poll/respond)
 router.use("/edge-shares", edgeSharesRouter); // owner-side: grant machines to another workspace
 router.use("/history", historyRouter); // print history + at-a-glance stats
+router.use("/library", libraryRouter); // stored 3MF/gcode files + send-to-machine
+router.use("/print-rules", printRulesRouter); // configurable print-update notifications (channels + rules)
 
 export default router;
