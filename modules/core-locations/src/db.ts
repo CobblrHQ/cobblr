@@ -10,6 +10,7 @@ export interface LocationsTable {
   short_name: string | null;
   parent_id: string | null;
   depth: Generated<number>;
+  position: Generated<number>;
   kind: Generated<"container" | "area">;
   metadata: Generated<Record<string, unknown>>;
   description: string | null;

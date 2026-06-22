@@ -1802,7 +1802,7 @@ bundlesRouter.delete(
       }
       const bundle = await meta
         .selectFrom("bundles")
-        .select("id")
+        .select(["id", "name"])
         .where("id", "=", id)
         .where("org_id", "=", req.tenant!.org.id)
         .executeTakeFirst();
@@ -1815,6 +1815,9 @@ bundlesRouter.delete(
         orgId: req.tenant!.org.id,
         action: "bundle_uninstalled",
         ref: { module: null, entityType: "bundle", entityId: bundle.id },
+        // The bundle row is gone after uninstall, so carry its name so the
+        // activity feed reads "bundle uninstalled · <name>" (mirrors install).
+        diff: { name: bundle.name },
       });
       res.status(204).end();
     } catch (err) {

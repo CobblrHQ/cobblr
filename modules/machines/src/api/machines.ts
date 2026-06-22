@@ -165,7 +165,7 @@ machinesRouter.delete(
       .deleteFrom("machines_machines")
       .where("id", "=", id)
       .where("instance", "=", instanceOf(req))
-      .returning("id")
+      .returning(["id", "name"])
       .executeTakeFirst();
     if (!deleted) {
       res.status(404).json({ error: { code: "not_found", message: "machine not found" } });
@@ -176,6 +176,9 @@ machinesRouter.delete(
       userId: sessionUser(req).id,
       action: "machine_deleted",
       ref: { module: "machines", entityType: "machine", entityId: id },
+      // The record is gone, so the activity feed can't resolve its title —
+      // carry the name in the diff so the row reads "deleted · <name>".
+      diff: { name: deleted.name },
     });
     res.status(204).end();
   }),

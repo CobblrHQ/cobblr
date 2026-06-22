@@ -30,7 +30,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { ApiError, api, type OrgMembership } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { displaySlug } from "../lib/workspaceSlug";
+import { displaySlug, slugifyHandle } from "../lib/workspaceSlug";
 import { Modal, useToast } from "@cobblr/platform-web";
 import { MembersModal } from "./MembersModal";
 
@@ -327,12 +327,18 @@ export function RenameWorkspaceModal({
   const [name, setName] = useState("");
   const [advanced, setAdvanced] = useState(false);
   const [slug, setSlug] = useState("");
+  // While false, the handle tracks the name (auto-suggested). Once the user
+  // edits the handle directly, it stops following so we don't clobber their
+  // choice. A bare rename never saves the suggested handle anyway — the slug is
+  // only persisted when Advanced is expanded (see the rename mutation).
+  const [slugTouched, setSlugTouched] = useState(false);
 
   useEffect(() => {
     if (open && org) {
       setName(org.name);
       setSlug(displaySlug(org.slug));
       setAdvanced(false);
+      setSlugTouched(false);
     }
   }, [open, org]);
 
@@ -363,6 +369,11 @@ export function RenameWorkspaceModal({
   const slugChanged = !!org && advanced && slug.trim() !== "" && slug.trim() !== displaySlug(org.slug);
   const nameChanged = !!org && name.trim() !== "" && name.trim() !== org.name;
   const canSave = !!org && (nameChanged || slugChanged) && !rename.isPending;
+  // A handle the current name would produce, offered as a one-tap fill when it
+  // differs from what's in the field (e.g. the slug was auto-generated from a
+  // username at signup and no longer matches a renamed workspace).
+  const slugSuggestion = slugifyHandle(name);
+  const showSlugSuggestion = slugSuggestion !== "" && slugSuggestion !== slug.trim();
 
   function submit(e: FormEvent) {
     e.preventDefault();
@@ -377,7 +388,17 @@ export function RenameWorkspaceModal({
           <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
             Workspace name
           </span>
-          <input value={name} onChange={(e) => setName(e.target.value)} className="input" autoFocus maxLength={120} />
+          <input
+            value={name}
+            onChange={(e) => {
+              const v = e.target.value;
+              setName(v);
+              if (!slugTouched) setSlug(slugifyHandle(v));
+            }}
+            className="input"
+            autoFocus
+            maxLength={120}
+          />
           <span className="mt-1 block text-[11px] text-muted dark:text-slate-400">
             Safe to change anytime — only the display name updates. Links keep working.
           </span>
@@ -400,12 +421,27 @@ export function RenameWorkspaceModal({
               <span className="text-xs font-mono text-faint dark:text-slate-500 shrink-0">/w/</span>
               <input
                 value={slug}
-                onChange={(e) => setSlug(e.target.value)}
+                onChange={(e) => {
+                  setSlug(e.target.value);
+                  setSlugTouched(true);
+                }}
                 className="input font-mono"
                 maxLength={60}
                 placeholder="my-workspace"
               />
             </div>
+            {showSlugSuggestion && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSlug(slugSuggestion);
+                  setSlugTouched(true);
+                }}
+                className="mt-1 text-[11px] text-accent hover:underline"
+              >
+                Suggest from name: /w/{slugSuggestion}
+              </button>
+            )}
             <span className="mt-1 block text-[11px] text-ember-600 dark:text-ember-400">
               ⚠ Risky — every existing bookmark, shared link, and API token that
               uses the old URL will break. Only change this if you know what you're doing.

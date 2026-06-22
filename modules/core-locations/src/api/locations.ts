@@ -34,17 +34,45 @@ locationsRouter.get(
         "short_name",
         "parent_id",
         "depth",
+        "position",
         "kind",
         "metadata",
         "created_at",
         "updated_at",
       ])
-      // Stable order: shallow first, then alpha. Makes a tree
-      // render trivial without a recursive CTE.
+      // Stable order: shallow first, then the user's manual sibling order
+      // (`position`, set via /reorder), then alpha as the tiebreaker. Makes a
+      // tree render trivial without a recursive CTE.
       .orderBy("depth")
+      .orderBy("position")
       .orderBy("name")
       .execute();
     res.json({ items: rows });
+  }),
+);
+
+// Persist a sibling group's display order. Body `{ ids: [...] }` in the desired
+// order → each location's `position` set to its index. Defined before the
+// "/:id" routes so it's unambiguous (and it's a POST, so no method clash). Only
+// touches the rows named; callers send one parent's children at a time.
+locationsRouter.post(
+  "/reorder",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const parsed = z.object({ ids: z.array(z.string().uuid()).min(1).max(2000) }).safeParse(req.body);
+    if (!parsed.success) return void badBody(res, parsed.error);
+    const { ids } = parsed.data;
+    const db = tenantDb(req);
+    await db.transaction().execute(async (trx) => {
+      for (let i = 0; i < ids.length; i++) {
+        await trx
+          .updateTable("core_locations_locations")
+          .set({ position: i })
+          .where("id", "=", ids[i]!)
+          .execute();
+      }
+    });
+    res.json({ ok: true });
   }),
 );
 

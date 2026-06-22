@@ -16,7 +16,7 @@ import { platform } from "@cobblr/platform-contract";
 import { lookupBarcode, type BarcodeHit } from "./barcode-lookup.js";
 import { resolveBarcodeViaWebSearch } from "./barcode-websearch.js";
 import { classifyScanCode, resolveIsbn, resolveAsin } from "./scan-router.js";
-import { crossCheckScanPhoto } from "./enrich-photo.js";
+import { crossCheckScanPhoto, identifyImage, refreshCatalogImageByName } from "./enrich-photo.js";
 import type { CoreScanDB } from "../db.js";
 
 // Cross-tenant barcode cache namespace + value shape. A UPC means the same
@@ -45,9 +45,66 @@ const SOURCE_LABEL: Record<string, string> = {
   upcitemdb: "UPCitemdb",
   openfoodfacts: "Open Food Facts",
   openproductsfacts: "Open Products Facts",
+  openbeautyfacts: "Open Beauty Facts",
+  openpetfoodfacts: "Open Pet Food Facts",
+  openlibrary: "Open Library",
+  musicbrainz: "MusicBrainz",
   "web-search": "a web search",
 };
 const sourceLabel = (s: string): string => SOURCE_LABEL[s] ?? s;
+
+// Provenance string for the inbox note. When the shared box resolver served the
+// result from the Barcode Intelligence DB (its cache or the OFF mirror), it
+// stamps raw.resolver.cache==="hit" — that's an instant DB hit, not a live
+// provider fetch, so we prefix "BIdb / " to make the source honest.
+function provenanceLabel(hit: BarcodeHit): string {
+  const served = (hit.raw as { resolver?: { cache?: string } })?.resolver?.cache === "hit";
+  return (served ? "BIdb / " : "") + sourceLabel(hit.source);
+}
+
+// Last resort when the barcode + web search find nothing: if the scan carried a
+// photo, identify the item FROM the photo (vision) and use that as the name —
+// turning the AI's clear "I can see what this is" into an actual title instead of
+// leaving a blank "name required" row. Returns true when it named the item.
+async function nameFromPhoto(ctx: EnrichContext): Promise<boolean> {
+  const row = await ctx.db
+    .selectFrom("core_scan_inbox_items")
+    .select(["image_file_id"])
+    .where("id", "=", ctx.itemId)
+    .executeTakeFirst();
+  if (!row?.image_file_id) return false; // a hardware-wedge scan with no photo
+  const file =
+    (await platform().files.read(ctx.orgId, row.image_file_id, "medium")) ??
+    (await platform().files.read(ctx.orgId, row.image_file_id, "original"));
+  if (!file) return false;
+  const identity = await identifyImage(
+    ctx.orgId,
+    Buffer.from(file.bytes).toString("base64"),
+    file.mimeType,
+    ctx.itemId,
+  ).catch(() => null);
+  if (!identity?.name) return false;
+  // The vision call can outlive the request's tenant pool — re-acquire.
+  const db = (await platform().tenants.getDb(ctx.orgId)) as unknown as typeof ctx.db;
+  await db
+    .updateTable("core_scan_inbox_items")
+    .set({
+      suggested_name: identity.name,
+      suggested_manufacturer: identity.brand,
+      suggested_metadata: sql`${JSON.stringify({
+        source: "photo",
+        category: identity.category,
+        entity_type: identity.entityType,
+      })}::jsonb` as never,
+      ai_confidence: String(Math.min(identity.confidence, 0.7)),
+      ai_notes: "No catalog or web hit — named from your photo.",
+      ai_suggested_at: new Date(),
+      updated_at: new Date(),
+    })
+    .where("id", "=", ctx.itemId)
+    .execute();
+  return true;
+}
 
 // The catalog-image upload re-uses the caller's bearer token, so it MUST
 // target our own API — never a caller-influenced base URL, or the token
@@ -228,7 +285,15 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
       image_url: cacheVal.image_url,
       raw: cacheVal.raw,
     };
-  } else if (codeClass.type === "upc") {
+  } else if (
+    codeClass.type === "upc" ||
+    (codeClass.type === "isbn" && /^(978|979)[0-9]{10}$/.test(ctx.upc.replace(/\D/g, "")))
+  ) {
+    // UPC/EAN — OR a scanned book's ISBN-13, which IS an EAN-13. Both resolve
+    // through the box resolver chain, so books now hit the local Open Library
+    // mirror (free, instant, offline) and CDs/vinyl hit the MusicBrainz mirror,
+    // instead of leaning on the live APIs. A miss on an ISBN still falls back to
+    // the live Open Library API below (a brand-new book not yet in the mirror).
     const result = await lookupBarcode(ctx.upc);
     if (result.outcome === "hit") hit = result.hit;
     if (result.outcome === "rate_limited") rateLimited = true;
@@ -258,8 +323,14 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
         .sharedCache.put(BARCODE_NS, ctx.upc, value, value.found ? undefined : GLOBAL_MISS_TTL_SEC)
         .catch((err) => console.error("[core-scan] shared cache write failed:", (err as Error).message));
     }
+    // ISBN-13 not in any resolver tier (incl. the OL mirror) → the live Open
+    // Library API as a last resort before web search.
+    if (codeClass.type === "isbn" && !hit && !rateLimited) {
+      hit = await resolveIsbn(codeClass.code).catch(() => null);
+    }
   } else if (codeClass.type === "isbn") {
-    // A book → Open Library (free, no key). A miss falls through to web search.
+    // An ISBN-10 (manual entry — a scanned book is the ISBN-13 EAN handled above).
+    // The live Open Library API; a miss falls through to web search.
     hit = await resolveIsbn(codeClass.code).catch(() => null);
   } else if (codeClass.type === "asin") {
     // A real Amazon ASIN → best-effort product-page title. Amazon often blocks
@@ -314,8 +385,21 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
         .sharedCache.put(BARCODE_NS, ctx.upc, webValue, GLOBAL_MISS_TTL_SEC)
         .catch(() => {});
       if (web.imageUrl) await downloadCatalogImage(ctx, web.imageUrl);
+      // A web-search title is the weakest source (a UPC search can surface a
+      // SPURIOUS listing — e.g. a J-Link probe coming back as a power supply). If
+      // the user gave us a photo, let it arbitrate: the cross-check replaces the
+      // name outright when the photo unambiguously shows a different product.
+      void crossCheckScanPhoto(ctx.orgId, ctx.itemId, web.name).catch((e) =>
+        console.error("[core-scan] web-search cross-check threw:", (e as Error).message),
+      );
       return;
     }
+    // Nothing from the barcode or web. Before giving up to manual entry, if the
+    // user gave us a photo, NAME it from the photo — the vision read routinely
+    // nails what the catalogs missed (a museum-gift souvenir, a foreign-language
+    // book edition). Only on a genuine miss, not a transient rate-limit (which
+    // should retry the lookup, not burn a vision call).
+    if (!rateLimited && (await nameFromPhoto(ctx))) return;
     // Nothing resolved. Distinguish a genuine miss (catalogs + web search all
     // came up empty — fill in manually) from a transient rate-limit (the
     // catalog was throttled and web search didn't save us — a re-scan should
@@ -367,11 +451,15 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
         low_trust: lowTrust || undefined,
       })}::jsonb` as never,
       ai_confidence: hit.title ? (lowTrust ? "0.6" : "0.85") : null,
+      // Provenance: a box-resolver result that came from the shared Barcode
+      // Intelligence DB (cache or OFF mirror) returns resolver.cache==="hit" —
+      // it resolved instantly from BIdb, NOT a live provider call. Surface that
+      // as "BIdb / go-upc" so an instant hit doesn't read as a live go-upc fetch.
       ai_notes: hit.title
-        ? `Identified via ${sourceLabel(hit.source)}.${
+        ? `Identified via ${provenanceLabel(hit)}.${
             lowTrust ? " ⚠ Short barcode — double-check this is the right product." : ""
           }`
-        : `Resolved via ${sourceLabel(hit.source)}.`,
+        : `Resolved via ${provenanceLabel(hit)}.`,
       ai_suggested_at: new Date(),
       updated_at: new Date(),
     })
@@ -380,6 +468,19 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
 
   // 3. Download the catalog image into core-files (best-effort).
   if (hit.image_url) await downloadCatalogImage(ctx, hit.image_url);
+
+  // 3b. On an explicit RE-RUN, the resolver's image can be stale even when the
+  // title is right — go-upc corrects titles but keeps the original (wrong)
+  // product's photo, so a UPC fixed in the Barcode Intelligence DB resolves to
+  // the correct NAME but the WRONG picture (the field "Pinecil" case: ribbon-
+  // cable image, Pinecil name). The photo cross-check can't catch it (name now
+  // matches the user's photo), so re-search the image by the resolved name and
+  // let it override. Force-only (don't churn first-pass images); detached.
+  if (ctx.force && hit.title) {
+    void refreshCatalogImageByName(ctx.orgId, ctx.itemId, hit.title, hit.brand ?? null).catch((e) =>
+      console.error("[core-scan] catalog refresh on re-run failed:", (e as Error).message),
+    );
+  }
 
   // 4. Cross-check the resolved name against the user's scan photo (#3d) — catches
   // a confidently-wrong barcode (store-local/reused code → unrelated product) that

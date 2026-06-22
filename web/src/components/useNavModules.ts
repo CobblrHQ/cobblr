@@ -293,6 +293,31 @@ export function useNavModules(activeSlug: string): NavModules {
     });
   }
 
+  // core-locations is foundational (the place tree other modules reference), so
+  // the core-*/foundational rule hides it — but it's genuinely user-facing (you
+  // manage the rooms your things live in), and there was no labelled path to it
+  // outside /configuration. Synthetic top named "locations" → /locations (route
+  // alias). Like every top it's per-device hide/reorder-able (keyed on the name).
+  // displayName honors the ORG-WIDE Presentation rename of the location entity
+  // kind (Configuration → Presentation), so a workspace can call it "Rooms",
+  // "Areas", etc. consistently across every device — not a per-browser tweak.
+  if (enabledNames.has("core-locations")) {
+    const locLabel = overridesByKey.get("entity_kind:core-locations:location")?.display_label;
+    rawTops.push({
+      name: "locations",
+      version: "0.1.0",
+      displayName: locLabel ?? "Locations",
+      description: "Locations — the rooms + places your things live in",
+      icon: "map-pin",
+      headerAction: null,
+      dependencies: [],
+      contributes: { fieldDefs: 0, wires: 0 },
+      enabled: true,
+      enabled_version: "0.1.0",
+      enabled_at: "",
+    });
+  }
+
   // A non-default instance is a SEPARATE TOP-LEVEL domain by default — per
   // instances.md it's "a new top-level thing to the user, never mixed." So it
   // gets its OWN top-level nav heading ("Pantry"), no dropdown, no trace of the

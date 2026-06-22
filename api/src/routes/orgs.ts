@@ -25,6 +25,7 @@ import { provisionAppWorkspace, ProvisionAppError, refreshManagedApp, importAppD
 import { checkEntitlement } from "../platform/hosted-seams.js";
 import { disableModuleForOrg, enableModuleForOrg } from "../modules/enable.js";
 import { recordClaim, USER_SOURCE } from "../platform/bundle-claims.js";
+import { lookup as lookupEntity } from "../platform/entities.js";
 import { getEntry as getModuleEntry } from "../modules/registry.js";
 
 export const orgsRouter = Router();
@@ -602,9 +603,36 @@ orgsRouter.get("/:slug/activity", requireAuth, withTenant, async (req, res, next
     const tokenById = new Map(tokenRows.map((t) => [t.id, t]));
     const userById = new Map(userRows.map((u) => [u.id, u]));
 
+    // Resolve a display title for each entry from its LIVE record, so the feed
+    // reads "updated · RailCore 300ZL" instead of the bare "machine" type. Only
+    // module-owned records whose diff carries no name (creates already do); a
+    // deleted record won't resolve and the UI falls back to the entity_type.
+    const titleByEntity = new Map<string, string>(); // `${entity_type}:${entity_id}` → title
+    const toResolve = new Map<string, { kind: string; entityId: string }>();
+    for (const i of items) {
+      if (!i.module_name || !i.entity_id) continue;
+      const d = (i.diff ?? {}) as Record<string, unknown>;
+      if (typeof d.name === "string" || typeof d.title === "string" || typeof d.label === "string") continue;
+      toResolve.set(`${i.entity_type}:${i.entity_id}`, {
+        kind: `${i.module_name}:${i.entity_type}`,
+        entityId: i.entity_id,
+      });
+    }
+    await Promise.all(
+      [...toResolve.entries()].map(async ([key, ref]) => {
+        try {
+          const r = await lookupEntity(req.tenant!.org.id, ref.kind, ref.entityId);
+          if (r?.title) titleByEntity.set(key, r.title);
+        } catch {
+          /* deleted / unresolvable kind — UI falls back to the entity_type */
+        }
+      }),
+    );
+
     res.json({
       items: items.map((i) => ({
         ...i,
+        entity_title: titleByEntity.get(`${i.entity_type}:${i.entity_id}`) ?? null,
         actor: i.user_id
           ? {
               id: i.user_id,

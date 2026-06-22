@@ -26,7 +26,12 @@ import { platform } from "@cobblr/platform-contract";
 import { bearer, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { downloadCatalogImage, enrichBarcodeItem } from "../services/enrich.js";
-import { enrichPhotoItem, observeScanPhoto } from "../services/enrich-photo.js";
+import {
+  crossCheckScanPhoto,
+  enrichPhotoItem,
+  observeScanPhoto,
+  refreshCatalogImageByName,
+} from "../services/enrich-photo.js";
 import { searchImages, rankImageOptions } from "../services/ddg-images.js";
 import { assembleScanMenu, assembleMergedMenu, runMatchmaker } from "../services/matchmaker.js";
 import { parseReceipt } from "../services/receipt.js";
@@ -54,6 +59,10 @@ const ScanBody = z.object({
   image_file_id: z.string().uuid().optional(),
   scan_batch_id: z.string().uuid().optional(),
   scan_area: z.string().max(200).optional(),
+  /** The active filing location ("bin") for this scan session — a
+   *  core-locations node. Stamped on the item so confirm files the created
+   *  entity into that location without re-picking. The companion app activeBin pattern. */
+  target_location_id: z.string().uuid().optional(),
   /** Per-scan budget for the inline enrichment race. After this
    *  the response returns the bare row and enrichment continues
    *  detached. Default 12s mirrors companion app. */
@@ -107,23 +116,55 @@ inboxRouter.post(
     // are each distinct). A re-scan after the item was committed/dismissed starts
     // fresh — we only match `pending`.
     if (body.source_kind === "barcode" && body.barcode) {
-      const existing = await db
-        .selectFrom("core_scan_inbox_items")
-        .select("id")
-        .where("status", "=", "pending")
-        .where("barcode_text", "=", body.barcode)
-        .where((eb) =>
-          body.scan_batch_id
-            ? eb("scan_batch_id", "=", body.scan_batch_id)
-            : eb("scan_batch_id", "is", null),
-        )
-        .where((eb) => (scanArea ? eb("scan_area", "=", scanArea) : eb("scan_area", "is", null)))
-        .orderBy("created_at", "desc")
-        .executeTakeFirst();
+      const hasPhoto = !!body.image_file_id;
+      // Preferred match when this scan carries a PHOTO: an existing pending entry
+      // for the SAME UPC that still has no photo — even in another batch/session.
+      // "I scanned this, the name came back wrong, here's a photo to fix it" should
+      // enrich the prior scan, not pile up a second row. Same-batch first, else the
+      // most recent photoless one anywhere.
+      const relinkTarget = hasPhoto
+        ? await db
+            .selectFrom("core_scan_inbox_items")
+            .select(["id", "suggested_name", "image_file_id"])
+            .where("status", "=", "pending")
+            .where("barcode_text", "=", body.barcode)
+            .where("image_file_id", "is", null)
+            .orderBy(
+              sql`(scan_batch_id is not distinct from ${body.scan_batch_id ?? null})`,
+              "desc",
+            )
+            .orderBy("created_at", "desc")
+            .executeTakeFirst()
+        : null;
+      // Otherwise dedup within the same batch + scan_area (two physical piles stay
+      // separate); only for barcode scans. A re-scan after commit/dismiss starts
+      // fresh — we only match `pending`.
+      const existing =
+        relinkTarget ??
+        (await db
+          .selectFrom("core_scan_inbox_items")
+          .select(["id", "suggested_name", "image_file_id"])
+          .where("status", "=", "pending")
+          .where("barcode_text", "=", body.barcode)
+          .where((eb) =>
+            body.scan_batch_id
+              ? eb("scan_batch_id", "=", body.scan_batch_id)
+              : eb("scan_batch_id", "is", null),
+          )
+          .where((eb) => (scanArea ? eb("scan_area", "=", scanArea) : eb("scan_area", "is", null)))
+          .orderBy("created_at", "desc")
+          .executeTakeFirst());
       if (existing) {
+        // Attach this scan's photo to the entry if it didn't have one (the re-scan
+        // is "more info" for the same item, not a duplicate).
+        const attachPhoto = hasPhoto && !existing.image_file_id;
         const bumped = await db
           .updateTable("core_scan_inbox_items")
-          .set({ quantity: sql`quantity + 1`, updated_at: sql`now()` })
+          .set({
+            quantity: sql`quantity + 1`,
+            ...(attachPhoto ? { image_file_id: body.image_file_id } : {}),
+            updated_at: sql`now()`,
+          })
           .where("id", "=", existing.id)
           .returningAll()
           .executeTakeFirstOrThrow();
@@ -133,15 +174,12 @@ inboxRouter.post(
           barcode: body.barcode,
           sourceKind: "barcode",
         });
-        // Re-scanning a still-UNIDENTIFIED item means "try again" — re-run
-        // enrichment through the current pipeline (detached, force) instead of
-        // leaving it frozen in a stale state. Without this, an item that failed
-        // before a fix shipped (e.g. a pre-router rate-limited FNSKU) stays stuck
-        // forever: the auto-retry gives up and every re-scan only bumps quantity.
-        // A resolved item just counts up.
         const token = bearer(req);
+        const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
         if (!bumped.suggested_name && body.barcode && token) {
-          const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+          // Re-scanning a still-UNIDENTIFIED item means "try again" — re-run
+          // enrichment (force) instead of leaving it frozen. enrichBarcodeItem
+          // cross-checks the (now-attached) photo against the resolved name itself.
           void enrichBarcodeItem({
             db,
             orgId: ctx.org.id,
@@ -156,6 +194,12 @@ inboxRouter.post(
             .then(() =>
               platform().events.emit("core-scan.scan.enriched", { orgId: ctx.org.id, itemId: bumped.id }),
             );
+        } else if (attachPhoto && bumped.suggested_name) {
+          // Already named, and we just gave it a photo → run the barcode-vs-photo
+          // cross-check so a wrong name gets flagged (and a one-tap fix offered).
+          void crossCheckScanPhoto(ctx.org.id, bumped.id, bumped.suggested_name).catch((err) =>
+            console.error("[core-scan] re-scan cross-check threw:", (err as Error).message),
+          );
         }
         res.status(200).json(bumped);
         return;
@@ -171,6 +215,7 @@ inboxRouter.post(
         image_file_id: body.image_file_id ?? null,
         scan_batch_id: body.scan_batch_id ?? null,
         scan_area: scanArea,
+        target_location_id: body.target_location_id ?? null,
         created_by_user_id: session.id,
       })
       .returningAll()
@@ -214,6 +259,23 @@ inboxRouter.post(
       );
       await Promise.race([enrichTask, timed]);
       // Read back the (possibly-enriched) row to return current state.
+    } else if (body.source_kind === "url" && body.source_url && token) {
+      // URL intake (incl. bulk paste): enrich DETACHED via the same pipeline —
+      // classifyScanCode routes a URL to the vendor resolver, then web search.
+      // Detached (not raced) so pasting many URLs stays snappy; the inbox poll
+      // swaps in each result as it lands.
+      const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+      void enrichBarcodeItem({
+        db,
+        orgId: ctx.org.id,
+        itemId: inserted.id,
+        orgSlug: ctx.org.slug,
+        bearer: token,
+        baseUrl,
+        upc: body.source_url,
+      })
+        .catch((err) => console.error("[core-scan] url enrich threw:", (err as Error).message))
+        .then(() => platform().events.emit("core-scan.scan.enriched", { orgId: ctx.org.id, itemId: inserted.id }));
     }
     // Photo-only scans (no barcode) are identified by the autonomous
     // photo-sort WIRE (core-scan.scan.received → core-scan:identify-photo,
@@ -620,6 +682,9 @@ inboxRouter.get(
 const PatchBody = z.object({
   quantity: z.number().int().min(1).max(100_000).optional(),
   name: z.string().min(1).max(160).optional(),
+  // Set/clear the filing location on an existing item (bulk "Set location" in
+  // triage stamps the same value across a selection). null clears it.
+  target_location_id: z.string().uuid().nullable().optional(),
 });
 
 inboxRouter.patch(
@@ -636,6 +701,7 @@ inboxRouter.patch(
     const patch: Record<string, unknown> = { updated_at: new Date() };
     if (parsed.data.quantity !== undefined) patch.quantity = parsed.data.quantity;
     if (parsed.data.name !== undefined) patch.suggested_name = parsed.data.name;
+    if (parsed.data.target_location_id !== undefined) patch.target_location_id = parsed.data.target_location_id;
     const db = tenantDb(req);
     // Capture the prior name first: renaming a barcode item is a correction we
     // feed back to the shared Barcode Intelligence DB (below), and we need the
@@ -691,6 +757,16 @@ inboxRouter.patch(
         itemId: id,
         force: true,
       }).catch((err) => console.error("[core-scan] re-match after rename threw:", (err as Error).message));
+      // Name changed → the catalog image likely shows the OLD product; refresh it
+      // to match the new name (detached, best-effort).
+      if (prior?.suggested_name !== parsed.data.name.trim()) {
+        void refreshCatalogImageByName(
+          ctx.org.id,
+          id,
+          parsed.data.name.trim(),
+          (row.suggested_manufacturer as string | null) ?? null,
+        ).catch((err) => console.error("[core-scan] catalog refresh after rename threw:", (err as Error).message));
+      }
     }
     res.json(row);
   }),

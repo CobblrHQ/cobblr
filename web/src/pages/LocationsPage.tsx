@@ -13,12 +13,32 @@ import {
   Trash2,
   Pencil,
   Box as BoxIcon,
-  Square as AreaIcon,
+  MapPin as AreaIcon,
+  Upload,
+  Download,
+  GripVertical,
+  CheckSquare,
 } from "lucide-react";
+import {
+  DndContext,
+  type DragEndEvent,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  closestCenter,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { BulkActionBar, Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
-import { ApiError, api, type Location } from "../lib/api";
+import { ApiError, api, fetchAuthBlobUrl, type Location } from "../lib/api";
 import { queueLabelsBulk } from "../lib/queue-label";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { ImportLocationsDialog } from "../components/ImportLocationsDialog";
 
 interface LocationNode extends Location {
   children: LocationNode[];
@@ -36,7 +56,14 @@ function buildTree(items: Location[]): LocationNode[] {
     }
   }
   const sort = (arr: LocationNode[]) => {
-    arr.sort((a, b) => a.name.localeCompare(b.name));
+    // Manual order first (set by drag → `position`), then NATURAL name order so
+    // an un-reordered group reads Bin 1, Bin 2, … Bin 10, Bin 11 (not Bin 1,
+    // Bin 10, Bin 11, Bin 2).
+    arr.sort(
+      (a, b) =>
+        a.position - b.position ||
+        a.name.localeCompare(b.name, undefined, { numeric: true }),
+    );
     for (const c of arr) sort(c.children);
   };
   sort(roots);
@@ -68,6 +95,15 @@ export function LocationsPage() {
   const [createParentId, setCreateParentId] = useState<string | null>(null);
   const [editTarget, setEditTarget] = useState<Location | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [importOpen, setImportOpen] = useState(false);
+  const exportCsv = async () => {
+    const url = await fetchAuthBlobUrl(api.exportLocationsPath(activeSlug));
+    if (!url) { toast.error("Couldn't export"); return; }
+    const a = document.createElement("a");
+    a.href = url; a.download = "locations.csv";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
   const [printing, setPrinting] = useState(false);
 
   function toggle(id: string) {
@@ -102,6 +138,42 @@ export function LocationsPage() {
       toast.error(`Queued ${ok}; ${fail} failed.`);
     }
     setSelected(new Set());
+  }
+
+  async function bulkDelete() {
+    const count = selected.size;
+    if (count === 0) return;
+    const all = list.data?.items ?? [];
+    const byId = new Map(all.map((l) => [l.id, l] as const));
+    // Delete only the top-most selected nodes — delete cascades to children,
+    // so we don't fire redundant (already-gone) deletes for selected descendants.
+    const tops = Array.from(selected).filter((id) => {
+      let p = byId.get(id)?.parent_id ?? null;
+      while (p) {
+        if (selected.has(p)) return false;
+        p = byId.get(p)?.parent_id ?? null;
+      }
+      return true;
+    });
+    const ok = await confirm({
+      title: `Delete ${count} location${count === 1 ? "" : "s"}?`,
+      message: `The selected location${count === 1 ? "" : "s"} (and any child locations under them) will be removed. Items pointing at them become location-less. This can't be undone.`,
+      confirmLabel: `Delete ${count}`,
+      destructive: true,
+    });
+    if (!ok) return;
+    let failed = 0;
+    for (const id of tops) {
+      try {
+        await api.deleteLocation(activeSlug, id);
+      } catch {
+        failed++;
+      }
+    }
+    setSelected(new Set());
+    void qc.invalidateQueries({ queryKey: ["core-locations", activeSlug] });
+    if (failed === 0) toast.success(`Deleted ${count} location${count === 1 ? "" : "s"}.`);
+    else toast.error(`Deleted some; ${failed} failed — refresh and retry.`);
   }
 
   const list = useQuery({
@@ -174,6 +246,110 @@ export function LocationsPage() {
     },
   });
 
+  const reorder = useMutation({
+    mutationFn: (ids: string[]) => api.reorderLocations(activeSlug, ids),
+    // Optimistic — reflect the new order instantly (the drag feels immediate),
+    // roll back on error, reconcile with the server on settle.
+    onMutate: async (ids) => {
+      await qc.cancelQueries({ queryKey: ["core-locations", activeSlug] });
+      const prev = qc.getQueryData<{ items: Location[] }>(["core-locations", activeSlug]);
+      if (prev) {
+        const pos = new Map(ids.map((id, i) => [id, i] as const));
+        qc.setQueryData(["core-locations", activeSlug], {
+          items: prev.items.map((l) => (pos.has(l.id) ? { ...l, position: pos.get(l.id)! } : l)),
+        });
+      }
+      return { prev };
+    },
+    onError: (err, _ids, ctx) => {
+      if (ctx?.prev) qc.setQueryData(["core-locations", activeSlug], ctx.prev);
+      toast.error(err instanceof ApiError ? err.message : String(err));
+    },
+    onSettled: () => void qc.invalidateQueries({ queryKey: ["core-locations", activeSlug] }),
+  });
+
+  // Drag-to-reorder (one DndContext for the whole tree; each sibling group is
+  // its own SortableContext). A node only reorders WITHIN its sibling group —
+  // dropping it onto a node with a different parent is ignored (re-parent by
+  // editing the parent). Touch-friendly: a small drag threshold via PointerSensor.
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  const parentOf = useMemo(() => {
+    const m = new Map<string, string | null>();
+    for (const l of items) m.set(l.id, l.parent_id ?? null);
+    return m;
+  }, [items]);
+  function onDragEnd(e: DragEndEvent) {
+    const { active, over } = e;
+    if (!over || active.id === over.id) return;
+    const aid = String(active.id);
+    const bid = String(over.id);
+    const aParent = parentOf.get(aid) ?? null;
+    if (aParent !== (parentOf.get(bid) ?? null)) return; // different parent group
+    const byId = new Map(items.map((l) => [l.id, l] as const));
+    const aKind = byId.get(aid)?.kind;
+    // The root level is split into two sections (areas vs unsorted containers),
+    // so a root-level drag only reorders within its own kind.
+    if (aParent === null && byId.get(bid)?.kind !== aKind) return;
+    const group = items
+      .filter(
+        (l) =>
+          (l.parent_id ?? null) === aParent &&
+          (aParent !== null || l.kind === aKind),
+      )
+      .sort(
+        (x, y) =>
+          x.position - y.position ||
+          x.name.localeCompare(y.name, undefined, { numeric: true }),
+      )
+      .map((l) => l.id);
+    const from = group.indexOf(aid);
+    const to = group.indexOf(bid);
+    if (from < 0 || to < 0) return;
+    reorder.mutate(arrayMove(group, from, to));
+  }
+
+  // Top level splits into the area/room TREE and a bottom bucket of "unsorted"
+  // containers (loose bins not placed in any area) — mirrors how companion app kept
+  // unsorted storage in its own section. The big onDelete handler is shared by
+  // both sections via this helper rather than duplicated.
+  const rootAreas = tree.filter((n) => n.kind !== "container");
+  const looseContainers = tree.filter((n) => n.kind === "container");
+  const renderCard = (n: LocationNode) => (
+    <LocationCard
+      key={n.id}
+      node={n}
+      usageByLocation={usageByLocation}
+      selected={selected}
+      onToggleSelect={toggle}
+      onAddChild={(parentId) => {
+        setCreateParentId(parentId);
+        setCreateOpen(true);
+      }}
+      onEdit={(loc) => setEditTarget(loc)}
+      onDelete={async (loc) => {
+        const subtree = subtreeUsage(loc);
+        const subtreeTotal = subtree.machines + subtree.assets + subtree.parts;
+        const childPart =
+          loc.children.length > 0
+            ? ` and its ${loc.children.length} child location(s)`
+            : "";
+        const usagePart =
+          subtreeTotal > 0
+            ? ` ${subtreeTotal} item(s) currently point at ${
+                loc.children.length > 0 ? "this subtree" : "this location"
+              } (${subtree.machines} machine(s), ${subtree.assets} asset(s), ${subtree.parts} part(s)) and will end up location-less.`
+            : "";
+        const ok = await confirm({
+          title: "Delete location?",
+          message: `${loc.name}${childPart} will be removed (cascade).${usagePart}`,
+          confirmLabel: "Delete",
+          destructive: true,
+        });
+        if (ok) del.mutate(loc.id);
+      }}
+    />
+  );
+
   return (
     <div className="space-y-4">
       <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
@@ -184,6 +360,35 @@ export function LocationsPage() {
           {items.length} {items.length === 1 ? "place" : "places"}
         </span>
         <div className="flex-1" />
+        {items.length > 0 && (
+          <button
+            onClick={() =>
+              setSelected(
+                selected.size === items.length
+                  ? new Set()
+                  : new Set(items.map((l) => l.id)),
+              )
+            }
+            title="Select every location (e.g. to bulk-delete)"
+            className="inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-600 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 px-2.5 py-1.5 text-sm transition"
+          >
+            <CheckSquare size={14} />
+            {selected.size === items.length ? "Deselect all" : "Select all"}
+          </button>
+        )}
+        <button
+          onClick={exportCsv}
+          title="Download all locations as a CSV"
+          className="inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-600 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 px-2.5 py-1.5 text-sm transition"
+        >
+          <Download size={14} /> Export
+        </button>
+        <button
+          onClick={() => setImportOpen(true)}
+          className="inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-600 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 px-2.5 py-1.5 text-sm transition"
+        >
+          <Upload size={14} /> Import
+        </button>
         <button
           onClick={() => {
             setCreateParentId(null);
@@ -194,6 +399,7 @@ export function LocationsPage() {
           <Plus size={14} /> New location
         </button>
       </div>
+      {importOpen && <ImportLocationsDialog slug={activeSlug} onClose={() => setImportOpen(false)} />}
 
       <p className="text-sm text-content dark:text-mortar-200">
         Hierarchical tree of physical places — rooms, shelves, bins. Anything
@@ -211,46 +417,35 @@ export function LocationsPage() {
         </div>
       )}
 
-      <div className="space-y-2">
-        {tree.map((n) => (
-          <LocationCard
-            key={n.id}
-            node={n}
-            usageByLocation={usageByLocation}
-            selected={selected}
-            onToggleSelect={toggle}
-            onAddChild={(parentId) => {
-              setCreateParentId(parentId);
-              setCreateOpen(true);
-            }}
-            onEdit={(loc) => setEditTarget(loc)}
-            onDelete={async (loc) => {
-              const subtree = subtreeUsage(loc);
-              const subtreeTotal =
-                subtree.machines + subtree.assets + subtree.parts;
-              const childPart =
-                loc.children.length > 0
-                  ? ` and its ${loc.children.length} child location(s)`
-                  : "";
-              const usagePart =
-                subtreeTotal > 0
-                  ? ` ${subtreeTotal} item(s) currently point at ${
-                      loc.children.length > 0
-                        ? "this subtree"
-                        : "this location"
-                    } (${subtree.machines} machine(s), ${subtree.assets} asset(s), ${subtree.parts} part(s)) and will end up location-less.`
-                  : "";
-              const ok = await confirm({
-                title: "Delete location?",
-                message: `${loc.name}${childPart} will be removed (cascade).${usagePart}`,
-                confirmLabel: "Delete",
-                destructive: true,
-              });
-              if (ok) del.mutate(loc.id);
-            }}
-          />
-        ))}
-      </div>
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+        <div className="space-y-2">
+          <SortableContext items={rootAreas.map((n) => n.id)} strategy={verticalListSortingStrategy}>
+            {rootAreas.map(renderCard)}
+          </SortableContext>
+        </div>
+
+        {looseContainers.length > 0 && (
+          <div className="mt-7 pt-4 border-t border-line dark:border-slate-700">
+            <div className="flex items-baseline gap-2 mb-1">
+              <h2 className="text-xs font-mono uppercase tracking-widest text-faint dark:text-slate-500">
+                Unsorted containers
+              </h2>
+              <span className="text-xs text-muted dark:text-slate-400">
+                {looseContainers.length}
+              </span>
+            </div>
+            <p className="text-xs text-muted dark:text-slate-400 mb-2">
+              Containers not yet placed in a room or area. Edit one (✎) and set
+              its parent to file it into the tree above.
+            </p>
+            <div className="space-y-2">
+              <SortableContext items={looseContainers.map((n) => n.id)} strategy={verticalListSortingStrategy}>
+                {looseContainers.map(renderCard)}
+              </SortableContext>
+            </div>
+          </div>
+        )}
+      </DndContext>
 
       {createOpen && (
         <LocationFormModal
@@ -284,15 +479,25 @@ export function LocationsPage() {
         count={selected.size}
         onClear={() => setSelected(new Set())}
         actions={
-          <button
-            type="button"
-            disabled={printing}
-            onClick={() => void bulkPrint()}
-            className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-accent hover:text-accent disabled:opacity-50"
-          >
-            <Printer size={12} />
-            {printing ? "Queuing…" : "Print labels"}
-          </button>
+          <>
+            <button
+              type="button"
+              disabled={printing}
+              onClick={() => void bulkPrint()}
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-accent hover:text-accent disabled:opacity-50"
+            >
+              <Printer size={12} />
+              {printing ? "Queuing…" : "Print labels"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void bulkDelete()}
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-ember-600 hover:text-ember-500"
+            >
+              <Trash2 size={12} />
+              Delete
+            </button>
+          </>
         }
       />
     </div>
@@ -317,11 +522,28 @@ function LocationCard({
   onDelete: (loc: LocationNode) => void;
 }) {
   const KindIcon = node.kind === "container" ? BoxIcon : AreaIcon;
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: node.id });
+  const style = { transform: CSS.Transform.toString(transform), transition };
   const usage = usageByLocation.get(node.id);
   const usageTotal = totalUsage(usage);
   return (
-    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden">
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden ${isDragging ? "opacity-60 shadow-lg ring-1 ring-accent/40" : ""}`}
+    >
       <div className="px-4 py-2.5 bg-subtle dark:bg-slate-800/50 border-b border-line dark:border-slate-700 flex items-center gap-2">
+        <button
+          type="button"
+          {...attributes}
+          {...listeners}
+          title="Drag to reorder (within its group)"
+          aria-label={`Drag ${node.name} to reorder`}
+          className="cursor-grab touch-none text-faint hover:text-muted shrink-0 -ml-1.5 active:cursor-grabbing"
+        >
+          <GripVertical size={15} />
+        </button>
         <input
           type="checkbox"
           checked={selected.has(node.id)}
@@ -382,18 +604,20 @@ function LocationCard({
       </div>
       {node.children.length > 0 && (
         <div className="p-3 pl-6 space-y-2 bg-subtle/50 dark:bg-slate-900/40">
-          {node.children.map((c) => (
-            <LocationCard
-              key={c.id}
-              node={c}
-              usageByLocation={usageByLocation}
-              selected={selected}
-              onToggleSelect={onToggleSelect}
-              onAddChild={onAddChild}
-              onEdit={onEdit}
-              onDelete={onDelete}
-            />
-          ))}
+          <SortableContext items={node.children.map((c) => c.id)} strategy={verticalListSortingStrategy}>
+            {node.children.map((c) => (
+              <LocationCard
+                key={c.id}
+                node={c}
+                usageByLocation={usageByLocation}
+                selected={selected}
+                onToggleSelect={onToggleSelect}
+                onAddChild={onAddChild}
+                onEdit={onEdit}
+                onDelete={onDelete}
+              />
+            ))}
+          </SortableContext>
         </div>
       )}
     </div>

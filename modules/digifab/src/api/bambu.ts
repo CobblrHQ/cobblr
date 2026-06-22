@@ -6,8 +6,10 @@
 // sees the printer list (names/models/online), never the token or access codes.
 // On create we store the token + the chosen printer's LAN access code ENCRYPTED.
 //
-// Phase 1 ships CLOUD mode (monitor-only — see BambuCloudDriver). LAN/hybrid
-// control is disclosed but disabled until the edge-bridge path (Phase 3).
+// All three modes are LIVE. CLOUD gives telemetry + light/pause/resume/stop over
+// Bambu's MQTT; full control (start, jog, home, set-temp, camera) comes over the
+// LAN via the Cobblr edge-bridge — either a pure-LAN connection or, more commonly,
+// per-printer LAN access layered on a cloud login (HYBRID — see fleet.ts).
 
 import { Router } from "express";
 import { z } from "zod";
@@ -54,11 +56,11 @@ function publicDevices(devices: BambuCloudDevice[]): Array<{ dev_id: string; nam
 export function modeCapabilities(mode: string): { monitor: boolean; control: boolean; available: boolean; note: string } {
   switch (mode) {
     case "cloud":
-      return { monitor: true, control: true, available: true, note: "Live status, temps & progress, plus chamber light and pause/resume/stop over the cloud. Jog, home and set-temp need LAN control — Bambu blocks raw G-code over the cloud. Starting a print also needs LAN." };
+      return { monitor: true, control: true, available: true, note: "Live status, temps & progress, plus chamber light and pause/resume/stop over the cloud. Jog, home, set-temp, starting a print and the camera need LAN — Bambu blocks raw G-code over the cloud. Add per-printer LAN access (hybrid) to unlock those without giving up cloud telemetry." };
     case "lan":
-      return { monitor: true, control: true, available: false, note: "Full control (start/pause/cancel) — needs Developer Mode on the printer + the Cobblr edge-bridge on your network. Coming soon." };
+      return { monitor: true, control: true, available: true, note: "Full control — start, pause, cancel, jog, home, set temps, live camera — over your LAN via the Cobblr edge-bridge. Needs Developer Mode (LAN access code) on the printer and a bridge on the same network." };
     case "hybrid":
-      return { monitor: true, control: true, available: false, note: "Cloud login + local control. Needs Developer Mode + the edge-bridge. Coming soon." };
+      return { monitor: true, control: true, available: true, note: "Best of both: cloud login for live status anywhere, plus per-printer LAN access (edge-bridge + Developer Mode) for full control and the camera. Cloud keeps reporting even when the bridge is offline." };
     default:
       return { monitor: false, control: false, available: false, note: "Unknown mode." };
   }

@@ -2018,6 +2018,7 @@ export const api = {
       image_file_id?: string;
       scan_batch_id?: string;
       scan_area?: string;
+      target_location_id?: string;
       enrich_ms?: number;
     },
   ) =>
@@ -2036,6 +2037,24 @@ export const api = {
     request<void>("DELETE", `/orgs/${slug}/modules/core-scan/qr-rules/${id}`),
   reorderScanQrRules: (slug: string, ids: string[]) =>
     request<{ ok: true }>("POST", `/orgs/${slug}/modules/core-scan/qr-rules/reorder`, { ids }),
+  // Resolve a native /qr/<token> to its target {entity_kind, entity_id, org_slug}
+  // WITHOUT navigating — lets the scanner branch (e.g. a location → set the filing
+  // bin) before falling back to the normal navigate. Unauthenticated, the same
+  // JSON the /qr/:token page reads.
+  resolveQrToken: (token: string) =>
+    fetch(`/api/v1/qr/${encodeURIComponent(token)}`, { headers: { accept: "application/json" } })
+      .then((r) =>
+        r.ok
+          ? (r.json() as Promise<{
+              org_slug?: string;
+              entity_kind?: string;
+              entity_id?: string;
+              detail_path?: string;
+              mode?: string;
+            }>)
+          : null,
+      )
+      .catch(() => null),
   scanResolveExternal: (slug: string, value: string) =>
     request<ScanResolveOutcome>("POST", `/orgs/${slug}/modules/core-scan/resolve-external`, { value }),
   listScanInbox: (
@@ -2054,8 +2073,11 @@ export const api = {
   getScanItem: (slug: string, id: string) =>
     request<ScanInboxItem>("GET", `/orgs/${slug}/modules/core-scan/inbox/${id}`),
   /** Light in-the-moment edits the camera modal makes — quantity, name. */
-  updateScanItem: (slug: string, id: string, body: { quantity?: number; name?: string }) =>
-    request<ScanInboxItem>("PATCH", `/orgs/${slug}/modules/core-scan/inbox/${id}`, body),
+  updateScanItem: (
+    slug: string,
+    id: string,
+    body: { quantity?: number; name?: string; target_location_id?: string | null },
+  ) => request<ScanInboxItem>("PATCH", `/orgs/${slug}/modules/core-scan/inbox/${id}`, body),
   confirmScanItem: (
     slug: string,
     id: string,
@@ -2761,7 +2783,35 @@ export const api = {
       "DELETE",
       `/orgs/${slug}/modules/core-locations/locations/${id}`,
     ),
+  importLocations: (slug: string, body: { csv: string; match_on?: string; dry_run?: boolean }) =>
+    request<LocationImportResponse>("POST", `/orgs/${slug}/modules/core-locations/locations/import`, body),
+  exportLocationsPath: (slug: string) => `/orgs/${slug}/modules/core-locations/locations/export`,
+  // Persist a sibling group's display order: `ids` in the desired order → each
+  // row's `position` set to its index. Siblings render by (position, name).
+  reorderLocations: (slug: string, ids: string[]) =>
+    request<{ ok: true }>("POST", `/orgs/${slug}/modules/core-locations/locations/reorder`, { ids }),
 };
+
+export interface LocationImportRow {
+  row_number: number;
+  name: string;
+  short_name: string | null;
+  kind: "area" | "container";
+  match_value: string | null;
+  action: "create" | "update";
+  parent: { key: string; resolved: boolean } | null;
+  metadata: Record<string, string>;
+}
+export interface LocationImportResponse {
+  match_on?: string;
+  detected_headers?: string[];
+  rows?: LocationImportRow[];
+  errors: { row_number: number; message: string }[];
+  summary?: { create: number; update: number; unresolved_parents: number };
+  committed: number;
+  created?: number;
+  updated?: number;
+}
 
 export interface AiStatus {
   available: boolean;
@@ -2972,6 +3022,7 @@ export interface Location {
   short_name: string | null;
   parent_id: string | null;
   depth: number;
+  position: number;
   kind: "area" | "container";
   metadata: Record<string, unknown>;
   description: string | null;
@@ -3944,6 +3995,10 @@ export interface ActivityEntry {
   occurred_at: string;
   actor: { id: string; display_name: string | null; email: string | null } | null;
   token: { id: string; name: string; prefix: string | null } | null;
+  /** The entity's display title resolved from its live record (server-side), so
+   *  updates/creates show a name instead of the bare entity_type. Null when the
+   *  record is gone (deleted) or the kind isn't resolvable. */
+  entity_title?: string | null;
 }
 
 /** Shape of /me/activity rows — every workspace activity attributed

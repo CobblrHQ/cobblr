@@ -9,3 +9,22 @@
 export function displaySlug(slug: string): string {
   return slug.replace(/-[0-9a-f]{4}$/, "");
 }
+
+/**
+ * Derive a URL-handle suggestion from a display name. Mirrors the server's
+ * `slugifyBase` (api/src/routes/auth.ts) minus the random uniqueness suffix, so
+ * a suggested handle matches what a rename would actually persist (the server
+ * re-`normalizeSlug`s on save, so a clean suggestion passes through unchanged).
+ * Returns "" for a name with no slug-able characters (caller decides what to do).
+ */
+export function slugifyHandle(name: string): string {
+  return name
+    .toLowerCase()
+    // Strip a possessive "'s" entirely so "the author's Workspace" → "ray-workspace"
+    // (matches signup); then drop any remaining apostrophes.
+    .replace(/['’]s\b/g, "")
+    .replace(/['’`]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+}

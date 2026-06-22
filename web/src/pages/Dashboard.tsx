@@ -1295,23 +1295,16 @@ function groupActivity(items: ActivityEntry[]): ActivityGroup[] {
 }
 
 function ActivityRow({ entry: e }: { entry: ActivityEntry }) {
-  // The diff blob usually carries the entity's title at create time.
-  // Falls back to the bare entity_type when there's nothing to show.
-  const diff = (e.diff ?? {}) as Record<string, unknown>;
-  const title =
-    pickString(diff, ["name", "title", "label"]) ?? null;
-  const action = humanAction(e.action);
-  const actor = e.actor?.display_name ?? "someone";
   return (
     <li className="px-4 py-2 flex items-baseline gap-3 text-sm">
       <span className="text-muted dark:text-slate-400 shrink-0">
-        {actor}
+        {actorLabel(e)}
       </span>
       <span className="text-content dark:text-mortar-200 shrink-0">
-        {action}
+        {humanAction(e.action)}
       </span>
       <span className="text-content dark:text-mortar-100 truncate">
-        {title ?? <span className="font-mono text-xs text-faint">{e.entity_type}</span>}
+        {activityTitle(e)}
       </span>
       <span className="flex-1" />
       <span className="font-mono text-[10px] text-faint shrink-0">
@@ -1335,7 +1328,7 @@ function ActivityGroupRow({ group }: { group: ActivityGroup }) {
   const first = group.items[0]!;
   const last = group.items[group.items.length - 1]!;
   const action = humanAction(first.action);
-  const actor = first.actor?.display_name ?? "someone";
+  const actor = actorLabel(first);
   const rowContent = (
     <div className="flex items-baseline gap-3 text-sm w-full">
       <span className="text-muted dark:text-slate-400 shrink-0">
@@ -1345,7 +1338,7 @@ function ActivityGroupRow({ group }: { group: ActivityGroup }) {
         {action}
       </span>
       <span className="text-content dark:text-mortar-100 truncate">
-        <span className="font-mono text-xs text-faint">{first.entity_type}</span>
+        {activityTitle(first)}
         <span className="ml-1.5 inline-flex items-center text-[10px] font-mono uppercase tracking-widest text-accent dark:text-cobble-400 bg-cobble-50 dark:bg-cobble-900/40 rounded px-1.5 py-0.5">
           ×{group.items.length}
         </span>
@@ -1396,6 +1389,47 @@ function pickString(
   return null;
 }
 
+// Actions the system performs on its own — no human did them, so "someone" is
+// wrong. They get an "Automation" actor instead.
+const AUTOMATION_ACTIONS = new Set(["wire_fired", "wire_failed"]);
+
+/** Who to credit a row to: the real user, else "Automation" for system actions,
+ *  else a neutral "someone". */
+function actorLabel(e: ActivityEntry): string {
+  return e.actor?.display_name ?? (AUTOMATION_ACTIONS.has(e.action) ? "Automation" : "someone");
+}
+
+/** Drop a "module:" namespace from an id for display (core-notifications:notify → notify). */
+function shortActionId(id: string): string {
+  const i = id.indexOf(":");
+  return i >= 0 ? id.slice(i + 1) : id;
+}
+
+/** The "what" cell. Wires carry no name/title, so build an "<event> → <action>"
+ *  summary from their diff (e.g. "inventory.part.low_stock → notify") instead of
+ *  the bare "binding" entity_type. Everything else uses its create-time title,
+ *  falling back to the entity_type. */
+function activityTitle(e: ActivityEntry): React.ReactNode {
+  const diff = (e.diff ?? {}) as Record<string, unknown>;
+  if (AUTOMATION_ACTIONS.has(e.action)) {
+    const event = pickString(diff, ["event"]);
+    const act = pickString(diff, ["action"]);
+    if (event || act) {
+      return (
+        <span className="font-mono text-xs">
+          {event ?? "event"}
+          <span className="text-faint"> → </span>
+          {act ? shortActionId(act) : "action"}
+        </span>
+      );
+    }
+  }
+  // Diff title (creates carry one) → server-resolved live-record title (updates)
+  // → bare entity_type (deleted / unresolvable).
+  const title = pickString(diff, ["name", "title", "label"]) ?? e.entity_title;
+  return title ?? <span className="font-mono text-xs text-faint">{e.entity_type}</span>;
+}
+
 function humanAction(a: string): string {
   // Cobblr's action names are snake_case verbs like 'task_created'
   // / 'pairing_created' / 'login'. Turn them into human prose.
@@ -1407,6 +1441,8 @@ function humanAction(a: string): string {
     user_created: "joined",
     pairing_created: "linked",
     pairing_deleted: "unlinked",
+    wire_fired: "ran a wire",
+    wire_failed: "wire failed",
   };
   if (map[a]) return map[a];
   // 'task_created' → 'created task' (the entity_type is already

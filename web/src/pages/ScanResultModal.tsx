@@ -84,6 +84,7 @@ export function ScanResultModal({
       return api.scanBarcode(activeSlug, {
         barcode,
         scan_area: scanArea ?? undefined,
+        target_location_id: scanAreaId ?? undefined,
         scan_batch_id: batchId ?? undefined,
         image_file_id: frameFileId ?? undefined,
       });

@@ -39,8 +39,9 @@ export async function resolveDriver(
   // A tunnelled edge_adapter connection routes through the cloud→edge relay
   // (base_url cobblr-edge://); a direct one dials the bridge URL.
   if (type === "edge_adapter") return new EdgeAdapterDriver(cfg, relay ?? null);
-  // Bambu Lab: cloud-mode is monitor-only over Bambu's HTTP API (creds in
-  // cfg.extra.creds). LAN-mode control routes through edge_adapter (Phase 3).
+  // Bambu Lab: cloud-mode does telemetry + light/pause/stop over Bambu's API
+  // (creds in cfg.extra.creds); full control + the camera route over the LAN
+  // edge-bridge (edge_adapter), either pure-LAN or per-printer hybrid.
   if (type === "bambu") return new BambuCloudDriver(cfg, connectionId);
   if (type === "mock") {
     let m = mockInstances.get(connectionId);

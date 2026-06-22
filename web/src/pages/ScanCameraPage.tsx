@@ -37,6 +37,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Camera, Check, Flashlight, Loader2, MapPin, ScanLine, X } from "lucide-react";
 import { Modal, usePageTitle, useToast } from "@cobblr/platform-web";
 import { ApiError, api, type ScanInboxItem } from "../lib/api";
+import { decideLocationScan, filingLabel } from "../lib/scanFiling";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { LocationPicker } from "../components/LocationPicker";
 import {
@@ -170,6 +171,12 @@ export function ScanCameraPage() {
     const loc = (locations.data?.items ?? []).find((l) => l.id === areaId);
     return loc ? (loc.short_name ?? loc.name) : null;
   }, [areaId, locations.data]);
+  // Refs so the memoised detect callback reads live values without re-binding
+  // (re-binding would restart the camera). Scan-to-set reads these.
+  const areaIdRef = useRef(areaId);
+  areaIdRef.current = areaId;
+  const locsRef = useRef(locations.data?.items);
+  locsRef.current = locations.data?.items;
 
   // ── Scan session: batch + resume ─────────────────────────────────────
   // Every save this session shares one scan_batch_id (minted lazily on the
@@ -311,8 +318,49 @@ export function ScanCameraPage() {
       }
       const qrLabel = /^https?:\/\/[^/]+\/qr\/([A-Za-z0-9_-]{16,})$/.exec(raw);
       if (qrLabel) {
-        setPhase("idle"); // release the camera before leaving
-        navigate(`/qr/${qrLabel[1]}`);
+        setPhase("idle");
+        const token = qrLabel[1] ?? "";
+        void (async () => {
+          const resolved = await api.resolveQrToken(token);
+          const locId = resolved?.entity_id;
+          // A LOCATION label in this workspace sets the active filing bin (and
+          // nests a container under the current bin) — then keep scanning into it,
+          // no navigation. Anything else navigates as before.
+          if (
+            resolved?.entity_kind === "core-locations:location" &&
+            locId &&
+            (!resolved.org_slug || resolved.org_slug === activeSlug)
+          ) {
+            const items = locsRef.current ?? [];
+            const byId = new Map(
+              items.map((l) => [
+                l.id,
+                { id: l.id, name: l.name, short_name: l.short_name, parent_id: l.parent_id, kind: l.kind },
+              ]),
+            );
+            const decision = decideLocationScan(locId, areaIdRef.current, byId);
+            if (decision.reparent) {
+              try {
+                await api.updateLocation(activeSlug, decision.reparent.child, {
+                  parent_id: decision.reparent.parent,
+                });
+                await locations.refetch();
+              } catch {
+                /* cycle / permission — fall back to a plain adopt */
+              }
+            }
+            setAreaId(decision.bin);
+            const b = byId.get(decision.bin);
+            const nm = b ? filingLabel(b) : "location";
+            const p = decision.reparent ? byId.get(decision.reparent.parent) : null;
+            toast.success(
+              p ? `Filed ${nm} in ${filingLabel(p)} — filing into ${nm}` : `Filing into ${nm}`,
+            );
+            setPhase("scanning");
+            return;
+          }
+          navigate(`/qr/${token}`);
+        })();
         return;
       }
       // External QR resolver (the redirect table): a foreign label the workspace
@@ -516,6 +564,7 @@ export function ScanCameraPage() {
         source_kind: "photo",
         image_file_id: rec.id,
         scan_area: areaName ?? undefined,
+        target_location_id: areaId ?? undefined,
         scan_batch_id: batchId ?? undefined,
       });
       onSaved(item);

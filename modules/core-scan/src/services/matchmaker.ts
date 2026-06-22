@@ -296,6 +296,60 @@ function cleanCaptureName(raw: string): string {
   return cut ? cut.charAt(0).toUpperCase() + cut.slice(1) : raw.slice(0, 80);
 }
 
+// ── physical-vs-record floor ─────────────────────────────────────────────────
+// A scanned PHYSICAL product — it carries a retail barcode, or vision typed it as
+// an asset/part — is never a subscription, warranty, bill, or document. Those are
+// administrative RECORDS you create by hand, not by scanning a barcode. But the
+// matchmaker (especially the keyword heuristic) would route a watch part into
+// "Warranties" or a soldering tip into "Subscriptions" on an incidental hit. So
+// when the item is unambiguously physical, drop record-nature tables from the
+// menu BEFORE matching — a deterministic floor that holds even when the AI is
+// down (the AI literally can't pick a table that isn't in its menu).
+//
+// Nature is derived from the table's OWN identity (noun/label) + its record-
+// SPECIFIC fields — NOT a per-bundle keyword list (see the author's "derive from
+// fields"). Record bundles are built on the inventory module, so they INHERIT
+// physical fields (qty/serial) — field *presence* can't separate them; the
+// record-specific fields they ADD (billing_cycle/renewal_date/document_number)
+// and their noun do. Medications (dose/form/pharmacy — a scanned pill bottle)
+// and Collections (condition/edition — scanned collectibles) carry none of these
+// and stay physical, correctly.
+const RECORD_NOUNS = [
+  "subscription", "warranty", "document", "bill", "policy", "receipt",
+  "membership", "renewal", "insurance", "contract", "invoice",
+];
+const RECORD_FIELDS = new Set([
+  "billing_cycle", "renewal_date", "cost_per_cycle", "payment_method", "plan_summary",
+  "policy_number", "premium", "coverage", "document_number", "doc_type", "issued_date",
+  "expires_date", "issuer", "return_by", "purchased_from",
+]);
+
+/** True when this menu table holds administrative RECORDS (subscriptions /
+ *  warranties / documents / bills), not physical goods. Noun/label match, or ≥2
+ *  record-specific fields (one alone could be incidental). */
+export function isRecordTable(entry: ScanMenuEntry): boolean {
+  const id = `${entry.noun ?? ""} ${entry.label ?? ""}`.toLowerCase();
+  if (RECORD_NOUNS.some((n) => id.includes(n))) return true;
+  const hits = entry.fields.reduce((n, f) => n + (RECORD_FIELDS.has((f.name ?? "").toLowerCase()) ? 1 : 0), 0);
+  return hits >= 2;
+}
+
+/** A scanned item is unambiguously a physical good when it carries a retail
+ *  barcode or vision typed it as an asset/part. Unknown nature → not asserted. */
+export function isPhysicalItem(item: PerceivedItem): boolean {
+  return Boolean(item.barcode && item.barcode.trim()) || item.entityType === "asset" || item.entityType === "part";
+}
+
+/** Drop record-nature tables when the item is unambiguously physical. Conservative:
+ *  a no-op when the item's nature is unclear, and never returns an empty menu (a
+ *  degenerate all-record workspace falls back to the full menu rather than zero
+ *  candidates). Idempotent — safe to apply at every matcher entry point. */
+export function filterMenuForItem(item: PerceivedItem, menu: ScanMenuEntry[]): ScanMenuEntry[] {
+  if (!isPhysicalItem(item)) return menu;
+  const kept = menu.filter((e) => !isRecordTable(e));
+  return kept.length > 0 ? kept : menu;
+}
+
 /**
  * The HEURISTIC floor — a deterministic, zero-cost matcher used when the AI
  * matchmaker is unavailable (no provider, not entitled, errored, or empty). It
@@ -306,7 +360,8 @@ function cleanCaptureName(raw: string): string {
  * than the model, but it means free / no-AI workspaces still get a real tracker
  * suggestion instead of a capture that never resolves. Connect AI to sharpen it.
  */
-export function heuristicMatch(item: PerceivedItem, menu: ScanMenuEntry[]): MatchCandidate[] {
+export function heuristicMatch(item: PerceivedItem, menuIn: ScanMenuEntry[]): MatchCandidate[] {
+  const menu = filterMenuForItem(item, menuIn);
   if (menu.length === 0) return [];
   const hay = `${item.name ?? ""} ${item.description ?? ""} ${item.category ?? ""} ${item.notes ?? ""} ${
     item.metadata ? JSON.stringify(item.metadata) : ""
@@ -321,6 +376,13 @@ export function heuristicMatch(item: PerceivedItem, menu: ScanMenuEntry[]): Matc
   const scored = menu
     .map((entry) => {
       let score = 0;
+      // `strong` = a real "this item IS that thing" signal: the table's NOUN
+      // matched, or a field-CHOICE matched (a specific attribute like a yarn
+      // weight). A match on only a secondary scan_keyword is weak and incidental
+      // ("ribbon" in "Lcd Ribbon Cable" hitting Yarn's ribbon-yarn keyword) — so it
+      // takes the noun, a choice, OR ≥2 corroborating keywords to suggest a table.
+      let strong = false;
+      let keywordHits = 0;
       const fields: Record<string, string | number | boolean> = {};
       // The table's OWN noun/keywords route it (a "yarn" table for a "...yarn"),
       // but they must NOT leak into field-value extraction — otherwise a vendor
@@ -330,8 +392,15 @@ export function heuristicMatch(item: PerceivedItem, menu: ScanMenuEntry[]): Matc
           .flatMap((s) => s.toLowerCase().split(/[^a-z0-9]+/))
           .filter((w) => w.length >= 3),
       );
-      for (const term of [entry.noun, ...(entry.scan_keywords ?? [])]) {
-        if (term && hasWord(term)) score += 2;
+      if (entry.noun && hasWord(entry.noun)) {
+        score += 2;
+        strong = true;
+      }
+      for (const term of entry.scan_keywords ?? []) {
+        if (term && hasWord(term)) {
+          score += 2;
+          keywordHits += 1;
+        }
       }
       // A choice matches only on a NON-noun capture token (whole-phrase hits the
       // noun-word guard too: every matched word must be a non-noun word).
@@ -345,16 +414,20 @@ export function heuristicMatch(item: PerceivedItem, menu: ScanMenuEntry[]): Matc
           for (const ch of f.choices) {
             if (ch && choiceHit(ch)) {
               score += 3;
+              strong = true;
               if (!(f.name in fields)) fields[f.name] = ch; // extract the matched choice
             }
           }
         }
       }
-      return { entry, score, fields };
+      return { entry, score, fields, keep: strong || keywordHits >= 2 };
     })
-    .filter((s) => s.score > 0)
+    // Only confident routes: a noun/choice match or ≥2 keywords. A lone incidental
+    // keyword no longer force-fits an item into the wrong bundle; when nothing
+    // qualifies we return [] and the card falls to the generic "Inventory part".
+    .filter((s) => s.keep)
     .sort((a, b) => b.score - a.score)
-    .slice(0, 3);
+    .slice(0, 2);
 
   if (scored.length === 0) return [];
   const qm = hay.match(/(\d+)\s*(skein|ball|spool|roll|pack|box|bottle|can|bag|unit|pcs|piece|x|×)/);
@@ -380,11 +453,15 @@ export function heuristicMatch(item: PerceivedItem, menu: ScanMenuEntry[]): Matc
 export async function runMatchmaker(
   orgId: string,
   item: PerceivedItem,
-  menu: ScanMenuEntry[],
+  menuIn: ScanMenuEntry[],
   /** The inbox item's UUID — links the AI-log row to the scan (source_id is a
    *  UUID column; passing the barcode/name here breaks the audit insert). */
   sourceId?: string,
 ): Promise<MatchCandidate[]> {
+  // A physical scan never routes to a record table — drop them before the model
+  // even sees the menu, so it can't suggest one (and the heuristic fallback below
+  // inherits the already-filtered menu).
+  const menu = filterMenuForItem(item, menuIn);
   if (menu.length === 0) return [];
 
   const system =

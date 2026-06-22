@@ -14,6 +14,30 @@ import type { Kysely } from "kysely";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { CoreScanDB } from "../db.js";
+import { reportBarcodeCorrection } from "./barcode-corrections.js";
+import { searchImages, rankImageOptions } from "./ddg-images.js";
+
+/** Re-fetch the catalog image to match a (corrected) name. The card prefers the
+ *  downloaded `catalog_image_file_id` over `catalog_image_url`, so a rename left
+ *  the OLD product's picture showing; here we set the best new external URL and
+ *  clear the stale download so the right image renders. Detached-safe (no bearer:
+ *  the external URL renders directly; a later backfill can download it). */
+export async function refreshCatalogImageByName(
+  orgId: string,
+  itemId: string,
+  name: string,
+  brand?: string | null,
+): Promise<void> {
+  const pool = await searchImages(name, 24).catch(() => []);
+  const best = rankImageOptions(pool, brand)[0]?.url;
+  if (!best) return;
+  const db = (await platform().tenants.getDb(orgId)) as unknown as Kysely<CoreScanDB>;
+  await db
+    .updateTable("core_scan_inbox_items")
+    .set({ catalog_image_url: best, catalog_image_file_id: null, updated_at: new Date() })
+    .where("id", "=", itemId)
+    .execute();
+}
 
 interface PhotoEnrichContext {
   db: Kysely<CoreScanDB>;
@@ -158,7 +182,8 @@ export async function crossCheckScanPhoto(
   if (!file) return;
   const imageB64 = Buffer.from(file.bytes).toString("base64");
 
-  let verdict: { match?: string; reason?: string } | null = null;
+  let verdict: { match?: string; reason?: string; correct_name?: string; correct_brand?: string } | null =
+    null;
   try {
     const r = await platform().ai.invoke({
       orgId,
@@ -172,7 +197,12 @@ export async function crossCheckScanPhoto(
           "matches that name/identity — consider the product type, packaging, and any " +
           "readable label text, and allow for a generic or differently-angled shot. " +
           'Only answer "no" when the photo clearly shows a DIFFERENT kind of product. ' +
-          'Reply with JSON only: {"match":"yes"|"no"|"unsure","reason":"<one short sentence>"}.',
+          "When (and ONLY when) it's a clear mismatch AND the photo's label makes the " +
+          "real product unambiguous, also return what the item actually IS — a concise " +
+          "retail product name, plus brand if visible. Omit them if you can't read it " +
+          "confidently. " +
+          'Reply with JSON only: {"match":"yes"|"no"|"unsure","reason":"<one short sentence>",' +
+          '"correct_name":"<the real product name, optional>","correct_brand":"<brand, optional>"}.',
       },
       source: { kind: "core-scan:photo-crosscheck", id: itemId },
     });
@@ -185,13 +215,72 @@ export async function crossCheckScanPhoto(
   }
   if (String(verdict?.match ?? "").toLowerCase() !== "no") return; // flag only a clear mismatch
   const reason = typeof verdict?.reason === "string" ? verdict.reason.trim() : "";
+  const correctName = typeof verdict?.correct_name === "string" ? verdict.correct_name.trim() : "";
+  const correctBrand = typeof verdict?.correct_brand === "string" ? verdict.correct_brand.trim() : "";
 
   // The vision call can outlive the request's tenant pool — re-acquire before write.
   const freshDb = (await platform().tenants.getDb(orgId)) as unknown as Kysely<CoreScanDB>;
+  const existing = await freshDb
+    .selectFrom("core_scan_inbox_items")
+    .select(["suggested_metadata", "suggested_name", "barcode_text"])
+    .where("id", "=", itemId)
+    .executeTakeFirst();
+  const baseMeta = (existing?.suggested_metadata as Record<string, unknown> | null) ?? {};
+  const prevName = (existing?.suggested_name as string | null) ?? resolvedName;
+
+  if (correctName) {
+    // The photo UNAMBIGUOUSLY identifies a different product → the photo wins.
+    // The barcode/web-search name is the weakest source (a UPC search can surface a
+    // spurious listing), so replace it outright with the photo's identity and treat
+    // the photo-derived details as primary. Keep the old name for context + undo.
+    await freshDb
+      .updateTable("core_scan_inbox_items")
+      .set({
+        suggested_name: correctName,
+        ...(correctBrand ? { suggested_manufacturer: correctBrand } : {}),
+        ai_confidence: "0.7",
+        suggested_metadata: sql`${JSON.stringify({
+          ...baseMeta,
+          source: "photo",
+          photo_corrected: { from: prevName, reason: reason || undefined },
+        })}::jsonb` as never,
+        ai_notes:
+          `Renamed from your photo — the lookup ("${prevName}") didn't match the item` +
+          (reason ? ` (${reason})` : "") +
+          ". Photo details are primary.",
+        updated_at: new Date(),
+      })
+      .where("id", "=", itemId)
+      .execute();
+    // Feed the barcode→name fix back to the shared Barcode Intelligence DB so the
+    // next scan of this code gets the right product. Best-effort; detached (no
+    // user) → lands as a pending proposal, which is the right trust level for an
+    // auto-applied correction.
+    if (existing?.barcode_text) {
+      void reportBarcodeCorrection({
+        upc: existing.barcode_text,
+        field: "title",
+        was: prevName,
+        now: correctName,
+      }).catch(() => {});
+    }
+    // The catalog image still shows the wrong product (the lookup's picture) —
+    // refresh it to match the corrected name.
+    void refreshCatalogImageByName(orgId, itemId, correctName, correctBrand || null).catch(() => {});
+    return;
+  }
+
+  // match=no but the photo didn't yield a confident name → flag for a manual fix,
+  // and store a structured photo_mismatch so the card can offer the one-tap rename.
+  const meta = {
+    ...baseMeta,
+    photo_mismatch: { reason: reason || undefined },
+  };
   await freshDb
     .updateTable("core_scan_inbox_items")
     .set({
       ai_confidence: "0.3",
+      suggested_metadata: sql`${JSON.stringify(meta)}::jsonb` as never,
       ai_notes:
         `⚠ This photo doesn't look like "${resolvedName}" — the barcode may be wrong` +
         (reason ? ` (${reason})` : "") +

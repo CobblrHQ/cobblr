@@ -20,7 +20,7 @@
 // edge target (a local Ollama uses it literally; the claude bridge maps it to a
 // Claude tier), so override it via capability defaults to match your device.
 
-import { platform, type AiCapability, type EdgeRequest } from "@cobblr/platform-contract";
+import { platform, type AiCapability, type EdgeRequest, type EdgeResponse } from "@cobblr/platform-contract";
 
 /** The personal-connections resolver injects the channel owner's user id here. */
 const CONNECTION_USER_KEY = "__connection_user_id";
@@ -37,15 +37,79 @@ const SUPPORTED: Partial<Record<AiCapability, { models: string[]; defaultModel?:
   "embed-text": { models: ["nomic-embed-text", "mxbai-embed-large"], defaultModel: "nomic-embed-text" },
 };
 
+// The bridge fronts a single-process `claude -p` agent. A bulk scan fans 15+ AI
+// calls (one identify + one matchmaker per item) at it at once and it answers
+// 502/503 under that load — which surfaced as failed identifies (→ raw heuristic
+// names) and scary "Non-JSON response (502)" notes. Two guards below: a per-
+// channel in-flight cap that queues excess calls, and a transient-status retry.
+const MAX_INFLIGHT_PER_CHANNEL = 3;
+const TRANSIENT = new Set([429, 502, 503, 504]);
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+const channelLoad = new Map<string, { inflight: number; waiters: Array<() => void> }>();
+async function acquire(key: string): Promise<void> {
+  let st = channelLoad.get(key);
+  if (!st) {
+    st = { inflight: 0, waiters: [] };
+    channelLoad.set(key, st);
+  }
+  if (st.inflight < MAX_INFLIGHT_PER_CHANNEL) {
+    st.inflight++;
+    return;
+  }
+  // At capacity: park until release() hands us the slot (inflight stays put).
+  await new Promise<void>((resolve) => st!.waiters.push(resolve));
+}
+function release(key: string): void {
+  const st = channelLoad.get(key);
+  if (!st) return;
+  const next = st.waiters.shift();
+  if (next) next(); // hand the slot to the next waiter without touching inflight
+  else st.inflight--;
+}
+
+// The edge agent long-polls; between poll cycles (and for the reaper window after
+// a gap) the channel can be momentarily unregistered, so platform().edge.send
+// THROWS "no edge device connected" / "edge disconnected". That's transient — the
+// agent re-polls within seconds — but it was surfacing as a hard AI failure, so the
+// matchmaker dropped to its "no AI" keyword note even though AI is connected. Retry
+// those throws too, a touch more patiently than the gateway retries (a re-poll can
+// take a second or two).
+const RECONNECTING = /no edge device|edge disconnected|edge channel gone/i;
+
 /** Route one Ollama-shaped POST down the workspace's edge channel. The agent
  *  forwards `body` verbatim to its local target and returns the parsed reply.
  *  Mirrors the ollama provider's "don't echo the upstream body on error" rule —
- *  the status is enough to diagnose without an exfil channel. */
+ *  the status is enough to diagnose without an exfil channel. Concurrency-capped
+ *  per channel + retries transient gateway codes AND a momentarily-disconnected
+ *  edge channel, with backoff. */
 async function edgePost(channelKey: string, path: string, body: unknown): Promise<Record<string, unknown>> {
   const req: EdgeRequest = { path, method: "POST", body, timeoutMs: 120_000 };
-  const res = await platform().edge.send(channelKey, req);
-  if (res.status < 200 || res.status >= 300) throw new Error(`edge bridge: ${res.status}`);
-  return (res.body ?? {}) as Record<string, unknown>;
+  await acquire(channelKey);
+  try {
+    let lastStatus = 0;
+    let lastErr: unknown = null;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      if (attempt > 0) await sleep(700 * 2 ** (attempt - 1)); // 0.7s, 1.4s, 2.8s
+      let res: EdgeResponse;
+      try {
+        res = await platform().edge.send(channelKey, req);
+      } catch (e) {
+        lastErr = e;
+        // Channel momentarily unregistered (poll gap / just reaped / re-registering)
+        // → wait for the agent's next poll. A real send error is not papered over.
+        if (RECONNECTING.test((e as Error)?.message ?? "")) continue;
+        throw e;
+      }
+      if (res.status >= 200 && res.status < 300) return (res.body ?? {}) as Record<string, unknown>;
+      lastStatus = res.status;
+      if (!TRANSIENT.has(res.status)) break; // a real error — don't waste retries
+    }
+    if (lastStatus) throw new Error(`edge bridge: ${lastStatus}`);
+    throw lastErr ?? new Error("edge bridge: unavailable");
+  } finally {
+    release(channelKey);
+  }
 }
 
 /** The edge channel key = the connection owner's user id, injected by the

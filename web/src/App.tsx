@@ -498,6 +498,9 @@ function ActiveOrgScopedRoutes() {
           <Route path="/configuration/health" element={<HealthPage />} />
           <Route path="/configuration/locations" element={<LocationsPage />} />
           <Route path="/configuration/locations/:id" element={<LocationDetailPage />} />
+          {/* Nav alias — the synthetic "Locations" top routes here (useNavModules). */}
+          <Route path="/locations" element={<LocationsPage />} />
+          <Route path="/locations/:id" element={<LocationDetailPage />} />
           <Route path="/configuration/templates" element={<TemplatesPage />} />
           <Route path="/scan" element={<ScanPage />} />
           <Route path="/scan/camera" element={<ScanCameraPage />} />

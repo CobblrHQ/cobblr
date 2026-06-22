@@ -1,11 +1,11 @@
 // Cloud-Bambu MachineDriver — the live side of a "Bambu Lab" connection in
 // CLOUD mode. A connection is an ACCOUNT: listDevices returns EVERY printer on
 // the account (each linkable to a machine, the same model as FDM Monster).
-// Monitor-only by design: Bambu's Authorization Control gates remote
+// Cloud SUBMIT is blocked by design: Bambu's Authorization Control gates remote
 // print-initiation behind their signed clients, so uploads/submits raise a clear
-// capability error pointing the user at LAN + Developer Mode (Phase 3). Status is
-// read over Bambu's cloud HTTP (`/bind` print_status). Phase 2 will prefer a
-// cached MQTT status (temps/progress) written by the hosted pump.
+// capability error pointing the user at LAN + Developer Mode. Live telemetry
+// (temps/progress) and light/pause/stop come from the hosted MQTT pump; the LAN
+// edge-bridge adds full control + camera (per-printer hybrid).
 //
 // All creds arrive via ManagerConfig.extra.creds (the encrypted blob):
 // { region, mode, token, mqttUser, account_email, devices: [{serial, accessCode, name, model}] }.
@@ -33,8 +33,8 @@ const BAMBU_CONTROLS: ControlDef[] = [
 ];
 
 const CONTROL_BLOCKED =
-  "Cloud mode is monitor-only — Bambu's Authorization Control blocks third-party " +
-  "remote print control. Connect this printer in LAN + Developer Mode to send jobs.";
+  "Starting a print over the Bambu cloud isn't allowed — Bambu's Authorization Control " +
+  "blocks third-party print initiation. Add LAN access (Developer Mode + edge-bridge) to send jobs.";
 
 /** Bambu cloud print_status → our JobState / device state. */
 export function mapCloudPrintStatus(status: string | undefined, online: boolean): string {

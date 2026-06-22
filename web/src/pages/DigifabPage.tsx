@@ -155,9 +155,14 @@ export function DigifabPage() {
                     const mode = (typeof c.config?.mode === "string" ? c.config.mode : "cloud") as BambuMode;
                     const caps = bambuCaps.data?.modes[mode];
                     if (!caps) return null;
+                    // Cloud has only PARTIAL control (light/pause/stop) — full
+                    // control comes over LAN (lan/hybrid). Say so honestly rather
+                    // than a blanket "control".
+                    const summary = mode === "cloud" ? "monitor + light/pause" : "full control";
+                    const full = mode !== "cloud";
                     return (
-                      <span title={caps.note} className={"text-[10px] font-mono px-1 rounded cursor-help " + (caps.control ? "text-moss-600 dark:text-moss-400" : "text-amber-600 dark:text-amber-400")}>
-                        {mode} · {caps.control ? "control" : "monitor only"}
+                      <span title={caps.note} className={"text-[10px] font-mono px-1 rounded cursor-help " + (full ? "text-moss-600 dark:text-moss-400" : "text-amber-600 dark:text-amber-400")}>
+                        {mode} · {summary}
                       </span>
                     );
                   })()}
@@ -1255,8 +1260,8 @@ function CreateConnectionModal({
             {/* How a Bambu connects — the two genuinely different paths. */}
             <div className="grid grid-cols-2 gap-2">
               {([
-                { id: "cloud", title: "Cloud account", note: "Bambu login. Live status & temps — no remote control (Bambu blocks it)." },
-                { id: "lan", title: "LAN via edge bridge", note: "Developer Mode + your bridge. Full control: send, pause, cancel." },
+                { id: "cloud", title: "Cloud account", note: "Bambu login. Live status, temps, chamber light + pause/resume/stop. Add per-printer LAN later for full control & camera." },
+                { id: "lan", title: "LAN via edge bridge", note: "Developer Mode + your bridge. Full control: send, pause, cancel, jog, camera." },
               ] as const).map((o) => (
                 <button key={o.id} type="button" onClick={() => setBambuWay(o.id)}
                   className={"text-left rounded border p-2 transition " + (bambuWay === o.id ? "border-cobble-500 bg-cobble-50/40 dark:bg-cobble-900/20" : "border-line dark:border-slate-600 hover:border-accent")}>

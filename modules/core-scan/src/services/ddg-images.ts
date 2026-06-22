@@ -92,7 +92,7 @@ async function fetchVqd(query: string): Promise<string> {
   return m[1];
 }
 
-export async function searchImages(query: string, limit = 8): Promise<DdgImageResult[]> {
+async function imageSearchOnce(query: string, limit: number): Promise<DdgImageResult[]> {
   const vqd = await fetchVqd(query);
   const params = new URLSearchParams({
     l: "us-en",
@@ -126,6 +126,83 @@ export async function searchImages(query: string, limit = 8): Promise<DdgImageRe
       width: typeof it.width === "number" ? it.width : undefined,
       height: typeof it.height === "number" ? it.height : undefined,
     }));
+}
+
+/**
+ * DDG's image endpoint (/i.js) is anti-bot-gated on a shared/datacenter IP and
+ * frequently returns an EMPTY result set even when the same query has results in
+ * a browser — observed in the field: "images empty but the web search has the
+ * right results." A fresh vqd handshake on a second/third try usually recovers
+ * it, so retry-on-empty (with a small backoff) before giving up. A thrown error
+ * (429 / handshake fail) is a different failure mode → surface it, don't retry
+ * here. Returns [] only after every attempt came back genuinely empty.
+ */
+export async function searchImages(query: string, limit = 8): Promise<DdgImageResult[]> {
+  const ATTEMPTS = 3;
+  for (let i = 0; i < ATTEMPTS; i++) {
+    const out = await imageSearchOnce(query, limit);
+    if (out.length > 0) return out;
+    if (i < ATTEMPTS - 1) await new Promise((r) => setTimeout(r, 450 * (i + 1)));
+  }
+  return [];
+}
+
+export interface DdgTextResult {
+  /** Result title — the strongest product-name candidate for a bare UPC. */
+  title: string;
+  /** Result URL (DDG redirect form). */
+  url: string;
+}
+
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10)))
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&");
+}
+
+async function textSearchOnce(query: string, limit: number): Promise<DdgTextResult[]> {
+  const res = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
+    headers: { "User-Agent": UA, Accept: "text/html", Referer: "https://duckduckgo.com/" },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`DDG text search returned ${res.status}`);
+  const html = await res.text();
+  const out: DdgTextResult[] = [];
+  const re = /class="result__a"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null && out.length < limit) {
+    const href = m[1] ?? "";
+    const rawTitle = m[2] ?? "";
+    const title = decodeEntities(rawTitle.replace(/<[^>]*>/g, ""))
+      .replace(/\s+/g, " ")
+      .trim();
+    if (title) out.push({ title, url: decodeEntities(href) });
+  }
+  return out;
+}
+
+/**
+ * DDG TEXT/web search (html.duckduckgo.com). Unlike the image endpoint, the text
+ * index DOES resolve a bare UPC to its retail product pages (Amazon/Target/eBay
+ * titles) — observed in the field: a UPC that returns NO image results yields a
+ * clean "Cuisinart Chef's Classic Nonstick…" title here. So this is the reliable
+ * name-grounding source for the web-search fallback. Retry-on-empty for the same
+ * anti-bot flakiness the image endpoint has.
+ */
+export async function searchText(query: string, limit = 10): Promise<DdgTextResult[]> {
+  const ATTEMPTS = 3;
+  for (let i = 0; i < ATTEMPTS; i++) {
+    const out = await textSearchOnce(query, limit);
+    if (out.length > 0) return out;
+    if (i < ATTEMPTS - 1) await new Promise((r) => setTimeout(r, 450 * (i + 1)));
+  }
+  return [];
 }
 
 function hostnameFromUrl(u: string | undefined): string {

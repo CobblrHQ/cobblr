@@ -34,6 +34,8 @@ import {
   X,
 } from "lucide-react";
 import { Modal, useImageSrc, useToast, usePageTitle } from "@cobblr/platform-web";
+import { LocationPicker } from "../components/LocationPicker";
+import { decideLocationScan, filingLabel } from "../lib/scanFiling";
 import {
   type AiStatus,
   ApiError,
@@ -419,6 +421,16 @@ export function ScanPage() {
   usePageTitle("Scan");
   const { activeSlug } = useActiveOrg();
   const [params] = useSearchParams();
+  // Active filing "bin" — a core-locations node every scan files into until
+  // cleared (the companion app activeBin pattern). Stamped as target_location_id on each
+  // scan so the item lands pre-filed; persists per workspace in localStorage.
+  const fileBinKey = `cobblr.scanFileBin.${activeSlug ?? ""}`;
+  const [fileBin, setFileBinState] = useState<string>(() => localStorage.getItem(fileBinKey) ?? "");
+  const setFileBin = (v: string) => {
+    setFileBinState(v);
+    if (v) localStorage.setItem(fileBinKey, v);
+    else localStorage.removeItem(fileBinKey);
+  };
   const into = params.get("into");
   const target: ScanTarget | null = into
     ? {
@@ -434,6 +446,7 @@ export function ScanPage() {
   // UPC entry is the only intake that needs a modal (it needs a keyboard
   // anyway); Upload triggers the hidden file input DIRECTLY — no modal hop.
   const [upcOpen, setUpcOpen] = useState(false);
+  const [urlsOpen, setUrlsOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const receiptRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
@@ -489,6 +502,22 @@ export function ScanPage() {
 
   const aiStatus = useAiStatus();
   const items = list.data?.items ?? [];
+  // "Needs review" = a pending item that didn't cleanly resolve: no name yet, a
+  // low-trust or rate-limited flag, or low confidence. Bulk-confirm the confident
+  // ones, then flip this on to focus only on the ones that need a human.
+  const needsReview = (it: ScanInboxItem): boolean => {
+    if (it.status !== "pending") return false;
+    const meta = (it.suggested_metadata ?? {}) as { low_trust?: boolean; rate_limited?: boolean };
+    return (
+      !it.suggested_name ||
+      !!meta.low_trust ||
+      !!meta.rate_limited ||
+      (it.ai_confidence != null && Number(it.ai_confidence) < 0.5)
+    );
+  };
+  const [reviewOnly, setReviewOnly] = useState(false);
+  const reviewCount = items.filter(needsReview).length;
+  const visibleItems = reviewOnly ? items.filter(needsReview) : items;
 
   // Auto-retry rate-limited scans, one at a time, paced. Rapid scanning throttles
   // the resolver (go-upc gate / upcitemdb burst); those rows are tagged
@@ -498,6 +527,11 @@ export function ScanPage() {
   // we're waiting on. Reads live cache inside the tick so the interval stays
   // stable (no reschedule churn from the 8s poll).
   const rlAttempts = useRef<Map<string, number>>(new Map());
+  // Once an item's retries are spent it should STOP reading "retrying…" — a
+  // persistent rate-limit (e.g. the daily upcitemdb quota, which won't clear till
+  // UTC midnight) is terminal for now, so the card switches to a nameable
+  // "couldn't identify" state. Reactive so the card re-renders when we give up.
+  const [rlGaveUp, setRlGaveUp] = useState<Set<string>>(new Set());
   useEffect(() => {
     if (!activeSlug) return;
     const MAX_RETRIES = 2;
@@ -513,7 +547,9 @@ export function ScanPage() {
           (rlAttempts.current.get(i.id) ?? 0) < MAX_RETRIES,
       );
       if (!target) return;
-      rlAttempts.current.set(target.id, (rlAttempts.current.get(target.id) ?? 0) + 1);
+      const n = (rlAttempts.current.get(target.id) ?? 0) + 1;
+      rlAttempts.current.set(target.id, n);
+      if (n >= MAX_RETRIES) setRlGaveUp((s) => new Set(s).add(target.id));
       void api
         .rerunScanAi(activeSlug, target.id)
         .catch(() => {})
@@ -559,6 +595,7 @@ export function ScanPage() {
         barcode: code,
         source_kind: "barcode",
         scan_batch_id: batchId ?? undefined,
+        target_location_id: fileBin || undefined,
       }),
     onMutate: (code: string) => {
       const id = `pending-${performance.now()}`;
@@ -586,7 +623,56 @@ export function ScanPage() {
   const scanDrive = useScanDrive(activeSlug, batchId ?? undefined);
   useBarcodeWedge({
     enabled: !!activeSlug && !upcOpen,
-    onScan: (code) => (scanDrive.on ? scanDrive.scan(code) : wedgeScan.mutate(code)),
+    onScan: (code) => {
+      if (scanDrive.on) {
+        scanDrive.scan(code);
+        return;
+      }
+      const qr = /^https?:\/\/[^/]+\/qr\/([A-Za-z0-9_-]{16,})$/.exec(code);
+      if (!qr) {
+        wedgeScan.mutate(code);
+        return;
+      }
+      // A scanned LOCATION label sets the active filing bin (and nests a container
+      // under the current bin) instead of staging an item — the companion app scan-to-set
+      // flow. Any other QR stages as a normal scan.
+      const token = qr[1] ?? "";
+      void (async () => {
+        const resolved = await api.resolveQrToken(token);
+        const locId = resolved?.entity_id;
+        if (
+          resolved?.entity_kind === "core-locations:location" &&
+          locId &&
+          (!resolved.org_slug || resolved.org_slug === activeSlug)
+        ) {
+          const items = locsQ.data?.items ?? [];
+          const byId = new Map(
+            items.map((l) => [
+              l.id,
+              { id: l.id, name: l.name, short_name: l.short_name, parent_id: l.parent_id, kind: l.kind },
+            ]),
+          );
+          const decision = decideLocationScan(locId, fileBin || null, byId);
+          if (decision.reparent) {
+            try {
+              await api.updateLocation(activeSlug, decision.reparent.child, {
+                parent_id: decision.reparent.parent,
+              });
+              await locsQ.refetch();
+            } catch {
+              /* cycle / permission — fall back to a plain adopt */
+            }
+          }
+          setFileBin(decision.bin);
+          const b = byId.get(decision.bin);
+          const nm = b ? filingLabel(b) : "location";
+          const p = decision.reparent ? byId.get(decision.reparent.parent) : null;
+          toast.success(p ? `Filed ${nm} in ${filingLabel(p)} — filing into ${nm}` : `Filing into ${nm}`);
+          return;
+        }
+        wedgeScan.mutate(code);
+      })();
+    },
   });
 
   // The workspace scan MENU — the same instances-with-fields catalog the
@@ -669,11 +755,111 @@ export function ScanPage() {
   const headerBtn =
     "inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-700 text-sm text-content hover:bg-subtle dark:hover:bg-slate-800/70 px-2.5 py-1.5 transition shrink-0";
 
+  // Bulk triage: select N items, then confirm / discard the whole selection at
+  // once (each confirm routes to its own matchmaker top candidate, fields and
+  // all). Loops the existing per-item endpoints — no server change.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const toggleSelected = (id: string) =>
+    setSelected((s) => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  const clearSelected = () => setSelected(new Set());
+  const allVisibleSelected = visibleItems.length > 0 && visibleItems.every((i) => selected.has(i.id));
+  const [bulkLocOpen, setBulkLocOpen] = useState(false);
+  const bulkApplyLocation = async (locId: string) => {
+    setBulkBusy(true);
+    setBulkLocOpen(false);
+    const ids = [...selected];
+    let ok = 0;
+    for (const id of ids) {
+      try {
+        await api.updateScanItem(activeSlug, id, { target_location_id: locId });
+        ok++;
+      } catch {
+        /* skip failures */
+      }
+    }
+    setBulkBusy(false);
+    clearSelected();
+    void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+    const name = (locsQ.data?.items ?? []).find((l) => l.id === locId);
+    toast.success(`Filed ${ok} item${ok === 1 ? "" : "s"} into ${name ? filingLabel(name) : "the location"}.`);
+  };
+  const bulkDiscard = async () => {
+    setBulkBusy(true);
+    const done: string[] = [];
+    for (const id of selected) {
+      try {
+        await api.discardScanItem(activeSlug, id);
+        done.push(id);
+      } catch {
+        /* skip failures; summary reflects what landed */
+      }
+    }
+    setBulkBusy(false);
+    clearSelected();
+    void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+    void qc.invalidateQueries({ queryKey: ["scan-inbox-discarded", activeSlug] });
+    // Undo inline — restores the whole batch if it was a mis-tap.
+    toast.action(`Removed ${done.length} item${done.length === 1 ? "" : "s"}.`, {
+      actionLabel: "Undo",
+      duration: 7000,
+      onAction: async () => {
+        await Promise.allSettled(done.map((id) => api.restoreScanItem(activeSlug, id)));
+        void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+        void qc.invalidateQueries({ queryKey: ["scan-inbox-discarded", activeSlug] });
+      },
+    });
+  };
+  const bulkConfirm = async () => {
+    setBulkBusy(true);
+    const byId = new Map(items.map((i) => [i.id, i]));
+    let ok = 0;
+    let skipped = 0;
+    let failed = 0;
+    for (const id of selected) {
+      const it = byId.get(id);
+      const cand = it?.suggested_candidates?.[0];
+      // Only auto-confirm items with a confident table match AND a name; the rest
+      // stay for a manual look (reported in the summary).
+      if (!it || !cand || !it.suggested_name) {
+        skipped++;
+        continue;
+      }
+      try {
+        await api.confirmScanItem(activeSlug, id, {
+          target_module: cand.module,
+          target_kind: cand.kind,
+          instance: cand.instance ?? undefined,
+          name: it.suggested_name,
+          quantity: it.quantity ?? cand.quantity ?? undefined,
+          extras: cand.fields,
+        });
+        ok++;
+      } catch {
+        failed++;
+      }
+    }
+    setBulkBusy(false);
+    clearSelected();
+    void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+    const parts = [`${ok} confirmed`];
+    if (skipped) parts.push(`${skipped} need a manual look`);
+    if (failed) parts.push(`${failed} failed`);
+    toast.success(parts.join(" · "));
+  };
+
   return (
     <div className="space-y-4 max-w-4xl">
       {/* ── the ONE header row: identity + intake. Short word labels;
             compact paddings keep it one row on phones. ──────────────── */}
-      <div className="flex items-center gap-2 border-b border-line dark:border-slate-700 pb-2.5 min-w-0">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center border-b border-line dark:border-slate-700 pb-2.5">
+        {/* identity — title, count, review/session chips */}
+        <div className="flex items-center gap-2 min-w-0">
         <h1 className="text-lg font-semibold text-content dark:text-mortar-100 shrink-0">
           Inbox
         </h1>
@@ -681,6 +867,21 @@ export function ScanPage() {
           {items.length}
           <span className="hidden sm:inline"> pending</span>
         </span>
+        {reviewCount > 0 && (
+          <button
+            type="button"
+            onClick={() => setReviewOnly((v) => !v)}
+            title="Show only items that didn't cleanly resolve"
+            className={
+              "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs shrink-0 transition " +
+              (reviewOnly
+                ? "border-amber-500 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300"
+                : "border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:border-amber-400")
+            }
+          >
+            ⚠ {reviewCount} need{reviewCount === 1 ? "s" : ""} review
+          </button>
+        )}
         {batchId && (
           <Link
             to="/scan"
@@ -691,7 +892,11 @@ export function ScanPage() {
             <X size={12} className="text-faint" />
           </Link>
         )}
-        <div className="flex-1" />
+        </div>
+        <div className="hidden sm:block sm:flex-1" />
+        {/* intake — a horizontal-scroll strip on mobile so it NEVER overflows no
+            matter how many buttons get added; a normal row on desktop. */}
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 -mb-1 sm:overflow-visible sm:pb-0 sm:mb-0">
         <button
           type="button"
           onClick={() => setUpcOpen(true)}
@@ -699,6 +904,14 @@ export function ScanPage() {
           className={headerBtn}
         >
           <ScanLine size={15} /> UPC
+        </button>
+        <button
+          type="button"
+          onClick={() => setUrlsOpen(true)}
+          title="Paste product URLs — one per line — to catalog them in bulk"
+          className={headerBtn}
+        >
+          <ExternalLink size={15} /> URLs
         </button>
         <button
           type="button"
@@ -746,7 +959,35 @@ export function ScanPage() {
         >
           <Camera size={16} />
         </Link>
+        </div>
       </div>
+
+      {/* Active filing bin: every scan (wedge gun, UPC, camera) files into this
+          core-locations node until cleared — pick it, or scan a location's QR.
+          Stamped as target_location_id so each item lands pre-filed. */}
+      {locsEnabled && (
+        <div className="flex items-center gap-2 text-sm -mt-1.5">
+          <span className="inline-flex items-center gap-1 text-muted dark:text-slate-400 shrink-0">
+            <MapPin size={14} /> Filing into
+          </span>
+          <div className="min-w-0 flex-1 max-w-[18rem]">
+            <LocationPicker
+              value={fileBin || null}
+              onChange={(v) => setFileBin(v ?? "")}
+              label=""
+            />
+          </div>
+          {fileBin && (
+            <button
+              type="button"
+              onClick={() => setFileBin("")}
+              className="text-xs text-faint hover:text-content dark:hover:text-mortar-100 shrink-0"
+            >
+              clear
+            </button>
+          )}
+        </div>
+      )}
 
       <AiOffNotice status={aiStatus} />
 
@@ -817,6 +1058,60 @@ export function ScanPage() {
           </div>
         ))}
 
+      {/* Bulk-triage toolbar — appears once anything is selected. Confirm routes
+          each item to its own matchmaker top candidate; discard clears them out. */}
+      {(selected.size > 0 || (visibleItems.length > 1 && allVisibleSelected)) && (
+        <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 rounded-lg border border-accent/40 bg-cobble-50 dark:bg-cobble-900/30 px-3 py-2 text-sm">
+          <span className="font-medium text-content dark:text-mortar-100">{selected.size} selected</span>
+          <button
+            type="button"
+            onClick={() => setSelected(new Set(visibleItems.map((i) => i.id)))}
+            className="text-xs text-accent hover:underline"
+          >
+            select all {visibleItems.length}
+          </button>
+          <span className="flex-1" />
+          {hasLocations && (
+            <button
+              type="button"
+              disabled={bulkBusy || selected.size === 0}
+              onClick={() => setBulkLocOpen((o) => !o)}
+              className="rounded border border-line dark:border-slate-700 text-sm px-3 py-1 text-content hover:bg-subtle dark:hover:bg-slate-800 transition disabled:opacity-50"
+            >
+              Set location
+            </button>
+          )}
+          <button
+            type="button"
+            disabled={bulkBusy || selected.size === 0}
+            onClick={() => void bulkConfirm()}
+            className="rounded bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-3 py-1 transition disabled:opacity-50"
+          >
+            {bulkBusy ? "Working…" : "Confirm"}
+          </button>
+          <button
+            type="button"
+            disabled={bulkBusy || selected.size === 0}
+            onClick={() => void bulkDiscard()}
+            className="rounded border border-line dark:border-slate-700 text-sm px-3 py-1 text-bad hover:bg-subtle dark:hover:bg-slate-800 transition disabled:opacity-50"
+          >
+            Discard
+          </button>
+          <button type="button" onClick={clearSelected} className="text-xs text-faint hover:text-content">
+            clear
+          </button>
+          {bulkLocOpen && (
+            <div className="w-full pt-1">
+              <LocationPicker
+                value={null}
+                onChange={(v) => v && void bulkApplyLocation(v)}
+                label="File the selection into"
+              />
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="space-y-2">
         {pendingScans.map((p) => (
           <div
@@ -832,13 +1127,16 @@ export function ScanPage() {
             </div>
           </div>
         ))}
-        {items.map((item) => (
+        {visibleItems.map((item) => (
           <InboxCard
             key={item.id}
             item={item}
             pageTarget={target}
             menu={menu}
             hasLocations={hasLocations}
+            selected={selected.has(item.id)}
+            onToggleSelect={() => toggleSelected(item.id)}
+            rateLimitGaveUp={rlGaveUp.has(item.id)}
           />
         ))}
       </div>
@@ -884,6 +1182,7 @@ export function ScanPage() {
       )}
 
       {upcOpen && <UpcModal onClose={() => setUpcOpen(false)} />}
+      {urlsOpen && <UrlsModal onClose={() => setUrlsOpen(false)} />}
     </div>
   );
 }
@@ -952,6 +1251,70 @@ function UpcModal({ onClose }: { onClose: () => void }) {
   );
 }
 
+// Bulk URL intake: paste product URLs (one per line) — each becomes an inbox item
+// enriched through the URL path (vendor resolver → web search). For cataloging an
+// order/wishlist without a barcode.
+function UrlsModal({ onClose }: { onClose: () => void }) {
+  const { activeSlug } = useActiveOrg();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const urls = text
+    .split(/\s+/)
+    .map((s) => s.trim())
+    .filter((s) => /^https?:\/\/\S+$/i.test(s))
+    .slice(0, 50);
+
+  const submit = async () => {
+    if (!urls.length) return;
+    setBusy(true);
+    let ok = 0;
+    for (const url of urls) {
+      try {
+        await api.scanBarcode(activeSlug, { source_kind: "url", source_url: url });
+        ok++;
+      } catch {
+        /* skip bad ones; summary reflects what landed */
+      }
+    }
+    setBusy(false);
+    void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+    toast.success(`Added ${ok} URL${ok === 1 ? "" : "s"} — identifying in the inbox.`);
+    onClose();
+  };
+
+  return (
+    <Modal open onClose={onClose} title="Paste product URLs" size="sm">
+      <div className="space-y-2">
+        <textarea
+          autoFocus
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder={"One URL per line\nhttps://www.example.com/product/123\nhttps://…"}
+          rows={6}
+          className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900 font-mono"
+        />
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted dark:text-slate-400">
+            {urls.length} URL{urls.length === 1 ? "" : "s"} detected{urls.length === 50 ? " (max)" : ""}
+          </span>
+          <span className="flex-1" />
+          <button
+            type="button"
+            disabled={busy || urls.length === 0}
+            onClick={() => void submit()}
+            className="rounded bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-3 py-1.5 transition disabled:opacity-50"
+          >
+            {busy ? "Adding…" : `Add ${urls.length || ""}`}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 // ── one inbox item: an accordion triage card ──────────────────────────
 // Collapsed: the at-a-glance match (thumb, name, one-tap table chips).
 // Expanded: catalog vs YOUR photo, the AI's reasoning + confidence,
@@ -962,11 +1325,17 @@ function InboxCard({
   pageTarget,
   menu,
   hasLocations,
+  selected,
+  onToggleSelect,
+  rateLimitGaveUp,
 }: {
   item: ScanInboxItem;
   pageTarget: ScanTarget | null;
   menu: ScanMenuEntry[] | null;
   hasLocations: boolean;
+  selected?: boolean;
+  onToggleSelect?: () => void;
+  rateLimitGaveUp?: boolean;
 }) {
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
@@ -1033,6 +1402,19 @@ function InboxCard({
     !item.suggested_name &&
     !item.ai_suggested_at &&
     !!(item.suggested_metadata as { rate_limited?: boolean } | null)?.rate_limited;
+  // Still worth a "retrying…" pulse only while retries remain; once spent (a
+  // persistent rate-limit like the daily upcitemdb quota), it's terminal.
+  const rlActive = rateLimited && !rateLimitGaveUp;
+  // Couldn't auto-identify → offer manual naming. Either enrichment finished
+  // empty (needsName) or the rate-limit retries are spent (rateLimitGaveUp).
+  const cantIdentify = needsName || (rateLimited && !!rateLimitGaveUp);
+  // A scan with no photo (just a barcode) must not say "this photo".
+  const idNoun = item.barcode_text || item.source_kind === "barcode" ? "barcode" : "photo";
+  // "Awaiting lookup…" only while genuinely fresh — nothing has come back yet.
+  // Once the matchmaker has run, a tentative table exists, or we're rate-limited,
+  // the lookup has SETTLED; an unnamed row then prompts to name, not "awaiting".
+  const awaitingFresh =
+    !item.suggested_name && !item.ai_suggested_at && candidates.length === 0 && !rateLimited;
   // Low-trust hit: a short/ambiguous barcode the catalogs may have mis-matched
   // (set in enrich.ts). Surface a ⚠ note + an obvious one-tap corrector so a
   // wrong match is easy to catch and fix — the fix feeds the shared Barcode
@@ -1040,14 +1422,46 @@ function InboxCard({
   const lowTrust = !!(item.suggested_metadata as { low_trust?: boolean } | null)?.low_trust;
   const barcodeIdentified = !!item.barcode_text && !!item.suggested_name;
   const [correcting, setCorrecting] = useState(false);
+  // The photo cross-check flagged the barcode→name as wrong AND read the real
+  // product off the label. Offer it as a one-tap fix: applying it renames the
+  // item, and a rename reports the correction to the Barcode Intelligence DB.
+  const photoMismatch = (
+    item.suggested_metadata as { photo_mismatch?: { correct_name?: string; reason?: string } } | null
+  )?.photo_mismatch;
+  const photoSuggestedName = photoMismatch?.correct_name?.trim() || "";
 
   const discard = useMutation({
     mutationFn: () => api.discardScanItem(activeSlug, item.id),
     onSuccess: () => {
-      toast.success("Discarded — undo from Recently deleted.");
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
       void qc.invalidateQueries({ queryKey: ["scan-inbox-discarded", activeSlug] });
+      // Undo inline — a mis-click shouldn't send you hunting in Recently deleted.
+      // Name the item so stacked toasts are distinguishable; auto-dismiss (7s) so
+      // they don't pile up sticky.
+      const label =
+        item.suggested_name?.trim() ||
+        (item.barcode_text ? `barcode ${item.barcode_text}` : "item");
+      toast.action(`Removed ${label}`, {
+        actionLabel: "Undo",
+        duration: 7000,
+        onAction: async () => {
+          await api.restoreScanItem(activeSlug, item.id);
+          void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+          void qc.invalidateQueries({ queryKey: ["scan-inbox-discarded", activeSlug] });
+        },
+      });
     },
+  });
+  // Apply the photo cross-check's identification as the name (one tap). The
+  // rename PATCH reports the correction to the Barcode Intelligence DB, so the
+  // wrong barcode→name is fixed for the next scan everywhere.
+  const applyPhotoName = useMutation({
+    mutationFn: () => api.updateScanItem(activeSlug, item.id, { name: photoSuggestedName }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      toast.success(`Renamed to "${photoSuggestedName}" — fix reported to the barcode DB.`);
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
   // Adjust the pending item's quantity in place (e.g. an over-counted dedup) —
   // a PATCH that keeps it in the inbox; no commit.
@@ -1126,6 +1540,16 @@ function InboxCard({
         className="p-3 flex items-start gap-3 cursor-pointer"
         onClick={() => (expanded ? setExpanded(false) : openForm())}
       >
+        {onToggleSelect && (
+          <input
+            type="checkbox"
+            checked={!!selected}
+            onClick={(e) => e.stopPropagation()}
+            onChange={onToggleSelect}
+            aria-label="Select for bulk action"
+            className="mt-5 shrink-0 h-4 w-4 accent-cobble-600 cursor-pointer"
+          />
+        )}
         <div className="w-14 h-14 shrink-0 rounded-md overflow-hidden border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 flex items-center justify-center">
           {thumb ? (
             <img
@@ -1157,15 +1581,18 @@ function InboxCard({
               <span className="text-accent animate-pulse">Re-running the lookup…</span>
             ) : serverMatching ? (
               <span className="text-accent animate-pulse">AI is reading the details…</span>
-            ) : rateLimited ? (
+            ) : rlActive ? (
               <span className="inline-flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
                 <Loader2 size={13} className="animate-spin shrink-0" />
                 Rate-limited — retrying…
               </span>
-            ) : needsName ? (
-              <span className="text-muted">Couldn’t identify this photo — name it:</span>
-            ) : (
+            ) : cantIdentify ? (
+              <span className="text-muted">Couldn’t identify this {idNoun} — name it:</span>
+            ) : awaitingFresh ? (
               <span className="text-faint italic">Awaiting lookup…</span>
+            ) : (
+              // Settled (matchmaker ran / a tentative table) but still nameless.
+              <span className="text-muted">Name this {idNoun}:</span>
             )}
             {(item.quantity ?? 1) > 1 && (
               <span className="shrink-0 inline-flex items-center rounded-full bg-cobble-600 text-white text-[11px] font-semibold overflow-hidden">
@@ -1216,7 +1643,24 @@ function InboxCard({
               {item.ai_notes}
             </div>
           )}
-          {needsName && <NameItInline slug={activeSlug} itemId={item.id} />}
+          {/* One-tap accept the photo's identification when the cross-check read a
+              real product off the label (and it differs from the current name). */}
+          {photoSuggestedName && photoSuggestedName !== (item.suggested_name ?? "") && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                applyPhotoName.mutate();
+              }}
+              disabled={applyPhotoName.isPending}
+              className="mt-1 inline-flex items-center gap-1.5 rounded-md border border-amber-400/60 bg-amber-50 dark:bg-amber-900/20 px-2 py-1 text-[11px] font-medium text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition disabled:opacity-50"
+              title="Rename to what the photo shows — and report the barcode fix"
+            >
+              <Sparkles size={12} className="shrink-0" />
+              Use photo’s name: “{photoSuggestedName}”
+            </button>
+          )}
+          {cantIdentify && <NameItInline slug={activeSlug} itemId={item.id} />}
           {/* One-tap correction: a barcode whose name looks wrong (always
               available, nudged for low-trust short codes). Renaming reports the
               fix to the shared Barcode Intelligence DB so the next scan is right. */}
@@ -1245,8 +1689,10 @@ function InboxCard({
                 {lowTrust ? "Double-check — fix the name" : "Not right? Fix the name"}
               </button>
             ))}
-          {/* Matchmaker chips — the best-fitting tables, their fields
-              pre-filled. Tap one to expand straight into that table's form. */}
+          {/* Matchmaker chips — the best-fitting tables, their fields pre-filled.
+              On phones only the TOP match shows (it's what Confirm uses) + a "+N"
+              that expands to choose another; desktop shows them all. Keeps the
+              collapsed card from being a wall of stacked pills on mobile. */}
           {candidates.length > 0 ? (
             <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
               {candidates.map((c, i) => (
@@ -1262,19 +1708,36 @@ function InboxCard({
                       ? `Fills: ${Object.entries(c.fields).map(([k, v]) => `${k}=${v}`).join(", ")}`
                       : `Add to ${c.label}`
                   }
-                  className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition border ${
+                  className={`max-w-full items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition border ${
+                    i === 0 ? "inline-flex" : "hidden sm:inline-flex"
+                  } ${
                     i === 0
                       ? "bg-cobble-600 hover:bg-cobble-700 text-white border-cobble-600"
                       : "bg-subtle dark:bg-slate-800 hover:bg-line dark:hover:bg-slate-700 text-content dark:text-mortar-200 border-line dark:border-slate-700"
                   }`}
                 >
-                  <Sparkles size={11} />
-                  {c.label}
+                  <Sparkles size={11} className="shrink-0" />
+                  <span className="truncate">{c.label}</span>
                   {Object.keys(c.fields).length > 0 && (
-                    <span className="opacity-70">· {Object.keys(c.fields).length} fields</span>
+                    <span className="opacity-70 shrink-0 hidden sm:inline">
+                      · {Object.keys(c.fields).length} fields
+                    </span>
                   )}
                 </button>
               ))}
+              {candidates.length > 1 && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setExpanded(true);
+                  }}
+                  title="See the other matches"
+                  className="sm:hidden inline-flex items-center rounded-full px-2 py-1 text-xs font-medium border border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:border-cobble-400 shrink-0"
+                >
+                  +{candidates.length - 1}
+                </button>
+              )}
             </div>
           ) : serverMatching ? (
             <div className="text-[11px] text-faint italic mt-1">finding the best table…</div>
@@ -1800,7 +2263,10 @@ function ConfirmForm({
     return cand?.quantity ?? item.quantity ?? 1;
   })();
   const [quantity, setQuantity] = useState<number>(initialQty);
-  const [locationId, setLocationId] = useState<string>("");
+  // Pre-fill from the filing bin stamped at scan time (target_location_id), so a
+  // deferred triage already knows where it was scanned; the scan_area string-match
+  // effect below only fires as a fallback when no bin was set.
+  const [locationId, setLocationId] = useState<string>(item.target_location_id ?? "");
   // Pre-fill the looked-up brand; the table's own fields (colour, fibre…)
   // seed from the lookup metadata, then the matchmaker's extraction wins.
   const [manufacturer, setManufacturer] = useState(item.suggested_manufacturer ?? "");
