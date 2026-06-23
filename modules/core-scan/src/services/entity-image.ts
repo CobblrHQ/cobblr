@@ -55,16 +55,22 @@ export async function enrichEntityImage(opts: {
    *  CRUD route is /instances/<instance>/items/<id>, not the base module route —
    *  the base PATCH filters by instance and would 404. */
   instance?: string | null;
+  /** A SPECIFIC image url the user picked (interactive web-image picker). When
+   *  set, skip the curated/search auto-pick and store exactly this one. */
+  imageUrl?: string | null;
 }): Promise<string | null> {
   try {
     const [moduleName, type] = opts.entityKind.split(":");
     if (!moduleName || !type) return null;
-    // Curated catalog first (hand-picked, correct model); fall back to the DDG
-    // image search (best-effort, can guess the wrong model) only on a miss.
-    let imageUrl = await curatedImageUrl(opts.query);
+    // A user-picked url wins outright. Otherwise: curated catalog first
+    // (hand-picked, correct model), then the DDG image search (best-effort).
+    let imageUrl = opts.imageUrl ?? null;
     if (!imageUrl) {
-      const results = await searchImages(opts.query);
-      imageUrl = pickImage(results, opts.query) ?? results[0]?.url ?? null;
+      imageUrl = await curatedImageUrl(opts.query);
+      if (!imageUrl) {
+        const results = await searchImages(opts.query);
+        imageUrl = pickImage(results, opts.query) ?? results[0]?.url ?? null;
+      }
     }
     if (!imageUrl) return null;
     const fileId = await fetchAndStoreImage(opts.orgSlug, opts.bearer, imageUrl);

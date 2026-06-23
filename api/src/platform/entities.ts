@@ -23,6 +23,7 @@ import type {
   EntityListResolver,
   EntityListResult,
   EntityResolver,
+  EntityWriter,
   ResolvedEntity,
 } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
@@ -267,6 +268,23 @@ function applyExposableProjection(
 
 export function registerResolver(kind: string, resolver: EntityResolver): void {
   resolvers.set(kind, resolver);
+}
+
+// ───────────────────── entity writers (in-process) ────────────────
+//
+// The WRITE counterpart to read resolvers: an in-process create/update/
+// delete for a kind, registered by the owning module. Used by cross-module
+// writers (the sync engine) that run with NO HTTP request / user token —
+// the writer resolves its own tenant db from orgId and runs the module's
+// own validation + events. There is intentionally no generic HTTP loopback.
+const entityWriters = new Map<string, EntityWriter>();
+
+export function registerEntityWriter(kind: string, writer: EntityWriter): void {
+  entityWriters.set(kind, writer);
+}
+
+export function getEntityWriter(kind: string): EntityWriter | undefined {
+  return entityWriters.get(kind);
 }
 
 export function registerListResolver(

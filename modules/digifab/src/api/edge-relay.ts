@@ -42,7 +42,7 @@ const POLL_WAIT_MS = 25_000; // long-poll hold before a 204 keep-alive
 const STALE_MS = 60_000; // drop a channel whose bridge stopped polling
 const DEFAULT_REQ_TIMEOUT_MS = 20_000;
 
-type RelayItem = { id: string; path: string; method: "GET" | "POST"; body?: unknown; instance?: EdgeRequest["instance"] };
+type RelayItem = { id: string; path: string; method: "GET" | "POST"; body?: unknown; instance?: EdgeRequest["instance"]; source?: EdgeRequest["source"] };
 type Pending = { resolve: (r: EdgeResponse) => void; reject: (e: Error) => void; timer: NodeJS.Timeout };
 
 interface OrgRelay {
@@ -74,7 +74,7 @@ function ensureOrg(key: string): OrgRelay {
         reject(new Error("edge bridge did not respond in time"));
       }, req.timeoutMs ?? DEFAULT_REQ_TIMEOUT_MS);
       relay.pending.set(id, { resolve, reject, timer });
-      const item: RelayItem = { id, path: req.path, method: req.method === "POST" ? "POST" : "GET", body: req.body, ...(req.instance ? { instance: req.instance } : {}) };
+      const item: RelayItem = { id, path: req.path, method: req.method === "POST" ? "POST" : "GET", body: req.body, ...(req.instance ? { instance: req.instance } : {}), ...(req.source ? { source: req.source } : {}) };
       if (relay.poller) {
         const deliver = relay.poller;
         relay.poller = null;

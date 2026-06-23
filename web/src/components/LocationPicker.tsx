@@ -7,7 +7,7 @@
 // that creates the row, then auto-selects it — so a user discovering
 // they need a new location doesn't have to abandon their form.
 
-import { useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { useToast } from "@cobblr/platform-web";
@@ -19,6 +19,31 @@ const CREATE_SENTINEL = "__new__";
 // get collapsed in <option> text by every major browser.
 const INDENT = "  ";
 
+// The ONE place that understands location order: siblings sort by manual
+// drag-order (`position`) then NATURAL name (Bin 1, Bin 2, … Bin 10 — never
+// Bin 1, Bin 10, Bin 2), depth-first so the hierarchy reads top-down. A node
+// whose parent was filtered out (e.g. an area-only list) becomes a root. Matches
+// the LocationsPage tree, so dropdown order == what the user arranged there.
+function orderLocations(items: Location[]): Location[] {
+  const ids = new Set(items.map((i) => i.id));
+  const byParent = new Map<string, Location[]>();
+  const roots: Location[] = [];
+  for (const it of items) {
+    const p = it.parent_id && ids.has(it.parent_id) ? it.parent_id : null;
+    if (p) (byParent.get(p) ?? byParent.set(p, []).get(p)!).push(it);
+    else roots.push(it);
+  }
+  const cmp = (a: Location, b: Location) =>
+    a.position - b.position || a.name.localeCompare(b.name, undefined, { numeric: true });
+  const out: Location[] = [];
+  const walk = (n: Location) => {
+    out.push(n);
+    (byParent.get(n.id) ?? []).sort(cmp).forEach(walk);
+  };
+  roots.sort(cmp).forEach(walk);
+  return out;
+}
+
 interface Props {
   value: string | null;
   onChange: (value: string | null) => void;
@@ -26,6 +51,11 @@ interface Props {
    *  Locations admin form to prevent picking yourself as a parent.
    *  Doesn't filter descendants (caller's job if needed). */
   excludeId?: string;
+  /** Restrict the pickable rows to one kind. `"area"` = rooms/zones only (for
+   *  things that live in a room — printers, machines, assets); `"container"` =
+   *  bins/drawers only. Omit to offer the whole hierarchy. A location created
+   *  inline defaults to this kind. */
+  kind?: Location["kind"];
   /** Visible <label> wrapped around the select. Omit when the caller
    *  draws their own label. */
   label?: string;
@@ -37,6 +67,7 @@ export function LocationPicker({
   value,
   onChange,
   excludeId,
+  kind,
   label,
   className,
   size = "md",
@@ -49,7 +80,11 @@ export function LocationPicker({
     queryFn: () => api.listLocations(activeSlug),
     enabled: !!activeSlug,
   });
-  const items = (list.data?.items ?? []).filter((i) => i.id !== excludeId);
+  const items = useMemo(() => {
+    let rows = (list.data?.items ?? []).filter((i) => i.id !== excludeId);
+    if (kind) rows = rows.filter((i) => i.kind === kind);
+    return orderLocations(rows);
+  }, [list.data, excludeId, kind]);
 
   const sizeClass = size === "sm" ? "px-2 py-1 text-xs" : "px-2 py-1 text-sm";
 
@@ -99,6 +134,7 @@ export function LocationPicker({
         <QuickCreateLocation
           slug={activeSlug}
           all={list.data?.items ?? []}
+          defaultKind={kind}
           onClose={() => setCreateOpen(false)}
           onCreated={(loc) => {
             onChange(loc.id);
@@ -132,11 +168,13 @@ const ENDS_WITH_NUMBER = /\d\s*$/;
 function QuickCreateLocation({
   slug,
   all,
+  defaultKind,
   onClose,
   onCreated,
 }: {
   slug: string;
   all: Location[];
+  defaultKind?: Location["kind"];
   onClose: () => void;
   onCreated: (loc: Location) => void;
 }) {
@@ -144,7 +182,7 @@ function QuickCreateLocation({
   const toast = useToast();
   const [name, setName] = useState("");
   const [shortName, setShortName] = useState("");
-  const [kind, setKind] = useState<"area" | "container">("container");
+  const [kind, setKind] = useState<"area" | "container">(defaultKind ?? "container");
   const [parentId, setParentId] = useState<string>("");
 
   const nextNum = nextContainerNumber(all);

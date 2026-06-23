@@ -37,12 +37,17 @@ export async function reportBarcodeCorrection(opts: {
   was: string | null;
   now: string | null;
   userId?: string | null;
+  /** A deliberate CONFIRM ("this listing is good — lock it in"): verify the
+   *  current value even though it didn't change. Bypasses the changed-guard so a
+   *  user affirming a thin/crowdsourced hit promotes it to a verified entry. */
+  confirm?: boolean;
 }): Promise<void> {
   const base = (process.env.COBBLR_BARCODE_RESOLVER_URL ?? "").replace(/\/+$/, "");
   const tok = process.env.COBBLR_BARCODE_RESOLVER_CORRECTION_TOKEN ?? "";
   if (!base || !tok) return; // unconfigured → no-op
   if (!/^[0-9]{6,14}$/.test(opts.upc)) return;
-  if (!meaningfullyChanged(opts.was, opts.now)) return;
+  if (!(opts.now ?? "").trim()) return; // never POST a blank value
+  if (!opts.confirm && !meaningfullyChanged(opts.was, opts.now)) return;
   try {
     await fetch(`${base}/correct`, {
       method: "POST",
@@ -51,7 +56,7 @@ export async function reportBarcodeCorrection(opts: {
         upc: opts.upc,
         field: opts.field,
         value: (opts.now ?? "").trim(),
-        source_context: "scan-triage",
+        source_context: opts.confirm ? "scan-confirm" : "scan-triage",
         corrected_by: opaqueActor(opts.userId),
       }),
       signal: AbortSignal.timeout(8000),

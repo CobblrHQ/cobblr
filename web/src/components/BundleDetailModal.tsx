@@ -9,7 +9,7 @@
 // For installed bundles we additionally hit /bundles/:id to fetch the
 // actually-installed wires/field-defs (in case the manifest drifted).
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowRight, CheckCircle2, ChevronDown, ChevronRight, Compass, Download, Package, Trash2 } from "lucide-react";
@@ -121,6 +121,20 @@ export function BundleDetailModal(props: Props) {
     enabled: open && !!installedBundleId,
   });
 
+  // Which modules are actually enabled in this workspace — so the read-only
+  // "your features" view on an already-installed bundle can show a feature as ON
+  // when the capability it brings is genuinely present (its module enabled),
+  // even if this bundle's own record didn't carry it.
+  const orgModules = useQuery({
+    queryKey: ["org-modules", slug],
+    queryFn: () => api.orgModules(slug),
+    enabled: open,
+  });
+  const enabledModuleNames = useMemo(
+    () => new Set((orgModules.data?.items ?? []).filter((m) => m.enabled).map((m) => m.name)),
+    [orgModules.data],
+  );
+
   // Seed the feature checkboxes from the bundle's stored enabled_features so the
   // checkboxes reflect what was ACTUALLY installed — for the installed modal and
   // the "Update" modal alike. Without this an already-installed bundle shows the
@@ -128,10 +142,27 @@ export function BundleDetailModal(props: Props) {
   // should be checked to reflect what was actually installed").
   const alreadyInstalled = props.mode === "featured" && props.alreadyInstalled === true;
   useEffect(() => {
-    if (detail.data && (props.mode === "installed" || alreadyInstalled)) {
+    if (!detail.data) return;
+    if (alreadyInstalled) {
+      // Locked, read-only view on an already-installed bundle: show a feature as
+      // ON when its capability is actually present — either the bundle recorded
+      // it OR the module(s) it needs are already enabled in this workspace (the author:
+      // "I have digifab installed, the print-manager box should be checked for 3D
+      // Printers"). The checkbox is disabled here, so this only reflects reality
+      // — it never silently changes what's stored (the locked install path sends
+      // enabled_features, not this set).
+      const on = new Set(detail.data.bundle.enabled_features ?? []);
+      for (const f of detail.data.bundle.manifest.features ?? []) {
+        const reqs = f.requires ?? [];
+        if (!on.has(f.key) && reqs.length > 0 && reqs.every((r) => enabledModuleNames.has(r.module))) {
+          on.add(f.key);
+        }
+      }
+      setSelectedFeatures(on);
+    } else if (props.mode === "installed") {
       setSelectedFeatures(new Set(detail.data.bundle.enabled_features ?? []));
     }
-  }, [props.mode, alreadyInstalled, detail.data]);
+  }, [props.mode, alreadyInstalled, detail.data, enabledModuleNames]);
 
   // The bundle to uninstall: the installed bundle in installed mode, or a
   // marketplace bundle the user already has installed (featured mode) so

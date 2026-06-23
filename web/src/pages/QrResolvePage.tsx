@@ -32,10 +32,10 @@ interface ResolveResult {
 
 export function QrResolvePage() {
   usePageTitle("QR label");
-  // The token is the LAST path segment — works under both router
-  // basenames without useParams (the two mounts declare the same
-  // ":token" param, but reading the raw path keeps this mount-agnostic).
-  const token = window.location.pathname.split("/").pop() ?? "";
+  // The token is EVERYTHING after "/qr/" — a single opaque segment OR a
+  // descriptive "<kind>/<id>" with a slash. Reading the raw path keeps this
+  // mount-agnostic across the two basenames (/qr/… and /w/<slug>/qr/…).
+  const token = window.location.pathname.split("/qr/")[1] ?? "";
 
   const [state, setState] = useState<"loading" | "dead" | "action" | "error">("loading");
   const [result, setResult] = useState<ResolveResult | null>(null);
@@ -44,7 +44,10 @@ export function QrResolvePage() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`/api/v1/qr/${encodeURIComponent(token)}`, {
+        // Encode per-segment so a descriptive token's slash survives (a
+        // collapsed %2F wouldn't match the multi-segment resolver route).
+        const encoded = token.split("/").map(encodeURIComponent).join("/");
+        const res = await fetch(`/api/v1/qr/${encoded}`, {
           headers: { accept: "application/json" },
         });
         const body = (await res.json()) as ResolveResult;

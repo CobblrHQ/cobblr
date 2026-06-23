@@ -73,8 +73,7 @@ const MaintenancePage = lazy(() => import("./pages/MaintenancePage").then((m) =>
 const UnitsPage = lazy(() => import("./pages/UnitsPage").then((m) => ({ default: m.UnitsPage })));
 const BackupPage = lazy(() => import("./pages/BackupPage").then((m) => ({ default: m.BackupPage })));
 const CalendarPage = lazy(() => import("./pages/CalendarPage").then((m) => ({ default: m.CalendarPage })));
-const QrTokensPage = lazy(() => import("./pages/QrTokensPage").then((m) => ({ default: m.QrTokensPage })));
-const ScanRulesPage = lazy(() => import("./pages/ScanRulesPage").then((m) => ({ default: m.ScanRulesPage })));
+const QrPage = lazy(() => import("./pages/QrPage").then((m) => ({ default: m.QrPage })));
 const HealthPage = lazy(() => import("./pages/HealthPage").then((m) => ({ default: m.HealthPage })));
 const OpenApiPage = lazy(() => import("./pages/OpenApiPage").then((m) => ({ default: m.OpenApiPage })));
 const QueuePage = lazy(() => import("./pages/QueuePage").then((m) => ({ default: m.QueuePage })));
@@ -226,7 +225,7 @@ function PublicRoutes() {
       {/* /qr/:token — printed QR-label resolve (phone-camera scans land
           here bare, signed-in or signed-out). Navigate-mode forwards to
           /w/<org>/<detail>; the workspace shell handles login from there. */}
-      <Route path="/qr/:token" element={<QrResolvePage />} />
+      <Route path="/qr/*" element={<QrResolvePage />} />
       {/* Streamlined consumer signup for a managed app ("Cobblr for Yarn"). */}
       <Route path="/start/:app" element={<StartAppPage />} />
       {/* Legacy un-prefixed member-portal links → workspace-scoped portal. */}
@@ -493,8 +492,9 @@ function ActiveOrgScopedRoutes() {
           <Route path="/configuration/units" element={<UnitsPage />} />
           <Route path="/configuration/backup" element={<BackupPage />} />
           <Route path="/calendar" element={<CalendarPage />} />
-          <Route path="/configuration/qr-tokens" element={<QrTokensPage />} />
-          <Route path="/configuration/scan-rules" element={<ScanRulesPage />} />
+          <Route path="/configuration/qr-tokens" element={<QrPage />} />
+          {/* Consolidated into the QR codes page (External rules tab). */}
+          <Route path="/configuration/scan-rules" element={<Navigate to="/configuration/qr-tokens?tab=rules" replace />} />
           <Route path="/configuration/health" element={<HealthPage />} />
           <Route path="/configuration/locations" element={<LocationsPage />} />
           <Route path="/configuration/locations/:id" element={<LocationDetailPage />} />
@@ -507,7 +507,7 @@ function ActiveOrgScopedRoutes() {
           {/* QR-label resolve inside the workspace: the in-app scanner
               navigates here on a label hit, and LandingRedirect rewrites
               bare /qr/<token> URLs into /w/<default>/qr/<token>. */}
-          <Route path="/qr/:token" element={<QrResolvePage />} />
+          <Route path="/qr/*" element={<QrResolvePage />} />
           <Route path="/configuration/presentation" element={<PresentationPage />} />
           <Route path="/configuration/integrations" element={<IntegrationsPage />} />
           <Route path="/configuration/ai" element={<AiPage />} />

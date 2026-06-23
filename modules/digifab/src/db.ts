@@ -183,6 +183,36 @@ export interface DigifabDB {
   digifab_observed_prints: DigifabObservedPrintsTable;
   digifab_bambu_tasks: DigifabBambuTasksTable;
   digifab_library: DigifabLibraryTable;
+  digifab_printer_files: DigifabPrinterFilesTable;
+  digifab_printer_file_meta: DigifabPrinterFileMetaTable;
+}
+
+/** Durable cache of one on-disk gcode file + its slicer thumbnail/estimate. The
+ *  warmer keeps it fresh; the UI reads it instead of the printer. Thumbnail is
+ *  fetched once (immutable per name/size/modified) and kept. */
+export interface DigifabPrinterFilesTable {
+  connection_id: string;
+  device_id: string;
+  name: string;
+  size: number | null;
+  modified: string | null;
+  print_time_sec: number | null;
+  filament_mm: number | null;
+  num_layers: number | null;
+  height: number | null;
+  generated_by: string | null;
+  thumbnail: string | null;
+  /** Null = estimate + thumbnail not yet pulled (the warmer backfills it). */
+  info_fetched_at: Date | null;
+  list_seen_at: Generated<Date>;
+}
+
+/** Per-device cache bookkeeping: when the list was last pulled + warm heartbeat. */
+export interface DigifabPrinterFileMetaTable {
+  connection_id: string;
+  device_id: string;
+  list_fetched_at: Date | null;
+  warm_at: Date | null;
 }
 
 /** A stored 3MF/gcode file you send to machines, with the slicer-embedded plate

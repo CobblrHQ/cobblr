@@ -32,7 +32,7 @@ import {
   observeScanPhoto,
   refreshCatalogImageByName,
 } from "../services/enrich-photo.js";
-import { searchImages, rankImageOptions } from "../services/ddg-images.js";
+import { searchImages, rankImageOptions, imageQuery } from "../services/ddg-images.js";
 import { assembleScanMenu, assembleMergedMenu, runMatchmaker } from "../services/matchmaker.js";
 import { parseReceipt } from "../services/receipt.js";
 import { reportBarcodeCorrection } from "../services/barcode-corrections.js";
@@ -111,10 +111,13 @@ inboxRouter.post(
 
     // Dedup repeated scans of the SAME barcode (the companion app behavior): rather than
     // pile up a new row per scan, bump the quantity on the pending entry that's
-    // already there. Scoped to the same batch + same scan_area so two physically
-    // separate piles stay separate; only for barcode scans (photos/notes/receipts
-    // are each distinct). A re-scan after the item was committed/dismissed starts
-    // fresh — we only match `pending`.
+    // already there. Dedup is GLOBAL across all pending items for that barcode —
+    // NOT scoped to a batch/area (batch-scoping let the same UPC pile up a fresh
+    // row per session, which is exactly how items went "missing": a re-scan in a
+    // new session created a duplicate instead of resurfacing the one you had).
+    // The matched item is re-assigned to the CURRENT session + bumped to the top.
+    // Only for barcode scans (photos/notes/receipts are each distinct); a re-scan
+    // after commit/dismiss starts fresh — we only match `pending`.
     if (body.source_kind === "barcode" && body.barcode) {
       const hasPhoto = !!body.image_file_id;
       // Preferred match when this scan carries a PHOTO: an existing pending entry
@@ -136,9 +139,9 @@ inboxRouter.post(
             .orderBy("created_at", "desc")
             .executeTakeFirst()
         : null;
-      // Otherwise dedup within the same batch + scan_area (two physical piles stay
-      // separate); only for barcode scans. A re-scan after commit/dismiss starts
-      // fresh — we only match `pending`.
+      // Otherwise the most-recent pending entry for this barcode, ANYWHERE (no
+      // batch/area filter — see the note above). Re-scanning the same code always
+      // resurfaces the single row you already have.
       const existing =
         relinkTarget ??
         (await db
@@ -146,12 +149,6 @@ inboxRouter.post(
           .select(["id", "suggested_name", "image_file_id"])
           .where("status", "=", "pending")
           .where("barcode_text", "=", body.barcode)
-          .where((eb) =>
-            body.scan_batch_id
-              ? eb("scan_batch_id", "=", body.scan_batch_id)
-              : eb("scan_batch_id", "is", null),
-          )
-          .where((eb) => (scanArea ? eb("scan_area", "=", scanArea) : eb("scan_area", "is", null)))
           .orderBy("created_at", "desc")
           .executeTakeFirst());
       if (existing) {
@@ -163,6 +160,17 @@ inboxRouter.post(
           .set({
             quantity: sql`quantity + 1`,
             ...(attachPhoto ? { image_file_id: body.image_file_id } : {}),
+            // Move the item into the session it was just re-scanned in, and stamp
+            // the area if this scan carried one — so it groups with the scans
+            // around it (companion app re-assigns batchId on a deduped re-scan too). Leave
+            // them untouched when the scan didn't specify (no session / no area).
+            ...(body.scan_batch_id ? { scan_batch_id: body.scan_batch_id } : {}),
+            ...(scanArea ? { scan_area: scanArea } : {}),
+            // Re-scanning a UPC means "I'm looking at this again" — re-queue it to
+            // the TOP of the inbox. The list sorts by created_at desc, so without
+            // this the deduped row stays buried at its original position and the
+            // user (reasonably) thinks the scan did nothing / went missing.
+            created_at: sql`now()`,
             updated_at: sql`now()`,
           })
           .where("id", "=", existing.id)
@@ -1162,7 +1170,10 @@ inboxRouter.post(
     const db = tenantDb(req);
     const row = await db
       .updateTable("core_scan_inbox_items")
-      .set({ status: "pending", updated_at: new Date() })
+      // Restoring re-queues to the TOP (bump created_at, the list's sort key) so
+      // the recovered item is where the user expects it, not buried at its old
+      // position — the same "where did it go?" trap as a deduped re-scan.
+      .set({ status: "pending", created_at: new Date(), updated_at: new Date() })
       .where("id", "=", id)
       .where("status", "=", "discarded")
       .returningAll()
@@ -1175,6 +1186,36 @@ inboxRouter.post(
   }),
 );
 
+/** Append a triage-action entry to an item's per-item history
+ *  (suggested_metadata.history, last 8) — the user-visible "what you did"
+ *  timeline shown in the source panel. Best-effort; history is cosmetic. */
+async function appendScanHistory(
+  db: ReturnType<typeof tenantDb>,
+  id: string,
+  entry: { action: "rerun" | "wrong" | "enrich" | "confirm"; note?: string | null },
+): Promise<void> {
+  try {
+    const cur = await db
+      .selectFrom("core_scan_inbox_items")
+      .select("suggested_metadata")
+      .where("id", "=", id)
+      .executeTakeFirst();
+    const meta = ((cur?.suggested_metadata ?? {}) as Record<string, unknown>) ?? {};
+    const prev = Array.isArray((meta as { history?: unknown }).history)
+      ? ((meta as { history: unknown[] }).history as unknown[])
+      : [];
+    const e: Record<string, unknown> = { action: entry.action, at: new Date().toISOString() };
+    if (entry.note && entry.note.trim()) e.note = entry.note.trim();
+    await db
+      .updateTable("core_scan_inbox_items")
+      .set({ suggested_metadata: JSON.stringify({ ...meta, history: [...prev, e].slice(-8) }) as never })
+      .where("id", "=", id)
+      .execute();
+  } catch {
+    /* best-effort */
+  }
+}
+
 // ─────────────────────── POST /inbox/:id/rerun-ai ─────────────────
 
 const RerunBody = z.object({
@@ -1183,6 +1224,13 @@ const RerunBody = z.object({
    *  lookup_metadata into the matchmaker prompt as the authoritative
    *  correction. */
   hint: z.string().trim().max(500).optional(),
+  /** "This is wrong" — re-resolve across ALL sources + the web, treat the result
+   *  as authoritative (distrust the flagged answer), and write the correction
+   *  back to BIdb. */
+  wrong: z.boolean().optional(),
+  /** "Right product, but needs detail" — keep the identity, but web-identify
+   *  across the board and accept a fuller name/spec/brand for the same item. */
+  enrich: z.boolean().optional(),
 });
 
 inboxRouter.post(
@@ -1210,6 +1258,13 @@ inboxRouter.post(
       res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
       return;
     }
+    // Record the triage action in the item's history (covers the photo branch's
+    // early return too) so the source panel can show "you asked for more detail".
+    const rerun = RerunBody.safeParse(req.body ?? {}).data;
+    await appendScanHistory(db, id, {
+      action: rerun?.wrong ? "wrong" : rerun?.enrich ? "enrich" : "rerun",
+      note: rerun?.hint,
+    });
     if (!row.barcode_text) {
       // Photo-only path → re-run the vision identify. The vision+match pass runs
       // tens of seconds over the edge relay, so we DON'T hold the request for it
@@ -1262,11 +1317,16 @@ inboxRouter.post(
       // only the tenant row left the shared cache answering with the
       // stale result — the box resolver was never consulted again).
       force: true,
+      // "This is wrong" → web-identify + write the correction back to BIdb;
+      // "needs detail" → keep identity, fill it in. Either way fold in the note.
+      wrong: rerun?.wrong,
+      enrich: rerun?.enrich,
+      hint: rerun?.hint,
     });
 
     // Stamp the user's hint AFTER enrichment (which rewrites
     // suggested_metadata) so the matchmaker sees it as user_hint.
-    const hint = RerunBody.safeParse(req.body ?? {}).data?.hint;
+    const hint = rerun?.hint;
     if (hint) {
       const cur = await db
         .selectFrom("core_scan_inbox_items")
@@ -1321,7 +1381,9 @@ inboxRouter.get(
       .select(["suggested_name", "suggested_manufacturer", "barcode_text"])
       .where("id", "=", id ?? "")
       .executeTakeFirst();
-    const q = row?.suggested_name ?? row?.barcode_text;
+    const q = row?.suggested_name
+      ? imageQuery(row.suggested_name, row.suggested_manufacturer)
+      : row?.barcode_text;
     if (!q) {
       res.json({ items: [] });
       return;
@@ -1340,7 +1402,19 @@ inboxRouter.get(
 // a pasted URL). Downloads into core-files so the image survives the
 // external host; the URL is SSRF-guarded inside downloadCatalogImage.
 
-const CatalogImageBody = z.object({ url: z.string().url().max(2000) });
+// Pick a URL (photo-options strip / pasted), REVERT to the original catalog
+// image, or USE the user's own scan photo as the catalog image. The first
+// override stashes the original refs in suggested_metadata.orig_catalog so a
+// revert can restore them (server-side → survives reload, unlike a client ref).
+const CatalogImageBody = z.union([
+  z.object({ url: z.string().url().max(2000) }),
+  z.object({ action: z.enum(["revert", "use_own_photo"]) }),
+]);
+
+interface OrigCatalog {
+  url: string | null;
+  file_id: string | null;
+}
 
 inboxRouter.post(
   "/inbox/:id/catalog-image",
@@ -1358,22 +1432,77 @@ inboxRouter.post(
     }
     const row = await db
       .selectFrom("core_scan_inbox_items")
-      .select(["id", "barcode_text", "catalog_image_url"])
+      .select([
+        "id",
+        "barcode_text",
+        "catalog_image_url",
+        "catalog_image_file_id",
+        "image_file_id",
+        "suggested_metadata",
+      ])
       .where("id", "=", id ?? "")
       .executeTakeFirst();
     if (!row) {
       res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
       return;
     }
+    const baseMeta = (row.suggested_metadata ?? {}) as Record<string, unknown> & { orig_catalog?: OrigCatalog };
+    // Capture the original ONCE — on the first override — so Revert can restore it.
+    const metaWithOrig = baseMeta.orig_catalog
+      ? baseMeta
+      : { ...baseMeta, orig_catalog: { url: row.catalog_image_url, file_id: row.catalog_image_file_id } };
+    const fresh = () =>
+      db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", row.id).executeTakeFirstOrThrow();
+
+    if ("action" in parsed.data && parsed.data.action === "revert") {
+      const orig = (baseMeta.orig_catalog ?? { url: null, file_id: null }) as OrigCatalog;
+      const { orig_catalog: _drop, ...rest } = baseMeta;
+      void _drop;
+      await db
+        .updateTable("core_scan_inbox_items")
+        .set({
+          catalog_image_url: orig.url,
+          catalog_image_file_id: orig.file_id,
+          suggested_metadata: sql`${JSON.stringify(rest)}::jsonb` as never,
+          updated_at: new Date(),
+        })
+        .where("id", "=", row.id)
+        .execute();
+      res.json(await fresh());
+      return;
+    }
+
+    if ("action" in parsed.data && parsed.data.action === "use_own_photo") {
+      if (!row.image_file_id) {
+        res.status(400).json({ error: { code: "no_photo", message: "This item has no photo of yours to use." } });
+        return;
+      }
+      await db
+        .updateTable("core_scan_inbox_items")
+        .set({
+          catalog_image_file_id: row.image_file_id,
+          catalog_image_url: null,
+          suggested_metadata: sql`${JSON.stringify(metaWithOrig)}::jsonb` as never,
+          updated_at: new Date(),
+        })
+        .where("id", "=", row.id)
+        .execute();
+      res.json(await fresh());
+      return;
+    }
+
+    // A picked/pasted URL: stash the original, set + download it.
+    const url = (parsed.data as { url: string }).url;
     await db
       .updateTable("core_scan_inbox_items")
-      .set({ catalog_image_url: parsed.data.url, updated_at: new Date() })
+      .set({
+        catalog_image_url: url,
+        suggested_metadata: sql`${JSON.stringify(metaWithOrig)}::jsonb` as never,
+        updated_at: new Date(),
+      })
       .where("id", "=", row.id)
       .execute();
-    await downloadCatalogImage(
-      { db, orgSlug: ctx.org.slug, bearer: token, itemId: row.id },
-      parsed.data.url,
-    );
+    await downloadCatalogImage({ db, orgSlug: ctx.org.slug, bearer: token, itemId: row.id }, url);
     // Picking a better catalog photo for a BARCODE item is the truth — feed it
     // back to the shared Barcode Intelligence DB as an image_url correction, so
     // the next scan of this UPC (any workspace) gets YOUR clean image, beating
@@ -1383,16 +1512,56 @@ inboxRouter.post(
         upc: row.barcode_text,
         field: "image_url",
         was: row.catalog_image_url,
-        now: parsed.data.url,
+        now: url,
         userId: sessionUser(req).id,
       });
     }
-    const fresh = await db
+    res.json(await fresh());
+  }),
+);
+
+// ──────────────────── POST /inbox/:id/confirm-barcode ────────────────
+// "This listing is good — lock it in." Promote the item's CURRENT resolved
+// fields (name / brand / category / catalog image) into the shared Barcode
+// Intelligence DB as VERIFIED corrections (a write-token → instant override),
+// so every future scan of this UPC — in any workspace — gets this clean entry
+// instead of a thin crowdsourced one. Barcode items only (BIdb is UPC-keyed).
+// Doesn't touch the item or commit it to inventory — that's the Confirm button.
+inboxRouter.post(
+  "/inbox/:id/confirm-barcode",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const id = req.params.id;
+    if (!id) {
+      res.status(400).json({ error: { code: "missing_id", message: "id required" } });
+      return;
+    }
+    const db = tenantDb(req);
+    const row = await db
       .selectFrom("core_scan_inbox_items")
       .selectAll()
-      .where("id", "=", row.id)
-      .executeTakeFirstOrThrow();
-    res.json(fresh);
+      .where("id", "=", id)
+      .executeTakeFirst();
+    if (!row) {
+      res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
+      return;
+    }
+    if (!row.barcode_text) {
+      res.status(400).json({ error: { code: "no_barcode", message: "only barcode items can be locked into the barcode database" } });
+      return;
+    }
+    const userId = sessionUser(req).id;
+    const meta = (row.suggested_metadata ?? {}) as { category?: unknown };
+    const cat = typeof meta.category === "string" ? meta.category : null;
+    // Verify each non-blank field (the helper no-ops a blank `now`).
+    await Promise.allSettled([
+      reportBarcodeCorrection({ upc: row.barcode_text, field: "title", was: row.suggested_name, now: row.suggested_name, userId, confirm: true }),
+      reportBarcodeCorrection({ upc: row.barcode_text, field: "brand", was: row.suggested_manufacturer, now: row.suggested_manufacturer, userId, confirm: true }),
+      reportBarcodeCorrection({ upc: row.barcode_text, field: "category", was: cat, now: cat, userId, confirm: true }),
+      reportBarcodeCorrection({ upc: row.barcode_text, field: "image_url", was: row.catalog_image_url, now: row.catalog_image_url, userId, confirm: true }),
+    ]);
+    await appendScanHistory(db, id, { action: "confirm" });
+    res.json(await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", id).executeTakeFirst());
   }),
 );
 
@@ -1498,10 +1667,27 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
     const idSource = ((row.suggested_metadata ?? {}) as { source?: string }).source ?? "";
     const REAL_BARCODE_SOURCES = new Set(["go-upc", "openfoodfacts", "openproductsfacts", "upcitemdb"]);
     const barcodeIdentified = !!row.barcode_text && !!row.suggested_name && REAL_BARCODE_SOURCES.has(idSource);
+    // For web-search / photo (NON-curated) items the matchmaker's candidate name
+    // is the reconciled one its note describes — publisher / author-parenthetical /
+    // retailer-noise stripped (a book: "Delmar Cengage Learning … (Whitman)" →
+    // "Refrigeration & Air Conditioning Technology"). Adopt it as the displayed
+    // name so the name and the note AGREE (the note kept claiming a cleanup the
+    // header didn't reflect). Guards: only when it changed, and never DROP a
+    // size/spec the resolved name carried (keep #384's "1.75 L").
+    const candName =
+      top && typeof top === "object" && "name" in top ? String((top as { name?: string }).name ?? "").trim() : "";
+    const SPEC_RE =
+      /\b\d+(?:\.\d+)?\s?(?:ml|cl|l|fl\.?\s?oz|oz|g|kg|mg|lb|ct|pk|pack|count|gal|qt|pt|proof|%)\b/i;
+    const adoptName =
+      !!candName &&
+      !barcodeIdentified &&
+      candName.toLowerCase() !== (row.suggested_name ?? "").toLowerCase() &&
+      !(SPEC_RE.test(row.suggested_name ?? "") && !SPEC_RE.test(candName));
     await dbAfter
       .updateTable("core_scan_inbox_items")
       .set({
         suggested_candidates: JSON.stringify(candidates) as never,
+        ...(adoptName ? { suggested_name: candName } : {}),
         suggested_metadata: JSON.stringify({
           ...((row.suggested_metadata ?? {}) as Record<string, unknown>),
           ...(photoObservations ? { photo_observations: photoObservations } : {}),
@@ -1523,6 +1709,31 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
       .where("id", "=", opts.itemId)
       .execute();
     return candidates;
+  } catch (err) {
+    // The match FAILED before stamping matched_at — the menu fetch, the model
+    // call, or (classically) a write on the now-stale tenant pool after the
+    // model ran for minutes. Without a matched_at stamp the card spins on
+    // "finding the best table…" FOREVER (serverMatching keys off its absence),
+    // with no give-up. Best-effort: stamp matched_at (+ a match_failed marker) so
+    // the UI stops spinning and shows the resolved name; the user can re-run or
+    // route by hand. Re-acquire the pool; swallow a second failure quietly.
+    console.error(`[core-scan] matchItem ${opts.itemId} failed:`, (err as Error).message);
+    try {
+      const dbErr = (await platform().tenants.getDb(opts.orgId)) as unknown as ReturnType<typeof tenantDb>;
+      await dbErr
+        .updateTable("core_scan_inbox_items")
+        .set({
+          suggested_metadata:
+            sql`coalesce(suggested_metadata, '{}'::jsonb) || jsonb_build_object('matched_at', now()::text, 'match_failed', true)` as never,
+          ai_suggested_at: sql`coalesce(ai_suggested_at, now())` as never,
+          updated_at: new Date(),
+        })
+        .where("id", "=", opts.itemId)
+        .execute();
+    } catch (e2) {
+      console.error(`[core-scan] matchItem ${opts.itemId} fail-stamp also failed:`, (e2 as Error).message);
+    }
+    return null;
   } finally {
     matchInFlight.delete(opts.itemId);
   }

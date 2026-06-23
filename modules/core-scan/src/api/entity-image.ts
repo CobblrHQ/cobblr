@@ -9,6 +9,7 @@ import { z } from "zod";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { bearer } from "../db.js";
 import { enrichEntityImage } from "../services/entity-image.js";
+import { searchImages, rankImageOptions } from "../services/ddg-images.js";
 
 export const entityImageRouter = Router({ mergeParams: true });
 
@@ -17,7 +18,25 @@ const Body = z.object({
   entity_id: z.string().min(1).max(100),
   query: z.string().min(2).max(200),
   instance: z.string().max(80).nullable().optional(),
+  /** A specific web-image url the user picked (skips auto-search). */
+  image_url: z.string().url().max(2000).optional(),
 });
+
+// GET /image-options?q=<query>&brand=<brand> — generic web-image candidates for
+// ANY entity (the universal "search the web for a photo" strip). Same DDG search
+// + catalog-quality ranking the scan inbox uses, decoupled from a scan item.
+const OptionsQuery = z.object({ q: z.string().min(2).max(200), brand: z.string().max(120).optional() });
+entityImageRouter.get(
+  "/image-options",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const parsed = OptionsQuery.safeParse(req.query);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const pool = await searchImages(parsed.data.q, 24).catch(() => []);
+    const items = rankImageOptions(pool, parsed.data.brand ?? null).slice(0, 12);
+    res.json({ items });
+  }),
+);
 
 entityImageRouter.post(
   "/entity-image",
@@ -39,6 +58,7 @@ entityImageRouter.post(
       entityId: parsed.data.entity_id,
       query: parsed.data.query,
       instance: parsed.data.instance ?? null,
+      imageUrl: parsed.data.image_url ?? null,
     });
     res.json({ image_path });
   }),

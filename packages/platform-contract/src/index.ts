@@ -902,10 +902,35 @@ export type CreateDefaultsProvider = (
   ctx: CreateDefaultsContext,
 ) => Promise<Record<string, unknown>>;
 
+/** In-process create/update/delete for one kind, registered by the owning
+ *  module. The WRITE counterpart to EntityResolver — used by cross-module
+ *  writers (the sync engine) that have no HTTP request / user token. The
+ *  writer resolves its own tenant db from orgId and runs the module's own
+ *  validation + events. */
+export interface EntityWriter {
+  /** Create an entity; returns the new entity's id. */
+  create(orgId: string, fields: Record<string, unknown>): Promise<string>;
+  update(orgId: string, id: string, fields: Record<string, unknown>): Promise<void>;
+  delete(orgId: string, id: string): Promise<void>;
+  /** Optional: existing entities of this kind, for a natural-key match during
+   *  an import preview — so a one-time import MERGES a source record into an
+   *  already-present row (same name) instead of duplicating it. Without this,
+   *  an importer treats every unmapped source record as a brand-new create. */
+  listForMatch?(
+    orgId: string,
+  ): Promise<Array<{ id: string; name: string; parentId?: string | null }>>;
+}
+
 export interface PlatformEntities {
   /** Register a resolver for one kind. Called from a module's
    *  api/index.ts at module-load time. */
   registerResolver(kind: string, resolver: EntityResolver): void;
+  /** Register an in-process WRITER for one kind (create/update/delete).
+   *  Lets cross-module writers (the sync engine) mutate this kind without
+   *  an HTTP loopback or user token. */
+  registerWriter(kind: string, writer: EntityWriter): void;
+  /** Resolve a registered writer for a kind, or null. */
+  getWriter(kind: string): EntityWriter | null;
   /** Register a list-resolver for a kind. Optional — without one,
    *  list() returns an empty result. Modules opt in when they want
    *  their kind to appear in core-views, search results, etc. */
@@ -1323,6 +1348,78 @@ export interface PlatformNotifications {
   orgMemberIds(orgId: string): Promise<string[]>;
 }
 
+// ── sync connectors (mirror external records into Cobblr entities) ──
+// The typed runtime the sync engine drives. A declarative / AI-authored
+// manifest layer can later compile down to this same shape.
+
+export interface SyncFetchContext {
+  orgId: string;
+  baseUrl: string;
+  credentials: Record<string, unknown>;
+  /** SSRF-guarded fetch injected by the engine — use this, not global fetch. */
+  fetch: typeof fetch;
+}
+
+export interface SyncRecord {
+  externalId: string;
+  parentExternalId?: string | null;
+  fields: Record<string, unknown>;
+  deleted?: boolean;
+}
+
+export interface SyncEntityType {
+  key: string;
+  label: string;
+  targetKind: string;
+  fetchAll: (ctx: SyncFetchContext) => Promise<SyncRecord[]>;
+  fetchOne?: (ctx: SyncFetchContext, externalId: string) => Promise<SyncRecord | null>;
+}
+
+export interface SyncWebhookHit {
+  entityType: string;
+  externalId: string;
+  deleted?: boolean;
+  record?: SyncRecord;
+}
+
+export interface SyncConnector {
+  id: string;
+  label: string;
+  describeCredentials: () => Record<string, { label: string; secret: boolean }>;
+  describeConfig?: () => Record<string, { label: string; placeholder?: string }>;
+  entityTypes: SyncEntityType[];
+  testConnection?: (ctx: SyncFetchContext) => Promise<{ ok: boolean; error?: string }>;
+  parseWebhook?: (
+    body: unknown,
+    headers: Record<string, string | string[] | undefined>,
+  ) => SyncWebhookHit | null;
+}
+
+/** What a reconcile WOULD do to one source record, computed without writing —
+ *  the unit of an import preview. 'link' = merge into an existing same-name
+ *  Cobblr entity instead of creating a duplicate. */
+export interface ImportPlanItem {
+  externalId: string;
+  name: string;
+  action: "create" | "update" | "link" | "unchanged" | "delete";
+  /** The existing Cobblr entity this row touches (link / update / delete). */
+  cobblrId?: string | null;
+}
+
+export interface ImportPlan {
+  entityType: string;
+  targetKind: string;
+  counts: {
+    create: number;
+    update: number;
+    link: number;
+    unchanged: number;
+    delete: number;
+    total: number;
+  };
+  items: ImportPlanItem[];
+}
+
 export interface PlatformIntegrations {
   /** Register an outbound connector. */
   registerConnector(c: {
@@ -1365,6 +1462,21 @@ export interface PlatformIntegrations {
       },
     ) => Promise<{ status: number; body?: unknown }>;
   }): void;
+  /** Register a SYNC connector — mirrors external records into a Cobblr
+   *  entity kind. The typed runtime the sync engine drives. */
+  registerSyncConnector(c: SyncConnector): void;
+  /** Resolve a registered sync connector by id (the engine needs its live
+   *  fetch fns), or null. */
+  getSyncConnector(id: string): SyncConnector | null;
+  /** List registered sync connectors for the "Add connection" picker
+   *  (metadata only — no live fns). */
+  listSyncConnectors(): Array<{
+    id: string;
+    label: string;
+    credentials: Record<string, { label: string; secret: boolean }>;
+    config: Record<string, { label: string; placeholder?: string }>;
+    entityTypes: Array<{ key: string; label: string; targetKind: string }>;
+  }>;
   /** List registered outbound connectors. Used by the connector
    *  catalogue endpoint to render the "Add connector" picker. */
   listConnectors(): Array<{
@@ -1589,6 +1701,12 @@ export interface EdgeRequest {
    *  are added in Cobblr and ride down with each call. Absent for the AI channel
    *  and for a statically-configured bridge. */
   instance?: { id: string; driver: string; config: Record<string, unknown> };
+  /** Generic local-source proxy (sync connectors): instead of a driver, the
+   *  bridge performs a plain HTTP request to `baseUrl + path` with `headers` and
+   *  returns the result. Lets a hosted sync connector reach a LAN source (e.g.
+   *  companion app) over the dial-out relay — the cloud never touches the private
+   *  address. Mutually exclusive with `instance`. */
+  source?: { baseUrl: string; headers?: Record<string, string> };
 }
 
 export interface EdgeResponse {
@@ -1609,6 +1727,20 @@ export interface PlatformEdge {
   hasChannel(orgId: string): boolean;
   /** Send a request to the workspace's edge; rejects if none is connected. */
   send(orgId: string, req: EdgeRequest): Promise<EdgeResponse>;
+}
+
+/** The single per-tenant egress policy every external-HTTP path routes through —
+ *  consistent SSRF posture across sync connectors, device drivers, webhooks, and
+ *  module polls (replaces the historic divergent per-module guards). */
+export interface PlatformEgress {
+  /** SSRF-guarded outbound fetch for a tenant. Link-local/metadata is always
+   *  blocked. On a HOSTED instance (COBBLR_HOSTED=true) a private/internal target
+   *  is blocked UNLESS a registered allow-provider permits it for this org (the
+   *  tenant's own registered edge endpoint); a self-hosted instance allows LAN. */
+  guardedFetch(orgId: string, input: string | URL | Request, init?: RequestInit): Promise<Response>;
+  /** Register a per-tenant allow-provider — e.g. the edge module exposing the
+   *  org's registered bridge endpoints. Returns true to permit a private target. */
+  registerAllow(provider: (orgId: string, ip: string, url: URL) => boolean | Promise<boolean>): void;
 }
 
 /** Cross-tenant key/value cache in cobblr_meta. For data that is the SAME for
@@ -2162,6 +2294,7 @@ export interface Platform {
   integrations: PlatformIntegrations;
   ai: PlatformAi;
   edge: PlatformEdge;
+  egress: PlatformEgress;
   auth: PlatformAuth;
   pairings: PlatformPairings;
   catalogs: PlatformCatalogs;

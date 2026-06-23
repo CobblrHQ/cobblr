@@ -16,7 +16,7 @@
 //      name stands.
 
 import { platform } from "@cobblr/platform-contract";
-import { searchImages, searchText, rankImageOptions, type DdgImageResult } from "./ddg-images.js";
+import { searchImages, searchText, rankImageOptions, imageQuery, type DdgImageResult } from "./ddg-images.js";
 
 export interface WebSearchProduct {
   name: string;
@@ -206,20 +206,38 @@ export function gs1Country(upc: string): string | null {
   return null;
 }
 
-export async function llmIdentify(orgId: string, upc: string, titles: string[]): Promise<LlmIdentity | null> {
+export async function llmIdentify(
+  orgId: string,
+  upc: string,
+  titles: string[],
+  hint?: string | null,
+): Promise<LlmIdentity | null> {
   const system =
     "You identify ONE retail product from its barcode (UPC/EAN) and any " +
     "web-search result titles provided. PREFER the titles when present — they " +
     "come from retailer and barcode-database pages, and agreement across them " +
-    "is a strong signal. If NO titles are given but you genuinely recognize " +
+    "is a strong signal. When the titles describe DIFFERENT products, identify " +
+    "the one the MAJORITY converge on — the brand+model that RECURS across the " +
+    "most titles wins. A product named in only ONE title, or appearing under " +
+    "'Related', 'You may also like', 'Sponsored', 'Customers also bought', " +
+    "'Similar items', or as an accessory/part-for, is cross-sell NOISE — do NOT " +
+    "pick it over the recurring product just because it looks more specific. " +
+    "If NO titles are given but you genuinely recognize " +
     "this specific barcode, you MAY identify it from your own knowledge — but " +
     "ONLY when you are actually confident. If you would be guessing, or the " +
     "titles are junk/contradictory/not a real product, reply name null and " +
     "confidence 0. NEVER fabricate a product. Then give a coarse category and " +
     "say whether it's an 'asset' (a discrete, individually-tracked whole item " +
     "— a tool, device, appliance, machine) or a 'part' (a component, " +
-    "consumable, material or supply).\n\n" +
-    'Reply with ONLY a JSON object: {"name": <brand + model + what it is, or null>, ' +
+    "consumable, material or supply).\n" +
+    "IMPORTANT — keep the SPEC, drop the fluff: the name MUST include any package " +
+    "size / quantity the result titles show (a volume like '1.75 L' or '750 mL', a " +
+    "net weight, a count like '12 ct', proof) — that's what identifies the specific " +
+    "SKU and is the whole point of the lookup. Do NOT pad the name with marketing " +
+    "adjectives ('premium', 'smooth', 'award-winning'); brand + what it is + the " +
+    "size is the ideal name.\n\n" +
+    'Reply with ONLY a JSON object: {"name": <brand + what it is + package size/qty ' +
+    'the titles show (e.g. "Bulleit Bourbon Whiskey 1.75 L"), or null>, ' +
     '"brand": <string|null>, "sku": <model/SKU or null>, "category": <one or two ' +
     'words, e.g. "power tool", "fastener", "filament", or null>, "entity_type": ' +
     '"asset"|"part"|null, "confidence": <0..1 — your genuine certainty>}.';
@@ -234,7 +252,10 @@ export async function llmIdentify(orgId: string, upc: string, titles: string[]):
   const countryHint = country
     ? `\nGS1 prefix hint: this barcode is registered in ${country} (a weak clue to the maker, not proof of origin).`
     : "";
-  const user = `UPC: ${upc}${countryHint}\n\n${titleBlock}`;
+  // The user's correction note (from the "This is wrong" button) is the strongest
+  // signal there is — a human looking at the physical item. Lead with it.
+  const hintBlock = hint && hint.trim() ? `\nUSER CORRECTION (authoritative — a person is looking at the item): ${hint.trim()}\n` : "";
+  const user = `UPC: ${upc}${countryHint}${hintBlock}\n\n${titleBlock}`;
 
   const call = platform()
     .ai.invoke({
@@ -278,7 +299,11 @@ export async function llmIdentify(orgId: string, upc: string, titles: string[]):
  * search backend is down or the UPC turns up nothing usable — the
  * caller then falls through to its existing "fill in manually" path.
  */
-export async function resolveBarcodeViaWebSearch(orgId: string, upc: string): Promise<WebSearchProduct | null> {
+export async function resolveBarcodeViaWebSearch(
+  orgId: string,
+  upc: string,
+  hint?: string | null,
+): Promise<WebSearchProduct | null> {
   const code = upc.trim();
   if (!code) return null;
 
@@ -311,7 +336,7 @@ export async function resolveBarcodeViaWebSearch(orgId: string, upc: string): Pr
 
   // Stage 2 — folded identify+classify via core-ai. Reached even with zero
   // titles; the heuristic floor only applies when titles actually existed.
-  const llm = await llmIdentify(orgId, code, rawTitles.slice(0, 12));
+  const llm = await llmIdentify(orgId, code, rawTitles.slice(0, 12), hint);
 
   const name = llm?.name ?? heuristicName;
   if (!name) return null; // genuinely nothing — caller falls to "fill in manually"
@@ -325,7 +350,7 @@ export async function resolveBarcodeViaWebSearch(orgId: string, upc: string): Pr
       // Rank by catalog quality (retail/brand domain + square-ish) and take the
       // best — NOT the first DDG hit, which is often a recipe-blog / social /
       // styled photo. The clean studio shot is usually buried a few results down.
-      const byName = await searchImages(name, 24);
+      const byName = await searchImages(imageQuery(name, llm?.brand), 24);
       imageUrl = rankImageOptions(byName, llm?.brand)[0]?.url ?? null;
     } catch {
       imageUrl = null; // best-effort; the row is still useful without a photo

@@ -19,6 +19,8 @@ export interface RemoteDevice {
    *  manager reports one. Cockpit display only — answers "why isn't it printing
    *  yet". */
   stage?: string | null;
+  /** Live job progress, when this device is mid-print. Cockpit display only. */
+  job?: DeviceJob | null;
   /** A webcam/MJPEG/HLS stream URL the MANAGER serves for this device, if it
    *  exposes one. Cobblr only embeds the URL — it never proxies the video
    *  (coordinate-not-control). A user can also set one manually per device. */
@@ -27,6 +29,17 @@ export interface RemoteDevice {
    *  Bambu LAN driver attaches its MQTT report). Lets the cloud ingest LAN
    *  telemetry as the source of truth for LAN-only / prefer-LAN modes. */
   raw?: Record<string, unknown> | null;
+}
+
+/** Live job progress while a device is printing — cockpit display only. */
+export interface DeviceJob {
+  /** 0..1 fraction printed. */
+  fractionPrinted?: number;
+  currentLayer?: number;
+  /** Estimated seconds remaining. */
+  timeLeftSec?: number;
+  /** Seconds elapsed so far. */
+  durationSec?: number;
 }
 
 /** Live temperatures (°C). `actual` is the reading; `target` the setpoint. */
@@ -148,6 +161,37 @@ export interface MachineDriver {
   /** OPTIONAL — grab one JPEG camera frame (e.g. Bambu LAN chamber camera over
    *  the bridge). A refreshing still, not a stream. Undefined → no camera. */
   getCameraFrame?(): Promise<Buffer | null>;
+  /** OPTIONAL — list the gcode files already on the machine's storage (the
+   *  printer's SD/USB), so the UI can show what's there without re-uploading.
+   *  Read-only; Cobblr caches it (it changes rarely). Undefined → no file list. */
+  listFiles?(deviceId: string): Promise<RemoteFile[]>;
+  /** OPTIONAL — start a file ALREADY on the machine's storage (no re-upload),
+   *  e.g. one returned by listFiles. Undefined → not supported. */
+  printFile?(deviceId: string, name: string): Promise<CommandResult>;
+  /** OPTIONAL — slicer metadata for one on-disk file (print-time/filament/layers),
+   *  for the file list. Undefined → not supported. */
+  fileInfo?(deviceId: string, name: string): Promise<RemoteFileInfo | null>;
+}
+
+/** A file already on a machine's own storage (display-only). */
+export interface RemoteFile {
+  name: string;
+  size?: number; // bytes
+  modified?: string; // ISO-8601 when the machine reports it
+}
+
+/** Slicer metadata for one on-disk file — print-time + filament estimate. */
+export interface RemoteFileInfo {
+  name: string;
+  size?: number;
+  printTimeSec?: number;
+  filamentMm?: number;
+  height?: number;
+  layerHeight?: number;
+  numLayers?: number;
+  generatedBy?: string;
+  /** The slicer's embedded preview as a data URI, when the gcode carries one. */
+  thumbnail?: string;
 }
 
 /** Ack of a command-and-forget actuator call. No job to poll. */

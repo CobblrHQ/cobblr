@@ -808,7 +808,7 @@ export function ScanCameraPage() {
               Stamped on everything you scan or photograph this session, so triage
               knows where it lives.
             </p>
-            <LocationPicker value={areaId} onChange={setAreaId} label="Area" />
+            <LocationPicker value={areaId} onChange={setAreaId} label="Area" kind="area" />
             <div className="flex justify-end gap-2 pt-1">
               {areaId && (
                 <button

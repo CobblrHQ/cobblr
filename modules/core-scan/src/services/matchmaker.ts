@@ -503,12 +503,13 @@ export async function runMatchmaker(
     "other source. Omit only what nothing in the data supports; never invent. Strip " +
     "retailer noise from `name` ('Amazon.com:', '1 Pack Of 9 Skein' suffixes " +
     "-> a clean product name).\n" +
-    "3. On the FIRST candidate only, add `notes`: 2-4 smooth, natural " +
-    "sentences reconciling the data — what the barcode DB, attributes, and " +
-    "title each contributed, what you inferred, and anything that disagrees " +
-    "or is missing. Pleasant, complete prose (not telegraphic fragments), " +
-    "but every sentence must carry information — no filler, praise, or " +
-    "hedging boilerplate. Be careful with counts: a 'Pack of N' in a " +
+    "3. On the FIRST candidate, add `notes` ONLY when something genuinely " +
+    "needed reconciling or inferring — a disagreement between the title, " +
+    "attributes, and/or photo_observations; a field you inferred rather than " +
+    "read; or an unconfirmed pack/count. Then write ONE short, natural " +
+    "sentence, information-only (no filler, praise, or hedging). For a clean, " +
+    "unambiguous match where nothing needed reconciling, OMIT `notes` entirely " +
+    "— do not narrate an obvious agreement. Be careful with counts: a 'Pack of N' in a " +
     "retailer-style TITLE describes that retailer's LISTING, not " +
     "necessarily the scanned unit — unit barcodes appear on multipack " +
     "listings constantly. Set `quantity` (integer) only when " +
@@ -521,7 +522,7 @@ export async function runMatchmaker(
     "Always strip pack suffixes from `name` regardless.\n\n" +
     'Reply with ONLY JSON: {"candidates":[{"module":<string>,"instance":<string|null>,' +
     '"confidence":<0..1>,"name":<string>,"fields":{<field_name>:<value>},' +
-    '"notes":<string, first candidate only>,"quantity":<int, optional>}]}. ' +
+    '"notes":<string, first candidate ONLY when reconciling is needed; else omit>,"quantity":<int, optional>}]}. ' +
     "Inside string values NEVER use the double-quote character — quote words " +
     "with single quotes ('medium weight') — or the JSON will not parse. " +
     "Order candidates best-first. confidence is how well the table fits the item.";

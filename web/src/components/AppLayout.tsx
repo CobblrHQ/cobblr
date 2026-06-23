@@ -117,7 +117,9 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
         className={`relative z-30 border-b backdrop-blur overflow-x-clip ${envBadge ? envBadge.header : DEFAULT_HEADER}`}
         style={skin ? { borderTop: "4px solid var(--app-accent)" } : undefined}
       >
-        <div className="max-w-6xl mx-auto px-5 py-3 flex items-center gap-2 sm:gap-3 min-w-0">
+        {/* Header chrome spans the FULL window (no max-width cap) so the module
+            nav gets the whole row; page content below stays centred at max-w-6xl. */}
+        <div className="px-5 py-3 flex items-center gap-2 sm:gap-3 min-w-0">
           {/* Brand — never compressed. Cobblr mark + wordmark always present. */}
           <Link
             to="/"

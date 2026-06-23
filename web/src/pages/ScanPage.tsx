@@ -16,6 +16,7 @@
 // nothing enriches it yet — a dead control is worse than none.
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -24,6 +25,7 @@ import {
   ChevronDown,
   ExternalLink,
   FileText,
+  Flag,
   Loader2,
   MapPin,
   MonitorSmartphone,
@@ -35,6 +37,7 @@ import {
 } from "lucide-react";
 import { Modal, useImageSrc, useToast, usePageTitle } from "@cobblr/platform-web";
 import { LocationPicker } from "../components/LocationPicker";
+import { ImageSearchPicker } from "../components/ImageSearchPicker";
 import { decideLocationScan, filingLabel } from "../lib/scanFiling";
 import {
   type AiStatus,
@@ -47,6 +50,7 @@ import {
 } from "../lib/api";
 import { matchParentType, readField } from "../lib/parent-type-match";
 import { useBarcodeWedge } from "../lib/useBarcodeWedge";
+import { resolveSessionBatch, clearScanSession, readScanSession, isSessionFresh } from "../lib/scanSession";
 import { tabBrowserId } from "../hooks/useBrowserDrive";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useAuth } from "../auth/AuthContext";
@@ -84,6 +88,60 @@ interface ScanDrive {
  *  workspace grant to `navigate` (if it was off), claims THIS tab, and routes
  *  scans through POST /scan-drive. Turning off releases the tab and restores the
  *  grant if WE raised it — never clobbering a separately-enabled Claude grant. */
+/** "Today 2:48 PM" / "Yesterday 4:10 PM" / "Jun 21, 2:48 PM" — a scan session's
+ *  when, for the grouped-inbox headers. */
+function formatSessionTime(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return "Earlier";
+  const d = new Date(ms);
+  const now = new Date();
+  const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const sameDate = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  const yest = new Date(now);
+  yest.setDate(now.getDate() - 1);
+  if (sameDate(d, now)) return `Today ${time}`;
+  if (sameDate(d, yest)) return `Yesterday ${time}`;
+  return `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}, ${time}`;
+}
+
+/** "Today" / "Yesterday" / "Jun 21" — the DAY header for loose (un-batched) scans
+ *  grouped by calendar day. */
+function formatDay(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return "Earlier";
+  const d = new Date(ms);
+  const now = new Date();
+  const sameDate = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  const yest = new Date(now);
+  yest.setDate(now.getDate() - 1);
+  if (sameDate(d, now)) return "Today";
+  if (sameDate(d, yest)) return "Yesterday";
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+/** Compact relative time for an inbox item's last touch ("just now", "10 min
+ *  ago", "3 h ago", "2 d ago") — so you can see how stale this listing is. */
+function timeAgo(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const ms = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return "";
+  const m = Math.floor(ms / 60000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m} min ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} h ago`;
+  const d = Math.floor(h / 24);
+  return `${d} d ago`;
+}
+
+/** Local calendar-day key (YYYY-M-D in the viewer's timezone) — groups loose
+ *  scans by the day they happened, not UTC (so a late-evening scan doesn't split
+ *  across UTC midnight). */
+function localDayKey(ms: number): string {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+}
+
 function useScanDrive(slug: string | undefined, batchId: string | undefined): ScanDrive {
   const toast = useToast();
   const qc = useQueryClient();
@@ -155,7 +213,17 @@ function useScanDrive(slug: string | undefined, batchId: string | undefined): Sc
   }, [slug, on, qc]);
 
   const scanMut = useMutation({
-    mutationFn: (code: string) => api.scanDrive(slug!, code, batchId),
+    mutationFn: async (code: string) => {
+      // An explicit ?batch (reviewing one session) wins; otherwise group scans
+      // into a time-gap session so the hardware scanner's scans aren't sessionless.
+      const sessionBatch =
+        batchId ??
+        (await resolveSessionBatch(slug!, () =>
+          api.createScanBatch(slug!).then((b) => b.id).catch(() => null),
+        )) ??
+        undefined;
+      return api.scanDrive(slug!, code, sessionBatch);
+    },
     onSuccess: (r) => {
       void qc.invalidateQueries({ queryKey: ["scan-inbox", slug] });
       // The driven tab is navigated server-push via the DriveBanner stream. If
@@ -518,6 +586,47 @@ export function ScanPage() {
   const [reviewOnly, setReviewOnly] = useState(false);
   const reviewCount = items.filter(needsReview).length;
   const visibleItems = reviewOnly ? items.filter(needsReview) : items;
+
+  // Group the inbox for the grouped view (skipped when already scoped to one
+  // session via ?batch). An explicit scan SESSION (scan_batch_id) is one group;
+  // loose scans with NO batch group by their calendar DAY. So a hardware-scanner
+  // session reads as one timed group, and legacy / un-batched items still read as
+  // coherent "Today / Yesterday / <date>" buckets instead of one undifferentiated
+  // "No session" lump. Newest group first; items keep their created_at-desc order.
+  const sessionGroups = useMemo(() => {
+    if (batchId) return null;
+    const groups = new Map<
+      string,
+      { key: string; isBatch: boolean; items: ScanInboxItem[]; latest: number; area: string | null }
+    >();
+    for (const it of visibleItems) {
+      const t = Date.parse(it.created_at);
+      const key = it.scan_batch_id ?? `day:${Number.isFinite(t) ? localDayKey(t) : "unknown"}`;
+      let g = groups.get(key);
+      if (!g) {
+        g = { key, isBatch: !!it.scan_batch_id, items: [], latest: 0, area: null };
+        groups.set(key, g);
+      }
+      g.items.push(it);
+      if (Number.isFinite(t) && t > g.latest) g.latest = t;
+      if (!g.area && it.scan_area) g.area = it.scan_area;
+    }
+    return [...groups.values()].sort((a, b) => b.latest - a.latest);
+  }, [batchId, visibleItems]);
+  // Every group (session or day) carries a meaningful time header now, so show
+  // them whenever we're grouping at all.
+  const showSessionHeaders = !!sessionGroups && sessionGroups.length > 0;
+  const [collapsedSessions, setCollapsedSessions] = useState<Set<string>>(new Set());
+  const toggleSession = (key: string) =>
+    setCollapsedSessions((s) => {
+      const next = new Set(s);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  // The active scanning session (localStorage), for the "Scanning into…" chip.
+  const activeSession = readScanSession(activeSlug ?? "");
+  const sessionActive = isSessionFresh(activeSession);
 
   // Auto-retry rate-limited scans, one at a time, paced. Rapid scanning throttles
   // the resolver (go-upc gate / upcitemdb burst); those rows are tagged
@@ -1112,6 +1221,23 @@ export function ScanPage() {
         </div>
       )}
 
+      {sessionActive && !batchId && (
+        <div className="mb-2 flex items-center gap-2 rounded-md border border-line dark:border-slate-700 bg-surface/60 dark:bg-slate-800/30 px-2.5 py-1.5 text-xs text-muted">
+          <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
+          <span>Scanning into the current session — scans group together until 30 min idle.</span>
+          <button
+            type="button"
+            onClick={() => {
+              clearScanSession(activeSlug);
+              toast.success("Next scan starts a new session");
+            }}
+            className="ml-auto shrink-0 rounded px-1.5 py-0.5 font-medium text-accent hover:bg-accent/10"
+          >
+            New session
+          </button>
+        </div>
+      )}
+
       <div className="space-y-2">
         {pendingScans.map((p) => (
           <div
@@ -1127,18 +1253,46 @@ export function ScanPage() {
             </div>
           </div>
         ))}
-        {visibleItems.map((item) => (
-          <InboxCard
-            key={item.id}
-            item={item}
-            pageTarget={target}
-            menu={menu}
-            hasLocations={hasLocations}
-            selected={selected.has(item.id)}
-            onToggleSelect={() => toggleSelected(item.id)}
-            rateLimitGaveUp={rlGaveUp.has(item.id)}
-          />
-        ))}
+        {(() => {
+          const card = (item: ScanInboxItem) => (
+            <InboxCard
+              key={item.id}
+              item={item}
+              pageTarget={target}
+              menu={menu}
+              hasLocations={hasLocations}
+              selected={selected.has(item.id)}
+              onToggleSelect={() => toggleSelected(item.id)}
+              rateLimitGaveUp={rlGaveUp.has(item.id)}
+            />
+          );
+          // Flat list when there's nothing to group by (scoped ?batch view).
+          if (!showSessionHeaders || !sessionGroups) return visibleItems.map(card);
+          // Otherwise a collapsible header per group: a real session shows its
+          // time (· area); a day bucket shows the day. Both show a count.
+          return sessionGroups.map((g) => {
+            const collapsed = collapsedSessions.has(g.key);
+            return (
+              <div key={g.key} className="space-y-2">
+                <button
+                  type="button"
+                  onClick={() => toggleSession(g.key)}
+                  className="flex w-full items-center gap-2 rounded-md bg-mortar-50 dark:bg-slate-800/40 px-2.5 py-1.5 text-left text-xs"
+                >
+                  <ChevronDown size={13} className={`shrink-0 transition ${collapsed ? "-rotate-90" : ""}`} />
+                  <span className="font-medium text-content dark:text-mortar-100">
+                    {g.isBatch ? formatSessionTime(g.latest) : formatDay(g.latest)}
+                  </span>
+                  {g.area && <span className="text-muted truncate">· {g.area}</span>}
+                  <span className="ml-auto shrink-0 text-faint">
+                    {g.items.length} item{g.items.length === 1 ? "" : "s"}
+                  </span>
+                </button>
+                {!collapsed && <div className="space-y-2">{g.items.map(card)}</div>}
+              </div>
+            );
+          });
+        })()}
       </div>
 
       {recentlyDeleted.length > 0 && (
@@ -1345,8 +1499,9 @@ function InboxCard({
   // into + the matchmaker's pre-filled fields. Keyed into ConfirmForm so
   // switching chips remounts (and so re-seeds) the form.
   const [expanded, setExpanded] = useState(false);
-  // The AI box's disclosure — collapsed by default (companion app).
-  const [aiOpen, setAiOpen] = useState(false);
+  // The source-data box's disclosure — OPEN by default (provenance + the routed
+  // fields at a glance); tap to collapse.
+  const [aiOpen, setAiOpen] = useState(true);
   const [formCtx, setFormCtx] = useState<{
     selKey: string | null;
     prefill: Record<string, unknown>;
@@ -1387,12 +1542,20 @@ function InboxCard({
     !item.suggested_name &&
     !!item.ai_suggested_at &&
     candidates.length === 0;
+  // How long ago enrichment finished — the matchmaker runs detached AFTER that
+  // and stamps matched_at when done. If matched_at never lands (the match threw
+  // before stamping), GIVE UP the "finding the best table…" pulse after a few
+  // minutes instead of spinning forever — show the resolved name + let the user
+  // route/re-run by hand. (The 8s list poll re-renders the card, so this flips on
+  // its own.) Belt-and-braces with the backend now stamping matched_at on failure.
+  const matchAgeMs = item.ai_suggested_at ? Date.now() - new Date(item.ai_suggested_at).getTime() : Infinity;
   const serverMatching =
     item.status === "pending" &&
     !!(item.suggested_name || item.ai_suggested_at) &&
     candidates.length === 0 &&
     !(item.suggested_metadata as { matched_at?: string } | null)?.matched_at &&
-    !needsName;
+    !needsName &&
+    matchAgeMs < 180_000;
   // Rate-limited: rapid scanning exhausted the go-upc gate / upcitemdb burst, so
   // the resolver was throttled. The row is tagged + left unfinished (no name, no
   // ai_suggested_at). Show a distinct "retrying" state — NOT a passive "awaiting
@@ -1480,7 +1643,8 @@ function InboxCard({
   const [reading, setReading] = useState(false);
   const readingSnapshot = useRef<string | null>(null);
   const rerun = useMutation({
-    mutationFn: (hint?: string) => api.rerunScanAi(activeSlug, item.id, hint),
+    mutationFn: (vars?: { hint?: string; wrong?: boolean; enrich?: boolean }) =>
+      api.rerunScanAi(activeSlug, item.id, vars?.hint, vars?.wrong, vars?.enrich),
     onMutate: () => {
       if (isPhotoItem) {
         readingSnapshot.current = item.ai_suggested_at ?? null;
@@ -1505,6 +1669,16 @@ function InboxCard({
       toast.error(e instanceof ApiError ? e.message : String(e));
     },
   });
+  // "This is good — lock it in": verify the current listing into the shared
+  // barcode DB (no re-resolve, doesn't commit to inventory).
+  const confirmBarcode = useMutation({
+    mutationFn: () => api.confirmScanBarcode(activeSlug, item.id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      toast.success("Locked into the barcode database — future scans of this code get this listing.");
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
   // Clear the local pulse once the server stamps a newer ai_suggested_at (the
   // identify finished — named or a "couldn't identify" note); cap it so a dropped
   // enrich can't pulse forever.
@@ -1521,15 +1695,37 @@ function InboxCard({
 
   // Internal /api/v1 file URLs need the Bearer token a bare <img> can't
   // send — useImageSrc blob-loads those; external URLs pass through.
-  const catalogUrl = item.catalog_image_file_id
+  // A catalog_image_url can 404 / hotlink-block (the broken-? the author hit): onError
+  // marks that URL broken and we drop to the next rung — the server-cached file,
+  // else the user's own photo — instead of leaving a dead image on the card.
+  const [brokenSrcs, setBrokenSrcs] = useState<Set<string>>(new Set());
+  const markBroken = (u: string | null) =>
+    u && setBrokenSrcs((s) => (s.has(u) ? s : new Set(s).add(u)));
+  const catalogFileUrl = item.catalog_image_file_id
     ? `/api/v1/orgs/${activeSlug}/modules/core-files/files/${item.catalog_image_file_id}/raw?variant=med`
-    : (item.catalog_image_url ?? null);
-  const yoursUrl = item.image_file_id
+    : null;
+  const catalogUrl =
+    [catalogFileUrl, item.catalog_image_url ?? null].find(
+      (u): u is string => !!u && !brokenSrcs.has(u),
+    ) ?? null;
+  const yoursRawUrl = item.image_file_id
     ? `/api/v1/orgs/${activeSlug}/modules/core-files/files/${item.image_file_id}/raw?variant=med`
     : null;
+  const yoursUrl = yoursRawUrl && !brokenSrcs.has(yoursRawUrl) ? yoursRawUrl : null;
   const catalogImg = useImageSrc(catalogUrl);
   const yoursImg = useImageSrc(yoursUrl);
   const thumb = catalogImg ?? yoursImg;
+
+  // Image viewer: click to zoom (lightbox), revert the catalog image to the
+  // original (preserved server-side on the first override), or use your own scan
+  // photo as the catalog image.
+  const [zoom, setZoom] = useState<string | null>(null);
+  const hasOrigCatalog = !!(item.suggested_metadata as { orig_catalog?: unknown } | null)?.orig_catalog;
+  const catalogAction = useMutation({
+    mutationFn: (action: "revert" | "use_own_photo") => api.scanCatalogAction(activeSlug, item.id, action),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] }),
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
 
   const ddg = (q: string) => `https://duckduckgo.com/?q=${encodeURIComponent(q)}`;
 
@@ -1787,9 +1983,14 @@ function InboxCard({
             <div className="flex gap-2">
               {catalogImg && (
                 <figure className="flex-1 min-w-0">
-                  <div className="rounded-md overflow-hidden border border-line dark:border-slate-700 bg-white dark:bg-slate-800 aspect-square flex items-center justify-center">
-                    <img src={catalogImg} alt="catalog" className="w-full h-full object-contain" />
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setZoom(catalogImg)}
+                    title="View full size"
+                    className="block w-full rounded-md overflow-hidden border border-line dark:border-slate-700 bg-white dark:bg-slate-800 aspect-square flex items-center justify-center cursor-zoom-in"
+                  >
+                    <img src={catalogImg} alt="catalog" className="w-full h-full object-contain" onError={() => markBroken(catalogUrl)} />
+                  </button>
                   <figcaption className="text-[10px] font-mono uppercase tracking-widest text-accent mt-1">
                     ✦ catalog
                   </figcaption>
@@ -1797,9 +1998,14 @@ function InboxCard({
               )}
               {yoursImg && yoursImg !== catalogImg && (
                 <figure className="flex-1 min-w-0">
-                  <div className="rounded-md overflow-hidden border border-line dark:border-slate-700 bg-black aspect-square flex items-center justify-center">
-                    <img src={yoursImg} alt="your photo" className="w-full h-full object-contain" />
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setZoom(yoursImg)}
+                    title="View full size"
+                    className="block w-full rounded-md overflow-hidden border border-line dark:border-slate-700 bg-black aspect-square flex items-center justify-center cursor-zoom-in"
+                  >
+                    <img src={yoursImg} alt="your photo" className="w-full h-full object-contain" onError={() => markBroken(yoursRawUrl)} />
+                  </button>
                   <figcaption className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mt-1">
                     yours
                   </figcaption>
@@ -1807,6 +2013,48 @@ function InboxCard({
               )}
             </div>
           )}
+          {/* Image tools: revert to the original catalog photo, or use your own. */}
+          {(hasOrigCatalog || (yoursImg && yoursImg !== catalogImg)) && (
+            <div className="flex flex-wrap gap-1.5" onClick={(e) => e.stopPropagation()}>
+              {hasOrigCatalog && (
+                <button
+                  type="button"
+                  disabled={catalogAction.isPending}
+                  onClick={() => catalogAction.mutate("revert")}
+                  className="text-[11px] rounded border border-line dark:border-slate-700 px-2 py-0.5 text-muted hover:text-content hover:border-accent transition disabled:opacity-50"
+                >
+                  ↺ Revert to original
+                </button>
+              )}
+              {yoursImg && yoursImg !== catalogImg && (
+                <button
+                  type="button"
+                  disabled={catalogAction.isPending}
+                  onClick={() => catalogAction.mutate("use_own_photo")}
+                  className="text-[11px] rounded border border-line dark:border-slate-700 px-2 py-0.5 text-muted hover:text-content hover:border-accent transition disabled:opacity-50"
+                >
+                  Use my photo
+                </button>
+              )}
+            </div>
+          )}
+          {zoom &&
+            createPortal(
+              <div
+                className="fixed inset-0 z-[100] bg-black/85 flex flex-col items-center justify-center gap-3 p-4 cursor-zoom-out"
+                onClick={() => setZoom(null)}
+                role="dialog"
+                aria-label="Image viewer"
+              >
+                <img src={zoom} alt="" className="max-w-full min-h-0 flex-1 object-contain rounded shadow-2xl" />
+                {/* Swap the photo without leaving the viewer (companion app). stopPropagation
+                    so a thumbnail click doesn't also dismiss the lightbox. */}
+                <div className="w-full max-w-2xl shrink-0" onClick={(e) => e.stopPropagation()}>
+                  <PhotoOptions item={item} onPick={(u) => setZoom(u)} />
+                </div>
+              </div>,
+              document.body,
+            )}
           <PhotoOptions item={item} />
           </div>
           <div className="space-y-3">
@@ -1833,6 +2081,9 @@ function InboxCard({
                 {!aiWorking && item.ai_confidence && (
                   <span className="text-muted">· {item.ai_confidence}</span>
                 )}
+                {!aiWorking && item.updated_at && (
+                  <span className="text-faint">· updated {timeAgo(item.updated_at)}</span>
+                )}
                 <ChevronDown
                   size={13}
                   className={`ml-auto text-faint transition-transform ${aiOpen ? "rotate-180" : ""}`}
@@ -1842,6 +2093,36 @@ function InboxCard({
               {item.ai_notes && (
                 <p className="text-xs text-muted dark:text-slate-400 mt-1">{item.ai_notes}</p>
               )}
+              {/* Per-item history — what you did to this listing, newest first.
+                  ("You asked for more detail · 2 min ago".) */}
+              {(() => {
+                const hist = (
+                  item.suggested_metadata as { history?: { action: string; at: string; note?: string }[] } | null
+                )?.history;
+                if (!Array.isArray(hist) || hist.length === 0) return null;
+                const label: Record<string, string> = {
+                  rerun: "Re-ran the lookup",
+                  wrong: "Flagged wrong — re-checked everything",
+                  enrich: "Asked for more detail",
+                  confirm: "Locked into the barcode database",
+                };
+                return (
+                  <div className="mt-2 border-t border-line dark:border-slate-700/60 pt-1.5">
+                    <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">history</div>
+                    <ul className="space-y-0.5">
+                      {[...hist].reverse().map((h, i) => (
+                        <li key={i} className="text-[11px] text-muted dark:text-slate-400 flex items-baseline gap-2">
+                          <span className="min-w-0">
+                            {label[h.action] ?? h.action}
+                            {h.note ? `: “${h.note}”` : ""}
+                          </span>
+                          <span className="text-faint ml-auto whitespace-nowrap">{timeAgo(h.at)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                );
+              })()}
               {/* The actual data the lookup returned — every parsed field, so it's
                   visible even when the form has no box for it, plus the raw dump. */}
               {(() => {
@@ -1927,8 +2208,16 @@ function InboxCard({
             )}
           </div>
 
-          {/* Research hint — correct the AI and re-run with it. */}
-          <HintBox onSubmit={(h) => rerun.mutate(h || undefined)} busy={aiWorking} />
+          {/* Research hint — re-run, confirm it's GOOD (lock into the barcode
+              DB), flag WRONG (re-derive), or ask for more DETAIL (keep product,
+              fill it in). */}
+          <HintBox
+            onSubmit={(h, opts) => rerun.mutate({ hint: h || undefined, ...opts })}
+            busy={aiWorking}
+            hasBarcode={!!item.barcode_text}
+            onConfirm={() => confirmBarcode.mutate()}
+            confirming={confirmBarcode.isPending}
+          />
           </div>
           </div>
 
@@ -1955,7 +2244,7 @@ function InboxCard({
 // The companion app "OTHER PHOTO OPTIONS" strip. Lazy — only fetches once a card
 // is expanded; picking one downloads it into core-files as the catalog
 // image (SSRF-guarded server-side).
-function PhotoOptions({ item }: { item: ScanInboxItem }) {
+function PhotoOptions({ item, onPick }: { item: ScanInboxItem; onPick?: (url: string) => void }) {
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
@@ -1967,65 +2256,76 @@ function PhotoOptions({ item }: { item: ScanInboxItem }) {
   });
   const pick = useMutation({
     mutationFn: (url: string) => api.setScanCatalogImage(activeSlug, item.id, url),
-    onSuccess: () => {
+    onSuccess: (_data, url) => {
       toast.success("Catalog photo updated");
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      onPick?.(url); // swap the enlarged image in the lightbox to the picked one
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
-  const items = options.data?.items ?? [];
-  if (options.isLoading) {
-    return <div className="text-[11px] text-faint animate-pulse">finding photo options…</div>;
-  }
-  if (items.length === 0) return null;
+  // Drop options whose thumbnail won't load (dead hotlink / 404) — onError adds
+  // the url here and we filter it out, so the strip never shows a broken tile.
+  // The grid + broken-thumb handling live in the shared ImageSearchPicker; here
+  // we keep the scan-item query/ranking (scanPhotoOptions) and the catalog apply.
   return (
-    <div>
-      <div className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-1">
-        other photo options <span className="text-faint normal-case">· DuckDuckGo</span>
-      </div>
-      <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
-        {items.map((o) => (
-          <button
-            key={o.url}
-            type="button"
-            disabled={pick.isPending}
-            onClick={() => pick.mutate(o.url)}
-            title={`${o.title} — ${o.source}`}
-            className="w-14 h-14 shrink-0 rounded border border-line dark:border-slate-700 overflow-hidden bg-white hover:border-cobble-400 transition disabled:opacity-50"
-          >
-            <img src={o.thumb} alt={o.title} className="w-full h-full object-cover" loading="lazy" />
-          </button>
-        ))}
-      </div>
-    </div>
+    <ImageSearchPicker
+      items={options.data?.items ?? []}
+      loading={options.isLoading}
+      busy={pick.isPending}
+      onPick={(url) => pick.mutate(url)}
+      label="other photo options"
+    />
   );
 }
 
 // ── research hint: tell the AI what it got wrong, re-run with it ─────
-function HintBox({ onSubmit, busy }: { onSubmit: (hint: string) => void; busy: boolean }) {
+function HintBox({
+  onSubmit,
+  busy,
+  hasBarcode,
+  onConfirm,
+  confirming,
+}: {
+  onSubmit: (hint: string, opts: { wrong?: boolean; enrich?: boolean }) => void;
+  busy: boolean;
+  hasBarcode: boolean;
+  onConfirm: () => void;
+  confirming: boolean;
+}) {
   const [hint, setHint] = useState("");
+  const fire = (opts: { wrong?: boolean; enrich?: boolean }) => {
+    onSubmit(hint.trim(), opts);
+    setHint("");
+  };
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
         // The hint is OPTIONAL — submitting empty re-runs the AI as-is (matches
         // the inline re-run); with a hint it re-runs with that extra context.
-        onSubmit(hint.trim());
-        setHint("");
+        fire({});
       }}
       className="rounded-md border border-dashed border-line dark:border-slate-700 p-2"
     >
       <div className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-1 flex items-center gap-1">
         <Sparkles size={10} className="text-accent" /> research hint
       </div>
-      <div className="flex gap-2">
-        <input
-          type="text"
-          value={hint}
-          onChange={(e) => setHint(e.target.value)}
-          placeholder="Anything that helps — a model number, a better name, a correction…"
-          className="flex-1 min-w-0 px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-800"
-        />
+      {/* Full-width textarea (single-line input cut the long placeholder off):
+          Enter submits, Shift+Enter inserts a newline — matches companion app. */}
+      <textarea
+        value={hint}
+        onChange={(e) => setHint(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            fire({});
+          }
+        }}
+        rows={2}
+        placeholder="Anything that helps — a model number, a better name, a correction… (Enter to submit, Shift+Enter for a newline)"
+        className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-800 resize-none"
+      />
+      <div className="mt-1.5 flex justify-end">
         <button
           type="submit"
           disabled={busy}
@@ -2034,6 +2334,43 @@ function HintBox({ onSubmit, busy }: { onSubmit: (hint: string) => void; busy: b
           <RotateCcw size={13} className={busy ? "animate-spin" : ""} /> {hint.trim() ? "Re-run with hint" : "Re-run AI"}
         </button>
       </div>
+      {/* Triage, in traffic-light order — red → yellow → green:
+          • This is wrong — distrust the identity entirely, re-derive from scratch.
+          • Right — needs detail — product's right but the listing is thin; keep
+            the identity, dig every source + the web for the full name/spec/photo.
+          • This is good — verify the current listing into the shared barcode DB.
+          The two corrections share a half-width row; the affirmative sits below. */}
+      <div className="mt-2 flex gap-2">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => fire({ wrong: true })}
+          title="Wrong product — re-check every source + the web, fix the name & photo, and correct the shared barcode database"
+          className="flex-1 min-w-0 rounded border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 px-2 py-1.5 text-sm font-medium disabled:opacity-50 inline-flex items-center justify-center gap-1.5"
+        >
+          <Flag size={13} className={busy ? "animate-pulse" : ""} /> This is wrong
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => fire({ enrich: true })}
+          title="The product is right but the listing is sparse — re-check every source + the web to fill in the proper name, size and photo"
+          className="flex-1 min-w-0 rounded border border-amber-300 dark:border-amber-700/70 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 px-2 py-1.5 text-sm font-medium disabled:opacity-50 inline-flex items-center justify-center gap-1.5"
+        >
+          <Sparkles size={13} className={busy ? "animate-pulse" : ""} /> Right — needs detail
+        </button>
+      </div>
+      {hasBarcode && (
+        <button
+          type="button"
+          disabled={busy || confirming}
+          onClick={onConfirm}
+          title="Lock the current name, brand & photo into the shared barcode database as verified"
+          className="mt-2 w-full rounded border border-emerald-300 dark:border-emerald-700/70 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 px-3 py-1.5 text-sm font-medium disabled:opacity-50 inline-flex items-center justify-center gap-1.5"
+        >
+          <CheckCircle size={13} className={confirming ? "animate-pulse" : ""} /> This is good — lock it in
+        </button>
+      )}
     </form>
   );
 }

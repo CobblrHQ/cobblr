@@ -62,6 +62,7 @@ export type ResolveOutcome =
       rule_name: string;
       entity_kind: string;
       entity_id: string;
+      entity_label: string;
       detail_path: string;
     }
   | {
@@ -181,7 +182,7 @@ async function resolveEntity(
   rule: QrRule,
   key: string,
   type?: string,
-): Promise<{ kind: string; id: string; detail_path: string } | { kind: string | null; missing: true }> {
+): Promise<{ kind: string; id: string; label: string; detail_path: string } | { kind: string | null; missing: true }> {
   const r = rule.resolve;
   const kind = (type ? r.type_map?.[type] : undefined) || r.target_kind || null;
   if (!kind) return { kind: null, missing: true };
@@ -201,7 +202,7 @@ async function resolveEntity(
     detailPath = rec?.detail_route ? rec.detail_route.replace("{id}", item.id) : undefined;
   }
   if (!detailPath) return { kind, missing: true };
-  return { kind, id: item.id, detail_path: detailPath };
+  return { kind, id: item.id, label: item.title || item.id, detail_path: detailPath };
 }
 
 /** Run a scanned value through the workspace's resolver rules. The FIRST rule
@@ -225,6 +226,7 @@ export async function resolveExternalScan(
         rule_name: rule.name,
         entity_kind: resolved.kind,
         entity_id: resolved.id,
+        entity_label: resolved.label,
         detail_path: resolved.detail_path,
       };
     }

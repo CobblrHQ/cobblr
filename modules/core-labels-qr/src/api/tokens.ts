@@ -8,7 +8,7 @@ import { sql } from "kysely";
 import { randomBytes } from "node:crypto";
 import { platform } from "@cobblr/platform-contract";
 import QRCode from "qrcode";
-import { tenantContext } from "../db.js";
+import { tenantContext, tenantDb, getQrTokenStyle, descriptiveToken } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 
 export const tokensRouter = Router({ mergeParams: true });
@@ -61,8 +61,47 @@ tokensRouter.post(
       return;
     }
     const ctx = tenantContext(req);
-    const slug = newSlug();
-    const meta = (platform().db.meta as unknown as { insertInto: (table: string) => unknown });
+    // Style decides the token form: descriptive = "/qr/<kind>/<id>"
+    // (self-describing, the workspace default); opaque = "/qr/<random>".
+    //
+    // Descriptive applies ONLY to a plain, permanent navigate label — the URL
+    // /qr/<kind>/<id> *is* the entity, so it's one-per-entity and forever. An
+    // action trigger or an expiring token needs a distinct, disposable token,
+    // so those stay opaque even under the descriptive default — otherwise a
+    // second mint for the same entity would collide with (and reuse) its nav
+    // token, silently dropping the new mode/expiry.
+    const style = await getQrTokenStyle(tenantDb(req));
+    const wantsDescriptive =
+      style === "descriptive" &&
+      parsed.data.mode === "navigate" &&
+      !parsed.data.expires_in_days;
+    const token = wantsDescriptive
+      ? descriptiveToken(parsed.data.entity_kind, parsed.data.entity_id)
+      : newSlug();
+    const meta = platform().db.meta as unknown as {
+      insertInto: (table: string) => unknown;
+      selectFrom: (table: string) => unknown;
+    };
+    // A descriptive token is deterministic per entity — reuse an existing row
+    // so re-printing the same label doesn't collide on the unique token.
+    if (wantsDescriptive) {
+      const existing = (await (
+        meta.selectFrom("core_labels_qr_tokens") as unknown as {
+          selectAll: () => {
+            where: (c: string, op: string, v: unknown) => {
+              executeTakeFirst: () => Promise<MetaQrToken | undefined>;
+            };
+          };
+        }
+      )
+        .selectAll()
+        .where("token", "=", token)
+        .executeTakeFirst()) as MetaQrToken | undefined;
+      if (existing) {
+        res.status(200).json(existing);
+        return;
+      }
+    }
     const expiresAt = parsed.data.expires_in_days
       ? new Date(Date.now() + parsed.data.expires_in_days * 86_400_000)
       : null;
@@ -72,7 +111,7 @@ tokensRouter.post(
       };
     })
       .values({
-        token: slug,
+        token,
         org_id: ctx.org.id,
         entity_kind: parsed.data.entity_kind,
         entity_id: parsed.data.entity_id,

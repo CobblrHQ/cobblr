@@ -14,8 +14,37 @@ export interface CoreLabelsQrScansTable {
   action_ok: boolean | null;
 }
 
+// Singleton per-workspace settings (one row, id=1).
+export interface CoreLabelsQrSettingsTable {
+  id: Generated<number>;
+  token_style: Generated<"descriptive" | "opaque">;
+  updated_at: Generated<Date>;
+}
+
 export interface CoreLabelsQrDB {
   core_labels_qr_scans: CoreLabelsQrScansTable;
+  core_labels_qr_settings: CoreLabelsQrSettingsTable;
+}
+
+export type QrTokenStyle = "descriptive" | "opaque";
+
+/** Read the workspace's QR token style (default descriptive). */
+export async function getQrTokenStyle(db: Kysely<CoreLabelsQrDB>): Promise<QrTokenStyle> {
+  const row = await db
+    .selectFrom("core_labels_qr_settings")
+    .select("token_style")
+    .where("id", "=", 1)
+    .executeTakeFirst();
+  return row?.token_style ?? "descriptive";
+}
+
+/** A readable, deterministic token for the descriptive style:
+ *  "<kind-local-name>/<entity-id>", e.g. "location/9a8e…". The full kind
+ *  still lives on the token row, so this is purely the human-readable label
+ *  (and stays unique because the entity id is a UUID). */
+export function descriptiveToken(entityKind: string, entityId: string): string {
+  const alias = entityKind.split(":").pop() || entityKind;
+  return `${alias}/${entityId}`;
 }
 
 export type OrgRole = "owner" | "admin" | "member" | "guest";

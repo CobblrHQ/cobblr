@@ -52,6 +52,7 @@ import * as notificationsImpl from "./platform/notifications.js";
 import * as integrationsImpl from "./platform/integrations.js";
 import * as aiImpl from "./platform/ai.js";
 import * as edgeImpl from "./platform/edge.js";
+import * as egressImpl from "./platform/egress.js";
 import { syncManifestRegistries } from "./platform/registry-sync.js";
 import { syncInstalledModules } from "./platform/installed-modules.js";
 import { migrateLensModules } from "./platform/migrate-lens-modules.js";
@@ -104,6 +105,8 @@ async function boot() {
     db: { meta },
     entities: {
       registerResolver: entities.registerResolver,
+      registerWriter: entities.registerEntityWriter,
+      getWriter: (kind) => entities.getEntityWriter(kind) ?? null,
       registerListResolver: entities.registerListResolver,
       registerInstanceListResolver: entities.registerInstanceListResolver,
       registerInstanceResolver: entities.registerInstanceResolver,
@@ -167,6 +170,16 @@ async function boot() {
     integrations: {
       registerConnector: integrationsImpl.registerConnector,
       registerInboundHandler: integrationsImpl.registerInboundHandler,
+      registerSyncConnector: integrationsImpl.registerSyncConnector,
+      getSyncConnector: (id) => integrationsImpl.getSyncConnector(id) ?? null,
+      listSyncConnectors: () =>
+        integrationsImpl.listSyncConnectors().map((c) => ({
+          id: c.id,
+          label: c.label,
+          credentials: c.describeCredentials(),
+          config: c.describeConfig?.() ?? {},
+          entityTypes: c.entityTypes.map((t) => ({ key: t.key, label: t.label, targetKind: t.targetKind })),
+        })),
       listConnectors: () =>
         integrationsImpl.listOutboundConnectors().map((c) => ({
           id: c.id,
@@ -228,6 +241,10 @@ async function boot() {
       registerChannel: edgeImpl.registerChannel,
       hasChannel: edgeImpl.hasChannel,
       send: edgeImpl.send,
+    },
+    egress: {
+      guardedFetch: egressImpl.guardedFetch,
+      registerAllow: egressImpl.registerAllow,
     },
     files: {
       registerReader: files.registerReader,

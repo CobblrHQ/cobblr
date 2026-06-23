@@ -7,7 +7,11 @@
 import type { Kysely } from "kysely";
 import type { DigifabDB } from "./db.js";
 
-const TTL_MS = 30_000;
+const TTL_MS = 30_000; // "fresh" window — drives the live card refresh + snapshot_fresh
+// Oldest frame still worth showing as an instant placeholder. Beyond this a
+// stale frame is more misleading than helpful, so we fall back to "connecting…".
+// Tune freely (1h–1d both reasonable); a day matches "show it even if old".
+const STALE_MAX_MS = 24 * 60 * 60_000;
 const MAX_BYTES = 4 * 1024 * 1024;
 
 /** Store a JPEG frame for (connection, device). Rejects non-JPEG / oversized. */
@@ -22,7 +26,11 @@ export async function putSnapshot(db: Kysely<DigifabDB>, connId: string, devId: 
   return true;
 }
 
-/** The latest fresh frame for one device, or null when absent/stale. */
+/** The latest stored frame for one device — served as the instant placeholder a
+ *  card/modal shows on open, so a hours-old frame beats a blank "connecting…"
+ *  gap while the live feed loads. Returns null past STALE_MAX_MS (too old to be
+ *  representative) or when no frame was ever captured. Callers that need the
+ *  tight live window use `freshSnapshotKeys`. */
 export async function getSnapshot(db: Kysely<DigifabDB>, connId: string, devId: string): Promise<Buffer | null> {
   const row = await db
     .selectFrom("digifab_device_snapshots")
@@ -31,7 +39,7 @@ export async function getSnapshot(db: Kysely<DigifabDB>, connId: string, devId: 
     .where("remote_device_id", "=", devId)
     .executeTakeFirst();
   if (!row) return null;
-  if (Date.now() - new Date(row.updated_at).getTime() > TTL_MS) return null;
+  if (Date.now() - new Date(row.updated_at).getTime() > STALE_MAX_MS) return null;
   return row.jpeg;
 }
 

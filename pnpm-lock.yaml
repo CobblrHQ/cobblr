@@ -1100,6 +1100,10 @@ importers:
         version: 5.9.3
 
   packages/platform-web:
+    dependencies:
+      ajv:
+        specifier: ^8.17.1
+        version: 8.20.0
     devDependencies:
       '@tanstack/react-query':
         specifier: ^5.62.7

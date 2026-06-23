@@ -35,6 +35,7 @@ import {
   type InboundToken,
 } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { SyncConnectionsSection } from "./SyncConnectionsSection";
 
 export function IntegrationsPage() {
   usePageTitle("Integrations");
@@ -89,6 +90,8 @@ export function IntegrationsPage() {
           <h1 className="text-2xl font-bold tracking-tight">Integrations</h1>
         </div>
       </header>
+
+      <SyncConnectionsSection />
 
       <section>
         <div className="flex items-center justify-between mb-2">

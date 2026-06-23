@@ -18,7 +18,8 @@ import { usePersistedState } from "../lib/use-persisted-state";
 import { ApiError, api, type Machine, type OrgModuleListItem, type PlatformFieldDef, type BambuDiscoveredDevice, type DigifabConnection, type DigifabDevice, type DigifabFleetDevice } from "../lib/api";
 import { DirectManagerConnect } from "../components/DirectManagerConnect";
 import { EntityImageEdit } from "../components/EntityImageEdit";
-import { FleetView, EdgeBridgeSetup } from "./DigifabPage";
+import { ImageSearchPicker } from "../components/ImageSearchPicker";
+import { FleetView, EdgeBridgeSetup, CreateConnectionModal } from "./DigifabPage";
 import { BambuConnectWizard } from "../components/BambuConnectWizard";
 import { BambuPrinterPicker } from "../components/BambuPrinterPicker";
 import { resolvePrinterKind, hiddenPrinterFields } from "../lib/printerKind";
@@ -734,6 +735,36 @@ function MachineDetailModal({
       setAutoBusy(false);
     }
   }
+  // Interactive web-photo picker (the shared ImageSearchPicker) — pick a SPECIFIC
+  // image instead of letting Auto choose. enrichEntityImage stores the chosen url.
+  const [photoSearchOpen, setPhotoSearchOpen] = useState(false);
+  const [photoPickBusy, setPhotoPickBusy] = useState(false);
+  async function pickWebPhoto(url: string) {
+    if (!m) return;
+    setPhotoPickBusy(true);
+    try {
+      const r = await api
+        .enrichEntityImage(activeSlug, {
+          entity_kind: "machines:machine",
+          entity_id: m.id,
+          query: [m.manufacturer, m.family, "3D printer"].filter(Boolean).join(" ") || m.name,
+          instance,
+          image_url: url,
+        })
+        .catch(() => null);
+      if (r?.image_path) {
+        void qc.invalidateQueries({ queryKey: ["machine", activeSlug, machineId] });
+        void qc.invalidateQueries({ queryKey: ["machines", activeSlug] });
+        toast.success("Photo updated.");
+        setPhotoSearchOpen(false);
+      } else {
+        toast.error("Couldn't save that image.");
+      }
+    } finally {
+      setPhotoPickBusy(false);
+    }
+  }
+
   useEffect(() => {
     // Once per modal open; if no image lands (a transient failure), it simply
     // retries the next time the printer is opened — no permanent "tried" flag.
@@ -818,6 +849,31 @@ function MachineDetailModal({
             </div>
           </div>
 
+          {/* Universal web-image picker — pick the printer's photo from a web search. */}
+          <div>
+            <button
+              type="button"
+              onClick={() => setPhotoSearchOpen((v) => !v)}
+              className="text-[10px] font-mono uppercase tracking-widest text-accent hover:underline"
+            >
+              {photoSearchOpen ? "hide photo search" : "search the web for a photo"}
+            </button>
+            {photoSearchOpen && (
+              <div className="mt-1.5">
+                <ImageSearchPicker
+                  query={
+                    ([m.manufacturer, m.family].filter(Boolean).join(" ").trim() || m.name.split("—")[0]!.trim()) +
+                    (printerKind !== null ? " 3D printer" : "")
+                  }
+                  brand={m.manufacturer ?? undefined}
+                  busy={photoPickBusy}
+                  onPick={pickWebPhoto}
+                  label="pick a photo"
+                />
+              </div>
+            )}
+          </div>
+
           <dl className="grid grid-cols-2 gap-3 text-xs">
             <EditField label={fp.label("name", "Name")} value={m.name} onCommit={(v) => update.mutate({ name: v })} />
             {/* Short name + Type are low-signal — show only when set (keeps the default compact). */}
@@ -836,7 +892,7 @@ function MachineDetailModal({
             )}
             {/* Quantity is an inventory-ism — a tracked machine (printer/laser/CNC) is one unit. Hide for specialised instances. */}
             {!fp.hidden("quantity") && !instance && <EditField label={fp.label("quantity", "Quantity")} value={String(m.quantity)} numeric onCommit={(v) => update.mutate({ quantity: Number(v) || 0 })} />}
-            <LocationPicker label="Location" value={m.location_id} onChange={(id) => update.mutate({ location_id: id })} size="sm" />
+            <LocationPicker label="Location" kind="area" value={m.location_id} onChange={(id) => update.mutate({ location_id: id })} size="sm" />
           </dl>
 
           {/* Custom fields render inline (they self-collapse empty ones, and are
@@ -849,7 +905,14 @@ function MachineDetailModal({
             onCommit={(name, value) => update.mutate({ metadata: { ...m.metadata, [name]: value } })}
           />
 
-          {digifabEnabled && <MachineDigifabPanel slug={activeSlug} machineId={m.id} machineName={m.name} />}
+          {digifabEnabled && (
+            <MachineDigifabPanel
+              slug={activeSlug}
+              machineId={m.id}
+              machineName={m.name}
+              driverHint={KIND_BRIDGE_DRIVER[typeof m.metadata?.printer_kind === "string" ? (m.metadata.printer_kind as string) : ""]}
+            />
+          )}
 
           {/* Secondary stuff stays out of the way: small add-pills (Tag / File /
               Link / Note) that only grow into full fields once used — so the
@@ -1233,7 +1296,7 @@ function NewMachineModal({
           <span className={lblCls}>Family (e.g. "Voron", "Railcore")</span>
           <input value={family} onChange={(e) => setFamily(e.target.value)} className="input" />
         </label>
-        <LocationPicker label="Location" value={locationId} onChange={setLocationId} />
+        <LocationPicker label="Location" kind="area" value={locationId} onChange={setLocationId} />
 
         {instance && !digifabEnabled && (
           <div className="rounded-lg border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/30 p-3 space-y-1.5">
@@ -1410,14 +1473,21 @@ function digifabStatusChip(dev: DigifabFleetDevice | undefined): { label: string
   }
 }
 
+// Printer kind → the bridge driver key, so connecting a manager from a printer
+// pre-selects the right driver (Klipper→moonraker, Prusa→prusalink, Duet→duet).
+const KIND_BRIDGE_DRIVER: Record<string, string> = { klipper: "moonraker", prusa: "prusalink", reprap: "duet", duet: "duet" };
+
 function MachineDigifabPanel({
   slug,
   machineId,
   machineName,
+  driverHint,
 }: {
   slug: string;
   machineId: string;
   machineName: string;
+  /** Pre-selected bridge driver (from the printer's kind), for the inline connect. */
+  driverHint?: string;
 }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -1446,6 +1516,7 @@ function MachineDigifabPanel({
   const chip = digifabStatusChip(fleetDev);
 
   const [connId, setConnId] = useState("");
+  const [createConnOpen, setCreateConnOpen] = useState(false);
   const devices = useQuery({
     queryKey: ["digifab-devices", slug, connId],
     queryFn: () => api.listDigifabDevices(slug, connId),
@@ -1530,16 +1601,19 @@ function MachineDigifabPanel({
         </div>
       ) : connections.length === 0 ? (
         <p className="text-xs text-muted dark:text-slate-400">
-          No print managers connected yet — add FDM Monster, OctoPrint, or Bambu.{" "}
-          <Link to="/digifab" className="text-accent hover:underline">
-            Set one up →
-          </Link>
+          No print managers connected yet — add FDM Monster, OctoPrint, Klipper, Duet, Prusa, or Bambu.{" "}
+          <button type="button" onClick={() => setCreateConnOpen(true)} className="text-accent hover:underline">
+            Connect one →
+          </button>
         </p>
       ) : (
         <div className="flex flex-wrap items-end gap-2">
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
+            <span className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
               Manager
+              <button type="button" onClick={() => setCreateConnOpen(true)} className="text-accent hover:underline normal-case tracking-normal">
+                + new
+              </button>
             </span>
             <select
               value={connId}
@@ -1585,6 +1659,25 @@ function MachineDigifabPanel({
             {createLink.isPending ? "linking…" : "Link"}
           </button>
         </div>
+      )}
+      {createConnOpen && (
+        <CreateConnectionModal
+          types={conns.data?.types ?? ["fdm_monster", "mock"]}
+          presetType="edge_adapter"
+          presetName={machineName}
+          presetDriver={driverHint}
+          onClose={() => setCreateConnOpen(false)}
+          onCreated={(connectionId) => {
+            // Auto-select the just-created manager so it's not back on "choose…";
+            // its single device then auto-picks → the user just clicks Link.
+            void qc.invalidateQueries({ queryKey: ["digifab-connections", slug] });
+            if (connectionId) {
+              setConnId(connectionId);
+              setDeviceId("");
+            }
+            setCreateConnOpen(false);
+          }}
+        />
       )}
     </div>
   );

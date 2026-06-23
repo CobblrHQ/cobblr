@@ -21,10 +21,13 @@ import type {
   ManagerConfig,
   MachineDriver,
   DeviceTemps,
+  DeviceJob,
   JobState,
   JobStatus,
   PlacementResolution,
   RemoteDevice,
+  RemoteFile,
+  RemoteFileInfo,
   SubmitArgs,
   SubmitResult,
   UploadResult,
@@ -73,6 +76,19 @@ function coerceTemps(raw: unknown): DeviceTemps | null {
   return out.nozzle || out.bed || out.chamber ? out : null;
 }
 
+function coerceJob(raw: unknown): DeviceJob | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+  const out: DeviceJob = {
+    ...(num(r.fractionPrinted) != null ? { fractionPrinted: num(r.fractionPrinted) } : {}),
+    ...(num(r.currentLayer) != null ? { currentLayer: num(r.currentLayer) } : {}),
+    ...(num(r.timeLeftSec) != null ? { timeLeftSec: num(r.timeLeftSec) } : {}),
+    ...(num(r.durationSec) != null ? { durationSec: num(r.durationSec) } : {}),
+  };
+  return Object.keys(out).length ? out : null;
+}
+
 export class EdgeAdapterDriver implements MachineDriver {
   private base: string;
   private token: string | null;
@@ -115,6 +131,38 @@ export class EdgeAdapterDriver implements MachineDriver {
       return r?.ok ? { ok: true, ref: r.ref ?? id } : { ok: false, detail: r?.detail ?? "control not accepted" };
     } catch (e) {
       return { ok: false, detail: (e as Error).message };
+    }
+  }
+
+  /** Start a file already on the machine's storage (no re-upload), via the bridge. */
+  async printFile(_deviceId: string, name: string): Promise<CommandResult> {
+    try {
+      const r = (await this.req("POST", "/print", { body: { name } })) as { ok?: boolean; ref?: string; detail?: string };
+      return r?.ok ? { ok: true, ref: r.ref } : { ok: false, detail: r?.detail ?? "print not accepted" };
+    } catch (e) {
+      return { ok: false, detail: (e as Error).message };
+    }
+  }
+
+  /** The gcode files already on the machine's storage, via the bridge. Best-
+   *  effort — [] if the driver doesn't list files. Cobblr caches this. */
+  async listFiles(): Promise<RemoteFile[]> {
+    try {
+      const data = (await this.req("GET", "/files")) as RemoteFile[];
+      return Array.isArray(data) ? data : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** Slicer metadata for one on-disk file (name goes in the path — the bridge
+   *  router doesn't pass query strings). Best-effort → null. */
+  async fileInfo(_deviceId: string, name: string): Promise<RemoteFileInfo | null> {
+    try {
+      const data = (await this.req("GET", `/fileinfo/${encodeURIComponent(name)}`)) as RemoteFileInfo | null;
+      return data && typeof data === "object" ? data : null;
+    } catch {
+      return null;
     }
   }
 
@@ -177,6 +225,7 @@ export class EdgeAdapterDriver implements MachineDriver {
       state: (d.state as string | undefined) ?? null,
       tags: [],
       temps: coerceTemps(d.temps),
+      job: coerceJob(d.job),
       stage: typeof d.stage === "string" && d.stage ? d.stage : null,
       raw: d.raw && typeof d.raw === "object" ? (d.raw as Record<string, unknown>) : null,
     }));

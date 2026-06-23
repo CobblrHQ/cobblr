@@ -6,6 +6,7 @@ import { Router } from "express";
 import { locationsRouter } from "./locations.js";
 import { locationsImportRouter } from "./import.js";
 import { registerLocationsResolvers } from "./resolvers.js";
+import { registerLocationsWriter } from "./sync-writer.js";
 
 const router = Router({ mergeParams: true });
 
@@ -18,5 +19,8 @@ router.use("/locations", locationsRouter);
 // time so cross-module callers (machines/assets/inventory entity-
 // chip rendering) can platform().entities.lookup() locations.
 registerLocationsResolvers();
+// Side-effect: register the in-process entity writer so the sync engine can
+// mirror an external system's locations in without an HTTP loopback.
+registerLocationsWriter();
 
 export default router;

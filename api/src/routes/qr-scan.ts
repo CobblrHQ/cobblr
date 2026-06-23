@@ -74,7 +74,9 @@ export async function resolveQrToken(token: string): Promise<ResolveResult> {
   };
 }
 
-qrScanRouter.get("/:token", async (req, res, next) => {
+// :token(.*) so a descriptive multi-segment token ("location/<uuid>") matches
+// the same route as a single-segment opaque one.
+qrScanRouter.get("/:token(.*)", async (req, res, next) => {
   try {
     const slug = req.params.token;
     if (!slug) {

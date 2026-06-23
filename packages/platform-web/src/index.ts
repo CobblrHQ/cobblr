@@ -1,4 +1,5 @@
 // Public exports for the shared web components package.
+export { JsonField, evaluateJson, type JsonFieldProps, type JsonEval } from "./JsonField";
 
 export { PlatformWebProvider, usePlatformWeb } from "./context";
 export { EntityActionsBar } from "./EntityActionsBar";

@@ -39,10 +39,46 @@ export interface CoreIntegrationsCallsTable {
   occurred_at: Generated<Date>;
 }
 
+// The id-map for sync connectors: one mirrored Cobblr entity per
+// (connection, entity_type, external_id). Both the webhook and the
+// reconcile poll upsert through this.
+export interface CoreIntegrationsSyncedRecordsTable {
+  id: Generated<string>;
+  connector_row_id: string;
+  entity_type: string;
+  target_kind: string;
+  external_id: string;
+  cobblr_entity_id: string;
+  source_hash: string | null;
+  deleted_at: Date | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+// Per (connection, entity_type) sync enablement + cadence + last-run status.
+export interface CoreIntegrationsSyncStateTable {
+  connector_row_id: string;
+  entity_type: string;
+  enabled: Generated<boolean>;
+  cadence_min: Generated<number>;
+  last_run_at: Date | null;
+  last_status: string | null;
+  last_error: string | null;
+  last_synced_count: number | null;
+  next_run_at: Date | null;
+  /** Null until the first import is approved — live poll + webhook are withheld
+   *  while in preview; set once the one-time import runs. */
+  import_approved_at: Date | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
 export interface CoreIntegrationsDB {
   core_integrations_connectors: CoreIntegrationsConnectorsTable;
   core_integrations_inbound_tokens: CoreIntegrationsInboundTokensTable;
   core_integrations_calls: CoreIntegrationsCallsTable;
+  core_integrations_synced_records: CoreIntegrationsSyncedRecordsTable;
+  core_integrations_sync_state: CoreIntegrationsSyncStateTable;
 }
 
 export type OrgRole = "owner" | "admin" | "member" | "guest";

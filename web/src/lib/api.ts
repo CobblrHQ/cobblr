@@ -621,10 +621,17 @@ export const api = {
     request<Machine>("GET", `${primaryBase(slug, "machines/machines", instance)}/${id}`),
   createMachine: (slug: string, body: Partial<Machine>, instance?: string) =>
     request<Machine>("POST", primaryBase(slug, "machines/machines", instance), body),
-  /** Fire-and-forget: auto-fetch a web image for an entity (e.g. a 3D printer)
-   *  and set its image_path when it lands — the user does nothing. 202 = queued. */
-  enrichEntityImage: (slug: string, body: { entity_kind: string; entity_id: string; query: string; instance?: string | null }) =>
+  /** Auto-fetch a web image for an entity (e.g. a 3D printer) and set its
+   *  image_path. Pass `image_url` to store a SPECIFIC user-picked image instead
+   *  of auto-searching. Returns the resolved image_path. */
+  enrichEntityImage: (slug: string, body: { entity_kind: string; entity_id: string; query: string; instance?: string | null; image_url?: string }) =>
     request<{ image_path: string | null }>("POST", `/orgs/${slug}/modules/core-scan/entity-image`, body),
+  /** Generic web-image candidates for any query (the universal photo-picker strip). */
+  imageOptions: (slug: string, q: string, brand?: string) =>
+    request<{ items: ImageOption[] }>(
+      "GET",
+      `/orgs/${slug}/modules/core-scan/image-options?q=${encodeURIComponent(q)}${brand ? `&brand=${encodeURIComponent(brand)}` : ""}`,
+    ),
   updateMachine: (slug: string, id: string, body: Partial<Machine>, instance?: string) =>
     request<Machine>("PATCH", `${primaryBase(slug, "machines/machines", instance)}/${id}`, body),
   deleteMachine: (slug: string, id: string, instance?: string) =>
@@ -1468,6 +1475,18 @@ export const api = {
   // ── Generic live controls (driver-declared) ───────────────────────────────
   getDigifabControls: (slug: string, connId: string, deviceId: string) =>
     request<{ controls: DigifabControl[] }>("GET", `/orgs/${slug}/modules/digifab/fleet/${connId}/${encodeURIComponent(deviceId)}/controls`),
+  getDigifabFiles: (slug: string, connId: string, deviceId: string, refresh = false) =>
+    request<{ files: { name: string; size?: number; modified?: string }[]; cached: boolean; stale?: boolean; at: string }>(
+      "GET",
+      `/orgs/${slug}/modules/digifab/fleet/${connId}/${encodeURIComponent(deviceId)}/files${refresh ? "?refresh=1" : ""}`,
+    ),
+  printDigifabFile: (slug: string, connId: string, deviceId: string, name: string) =>
+    request<{ ok: boolean; ref?: string }>("POST", `/orgs/${slug}/modules/digifab/fleet/${connId}/${encodeURIComponent(deviceId)}/print`, { name }),
+  getDigifabFileInfo: (slug: string, connId: string, deviceId: string, name: string) =>
+    request<{ info: DigifabFileInfo | null; cached: boolean; stale?: boolean }>(
+      "GET",
+      `/orgs/${slug}/modules/digifab/fleet/${connId}/${encodeURIComponent(deviceId)}/fileinfo?name=${encodeURIComponent(name)}`,
+    ),
   getDigifabDeviceDetail: (slug: string, connId: string, deviceId: string) =>
     request<DigifabDeviceDetail>("GET", `/orgs/${slug}/modules/digifab/fleet/${connId}/${encodeURIComponent(deviceId)}/detail`),
   // NB: a PATH (no /api/v1) — fetchAuthBlobUrl prepends /api/v1. Including it here
@@ -1777,6 +1796,17 @@ export const api = {
       "POST",
       `/orgs/${slug}/modules/core-labels-qr/tokens/${id}/revoke`,
     ),
+  getQrSettings: (slug: string) =>
+    request<{ token_style: "descriptive" | "opaque" }>(
+      "GET",
+      `/orgs/${slug}/modules/core-labels-qr/settings`,
+    ),
+  setQrTokenStyle: (slug: string, token_style: "descriptive" | "opaque") =>
+    request<{ token_style: "descriptive" | "opaque" }>(
+      "PUT",
+      `/orgs/${slug}/modules/core-labels-qr/settings`,
+      { token_style },
+    ),
 
   // ─── core-healthcheck ─────────────────────────────────────────────
   healthSnapshot: (slug: string) =>
@@ -2007,6 +2037,74 @@ export const api = {
       `/orgs/${slug}/modules/core-integrations/inbound-tokens/${id}`,
     ),
 
+  // core-integrations sync connectors — mirror an external system's records
+  // into a Cobblr entity kind (live webhook + reconcile poll).
+  listSyncConnectors: (slug: string) =>
+    request<{ items: SyncConnectorDef[] }>(
+      "GET",
+      `/orgs/${slug}/modules/core-integrations/sync/connectors`,
+    ),
+  listSyncConnections: (slug: string) =>
+    request<{ items: SyncConnection[] }>(
+      "GET",
+      `/orgs/${slug}/modules/core-integrations/sync/connections`,
+    ),
+  createSyncConnection: (
+    slug: string,
+    body: { connector_id: string; label: string; base_url: string; credentials: Record<string, unknown>; transport?: "direct" | "edge"; bridge?: string | null },
+  ) =>
+    request<SyncConnection & { webhook_path: string }>(
+      "POST",
+      `/orgs/${slug}/modules/core-integrations/sync/connections`,
+      body,
+    ),
+  getSyncConnection: (slug: string, id: string) =>
+    request<SyncConnectionDetail>(
+      "GET",
+      `/orgs/${slug}/modules/core-integrations/sync/connections/${id}`,
+    ),
+  updateSyncConnection: (
+    slug: string,
+    id: string,
+    body: { label?: string; base_url?: string; credentials?: Record<string, unknown>; enabled?: boolean },
+  ) =>
+    request<{ ok: boolean }>(
+      "PATCH",
+      `/orgs/${slug}/modules/core-integrations/sync/connections/${id}`,
+      body,
+    ),
+  deleteSyncConnection: (slug: string, id: string) =>
+    request<{ ok: boolean }>(
+      "DELETE",
+      `/orgs/${slug}/modules/core-integrations/sync/connections/${id}`,
+    ),
+  testSyncConnection: (slug: string, id: string) =>
+    request<{ ok: boolean; error?: string; note?: string }>(
+      "POST",
+      `/orgs/${slug}/modules/core-integrations/sync/connections/${id}/test`,
+    ),
+  configureSync: (slug: string, id: string, entityType: string, body: { enabled: boolean; cadence_min?: number }) =>
+    request<{ ok: boolean }>(
+      "PUT",
+      `/orgs/${slug}/modules/core-integrations/sync/connections/${id}/syncs/${encodeURIComponent(entityType)}`,
+      body,
+    ),
+  runSync: (slug: string, id: string, entityType: string) =>
+    request<{ ok: boolean; result?: SyncRunResult; error?: string }>(
+      "POST",
+      `/orgs/${slug}/modules/core-integrations/sync/connections/${id}/syncs/${encodeURIComponent(entityType)}/run`,
+    ),
+  previewSyncImport: (slug: string, id: string, entityType: string) =>
+    request<{ ok: boolean; plan?: ImportPlan; error?: string }>(
+      "POST",
+      `/orgs/${slug}/modules/core-integrations/sync/connections/${id}/syncs/${encodeURIComponent(entityType)}/preview`,
+    ),
+  runSyncImport: (slug: string, id: string, entityType: string) =>
+    request<{ ok: boolean; result?: SyncRunResult; error?: string }>(
+      "POST",
+      `/orgs/${slug}/modules/core-integrations/sync/connections/${id}/syncs/${encodeURIComponent(entityType)}/import`,
+    ),
+
   // core-scan — barcode + photo identification, generalized. See
   // docs/modules/core-scan.md.
   scanBarcode: (
@@ -2042,7 +2140,8 @@ export const api = {
   // bin) before falling back to the normal navigate. Unauthenticated, the same
   // JSON the /qr/:token page reads.
   resolveQrToken: (token: string) =>
-    fetch(`/api/v1/qr/${encodeURIComponent(token)}`, { headers: { accept: "application/json" } })
+    // Per-segment encode so a descriptive token's slash survives the path.
+    fetch(`/api/v1/qr/${token.split("/").map(encodeURIComponent).join("/")}`, { headers: { accept: "application/json" } })
       .then((r) =>
         r.ok
           ? (r.json() as Promise<{
@@ -2162,16 +2261,20 @@ export const api = {
       bundle_external_id,
       ...(item_ids ? { item_ids } : {}),
     }),
-  rerunScanAi: (slug: string, id: string, hint?: string) =>
+  rerunScanAi: (slug: string, id: string, hint?: string, wrong?: boolean, enrich?: boolean) =>
     request<ScanInboxItem>(
       "POST",
       `/orgs/${slug}/modules/core-scan/inbox/${id}/rerun-ai`,
-      hint ? { hint } : {},
+      { ...(hint ? { hint } : {}), ...(wrong ? { wrong: true } : {}), ...(enrich ? { enrich: true } : {}) },
     ),
+  // "This listing is good — lock it in": verify the current name/brand/category/
+  // photo into the shared barcode database for every future scan of this UPC.
+  confirmScanBarcode: (slug: string, id: string) =>
+    request<ScanInboxItem>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/confirm-barcode`),
   // Alternative catalog photos (DDG image search on the resolved name) +
   // pick-one-as-catalog. The companion app "OTHER PHOTO OPTIONS" strip.
   scanPhotoOptions: (slug: string, id: string) =>
-    request<{ items: Array<{ url: string; thumb: string; title: string; source: string }> }>(
+    request<{ items: ImageOption[] }>(
       "GET",
       `/orgs/${slug}/modules/core-scan/inbox/${id}/photo-options`,
     ),
@@ -2180,6 +2283,13 @@ export const api = {
       "POST",
       `/orgs/${slug}/modules/core-scan/inbox/${id}/catalog-image`,
       { url },
+    ),
+  /** Revert the catalog image to the original, or use the user's own scan photo. */
+  scanCatalogAction: (slug: string, id: string, action: "revert" | "use_own_photo") =>
+    request<ScanInboxItem>(
+      "POST",
+      `/orgs/${slug}/modules/core-scan/inbox/${id}/catalog-image`,
+      { action },
     ),
   createScanBatch: (slug: string) =>
     request<{ id: string }>(
@@ -2962,6 +3072,67 @@ export interface InboundToken {
   created_at: string;
 }
 
+// Sync connectors (mirror an external system into a Cobblr entity kind).
+export interface SyncConnectorDef {
+  id: string;
+  label: string;
+  credentials: Record<string, { label: string; secret: boolean }>;
+  config: Record<string, { label: string; placeholder?: string }>;
+  entityTypes: Array<{ key: string; label: string; targetKind: string }>;
+}
+
+export interface SyncStateRow {
+  connector_row_id: string;
+  entity_type: string;
+  enabled: boolean;
+  cadence_min: number;
+  last_run_at: string | null;
+  last_status: string | null;
+  last_error: string | null;
+  last_synced_count: number | null;
+  next_run_at: string | null;
+  /** Null until the first import is approved (then live sync is active). */
+  import_approved_at: string | null;
+}
+
+export interface SyncRunResult {
+  created: number;
+  updated: number;
+  linked: number;
+  tombstoned: number;
+  total: number;
+}
+
+// An import preview — what a reconcile WOULD do, computed without writing.
+export interface ImportPlanItem {
+  externalId: string;
+  name: string;
+  action: "create" | "update" | "link" | "unchanged" | "delete";
+  cobblrId?: string | null;
+}
+export interface ImportPlan {
+  entityType: string;
+  targetKind: string;
+  counts: { create: number; update: number; link: number; unchanged: number; delete: number; total: number };
+  items: ImportPlanItem[];
+}
+
+export interface SyncConnection {
+  id: string;
+  connector_id: string;
+  label: string;
+  config: { base_url: string; transport?: "direct" | "edge"; bridge?: string | null };
+  enabled: boolean;
+  created_at: string;
+  syncs?: SyncStateRow[];
+}
+
+export interface SyncConnectionDetail extends SyncConnection {
+  entity_types: Array<{ key: string; label: string; targetKind: string }>;
+  syncs: SyncStateRow[];
+  webhook_path: string | null;
+}
+
 export interface IntegrationCall {
   id: string;
   direction: "outbound" | "inbound";
@@ -3014,6 +3185,14 @@ export interface EntityKindOverride {
   config: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+}
+
+/** One web-image candidate (the universal photo-picker strip). */
+export interface ImageOption {
+  url: string;
+  thumb: string;
+  title: string;
+  source: string;
 }
 
 export interface Location {
@@ -3116,6 +3295,7 @@ export type ScanResolveOutcome =
       rule_name: string;
       entity_kind: string;
       entity_id: string;
+      entity_label: string;
       detail_path: string;
     }
   | {
@@ -3636,6 +3816,19 @@ export interface DigifabDeviceDetail {
     firmware_update: boolean; hms_count: number;
     ams: DigifabAmsSlot[];
   } | null;
+  job?: { fractionPrinted?: number; currentLayer?: number; timeLeftSec?: number; durationSec?: number } | null;
+}
+
+export interface DigifabFileInfo {
+  name: string;
+  size?: number;
+  printTimeSec?: number;
+  filamentMm?: number;
+  height?: number;
+  layerHeight?: number;
+  numLayers?: number;
+  generatedBy?: string;
+  thumbnail?: string;
 }
 
 export interface DigifabControl {

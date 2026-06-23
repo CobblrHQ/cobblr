@@ -15,7 +15,7 @@ import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { CoreScanDB } from "../db.js";
 import { reportBarcodeCorrection } from "./barcode-corrections.js";
-import { searchImages, rankImageOptions } from "./ddg-images.js";
+import { searchImages, rankImageOptions, imageQuery } from "./ddg-images.js";
 
 /** Re-fetch the catalog image to match a (corrected) name. The card prefers the
  *  downloaded `catalog_image_file_id` over `catalog_image_url`, so a rename left
@@ -28,7 +28,7 @@ export async function refreshCatalogImageByName(
   name: string,
   brand?: string | null,
 ): Promise<void> {
-  const pool = await searchImages(name, 24).catch(() => []);
+  const pool = await searchImages(imageQuery(name, brand), 24).catch(() => []);
   const best = rankImageOptions(pool, brand)[0]?.url;
   if (!best) return;
   const db = (await platform().tenants.getDb(orgId)) as unknown as Kysely<CoreScanDB>;

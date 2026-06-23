@@ -32,6 +32,11 @@ export default defineModule({
       registerPollWorker();
       const { registerAssignWorker } = await import("./assign-worker.js");
       registerAssignWorker();
+      // Background warmer for the printer file cache — a self-perpetuating queue
+      // loop that keeps each printer's file list + thumbnails warm in the DB, so
+      // the UI reads warm data and the machine is never hit on a modal open.
+      const { registerFileWarmer } = await import("./printer-file-cache.js");
+      registerFileWarmer();
       // Live Bambu cloud telemetry — holds an MQTT subscription per cloud Bambu
       // account and writes real-time temps/progress into digifab_bambu_status.
       const { startBambuPump } = await import("./bambu-pump.js");

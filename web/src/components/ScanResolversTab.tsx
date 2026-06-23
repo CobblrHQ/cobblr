@@ -4,7 +4,7 @@
 // operators add their own here. Backed by /super-admin/scan-url-resolvers.
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
+import { Modal, JsonField, useToast, useConfirm } from "@cobblr/platform-web";
 import { ScanLine, FlaskConical, Plus, Trash2, Pencil } from "lucide-react";
 import { api, type ScanUrlResolverRow, type ScanUrlResolution } from "../lib/api";
 
@@ -200,23 +200,15 @@ function EditModal({
   onSaved: () => void;
 }) {
   const toast = useToast();
-  const [text, setText] = useState(() => (row ? JSON.stringify(row.manifest, null, 2) : TEMPLATE));
-  const [err, setErr] = useState<string | null>(null);
+  const [manifest, setManifest] = useState<unknown>(() => (row ? row.manifest : JSON.parse(TEMPLATE)));
+  const [valid, setValid] = useState(true);
   const save = useMutation({
-    mutationFn: () => {
-      let manifest: unknown;
-      try {
-        manifest = JSON.parse(text);
-      } catch (e) {
-        throw new Error("Manifest isn't valid JSON — " + (e as Error).message);
-      }
-      return api.saveScanResolver(manifest);
-    },
+    mutationFn: () => api.saveScanResolver(manifest),
     onSuccess: () => {
       toast.success("Saved.");
       onSaved();
     },
-    onError: (e) => setErr(e instanceof Error ? e.message : "Couldn't save — check the manifest."),
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't save — check the manifest."),
   });
   return (
     <Modal open onClose={onClose} title={row ? `Edit ${row.label}` : "Add a vendor resolver"} size="lg">
@@ -227,23 +219,21 @@ function EditModal({
           <code className="text-xs text-content">{"{key}"}</code> and{" "}
           <code className="text-xs text-content">{"{env:VAR}"}</code> template the request.
         </p>
-        <textarea
-          value={text}
-          onChange={(e) => {
-            setText(e.target.value);
-            setErr(null);
+        <JsonField
+          value={manifest}
+          onChange={(v, m) => {
+            setValid(m.valid);
+            if (m.valid) setManifest(v);
           }}
-          spellCheck={false}
           rows={20}
-          className="w-full font-mono text-xs px-3 py-2 rounded border border-line bg-surface text-content"
+          hint="The resolver manifest as JSON."
         />
-        {err && <p className="text-sm text-accent whitespace-pre-wrap">{err}</p>}
         <div className="flex justify-end gap-2">
           <button onClick={onClose} className="px-3 py-2 rounded-md border border-line text-sm text-muted">
             Cancel
           </button>
           <button
-            disabled={save.isPending}
+            disabled={save.isPending || !valid}
             onClick={() => save.mutate()}
             className="px-3 py-2 rounded-md bg-cobble-600 text-white text-sm font-medium disabled:opacity-50"
           >

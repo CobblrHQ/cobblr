@@ -26,7 +26,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVertical, Plus, Pencil, Trash2, ScanLine, ArrowRight } from "lucide-react";
+import { GripVertical, Plus, Pencil, Trash2, ScanLine, ArrowRight, ClipboardPaste } from "lucide-react";
 import { Modal, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
 import { ApiError, api, type ScanQrRule, type ScanResolveOutcome } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -55,7 +55,7 @@ function emptyDraft(): RuleDraft {
   };
 }
 
-export function ScanRulesPage() {
+export function ScanRulesPage({ embedded = false }: { embedded?: boolean } = {}) {
   usePageTitle("External QR rules");
   const { activeSlug, activeOrg } = useActiveOrg();
   const qc = useQueryClient();
@@ -71,6 +71,7 @@ export function ScanRulesPage() {
   const rules = useMemo(() => list.data?.rules ?? [], [list.data]);
 
   const [editing, setEditing] = useState<ScanQrRule | "new" | null>(null);
+  const [pasting, setPasting] = useState(false);
 
   const save = useMutation({
     mutationFn: (d: { id?: string; body: RuleDraft }) =>
@@ -78,6 +79,7 @@ export function ScanRulesPage() {
     onSuccess: () => {
       toast.success("Rule saved.");
       setEditing(null);
+      setPasting(false);
       void qc.invalidateQueries({ queryKey: ["scan-qr-rules", activeSlug] });
     },
     onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't save the rule."),
@@ -120,11 +122,13 @@ export function ScanRulesPage() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-6 space-y-6">
+    <div className={embedded ? "space-y-6" : "mx-auto max-w-3xl px-4 py-6 space-y-6"}>
       <header className="space-y-1">
-        <h1 className="text-xl font-semibold text-content dark:text-mortar-100 flex items-center gap-2">
-          <ScanLine size={20} /> External QR rules
-        </h1>
+        {!embedded && (
+          <h1 className="text-xl font-semibold text-content dark:text-mortar-100 flex items-center gap-2">
+            <ScanLine size={20} /> External QR rules
+          </h1>
+        )}
         <p className="text-sm text-muted dark:text-mortar-300">
           Teach the scanner to read QR labels printed by another app and open the matching item here.
           A rule recognises a label format and resolves it to a Cobblr entity. Inert until you add one
@@ -140,12 +144,21 @@ export function ScanRulesPage() {
             Rules {rules.length > 0 && `(${rules.length})`}
           </h2>
           {isAdmin && (
-            <button
-              onClick={() => setEditing("new")}
-              className="inline-flex items-center gap-1.5 rounded-md bg-cobble-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-cobble-700"
-            >
-              <Plus size={15} /> Add rule
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setPasting(true)}
+                title="Create a rule by pasting its JSON"
+                className="inline-flex items-center gap-1.5 rounded-md border border-line dark:border-slate-600 px-3 py-1.5 text-sm text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800"
+              >
+                <ClipboardPaste size={15} /> Paste JSON
+              </button>
+              <button
+                onClick={() => setEditing("new")}
+                className="inline-flex items-center gap-1.5 rounded-md bg-cobble-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-cobble-700"
+              >
+                <Plus size={15} /> Add rule
+              </button>
+            </div>
           )}
         </div>
 
@@ -183,7 +196,101 @@ export function ScanRulesPage() {
           onSave={(body) => save.mutate({ id: editing === "new" ? undefined : editing.id, body })}
         />
       )}
+      {pasting && (
+        <PasteRuleModal
+          saving={save.isPending}
+          onClose={() => setPasting(false)}
+          onCreate={(body) => save.mutate({ body })}
+        />
+      )}
     </div>
+  );
+}
+
+// ─────────────────────── paste a rule as JSON ───────────────────────
+// Faster than the form when someone hands you a ready-made rule (a support
+// answer, a docs snippet). Parses leniently, validates the essentials client-
+// side, and lets the server schema be the final word.
+const PASTE_EXAMPLE = JSON.stringify(
+  {
+    name: "companion app storage stickers",
+    match: { type: "url_prefix", value: "https://workshop.example.com/storage/" },
+    resolve: { key_field: "wos_id", target_kind: "core-locations:location" },
+  },
+  null,
+  2,
+);
+
+function PasteRuleModal({
+  saving,
+  onClose,
+  onCreate,
+}: {
+  saving: boolean;
+  onClose: () => void;
+  onCreate: (body: RuleDraft) => void;
+}) {
+  const [text, setText] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+
+  function submit() {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      setErr("That isn't valid JSON — check for a stray comma or quote.");
+      return;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      setErr("Expected a single rule object { name, match, resolve }.");
+      return;
+    }
+    const p = parsed as Record<string, unknown>;
+    if (!p.name || !p.match || !p.resolve) {
+      setErr("A rule needs at least name, match, and resolve.");
+      return;
+    }
+    // `extract` is optional for the author but required by the schema → default {}.
+    onCreate({ enabled: true, ...(p as object), extract: (p.extract as object) ?? {} } as RuleDraft);
+  }
+
+  return (
+    <Modal open onClose={onClose} title="Paste a rule" subtitle="External QR resolver" size="lg">
+      <div className="space-y-3">
+        <p className="text-sm text-muted dark:text-mortar-300">
+          Paste a rule as JSON — <code>name</code>, <code>match</code>, <code>resolve</code> (optional{" "}
+          <code>extract</code>, <code>enabled</code>, <code>position</code>). Quicker than filling the form when
+          you've been handed a ready rule.
+        </p>
+        <textarea
+          value={text}
+          onChange={(e) => {
+            setText(e.target.value);
+            setErr(null);
+          }}
+          rows={12}
+          spellCheck={false}
+          placeholder={PASTE_EXAMPLE}
+          className="w-full rounded-md border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 p-2 font-mono text-xs text-content dark:text-mortar-100"
+        />
+        {err && <p className="text-xs text-ember-600">{err}</p>}
+        <button type="button" onClick={() => setText(PASTE_EXAMPLE)} className="text-xs text-accent hover:underline">
+          Fill with an example
+        </button>
+      </div>
+      <div className="mt-4 flex justify-end gap-2">
+        <button onClick={onClose} className="rounded-md px-3 py-1.5 text-sm text-muted hover:text-content dark:hover:text-mortar-100">
+          Cancel
+        </button>
+        <button
+          onClick={submit}
+          disabled={saving || !text.trim()}
+          className="rounded-md bg-cobble-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-cobble-700 disabled:opacity-50"
+        >
+          {saving ? "Creating…" : "Create rule"}
+        </button>
+      </div>
+    </Modal>
   );
 }
 
@@ -301,10 +408,27 @@ function TestBox({ slug, hasRules }: { slug: string; hasRules: boolean }) {
       {result && (
         <div className="text-xs">
           {result.outcome === "resolved" ? (
-            <p className="text-emerald-600 dark:text-emerald-400">
-              ✓ <span className="font-medium">{result.rule_name}</span> → opens{" "}
-              <Link to={result.detail_path} className="underline">{result.entity_kind}</Link>
-            </p>
+            <div className="flex items-center gap-2.5 rounded-md border border-emerald-500/30 bg-emerald-500/5 dark:bg-emerald-500/10 p-2.5">
+              <span className="text-base leading-none text-emerald-600 dark:text-emerald-400">✓</span>
+              <div className="min-w-0 flex-1">
+                <Link
+                  to={result.detail_path}
+                  className="block truncate font-medium text-content dark:text-mortar-100 underline-offset-2 hover:text-accent hover:underline"
+                >
+                  {result.entity_label}
+                </Link>
+                <div className="text-[11px] text-muted dark:text-slate-400">
+                  matched by <span className="text-content dark:text-mortar-200">{result.rule_name}</span> ·{" "}
+                  <code className="text-faint">{result.entity_kind}</code>
+                </div>
+              </div>
+              <Link
+                to={result.detail_path}
+                className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-accent hover:underline"
+              >
+                Open <ArrowRight size={13} />
+              </Link>
+            </div>
           ) : result.outcome === "recognized_no_match" ? (
             <p className="text-amber-600 dark:text-amber-400">
               Recognised by <span className="font-medium">{result.rule_name}</span> (key <code>{result.key}</code>),
@@ -347,9 +471,49 @@ function RuleModal({
       : d.resolve.target_kind?.trim() || Object.keys(d.resolve.type_map ?? {}).length > 0) &&
     (d.match.type === "bare" || d.match.value?.trim());
 
+  // Form ↔ JSON: editing the JSON keeps the form draft in sync on every valid
+  // parse, so you can flip between them and Save from either.
+  const [mode, setMode] = useState<"form" | "json">("form");
+  const [jsonText, setJsonText] = useState("");
+  const [jsonErr, setJsonErr] = useState<string | null>(null);
+  function showJson() {
+    setJsonText(JSON.stringify(d, null, 2));
+    setJsonErr(null);
+    setMode("json");
+  }
+  function editJson(t: string) {
+    setJsonText(t);
+    try {
+      const parsed = JSON.parse(t);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("not an object");
+      setD(parsed as RuleDraft);
+      setJsonErr(null);
+    } catch {
+      setJsonErr("Invalid JSON — the form keeps the last valid version.");
+    }
+  }
+
+  const tabCls = (on: boolean) =>
+    "rounded px-2.5 py-1 " + (on ? "bg-surface dark:bg-slate-700 text-content dark:text-mortar-100 shadow-sm" : "text-muted hover:text-content dark:hover:text-mortar-100");
+
   return (
     <Modal open onClose={onClose} title={rule ? "Edit rule" : "New rule"} subtitle="External QR resolver" size="lg">
       <div className="space-y-5">
+        <div className="flex w-fit gap-0.5 rounded-md bg-subtle dark:bg-slate-800 p-0.5 text-xs">
+          <button type="button" onClick={() => setMode("form")} className={tabCls(mode === "form")}>Form</button>
+          <button type="button" onClick={showJson} className={tabCls(mode === "json")}>JSON</button>
+        </div>
+        {mode === "json" ? (
+          <div className="space-y-1">
+            <textarea value={jsonText} onChange={(e) => editJson(e.target.value)} rows={16} spellCheck={false} className="input w-full font-mono text-xs" />
+            {jsonErr ? (
+              <p className="text-xs text-ember-600">{jsonErr}</p>
+            ) : (
+              <p className="text-xs text-muted dark:text-mortar-300">Edit the rule directly — name, match, extract, resolve (+ optional enabled, position).</p>
+            )}
+          </div>
+        ) : (
+        <>
         <Field label="Name">
           <input value={d.name} onChange={(e) => set({ name: e.target.value })} placeholder="e.g. companion app labels" className="input" autoFocus />
         </Field>
@@ -434,13 +598,15 @@ function RuleModal({
             </Field>
           </Section>
         )}
+        </>
+        )}
       </div>
 
       <div className="mt-6 flex justify-end gap-2">
         <button onClick={onClose} className="rounded-md border border-line dark:border-slate-700 px-4 py-2 text-sm text-content dark:text-mortar-100 hover:bg-mortar-100 dark:hover:bg-slate-800">
           Cancel
         </button>
-        <button onClick={() => onSave(d)} disabled={!canSave || saving} className="rounded-md bg-cobble-600 px-4 py-2 text-sm font-medium text-white hover:bg-cobble-700 disabled:opacity-50">
+        <button onClick={() => onSave(d)} disabled={!canSave || saving || (mode === "json" && !!jsonErr)} className="rounded-md bg-cobble-600 px-4 py-2 text-sm font-medium text-white hover:bg-cobble-700 disabled:opacity-50">
           {saving ? "Saving…" : "Save rule"}
         </button>
       </div>

@@ -16,11 +16,13 @@ const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
  *  `…/qr/:token` URL a phone camera reads off a printed Cobblr label. */
 export function qrTokenFromScan(code: string): string | null {
   const t = code.trim();
-  const m = t.match(/\/qr\/([A-Za-z0-9_-]+)\/?$/);
-  if (m) return m[1]!;
-  // A bare token is a url-safe slug with no scheme/space. (Numeric-only is a
-  // UPC/EAN, not a token — let it fall to the barcode path.)
-  if (/^[A-Za-z0-9_-]{6,}$/.test(t) && /[A-Za-z_-]/.test(t)) return t;
+  // Everything after /qr/ — a single opaque segment OR a descriptive
+  // "<kind>/<id>" with a slash; stop at any query/fragment, drop a trailing /.
+  const m = t.match(/\/qr\/([^?#\s]+)/);
+  if (m) return m[1]!.replace(/\/$/, "");
+  // A bare token is a url-safe slug with no scheme/space (descriptive bare
+  // tokens carry one slash). Numeric-only is a UPC/EAN — let it fall to barcode.
+  if (/^[A-Za-z0-9_-]+(\/[A-Za-z0-9_-]+)?$/.test(t) && t.length >= 6 && /[A-Za-z_-]/.test(t)) return t;
   return null;
 }
 

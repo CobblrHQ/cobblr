@@ -15,6 +15,7 @@ import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { lookupBarcode, type BarcodeHit } from "./barcode-lookup.js";
 import { resolveBarcodeViaWebSearch } from "./barcode-websearch.js";
+import { reportBarcodeCorrection } from "./barcode-corrections.js";
 import { classifyScanCode, resolveIsbn, resolveAsin } from "./scan-router.js";
 import { crossCheckScanPhoto, identifyImage, refreshCatalogImageByName } from "./enrich-photo.js";
 import type { CoreScanDB } from "../db.js";
@@ -60,6 +61,22 @@ const sourceLabel = (s: string): string => SOURCE_LABEL[s] ?? s;
 function provenanceLabel(hit: BarcodeHit): string {
   const served = (hit.raw as { resolver?: { cache?: string } })?.resolver?.cache === "hit";
   return (served ? "BIdb / " : "") + sourceLabel(hit.source);
+}
+
+/** Standardize a product name to LEAD WITH ITS BRAND when it doesn't already —
+ *  a sparse source name like "Black Label No.7" (brand "Jack Daniel's") reads
+ *  much better as "Jack Daniel's Black Label No.7". Skips when the brand is
+ *  already present (full string, or all its significant words appear) so it never
+ *  doubles up ("Jack Daniel's Jack Daniel's …"). Brand-less / nameless → unchanged. */
+function withBrandPrefix(name: string | null, brand: string | null): string | null {
+  const n = (name ?? "").trim();
+  const b = (brand ?? "").trim();
+  if (!n || !b) return name;
+  const nl = n.toLowerCase();
+  if (nl.includes(b.toLowerCase())) return n;
+  const bw = b.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3);
+  if (bw.length > 0 && bw.every((w) => nl.includes(w))) return n;
+  return `${b} ${n}`;
 }
 
 // Last resort when the barcode + web search find nothing: if the scan carried a
@@ -160,6 +177,21 @@ interface EnrichContext {
    *  box resolver was never asked again. The fresh result re-puts both
    *  caches below, healing the stale entry for every tenant. */
   force?: boolean;
+  /** The user pressed "This is wrong" — re-resolve across ALL sources and treat
+   *  the result as AUTHORITATIVE: run the web identify unconditionally (not only
+   *  when the provider name looks thin) and adopt a confident web result even if
+   *  it isn't strictly "fuller" than the flagged one, then write the correction
+   *  back to BIdb. Distrust-the-current-answer mode. */
+  wrong?: boolean;
+  /** The user pressed "Right product, but needs detail" — the IDENTITY is fine
+   *  but the listing is thin (a bare "stratosphere gin"). Run the web identify
+   *  unconditionally and accept a fuller name for the SAME product (keep the
+   *  same-product guard, drop the must-add-hard-spec requirement) — fill in the
+   *  proper name / spec / brand without changing what it is. */
+  enrich?: boolean;
+  /** The user's "what's wrong / what is it" note — folded into the web identify
+   *  so a correction like "it's Maker's Mark" steers the re-resolution. */
+  hint?: string;
 }
 
 export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
@@ -342,12 +374,12 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
   if (!hit) {
     // Catalog DBs have nothing — fall back to web search (what a person
     // does: search the UPC, read the name off the agreeing results).
-    const web = await resolveBarcodeViaWebSearch(ctx.orgId, ctx.upc).catch(() => null);
+    const web = await resolveBarcodeViaWebSearch(ctx.orgId, ctx.upc, ctx.hint).catch(() => null);
     if (web) {
       await ctx.db
         .updateTable("core_scan_inbox_items")
         .set({
-          suggested_name: web.name,
+          suggested_name: withBrandPrefix(web.name, web.brand),
           suggested_manufacturer: web.brand,
           suggested_sku: web.sku,
           catalog_image_url: web.imageUrl,
@@ -439,7 +471,7 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
   await ctx.db
     .updateTable("core_scan_inbox_items")
     .set({
-      suggested_name: hit.title || null,
+      suggested_name: withBrandPrefix(hit.title || null, hit.brand),
       suggested_manufacturer: hit.brand,
       suggested_sku: hit.model,
       catalog_image_url: hit.image_url,
@@ -490,6 +522,116 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
     void crossCheckScanPhoto(ctx.orgId, ctx.itemId, hit.title).catch((e) =>
       console.error("[core-scan] photo cross-check failed:", (e as Error).message),
     );
+  }
+
+  // 5. THIN HIT → enrich + feed BIdb. A bare category name ("Bourbon"), usually
+  // from a light Open*Facts mirror entry that's technically right but sparse, is a
+  // STARTING POINT — not the finished answer. When the name omits the brand (it's
+  // a category, not the product), web+AI builds the full title and we write it
+  // back to the Barcode Intelligence DB so it SUPERSEDES the thin entry for every
+  // future scan, any instance — "enrichen our DB once we process it the first
+  // time." Detached + best-effort; resolveBarcodeViaWebSearch is internally
+  // AI-gated, and once the write-back lands the next resolve isn't thin → no loop.
+  // Thin hit → enrich. ALSO when the user flagged it wrong (re-derive) or asked
+  // to enrich it (fill in detail): run the web identify regardless of thin-ness.
+  if (ctx.wrong || ctx.enrich || isThinHit(hit)) {
+    void enrichThinHit(ctx, hit).catch((e) =>
+      console.error("[core-scan] thin-hit enrich failed:", (e as Error).message),
+    );
+  }
+}
+
+/** A resolver hit worth enriching: a brand exists but the NAME omits it (a bare
+ *  category like "Bourbon"), or a very short name from a light crowdsourced mirror
+ *  (Open*Facts). A name that already carries its brand is left alone. */
+function isThinHit(hit: BarcodeHit): boolean {
+  const title = hit.title?.trim() ?? "";
+  if (!title) return false;
+  const brand = hit.brand?.trim() ?? "";
+  if (brand.length >= 2 && title.toLowerCase().includes(brand.toLowerCase())) return false;
+  const words = title.split(/\s+/).filter(Boolean);
+  const LIGHT = new Set([
+    "openfoodfacts",
+    "openproductsfacts",
+    "openbeautyfacts",
+    "openpetfoodfacts",
+    "openlibrary",
+    "musicbrainz",
+  ]);
+  return (brand.length >= 2 && words.length <= 3) || (LIGHT.has(hit.source) && words.length <= 2);
+}
+
+/** Web+AI-enrich a thin hit into a full product title, update the row, and feed
+ *  the richer result back to BIdb (trusted actor → supersedes the thin entry).
+ *  Only upgrades when the web result is genuinely FULLER + about the same product
+ *  (shares the head noun) + reasonably confident — never replaces a hit with a
+ *  shakier guess. Detached/best-effort. */
+async function enrichThinHit(ctx: EnrichContext, hit: BarcodeHit): Promise<void> {
+  const thin = hit.title?.trim() ?? "";
+  const web = await resolveBarcodeViaWebSearch(ctx.orgId, ctx.upc, ctx.hint).catch(() => null);
+  const enriched = web?.name?.trim();
+  if (!web || !enriched || web.confidence < 0.5) return;
+  // Only upgrade when the web result adds REAL SKU information — the package
+  // size/spec (1.75 L / 750 mL / 12 ct / proof / net weight) or the brand — not
+  // just more descriptive words. A longer-but-spec-less name ("…Frontier Whiskey"
+  // with no size) is fluff and must NOT replace the thin name. The head-noun
+  // share keeps it about the same product (not a hallucinated different one).
+  const SPEC_RE =
+    /\b\d+(?:\.\d+)?\s?(?:ml|cl|l|liter|litre|fl\.?\s?oz|oz|g|kg|mg|lb|ct|pk|pack|count|gal|qt|pt|proof|%)\b/i;
+  const brandLc = (web.brand ?? hit.brand ?? "").trim().toLowerCase();
+  const addsSpec = SPEC_RE.test(enriched) && !SPEC_RE.test(thin);
+  const addsBrand =
+    brandLc.length >= 2 && !thin.toLowerCase().includes(brandLc) && enriched.toLowerCase().includes(brandLc);
+  const headNoun = thin.toLowerCase().split(/\s+/).find((w) => w.length >= 3) ?? "";
+  const sameProduct = headNoun ? enriched.toLowerCase().includes(headNoun) : true;
+  // A LOOSER same-product test for ENRICH mode: the user confirmed the product is
+  // right, and a spelling fix ("stratosphere" → "Stratusphere") makes the strict
+  // head-noun check fail. Accept if the enriched name still shares ANY significant
+  // word from the thin one (the category noun "gin" survives a brand respelling),
+  // which keeps "gin → gin" but rejects "gin → vodka".
+  const thinWords = thin.toLowerCase().split(/\s+/).filter((w) => w.length >= 3);
+  const sharesAnyWord = thinWords.length ? thinWords.some((w) => enriched.toLowerCase().includes(w)) : true;
+  // Three acceptance bars (the >0.5 confidence gate above always stands):
+  //   • WRONG   — the user says the identity is bad: adopt any confident result,
+  //               same-product + adds-info gates dropped (it may be a new product).
+  //   • ENRICH  — the user says the product is RIGHT but the listing is thin: keep
+  //               the same product, accept a fuller name (a more complete name, or
+  //               one that adds spec/brand). The identify is anti-fluff (#384), so
+  //               "fuller" here means a better name for the same thing.
+  //   • default — conservative auto-enrich: same product AND real SKU info only.
+  const fuller = enriched.length > thin.length || addsSpec || addsBrand;
+  if (ctx.wrong) {
+    /* adopt */
+  } else if (ctx.enrich) {
+    if (!sharesAnyWord || !fuller) return;
+  } else {
+    if (!sameProduct || (!addsSpec && !addsBrand)) return;
+  }
+
+  await ctx.db
+    .updateTable("core_scan_inbox_items")
+    .set({
+      suggested_name: enriched,
+      ...(web.brand ? { suggested_manufacturer: web.brand } : {}),
+      suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({
+        enriched_from: thin,
+        ...(web.category ? { category: web.category } : {}),
+      })}::jsonb` as never,
+      updated_at: new Date(),
+    })
+    .where("id", "=", ctx.itemId)
+    .execute();
+
+  // The name changed → the image probably should too (a generic "Whiskey" shelf
+  // shot shouldn't survive a re-identify to "Maker's Mark"). Re-search by the new
+  // name (brand-aware). Detached/best-effort.
+  void refreshCatalogImageByName(ctx.orgId, ctx.itemId, enriched, web.brand ?? hit.brand ?? null).catch(() => {});
+
+  // Supersede the thin BIdb/OFF entry for every future scan (trusted actor →
+  // auto-verified). Best-effort; inert if the resolver/correction token is unset.
+  void reportBarcodeCorrection({ upc: ctx.upc, field: "title", was: thin, now: enriched }).catch(() => {});
+  if (web.brand && web.brand !== hit.brand) {
+    void reportBarcodeCorrection({ upc: ctx.upc, field: "brand", was: hit.brand ?? null, now: web.brand }).catch(() => {});
   }
 }
 

@@ -2,6 +2,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@cobblr/platform-web";
 import { useBarcodeWedge } from "../lib/useBarcodeWedge";
+import { resolveSessionBatch } from "../lib/scanSession";
 import { api, ApiError } from "../lib/api";
 
 /**
@@ -33,8 +34,19 @@ export function GlobalScanWedge({ activeSlug }: { activeSlug: string }) {
   const onScanRoute = loc.pathname === "/scan" || loc.pathname.startsWith("/scan/");
 
   const scan = useMutation({
-    mutationFn: (code: string) =>
-      api.scanBarcode(activeSlug, { barcode: code, source_kind: "barcode" }),
+    mutationFn: async (code: string) => {
+      // Group consecutive hardware scans into a time-gap session so they land in
+      // one batch (and stop being sessionless). A failed mint just means
+      // un-batched — never blocks the scan.
+      const batchId = await resolveSessionBatch(activeSlug, () =>
+        api.createScanBatch(activeSlug).then((b) => b.id).catch(() => null),
+      );
+      return api.scanBarcode(activeSlug, {
+        barcode: code,
+        source_kind: "barcode",
+        ...(batchId ? { scan_batch_id: batchId } : {}),
+      });
+    },
     onSuccess: (item) => {
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
       const name = item.suggested_name ?? `barcode ${item.barcode_text ?? ""}`.trim();

@@ -10,7 +10,7 @@ import { ApiError, api, type QrToken } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
 
-export function QrTokensPage() {
+export function QrTokensPage({ embedded = false }: { embedded?: boolean } = {}) {
   usePageTitle("QR codes");
   const { activeSlug, activeOrg } = useActiveOrg();
   const qc = useQueryClient();
@@ -34,15 +34,32 @@ export function QrTokensPage() {
       toast.error(e instanceof ApiError ? e.message : "Couldn't revoke"),
   });
 
+  const settings = useQuery({
+    queryKey: ["qr-settings", activeSlug],
+    queryFn: () => api.getQrSettings(activeSlug),
+    enabled: !!activeSlug,
+  });
+  const setStyle = useMutation({
+    mutationFn: (s: "descriptive" | "opaque") => api.setQrTokenStyle(activeSlug, s),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["qr-settings", activeSlug] });
+      toast.success("Saved");
+    },
+    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't save"),
+  });
+  const style = settings.data?.token_style ?? "descriptive";
+
   const items = list.data?.items ?? [];
   const active = items.filter((t) => status(t) === "active").length;
 
   return (
-    <div className="space-y-4 max-w-3xl">
-      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
-          QR codes
-        </h1>
+    <div className={embedded ? "space-y-4" : "space-y-4 max-w-3xl"}>
+      <div className={"flex items-baseline gap-3 " + (embedded ? "" : "border-b border-line dark:border-slate-700 pb-3")}>
+        {!embedded && (
+          <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
+            QR codes
+          </h1>
+        )}
         <span className="text-[10px] font-mono text-faint dark:text-slate-500">
           {active} active · {items.length} total
         </span>
@@ -54,6 +71,37 @@ export function QrTokensPage() {
         navigating to the item or firing an action. Revoke one and its printed
         label stops working immediately.
       </p>
+
+      {/* New-code style: self-describing vs opaque. Existing codes unaffected. */}
+      <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3">
+        <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1.5">
+          New-code style
+        </div>
+        <div className="flex gap-2">
+          {(["descriptive", "opaque"] as const).map((opt) => (
+            <button
+              key={opt}
+              type="button"
+              onClick={() => style !== opt && setStyle.mutate(opt)}
+              disabled={setStyle.isPending}
+              className={
+                "text-xs px-2.5 py-1.5 rounded border transition " +
+                (style === opt
+                  ? "border-cobble-500 bg-cobble-50 dark:bg-cobble-900/40 text-content dark:text-mortar-100"
+                  : "border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:text-content")
+              }
+            >
+              {opt === "descriptive" ? "Self-describing" : "Opaque"}
+            </button>
+          ))}
+        </div>
+        <p className="text-[11px] text-muted dark:text-slate-400 mt-1.5">
+          {style === "descriptive"
+            ? "New codes encode /qr/<kind>/<id> — self-describing and portable: still interpretable if this instance is gone. Denser code."
+            : "New codes encode a short random token — reveals nothing and scans cleanly on tiny labels, but needs this instance to resolve."}{" "}
+          Codes you've already printed keep working either way.
+        </p>
+      </div>
 
       {list.isLoading && <div className="text-sm text-muted">Loading…</div>}
       {!list.isLoading && items.length === 0 && (

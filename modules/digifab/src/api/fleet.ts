@@ -21,6 +21,7 @@ import { buildDriverById, bambuLanDriverFor, parseBambuLan, bambuLanMode, type B
 import { availableDriverKeys } from "../drivers/registry.js";
 import { classify } from "../state.js";
 import type { MachineDriver, RemoteDevice } from "../drivers/types.js";
+import { readCachedList, readCachedInfo, refreshList, ensureInfo, ensureWarming } from "../printer-file-cache.js";
 
 export const fleetRouter = Router({ mergeParams: true });
 
@@ -399,6 +400,66 @@ fleetRouter.get(
   }),
 );
 
+// The gcode files on the printer's storage — served from the DURABLE backend
+// cache (digifab_printer_files), kept warm by the background warmer, so a modal
+// open never touches the machine. We only pull live on the first-ever request
+// (no cache yet) or an explicit ?refresh=1; every request (re)starts the warm
+// loop so the list + thumbnails stay current on the backend's schedule.
+fleetRouter.get(
+  "/:connectionId/:deviceId/files",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const db = tenantDb(req);
+    const orgId = tenantContext(req).org.id;
+    const connId = req.params.connectionId!;
+    const deviceId = req.params.deviceId!;
+    const refresh = req.query.refresh === "1";
+    const cached = await readCachedList(db, connId, deviceId);
+    let files = cached.files;
+    let live = false;
+    if (refresh || cached.listFetchedAt == null) {
+      const driver = await buildDriverById(db, orgId, connId);
+      if (driver?.listFiles) {
+        try {
+          files = await withTimeout(refreshList(db, driver, connId, deviceId), 15_000, "listFiles timed out");
+          live = true;
+        } catch {
+          /* printer unreachable → serve whatever's cached (possibly empty) */
+        }
+      }
+    }
+    await ensureWarming(db, orgId, connId, deviceId).catch(() => {});
+    res.json({ files, cached: !live, at: (cached.listFetchedAt ?? new Date()).toISOString() });
+  }),
+);
+
+// Slicer metadata + embedded thumbnail for one file — served from the durable
+// cache (fetched once, immutable per file). A cache miss (the warmer hasn't
+// reached this file yet) pulls it live once and persists it, so the rows you
+// look at first fill in immediately while the rest backfill in the background.
+fleetRouter.get(
+  "/:connectionId/:deviceId/fileinfo",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const name = typeof req.query.name === "string" ? req.query.name : "";
+    if (!name) return void res.status(400).json({ error: { code: "bad_query", message: "name required" } });
+    const db = tenantDb(req);
+    const orgId = tenantContext(req).org.id;
+    const connId = req.params.connectionId!;
+    const deviceId = req.params.deviceId!;
+    const cached = await readCachedInfo(db, connId, deviceId, name);
+    if (cached.fetched) return void res.json({ info: cached.info, cached: true });
+    const driver = await buildDriverById(db, orgId, connId);
+    if (!driver?.fileInfo) return void res.json({ info: null, cached: false });
+    try {
+      const info = await withTimeout(ensureInfo(db, driver, connId, deviceId, name), 15_000, "fileInfo timed out");
+      return void res.json({ info, cached: false });
+    } catch (e) {
+      return void res.status(502).json({ error: { code: "fileinfo_failed", message: (e as Error).message } });
+    }
+  }),
+);
+
 const ControlBody = z.object({ id: z.string().min(1).max(60), params: z.record(z.unknown()).optional() });
 fleetRouter.post(
   "/:connectionId/:deviceId/control",
@@ -414,6 +475,22 @@ fleetRouter.post(
     if (!driver?.runControl) return void res.status(501).json({ error: { code: "unsupported", message: "this printer can't be controlled here" } });
     const r = await driver.runControl(req.params.deviceId!, parsed.data.id, parsed.data.params ?? {});
     if (!r.ok) return void res.status(502).json({ error: { code: "control_failed", message: r.detail ?? "command not accepted by the printer" } });
+    res.json({ ok: true, ref: r.ref });
+  }),
+);
+
+// Start a file ALREADY on the printer's storage (from the file list) — no upload.
+const PrintBody = z.object({ name: z.string().min(1).max(300) });
+fleetRouter.post(
+  "/:connectionId/:deviceId/print",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const parsed = PrintBody.safeParse(req.body);
+    if (!parsed.success) return void res.status(400).json({ error: { code: "bad_body", message: "file name required" } });
+    const driver = await buildDriverById(tenantDb(req), tenantContext(req).org.id, req.params.connectionId!);
+    if (!driver?.printFile) return void res.status(501).json({ error: { code: "unsupported", message: "this printer can't start an on-disk file here" } });
+    const r = await driver.printFile(req.params.deviceId!, parsed.data.name);
+    if (!r.ok) return void res.status(502).json({ error: { code: "print_failed", message: r.detail ?? "the printer didn't accept the print" } });
     res.json({ ok: true, ref: r.ref });
   }),
 );
@@ -511,7 +588,40 @@ fleetRouter.get(
       .where("connection_id", "=", req.params.connectionId!)
       .where("serial", "=", req.params.deviceId!)
       .executeTakeFirst();
-    if (!row?.report) return void res.json({ live: false, telemetry: null, lan });
+    if (!row?.report) {
+      // No Bambu cloud MQTT report. For an edge-bridge machine (Duet, PrusaLink,
+      // Moonraker) live temps + state come from the bridge's device list, not a
+      // cloud pump — so pull them (cached, shared with the floor view) and report
+      // them here instead of leaving the modal blank.
+      try {
+        const driver = await buildDriverById(tenantDb(req), tenantContext(req).org.id, req.params.connectionId!);
+        if (driver) {
+          const { devices, at } = await fetchDevicesCached(driver, req.params.connectionId!);
+          const dev = devices.find((x) => x.id === req.params.deviceId);
+          const t = dev?.temps;
+          const st = dev?.state;
+          if (t && (t.nozzle || t.bed || t.chamber)) {
+            return void res.json({
+              live: true,
+              updated_at: new Date(at).toISOString(),
+              telemetry: {
+                nozzle: t.nozzle?.actual ?? null, nozzle_target: t.nozzle?.target ?? null,
+                bed: t.bed?.actual ?? null, bed_target: t.bed?.target ?? null,
+                chamber: t.chamber?.actual ?? null,
+                light: null, speed_level: null, nozzle_diameter: null, nozzle_type: null,
+                wifi: null, gcode_state: st ?? null, firmware_update: false, hms_count: 0,
+                ams: [],
+              },
+              job: dev?.job ?? null,
+              lan,
+            });
+          }
+        }
+      } catch {
+        /* bridge unreachable → fall through to no-telemetry */
+      }
+      return void res.json({ live: false, telemetry: null, lan });
+    }
     const p = row.report as Record<string, unknown>;
     const slots: { id: string; type: string | null; color: string | null; remain: number | null; brand: string | null }[] = [];
     const amsUnits = Array.isArray((p.ams as { ams?: unknown })?.ams) ? ((p.ams as { ams: Record<string, unknown>[] }).ams) : [];

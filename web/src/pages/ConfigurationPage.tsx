@@ -35,7 +35,6 @@ import {
   Plug,
   Printer,
   QrCode,
-  ScanLine,
   Ruler,
   Search,
   Sliders,
@@ -316,16 +315,8 @@ export function ConfigurationPage() {
       icon: QrCode,
       label: "QR codes",
       description:
-        "Every QR token the workspace has minted — what each points at, whether it's public, when it expires. Copy a scan URL or revoke a token whose printed label walked off.",
+        "The QR tokens the workspace has minted (copy a scan URL, revoke a token whose label walked off), plus external-QR rules that teach the scanner to read labels printed by another app — two tabs in one window.",
       to: "/configuration/qr-tokens",
-    },
-    {
-      group: "data",
-      icon: ScanLine,
-      label: "External QR rules",
-      description:
-        "Teach the scanner to read QR labels printed by another app (a companion app URL, a bare Homebox number, …) and open the matching item here — so labels you already printed keep working without a reprint.",
-      to: "/configuration/scan-rules",
     },
     // ── people + access ────────────────────────────────────────────
     {

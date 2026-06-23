@@ -8,7 +8,7 @@ import { useState, useMemo, useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQuery, useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, Wifi, Printer, RefreshCw, Send, ListChecks, Boxes, AlertTriangle, Layers, X, ListPlus, Ban, Camera, Pause, Play, Thermometer, ChevronRight, Share2, Sliders } from "lucide-react";
-import { ApiError, api, fetchAuthBlobUrl, type DigifabConnection, type DigifabJob, type DigifabFleetDevice, type DigifabDeviceClass, type BambuMode, type DigifabLibraryItem, type DigifabHistory, type DigifabDeviceDetail } from "../lib/api";
+import { ApiError, api, fetchAuthBlobUrl, type DigifabConnection, type DigifabJob, type DigifabFleetDevice, type DigifabDeviceClass, type BambuMode, type DigifabLibraryItem, type DigifabHistory, type DigifabDeviceDetail, type DigifabFileInfo } from "../lib/api";
 import { BambuConnectWizard } from "../components/BambuConnectWizard";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { PrintUpdatesPanel } from "./PrintUpdatesPanel";
@@ -1200,18 +1200,29 @@ function NewJobModal({
   );
 }
 
-function CreateConnectionModal({
+export function CreateConnectionModal({
   types,
   onClose,
   onCreated,
+  presetType,
+  presetName,
+  presetDriver,
 }: {
   types: string[];
   onClose: () => void;
-  onCreated: () => void;
+  /** Receives the new connection's id (when known) so the caller can auto-select it. */
+  onCreated: (connectionId?: string) => void;
+  /** Pre-select the connection TYPE (e.g. "edge_adapter" when launched from a
+   *  printer, so the user skips the type pick). */
+  presetType?: string;
+  /** Pre-fill the first machine's name (carry the printer's name over). */
+  presetName?: string;
+  /** Pre-select the first machine's driver (e.g. "moonraker"). */
+  presetDriver?: string;
 }) {
   const { activeSlug } = useActiveOrg();
   const toast = useToast();
-  const [type, setType] = useState(types[0] ?? "fdm_monster");
+  const [type, setType] = useState(presetType ?? types[0] ?? "fdm_monster");
   // For a Bambu, the user chooses HOW it connects: cloud account (monitor) or LAN
   // via the edge bridge (full control). They're different connection shapes.
   const [bambuWay, setBambuWay] = useState<"cloud" | "lan">("cloud");
@@ -1234,9 +1245,9 @@ function CreateConnectionModal({
             ? { api_key: apiKey.trim() || undefined }
             : { username: username.trim() || undefined, password: password || undefined }),
       }),
-    onSuccess: () => {
+    onSuccess: (conn) => {
       toast.success("Connection added");
-      onCreated();
+      onCreated((conn as { id?: string } | undefined)?.id);
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
@@ -1275,7 +1286,7 @@ function CreateConnectionModal({
               : <EdgeBridgeSetup presetDriver="bambu" onCreated={onCreated} onClose={onClose} />}
           </div>
         ) : type === "edge_adapter" ? (
-          <EdgeBridgeSetup onCreated={onCreated} onClose={onClose} />
+          <EdgeBridgeSetup onCreated={onCreated} onClose={onClose} presetName={presetName} presetDriver={presetDriver} />
         ) : (
       <form
         onSubmit={(e) => {
@@ -1962,9 +1973,11 @@ function fmtRemaining(mins: number): string {
   return m ? `${h}h ${m}m` : `${h}h`;
 }
 
-// The relayed snapshot: auth-fetch the latest agent-pushed frame to a blob URL
-// and refresh it every few seconds (a near-live thumbnail for remote viewers).
-function RelaySnapshot({ slug, connId, deviceId, name }: { slug: string; connId: string; deviceId: string; name: string }) {
+// The relayed snapshot: auth-fetch the latest agent-pushed frame to a blob URL.
+// `live` → refresh every few seconds (a near-live thumbnail while the printer
+// works); otherwise fetch ONCE and freeze it — the last frame stays visible with
+// no constant bandwidth on an idle bed.
+function RelaySnapshot({ slug, connId, deviceId, name, live }: { slug: string; connId: string; deviceId: string; name: string; live: boolean }) {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
@@ -1974,10 +1987,10 @@ function RelaySnapshot({ slug, connId, deviceId, name }: { slug: string; connId:
       if (!alive) { if (next) URL.revokeObjectURL(next); return; }
       if (next) { setUrl(next); if (current) URL.revokeObjectURL(current); current = next; }
     };
-    void tick();
-    const id = setInterval(tick, 5000);
-    return () => { alive = false; clearInterval(id); if (current) URL.revokeObjectURL(current); };
-  }, [slug, connId, deviceId]);
+    void tick(); // always grab the latest stored frame once (even if stale)
+    const id = live ? setInterval(tick, 5000) : null;
+    return () => { alive = false; if (id) clearInterval(id); if (current) URL.revokeObjectURL(current); };
+  }, [slug, connId, deviceId, live]);
   if (!url) return null;
   return <img src={url} alt={`${name} camera`} className="mb-1.5 w-full h-24 object-cover rounded bg-black/30" />;
 }
@@ -2033,12 +2046,21 @@ function DeviceCard({ d, connId, slug }: { d: DigifabFleetDevice; connId: string
   const job = d.active_job;
   return (
     <div className={`rounded-lg border ${att ? "border-amber-400 dark:border-amber-700" : st.ring} bg-subtle dark:bg-slate-800/50 p-2.5 ${d.enabled ? "" : "opacity-50"}`}>
-      {/* Cockpit: a live camera feed. When the snapshot relay is on + a fresh
-          agent-pushed frame exists, show that (remote-viewable, auth-fetched);
-          otherwise embed the LAN camera stream directly. */}
-      {d.snapshot_relay && d.snapshot_fresh ? (
-        <RelaySnapshot slug={slug} connId={connId} deviceId={d.id} name={d.name} />
-      ) : d.camera_url ? (
+      {/* Cockpit camera. A relayed snapshot shows the last frame frozen and only
+          live-refreshes while the printer is working (printing/paused) — no
+          constant bandwidth on an idle bed, but the last image stays visible. A
+          direct camera_url is a continuous MJPEG stream, so it's only embedded
+          while working; otherwise it'd stream 24/7. Either way the live feed is
+          one click away in the detail modal (mounts on open). */}
+      {d.snapshot_relay ? (
+        <RelaySnapshot
+          slug={slug}
+          connId={connId}
+          deviceId={d.id}
+          name={d.name}
+          live={d.klass === "printing" || d.klass === "paused"}
+        />
+      ) : (d.klass === "printing" || d.klass === "paused") && d.camera_url ? (
         <img
           src={d.camera_url}
           alt={`${d.name} camera`}
@@ -2292,6 +2314,222 @@ function ControlsPanel({ slug, connId, deviceId, name, telemetry, lanActive }: {
         </div>
       )}
     </>
+  );
+}
+
+// Printer file timestamp (rr_filelist `date`, the machine's local time, no TZ) →
+// a compact "26 Feb 2023" plus a relative hint for recent files.
+function fmtFileDate(iso?: string): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const date = d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  const days = Math.floor((Date.now() - d.getTime()) / 86_400_000);
+  if (days < 0) return date;
+  if (days === 0) return `Today · ${date}`;
+  if (days === 1) return `Yesterday · ${date}`;
+  if (days < 30) return `${days}d ago · ${date}`;
+  return date;
+}
+
+// Seconds → "2h 5m" / "45m". Shared by the job panel + per-file estimates.
+function fmtDuration(s?: number): string | null {
+  if (s == null || !Number.isFinite(s) || s <= 0) return null;
+  const h = Math.floor(s / 3600);
+  const m = Math.round((s % 3600) / 60);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+// Live print progress (Duet & any bridge that reports job): a bar + layer / time.
+function JobPanel({ job }: { job: { fractionPrinted?: number; currentLayer?: number; timeLeftSec?: number; durationSec?: number } }) {
+  const pct = job.fractionPrinted != null ? Math.round(job.fractionPrinted * 100) : null;
+  return (
+    <div className="space-y-1.5">
+      {pct != null && (
+        <div className="flex items-center gap-2">
+          <div className="flex-1 h-2 rounded-full bg-subtle dark:bg-slate-800 overflow-hidden">
+            <div className="h-full bg-accent transition-[width]" style={{ width: `${pct}%` }} />
+          </div>
+          <span className="text-xs font-mono text-content dark:text-mortar-100 shrink-0">{pct}%</span>
+        </div>
+      )}
+      <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[11px] text-faint">
+        {job.currentLayer != null && <span>Layer {job.currentLayer}</span>}
+        {fmtDuration(job.timeLeftSec) && <span>{fmtDuration(job.timeLeftSec)} left</span>}
+        {fmtDuration(job.durationSec) && <span>{fmtDuration(job.durationSec)} elapsed</span>}
+      </div>
+    </div>
+  );
+}
+
+// One file row. The slicer preview + estimate (fileInfo) load LAZILY — only once
+// the row scrolls into view (IntersectionObserver) — and are hard-cached (30 min,
+// immutable per file) both here and server-side, so the bridge is hit at most once
+// per file the user actually looks at. NEVER eager-fetches the whole list.
+function FileRow({
+  slug, connId, deviceId, file, printing, onPrint, onZoom, fmtSize,
+}: {
+  slug: string; connId: string; deviceId: string;
+  file: { name: string; size?: number; modified?: string };
+  printing: string | null;
+  onPrint: (name: string) => void;
+  onZoom?: (src: string) => void;
+  fmtSize: (b?: number) => string;
+}) {
+  const ref = useRef<HTMLLIElement>(null);
+  const [visible, setVisible] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || visible) return;
+    const io = new IntersectionObserver(
+      (entries) => { if (entries.some((e) => e.isIntersecting)) { setVisible(true); io.disconnect(); } },
+      { root: el.closest("ul"), rootMargin: "150px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [visible]);
+  const fq = useQuery({
+    queryKey: ["digifab-fileinfo", slug, connId, deviceId, file.name],
+    queryFn: () => api.getDigifabFileInfo(slug, connId, deviceId, file.name),
+    enabled: visible,
+    staleTime: 30 * 60_000,
+    gcTime: 30 * 60_000, // keep the (heavy) thumbnail in memory across reopens — no re-fetch
+    refetchInterval: false,
+    refetchOnWindowFocus: false,
+  });
+  const fi: DigifabFileInfo | null = fq.data?.info ?? null;
+  const thumb = fi?.thumbnail;
+  return (
+    <li ref={ref} className="px-2 py-1 text-xs">
+      <div className="flex items-center gap-2">
+        <div className="w-10 h-10 shrink-0 rounded border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 overflow-hidden flex items-center justify-center">
+          {thumb ? (
+            <img src={thumb} alt="" className="w-full h-full object-contain cursor-zoom-in" onClick={() => onZoom?.(thumb)} />
+          ) : (
+            <span className="text-faint text-[9px]">{visible && fq.isFetching ? "…" : ""}</span>
+          )}
+        </div>
+        <div className="flex-1 min-w-0">
+          <button type="button" onClick={() => setExpanded((v) => !v)} className="block w-full truncate text-left text-content dark:text-mortar-100 hover:text-accent" title="Show print estimate">
+            {file.name}
+          </button>
+          {file.modified && <div className="text-faint text-[10px]">{fmtFileDate(file.modified)}</div>}
+        </div>
+        {file.size != null && <span className="text-faint font-mono shrink-0">{fmtSize(file.size)}</span>}
+        <button type="button" onClick={() => onPrint(file.name)} disabled={printing === file.name} className="shrink-0 text-accent hover:underline disabled:opacity-50">
+          {printing === file.name ? "Sending…" : "Print"}
+        </button>
+      </div>
+      {expanded && (
+        <div className="mt-1 pl-12 text-[11px] text-faint">
+          {fq.isLoading ? (
+            "Reading slicer info…"
+          ) : !fi ? (
+            "No slicer estimate in this file."
+          ) : (
+            <span className="flex flex-wrap gap-x-3 gap-y-0.5">
+              {fmtDuration(fi.printTimeSec) && <span>⏱ {fmtDuration(fi.printTimeSec)}</span>}
+              {fi.filamentMm != null && <span>🧵 {(fi.filamentMm / 1000).toFixed(1)} m</span>}
+              {fi.numLayers != null && <span>{fi.numLayers} layers</span>}
+              {fi.height != null && <span>{fi.height} mm tall</span>}
+              {fi.generatedBy && <span className="opacity-70">· {fi.generatedBy.split(/\s+/)[0]}</span>}
+            </span>
+          )}
+        </div>
+      )}
+    </li>
+  );
+}
+
+// The gcode files already on the printer's storage. CACHED — the list is fetched
+// once (5-min cache) and NEVER polled; each row's preview + estimate load lazily
+// on scroll (see FileRow). The Refresh button forces a live re-read of the list.
+function FilesPanel({ slug, connId, deviceId, onZoom }: { slug: string; connId: string; deviceId: string; onZoom?: (src: string) => void }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const confirm = useConfirm();
+  const [refreshing, setRefreshing] = useState(false);
+  const [printing, setPrinting] = useState<string | null>(null);
+  const q = useQuery({
+    queryKey: ["digifab-files", slug, connId, deviceId],
+    queryFn: () => api.getDigifabFiles(slug, connId, deviceId),
+    staleTime: 15 * 60_000,
+    gcTime: 15 * 60_000, // keep across modal close/reopen → no refetch within the window
+    refetchInterval: false,
+    refetchOnWindowFocus: false,
+  });
+  const files = q.data?.files ?? [];
+  const [sort, setSort] = useState<"recent" | "oldest" | "name" | "size">("recent");
+  const sorted = useMemo(() => {
+    const t = (m?: string) => (m ? new Date(m).getTime() || 0 : 0);
+    return [...files].sort((a, b) => {
+      switch (sort) {
+        case "name": return a.name.localeCompare(b.name, undefined, { numeric: true });
+        case "size": return (b.size ?? 0) - (a.size ?? 0);
+        case "oldest": return t(a.modified) - t(b.modified);
+        default: return t(b.modified) - t(a.modified); // recent
+      }
+    });
+  }, [files, sort]);
+  const doPrint = async (name: string) => {
+    if (!(await confirm({ title: `Print "${name}"?`, message: "This starts the print on the printer now.", confirmLabel: "Print" }))) return;
+    setPrinting(name);
+    try {
+      await api.printDigifabFile(slug, connId, deviceId, name);
+      toast.success(`Sent "${name}" — the print is starting.`);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't start the print");
+    } finally {
+      setPrinting(null);
+    }
+  };
+  const fmtSize = (b?: number) =>
+    b == null ? "" : b >= 1e6 ? `${(b / 1e6).toFixed(1)} MB` : b >= 1e3 ? `${Math.round(b / 1e3)} KB` : `${b} B`;
+  const refresh = async () => {
+    setRefreshing(true);
+    try {
+      qc.setQueryData(["digifab-files", slug, connId, deviceId], await api.getDigifabFiles(slug, connId, deviceId, true));
+    } catch {
+      /* keep the existing list on a failed refresh */
+    } finally {
+      setRefreshing(false);
+    }
+  };
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-2 text-[11px]">
+        <span className="text-muted dark:text-slate-400">
+          {q.isLoading ? "Loading…" : `${files.length} file${files.length === 1 ? "" : "s"}`}
+          {q.data?.cached ? " · cached" : ""}
+        </span>
+        <button type="button" onClick={refresh} disabled={refreshing || q.isLoading} className="text-accent hover:underline disabled:opacity-50">
+          {refreshing ? "Refreshing…" : "Refresh"}
+        </button>
+        {files.length > 1 && (
+          <select
+            value={sort}
+            onChange={(e) => setSort(e.target.value as typeof sort)}
+            className="ml-auto bg-transparent text-muted dark:text-slate-400 border border-line dark:border-slate-700 rounded px-1 py-0.5 text-[11px]"
+            title="Sort files"
+          >
+            <option value="recent">Newest first</option>
+            <option value="oldest">Oldest first</option>
+            <option value="name">Name A–Z</option>
+            <option value="size">Largest first</option>
+          </select>
+        )}
+      </div>
+      {!q.isLoading && files.length === 0 ? (
+        <div className="text-xs text-muted dark:text-slate-400 italic">No files reported (this printer may not list them).</div>
+      ) : (
+        <ul className="divide-y divide-line dark:divide-slate-800 border border-line dark:border-slate-700 rounded max-h-72 overflow-y-auto">
+          {sorted.map((f) => (
+            <FileRow key={f.name} slug={slug} connId={connId} deviceId={deviceId} file={f} printing={printing} onPrint={doPrint} onZoom={onZoom} fmtSize={fmtSize} />
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -2564,6 +2802,12 @@ function PrinterDetailModal({ slug, connId, device, onClose }: { slug: string; c
               )}
             </div>
           )}
+          {detail.data?.job && (
+            <div>
+              <div className={lbl + " mb-1"}>Printing</div>
+              <JobPanel job={detail.data.job} />
+            </div>
+          )}
           {detail.data && detail.data.live === false && <div className="text-[11px] text-faint italic">No live cloud telemetry for this printer.</div>}
 
           {detail.data?.lan?.camera && (
@@ -2576,6 +2820,11 @@ function PrinterDetailModal({ slug, connId, device, onClose }: { slug: string; c
           <div>
             <div className={lbl + " mb-1.5"}>Controls</div>
             <ControlsPanel slug={slug} connId={connId} deviceId={device.id} name={device.name} telemetry={t} lanActive={!!detail.data?.lan?.configured && detail.data?.lan?.mode !== "cloud"} />
+          </div>
+
+          <div>
+            <div className={lbl + " mb-1.5"}>Files on {device.name}</div>
+            <FilesPanel slug={slug} connId={connId} deviceId={device.id} onZoom={setLightbox} />
           </div>
 
           <div>

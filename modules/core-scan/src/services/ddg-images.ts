@@ -63,6 +63,24 @@ export function catalogScore(r: DdgImageResult, brand?: string | null): number {
   return s;
 }
 
+/** Build an image-search query that puts the BRAND in the query, not just the
+ *  ranking. A generic name like "Blended Scotch Whiskey" matches any scotch (a
+ *  Kirkland item came back as Johnnie Walker), and ranking by brand can't help
+ *  when no on-brand image is in the generic pool. Skips the brand when the name
+ *  ALREADY carries it — the full string, or all of the brand's significant
+ *  (3+ char) words already appear — so we never emit "Kirkland Signature
+ *  Kirkland Signature …". */
+export function imageQuery(name: string, brand?: string | null): string {
+  const n = (name ?? "").trim();
+  const b = (brand ?? "").trim();
+  if (!b) return n;
+  const nl = n.toLowerCase();
+  if (nl.includes(b.toLowerCase())) return n;
+  const brandWords = b.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3);
+  if (brandWords.length > 0 && brandWords.every((w) => nl.includes(w))) return n;
+  return `${b} ${n}`.trim();
+}
+
 /** Reorder image options best-catalog-first (stable on ties). */
 export function rankImageOptions(results: DdgImageResult[], brand?: string | null): DdgImageResult[] {
   return results

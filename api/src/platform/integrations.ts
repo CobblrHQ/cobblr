@@ -100,6 +100,91 @@ export function listInboundHandlers(): InboundHandler[] {
   return Array.from(inboundHandlers.values());
 }
 
+// ───────────────────────── sync connectors ────────────────────────
+//
+// A sync connector MIRRORS records from an external system into a Cobblr
+// entity kind. This is the typed runtime the sync engine drives; a
+// declarative / AI-authored manifest layer can later compile DOWN to this
+// same shape (a manifest → SyncConnector factory), so this interface is
+// the stable compile target, not a throwaway first cut.
+
+export interface SyncFetchContext {
+  orgId: string;
+  baseUrl: string;
+  credentials: Record<string, unknown>; // decrypted
+  /** SSRF-guarded fetch injected by the engine — connectors MUST use this
+   *  (it allows LAN for self-hosted sources but blocks metadata endpoints),
+   *  never the global fetch. */
+  fetch: typeof fetch;
+}
+
+export interface SyncRecord {
+  /** The source system's stable id for this record. */
+  externalId: string;
+  /** External id of the parent record, for hierarchical kinds (resolved to
+   *  the mirrored parent's Cobblr id by the engine). */
+  parentExternalId?: string | null;
+  /** Fields mapped to the target kind; the registered entity writer applies
+   *  them. The engine injects the resolved parent id as `parent_id`. */
+  fields: Record<string, unknown>;
+  /** A webhook delete event carries deleted:true (no fields needed). */
+  deleted?: boolean;
+}
+
+export interface SyncEntityType {
+  /** Stable key within the connector, e.g. "locations". */
+  key: string;
+  label: string;
+  /** The Cobblr entity kind these records mirror into, e.g.
+   *  "core-locations:location". Must have a registered entity writer. */
+  targetKind: string;
+  /** Pull the FULL set (the connector handles pagination). Drives reconcile
+   *  + delete-detection. */
+  fetchAll: (ctx: SyncFetchContext) => Promise<SyncRecord[]>;
+  /** Pull one record by external id — the webhook fast path. Optional: a
+   *  connector whose webhook body already carries the record can omit it. */
+  fetchOne?: (ctx: SyncFetchContext, externalId: string) => Promise<SyncRecord | null>;
+}
+
+export interface SyncWebhookHit {
+  entityType: string; // which SyncEntityType.key changed
+  externalId: string;
+  deleted?: boolean;
+  /** The fully mapped record when the webhook body already carries it (skips
+   *  a fetchOne round-trip). */
+  record?: SyncRecord;
+}
+
+export interface SyncConnector {
+  id: string; // "companion app"
+  label: string;
+  describeCredentials: () => Record<string, { label: string; secret: boolean }>;
+  /** Non-secret config fields (e.g. the base URL). */
+  describeConfig?: () => Record<string, { label: string; placeholder?: string }>;
+  entityTypes: SyncEntityType[];
+  testConnection?: (ctx: SyncFetchContext) => Promise<{ ok: boolean; error?: string }>;
+  /** Interpret an inbound webhook body → which record changed (the live push
+   *  path). Return null to ignore (a ping / unrelated event). */
+  parseWebhook?: (
+    body: unknown,
+    headers: Record<string, string | string[] | undefined>,
+  ) => SyncWebhookHit | null;
+}
+
+const syncConnectors = new Map<string, SyncConnector>();
+
+export function registerSyncConnector(c: SyncConnector): void {
+  syncConnectors.set(c.id, c);
+}
+
+export function getSyncConnector(id: string): SyncConnector | undefined {
+  return syncConnectors.get(id);
+}
+
+export function listSyncConnectors(): SyncConnector[] {
+  return Array.from(syncConnectors.values());
+}
+
 // ─────────────────────── credential encryption ────────────────────
 
 const ALGO = "aes-256-gcm";
