@@ -11,6 +11,7 @@ import { type Kysely } from "kysely";
 import type { CoreIntegrationsDB } from "../db.js";
 import { loadConnectionRef } from "./connection.js";
 import { runReconcile } from "./engine.js";
+import { resolveSyncConnector } from "./resolve.js";
 
 const SCAN_QUEUE = "core-integrations.sync-scan";
 const SCAN_INTERVAL_MS = 2 * 60_000;
@@ -40,7 +41,7 @@ export function registerSyncWorker(): void {
       let count = 0;
       try {
         const ref = await loadConnectionRef(db, orgId, s.connector_row_id);
-        const def = ref ? platform().integrations.getSyncConnector(ref.connectorId) : null;
+        const def = ref ? await resolveSyncConnector(db, ref.connectorId) : null;
         const type = def?.entityTypes.find((t) => t.key === s.entity_type);
         if (!ref || !type) throw new Error("connection or entity type unavailable");
         const r = await runReconcile(db, ref, type);

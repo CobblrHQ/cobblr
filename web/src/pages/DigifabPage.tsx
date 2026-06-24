@@ -10,6 +10,7 @@ import { useMutation, useQuery, useInfiniteQuery, useQueryClient } from "@tansta
 import { Plus, Trash2, Wifi, Printer, RefreshCw, Send, ListChecks, Boxes, AlertTriangle, Layers, X, ListPlus, Ban, Camera, Pause, Play, Thermometer, ChevronRight, Share2, Sliders } from "lucide-react";
 import { ApiError, api, fetchAuthBlobUrl, type DigifabConnection, type DigifabJob, type DigifabFleetDevice, type DigifabDeviceClass, type BambuMode, type DigifabLibraryItem, type DigifabHistory, type DigifabDeviceDetail, type DigifabFileInfo } from "../lib/api";
 import { BambuConnectWizard } from "../components/BambuConnectWizard";
+import { BridgePicker } from "../components/BridgePicker";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { PrintUpdatesPanel } from "./PrintUpdatesPanel";
 import { Modal, useToast, useConfirm, usePageTitle, useImageSrc } from "@cobblr/platform-web";
@@ -1472,9 +1473,9 @@ export function EdgeBridgeSetup({ onCreated, onClose, presetDriver, presetName }
           already-connected check so you can add a 2nd bridge even when the main
           one's online — typing an id flips the view to that bridge's install. */}
       <label className="block">
-        <span className={lbl}>Bridge <span className="normal-case text-faint/70">— must match the bridge's installed id</span></span>
-        <input value={bridgeId} onChange={(e) => setBridgeId(e.target.value)} placeholder="blank for your main bridge · e.g. garage, lightburn-pc" className={field} />
-        <span className="text-[11px] text-faint">
+        <span className={lbl}>Bridge <span className="normal-case text-faint/70">— pick a connected one, or type an id you're about to install</span></span>
+        <BridgePicker slug={activeSlug} value={bridgeId.trim() ? bridgeId : null} onChange={(v) => setBridgeId(v ?? "")} />
+        <span className="text-[11px] text-faint mt-1 block">
           {bid
             ? <>Talking to <code>{bid}</code> — this must match that bridge's <code>BRIDGE_ID</code>. A 2nd+ bridge (another site, or LightBurn's PC) <strong>must</strong> be named so it gets its own channel.</>
             : <>Blank = your <strong>main</strong> bridge (installed without a <code>BRIDGE_ID</code>). If you gave even your first bridge an id, type it here. Extra bridges always need a name.</>}

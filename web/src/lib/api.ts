@@ -2044,6 +2044,30 @@ export const api = {
       "GET",
       `/orgs/${slug}/modules/core-integrations/sync/connectors`,
     ),
+  // This workspace's connected edge bridges (default + named) — for the shared
+  // bridge picker. Served by digifab's relay, which all edge transport rides.
+  listEdgeBridges: (slug: string) =>
+    request<{ bridges: EdgeBridge[] }>(
+      "GET",
+      `/orgs/${slug}/modules/digifab/edge/bridges`,
+    ),
+  // Installed declarative sync-source manifests (the user-installable "drivers").
+  listSyncSources: (slug: string) =>
+    request<{ installed: SyncSourceDef[] }>(
+      "GET",
+      `/orgs/${slug}/modules/core-integrations/sync-sources`,
+    ),
+  installSyncSource: (slug: string, manifest: Record<string, unknown>) =>
+    request<SyncSourceDef>(
+      "POST",
+      `/orgs/${slug}/modules/core-integrations/sync-sources`,
+      manifest,
+    ),
+  uninstallSyncSource: (slug: string, sourceId: string) =>
+    request<void>(
+      "DELETE",
+      `/orgs/${slug}/modules/core-integrations/sync-sources/${encodeURIComponent(sourceId)}`,
+    ),
   listSyncConnections: (slug: string) =>
     request<{ items: SyncConnection[] }>(
       "GET",
@@ -2158,13 +2182,20 @@ export const api = {
     request<ScanResolveOutcome>("POST", `/orgs/${slug}/modules/core-scan/resolve-external`, { value }),
   listScanInbox: (
     slug: string,
-    q: { status?: "pending" | "enriching" | "resolved" | "discarded"; batch_id?: string } = {},
+    q: {
+      status?: "pending" | "enriching" | "resolved" | "discarded";
+      batch_id?: string;
+      limit?: number;
+      cursor?: string;
+    } = {},
   ) => {
     const params = new URLSearchParams();
     if (q.status) params.set("status", q.status);
     if (q.batch_id) params.set("batch_id", q.batch_id);
+    if (q.limit) params.set("limit", String(q.limit));
+    if (q.cursor) params.set("cursor", q.cursor);
     const qs = params.toString();
-    return request<{ items: ScanInboxItem[] }>(
+    return request<{ items: ScanInboxItem[]; next_cursor?: string | null; total?: number }>(
       "GET",
       `/orgs/${slug}/modules/core-scan/inbox${qs ? "?" + qs : ""}`,
     );
@@ -2271,6 +2302,13 @@ export const api = {
   // photo into the shared barcode database for every future scan of this UPC.
   confirmScanBarcode: (slug: string, id: string) =>
     request<ScanInboxItem>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/confirm-barcode`),
+  // Merge several similar pending items (same product, different barcodes) into one
+  // line with the summed quantity; keepId's name/photo wins, others are discarded.
+  combineScanItems: (slug: string, ids: string[], keepId?: string) =>
+    request<ScanInboxItem>("POST", `/orgs/${slug}/modules/core-scan/inbox/combine`, {
+      ids,
+      ...(keepId ? { keep_id: keepId } : {}),
+    }),
   // Alternative catalog photos (DDG image search on the resolved name) +
   // pick-one-as-catalog. The companion app "OTHER PHOTO OPTIONS" strip.
   scanPhotoOptions: (slug: string, id: string) =>
@@ -3073,12 +3111,31 @@ export interface InboundToken {
 }
 
 // Sync connectors (mirror an external system into a Cobblr entity kind).
+// A connected edge bridge for the workspace. `bridge: null` = the default
+// (no-id) bridge; a string = a named bridge.
+export interface EdgeBridge {
+  bridge: string | null;
+  connected: boolean;
+  last_seen: number | null;
+}
+
 export interface SyncConnectorDef {
   id: string;
   label: string;
   credentials: Record<string, { label: string; secret: boolean }>;
   config: Record<string, { label: string; placeholder?: string }>;
   entityTypes: Array<{ key: string; label: string; targetKind: string }>;
+}
+
+// An installed declarative sync-source manifest (a row in sync_source_defs).
+export interface SyncSourceDef {
+  id: string;
+  source_id: string;
+  name: string;
+  manifest: Record<string, unknown>;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface SyncStateRow {
@@ -3109,6 +3166,10 @@ export interface ImportPlanItem {
   name: string;
   action: "create" | "update" | "link" | "unchanged" | "delete";
   cobblrId?: string | null;
+  /** The mapped source fields this row would write (what data comes over). */
+  fields?: Record<string, unknown>;
+  /** For link/update/delete: the existing Cobblr entity (name + current fields). */
+  match?: { id: string; name: string; fields?: Record<string, unknown> | null } | null;
 }
 export interface ImportPlan {
   entityType: string;

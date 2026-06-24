@@ -53,7 +53,7 @@ export function QrTokensPage({ embedded = false }: { embedded?: boolean } = {}) 
   const active = items.filter((t) => status(t) === "active").length;
 
   return (
-    <div className={embedded ? "space-y-4" : "space-y-4 max-w-3xl"}>
+    <div className={embedded ? "space-y-4" : "space-y-4 max-w-3xl mx-auto"}>
       <div className={"flex items-baseline gap-3 " + (embedded ? "" : "border-b border-line dark:border-slate-700 pb-3")}>
         {!embedded && (
           <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">

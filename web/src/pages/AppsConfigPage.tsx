@@ -129,7 +129,7 @@ export function AppsConfigPage() {
   };
 
   return (
-    <div className="space-y-5 max-w-5xl">
+    <div className="space-y-5 max-w-5xl mx-auto">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold text-content dark:text-mortar-100">Apps</h1>

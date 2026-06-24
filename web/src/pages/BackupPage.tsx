@@ -199,7 +199,7 @@ export function BackupPage() {
     "inline-flex items-center gap-2 rounded-lg border border-line dark:border-slate-600 px-3.5 py-2 text-sm font-semibold text-content dark:text-mortar-100 hover:bg-subtle disabled:opacity-50";
 
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div className="space-y-6 max-w-3xl mx-auto">
       <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
         <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">backup &amp; blueprints</h1>
         <span className="page-subtitle">share a setup, or keep a full copy of your workspace</span>

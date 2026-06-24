@@ -11,8 +11,11 @@ export const IDENTIFY_PROMPT =
   "\"electronics\"), and whether it's an \"asset\" (a discrete, individually-" +
   "tracked whole item — a tool, device, appliance, machine) or a \"part\" (a " +
   "component, consumable, material or supply).\n\n" +
+  "If a UPC/EAN barcode is printed on the package and the digits are clearly " +
+  "legible, read them.\n\n" +
   'Reply with ONLY a JSON object: {"name": <string>, "brand": <string|null>, ' +
   '"category": <string|null>, "entity_type": "asset"|"part"|null, ' +
+  '"barcode": <the UPC/EAN digits if clearly legible, else null>, ' +
   '"confidence": <0..1, how sure you are>}. If the photo is unclear, empty, or ' +
   "not a single identifiable object, reply name \"\" and confidence 0.";
 

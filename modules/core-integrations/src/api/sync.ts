@@ -10,18 +10,57 @@ import { Router } from "express";
 import { z } from "zod";
 import { randomBytes } from "node:crypto";
 import { sql } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { platform, type SyncConnector } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { loadConnectionRef } from "../sync/connection.js";
 import { runReconcile, planReconcile } from "../sync/engine.js";
 import { ensureSyncScan } from "../sync/worker.js";
+import { installedSyncConnectors, resolveSyncConnector } from "../sync/resolve.js";
 
 export const syncRouter = Router({ mergeParams: true });
 
 const newToken = (): string => randomBytes(24).toString("base64url");
-const syncConnectorIds = (): Set<string> =>
-  new Set(platform().integrations.listSyncConnectors().map((c) => c.id));
+
+type TenantDb = ReturnType<typeof tenantDb>;
+
+// resolveSyncConnector / installedSyncConnectors live in ../sync/resolve.js so the
+// HTTP surface and the live webhook handler resolve identically (built-in OR this
+// workspace's installed manifests — nothing source-specific is compiled in).
+
+// The picker projection (metadata only — no live fns), matching the shape
+// platform().integrations.listSyncConnectors() returns for built-ins.
+function projectSyncConnector(c: SyncConnector): {
+  id: string;
+  label: string;
+  credentials: Record<string, { label: string; secret: boolean }>;
+  config: Record<string, { label: string; placeholder?: string }>;
+  entityTypes: Array<{ key: string; label: string; targetKind: string }>;
+} {
+  return {
+    id: c.id,
+    label: c.label,
+    credentials: c.describeCredentials(),
+    config: c.describeConfig?.() ?? {},
+    entityTypes: c.entityTypes.map((e) => ({ key: e.key, label: e.label, targetKind: e.targetKind })),
+  };
+}
+
+/** The "add a connection" catalogue: global built-ins + installed sources. */
+async function syncConnectorCatalogue(db: TenantDb) {
+  return [
+    ...platform().integrations.listSyncConnectors(),
+    ...(await installedSyncConnectors(db)).map(projectSyncConnector),
+  ];
+}
+
+async function syncConnectorIdSet(db: TenantDb): Promise<Set<string>> {
+  const installed = await installedSyncConnectors(db);
+  return new Set([
+    ...platform().integrations.listSyncConnectors().map((c) => c.id),
+    ...installed.map((c) => c.id),
+  ]);
+}
 
 // cobblr_meta lookup so the unauthenticated /api/v1/hooks receiver resolves a
 // token without scanning every tenant DB.
@@ -41,8 +80,8 @@ function exposeConfig(config: unknown): { base_url: string; transport: "direct" 
 // ── catalogue: the "add a connection" picker ──
 syncRouter.get(
   "/connectors",
-  asyncHandler(async (_req, res) => {
-    res.json({ items: platform().integrations.listSyncConnectors() });
+  asyncHandler(async (req, res) => {
+    res.json({ items: await syncConnectorCatalogue(tenantDb(req)) });
   }),
 );
 
@@ -51,7 +90,7 @@ syncRouter.get(
   "/connections",
   asyncHandler(async (req, res) => {
     const db = tenantDb(req);
-    const syncIds = syncConnectorIds();
+    const syncIds = await syncConnectorIdSet(db);
     const rows = await db
       .selectFrom("core_integrations_connectors")
       .select(["id", "connector_id", "label", "config", "enabled", "created_at"])
@@ -94,11 +133,11 @@ syncRouter.post(
     if (!requireRole(req, res, "owner", "admin")) return;
     const parsed = ConnectionCreate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
-    if (!syncConnectorIds().has(parsed.data.connector_id)) {
-      return void res.status(400).json({ error: { code: "unknown_connector", message: "not a registered sync connector" } });
-    }
     const ctx = tenantContext(req);
     const db = tenantDb(req);
+    if (!(await syncConnectorIdSet(db)).has(parsed.data.connector_id)) {
+      return void res.status(400).json({ error: { code: "unknown_connector", message: "not a registered sync connector" } });
+    }
     const enc = await platform().integrations.encryptCredentials(ctx.org.id, parsed.data.credentials);
     const conn = await db
       .insertInto("core_integrations_connectors")
@@ -145,7 +184,7 @@ syncRouter.get(
       .select(["id", "connector_id", "label", "config", "enabled", "created_at"])
       .where("id", "=", req.params.id!)
       .executeTakeFirst();
-    if (!conn || !syncConnectorIds().has(conn.connector_id)) {
+    if (!conn || !(await syncConnectorIdSet(db)).has(conn.connector_id)) {
       return void res.status(404).json({ error: { code: "not_found", message: "sync connection not found" } });
     }
     const states = await db.selectFrom("core_integrations_sync_state").selectAll().where("connector_row_id", "=", conn.id).execute();
@@ -155,7 +194,7 @@ syncRouter.get(
       .where("connector_id", "=", "sync")
       .where(sql`config ->> 'connector_row_id'`, "=", conn.id)
       .executeTakeFirst();
-    const def = platform().integrations.listSyncConnectors().find((c) => c.id === conn.connector_id);
+    const def = await resolveSyncConnector(db, conn.connector_id);
     res.json({
       ...conn,
       config: exposeConfig(conn.config),
@@ -226,7 +265,7 @@ syncRouter.post(
     const db = tenantDb(req);
     const ref = await loadConnectionRef(db, ctx.org.id, req.params.id!);
     if (!ref) return void res.status(404).json({ error: { code: "not_found", message: "connection not found / disabled" } });
-    const def = platform().integrations.getSyncConnector(ref.connectorId);
+    const def = await resolveSyncConnector(db, ref.connectorId);
     if (!def?.testConnection) return void res.json({ ok: true, note: "connector has no test" });
     const result = await def.testConnection({ orgId: ref.orgId, baseUrl: ref.baseUrl, credentials: ref.credentials, fetch });
     res.json(result);
@@ -293,7 +332,7 @@ async function loadRefType(
     res.status(404).json({ error: { code: "not_found", message: "connection not found / disabled" } });
     return null;
   }
-  const def = platform().integrations.getSyncConnector(ref.connectorId);
+  const def = await resolveSyncConnector(db, ref.connectorId);
   const type = def?.entityTypes.find((t) => t.key === req.params.entityType);
   if (!type) {
     res.status(404).json({ error: { code: "unknown_type", message: "entity type not offered by this connector" } });

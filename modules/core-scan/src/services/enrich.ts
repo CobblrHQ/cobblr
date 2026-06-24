@@ -375,7 +375,10 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
     // Catalog DBs have nothing — fall back to web search (what a person
     // does: search the UPC, read the name off the agreeing results).
     const web = await resolveBarcodeViaWebSearch(ctx.orgId, ctx.upc, ctx.hint).catch(() => null);
-    if (web) {
+    // A junk "name" ("Unknown Item" / "XXXXXXXX") means the web couldn't identify
+    // it either — DON'T accept it as a result. Fall through to the photo/manual
+    // path with no name, so it never gets shown as valid or image-searched.
+    if (web && !isJunkName(web.name)) {
       await ctx.db
         .updateTable("core_scan_inbox_items")
         .set({
@@ -532,9 +535,12 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
   // future scan, any instance — "enrichen our DB once we process it the first
   // time." Detached + best-effort; resolveBarcodeViaWebSearch is internally
   // AI-gated, and once the write-back lands the next resolve isn't thin → no loop.
-  // Thin hit → enrich. ALSO when the user flagged it wrong (re-derive) or asked
-  // to enrich it (fill in detail): run the web identify regardless of thin-ness.
-  if (ctx.wrong || ctx.enrich || isThinHit(hit)) {
+  // Thin hit → enrich. ALSO when the user flagged it wrong (re-derive), asked to
+  // enrich it (fill in detail), gave a research HINT (a targeted correction like
+  // "it's 1 unit, not 96 packs" — re-identify folding the hint in), or the provider
+  // title is non-English (re-identify prefers English): run the web identify
+  // regardless of thin-ness.
+  if (ctx.wrong || ctx.enrich || ctx.hint || isThinHit(hit) || looksNonEnglish(hit.title)) {
     void enrichThinHit(ctx, hit).catch((e) =>
       console.error("[core-scan] thin-hit enrich failed:", (e as Error).message),
     );
@@ -561,6 +567,38 @@ function isThinHit(hit: BarcodeHit): boolean {
   return (brand.length >= 2 && words.length <= 3) || (LIGHT.has(hit.source) && words.length <= 2);
 }
 
+/** A name that is NOT a real identification — the web-search LLM's "I give up"
+ *  output for a barcode with no usable results: an empty/"Unknown Item" string, a
+ *  placeholder run of one character ("XXXXXXXX"), or something too short to be a
+ *  product. These must never become the item's name or get image-searched. */
+export function isJunkName(name: string | null | undefined): boolean {
+  const n = (name ?? "").trim();
+  if (!n) return true;
+  const lc = n.toLowerCase();
+  if (lc === "unknown" || lc === "unknown item" || lc === "unidentified" || lc === "n/a" || lc.startsWith("unknown ")) {
+    return true;
+  }
+  const alnum = n.replace(/[^a-z0-9]/gi, "");
+  if (alnum.length < 3) return true; // too short to be a product name
+  if (/(.)\1{3,}/i.test(alnum)) return true; // a run of one char ≥4 (placeholder)
+  return false;
+}
+
+/** A provider sometimes returns a LOCALIZED title (go-upc handed back "Charmin
+ *  Papel Higiénico Ultra Soft" for a US item). Treat a non-English-looking title
+ *  as worth a web re-identify, which prefers English. Heuristic: accented Latin
+ *  letters (Spanish/French/Portuguese/German/…) or any non-Latin script. An
+ *  English-market name that legitimately carries an accent ("Nestlé") is safe —
+ *  the re-identify just returns the same accented name and nothing changes. */
+function looksNonEnglish(s: string | null | undefined): boolean {
+  if (!s) return false;
+  // Accented Latin letters, skipping × (×) and ÷ (÷).
+  if (/[À-ÖØ-öø-ſ]/.test(s)) return true;
+  // Any non-Latin script (Greek, Cyrillic, CJK, Arabic, Hebrew, …).
+  if (/[Ͱ-῿Ⰰ-퟿豈-﷿ﹰ-﻿＀-￯]/.test(s)) return true;
+  return false;
+}
+
 /** Web+AI-enrich a thin hit into a full product title, update the row, and feed
  *  the richer result back to BIdb (trusted actor → supersedes the thin entry).
  *  Only upgrades when the web result is genuinely FULLER + about the same product
@@ -570,7 +608,7 @@ async function enrichThinHit(ctx: EnrichContext, hit: BarcodeHit): Promise<void>
   const thin = hit.title?.trim() ?? "";
   const web = await resolveBarcodeViaWebSearch(ctx.orgId, ctx.upc, ctx.hint).catch(() => null);
   const enriched = web?.name?.trim();
-  if (!web || !enriched || web.confidence < 0.5) return;
+  if (!web || !enriched || web.confidence < 0.5 || isJunkName(enriched)) return;
   // Only upgrade when the web result adds REAL SKU information — the package
   // size/spec (1.75 L / 750 mL / 12 ct / proof / net weight) or the brand — not
   // just more descriptive words. A longer-but-spec-less name ("…Frontier Whiskey"
@@ -600,10 +638,22 @@ async function enrichThinHit(ctx: EnrichContext, hit: BarcodeHit): Promise<void>
   //               "fuller" here means a better name for the same thing.
   //   • default — conservative auto-enrich: same product AND real SKU info only.
   const fuller = enriched.length > thin.length || addsSpec || addsBrand;
+  // A non-English provider title replaced by an English one for the same product
+  // is always an upgrade, even if it adds no new spec/brand.
+  const langUpgrade = looksNonEnglish(thin) && !looksNonEnglish(enriched) && sharesAnyWord;
   if (ctx.wrong) {
     /* adopt */
+  } else if (ctx.hint) {
+    // A targeted research-hint correction ("it's 1 unit, not 96 packs"): the
+    // identify already folded the hint in. Accept a confident SAME-PRODUCT result
+    // even if it's SHORTER — stripping a wrong "96 Packs" shortens but improves
+    // the name, so the `fuller` bar must NOT apply. sharesAnyWord still guards
+    // against the identify hallucinating a different product.
+    if (!sharesAnyWord) return;
   } else if (ctx.enrich) {
     if (!sharesAnyWord || !fuller) return;
+  } else if (langUpgrade) {
+    /* accept: English replacement of a localized provider title, same product */
   } else {
     if (!sameProduct || (!addsSpec && !addsBrand)) return;
   }

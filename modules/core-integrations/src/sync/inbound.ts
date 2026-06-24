@@ -10,6 +10,7 @@ import { type Kysely } from "kysely";
 import type { CoreIntegrationsDB } from "../db.js";
 import { applyWebhookHit } from "./engine.js";
 import { loadConnectionRef } from "./connection.js";
+import { resolveSyncConnector } from "./resolve.js";
 
 let registered = false;
 
@@ -27,14 +28,16 @@ export function registerSyncInboundHandler(): void {
       if (!cfg.connector_row_id || !cfg.connector_id) {
         return { status: 400, body: { error: "not a sync webhook token" } };
       }
-      const connector = platform().integrations.getSyncConnector(cfg.connector_id);
+      // Resolve the connector org-aware (built-in OR this workspace's installed
+      // manifest) — the same resolution the HTTP surface uses.
+      const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreIntegrationsDB>;
+      const connector = await resolveSyncConnector(db, cfg.connector_id);
       if (!connector?.parseWebhook) {
         return { status: 202, body: { ok: true, ignored: "connector has no webhook parser" } };
       }
       const hit = connector.parseWebhook(req.body, req.headers);
       if (!hit) return { status: 202, body: { ok: true, ignored: true } };
 
-      const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreIntegrationsDB>;
       const ref = await loadConnectionRef(db, ctx.orgId, cfg.connector_row_id);
       if (!ref) return { status: 404, body: { error: "sync connection not found / disabled" } };
 

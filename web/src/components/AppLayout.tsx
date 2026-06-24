@@ -8,7 +8,7 @@
 // specialisations (3D Printers, Laser Cutters, etc.) into a hover
 // popover under the parent rather than as broken top-level links.
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CobblestoneMark } from "../CobblestoneMark";
@@ -32,6 +32,9 @@ import { useDeployEnv, DEFAULT_HEADER } from "../lib/deploy-env";
 
 export function AppLayout({ activeSlug }: { activeSlug: string }) {
   const location = useLocation();
+  // Ask-Cobblr panel open state, lifted here so the main content shifts left
+  // (into its centering margin) when the panel opens, instead of being overlaid.
+  const [chatOpen, setChatOpen] = useState(false);
   const { activeOrg } = useActiveOrg();
   const qc = useQueryClient();
   // Managed-app mode: no workspace switching, no platform nav — just the app.
@@ -201,7 +204,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
             <SearchBar />
             <NotificationsBell />
             {/* Ask-Cobblr launcher — a header button, not a floating FAB. */}
-            <ChatWidget />
+            <ChatWidget open={chatOpen} setOpen={setChatOpen} />
             <UserMenu themed={!!skin} />
           </div>
 
@@ -211,7 +214,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           <div className="flex-1 md:hidden" />
           <div className="shrink-0 md:hidden flex items-center gap-0.5">
             <HeaderActions />
-            <ChatWidget />
+            <ChatWidget open={chatOpen} setOpen={setChatOpen} />
             <MobileNav />
           </div>
         </div>
@@ -220,7 +223,10 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
         <EmailVerifyBanner />
       </div>
 
-      <main className="min-w-0">
+      {/* When the Ask-Cobblr panel (fixed 440px right sidebar) is open, reserve
+          its width on wide screens so the centered content shifts LEFT into its
+          margin and the two coexist — no overlap, no compression (xl+ has room). */}
+      <main className={`min-w-0 transition-[padding] duration-200 ${chatOpen ? "xl:pr-[456px]" : ""}`}>
         <div className="max-w-6xl mx-auto w-full px-5 py-6">
           {/* Per-page boundary: a crash in one page shows a fallback but
               keeps the nav/chrome, and keying on pathname resets it when

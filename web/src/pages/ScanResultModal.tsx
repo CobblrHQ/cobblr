@@ -8,7 +8,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, CheckCircle, MapPin, Minus, Plus, ScanLine, Sparkles, Trash2 } from "lucide-react";
+import { Check, CheckCircle, Flag, MapPin, Minus, Plus, ScanLine, Sparkles, Trash2 } from "lucide-react";
 import { Modal, useToast } from "@cobblr/platform-web";
 import { ApiError, api, type ScanCandidate, type ScanInboxItem } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -202,7 +202,22 @@ export function ScanResultModal({
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
 
-  const looking = scan.isPending || (!!item && !item.suggested_name && !match.isFetched);
+  // Phone "Not right?" — re-ask everything (the same wrong-flag re-derive the
+  // desktop triage uses). A barcode re-run is inline, so the response IS the
+  // re-identified row; swap it straight in so the card updates on the spot.
+  const rerunWrong = useMutation({
+    mutationFn: () => api.rerunScanAi(activeSlug, item!.id, undefined, true),
+    onSuccess: (fresh) => {
+      setItem(fresh);
+      setQty(fresh.quantity > 0 ? fresh.quantity : 1);
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      void qc.invalidateQueries({ queryKey: ["scan-match", activeSlug, fresh.id] });
+      toast.success("Re-checked");
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+
+  const looking = scan.isPending || rerunWrong.isPending || (!!item && !item.suggested_name && !match.isFetched);
   // Catalog image first; the user's own photo as the fallback (photo scans
   // and barcode items that resolved without catalog art still get a face).
   // External catalog_image_url can 404/hotlink-block (the broken-? the author hit)
@@ -219,7 +234,7 @@ export function ScanResultModal({
         : null,
     ].find((u): u is string => !!u && !brokenSrcs.has(u)) ?? null;
   const areaLabel = item?.scan_area ?? scanArea ?? null;
-  const busy = commit.isPending || save.isPending || discard.isPending;
+  const busy = commit.isPending || save.isPending || discard.isPending || rerunWrong.isPending;
 
   return (
     <Modal open onClose={onClose} title="Scanned" size="sm">
@@ -348,7 +363,7 @@ export function ScanResultModal({
           )
         )}
 
-        <div className="flex items-center justify-between pt-1">
+        <div className="flex items-center justify-between gap-2 pt-1">
           <button
             type="button"
             disabled={!item || busy}
@@ -357,6 +372,17 @@ export function ScanResultModal({
           >
             <Trash2 size={13} /> Discard
           </button>
+          {/* Phone correct/wrong: if the ID looks off, re-check on the spot. */}
+          {item && item.suggested_name && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => rerunWrong.mutate()}
+              className="inline-flex items-center gap-1 text-xs text-red-600 dark:text-red-400 hover:underline disabled:opacity-40"
+            >
+              <Flag size={12} className={rerunWrong.isPending ? "animate-pulse" : ""} /> Not right?
+            </button>
+          )}
           <button
             type="button"
             disabled={busy}

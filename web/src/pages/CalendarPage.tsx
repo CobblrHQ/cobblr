@@ -64,7 +64,7 @@ export function CalendarPage() {
   }
 
   return (
-    <div className="space-y-4 max-w-5xl">
+    <div className="space-y-4 max-w-5xl mx-auto">
       <div className="flex flex-wrap items-center gap-3 border-b border-line dark:border-slate-700 pb-3">
         <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title flex items-center gap-2">
           <CalendarDays size={22} className="text-accent" /> Calendar

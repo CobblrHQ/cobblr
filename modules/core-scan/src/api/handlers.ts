@@ -34,7 +34,7 @@ export function registerScanHandlers(): void {
     if (row.barcode_text || !row.image_file_id || row.ai_suggested_at) {
       return { ok: true, skipped: "not an un-enriched photo-only scan" };
     }
-    await enrichPhotoItem({ db, orgId: ctx.orgId, itemId, imageFileId: row.image_file_id });
+    await enrichPhotoItem({ db, orgId: ctx.orgId, itemId, imageFileId: row.image_file_id, userId: ctx.userId });
     void platform().events.emit("core-scan.scan.enriched", { orgId: ctx.orgId, itemId });
     return { ok: true, identified: true };
   });

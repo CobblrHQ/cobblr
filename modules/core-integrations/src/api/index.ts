@@ -10,12 +10,12 @@ import { Router } from "express";
 import { connectorsRouter } from "./connectors.js";
 import { inboundTokensRouter } from "./inbound-tokens.js";
 import { syncRouter } from "./sync.js";
+import { sourceDefsRouter } from "./source-defs.js";
 import { register as registerWebhook } from "../connectors/webhook.js";
 import { register as registerHttp } from "../connectors/http.js";
 import { register as registerSlack } from "../connectors/slack.js";
 import { register as registerDiscord } from "../connectors/discord.js";
 import { register as registerInboundWebhook } from "../connectors/inbound-webhook.js";
-import { registercompanion appConnector } from "../connectors/companion app.js";
 import { registerSyncInboundHandler } from "../sync/inbound.js";
 import { registerSyncWorker } from "../sync/worker.js";
 
@@ -28,8 +28,9 @@ function registerBuiltins(): void {
   registerSlack();
   registerDiscord();
   registerInboundWebhook();
-  // Sync connectors + the inbound handler (live push) + the reconcile worker.
-  registercompanion appConnector();
+  // Sync sources are declarative manifests installed per workspace (see
+  // sync/declarative.ts + api/source-defs.ts) — none are compiled in. The
+  // inbound handler (live push) + the reconcile worker are global.
   registerSyncInboundHandler();
   registerSyncWorker();
 }
@@ -40,5 +41,6 @@ const router = Router({ mergeParams: true });
 router.use("/connectors", connectorsRouter);
 router.use("/inbound-tokens", inboundTokensRouter);
 router.use("/sync", syncRouter);
+router.use("/sync-sources", sourceDefsRouter);
 
 export default router;

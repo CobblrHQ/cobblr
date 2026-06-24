@@ -128,7 +128,7 @@ export function LocationDetailPage() {
   })();
 
   return (
-    <div className="space-y-5 max-w-4xl">
+    <div className="space-y-5 max-w-4xl mx-auto">
       <Link
         to="/configuration/locations"
         className="inline-flex items-center gap-1.5 text-xs text-muted dark:text-slate-400 hover:text-accent"

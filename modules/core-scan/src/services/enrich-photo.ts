@@ -47,6 +47,15 @@ interface PhotoEnrichContext {
   itemId: string;
   /** The scanned photo's core-files id. */
   imageFileId: string;
+  /** The user who triggered the scan/re-run. Threaded into the AI call so a
+   *  personal AI connection resolves via the OWNER's route ('own' path), not
+   *  only the 'workspace-default' share path — this is why an unidentified photo
+   *  failed instantly on a hosted workspace whose AI is a personal connection:
+   *  the detached enrich had no caller. */
+  userId?: string | null;
+  /** A user-triggered re-run → bypass the AI cache so the identify reflects the
+   *  current prompt, not a stale result cached for this image. */
+  force?: boolean;
 }
 
 function clamp01(n: number): number {
@@ -61,6 +70,9 @@ export interface PhotoIdentity {
   category: string | null;
   entityType: "asset" | "part" | null;
   confidence: number;
+  /** A UPC/EAN the vision model read off the package (digits only), or null.
+   *  OCR'd — lower trust than a hardware scan, so it's captured as AI-read. */
+  barcode: string | null;
 }
 
 /**
@@ -75,6 +87,8 @@ export async function identifyImage(
   imageB64: string,
   mediaType: string,
   sourceId?: string,
+  userId?: string | null,
+  bypassCache?: boolean,
 ): Promise<PhotoIdentity | null> {
   let parsed: Record<string, unknown> | null = null;
   try {
@@ -83,24 +97,54 @@ export async function identifyImage(
       capability: "identify-image",
       input: { image_b64: imageB64, image_media_type: mediaType },
       source: { kind: "core-scan:photo", id: sourceId ?? "eval" },
+      // Route through the caller's own AI connection (the 'own' path), not only
+      // the workspace-default share path. Without it a detached photo enrich on a
+      // personal-connection workspace resolved no provider → instant fail.
+      userId: userId ?? undefined,
+      // A re-run ("re-ask everything") forces a fresh call so it reflects the
+      // CURRENT identify prompt, not a result cached under an older one (keyed by
+      // image, not prompt — a prompt fix wouldn't otherwise reach a cached image).
+      bypass_cache: bypassCache,
     });
     // OpenAI returns {role, content}; Anthropic returns {text} — tolerate both.
     const res = r.result as { text?: string; content?: string };
     const raw = res.text ?? res.content ?? "";
     const m = raw.match(/\{[\s\S]*\}/);
     parsed = JSON.parse(m ? m[0] : raw);
-  } catch {
+  } catch (err) {
+    // Surfaced (was silent) so a vision failure is diagnosable, not a mystery
+    // "no vision provider" note. Still returns null — the caller degrades.
+    console.error("[core-scan] identifyImage failed:", (err as Error)?.message ?? err);
     return null;
   }
-  const name = typeof parsed?.name === "string" ? parsed.name.trim() : "";
+  // Tolerant extraction: the model mostly returns the asked-for {name,…} shape,
+  // but sometimes a richer one ({product_line, product_name, type, manufacturer,
+  // …}). Pull a usable name from either rather than failing the whole identify
+  // (which surfaced as a bogus "no vision provider" note — the vision worked).
+  const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
+  const p = (parsed ?? {}) as Record<string, unknown>;
+  const name =
+    str(p.name) ||
+    [str(p.product_line), str(p.product_name)].filter(Boolean).join(" ").trim() ||
+    str(p.product_name) ||
+    str(p.title) ||
+    "";
   if (!name) return null;
-  const et = parsed?.entity_type === "asset" || parsed?.entity_type === "part" ? parsed.entity_type : null;
+  const rawType = str(p.entity_type) || str(p.type);
+  const et: "asset" | "part" | null = rawType === "asset" || rawType === "part" ? rawType : null;
   return {
     name,
-    brand: typeof parsed?.brand === "string" ? parsed.brand.trim() || null : null,
-    category: typeof parsed?.category === "string" ? parsed.category.trim() || null : null,
+    brand: str(p.brand) || str(p.manufacturer).split(",")[0]?.trim() || null,
+    category: str(p.category) || str(p.product_line) || null,
     entityType: et,
-    confidence: clamp01(typeof parsed?.confidence === "number" ? parsed.confidence : 0.5),
+    // A richer-shape reply with no confidence field WAS confident enough to
+    // describe the item — don't read that as a 0.5 maybe.
+    confidence: clamp01(typeof p.confidence === "number" ? p.confidence : str(p.name) ? 0.5 : 0.75),
+    // A barcode the model read off the package (various keys it might use).
+    barcode: (() => {
+      const b = (str(p.barcode) || str(p.upc) || str(p.ean) || str(p.barcode_number)).replace(/\D/g, "");
+      return /^[0-9]{8,14}$/.test(b) ? b : null;
+    })(),
   };
 }
 
@@ -304,7 +348,7 @@ export async function enrichPhotoItem(ctx: PhotoEnrichContext): Promise<void> {
   }
   const imageB64 = Buffer.from(file.bytes).toString("base64");
 
-  const identity = await identifyImage(ctx.orgId, imageB64, file.mimeType, ctx.itemId);
+  const identity = await identifyImage(ctx.orgId, imageB64, file.mimeType, ctx.itemId, ctx.userId, ctx.force);
   // identifyImage's vision call can run tens of seconds. When enrichPhotoItem
   // runs detached (after the HTTP response has returned), the request's tenant
   // pool may have been reaped meanwhile — a later write then throws "Cannot use
@@ -320,15 +364,31 @@ export async function enrichPhotoItem(ctx: PhotoEnrichContext): Promise<void> {
     return;
   }
 
+  // The vision read a barcode off the package → capture it, but ONLY when the
+  // item has no hardware-scanned barcode (never clobber a real scan), and flag it
+  // AI-read (OCR'd digits can be off — lower trust, surfaced for the user to
+  // confirm/scan). This is the "photograph it → recover the barcode" arc.
+  let captureBarcode: string | null = null;
+  if (identity.barcode) {
+    const cur = await ctx.db
+      .selectFrom("core_scan_inbox_items")
+      .select("barcode_text")
+      .where("id", "=", ctx.itemId)
+      .executeTakeFirst();
+    if (!cur?.barcode_text) captureBarcode = identity.barcode;
+  }
+
   await ctx.db
     .updateTable("core_scan_inbox_items")
     .set({
       suggested_name: identity.name,
       suggested_manufacturer: identity.brand,
+      ...(captureBarcode ? { barcode_text: captureBarcode } : {}),
       suggested_metadata: sql`${JSON.stringify({
         source: "vision",
         category: identity.category,
         entity_type: identity.entityType,
+        ...(captureBarcode ? { barcode_source: "ai-photo" } : {}),
       })}::jsonb` as never,
       ai_confidence: String(identity.confidence),
       ai_notes:

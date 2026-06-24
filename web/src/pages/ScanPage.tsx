@@ -15,10 +15,10 @@
 // URL intake is deliberately absent: the API stores source_url but
 // nothing enriches it yet — a dead control is worse than none.
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Camera,
   CheckCircle,
@@ -132,6 +132,130 @@ function timeAgo(iso: string | null | undefined): string {
   if (h < 24) return `${h} h ago`;
   const d = Math.floor(h / 24);
   return `${d} d ago`;
+}
+
+/** True when the item never got a real identity — no name, or the AI's
+ *  "couldn't identify it" placeholder ("Unknown Item"). Used to suppress the
+ *  catalog photo search (searching "Unknown Item" returns junk) and the default
+ *  commit target (don't pre-route an unidentified thing into Inventory). */
+function isUnidentified(name: string | null | undefined): boolean {
+  const n = (name ?? "").trim();
+  const lc = n.toLowerCase();
+  if (!n || lc === "unknown" || lc === "unknown item" || lc === "unidentified" || lc.startsWith("unknown ")) {
+    return true;
+  }
+  // Junk placeholders already stored before the backend guard landed: a run of
+  // one character ("XXXXXXXX") or too short to be a product.
+  const alnum = n.replace(/[^a-z0-9]/gi, "");
+  return alnum.length < 3 || /(.)\1{3,}/i.test(alnum);
+}
+
+// ── "looks like the same product" clustering — for the combine offer ──
+const COMBINE_STOP = new Set([
+  "the", "and", "for", "with", "ultra", "soft", "pack", "count", "new", "size", "per", "each",
+]);
+function nameTokens(s: string | null | undefined): Set<string> {
+  return new Set(
+    (s ?? "")
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter((w) => w.length >= 3 && !/^\d+$/.test(w) && !COMBINE_STOP.has(w)),
+  );
+}
+function jaccard(a: Set<string>, b: Set<string>): number {
+  if (!a.size || !b.size) return 0;
+  let inter = 0;
+  for (const w of a) if (b.has(w)) inter++;
+  return inter / (a.size + b.size - inter);
+}
+/** Cluster pending items that look like the SAME product so we can OFFER to
+ *  combine them (you scanned 4 of one thing but a pack carried a different
+ *  barcode). Anchored on the BRAND plus the shared PRODUCT words (brand words
+ *  removed): two items cluster when, same brand, they share ≥2 significant
+ *  non-brand tokens — or a high token ratio. A pure Jaccard bar was too strict:
+ *  "Charmin … Toilet Paper … Jumbo Roll" vs "Charmin … Bath Tissue Jumbo Roll"
+ *  are the same product but only share charmin/jumbo/roll, so this anchors on
+ *  the 2 shared product words instead. Compared to each cluster's SEED so it
+ *  can't drift. Always an opt-in offer, so erring slightly eager is fine. */
+function productTokens(name: string | null | undefined, brand: string): Set<string> {
+  const brandToks = nameTokens(brand);
+  return new Set([...nameTokens(name)].filter((w) => !brandToks.has(w)));
+}
+function findCombineClusters(items: ScanInboxItem[]): ScanInboxItem[][] {
+  const clusters: { brand: string; seed: Set<string>; items: ScanInboxItem[] }[] = [];
+  for (const it of items) {
+    const brand = (it.suggested_manufacturer ?? "").trim().toLowerCase();
+    if (!brand || !it.suggested_name) continue;
+    const product = productTokens(it.suggested_name, brand);
+    if (product.size === 0) continue;
+    const hit = clusters.find((c) => {
+      if (c.brand !== brand) return false;
+      let shared = 0;
+      for (const w of product) if (c.seed.has(w)) shared++;
+      return shared >= 2 || jaccard(c.seed, product) >= 0.5;
+    });
+    if (hit) hit.items.push(it);
+    else clusters.push({ brand, seed: product, items: [it] });
+  }
+  return clusters.filter((c) => c.items.length >= 2).map((c) => c.items);
+}
+
+/** How a combine offer was found — drives the banner's wording + which item it
+ *  keeps. "name" = same brand + product words; "barcode" = an OCR-read barcode
+ *  that's a near-match to one you scanned earlier. */
+type CombineCluster = { items: ScanInboxItem[]; reason: "name" | "barcode" };
+
+const barcodeSourceOf = (it: ScanInboxItem): string | undefined =>
+  (it.suggested_metadata as { barcode_source?: string } | null)?.barcode_source;
+
+/** Levenshtein edit distance, capped — OCR barcode errors are 1–2 chars. */
+function editDistance(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  if (Math.abs(m - n) > 3) return 99;
+  let prev = Array.from({ length: n + 1 }, (_, i) => i);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
+    for (let j = 1; j <= n; j++) {
+      cur[j] = Math.min(
+        (prev[j] ?? 0) + 1,
+        (cur[j - 1] ?? 0) + 1,
+        (prev[j - 1] ?? 0) + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    }
+    prev = cur;
+  }
+  return prev[n] ?? 99;
+}
+
+/** Pair a photo item whose barcode was READ BY AI (OCR) with a DIFFERENT item
+ *  whose barcode was SCANNED, when the two codes are within a couple of edits —
+ *  "this OCR'd code looks like one you scanned; same thing?". Anchored on the
+ *  AI-read side (the uncertain one) to avoid matching two genuinely-different
+ *  scanned UPCs. Cluster = [aiItem, scannedItem] (banner renders at the photo). */
+function findBarcodeMatchClusters(items: ScanInboxItem[]): ScanInboxItem[][] {
+  const ai = items.filter((i) => i.barcode_text && barcodeSourceOf(i) === "ai-photo");
+  const scanned = items.filter((i) => i.barcode_text && barcodeSourceOf(i) !== "ai-photo");
+  const out: ScanInboxItem[][] = [];
+  const used = new Set<string>();
+  for (const a of ai) {
+    if (used.has(a.id)) continue;
+    for (const s of scanned) {
+      if (used.has(s.id)) continue;
+      // d=0 → OCR nailed it, exactly a barcode you scanned (the strongest match);
+      // 1–2 → OCR off by a digit. Both mean "same item, offer to merge". (Identical
+      // codes aren't caught by scan-dedup, which only runs at scan time.)
+      const d = editDistance(a.barcode_text ?? "", s.barcode_text ?? "");
+      if (d <= 2) {
+        out.push([a, s]);
+        used.add(a.id);
+        used.add(s.id);
+        break;
+      }
+    }
+  }
+  return out;
 }
 
 /** Local calendar-day key (YYYY-M-D in the viewer's timezone) — groups loose
@@ -557,19 +681,56 @@ export function ScanPage() {
   // "Done" lands here so you review exactly what you just walked around
   // scanning, not everything ever pending.
   const batchId = params.get("batch");
-  const list = useQuery({
+  // Infinite scroll — no hard cap. Load 50 at a time; the sentinel near the
+  // bottom pulls the next page. Poll keeps every loaded page fresh for live
+  // enrichment updates.
+  const list = useInfiniteQuery({
     queryKey: ["scan-inbox", activeSlug, batchId],
-    queryFn: () =>
+    queryFn: ({ pageParam }) =>
       api.listScanInbox(activeSlug, {
         status: "pending",
         batch_id: batchId ?? undefined,
+        limit: 50,
+        cursor: pageParam,
       }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
     enabled: !!activeSlug,
     refetchInterval: 8_000,
   });
 
   const aiStatus = useAiStatus();
-  const items = list.data?.items ?? [];
+  // Flatten the pages, deduped by id — a poll-refetch of page 1 can surface new
+  // scans that overlap a later page's stored cursor.
+  const items = useMemo(() => {
+    const seen = new Set<string>();
+    const out: ScanInboxItem[] = [];
+    for (const p of list.data?.pages ?? []) {
+      for (const it of p.items) {
+        if (!seen.has(it.id)) {
+          seen.add(it.id);
+          out.push(it);
+        }
+      }
+    }
+    return out;
+  }, [list.data]);
+  const totalPending = list.data?.pages[0]?.total ?? items.length;
+  // Pull the next page when the bottom sentinel scrolls into view.
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
+  const { hasNextPage, isFetchingNextPage, fetchNextPage } = list;
+  useEffect(() => {
+    const el = loadMoreRef.current;
+    if (!el || !hasNextPage) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting && hasNextPage && !isFetchingNextPage) void fetchNextPage();
+      },
+      { rootMargin: "600px" },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
   // "Needs review" = a pending item that didn't cleanly resolve: no name yet, a
   // low-trust or rate-limited flag, or low confidence. Bulk-confirm the confident
   // ones, then flip this on to focus only on the ones that need a human.
@@ -586,6 +747,128 @@ export function ScanPage() {
   const [reviewOnly, setReviewOnly] = useState(false);
   const reviewCount = items.filter(needsReview).length;
   const visibleItems = reviewOnly ? items.filter(needsReview) : items;
+
+  // "Looks like the same product" — clusters of pending items (same brand +
+  // overlapping names) we can offer to combine into one line. Dismissed clusters
+  // (by id-signature) stay hidden for the session.
+  const combineClusters = useMemo<CombineCluster[]>(() => {
+    const pending = visibleItems.filter((i) => i.status === "pending");
+    return [
+      ...findCombineClusters(pending).map((items) => ({ items, reason: "name" as const })),
+      ...findBarcodeMatchClusters(pending).map((items) => ({ items, reason: "barcode" as const })),
+    ];
+  }, [visibleItems]);
+  const [dismissedCombine, setDismissedCombine] = useState<Set<string>>(new Set());
+  const combineMut = useMutation({
+    mutationFn: ({ ids, keepId }: { ids: string[]; keepId: string }) =>
+      api.combineScanItems(activeSlug, ids, keepId),
+    onSuccess: (fresh) => {
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      toast.success(`Combined into one — ${fresh.suggested_name ?? "item"} ×${fresh.quantity}`);
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+  // Render the combine offer INLINE, right above the cluster's first item (not in
+  // a stack at the top) — so it sits with the items it's about.
+  const clusterByFirstId = useMemo(() => {
+    const m = new Map<string, CombineCluster>();
+    for (const c of combineClusters) if (c.items[0]) m.set(c.items[0].id, c);
+    return m;
+  }, [combineClusters]);
+  const combineBanner = (cluster: CombineCluster): ReactNode => {
+    const ids = cluster.items.map((c) => c.id);
+    const sig = [...ids].sort().join(",");
+    if (dismissedCombine.has(sig)) return null;
+    // Barcode near-match: an OCR-read code that's a couple edits from one you
+    // scanned. Keep the SCANNED item (its barcode is authoritative); the photo's
+    // OCR'd code is recorded but not trusted.
+    if (cluster.reason === "barcode") {
+      const [aiItem, scannedItem] = cluster.items;
+      if (!aiItem || !scannedItem) return null;
+      const totalQty = cluster.items.reduce((n, c) => n + (c.quantity || 1), 0);
+      const exact = aiItem.barcode_text === scannedItem.barcode_text;
+      // Same barcode, but the two listings can read very differently (a vision
+      // name vs a catalog name). Don't auto-pick — show both and let the user
+      // choose which one survives. Either way the qty sums and the authoritative
+      // scanned barcode is kept (the combine endpoint adopts it).
+      const choice = (item: ScanInboxItem, label: string, keepsPhoto: boolean) => (
+        <button
+          type="button"
+          disabled={combineMut.isPending}
+          onClick={() => combineMut.mutate({ ids, keepId: item.id })}
+          className="flex-1 min-w-0 text-left rounded border border-amber-300 dark:border-amber-700/70 hover:bg-amber-100/60 dark:hover:bg-amber-900/30 px-2.5 py-1.5 disabled:opacity-50"
+        >
+          <div className="text-[10px] font-mono uppercase tracking-widest text-amber-700 dark:text-amber-500">
+            keep {label}
+            {keepsPhoto ? " (your photo)" : ""}
+          </div>
+          <div className="truncate text-sm text-content dark:text-mortar-100">{item.suggested_name ?? "(unnamed)"}</div>
+        </button>
+      );
+      return (
+        <div className="rounded-lg border border-amber-300 dark:border-amber-700/60 bg-amber-50/70 dark:bg-amber-950/20 px-3 py-2.5">
+          <div className="flex items-start gap-2 mb-2">
+            <ScanLine size={15} className="text-amber-500 shrink-0 mt-0.5" />
+            <div className="min-w-0 flex-1 text-sm">
+              <span className="font-medium text-content dark:text-mortar-100">
+                Same barcode (<span className="font-mono">{aiItem.barcode_text}</span>){" "}
+                {exact ? "as" : "≈ one"} you scanned — looks like the same item.
+              </span>
+              <span className="text-muted"> Which listing to keep? Merges to ×{totalQty}, keeps the scanned barcode.</span>
+            </div>
+            <button
+              type="button"
+              title="Not the same — keep separate"
+              onClick={() => setDismissedCombine((s) => new Set(s).add(sig))}
+              className="shrink-0 text-faint hover:text-muted p-1"
+            >
+              <X size={16} />
+            </button>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-2">
+            {choice(aiItem, "this", true)}
+            {choice(scannedItem, "scanned", false)}
+          </div>
+        </div>
+      );
+    }
+    // Keep the most complete listing: English (ASCII) over localized, then longest.
+    const keep = [...cluster.items].sort((a, b) => {
+      const aNon = /[^\x00-\x7F]/.test(a.suggested_name ?? "") ? 1 : 0;
+      const bNon = /[^\x00-\x7F]/.test(b.suggested_name ?? "") ? 1 : 0;
+      if (aNon !== bNon) return aNon - bNon;
+      return (b.suggested_name?.length ?? 0) - (a.suggested_name?.length ?? 0);
+    })[0];
+    if (!keep) return null;
+    const totalQty = cluster.items.reduce((n, c) => n + (c.quantity || 1), 0);
+    return (
+      <div className="rounded-lg border border-amber-300 dark:border-amber-700/60 bg-amber-50/70 dark:bg-amber-950/20 px-3 py-2.5 flex items-center gap-3">
+        <Sparkles size={15} className="text-amber-500 shrink-0" />
+        <div className="min-w-0 flex-1 text-sm">
+          <span className="font-medium text-content dark:text-mortar-100">
+            {cluster.items.length} items look like the same product
+          </span>
+          <span className="text-muted"> — {keep.suggested_name}. Combine into one (×{totalQty})?</span>
+        </div>
+        <button
+          type="button"
+          disabled={combineMut.isPending}
+          onClick={() => combineMut.mutate({ ids, keepId: keep.id })}
+          className="shrink-0 rounded bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 text-sm font-medium disabled:opacity-50"
+        >
+          Combine
+        </button>
+        <button
+          type="button"
+          title="Not the same — keep separate"
+          onClick={() => setDismissedCombine((s) => new Set(s).add(sig))}
+          className="shrink-0 text-faint hover:text-muted p-1"
+        >
+          <X size={16} />
+        </button>
+      </div>
+    );
+  };
 
   // Group the inbox for the grouped view (skipped when already scoped to one
   // session via ?batch). An explicit scan SESSION (scan_batch_id) is one group;
@@ -963,7 +1246,7 @@ export function ScanPage() {
   };
 
   return (
-    <div className="space-y-4 max-w-4xl">
+    <div className="space-y-4 max-w-4xl mx-auto">
       {/* ── the ONE header row: identity + intake. Short word labels;
             compact paddings keep it one row on phones. ──────────────── */}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center border-b border-line dark:border-slate-700 pb-2.5">
@@ -973,7 +1256,7 @@ export function ScanPage() {
           Inbox
         </h1>
         <span className="text-sm text-muted dark:text-slate-400 shrink-0">
-          {items.length}
+          {totalPending}
           <span className="hidden sm:inline"> pending</span>
         </span>
         {reviewCount > 0 && (
@@ -1254,18 +1537,25 @@ export function ScanPage() {
           </div>
         ))}
         {(() => {
-          const card = (item: ScanInboxItem) => (
-            <InboxCard
-              key={item.id}
-              item={item}
-              pageTarget={target}
-              menu={menu}
-              hasLocations={hasLocations}
-              selected={selected.has(item.id)}
-              onToggleSelect={() => toggleSelected(item.id)}
-              rateLimitGaveUp={rlGaveUp.has(item.id)}
-            />
-          );
+          // Each card, with the combine offer injected just above the first item
+          // of any cluster it belongs to (so the offer sits with its items).
+          const card = (item: ScanInboxItem) => {
+            const cluster = clusterByFirstId.get(item.id);
+            return (
+              <Fragment key={item.id}>
+                {cluster && combineBanner(cluster)}
+                <InboxCard
+                  item={item}
+                  pageTarget={target}
+                  menu={menu}
+                  hasLocations={hasLocations}
+                  selected={selected.has(item.id)}
+                  onToggleSelect={() => toggleSelected(item.id)}
+                  rateLimitGaveUp={rlGaveUp.has(item.id)}
+                />
+              </Fragment>
+            );
+          };
           // Flat list when there's nothing to group by (scoped ?batch view).
           if (!showSessionHeaders || !sessionGroups) return visibleItems.map(card);
           // Otherwise a collapsible header per group: a real session shows its
@@ -1293,6 +1583,12 @@ export function ScanPage() {
             );
           });
         })()}
+        {/* Infinite-scroll sentinel — pulls the next page as it nears the view. */}
+        {hasNextPage && (
+          <div ref={loadMoreRef} className="py-4 text-center text-xs text-faint">
+            {isFetchingNextPage ? "loading more…" : ""}
+          </div>
+        )}
       </div>
 
       {recentlyDeleted.length > 0 && (
@@ -1515,7 +1811,11 @@ function InboxCard({
     // TOP candidate, fields pre-filled. Expanding a card should land on the
     // AI's best read, not a blank form (the chip tap is a shortcut, not a
     // requirement).
-    const pick = cand ?? (pageTarget ? null : (topCand ?? null));
+    // An unidentified item ("Unknown Item") shouldn't auto-route anywhere —
+    // leave the target unselected so the user picks, rather than pre-filling
+    // "Inventory part" for a thing we couldn't identify.
+    const pick =
+      cand ?? (pageTarget || isUnidentified(item.suggested_name) ? null : (topCand ?? null));
     setFormCtx(
       pick
         ? { selKey: entryKey(pick.module, pick.instance), prefill: pick.fields }
@@ -1651,11 +1951,18 @@ function InboxCard({
         setReading(true);
       }
     },
-    onSuccess: (fresh) => {
+    onSuccess: (fresh, vars) => {
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
       if (isPhotoItem) {
         // Detached on the server — the result isn't ready yet; the poll shows it.
         toast.success("Reading the photo with AI…");
+        return;
+      }
+      // A hint / wrong / enrich re-derive also runs DETACHED (the web identify),
+      // so `fresh` still carries the OLD name — never claim "updated: <old name>".
+      // The 1.5s inbox poll surfaces the corrected name a moment later.
+      if (vars?.hint || vars?.wrong || vars?.enrich) {
+        toast.success("Re-checking — the name updates in a moment…");
         return;
       }
       toast.success(
@@ -1826,6 +2133,9 @@ function InboxCard({
           </div>
           <div className="text-[11px] font-mono text-faint dark:text-slate-500 truncate">
             {item.barcode_text}
+            {(item.suggested_metadata as { barcode_source?: string } | null)?.barcode_source === "ai-photo" && (
+              <span className="text-amber-600 dark:text-amber-500"> (read from photo)</span>
+            )}
             {item.suggested_manufacturer && ` · ${item.suggested_manufacturer}`}
             {item.suggested_sku && ` · ${item.suggested_sku}`}
             {item.scan_area && ` · 📍${item.scan_area}`}
@@ -2105,6 +2415,7 @@ function InboxCard({
                   wrong: "Flagged wrong — re-checked everything",
                   enrich: "Asked for more detail",
                   confirm: "Locked into the barcode database",
+                  combine: "Combined similar items",
                 };
                 return (
                   <div className="mt-2 border-t border-line dark:border-slate-700/60 pt-1.5">
@@ -2251,7 +2562,9 @@ function PhotoOptions({ item, onPick }: { item: ScanInboxItem; onPick?: (url: st
   const options = useQuery({
     queryKey: ["scan-photo-options", activeSlug, item.id],
     queryFn: () => api.scanPhotoOptions(activeSlug, item.id),
-    enabled: !!item.suggested_name || !!item.barcode_text,
+    // Only when there's a REAL name to search by — an unidentified item ("Unknown
+    // Item") or a bare barcode returns junk photos, so don't even ask.
+    enabled: !isUnidentified(item.suggested_name),
     staleTime: 5 * 60_000,
   });
   const pick = useMutation({

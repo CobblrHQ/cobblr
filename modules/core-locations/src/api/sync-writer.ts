@@ -80,6 +80,27 @@ export function registerLocationsWriter(): void {
         .execute();
       return rows.map((r) => ({ id: r.id, name: r.name, parentId: r.parent_id }));
     },
+
+    // Current fields of one location — lets the import preview show the
+    // both-sides diff (what's there now vs what a merge would write).
+    async read(orgId, id) {
+      const db = (await platform().tenants.getDb(orgId)) as Kysely<CoreLocationsDB>;
+      const row = await db
+        .selectFrom("core_locations_locations")
+        .select(["name", "short_name", "kind", "parent_id", "metadata", "description", "notes"])
+        .where("id", "=", id)
+        .executeTakeFirst();
+      if (!row) return null;
+      return {
+        name: row.name,
+        short_name: row.short_name,
+        kind: row.kind,
+        parent_id: row.parent_id,
+        metadata: row.metadata,
+        description: row.description,
+        notes: row.notes,
+      };
+    },
   });
 }
 

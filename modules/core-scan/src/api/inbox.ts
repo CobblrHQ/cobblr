@@ -25,7 +25,7 @@ import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { bearer, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { downloadCatalogImage, enrichBarcodeItem } from "../services/enrich.js";
+import { downloadCatalogImage, enrichBarcodeItem, isJunkName } from "../services/enrich.js";
 import {
   crossCheckScanPhoto,
   enrichPhotoItem,
@@ -634,8 +634,26 @@ const ListQuery = z.object({
   status: z.enum(["pending", "enriching", "resolved", "discarded"]).optional(),
   source_kind: z.enum(["barcode", "photo", "url", "receipt"]).optional(),
   batch_id: z.string().uuid().optional(),
-  limit: z.coerce.number().int().min(1).max(500).default(100),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  /** Opaque keyset cursor: page backwards through created_at-desc, no cap. */
+  cursor: z.string().optional(),
 });
+
+// Keyset cursor over (created_at, id) — stable even with duplicate timestamps.
+function encodeCursor(ts: Date | string, id: string): string {
+  const iso = typeof ts === "string" ? ts : ts.toISOString();
+  return Buffer.from(`${iso}|${id}`, "utf8").toString("base64url");
+}
+function decodeCursor(c: string): { ts: Date; id: string } | null {
+  try {
+    const [iso, id] = Buffer.from(c, "base64url").toString("utf8").split("|");
+    if (!iso || !id) return null;
+    const ts = new Date(iso);
+    return Number.isNaN(ts.getTime()) ? null : { ts, id };
+  } catch {
+    return null;
+  }
+}
 
 inboxRouter.get(
   "/inbox",
@@ -643,21 +661,42 @@ inboxRouter.get(
     const q = ListQuery.safeParse(req.query);
     if (!q.success) return badBody(res, q.error);
     const db = tenantDb(req);
+    const { status, source_kind, batch_id, limit, cursor } = q.data;
     let query = db
       .selectFrom("core_scan_inbox_items")
       .selectAll()
       .orderBy("created_at", "desc")
-      .limit(q.data.limit);
+      .orderBy("id", "desc")
+      .limit(limit);
     // Default scope: hide discarded items in the standard list.
-    if (q.data.status) {
-      query = query.where("status", "=", q.data.status);
-    } else {
-      query = query.where("status", "!=", "discarded");
+    if (status) query = query.where("status", "=", status);
+    else query = query.where("status", "!=", "discarded");
+    if (source_kind) query = query.where("source_kind", "=", source_kind);
+    if (batch_id) query = query.where("scan_batch_id", "=", batch_id);
+    const c = cursor ? decodeCursor(cursor) : null;
+    if (c) {
+      query = query.where((eb) =>
+        eb.or([
+          eb("created_at", "<", c.ts),
+          eb.and([eb("created_at", "=", c.ts), eb("id", "<", c.id)]),
+        ]),
+      );
     }
-    if (q.data.source_kind) query = query.where("source_kind", "=", q.data.source_kind);
-    if (q.data.batch_id) query = query.where("scan_batch_id", "=", q.data.batch_id);
     const items = await query.execute();
-    res.json({ items });
+    const last = items[items.length - 1];
+    const next_cursor = items.length === limit && last ? encodeCursor(last.created_at, last.id) : null;
+    // Total (for the header) only on the first page — it doesn't change per page.
+    let total: number | undefined;
+    if (!cursor) {
+      let cq = db.selectFrom("core_scan_inbox_items").select((eb) => eb.fn.countAll().as("n"));
+      if (status) cq = cq.where("status", "=", status);
+      else cq = cq.where("status", "!=", "discarded");
+      if (source_kind) cq = cq.where("source_kind", "=", source_kind);
+      if (batch_id) cq = cq.where("scan_batch_id", "=", batch_id);
+      const row = await cq.executeTakeFirst();
+      total = Number(row?.n ?? 0);
+    }
+    res.json({ items, next_cursor, ...(total !== undefined ? { total } : {}) });
   }),
 );
 
@@ -1192,7 +1231,7 @@ inboxRouter.post(
 async function appendScanHistory(
   db: ReturnType<typeof tenantDb>,
   id: string,
-  entry: { action: "rerun" | "wrong" | "enrich" | "confirm"; note?: string | null },
+  entry: { action: "rerun" | "wrong" | "enrich" | "confirm" | "combine"; note?: string | null },
 ): Promise<void> {
   try {
     const cur = await db
@@ -1281,9 +1320,12 @@ inboxRouter.post(
       }
       const imageFileId = row.image_file_id;
       const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+      // Capture the caller now — the detached work runs after the request, so
+      // route the AI through their personal connection (the 'own' path).
+      const uid = sessionUser(req).id;
       void (async () => {
         const workDb = (await platform().tenants.getDb(ctx.org.id)) as unknown as typeof db;
-        await enrichPhotoItem({ db: workDb, orgId: ctx.org.id, itemId: id, imageFileId });
+        await enrichPhotoItem({ db: workDb, orgId: ctx.org.id, itemId: id, imageFileId, userId: uid, force: true });
         void platform().events.emit("core-scan.scan.enriched", { orgId: ctx.org.id, itemId: id });
         await matchItem({ orgId: ctx.org.id, orgSlug: ctx.org.slug, token, baseUrl, itemId: id, force: true });
       })().catch((err) => {
@@ -1381,9 +1423,11 @@ inboxRouter.get(
       .select(["suggested_name", "suggested_manufacturer", "barcode_text"])
       .where("id", "=", id ?? "")
       .executeTakeFirst();
-    const q = row?.suggested_name
-      ? imageQuery(row.suggested_name, row.suggested_manufacturer)
-      : row?.barcode_text;
+    // Only image-search a REAL identified name. An unidentified item ("Unknown
+    // Item") or a bare barcode number returns junk (a "?" bag, an "UNKNOWN" sign),
+    // so return nothing rather than searching for it.
+    const name = row?.suggested_name?.trim() ?? "";
+    const q = isJunkName(name) ? null : imageQuery(name, row?.suggested_manufacturer ?? null);
     if (!q) {
       res.json({ items: [] });
       return;
@@ -1562,6 +1606,92 @@ inboxRouter.post(
     ]);
     await appendScanHistory(db, id, { action: "confirm" });
     res.json(await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", id).executeTakeFirst());
+  }),
+);
+
+// ──────────────────────── POST /inbox/combine ───────────────────────
+// "These look like the same product — combine." Merge several pending items
+// (you scanned 4 of one thing, but one pack carried a different barcode) into a
+// SINGLE line with the summed quantity. The distinct barcodes are preserved in
+// the kept item's metadata (merged_barcodes) so nothing is lost; the others are
+// soft-discarded (restorable). Always user-initiated — never auto-merges across
+// barcodes, since a different UPC can be a genuinely different SKU.
+const CombineBody = z.object({
+  ids: z.array(z.string()).min(2).max(50),
+  /** Which item's name/photo to keep; defaults to the first id. */
+  keep_id: z.string().optional(),
+});
+
+inboxRouter.post(
+  "/inbox/combine",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const parsed = CombineBody.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "bad_request", message: "ids[] (2–50) required" } });
+      return;
+    }
+    const db = tenantDb(req);
+    const { ids, keep_id } = parsed.data;
+    const rows = await db
+      .selectFrom("core_scan_inbox_items")
+      .selectAll()
+      .where("id", "in", ids)
+      .where("status", "=", "pending")
+      .execute();
+    if (rows.length < 2) {
+      res.status(400).json({ error: { code: "too_few", message: "need ≥2 pending items to combine" } });
+      return;
+    }
+    const primary = rows.find((r) => r.id === keep_id) ?? rows[0];
+    if (!primary) {
+      res.status(400).json({ error: { code: "too_few", message: "need ≥2 pending items to combine" } });
+      return;
+    }
+    const others = rows.filter((r) => r.id !== primary.id);
+    const totalQty = rows.reduce((n, r) => n + (Number(r.quantity) || 1), 0);
+    const barcodes = Array.from(new Set(rows.map((r) => r.barcode_text).filter(Boolean))) as string[];
+    const meta = (primary.suggested_metadata ?? {}) as Record<string, unknown>;
+    // Barcode authority: if the kept item's own barcode was READ BY AI (OCR, can
+    // be a digit off) — or it has none — but a merged item carries a SCANNED one,
+    // adopt the scanned code as the kept item's barcode. So you keep the photo +
+    // name you chose AND end up with the real barcode. Clear the ai-photo flag.
+    const primaryAiBarcode = (meta as { barcode_source?: string }).barcode_source === "ai-photo";
+    const scannedBarcode = others.find(
+      (o) => o.barcode_text && (o.suggested_metadata as { barcode_source?: string } | null)?.barcode_source !== "ai-photo",
+    )?.barcode_text;
+    const adoptBarcode = (primaryAiBarcode || !primary.barcode_text) && scannedBarcode ? scannedBarcode : null;
+    const { barcode_source: _bs, ...metaNoSource } = meta as { barcode_source?: string };
+    // Never lose the user's real photo on a merge: if the kept item has no photo
+    // of its own but a merged one does, carry it over (e.g. "keep the scanned
+    // listing" still keeps the picture you took).
+    const adoptPhoto = !primary.image_file_id ? others.find((o) => o.image_file_id)?.image_file_id ?? null : null;
+    await db
+      .updateTable("core_scan_inbox_items")
+      .set({
+        quantity: totalQty,
+        ...(adoptBarcode ? { barcode_text: adoptBarcode } : {}),
+        ...(adoptPhoto ? { image_file_id: adoptPhoto } : {}),
+        suggested_metadata: JSON.stringify({
+          ...(adoptBarcode ? metaNoSource : meta),
+          ...(barcodes.length ? { merged_barcodes: barcodes } : {}),
+          merged_count: rows.length,
+        }) as never,
+        updated_at: new Date(),
+      })
+      .where("id", "=", primary.id)
+      .execute();
+    await db
+      .updateTable("core_scan_inbox_items")
+      .set({ status: "discarded", updated_at: new Date() })
+      .where(
+        "id",
+        "in",
+        others.map((o) => o.id),
+      )
+      .execute();
+    await appendScanHistory(db, primary.id, { action: "combine", note: `${rows.length} items` });
+    res.json(await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", primary.id).executeTakeFirst());
   }),
 );
 

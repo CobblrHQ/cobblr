@@ -73,12 +73,26 @@ export interface CoreIntegrationsSyncStateTable {
   updated_at: Generated<Date>;
 }
 
+// An installed declarative sync-source manifest. `source_id` (= the manifest id)
+// is what a connection's connector_id references; the engine resolves a
+// connection's connector from the global builtins OR this per-workspace table.
+export interface CoreIntegrationsSyncSourceDefsTable {
+  id: Generated<string>;
+  source_id: string;
+  name: string;
+  manifest: Record<string, unknown>;
+  enabled: Generated<boolean>;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
 export interface CoreIntegrationsDB {
   core_integrations_connectors: CoreIntegrationsConnectorsTable;
   core_integrations_inbound_tokens: CoreIntegrationsInboundTokensTable;
   core_integrations_calls: CoreIntegrationsCallsTable;
   core_integrations_synced_records: CoreIntegrationsSyncedRecordsTable;
   core_integrations_sync_state: CoreIntegrationsSyncStateTable;
+  core_integrations_sync_source_defs: CoreIntegrationsSyncSourceDefsTable;
 }
 
 export type OrgRole = "owner" | "admin" | "member" | "guest";

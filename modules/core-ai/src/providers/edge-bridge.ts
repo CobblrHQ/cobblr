@@ -21,6 +21,7 @@
 // Claude tier), so override it via capability defaults to match your device.
 
 import { platform, type AiCapability, type EdgeRequest, type EdgeResponse } from "@cobblr/platform-contract";
+import { IDENTIFY_PROMPT, measurementContext } from "./identify-prompt.js";
 
 /** The personal-connections resolver injects the channel owner's user id here. */
 const CONNECTION_USER_KEY = "__connection_user_id";
@@ -184,17 +185,26 @@ export function register(): void {
         case "extract-text":
         case "identify-image":
         case "match-to-catalog": {
-          // Image-or-text generic chat: caller passes input.prompt + optional
-          // input.image_b64; returned as raw text the caller parses.
+          // Apply the SAME canonical prompt the OpenAI/Anthropic adapters use for
+          // each image capability — the caller (e.g. identifyImage) passes only
+          // image_b64, NOT a prompt, so a "Describe this." fallback returned prose
+          // the caller's JSON.parse choked on ("no vision provider configured").
+          const labels = Array.isArray(ctx.input.labels) ? (ctx.input.labels as string[]) : [];
           const prompt =
-            typeof ctx.input.prompt === "string"
+            typeof ctx.input.prompt === "string" && ctx.input.prompt.trim()
               ? ctx.input.prompt
-              : ctx.capability === "match-to-catalog"
-                ? `Match the user entity to the best catalog candidate. Reply with JSON ` +
-                  `{"matches":[{"candidate_id":string,"confidence":number}]} (desc, top 3).\n\n` +
-                  `User entity:\n${JSON.stringify(ctx.input.user_entity ?? {}, null, 2)}\n\n` +
-                  `Candidates:\n${JSON.stringify(ctx.input.candidates ?? [], null, 2)}`
-                : "Describe this.";
+              : ctx.capability === "identify-image"
+                ? IDENTIFY_PROMPT + measurementContext(ctx.input)
+                : ctx.capability === "extract-text"
+                  ? "Read all text from the image. Return the text only."
+                  : ctx.capability === "classify-image"
+                    ? `Classify this image with one of the supplied labels.${labels.length ? `\n\nAllowed labels: ${labels.join(", ")}` : ""}`
+                    : ctx.capability === "match-to-catalog"
+                      ? `Match the user entity to the best catalog candidate. Reply with JSON ` +
+                        `{"matches":[{"candidate_id":string,"confidence":number}]} (desc, top 3).\n\n` +
+                        `User entity:\n${JSON.stringify(ctx.input.user_entity ?? {}, null, 2)}\n\n` +
+                        `Candidates:\n${JSON.stringify(ctx.input.candidates ?? [], null, 2)}`
+                      : "Describe this.";
           const imageB64 = typeof ctx.input.image_b64 === "string" ? ctx.input.image_b64 : null;
           const msg: Record<string, unknown> = { role: "user", content: prompt };
           if (imageB64) msg.images = [imageB64];

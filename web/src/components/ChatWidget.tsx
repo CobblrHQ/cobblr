@@ -24,9 +24,10 @@ interface Msg {
 
 const kindLabel = (id: string) => id.split(":")[1] ?? id;
 
-export function ChatWidget() {
+/** `open`/`setOpen` are lifted to AppLayout so the main content can shift left
+ *  when the panel opens (the two breakpoint-gated instances share one state). */
+export function ChatWidget({ open, setOpen }: { open: boolean; setOpen: (v: boolean) => void }) {
   const { activeSlug } = useActiveOrg();
-  const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);

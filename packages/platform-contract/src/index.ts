@@ -919,6 +919,9 @@ export interface EntityWriter {
   listForMatch?(
     orgId: string,
   ): Promise<Array<{ id: string; name: string; parentId?: string | null }>>;
+  /** Optional: read an entity's current fields, so an import preview can show the
+   *  both-sides diff (what's there now vs what the source would write). */
+  read?(orgId: string, id: string): Promise<Record<string, unknown> | null>;
 }
 
 export interface PlatformEntities {
@@ -1404,6 +1407,11 @@ export interface ImportPlanItem {
   action: "create" | "update" | "link" | "unchanged" | "delete";
   /** The existing Cobblr entity this row touches (link / update / delete). */
   cobblrId?: string | null;
+  /** The mapped source fields this row would WRITE — what data comes over. */
+  fields?: Record<string, unknown>;
+  /** For link/update/delete: the existing Cobblr entity, so the preview can show
+   *  the match both-sides (its name + current fields, when the writer can read). */
+  match?: { id: string; name: string; fields?: Record<string, unknown> | null } | null;
 }
 
 export interface ImportPlan {

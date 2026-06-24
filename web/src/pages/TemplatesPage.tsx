@@ -69,7 +69,7 @@ export function TemplatesPage() {
   })).filter((g) => g.items.length > 0);
 
   return (
-    <div className="space-y-5 max-w-4xl">
+    <div className="space-y-5 max-w-4xl mx-auto">
       <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
         <Link
           to="/configuration"

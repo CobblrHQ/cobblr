@@ -177,6 +177,28 @@ edgeRelayRouter.get("/status", asyncHandler(async (req, res) => {
   res.json({ connected: platform().edge.hasChannel(key), last_seen: orgs.get(key)?.lastSeen ?? null });
 }));
 
+// GET /bridges — list THIS workspace's connected edge bridges (default + named),
+// for the shared bridge picker. `orgs` is keyed by edgeChannelKey(orgId, bridge):
+// a key equal to orgId is the DEFAULT bridge, and orgId::<name> is a named one.
+edgeRelayRouter.get("/bridges", asyncHandler(async (req, res) => {
+  if (!requireRole(req, res, "owner", "admin", "member")) return;
+  const orgId = tenantContext(req).org.id;
+  const prefix = `${orgId}::`;
+  const bridges: Array<{ bridge: string | null; connected: boolean; last_seen: number | null }> = [];
+  for (const [key, o] of orgs) {
+    let bridge: string | null;
+    if (key === orgId) bridge = null; // the default (no-id) bridge
+    else if (key.startsWith(prefix)) bridge = key.slice(prefix.length);
+    else continue; // another workspace's channel
+    bridges.push({ bridge, connected: platform().edge.hasChannel(key), last_seen: o.lastSeen });
+  }
+  // Default first, then named bridges alphabetically.
+  bridges.sort((a, b) =>
+    a.bridge === null ? -1 : b.bridge === null ? 1 : a.bridge.localeCompare(b.bridge),
+  );
+  res.json({ bridges });
+}));
+
 // ── Self-update — the bridge fetches its OWN code from here (no Docker registry,
 // no PAT). GET /release returns the current version; the loader downloads
 // /release/bundle only when its running version differs, verifies the sha256, and

@@ -51,7 +51,7 @@ async function buildLinkMap(
   db: Kysely<CoreIntegrationsDB>,
   ref: SyncConnectionRef,
   type: SyncEntityType,
-): Promise<Map<string, string>> {
+): Promise<Map<string, { id: string; name: string }>> {
   const writer = platform().entities.getWriter(type.targetKind);
   if (!writer?.listForMatch) return new Map();
   const existing = await writer.listForMatch(ref.orgId);
@@ -63,11 +63,11 @@ async function buildLinkMap(
     .where("deleted_at", "is", null)
     .execute();
   const taken = new Set(mapped.map((m) => m.cobblr_entity_id));
-  const out = new Map<string, string>();
+  const out = new Map<string, { id: string; name: string }>();
   for (const e of existing) {
     const key = e.name.trim().toLowerCase();
     if (!key || taken.has(e.id) || out.has(key)) continue; // ambiguous dup name → skip
-    out.set(key, e.id);
+    out.set(key, { id: e.id, name: e.name }); // keep the original name for the preview
   }
   return out;
 }
@@ -127,7 +127,7 @@ async function upsertOne(
   /** When set (import only), an unmapped record whose name matches an entry is
    *  ADOPTED into that existing entity instead of creating a duplicate. Consumed
    *  on use so two source rows can't both claim the same target. */
-  linkByName?: Map<string, string>,
+  linkByName?: Map<string, { id: string; name: string }>,
 ): Promise<"created" | "updated" | "linked" | "noop"> {
   const writer = platform().entities.getWriter(type.targetKind);
   if (!writer) throw new Error(`sync: no entity writer registered for ${type.targetKind}`);
@@ -159,10 +159,10 @@ async function upsertOne(
   // adopt it (update in place + map) rather than create a duplicate.
   if (!existing && linkByName) {
     const key = String(record.fields.name ?? "").trim().toLowerCase();
-    const matchId = key ? linkByName.get(key) : undefined;
-    if (matchId) {
+    const matched = key ? linkByName.get(key) : undefined;
+    if (matched) {
       linkByName.delete(key);
-      await writer.update(ref.orgId, matchId, fields);
+      await writer.update(ref.orgId, matched.id, fields);
       await db
         .insertInto("core_integrations_synced_records")
         .values({
@@ -170,7 +170,7 @@ async function upsertOne(
           entity_type: type.key,
           target_kind: type.targetKind,
           external_id: record.externalId,
-          cobblr_entity_id: matchId,
+          cobblr_entity_id: matched.id,
           source_hash: hash,
         })
         .execute();
@@ -326,6 +326,18 @@ export async function planReconcile(
     .execute();
   const byExternal = new Map(mapRows.map((m) => [m.external_id, m]));
 
+  const writer = platform().entities.getWriter(type.targetKind);
+  // Read an existing entity's CURRENT fields so the preview shows the match
+  // both-sides (what's there now vs what the source would write). Best-effort —
+  // a writer without `read` just yields the id + name.
+  const readMatch = async (
+    id: string,
+    fallbackName: string,
+  ): Promise<{ id: string; name: string; fields: Record<string, unknown> | null }> => {
+    const f = writer?.read ? await writer.read(ref.orgId, id).catch(() => null) : null;
+    return { id, name: String((f?.name as string | undefined) ?? fallbackName), fields: f };
+  };
+
   const items: ImportPlanItem[] = [];
   const counts = { create: 0, update: 0, link: 0, unchanged: 0, delete: 0, total: live.length };
   for (const r of ordered) {
@@ -335,23 +347,24 @@ export async function planReconcile(
     const m = byExternal.get(r.externalId);
     if (m && !m.deleted_at) {
       if (m.source_hash === hash) {
+        // unchanged: identical hash, nothing to diff — skip the extra read.
         counts.unchanged++;
-        items.push({ externalId: r.externalId, name, action: "unchanged", cobblrId: m.cobblr_entity_id });
+        items.push({ externalId: r.externalId, name, action: "unchanged", cobblrId: m.cobblr_entity_id, fields: r.fields, match: { id: m.cobblr_entity_id, name } });
       } else {
         counts.update++;
-        items.push({ externalId: r.externalId, name, action: "update", cobblrId: m.cobblr_entity_id });
+        items.push({ externalId: r.externalId, name, action: "update", cobblrId: m.cobblr_entity_id, fields: r.fields, match: await readMatch(m.cobblr_entity_id, name) });
       }
       continue;
     }
     const key = name.trim().toLowerCase();
-    const matchId = key ? linkByName.get(key) : undefined;
-    if (matchId) {
+    const matched = key ? linkByName.get(key) : undefined;
+    if (matched) {
       linkByName.delete(key); // one target per source row, mirrors apply
       counts.link++;
-      items.push({ externalId: r.externalId, name, action: "link", cobblrId: matchId });
+      items.push({ externalId: r.externalId, name, action: "link", cobblrId: matched.id, fields: r.fields, match: await readMatch(matched.id, matched.name) });
     } else {
       counts.create++;
-      items.push({ externalId: r.externalId, name, action: "create" });
+      items.push({ externalId: r.externalId, name, action: "create", fields: r.fields });
     }
   }
   // Deletes: mapped, non-tombstoned ids no longer present in the source.
@@ -359,7 +372,8 @@ export async function planReconcile(
   for (const m of mapRows) {
     if (!m.deleted_at && !present.has(m.external_id)) {
       counts.delete++;
-      items.push({ externalId: m.external_id, name: m.external_id, action: "delete", cobblrId: m.cobblr_entity_id });
+      const match = await readMatch(m.cobblr_entity_id, m.external_id);
+      items.push({ externalId: m.external_id, name: match.name, action: "delete", cobblrId: m.cobblr_entity_id, match });
     }
   }
   return { entityType: type.key, targetKind: type.targetKind, counts, items };

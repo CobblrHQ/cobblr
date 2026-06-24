@@ -4,9 +4,11 @@ import { platform } from "@cobblr/platform-contract";
 import { machinesRouter } from "./machines.js";
 import { registerMachinesResolvers } from "./resolvers.js";
 import { registerMachinesActionHandlers } from "./action-handlers.js";
+import { registerMachinesWriter } from "./sync-writer.js";
 
 registerMachinesResolvers();
 registerMachinesActionHandlers();
+registerMachinesWriter(); // opt in as a sync target (e.g. mirror companion app printers)
 
 // Per-instance item count — lets the nav hide an empty auto-created default
 // instance once the workspace has named ones.
