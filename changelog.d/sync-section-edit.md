@@ -1,0 +1,1 @@
+- Sync sources: each section now has its own "edit" action — tweak just that section's JSON (mapping, references, images, target instance) in a pre-filled editor, no need to re-paste the whole source.

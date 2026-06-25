@@ -8,7 +8,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, CheckCircle, Flag, MapPin, Minus, Plus, ScanLine, Sparkles, Trash2 } from "lucide-react";
+import { Camera, Check, CheckCircle, MapPin, Minus, Plus, ScanLine, Sparkles, Trash2 } from "lucide-react";
 import { Modal, useToast } from "@cobblr/platform-web";
 import { ApiError, api, type ScanCandidate, type ScanInboxItem } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -107,6 +107,10 @@ export function ScanResultModal({
   // and finishes in the background — keep polling the row while the card is
   // up so the name/photo pop in a second later instead of never (companion app does
   // the same lazy fill). Stops once the row looks final or after ~24s.
+  // After "Not it — photograph it" the vision identify runs DETACHED, but the item
+  // already carries the (wrong) barcode name, so stillEnriching is false. Force the
+  // poll while `reading` and clear it once vision stamps ai_suggested_at.
+  const [reading, setReading] = useState(false);
   const stillEnriching =
     !!item &&
     !item.ai_suggested_at &&
@@ -114,17 +118,30 @@ export function ScanResultModal({
   const live = useQuery({
     queryKey: ["scan-item-live", activeSlug, item?.id],
     queryFn: () => api.getScanItem(activeSlug, item!.id),
-    enabled: !!item?.id && stillEnriching,
+    enabled: !!item?.id && (stillEnriching || reading),
     // 2s cadence, capped — an item that will never enrich (no AI provider,
     // no catalog hit) shouldn't poll for as long as the card stays open.
-    refetchInterval: (query) => (query.state.dataUpdateCount >= 12 ? false : 2_000),
+    refetchInterval: (query) => (query.state.dataUpdateCount >= 14 ? false : 2_000),
     gcTime: 0,
   });
+  const readingAnchor = useRef<string | null>(null);
   useEffect(() => {
     const fresh = live.data;
     if (!fresh || !item) return;
-    if (fresh.updated_at !== item.updated_at) setItem(fresh);
-  }, [live.data, item]);
+    if (fresh.updated_at !== item.updated_at) {
+      setItem(fresh);
+      // vision finished (fresh ai_suggested_at past the moment we started) → done.
+      if (reading && fresh.ai_suggested_at && fresh.ai_suggested_at !== readingAnchor.current) {
+        setReading(false);
+      }
+    }
+  }, [live.data, item, reading]);
+  // Safety: never spin forever if the detached work dies.
+  useEffect(() => {
+    if (!reading) return;
+    const t = setTimeout(() => setReading(false), 30_000);
+    return () => clearTimeout(t);
+  }, [reading]);
 
   // Once identified, ask the matchmaker which table(s) fit — shown as tap chips.
   const match = useQuery({
@@ -217,7 +234,31 @@ export function ScanResultModal({
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
 
-  const looking = scan.isPending || rerunWrong.isPending || (!!item && !item.suggested_name && !match.isFetched);
+  // Phone "Not it — photograph it" — the companion app junk-barcode rescue. The OS camera
+  // captures the product; we attach it and force the VISION identify (detached),
+  // which overrides a junk/non-product barcode no source can fix. The poll above
+  // (driven by `reading`) surfaces the corrected name a few seconds later.
+  const photoRef = useRef<HTMLInputElement>(null);
+  const photoIdentify = useMutation({
+    mutationFn: async (file: File) => {
+      readingAnchor.current = item?.ai_suggested_at ?? null;
+      const f = await api.uploadFile(activeSlug, file);
+      return api.rerunScanAi(activeSlug, item!.id, undefined, undefined, undefined, f.id);
+    },
+    onMutate: () => setReading(true),
+    onSuccess: (fresh) => {
+      setItem(fresh);
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      toast.success("Reading the photo with AI…");
+    },
+    onError: (e) => {
+      setReading(false);
+      toast.error(e instanceof ApiError ? e.message : String(e));
+    },
+  });
+
+  const looking =
+    scan.isPending || rerunWrong.isPending || (!!item && !item.suggested_name && !match.isFetched);
   // Catalog image first; the user's own photo as the fallback (photo scans
   // and barcode items that resolved without catalog art still get a face).
   // External catalog_image_url can 404/hotlink-block (the broken-? the author hit)
@@ -234,7 +275,8 @@ export function ScanResultModal({
         : null,
     ].find((u): u is string => !!u && !brokenSrcs.has(u)) ?? null;
   const areaLabel = item?.scan_area ?? scanArea ?? null;
-  const busy = commit.isPending || save.isPending || discard.isPending || rerunWrong.isPending;
+  const busy =
+    commit.isPending || save.isPending || discard.isPending || rerunWrong.isPending || photoIdentify.isPending;
 
   return (
     <Modal open onClose={onClose} title="Scanned" size="sm">
@@ -265,6 +307,11 @@ export function ScanResultModal({
             )}
             {!scan.isPending && item && !item.suggested_name && (
               <AiOffMissHint status={aiStatus} />
+            )}
+            {reading && (
+              <div className="text-[11px] text-accent animate-pulse mt-0.5 flex items-center gap-1">
+                <Camera size={11} /> Reading the photo with AI…
+              </div>
             )}
             <div className="text-[11px] font-mono text-faint truncate">
               {barcode}
@@ -372,16 +419,32 @@ export function ScanResultModal({
           >
             <Trash2 size={13} /> Discard
           </button>
-          {/* Phone correct/wrong: if the ID looks off, re-check on the spot. */}
-          {item && item.suggested_name && (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => rerunWrong.mutate()}
-              className="inline-flex items-center gap-1 text-xs text-red-600 dark:text-red-400 hover:underline disabled:opacity-40"
-            >
-              <Flag size={12} className={rerunWrong.isPending ? "animate-pulse" : ""} /> Not right?
-            </button>
+          {/* Phone wrong-path: photograph the product and identify from the package
+              — the only thing that rescues a junk / non-product barcode. */}
+          {item && (
+            <>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => photoRef.current?.click()}
+                className="inline-flex items-center gap-1 text-xs text-red-600 dark:text-red-400 hover:underline disabled:opacity-40"
+              >
+                <Camera size={13} className={photoIdentify.isPending ? "animate-pulse" : ""} /> Not it —
+                photograph it
+              </button>
+              <input
+                ref={photoRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                hidden
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  e.currentTarget.value = "";
+                  if (f) photoIdentify.mutate(f);
+                }}
+              />
+            </>
           )}
           <button
             type="button"

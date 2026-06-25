@@ -20,7 +20,7 @@ import {
   type ModuleInstance,
   type OrgModuleListItem,
 } from "../lib/api";
-import { readNavHidden, readNavOrder } from "../lib/nav-order";
+import { readNavHidden, readNavOrder, readNavOverflow } from "../lib/nav-order";
 
 /** Synthetic top-level name prefix for a user-defined heading group. */
 export const HEADING_PREFIX = "__heading__";
@@ -45,6 +45,8 @@ export interface NavModules {
   allTops: OrgModuleListItem[];
   /** Names the user has hidden from their nav (per-device). */
   hiddenNames: Set<string>;
+  /** Entries the user pinned to the "more" overflow (always folded). */
+  overflowNames: Set<string>;
   /** parentModuleName → its enabled specialisation children
    *  (either real Pillar-E modules OR installed lens bundles
    *  rendered as synthetic module items). */
@@ -196,12 +198,15 @@ export function useNavModules(activeSlug: string): NavModules {
   // Re-read persisted nav order + hidden set whenever they change.
   const [navOrder, setNavOrder] = useState<string[]>(() => readNavOrder(activeSlug));
   const [navHidden, setNavHidden] = useState<string[]>(() => readNavHidden(activeSlug));
+  const [navOverflow, setNavOverflow] = useState<string[]>(() => readNavOverflow(activeSlug));
   useEffect(() => {
     setNavOrder(readNavOrder(activeSlug));
     setNavHidden(readNavHidden(activeSlug));
+    setNavOverflow(readNavOverflow(activeSlug));
     function reload() {
       setNavOrder(readNavOrder(activeSlug));
       setNavHidden(readNavHidden(activeSlug));
+      setNavOverflow(readNavOverflow(activeSlug));
     }
     window.addEventListener("cobblr:nav-order-changed", reload);
     window.addEventListener("storage", reload);
@@ -512,6 +517,7 @@ export function useNavModules(activeSlug: string): NavModules {
     });
   }, [rawTopsKey, navOrder.join("|")]);
   const hiddenNames = new Set(navHidden);
+  const overflowNames = new Set(navOverflow);
   const tops = allTops.filter((t) => !hiddenNames.has(t.name));
 
   // TEMP DEBUG (#4 managed-app empty nav) — remove after diagnosis.
@@ -538,6 +544,7 @@ export function useNavModules(activeSlug: string): NavModules {
     tops,
     allTops,
     hiddenNames,
+    overflowNames,
     childrenByParent,
     instanceGroups,
     enabledNames,

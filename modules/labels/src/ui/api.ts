@@ -24,6 +24,24 @@ export interface PrintResponse {
   printables: Printable[];
 }
 
+/** A labelable entity kind — one tab in the browser. */
+export interface LabelableKind {
+  kind: string;
+  label: string;
+  icon: string | null;
+  count?: number;
+}
+
+/** One row inside a tab — everything a queue-add needs, nothing more. */
+export interface LabelableItem {
+  kind: string;
+  id: string;
+  title: string;
+  subtitle: string | null;
+  image_path: string | null;
+  detail_url: string | null;
+}
+
 export class LabelsApi {
   constructor(
     private readonly slug: string,
@@ -64,6 +82,21 @@ export class LabelsApi {
   }) => this.request<QueueItem>("POST", "/queue", b);
   removeFromQueue = (id: string) => this.request<void>("DELETE", `/queue/${id}`);
   print = () => this.request<PrintResponse>("POST", "/print", {});
+
+  /** Browse — the kinds that support labels (the tabs) and their rows. */
+  listLabelableKinds = () =>
+    this.request<{ kinds: LabelableKind[] }>("GET", "/browse/kinds");
+  listLabelableItems = (kind: string, opts?: { q?: string; limit?: number; offset?: number }) => {
+    const p = new URLSearchParams();
+    if (opts?.q) p.set("q", opts.q);
+    if (opts?.limit) p.set("limit", String(opts.limit));
+    if (opts?.offset) p.set("offset", String(opts.offset));
+    const qs = p.toString();
+    return this.request<{ items: LabelableItem[]; total?: number }>(
+      "GET",
+      `/browse/kinds/${encodeURIComponent(kind)}/items${qs ? `?${qs}` : ""}`,
+    );
+  };
 
   /** Render the queue to a print-ready PDF (server-side, pdf-lib). */
   renderPdf = (size_key: string, item_ids?: string[]) =>

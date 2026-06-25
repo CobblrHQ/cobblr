@@ -1,0 +1,2 @@
+- JSON editors now have a Copy button (next to Format) — grab the whole block in one click.
+- Sync sources: re-syncing a live entity type now shows the same both-sides preview as the first import before it writes, so a mapping/JSON edit is reviewed (create/update/merge/delete) before any data changes — not applied blindly.

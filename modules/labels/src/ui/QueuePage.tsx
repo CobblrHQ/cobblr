@@ -8,6 +8,7 @@ import QRCode from "qrcode";
 import { Printer, Send, Trash2 } from "lucide-react";
 import { usePageTitle, useToast } from "@cobblr/platform-web";
 import { useLabels } from "./context";
+import { BrowsePanel } from "./BrowsePanel";
 import { renderPrintSheetHtml } from "./renderPrintSheet";
 import {
   PAPER_SIZES,
@@ -186,8 +187,8 @@ export function QueuePage() {
 
       {list.isLoading && <div className="text-sm text-faint dark:text-slate-500">loading…</div>}
       {items.length === 0 && !list.isLoading && (
-        <div className="border-2 border-dashed border-line dark:border-slate-700 rounded-xl p-12 text-center text-faint dark:text-slate-500">
-          Queue is empty. Add labels from any module that supports them (e.g. inventory parts).
+        <div className="text-sm text-faint dark:text-slate-500">
+          Queue is empty — pick items below, or add labels from any module that supports them.
         </div>
       )}
 
@@ -220,6 +221,9 @@ export function QueuePage() {
           />
         </>
       )}
+
+      {/* Find things to label — tabbed by the kinds that support labels. */}
+      <BrowsePanel />
     </div>
   );
 }

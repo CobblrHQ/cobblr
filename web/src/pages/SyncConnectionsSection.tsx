@@ -6,7 +6,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Modal, JsonField, useToast, useConfirm } from "@cobblr/platform-web";
-import { api, ApiError, type SyncConnectorDef, type SyncConnection, type SyncSourceDef, type ImportPlanItem } from "../lib/api";
+import { api, ApiError, type SyncConnectorDef, type SyncConnection, type SyncSourceDef, type ImportPlanItem, type ModuleInstance } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { BridgePicker } from "../components/BridgePicker";
 
@@ -37,6 +37,86 @@ function fmtVal(v: unknown): string {
   if (v === null || v === undefined) return "—";
   if (typeof v === "object") return JSON.stringify(v);
   return String(v);
+}
+
+/** Closest existing instance to a (mistyped) slug — by shared prefix or
+ *  containment after stripping punctuation. "lasers" → "laser-cutters". */
+function suggestInstance(slug: string, candidates: string[]): string | null {
+  const norm = (x: string) => x.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const n = norm(slug);
+  if (!n) return null;
+  let best: string | null = null;
+  let bestScore = 3; // need at least a 4-char overlap to bother suggesting
+  for (const c of candidates) {
+    const cn = norm(c);
+    let p = 0;
+    while (p < n.length && p < cn.length && n[p] === cn[p]) p++;
+    const score = cn.includes(n) || n.includes(cn) ? Math.max(p, n.length, 4) : p;
+    if (score > bestScore) {
+      best = c;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
+/** Sanity-check a section's parsed JSON. `errors` block save (the section is
+ *  structurally broken); `warnings` inform but don't block (e.g. an instance slug
+ *  that doesn't match any real instance — the exact bug that silently shipped
+ *  lasers to a non-existent "lasers" instance). */
+function validateSection(
+  section: unknown,
+  instances: ModuleInstance[],
+): { errors: string[]; warnings: string[] } {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const s = section as Record<string, unknown> | null;
+  if (!s || typeof s !== "object" || Array.isArray(s)) {
+    errors.push("Section must be a JSON object.");
+    return { errors, warnings };
+  }
+  if (typeof s.key !== "string" || !s.key) errors.push('Missing "key" (the section id).');
+  if (typeof s.targetKind !== "string" || !s.targetKind) errors.push('Missing "targetKind" (e.g. "machines:machine").');
+  if (!(s.list as { path?: string })?.path) warnings.push('No "list.path" — nothing will be fetched.');
+  if (!s.idField) warnings.push('No "idField" — rows need a stable external id (e.g. "$.id").');
+  if (!s.map || typeof s.map !== "object") warnings.push('No "map" — no fields will be written.');
+
+  // Instance existence — the high-value check.
+  const allNames = new Set(instances.map((i) => i.instance_name));
+  const moduleOf = typeof s.targetKind === "string" ? s.targetKind.split(":")[0] : "";
+  const moduleInstances = instances.filter((i) => i.module_name === moduleOf).map((i) => i.instance_name);
+  const checkInstance = (slug: unknown, where: string) => {
+    if (typeof slug !== "string" || !slug) return;
+    if (allNames.has(slug)) return;
+    const sug = suggestInstance(slug, moduleInstances.length ? moduleInstances : [...allNames]);
+    warnings.push(
+      `${where} "${slug}" isn't an instance in this workspace${sug ? ` — did you mean "${sug}"?` : ""}.` +
+        (moduleInstances.length ? ` Available: ${moduleInstances.join(", ")}.` : " Create it first, or fix the slug."),
+    );
+  };
+  checkInstance(s.targetInstance, "targetInstance");
+  const ib = s.instanceBy as { map?: Record<string, unknown>; default?: unknown } | undefined;
+  if (ib && typeof ib === "object") {
+    for (const v of Object.values(ib.map ?? {})) checkInstance(v, "instanceBy →");
+    checkInstance(ib.default, "instanceBy default");
+    if (s.targetInstance) warnings.push("Both targetInstance and instanceBy are set — instanceBy wins per row.");
+  }
+  return { errors, warnings };
+}
+
+/** Render block for a section validator's findings. */
+function SectionIssues({ errors, warnings }: { errors: string[]; warnings: string[] }) {
+  if (!errors.length && !warnings.length) return null;
+  return (
+    <div className="space-y-1">
+      {errors.map((e, i) => (
+        <p key={`e${i}`} className="text-[11px] text-ember-600 dark:text-ember-400">⛔ {e}</p>
+      ))}
+      {warnings.map((w, i) => (
+        <p key={`w${i}`} className="text-[11px] text-amber-600 dark:text-amber-400">⚠️ {w}</p>
+      ))}
+    </div>
+  );
 }
 
 // A key/value view of a record's fields (name omitted — it's the row title).
@@ -139,6 +219,17 @@ export function SyncConnectionsSection() {
   const connections = connectionsQ.data?.items ?? [];
   const sources = sourcesQ.data?.installed ?? [];
 
+  // A connection is built on a source (connector_id === source_id); group them so
+  // each source renders ONCE with its connections nested — no duplicate section
+  // list. Orphans (source manifest missing) fall through to a standalone card.
+  const connsBySource = new Map<string, SyncConnection[]>();
+  for (const c of connections) {
+    const arr = connsBySource.get(c.connector_id) ?? [];
+    arr.push(c);
+    connsBySource.set(c.connector_id, arr);
+  }
+  const orphanConns = connections.filter((c) => !sources.some((s) => s.source_id === c.connector_id));
+
   return (
     <section className="space-y-3">
       <div className="flex items-center justify-between">
@@ -172,30 +263,31 @@ export function SyncConnectionsSection() {
             + Install a source
           </button>
         </div>
-        {sources.length === 0 ? (
+        {sources.length === 0 && orphanConns.length === 0 ? (
           <p className="text-[11px] text-faint italic">
             No sources installed. Install one (paste its manifest) to connect an external system.
           </p>
         ) : (
-          <ul className="space-y-1">
+          <ul className="space-y-2">
             {sources.map((s) => (
-              <SourceRow key={s.source_id} source={s} onChange={invalidateSources} onEditRaw={() => setEditingSource(s)} />
+              <SourceRow
+                key={s.source_id}
+                source={s}
+                connections={connsBySource.get(s.source_id) ?? []}
+                onChange={() => {
+                  invalidateSources();
+                  invalidate();
+                }}
+                onEditRaw={() => setEditingSource(s)}
+                onAddConnection={() => setAdding(true)}
+              />
+            ))}
+            {orphanConns.map((c) => (
+              <SyncConnectionCard key={c.id} conn={c} onChange={invalidate} />
             ))}
           </ul>
         )}
       </div>
-
-      {connections.length === 0 ? (
-        <div className="text-[11px] text-faint italic border border-dashed border-line dark:border-slate-700 rounded-lg px-3 py-4">
-          No sync connections yet. {connectors.length > 0 ? 'Add one to mirror an external system in.' : 'Install a source above, then add a connection.'}
-        </div>
-      ) : (
-        <ul className="space-y-2">
-          {connections.map((c) => (
-            <SyncConnectionCard key={c.id} conn={c} onChange={invalidate} />
-          ))}
-        </ul>
-      )}
 
       {adding && (
         <AddSyncConnectionModal
@@ -239,19 +331,33 @@ export function SyncConnectionsSection() {
 type Section = { key: string; label?: string; targetKind?: string };
 function SourceRow({
   source,
+  connections,
   onChange,
   onEditRaw,
+  onAddConnection,
 }: {
   source: SyncSourceDef;
+  connections: SyncConnection[];
   onChange: () => void;
   onEditRaw: () => void;
+  onAddConnection: () => void;
 }) {
   const { activeSlug } = useActiveOrg();
   const toast = useToast();
   const confirm = useConfirm();
   const qc = useQueryClient();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true); // expanded by default — sections are the point
   const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<Section | null>(null);
+  // Real workspace instances — so the editor can flag a targetInstance/instanceBy
+  // slug that doesn't exist (same cache key the nav uses).
+  const instancesQ = useQuery({
+    queryKey: ["instances", activeSlug],
+    queryFn: () => api.listInstances(activeSlug),
+    enabled: !!activeSlug,
+    staleTime: 30_000,
+  });
+  const instances = instancesQ.data?.items ?? [];
 
   const sections: Section[] = Array.isArray((source.manifest as { entityTypes?: unknown }).entityTypes)
     ? ((source.manifest as { entityTypes: Section[] }).entityTypes)
@@ -293,6 +399,9 @@ function SourceRow({
           <span className="text-content dark:text-mortar-100 font-medium truncate">{source.name}</span>
           <span className="text-faint dark:text-slate-500 font-mono text-[10px] shrink-0">{source.source_id}</span>
           <span className="text-faint dark:text-slate-500 shrink-0">· {sections.length} section{sections.length === 1 ? "" : "s"}</span>
+          {connections.length > 0 && (
+            <span className="text-faint dark:text-slate-500 shrink-0">· {connections.length} connection{connections.length === 1 ? "" : "s"}</span>
+          )}
         </button>
         <button
           type="button"
@@ -314,9 +423,14 @@ function SourceRow({
                   <span className="text-content dark:text-mortar-200">{s.label ?? s.key}</span>
                   {s.targetKind && <span className="text-faint dark:text-slate-500 ml-1.5 font-mono text-[10px]">→ {s.targetKind}</span>}
                 </span>
-                <button type="button" onClick={() => removeSection(s)} className="text-[11px] text-faint hover:text-ember-600 dark:hover:text-ember-400 transition shrink-0">
-                  remove
-                </button>
+                <span className="flex items-center gap-2.5 shrink-0">
+                  <button type="button" onClick={() => setEditing(s)} className="text-[11px] text-faint hover:text-content dark:hover:text-mortar-200 transition">
+                    edit
+                  </button>
+                  <button type="button" onClick={() => removeSection(s)} className="text-[11px] text-faint hover:text-ember-600 dark:hover:text-ember-400 transition">
+                    remove
+                  </button>
+                </span>
               </li>
             ))}
           </ul>
@@ -328,15 +442,55 @@ function SourceRow({
               Edit JSON
             </button>
           </div>
+
+          {/* Connections built on this source — nested here so the sections are
+              defined ONCE above and each connection just carries its sync state,
+              instead of a second duplicate list. */}
+          <div className="pt-2 mt-1 border-t border-line/40 dark:border-slate-700/40">
+            <div className="text-[9px] font-mono uppercase tracking-widest text-faint mb-1.5">Connections</div>
+            {connections.length > 0 ? (
+              <ul className="space-y-1.5">
+                {connections.map((c) => (
+                  <SyncConnectionCard key={c.id} conn={c} onChange={onChange} nested />
+                ))}
+              </ul>
+            ) : (
+              <p className="text-[11px] text-faint">
+                No connection yet.{" "}
+                <button type="button" onClick={onAddConnection} className="text-accent hover:underline">
+                  Add a connection →
+                </button>
+              </p>
+            )}
+          </div>
         </div>
       )}
       {adding && (
         <AddSectionModal
           existingKeys={sections.map((s) => s.key)}
+          instances={instances}
           onClose={() => setAdding(false)}
           onAdd={(section) => {
             setAdding(false);
             saveSections.mutate([...sections, section]);
+          }}
+        />
+      )}
+      {editing && (
+        <EditSectionModal
+          // `sections` IS entityTypes (narrowly typed) — pass the full object.
+          section={editing as unknown as Record<string, unknown>}
+          otherKeys={sections.filter((s) => s.key !== editing.key).map((s) => s.key)}
+          instances={instances}
+          onClose={() => setEditing(null)}
+          onSave={(updated) => {
+            const origKey = editing.key;
+            setEditing(null);
+            saveSections.mutate(
+              (sections as unknown as Record<string, unknown>[]).map((s) =>
+                (s as { key?: string }).key === origKey ? updated : s,
+              ),
+            );
           }}
         />
       )}
@@ -406,16 +560,19 @@ function InstallSourceModal({
 // JSON. This is the day-to-day "sync another thing from companion app" path.
 function AddSectionModal({
   existingKeys,
+  instances,
   onClose,
   onAdd,
 }: {
   existingKeys: string[];
+  instances: ModuleInstance[];
   onClose: () => void;
   onAdd: (section: Record<string, unknown>) => void;
 }) {
   const [section, setSection] = useState<unknown>(undefined);
   const [valid, setValid] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const issues = section && typeof section === "object" ? validateSection(section, instances) : { errors: [], warnings: [] };
   const submit = () => {
     const s = section as { key?: string } | null;
     if (!s || typeof s !== "object" || typeof s.key !== "string" || !s.key) {
@@ -424,6 +581,10 @@ function AddSectionModal({
     }
     if (existingKeys.includes(s.key)) {
       setErr(`This source already has a "${s.key}" section — remove it first, or use a different key.`);
+      return;
+    }
+    if (issues.errors.length) {
+      setErr("Fix the blocking issues above first.");
       return;
     }
     onAdd(section as Record<string, unknown>);
@@ -450,6 +611,7 @@ function AddSectionModal({
           }
           hint="One SyncEntityTypeManifest. Grammar: docs/modules/sync-sources.md."
         />
+        <SectionIssues errors={issues.errors} warnings={issues.warnings} />
         {err && <p className="text-[11px] text-ember-600 dark:text-ember-400">{err}</p>}
         <div className="flex justify-end gap-2">
           <button type="button" onClick={onClose} className="text-xs px-3 py-1.5 rounded border border-line dark:border-slate-600 text-content dark:text-mortar-200">
@@ -457,7 +619,7 @@ function AddSectionModal({
           </button>
           <button
             type="button"
-            disabled={!valid}
+            disabled={!valid || issues.errors.length > 0}
             onClick={submit}
             className="text-xs px-3 py-1.5 rounded bg-cobble-600 text-white hover:bg-cobble-700 disabled:opacity-50 transition"
           >
@@ -469,7 +631,83 @@ function AddSectionModal({
   );
 }
 
-function SyncConnectionCard({ conn, onChange }: { conn: SyncConnection; onChange: () => void }) {
+// Edit ONE section's JSON in place (mapping, references, images, targetInstance…)
+// without re-pasting the whole container. Pre-filled from the current section;
+// saving re-installs the source with just that entity-type replaced.
+function EditSectionModal({
+  section: initial,
+  otherKeys,
+  instances,
+  onClose,
+  onSave,
+}: {
+  section: Record<string, unknown>;
+  otherKeys: string[];
+  instances: ModuleInstance[];
+  onClose: () => void;
+  onSave: (section: Record<string, unknown>) => void;
+}) {
+  const [section, setSection] = useState<unknown>(initial);
+  const [valid, setValid] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+  const label = (initial as { label?: string; key?: string }).label ?? (initial as { key?: string }).key ?? "section";
+  const issues = section && typeof section === "object" ? validateSection(section, instances) : { errors: [], warnings: [] };
+  const submit = () => {
+    const s = section as { key?: string } | null;
+    if (!s || typeof s !== "object" || typeof s.key !== "string" || !s.key) {
+      setErr('A section needs a "key".');
+      return;
+    }
+    if (otherKeys.includes(s.key)) {
+      setErr(`Another section already uses the key "${s.key}".`);
+      return;
+    }
+    if (issues.errors.length) {
+      setErr("Fix the blocking issues above first.");
+      return;
+    }
+    onSave(section as Record<string, unknown>);
+  };
+  return (
+    <Modal open onClose={onClose} title={`Edit section — ${label}`} size="md">
+      <div className="space-y-3">
+        <p className="text-[11px] text-muted dark:text-slate-400">
+          Edit just this section's JSON — map, references, images, targetInstance. Saving re-installs the source;
+          open connections pick up the change on the next preview / sync.
+        </p>
+        <JsonField
+          value={section}
+          onChange={(v, m) => {
+            setValid(m.valid && !!v && typeof v === "object");
+            if (m.valid) {
+              setSection(v);
+              setErr(null);
+            }
+          }}
+          rows={18}
+          hint="One SyncEntityTypeManifest. Grammar: docs/modules/sync-sources.md."
+        />
+        <SectionIssues errors={issues.errors} warnings={issues.warnings} />
+        {err && <p className="text-[11px] text-ember-600 dark:text-ember-400">{err}</p>}
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onClose} className="text-xs px-3 py-1.5 rounded border border-line dark:border-slate-600 text-content dark:text-mortar-200">
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={!valid || issues.errors.length > 0}
+            onClick={submit}
+            className="text-xs px-3 py-1.5 rounded bg-cobble-600 text-white hover:bg-cobble-700 disabled:opacity-50 transition"
+          >
+            Save section
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function SyncConnectionCard({ conn, onChange, nested }: { conn: SyncConnection; onChange: () => void; nested?: boolean }) {
   const { activeSlug } = useActiveOrg();
   const toast = useToast();
   const confirm = useConfirm();
@@ -500,6 +738,7 @@ function SyncConnectionCard({ conn, onChange }: { conn: SyncConnection; onChange
       if (r.ok && r.result) {
         const { created, updated, tombstoned } = r.result;
         toast.success(`Synced — ${created} new, ${updated} updated, ${tombstoned} removed`);
+        setPreviewKey(null); // sync was launched from the preview — close it
       } else toast.error(r.error ?? "Sync failed");
       void qc.invalidateQueries({ queryKey: ["sync-connection", activeSlug, conn.id] });
     },
@@ -533,14 +772,24 @@ function SyncConnectionCard({ conn, onChange }: { conn: SyncConnection; onChange
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
   const previewLabel = detail?.entity_types?.find((t) => t.key === previewKey)?.label ?? previewKey ?? "";
+  // A live (already-imported) type previews-then-syncs; a new one previews-then-imports.
+  const previewApproved = !!detail?.syncs?.find((s) => s.entity_type === previewKey)?.import_approved_at;
 
   const webhookUrl = detail?.webhook_path ? `${window.location.origin}${detail.webhook_path}` : null;
 
   return (
-    <li className="rounded-lg border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800/50 p-3 space-y-2.5">
+    <li
+      className={
+        nested
+          ? "rounded border border-line/50 dark:border-slate-700/50 bg-subtle/60 dark:bg-slate-800/40 p-2.5 space-y-2"
+          : "rounded-lg border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800/50 p-3 space-y-2.5"
+      }
+    >
       <div className="flex items-center gap-2">
-        <span className="text-sm font-medium text-content dark:text-mortar-100">{conn.label}</span>
-        <span className="text-[10px] font-mono text-faint">{conn.connector_id}</span>
+        {/* Nested under its source card → the source already shows the name, so
+            lead with the base URL (what differs between connections). */}
+        {!nested && <span className="text-sm font-medium text-content dark:text-mortar-100">{conn.label}</span>}
+        {!nested && <span className="text-[10px] font-mono text-faint">{conn.connector_id}</span>}
         <span className="text-[11px] font-mono text-muted dark:text-slate-400 truncate">{conn.config.base_url}</span>
         <div className="flex-1" />
         <button onClick={() => test.mutate()} disabled={test.isPending} className="text-[11px] text-accent hover:underline">
@@ -603,11 +852,10 @@ function SyncConnectionCard({ conn, onChange }: { conn: SyncConnection; onChange
                 </span>
               )}
               <button
-                onClick={() => run.mutate(t.key)}
-                disabled={run.isPending}
+                onClick={() => setPreviewKey(t.key)}
                 className="text-[11px] text-accent hover:underline shrink-0"
               >
-                {run.isPending ? "Syncing…" : "Sync now"}
+                Preview &amp; sync →
               </button>
             </div>
           );
@@ -625,9 +873,10 @@ function SyncConnectionCard({ conn, onChange }: { conn: SyncConnection; onChange
         </div>
       )}
 
-      {/* First-import preview: what a one-time pull WOULD do, before committing. */}
+      {/* Preview before committing: what a pull WOULD do — for the first import
+          AND for every later re-sync, so a mapping edit is reviewed before it writes. */}
       {previewKey && (
-        <Modal open onClose={() => setPreviewKey(null)} title={`Import preview — ${previewLabel}`} size="md">
+        <Modal open onClose={() => setPreviewKey(null)} title={`${previewApproved ? "Sync" : "Import"} preview — ${previewLabel}`} size="md">
           {previewQ.isFetching && !previewQ.data && (
             <div className="text-sm text-muted dark:text-slate-400 py-6 text-center">Pulling from the source…</div>
           )}
@@ -645,7 +894,7 @@ function SyncConnectionCard({ conn, onChange }: { conn: SyncConnection; onChange
                     </span>
                   ))}
                 {previewQ.data.plan.counts.total === 0 && (
-                  <span className="text-[11px] text-muted dark:text-slate-400">Nothing to import — the source is empty.</span>
+                  <span className="text-[11px] text-muted dark:text-slate-400">Nothing to {previewApproved ? "sync" : "import"} — the source is empty.</span>
                 )}
               </div>
               <div className="max-h-72 overflow-auto rounded-lg border border-line dark:border-slate-700">
@@ -655,7 +904,7 @@ function SyncConnectionCard({ conn, onChange }: { conn: SyncConnection; onChange
               </div>
               <p className="text-[11px] text-muted dark:text-slate-400">
                 <strong>Merge</strong> links a source record to a same-name item already in this workspace instead of
-                duplicating it. After import, this entity type keeps syncing live.
+                duplicating it.{!previewApproved && " After import, this entity type keeps syncing live."}
               </p>
               <div className="flex justify-end gap-2 pt-1">
                 <button
@@ -665,11 +914,17 @@ function SyncConnectionCard({ conn, onChange }: { conn: SyncConnection; onChange
                   Cancel
                 </button>
                 <button
-                  onClick={() => doImport.mutate(previewKey)}
-                  disabled={doImport.isPending || previewQ.data.plan.counts.total === 0}
+                  onClick={() => (previewApproved ? run.mutate(previewKey) : doImport.mutate(previewKey))}
+                  disabled={doImport.isPending || run.isPending || previewQ.data.plan.counts.total === 0}
                   className="text-xs px-3 py-1.5 rounded bg-cobble-600 text-white hover:bg-cobble-700 disabled:opacity-60"
                 >
-                  {doImport.isPending ? "Importing…" : "Approve & import"}
+                  {previewApproved
+                    ? run.isPending
+                      ? "Syncing…"
+                      : "Apply sync"
+                    : doImport.isPending
+                      ? "Importing…"
+                      : "Approve & import"}
                 </button>
               </div>
             </div>

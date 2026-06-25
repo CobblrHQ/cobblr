@@ -20,8 +20,9 @@ const RENDERERS_BY_TYPE: Record<PlatformFieldDef["type"], CatalogFieldRenderer[]
   boolean: ["boolean"],
   date: ["text"],
   url: ["url-link", "image-url"],
-  // computed renders its rendered string as plain text — no renderer picker.
-  computed: ["text"],
+  // computed renders its template string; `url-link` makes a {{ }}-built URL
+  // (e.g. a git repo link) clickable instead of plain text.
+  computed: ["text", "url-link"],
 };
 
 // Tiny inline sample so the user can see what a renderer looks like.
@@ -70,7 +71,7 @@ export function FieldsPage() {
         name,
         display_label: label,
         type,
-        renderer: type === "computed" || renderer === "text" ? null : renderer,
+        renderer: renderer === "text" ? null : renderer,
         template: type === "computed" ? template : undefined,
       }),
     onSuccess: () => {
@@ -217,7 +218,7 @@ export function FieldsPage() {
               </span>
             </label>
           )}
-          {type !== "computed" && rendererChoices.length > 1 && (
+          {rendererChoices.length > 1 && (
             <label className="block col-span-2">
               <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                 Renderer

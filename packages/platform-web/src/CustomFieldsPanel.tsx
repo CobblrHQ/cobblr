@@ -311,7 +311,13 @@ function ComputedRow({
         <span className="ml-2 italic text-accent normal-case tracking-normal">computed</span>
       </span>
       <div className="input flex-1 bg-mortar-50/60 dark:bg-slate-800/60 text-content dark:text-mortar-100 cursor-default select-text">
-        {str || <span className="text-faint dark:text-slate-600">—</span>}
+        {str ? (
+          // Honour the field's renderer so a {{ }}-built URL (renderer "url-link")
+          // draws as a clickable link, not plain text.
+          <FieldRenderer fieldName={def.name} value={str} renderer={def.renderer ?? undefined} type={def.type} />
+        ) : (
+          <span className="text-faint dark:text-slate-600">—</span>
+        )}
       </div>
     </label>
   );

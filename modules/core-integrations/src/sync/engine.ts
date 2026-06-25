@@ -43,10 +43,21 @@ export interface ReconcileResult {
   total: number;
 }
 
+/** Normalised key for the import name-merge. Case-insensitive and
+ *  punctuation/whitespace-insensitive, so near-duplicates link instead of
+ *  duplicating — e.g. "Prusa Mini" ⇄ "Prusa MINI+" both → "prusa mini".
+ *  Word boundaries are kept (runs of non-alphanumerics collapse to one space),
+ *  so genuinely different names ("CR-10" vs "CR-10S") still don't collide. The
+ *  both-sides import preview shows every resulting merge, so a wrong one is
+ *  caught before it's written. */
+export function matchKey(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
 /** Existing same-name entities not yet owned by this connection — the merge
- *  targets for a one-time import. Name → cobblr id, lowercased/trimmed. Built
- *  from the writer's listForMatch minus anything already in the id-map, so a
- *  link never hijacks an entity another external id already mirrors. */
+ *  targets for a one-time import. Name → cobblr id, normalised via matchKey.
+ *  Built from the writer's listForMatch minus anything already in the id-map, so
+ *  a link never hijacks an entity another external id already mirrors. */
 async function buildLinkMap(
   db: Kysely<CoreIntegrationsDB>,
   ref: SyncConnectionRef,
@@ -65,7 +76,7 @@ async function buildLinkMap(
   const taken = new Set(mapped.map((m) => m.cobblr_entity_id));
   const out = new Map<string, { id: string; name: string }>();
   for (const e of existing) {
-    const key = e.name.trim().toLowerCase();
+    const key = matchKey(e.name);
     if (!key || taken.has(e.id) || out.has(key)) continue; // ambiguous dup name → skip
     out.set(key, { id: e.id, name: e.name }); // keep the original name for the preview
   }
@@ -91,10 +102,98 @@ function hashRecord(
   targetKind: string,
   parentCobblrId: string | null,
   fields: Record<string, unknown>,
+  references?: SyncRecord["references"],
+  targetInstance?: string | null,
+  images?: SyncRecord["images"],
 ): string {
   return createHash("sha1")
-    .update(JSON.stringify({ targetKind, parentCobblrId, fields }))
+    .update(
+      JSON.stringify({
+        targetKind,
+        parentCobblrId,
+        fields,
+        references: references ?? null,
+        targetInstance: targetInstance ?? null,
+        images: images ?? null,
+      }),
+    )
     .digest("hex");
+}
+
+/** Resolve a record's cross-section references to mirrored Cobblr ids (null if
+ *  the referenced entity hasn't been imported yet). Same id-map as resolveParent,
+ *  but pointed at any section — e.g. a printer's location_id → a location. */
+async function resolveReferences(
+  db: Kysely<CoreIntegrationsDB>,
+  ref: SyncConnectionRef,
+  record: SyncRecord,
+): Promise<Record<string, string | null>> {
+  const out: Record<string, string | null> = {};
+  if (!record.references) return out;
+  for (const [field, r] of Object.entries(record.references)) {
+    const row = await db
+      .selectFrom("core_integrations_synced_records")
+      .select("cobblr_entity_id")
+      .where("connector_row_id", "=", ref.connectorRowId)
+      .where("entity_type", "=", r.section)
+      .where("external_id", "=", r.externalId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    out[field] = row?.cobblr_entity_id ?? null;
+  }
+  return out;
+}
+
+const orgSlugCache = new Map<string, string>();
+/** The org's URL slug — needed to build the served file URL. Cached; slugs are
+ *  effectively immutable for an org's lifetime. */
+async function orgSlug(orgId: string): Promise<string> {
+  const cached = orgSlugCache.get(orgId);
+  if (cached) return cached;
+  const meta = platform().db.meta as unknown as Kysely<{ orgs: { id: string; slug: string } }>;
+  const row = await meta.selectFrom("orgs").select("slug").where("id", "=", orgId).executeTakeFirst();
+  const slug = row?.slug ?? orgId;
+  orgSlugCache.set(orgId, slug);
+  return slug;
+}
+
+/** Pull a record's images across: fetch each through the connector's transport
+ *  (the edge bridge), store the bytes in core-files, and return target-field →
+ *  served file URL. A single image that fails to fetch/store is skipped, never
+ *  aborting the record. Called only on a real write (create/update), never noop.
+ *  `missing` counts declared images that didn't resolve — the caller uses it to
+ *  mark the record for retry so a transient miss (e.g. a bridge not yet updated
+ *  to binary support) self-heals on the next reconcile instead of sticking. */
+async function resolveImages(
+  ref: SyncConnectionRef,
+  type: SyncEntityType,
+  record: SyncRecord,
+): Promise<{ fields: Record<string, string>; missing: number }> {
+  if (!record.images || !type.fetchBinary) return { fields: {}, missing: 0 };
+  const out: Record<string, string> = {};
+  const ctx = fetchCtx(ref);
+  for (const [field, urlOrPath] of Object.entries(record.images)) {
+    try {
+      const img = await type.fetchBinary(ctx, urlOrPath);
+      if (!img || img.bytes.byteLength === 0) continue;
+      // Only store an actual image. A pre-binary edge bridge (or an error page)
+      // hands the body back as JSON/text — storing that would be a corrupt
+      // "photo" the unchanged-hash short-circuit would never re-pull. Skip it.
+      const mt = (img.mimeType || "").toLowerCase();
+      if (mt.includes("json") || mt.startsWith("text/")) continue;
+      const stored = await platform().files.write(ref.orgId, img.bytes, {
+        mimeType: img.mimeType,
+        filename: `${type.key}-${record.externalId}`,
+      });
+      if (stored?.fileId) {
+        const slug = await orgSlug(ref.orgId);
+        out[field] = `/api/v1/orgs/${slug}/modules/core-files/files/${stored.fileId}/raw`;
+      }
+    } catch {
+      /* one bad image shouldn't sink the whole record */
+    }
+  }
+  return { fields: out, missing: Object.keys(record.images).length - Object.keys(out).length };
 }
 
 async function resolveParent(
@@ -133,8 +232,9 @@ async function upsertOne(
   if (!writer) throw new Error(`sync: no entity writer registered for ${type.targetKind}`);
 
   const parentCobblrId = await resolveParent(db, ref, type.key, record.parentExternalId);
-  const fields = { ...record.fields, parent_id: parentCobblrId };
-  const hash = hashRecord(type.targetKind, parentCobblrId, record.fields);
+  // Per-record instance (instanceBy routing) wins over the section's static one.
+  const instance = record.instance ?? type.targetInstance ?? null;
+  const hash = hashRecord(type.targetKind, parentCobblrId, record.fields, record.references, instance, record.images);
 
   const existing = await db
     .selectFrom("core_integrations_synced_records")
@@ -144,12 +244,29 @@ async function upsertOne(
     .where("external_id", "=", record.externalId)
     .executeTakeFirst();
 
+  // Unchanged source → no-op BEFORE any image fetch: pulling an image is a
+  // network round-trip through the bridge, only worth it when actually writing.
+  if (existing && !existing.deleted_at && existing.source_hash === hash) return "noop";
+
+  // We're writing — resolve references + pull any images now (once per change).
+  const { fields: imageFields, missing: missingImages } = await resolveImages(ref, type, record);
+  const fields = {
+    ...record.fields,
+    parent_id: parentCobblrId,
+    ...(await resolveReferences(db, ref, record)),
+    ...(instance ? { instance } : {}),
+    ...imageFields,
+  };
+  // If a declared image didn't come across (e.g. the bridge hasn't self-updated to
+  // binary support yet), store a RETRY-marked hash so the next reconcile re-pulls
+  // it instead of short-circuiting on an unchanged hash — self-heals once ready.
+  const storedHash = missingImages > 0 ? `${hash}:img-retry` : hash;
+
   if (existing && !existing.deleted_at) {
-    if (existing.source_hash === hash) return "noop";
     await writer.update(ref.orgId, existing.cobblr_entity_id, fields);
     await db
       .updateTable("core_integrations_synced_records")
-      .set({ source_hash: hash, target_kind: type.targetKind, updated_at: new Date() })
+      .set({ source_hash: storedHash, target_kind: type.targetKind, updated_at: new Date() })
       .where("id", "=", existing.id)
       .execute();
     return "updated";
@@ -158,7 +275,7 @@ async function upsertOne(
   // Import merge: an unmapped record whose name matches an existing entity →
   // adopt it (update in place + map) rather than create a duplicate.
   if (!existing && linkByName) {
-    const key = String(record.fields.name ?? "").trim().toLowerCase();
+    const key = matchKey(String(record.fields.name ?? ""));
     const matched = key ? linkByName.get(key) : undefined;
     if (matched) {
       linkByName.delete(key);
@@ -171,7 +288,7 @@ async function upsertOne(
           target_kind: type.targetKind,
           external_id: record.externalId,
           cobblr_entity_id: matched.id,
-          source_hash: hash,
+          source_hash: storedHash,
         })
         .execute();
       return "linked";
@@ -185,7 +302,7 @@ async function upsertOne(
       .updateTable("core_integrations_synced_records")
       .set({
         cobblr_entity_id: cobblrId,
-        source_hash: hash,
+        source_hash: storedHash,
         target_kind: type.targetKind,
         deleted_at: null,
         updated_at: new Date(),
@@ -201,7 +318,7 @@ async function upsertOne(
         target_kind: type.targetKind,
         external_id: record.externalId,
         cobblr_entity_id: cobblrId,
-        source_hash: hash,
+        source_hash: storedHash,
       })
       .execute();
   }
@@ -343,28 +460,31 @@ export async function planReconcile(
   for (const r of ordered) {
     const name = String(r.fields.name ?? r.externalId);
     const parentCobblrId = await resolveParent(db, ref, type.key, r.parentExternalId);
-    const hash = hashRecord(type.targetKind, parentCobblrId, r.fields);
+    const hash = hashRecord(type.targetKind, parentCobblrId, r.fields, r.references, r.instance ?? type.targetInstance, r.images);
+    // Show the resolved cross-section references in the preview (e.g. location_id
+    // → the mirrored Cobblr id, or null if that section isn't imported yet).
+    const fields = { ...r.fields, ...(await resolveReferences(db, ref, r)) };
     const m = byExternal.get(r.externalId);
     if (m && !m.deleted_at) {
       if (m.source_hash === hash) {
         // unchanged: identical hash, nothing to diff — skip the extra read.
         counts.unchanged++;
-        items.push({ externalId: r.externalId, name, action: "unchanged", cobblrId: m.cobblr_entity_id, fields: r.fields, match: { id: m.cobblr_entity_id, name } });
+        items.push({ externalId: r.externalId, name, action: "unchanged", cobblrId: m.cobblr_entity_id, fields, match: { id: m.cobblr_entity_id, name } });
       } else {
         counts.update++;
-        items.push({ externalId: r.externalId, name, action: "update", cobblrId: m.cobblr_entity_id, fields: r.fields, match: await readMatch(m.cobblr_entity_id, name) });
+        items.push({ externalId: r.externalId, name, action: "update", cobblrId: m.cobblr_entity_id, fields, match: await readMatch(m.cobblr_entity_id, name) });
       }
       continue;
     }
-    const key = name.trim().toLowerCase();
+    const key = matchKey(name);
     const matched = key ? linkByName.get(key) : undefined;
     if (matched) {
       linkByName.delete(key); // one target per source row, mirrors apply
       counts.link++;
-      items.push({ externalId: r.externalId, name, action: "link", cobblrId: matched.id, fields: r.fields, match: await readMatch(matched.id, matched.name) });
+      items.push({ externalId: r.externalId, name, action: "link", cobblrId: matched.id, fields, match: await readMatch(matched.id, matched.name) });
     } else {
       counts.create++;
-      items.push({ externalId: r.externalId, name, action: "create", fields: r.fields });
+      items.push({ externalId: r.externalId, name, action: "create", fields });
     }
   }
   // Deletes: mapped, non-tombstoned ids no longer present in the source.

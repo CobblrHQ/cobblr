@@ -82,6 +82,16 @@ export function createApp(): AppHandles {
       credentials: true,
     }),
   );
+  // The edge relay's /respond carries base64 image/file bytes a bridge pulled
+  // from a LAN source (sync image import) — larger than the default 1mb API cap.
+  // Parse that ONE path at a higher limit BEFORE the global parser, which then
+  // sees req._body already set and skips it. Every other path stays at 1mb.
+  const relayRespondJson = express.json({ limit: "20mb" });
+  app.use((req, res, next) =>
+    req.method === "POST" && req.path.endsWith("/modules/digifab/edge/respond")
+      ? relayRespondJson(req, res, next)
+      : next(),
+  );
   app.use(
     express.json({
       limit: "1mb",

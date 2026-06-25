@@ -1270,6 +1270,11 @@ const RerunBody = z.object({
   /** "Right product, but needs detail" — keep the identity, but web-identify
    *  across the board and accept a fuller name/spec/brand for the same item. */
   enrich: z.boolean().optional(),
+  /** The user photographed the product to (re)identify it — attach this photo and
+   *  force the VISION path even when a (wrong) barcode is already on the item. The
+   *  phone's "Not it — photograph it": a junk/non-product barcode that no source
+   *  can fix gets identified from the package instead. */
+  image_file_id: z.string().uuid().optional(),
 });
 
 inboxRouter.post(
@@ -1304,7 +1309,21 @@ inboxRouter.post(
       action: rerun?.wrong ? "wrong" : rerun?.enrich ? "enrich" : "rerun",
       note: rerun?.hint,
     });
-    if (!row.barcode_text) {
+    // The user photographed the product to re-identify it (phone "Not it —
+    // photograph it"). Attach the new photo and force the vision path below, even
+    // if a (wrong) barcode is sitting on the item — vision off the package beats a
+    // junk/non-product code no source can fix.
+    const attachedPhoto = rerun?.image_file_id;
+    if (attachedPhoto) {
+      await db
+        .updateTable("core_scan_inbox_items")
+        .set({ image_file_id: attachedPhoto, updated_at: new Date() })
+        .where("id", "=", id)
+        .execute();
+      row.image_file_id = attachedPhoto;
+    }
+
+    if (!row.barcode_text || attachedPhoto) {
       // Photo-only path → re-run the vision identify. The vision+match pass runs
       // tens of seconds over the edge relay, so we DON'T hold the request for it
       // (holding past ~100s 524s behind cobblr.me's Cloudflare tunnel). Instead we

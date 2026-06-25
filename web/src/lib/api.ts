@@ -1238,8 +1238,15 @@ export const api = {
   },
   deleteFile: (slug: string, id: string) =>
     request<void>("DELETE", `/orgs/${slug}/modules/core-files/files/${id}`),
+  // IDEMPOTENT: image_path is stored as a FULL raw URL (uploads + web-image
+  // enrich both do `fileRawUrl(id)`), so a caller that wraps an already-resolved
+  // path/URL again must NOT double it (that yields `.../files//api/.../raw/raw`
+  // → 404 → retry → modal flicker). A bare file id is wrapped; a full path or
+  // external URL passes straight through.
   fileRawUrl: (slug: string, id: string, variant?: "medium" | "thumb" | "original") =>
-    `/api/v1/orgs/${slug}/modules/core-files/files/${id}/raw${variant ? `?variant=${variant}` : ""}`,
+    /^(https?:\/\/|\/)/.test(id)
+      ? id
+      : `/api/v1/orgs/${slug}/modules/core-files/files/${id}/raw${variant ? `?variant=${variant}` : ""}`,
 
   // ─── core-views ───────────────────────────────────────────────────
   listSavedViews: (slug: string, kind?: string) =>
@@ -2292,11 +2299,16 @@ export const api = {
       bundle_external_id,
       ...(item_ids ? { item_ids } : {}),
     }),
-  rerunScanAi: (slug: string, id: string, hint?: string, wrong?: boolean, enrich?: boolean) =>
+  rerunScanAi: (slug: string, id: string, hint?: string, wrong?: boolean, enrich?: boolean, imageFileId?: string) =>
     request<ScanInboxItem>(
       "POST",
       `/orgs/${slug}/modules/core-scan/inbox/${id}/rerun-ai`,
-      { ...(hint ? { hint } : {}), ...(wrong ? { wrong: true } : {}), ...(enrich ? { enrich: true } : {}) },
+      {
+        ...(hint ? { hint } : {}),
+        ...(wrong ? { wrong: true } : {}),
+        ...(enrich ? { enrich: true } : {}),
+        ...(imageFileId ? { image_file_id: imageFileId } : {}),
+      },
     ),
   // "This listing is good — lock it in": verify the current name/brand/category/
   // photo into the shared barcode database for every future scan of this UPC.
@@ -4101,6 +4113,9 @@ export interface DigifabJob {
   created_at: string;
   updated_at: string;
   last_polled_at: string | null;
+  /** True for a print started ON the machine (observed), not sent via Cobblr —
+   *  read-only in the queue (no send/delete). */
+  external?: boolean;
 }
 
 export interface DigifabPoolMember {

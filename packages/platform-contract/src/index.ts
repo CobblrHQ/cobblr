@@ -1368,14 +1368,37 @@ export interface SyncRecord {
   parentExternalId?: string | null;
   fields: Record<string, unknown>;
   deleted?: boolean;
+  /** Cross-section references: a target field that points at ANOTHER synced
+   *  entity by its external id (e.g. a machine's location_id → a location). The
+   *  engine resolves each through that section's id-map to the mirrored Cobblr
+   *  entity id before writing — null if that entity hasn't been imported yet. */
+  references?: Record<string, { section: string; externalId: string }>;
+  /** Image fields to pull across: a target field (e.g. "image_path") → the source
+   *  URL/path of an image. The engine fetches each (through the edge bridge),
+   *  stores the bytes in core-files, and sets the field to the served file URL.
+   *  Relative paths are resolved against the source base. */
+  images?: Record<string, string>;
+  /** Per-record target instance (multi-instance modules) — the section's
+   *  `instanceBy` routes each row to an instance by a field value, so ONE section
+   *  fans a single endpoint out to several instances. Overrides the section's
+   *  static `targetInstance` when set. */
+  instance?: string | null;
 }
 
 export interface SyncEntityType {
   key: string;
   label: string;
   targetKind: string;
+  /** For a multi-instance target module: the instance slug to write into (e.g.
+   *  "3d-printers"), so imported rows land under that instance's nav entry rather
+   *  than the base. The engine passes it to the writer as the `instance` field. */
+  targetInstance?: string | null;
   fetchAll: (ctx: SyncFetchContext) => Promise<SyncRecord[]>;
   fetchOne?: (ctx: SyncFetchContext, externalId: string) => Promise<SyncRecord | null>;
+  /** Fetch a binary asset (image) from the source through the same transport as
+   *  fetchAll — used by the engine to pull `SyncRecord.images` across. Returns the
+   *  raw bytes + mime type, or null on any non-2xx / empty body. */
+  fetchBinary?: (ctx: SyncFetchContext, urlOrPath: string) => Promise<{ bytes: Uint8Array; mimeType: string } | null>;
 }
 
 export interface SyncWebhookHit {

@@ -85,6 +85,7 @@ export function JsonField({
   const id = useId();
   const [text, setText] = useState(() => serialize(value));
   const [errors, setErrors] = useState<string[]>(() => evaluateJson(serialize(value), { schema, required }).errors);
+  const [copied, setCopied] = useState(false);
 
   // Re-seed when the parent pushes a genuinely different value (reset / connector
   // switch), without clobbering an in-progress edit that parses to the same thing.
@@ -112,6 +113,13 @@ export function JsonField({
     }
   };
 
+  const copy = () => {
+    void navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
+
   return (
     <div className={className}>
       <div className="flex items-center justify-between mb-1">
@@ -122,9 +130,14 @@ export function JsonField({
         ) : (
           <span />
         )}
-        <button type="button" onClick={format} className="text-[10px] text-accent hover:underline">
-          Format
-        </button>
+        <div className="flex items-center gap-3">
+          <button type="button" onClick={copy} className="text-[10px] text-accent hover:underline">
+            {copied ? "Copied" : "Copy"}
+          </button>
+          <button type="button" onClick={format} className="text-[10px] text-accent hover:underline">
+            Format
+          </button>
+        </div>
       </div>
       <textarea
         id={id}

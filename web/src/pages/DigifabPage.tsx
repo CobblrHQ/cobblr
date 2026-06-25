@@ -888,6 +888,11 @@ function PrintQueueSection({ connections }: { connections: DigifabConnection[] }
                   <span className={"text-[10px] px-1.5 py-0.5 rounded font-medium " + (JOB_STATUS_STYLE[jb.status] ?? "text-muted bg-subtle")}>
                     {jb.status}
                   </span>
+                  {jb.external && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded font-medium text-amber-700 bg-amber-100 dark:text-amber-300 dark:bg-amber-900/40" title="Started on the printer, not sent from Cobblr">
+                      on printer
+                    </span>
+                  )}
                   {jb.status === "printing" && jb.progress != null && (
                     <span className="text-[11px] text-accent">{Math.round(jb.progress * 100)}%</span>
                   )}

@@ -78,8 +78,31 @@ jobsRouter.get(
     if (cursor) q = q.where("created_at", "<", new Date(cursor));
     const rows = await q.orderBy("created_at", "desc").limit(limit + 1).execute();
     const hasMore = rows.length > limit;
-    const items = rows.slice(0, limit);
-    const next_cursor = hasMore ? new Date(items[items.length - 1]!.created_at).toISOString() : null;
+    const base = rows.slice(0, limit).map((r) => ({ ...r, external: false }));
+    const next_cursor = hasMore ? new Date(base[base.length - 1]!.created_at).toISOString() : null;
+    // Prepend in-progress prints started ON the machine (no Cobblr job) on the
+    // first page, so a running externally-started print shows in the queue. They
+    // carry status 'printing' → canSend/canDelete already treat them as read-only.
+    let items = base;
+    if (!cursor && (!status || status === "printing")) {
+      const obs = await tenantDb(req)
+        .selectFrom("digifab_observed_prints")
+        .select(["id", "connection_id", "serial", "file_ref", "started_at", "created_at"])
+        .where("status", "=", "printing")
+        .where("ended_at", "is", null)
+        .orderBy("started_at", "desc")
+        .execute();
+      const ext = obs.map((o) => ({
+        id: o.id, connection_id: o.connection_id, file_ref: o.file_ref ?? "(started on the printer)",
+        target_device: o.serial, target_tag: null, target_pool: null,
+        material_part_id: null, material_grams: null, remote_file_id: null, remote_job_id: null,
+        status: "printing", priority: 0, attempts: 0, max_attempts: 1, progress: null,
+        error: null, file_id: null, linked_machine_id: null, linked_task_id: null,
+        created_at: o.started_at ?? o.created_at, updated_at: o.started_at ?? o.created_at,
+        last_polled_at: null, external: true,
+      })) as typeof base;
+      items = [...ext, ...base];
+    }
     res.json({ items, next_cursor });
   }),
 );

@@ -89,6 +89,40 @@ export function toggleNavHidden(slug: string, name: string) {
   );
 }
 
+// ── per-device "always in More" nav entries ─────────────────────────
+// A user pins entries to the "more ▾" overflow so they never sit in the
+// row even when there's space — keeping the bar to the few they use most.
+// Distinct from hidden (still reachable, just folded) and per-device like
+// the rest of these prefs. The responsive overflow folds the REST as the
+// window narrows; these are folded unconditionally.
+const OKEY = (slug: string) => `cobblr:nav-overflow:${slug}`;
+
+export function readNavOverflow(slug: string): string[] {
+  if (!slug) return [];
+  try {
+    const raw = localStorage.getItem(OKEY(slug));
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+export function writeNavOverflow(slug: string, names: string[]) {
+  if (!slug) return;
+  try {
+    localStorage.setItem(OKEY(slug), JSON.stringify(names));
+    window.dispatchEvent(new CustomEvent("cobblr:nav-order-changed", { detail: { slug } }));
+  } catch {
+    /* quota or disabled — keep everything in the row */
+  }
+}
+
+export function toggleNavOverflow(slug: string, name: string) {
+  const cur = readNavOverflow(slug);
+  writeNavOverflow(slug, cur.includes(name) ? cur.filter((n) => n !== name) : [...cur, name]);
+}
+
 // ── per-device hidden header quick-actions (the right-cluster icons) ──
 // Separate from nav-hidden so a module that contributes BOTH a left-nav
 // entry and a right-cluster icon can have each toggled independently.

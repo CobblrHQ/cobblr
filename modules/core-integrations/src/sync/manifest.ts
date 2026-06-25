@@ -46,6 +46,21 @@ export const SyncEntityTypeManifest = z.object({
   label: z.string().min(1).max(120),
   /** The Cobblr entity kind to write into, e.g. "core-locations:location". */
   targetKind: z.string().min(1).max(120),
+  /** For a multi-instance target (e.g. machines): the instance slug to land rows
+   *  in, so they show under that nav entry — e.g. "3d-printers". Omit for the base. */
+  targetInstance: z.string().max(60).optional(),
+  /** Route EACH row to an instance by a field value, so ONE section fans a single
+   *  endpoint out to several instances (e.g. companion app /printers → 3d-printers +
+   *  laser-cutters + cnc by category). A value not in `map` is skipped unless
+   *  `default` is set. Subsumes filter+targetInstance for the fan-out case.
+   *  e.g. { "from": "$.category", "map": { "printer": "3d-printers", "laser": "laser-cutters" } } */
+  instanceBy: z
+    .object({
+      from: Extract,
+      map: z.record(z.string().max(60)),
+      default: z.string().max(60).optional(),
+    })
+    .optional(),
   /** List endpoint (fetchAll). `arrayPath` points at the array inside the
    *  response (e.g. "$.items"); omit if the body IS the array. */
   list: z.object({
@@ -59,12 +74,35 @@ export const SyncEntityTypeManifest = z.object({
   item: z
     .object({ method: Method, path: z.string().min(1), itemPath: z.string().optional() })
     .optional(),
+  /** Optional record filter: include a source row only when the extracted value
+   *  matches. Lets one endpoint feed several sections — e.g. companion app /printers returns
+   *  printers + lasers + CNC (a `category` field); filter each into its own
+   *  section/instance. e.g. { "from": "$.category", "equals": "printer" }. */
+  filter: z
+    .object({
+      from: Extract,
+      equals: z.string().optional(),
+      in: z.array(z.string()).optional(),
+      notEquals: z.string().optional(),
+    })
+    .optional(),
   /** Extract for the source record's stable external id (e.g. "$.id"). */
   idField: Extract,
   /** Extract for the parent's external id (hierarchy), or omit for flat. */
   parentField: Extract.optional(),
   /** Source-field → target-field mapping. */
   map: z.record(FieldSpec),
+  /** Cross-section references: a target field whose value is ANOTHER section's
+   *  external id (e.g. a printer's location_id → the locations section). The
+   *  engine resolves `from` (the external id in the source) through that
+   *  section's id-map to the mirrored Cobblr id. Keep the field OUT of `map` —
+   *  references win. e.g. { "location_id": { "section": "locations", "from": "$.location_id" } } */
+  references: z.record(z.object({ section: z.string().min(1), from: Extract })).optional(),
+  /** Image fields to pull across: a target field → the extract for the source
+   *  image URL/path. The engine fetches each (through the bridge), stores the
+   *  bytes in core-files, and sets the field to the served file URL. Relative
+   *  paths resolve against the source base. e.g. { "image_path": "$.image_url" } */
+  images: z.record(Extract).optional(),
 });
 export type SyncEntityTypeManifest = z.infer<typeof SyncEntityTypeManifest>;
 

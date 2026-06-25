@@ -36,7 +36,11 @@ export function ModuleNav() {
   // Focused mode: keep the domains, but hide the "manage specialisations" /
   // add-instance affordance (builder chrome).
   const focused = isFocused(activeOrg);
-  const { tops, childrenByParent: children, instanceGroups } = useNavModules(activeSlug);
+  const { tops, overflowNames, childrenByParent: children, instanceGroups } = useNavModules(activeSlug);
+  // Entries the user pinned to "more" never compete for row space — they're
+  // always folded. The rest flow through the responsive measurement below.
+  const pinned = tops.filter((t) => overflowNames.has(t.name));
+  const rowEligible = tops.filter((t) => !overflowNames.has(t.name));
   const [pickerScope, setPickerScope] = useState<string | null>(null);
   // Scan moved to the right cluster as a module-declared headerAction
   // (an icon-only quick-action) — see HeaderActions. It's no longer a
@@ -52,7 +56,7 @@ export function ModuleNav() {
   const rowRef = useRef<HTMLDivElement>(null);
   const widthCache = useRef<Map<string, number>>(new Map());
   const [visibleCount, setVisibleCount] = useState(Number.MAX_SAFE_INTEGER);
-  const topsKey = tops.map((t) => t.name).join("|");
+  const topsKey = rowEligible.map((t) => t.name).join("|") + "::" + pinned.map((t) => t.name).join("|");
 
   useLayoutEffect(() => {
     const el = rowRef.current;
@@ -72,7 +76,7 @@ export function ModuleNav() {
       const fitWithin = (budget: number) => {
         let used = 0;
         let n = 0;
-        for (const m of tops) {
+        for (const m of rowEligible) {
           const w = widthCache.current.get(m.name) ?? 110;
           if (used + w > budget) break;
           used += w;
@@ -81,7 +85,8 @@ export function ModuleNav() {
         return n;
       };
       let n = fitWithin(avail);
-      if (n < tops.length) n = fitWithin(avail - MORE_W); // make room for "more"
+      // "more ▾" shows when row items overflow OR anything is pinned to it.
+      if (n < rowEligible.length || pinned.length > 0) n = fitWithin(avail - MORE_W);
       setVisibleCount(n);
     };
     recompute();
@@ -92,8 +97,9 @@ export function ModuleNav() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [topsKey]);
 
-  const visible = tops.slice(0, visibleCount);
-  const overflow = tops.slice(visibleCount);
+  const visible = rowEligible.slice(0, visibleCount);
+  // Folded = whatever didn't fit, then the pinned entries (always last in More).
+  const overflow = [...rowEligible.slice(visibleCount), ...pinned];
 
   const renderTop = (m: (typeof tops)[number]) => {
     // Instance nav-group → one connected element (stem + segments).

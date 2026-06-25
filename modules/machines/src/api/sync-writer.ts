@@ -33,6 +33,9 @@ export function registerMachinesWriter(): void {
           notes: asStr(fields.notes),
           ...(asInt(fields.excitement) !== null ? { excitement: asInt(fields.excitement)! } : {}),
           ...(asInt(fields.quantity) !== null ? { quantity: asInt(fields.quantity)! } : {}),
+          // Land in the requested instance (e.g. "3d-printers") so it shows under
+          // that nav entry, not generic Machines. Default keeps the base instance.
+          ...(asStr(fields.instance) ? { instance: asStr(fields.instance)! } : {}),
           metadata: sql`${JSON.stringify(fields.metadata ?? {})}::jsonb` as never,
         })
         .returning("id")
@@ -57,6 +60,9 @@ export function registerMachinesWriter(): void {
       if (fields.metadata !== undefined) {
         patch.metadata = sql`${JSON.stringify(fields.metadata ?? {})}::jsonb`;
       }
+      // Re-target the instance on update too, so a section that gains a
+      // targetInstance MOVES already-imported machines into it on the next sync.
+      if (asStr(fields.instance)) patch.instance = asStr(fields.instance);
       await db.updateTable("machines_machines").set(patch as never).where("id", "=", id).execute();
       void platform().events.emit("machines.machine.updated", { orgId, machineId: id });
     },

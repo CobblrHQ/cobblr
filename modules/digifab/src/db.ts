@@ -246,9 +246,10 @@ export interface DigifabObservedPrintsTable {
   connection_id: string;
   serial: string;
   file_ref: string | null;
-  status: string; // 'completed' | 'failed'
+  status: string; // 'printing' (in progress) | 'completed' | 'failed'
   started_at: Date | null;
-  ended_at: Generated<Date>;
+  /** Null while still printing; set when the print finishes. */
+  ended_at: Date | null;
   created_at: Generated<Date>;
 }
 

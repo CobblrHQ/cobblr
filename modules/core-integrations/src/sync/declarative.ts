@@ -49,14 +49,61 @@ function evalField(spec: FieldSpec, data: unknown): unknown {
   return raw === undefined ? null : raw;
 }
 
+/** A record passes the section filter when the extracted value matches the
+ *  declared condition. No filter → everything passes. */
+function passesFilter(et: SyncEntityTypeManifest, data: unknown): boolean {
+  const f = et.filter;
+  if (!f) return true;
+  const v = resolve(f.from, data);
+  const s = v == null ? "" : String(v);
+  if (f.equals !== undefined && s !== f.equals) return false;
+  if (f.notEquals !== undefined && s === f.notEquals) return false;
+  if (f.in && !f.in.includes(s)) return false;
+  return true;
+}
+
+/** The instance a row routes to via instanceBy, or null when instanceBy maps it
+ *  nowhere and has no default — such a row is dropped, not imported. Also null
+ *  when the section has no instanceBy (the static targetInstance applies). */
+function instanceFor(et: SyncEntityTypeManifest, data: unknown): string | null {
+  const ib = et.instanceBy;
+  if (!ib) return null;
+  const v = resolve(ib.from, data);
+  return ib.map[v == null ? "" : String(v)] ?? ib.default ?? null;
+}
+
+/** A row is included only if it also resolves to an instance when the section
+ *  uses instanceBy (an unmapped value with no default is skipped). */
+function passesInstanceBy(et: SyncEntityTypeManifest, data: unknown): boolean {
+  return !et.instanceBy || instanceFor(et, data) != null;
+}
+
 function mapRecord(et: SyncEntityTypeManifest, data: unknown): SyncRecord {
   const idVal = resolve(et.idField, data);
   const parentVal = et.parentField ? resolve(et.parentField, data) : null;
+  const instance = instanceFor(et, data);
   const fields = evalField({ object: et.map }, data) as Record<string, unknown>;
+  const references: Record<string, { section: string; externalId: string }> = {};
+  if (et.references) {
+    for (const [field, spec] of Object.entries(et.references)) {
+      const v = resolve(spec.from, data);
+      if (v != null) references[field] = { section: spec.section, externalId: String(v) };
+    }
+  }
+  const images: Record<string, string> = {};
+  if (et.images) {
+    for (const [field, expr] of Object.entries(et.images)) {
+      const v = resolve(expr, data);
+      if (v != null && String(v).trim()) images[field] = String(v);
+    }
+  }
   return {
     externalId: String(idVal),
     parentExternalId: parentVal != null ? String(parentVal) : null,
     fields,
+    ...(Object.keys(references).length ? { references } : {}),
+    ...(Object.keys(images).length ? { images } : {}),
+    ...(instance ? { instance } : {}),
   };
 }
 
@@ -87,11 +134,32 @@ function buildEntityType(manifest: SyncSourceManifest, et: SyncEntityTypeManifes
     key: et.key,
     label: et.label,
     targetKind: et.targetKind,
+    targetInstance: et.targetInstance ?? null,
+    async fetchBinary(ctx, urlOrPath) {
+      try {
+        const base = ctx.baseUrl.replace(/\/+$/, "");
+        const url = /^https?:\/\//.test(urlOrPath)
+          ? urlOrPath
+          : `${base}${urlOrPath.startsWith("/") ? urlOrPath : `/${urlOrPath}`}`;
+        const res = await ctx.fetch(url, {
+          method: "GET",
+          headers: { ...authHeaders(manifest, ctx), Accept: "image/*,*/*" },
+        });
+        if (!res.ok) return null;
+        const buf = await res.arrayBuffer();
+        if (!buf || buf.byteLength === 0) return null;
+        return { bytes: new Uint8Array(buf), mimeType: res.headers.get("content-type") || "application/octet-stream" };
+      } catch {
+        return null;
+      }
+    },
     async fetchAll(ctx) {
       const body = await get(manifest, ctx, et.list.method, et.list.path);
       const arr = et.list.arrayPath ? resolve(et.list.arrayPath, body) : body;
       const items = Array.isArray(arr) ? arr : [];
-      return items.map((it) => mapRecord(et, it));
+      return items
+        .filter((it) => passesFilter(et, it) && passesInstanceBy(et, it))
+        .map((it) => mapRecord(et, it));
     },
     ...(et.item
       ? {
@@ -103,6 +171,10 @@ function buildEntityType(manifest: SyncSourceManifest, et: SyncEntityTypeManifes
               // the source returns the object unwrapped.
               const obj = et.item!.itemPath ? (resolve(et.item!.itemPath, body) ?? body) : body;
               if (obj == null || typeof obj !== "object") return null;
+              // Honour the section filter + instanceBy routing here too: a webhook
+              // for a row this section excludes (a laser hitting the printers
+              // section, or a value instanceBy maps nowhere) is a no-match.
+              if (!passesFilter(et, obj) || !passesInstanceBy(et, obj)) return null;
               const rec = mapRecord(et, obj);
               return rec.externalId && rec.externalId !== "undefined" ? rec : null;
             } catch {

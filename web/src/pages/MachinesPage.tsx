@@ -148,13 +148,38 @@ export function MachinesPage({
     : allRows;
 
   const [query, setQuery] = useState("");
+  // Generic, data-driven state filter: hide whatever machine states you don't
+  // want to see (e.g. companion app's "shelved", or "sold"). The states come from the data
+  // itself — not a hardcoded list — and your choice persists per view. (A bundle
+  // can also ship a default via a saved view; this is the user-defined layer.)
+  const stateKey = `cobblr.machines.hiddenStates.${instance ?? "all"}`;
+  const [hiddenStates, setHiddenStates] = useState<Set<string>>(() => {
+    try {
+      return new Set(JSON.parse(localStorage.getItem(stateKey) || "[]") as string[]);
+    } catch {
+      return new Set();
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(stateKey, JSON.stringify([...hiddenStates]));
+    } catch {
+      /* private mode / quota — non-fatal */
+    }
+  }, [stateKey, hiddenStates]);
+  const [stateMenuOpen, setStateMenuOpen] = useState(false);
+  const allStates = useMemo(
+    () => [...new Set(rows.map((m) => m.state).filter((s): s is string => !!s))].sort((a, b) => a.localeCompare(b)),
+    [rows],
+  );
+  const stateVisible = hiddenStates.size ? rows.filter((m) => !hiddenStates.has(m.state ?? "")) : rows;
   const filtered = query
-    ? rows.filter((m) =>
+    ? stateVisible.filter((m) =>
         [m.name, m.manufacturer, m.family, m.type, m.short_name]
           .filter(Boolean)
           .some((v) => v!.toLowerCase().includes(query.toLowerCase())),
       )
-    : rows;
+    : stateVisible;
 
   // Group the un-lensed list by specialisation section (3D Printers /
   // Laser Cutters / CNC Machines). Each machine carries an explicit
@@ -266,6 +291,59 @@ export function MachinesPage({
         <span className="text-[10px] font-mono text-faint dark:text-slate-500">
           {filtered.length} of {allRows.length}
         </span>
+        {allStates.length > 1 && (
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setStateMenuOpen((o) => !o)}
+              className={
+                "text-[10px] font-mono uppercase tracking-widest px-2 py-0.5 rounded border transition " +
+                (hiddenStates.size
+                  ? "border-accent text-accent bg-accent/5"
+                  : "border-line dark:border-slate-600 text-muted hover:text-accent hover:border-accent")
+              }
+              title="Show or hide machines by state"
+            >
+              {hiddenStates.size ? `states · ${hiddenStates.size} hidden` : "states"}
+            </button>
+            {stateMenuOpen && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setStateMenuOpen(false)} />
+                <div className="absolute z-20 mt-1 left-0 min-w-44 max-h-72 overflow-y-auto rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg p-2 space-y-0.5">
+                  <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-widest text-faint px-1 mb-1">
+                    <span>show states</span>
+                    {hiddenStates.size > 0 && (
+                      <button type="button" onClick={() => setHiddenStates(new Set())} className="text-accent hover:underline normal-case tracking-normal">
+                        reset
+                      </button>
+                    )}
+                  </div>
+                  {allStates.map((s) => {
+                    const shown = !hiddenStates.has(s);
+                    return (
+                      <label key={s} className="flex items-center gap-2 px-1 py-0.5 text-xs cursor-pointer rounded hover:bg-subtle dark:hover:bg-slate-800">
+                        <input
+                          type="checkbox"
+                          checked={shown}
+                          onChange={() =>
+                            setHiddenStates((prev) => {
+                              const n = new Set(prev);
+                              if (shown) n.add(s);
+                              else n.delete(s);
+                              return n;
+                            })
+                          }
+                        />
+                        <span className="text-content dark:text-mortar-100 capitalize">{s}</span>
+                        <span className="ml-auto text-faint">{rows.filter((m) => m.state === s).length}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+        )}
         {showFleetTab && (
           <div className="inline-flex rounded-md border border-line dark:border-slate-600 overflow-hidden text-xs">
             <button type="button" onClick={() => setPageTab("items")} className={"px-2.5 py-1 " + (pageTab === "items" ? "bg-cobble-600 text-white" : "text-muted hover:bg-subtle dark:hover:bg-slate-800")}>

@@ -2070,10 +2070,10 @@ function InboxCard({
               never replace a known title with a status line. Status renders as
               a subtle chip beside it; the pulse only owns the title slot when
               there's genuinely nothing to show yet. */}
-          <div className="font-medium text-content dark:text-mortar-100 truncate flex items-center gap-2 min-w-0">
+          <div className="font-medium text-content dark:text-mortar-100 flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
             {item.suggested_name ? (
               <>
-                <span className="truncate">{item.suggested_name}</span>
+                <span className="truncate min-w-0 max-w-full">{item.suggested_name}</span>
                 {(rerunning || serverMatching) && (
                   <span className="shrink-0 inline-flex items-center gap-1 rounded-full border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 px-2 py-0.5 text-[10px] font-mono uppercase tracking-widest text-accent animate-pulse">
                     {rerunning ? "re-running" : "AI reading…"}

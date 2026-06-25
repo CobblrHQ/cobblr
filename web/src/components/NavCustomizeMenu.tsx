@@ -13,7 +13,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, ChevronUp, Eye, EyeOff, SlidersHorizontal } from "lucide-react";
+import { ChevronDown, ChevronUp, Eye, EyeOff, MoreHorizontal, SlidersHorizontal } from "lucide-react";
 import { api } from "../lib/api";
 import { moduleIcon } from "../lib/module-icon";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -23,12 +23,13 @@ import {
   readNavActionsHidden,
   toggleNavActionHidden,
   toggleNavHidden,
+  toggleNavOverflow,
   writeNavOrder,
 } from "../lib/nav-order";
 
 export function NavCustomizeMenu() {
   const { activeSlug } = useActiveOrg();
-  const { allTops, hiddenNames } = useNavModules(activeSlug);
+  const { allTops, hiddenNames, overflowNames } = useNavModules(activeSlug);
   // Modules that contribute a right-cluster icon (the "quick actions").
   const modules = useQuery({
     queryKey: ["org-modules", activeSlug],
@@ -127,6 +128,7 @@ export function NavCustomizeMenu() {
             <ul className="max-h-80 overflow-y-auto">
               {allTops.map((t, i) => {
                 const hidden = hiddenNames.has(t.name);
+                const pinnedToMore = overflowNames.has(t.name);
                 return (
                   <li
                     key={t.name}
@@ -156,6 +158,16 @@ export function NavCustomizeMenu() {
                     >
                       {t.displayName.toLowerCase()}
                     </span>
+                    <button
+                      type="button"
+                      disabled={hidden}
+                      onClick={() => toggleNavOverflow(activeSlug, t.name)}
+                      title={pinnedToMore ? 'In “more” — click to put back in the bar' : 'Always show in “more”'}
+                      className="shrink-0 p-0.5 disabled:opacity-25"
+                      data-testid={`nav-overflow-${t.name}`}
+                    >
+                      <MoreHorizontal size={13} className={pinnedToMore ? "text-accent" : "text-faint"} />
+                    </button>
                     <button
                       type="button"
                       disabled={i === 0}

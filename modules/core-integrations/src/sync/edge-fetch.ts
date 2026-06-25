@@ -49,6 +49,17 @@ export function edgeRelayFetch(ref: SyncConnectionRef): typeof fetch {
       source: { baseUrl: ref.baseUrl, headers: headersToObject(init?.headers) },
     };
     const res = await platform().edge.send(key, req);
+    // Binary responses (images, files) ride as { __binary, contentType, data_b64 }
+    // because the JSON relay can't carry raw bytes — the bridge base64-encodes any
+    // non-text body. Reconstruct a real binary Response so res.arrayBuffer() works.
+    const b = res.body as { __binary?: boolean; contentType?: string; data_b64?: string } | null;
+    if (b && b.__binary === true && typeof b.data_b64 === "string") {
+      const bytes = Uint8Array.from(Buffer.from(b.data_b64, "base64"));
+      return new Response(bytes, {
+        status: res.status || 502,
+        headers: { "content-type": b.contentType || "application/octet-stream" },
+      });
+    }
     const bodyText = typeof res.body === "string" ? res.body : JSON.stringify(res.body ?? null);
     return new Response(bodyText, {
       status: res.status || 502,

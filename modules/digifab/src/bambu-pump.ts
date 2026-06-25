@@ -377,14 +377,50 @@ async function handleReport(connId: string, orgId: string, serial: string, paylo
   const file = (typeof merged.subtask_name === "string" && merged.subtask_name) || (typeof merged.gcode_file === "string" ? (merged.gcode_file as string) : null);
   if (newState === "printing" && prev !== "printing") {
     pc.printStart.set(serial, { file, at: new Date() });
+    // Record the print IN PROGRESS now (ended_at null) so an externally-started
+    // job shows in the list while it runs — deduped against an already-open row.
+    const open = await db
+      .selectFrom("digifab_observed_prints")
+      .select("id")
+      .where("connection_id", "=", connId)
+      .where("serial", "=", serial)
+      .where("status", "=", "printing")
+      .where("ended_at", "is", null)
+      .executeTakeFirst();
+    if (!open) {
+      await db
+        .insertInto("digifab_observed_prints")
+        .values({ connection_id: connId, serial, file_ref: file, status: "printing", started_at: new Date(), ended_at: null })
+        .execute()
+        .catch((e) => console.warn(`[digifab] observed-print start insert failed (${serial}):`, (e as Error).message));
+    }
   } else if ((newState === "completed" || newState === "failed") && (prev === "printing" || prev === "paused")) {
     const start = pc.printStart.get(serial);
     pc.printStart.delete(serial);
-    await db
-      .insertInto("digifab_observed_prints")
-      .values({ connection_id: connId, serial, file_ref: start?.file ?? file, status: newState, started_at: start?.at ?? null, ended_at: new Date() })
-      .execute()
-      .catch((e) => console.warn(`[digifab] observed-print insert failed (${serial}):`, (e as Error).message));
+    // Close the open in-progress row if one exists; else insert a terminal row.
+    const open = await db
+      .selectFrom("digifab_observed_prints")
+      .select("id")
+      .where("connection_id", "=", connId)
+      .where("serial", "=", serial)
+      .where("status", "=", "printing")
+      .where("ended_at", "is", null)
+      .orderBy("created_at", "desc")
+      .executeTakeFirst();
+    if (open) {
+      await db
+        .updateTable("digifab_observed_prints")
+        .set({ status: newState, ended_at: new Date(), ...((start?.file ?? file) ? { file_ref: start?.file ?? file } : {}) })
+        .where("id", "=", open.id)
+        .execute()
+        .catch((e) => console.warn(`[digifab] observed-print close failed (${serial}):`, (e as Error).message));
+    } else {
+      await db
+        .insertInto("digifab_observed_prints")
+        .values({ connection_id: connId, serial, file_ref: start?.file ?? file, status: newState, started_at: start?.at ?? null, ended_at: new Date() })
+        .execute()
+        .catch((e) => console.warn(`[digifab] observed-print insert failed (${serial}):`, (e as Error).message));
+    }
   } else if (prev === undefined && (newState === "completed" || newState === "failed") && file) {
     // BACKFILL: we connected to a printer ALREADY sitting on a finished print —
     // it completed while the pump was down, or before observed-capture shipped.

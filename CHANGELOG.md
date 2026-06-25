@@ -2,6 +2,32 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-06-25
+
+### Features
+- - Computed fields can now build clickable links: a new `{{ name | slug }}` template filter turns a value into a URL-safe slug, and computed fields can use the `url-link` renderer, so e.g. a "git repo" field with template https://github.com/me/{{ name | slug }} renders as a clickable link per entity.
+- Labels page can now find things to label: a new Add labels panel under the queue, with a tab per kind that supports labels (Parts, Machines, Assets, …), each listing its items with thumbnails and a one-tap Add. Search within a tab to narrow it. The tabs aren't hardcoded: a kind shows up here for the same reason it gets a Print-label button, so enabling a new module with labelable items adds its tab automatically.
+- Filter the machines/printers view by state. A "states" control lets you hide whatever machine states you don't want to see (e.g. shelved, sold): the states come from your data, and your choice persists per view.
+- Prints started on the printer now show in the queue while running. A print you start directly on the machine (e.g. from Bambu Studio/Handy) (not sent from Cobblr) now appears in the Print Queue as a read-only "on printer" entry the moment it starts, instead of being invisible until it finishes.
+- The phone scan card now has a "Not it: photograph it" action: when a barcode resolves to the wrong thing, or to a junk, non-product code nothing can fix, snap a photo of the item and AI identifies it from the package, overriding the bad barcode result. The corrected name appears on the card a few seconds later.
+
+### Improvements
+- - Navbar: pin individual entries to the “more ▾” overflow so they always fold there even when the bar has room: per-entry toggle in the navbar Customize menu (the ••• icon next to each entry). Keeps a busy header down to the few sections you use most; the rest still auto-fold responsively as before.
+- - JSON editors now have a Copy button (next to Format): grab the whole block in one click. - Sync sources: re-syncing a live entity type now shows the same both-sides preview as the first import before it writes, so a mapping/JSON edit is reviewed (create/update/merge/delete) before any data changes, not applied blindly.
+- - Sync manifests can declare cross-section references: a field (e.g. a printer location_id) that points at another section by external id, resolved through that section id-map to the mirrored Cobblr entity. So importing 3D printers links each to the location you already imported. Shown resolved in the preview.
+- - Import name-merge is now case- and punctuation-insensitive, so near-duplicates link instead of duplicating: e.g. "Prusa Mini" merges with "Prusa MINI+". Truly different names (CR-10 vs CR-10S) still stay distinct, and every merge is shown in the both-sides preview before it is written.
+- - Sync sources can pull images across: a section declares "images": { "image_path": "$.image_url" } and the engine fetches each image through the edge bridge, stores it in your file library, and points the record at it. Works for LAN sources (e.g. companion app printer photos) the cloud can’t reach directly.
+- - Synced images that don't come across on the first try (e.g. before an edge bridge has self-updated to binary support) now self-heal: the record is re-pulled on the next reconcile until the image lands, instead of sticking with no photo.
+- - Sync sections can filter source rows by a field, so one endpoint feeds several sections: e.g. companion app /printers returns printers + lasers + CNC, and "filter": { "from": "$.category", "equals": "printer" } imports only the 3D printers. Each category into its own section/instance.
+- - Sync sources: each section now has its own "edit" action: tweak just that section's JSON (mapping, references, images, target instance) in a pre-filled editor, no need to re-paste the whole source.
+- - Live Sync settings: a source and its connection are now ONE card instead of two stacked blocks that repeated the section list. The source defines its sections once (with edit/remove); each connection nests underneath carrying only its own sync state (live toggle · synced count · Preview & sync · webhook). Add a second connection and it just joins the same card: the manifest is still edited once above.
+- - A sync section can target a module instance: add "targetInstance": "<slug>" (e.g. "3d-printers") and imported rows land under that nav entry instead of the generic base. Adding/changing it re-targets already-imported rows on the next sync.
+
+### Fixes
+- Fixed a printer modal flicker. A printer photo set via the web-image search could make the detail modal flash, from a doubled image URL (404 → retry). The file-URL helper is now idempotent so an already-resolved image path is never wrapped twice.
+- On mobile, an inbox item's name no longer gets crushed to a single letter while the "AI reading…" badge hogs the row: the status badge now wraps below the name so the name keeps the full width.
+- - Sync sources: one section can now fan a single endpoint out to several instances with "instanceBy": e.g. companion app /printers routes to 3d-printers + laser-cutters + cnc by category, instead of one near-duplicate section per category. - The section editor sanity-checks pasted JSON: structural problems block the save; an instance slug that does not match a real workspace instance warns with a "did you mean" suggestion (catches the targetInstance typo that silently shipped lasers nowhere).
+
 ## 2026-06-24
 
 ### Features

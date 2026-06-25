@@ -16,14 +16,17 @@
 // implementation for mustache.js (logicless) or LiquidJS (Shopify's
 // sandboxed templating). The render() function is the seam.
 
-// Two filter shapes after the key:
+// Filter shapes after the key:
 //   {{ key | default: "fallback" }}   — value-or-fallback (the original)
 //   {{ key | relative }}              — format a date/timestamp as
 //                                       "in 3 days" / "2 days ago" / "today"
+//   {{ key | slug }}                  — URL-safe slug, e.g.
+//                                       "Voron 2.4 (Garage)" → "voron-2-4-garage".
+//                                       Lets a template build a stable link, e.g.
+//                                       https://github.com/me/{{ name | slug }}
 // The pattern captures the key, an optional `default:"…"` fallback, and an
-// optional bare filter name (currently only `relative`). default + a bare
-// filter are mutually exclusive in practice; the bare filter wins if both
-// somehow appear.
+// optional bare filter name (`relative` | `slug`). default + a bare filter are
+// mutually exclusive in practice; the bare filter wins if both somehow appear.
 const VAR_PATTERN =
   /\{\{\s*([a-z0-9_.]+)(?:\s*\|\s*default:\s*"((?:[^"\\]|\\.)*)"|\s*\|\s*([a-z_]+))?\s*\}\}/gi;
 
@@ -45,6 +48,9 @@ export function render(
       if (filter === "relative" && opts?.relative) {
         const rel = relativeTime(v);
         return rel == null ? "" : escapeHtml(rel);
+      }
+      if (filter === "slug") {
+        return v == null ? "" : escapeHtml(slugify(String(v)));
       }
       if (v == null || v === "") {
         return escapeHtml(unescapeDoubleQuoted(fallback ?? ""));
@@ -80,6 +86,17 @@ export function relativeTime(value: unknown, nowMs = Date.now()): string | null 
   else if (n < 365) phrase = unit(Math.round(n / 30), "month");
   else phrase = unit(Math.round(n / 365), "year");
   return diffDays > 0 ? `in ${phrase}` : `${phrase} ago`;
+}
+
+/** URL-safe slug: lowercase, runs of non-alphanumerics → a single hyphen,
+ *  trimmed. "3DSystems CubePro #1 (Modded)" → "3dsystems-cubepro-1-modded". */
+export function slugify(s: string): string {
+  return s
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "") // strip combining diacritics
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 /** Resolve a dotted key against a nested object. `a.b.c` → data.a.b.c.
