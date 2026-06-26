@@ -847,31 +847,29 @@ const ConfirmBody = z.object({
   eval_note: z.string().max(200).optional(),
 });
 
-const KIND_CREATE_ENDPOINTS: Record<string, string> = {
-  "inventory:part": "inventory/parts",
-  "machines:machine": "machines/machines",
-  "assets:asset": "assets/assets",
-};
+// (The per-kind create endpoint + quantity-field name are now DECLARED by the
+//  owning module via platform().entities.registerScannable and read at commit
+//  time — core-scan no longer hardcodes them. Audit 2026-06-26 follow-up.)
 
-// Each target kind names its quantity field differently — map the inbox
-// row's quantity onto the right one so a commit carries the count.
-const KIND_QTY_FIELD: Record<string, string> = {
-  "inventory:part": "qty",
-  "assets:asset": "quantity",
-  "machines:machine": "quantity",
-};
-
-/** Route a draft to its target kind: an explicit choice wins; otherwise
- *  the identify's asset/part hint (asset → assets:asset, else the safe
- *  inventory:part default). */
+/** Route a draft to its target kind: an explicit choice wins; otherwise match
+ *  the identify's noun hint (entity_type, e.g. "asset"/"part") to a registered
+ *  scannable's noun, else the registry's declared default. Registry-driven — no
+ *  module names hardcoded here. (Audit burn-down.) */
 function resolveTargetKind(
   explicitModule: string | undefined,
   explicitKind: string | undefined,
   entityType: unknown,
 ): { module: string; kind: string } {
   if (explicitModule && explicitKind) return { module: explicitModule, kind: explicitKind };
-  if (entityType === "asset") return { module: "assets", kind: "asset" };
-  return { module: "inventory", kind: "part" };
+  const scannables = platform().entities.listScannable();
+  const hint = typeof entityType === "string" ? entityType : undefined;
+  const chosen =
+    (hint ? scannables.find((s) => s.noun === hint) : undefined) ??
+    scannables.find((s) => s.default) ??
+    scannables[0];
+  if (!chosen) return { module: "", kind: "" }; // no scannables → caller 400s
+  const [module, kind] = chosen.kind.split(":");
+  return { module: module!, kind: kind! };
 }
 
 inboxRouter.post(
@@ -918,21 +916,25 @@ inboxRouter.post(
       (meta as { entity_type?: unknown }).entity_type,
     );
     const kindKey = `${target.module}:${target.kind}`;
-    const createPath = KIND_CREATE_ENDPOINTS[kindKey];
-    if (!createPath) {
+    // The owning module declares its scan target (create endpoint + quantity
+    // field) via registerScannable — core-scan reads it instead of a hardcoded
+    // map. (Audit 2026-06-26 follow-up.)
+    const scanTarget = platform().entities.getScannable(kindKey);
+    if (!scanTarget) {
       res.status(400).json({
         error: {
           code: "unknown_target_kind",
-          message: `No create endpoint registered for ${kindKey}. Today: inventory:part, machines:machine, assets:asset.`,
+          message: `${kindKey} is not a scan target — its module marks the kind scannable via platform().entities.registerScannable.`,
         },
       });
       return;
     }
+    const createPath = scanTarget.createEndpoint;
 
     // Build the create body. Defaults from the suggestion + extras win.
     // The quantity rides on the kind's own field name (qty vs quantity).
     const qty = parsed.data.quantity ?? Number(row.quantity ?? 1);
-    const qtyField = KIND_QTY_FIELD[kindKey];
+    const qtyField = scanTarget.qtyField;
     // `extras.metadata` (the instance's custom fields the user filled on the
     // confirm form — colorway, fibre, …) is DEEP-merged into the scan metadata
     // so it doesn't wipe the barcode/sku/source we stamp for catalog re-match.
@@ -1519,8 +1521,13 @@ inboxRouter.post(
 
     if ("action" in parsed.data && parsed.data.action === "revert") {
       const orig = (baseMeta.orig_catalog ?? { url: null, file_id: null }) as OrigCatalog;
-      const { orig_catalog: _drop, ...rest } = baseMeta;
+      // Reverting to the auto image relinquishes the user's pick → also clear the
+      // `catalog_image_user_set` lock so a future re-identify can refresh it again.
+      const { orig_catalog: _drop, catalog_image_user_set: _u, ...rest } = baseMeta as Record<string, unknown> & {
+        catalog_image_user_set?: boolean;
+      };
       void _drop;
+      void _u;
       await db
         .updateTable("core_scan_inbox_items")
         .set({
@@ -1545,7 +1552,8 @@ inboxRouter.post(
         .set({
           catalog_image_file_id: row.image_file_id,
           catalog_image_url: null,
-          suggested_metadata: sql`${JSON.stringify(metaWithOrig)}::jsonb` as never,
+          // The user chose this image → lock it so a later re-identify won't clobber it.
+          suggested_metadata: sql`${JSON.stringify({ ...metaWithOrig, catalog_image_user_set: true })}::jsonb` as never,
           updated_at: new Date(),
         })
         .where("id", "=", row.id)
@@ -1560,7 +1568,8 @@ inboxRouter.post(
       .updateTable("core_scan_inbox_items")
       .set({
         catalog_image_url: url,
-        suggested_metadata: sql`${JSON.stringify(metaWithOrig)}::jsonb` as never,
+        // The user chose this image → lock it so a later re-identify won't clobber it.
+        suggested_metadata: sql`${JSON.stringify({ ...metaWithOrig, catalog_image_user_set: true })}::jsonb` as never,
         updated_at: new Date(),
       })
       .where("id", "=", row.id)

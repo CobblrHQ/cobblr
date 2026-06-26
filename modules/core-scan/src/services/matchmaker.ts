@@ -125,13 +125,13 @@ export async function assembleScanMenu(
   token: string,
 ): Promise<ScanMenuEntry[]> {
   const auth = { Authorization: `Bearer ${token}` };
-  const SCANNABLE = new Set(["inventory", "assets", "machines"]);
-  // Default-instance entity kinds per module (named instances use <name>:item).
-  const DEFAULT_KIND: Record<string, string> = {
-    inventory: "inventory:part",
-    assets: "assets:asset",
-    machines: "machines:machine",
-  };
+  // Scan targets are DECLARED by the owning modules (registerScannable), not
+  // hardcoded here — a new scannable module needs no matchmaker edit. Map each
+  // module to its default kind + noun. (Audit 2026-06-26 follow-up.)
+  const scanByModule = new Map<string, { kind: string; noun: string }>();
+  for (const s of platform().entities.listScannable()) {
+    scanByModule.set(s.kind.split(":")[0]!, { kind: s.kind, noun: s.noun });
+  }
 
   let instances: Array<{ module_name: string; instance_name: string; display_name: string; is_default: boolean; item_count?: number | null; config?: Record<string, unknown> }> = [];
   try {
@@ -174,13 +174,12 @@ export async function assembleScanMenu(
 
   const entries: ScanMenuEntry[] = [];
   for (const inst of instances) {
-    if (!SCANNABLE.has(inst.module_name)) continue;
+    const scanInfo = scanByModule.get(inst.module_name);
+    if (!scanInfo) continue;
     if (inst.is_default && hideDefaults.has(inst.module_name)) continue;
-    const kind = inst.is_default
-      ? DEFAULT_KIND[inst.module_name] ?? `${inst.module_name}:item`
-      : `${inst.instance_name}:item`;
+    const kind = inst.is_default ? scanInfo.kind : `${inst.instance_name}:item`;
     const override = overridesByTarget.get(`${inst.module_name}:${inst.instance_name}`);
-    const noun = override?.item_noun || (inst.module_name === "assets" ? "asset" : "part");
+    const noun = override?.item_noun || scanInfo.noun;
     const scanKeywords = Array.isArray(override?.scan_keywords)
       ? override!.scan_keywords.filter((k): k is string => typeof k === "string" && k.trim() !== "")
       : undefined;

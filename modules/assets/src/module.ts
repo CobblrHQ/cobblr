@@ -76,8 +76,9 @@ export default defineModule({
   exposes: {
     events: [
       "assets.asset.created",
-      "assets.asset.state_changed",
-      "assets.asset.deleted",
+      // (removed assets.asset.state_changed / .deleted — declared but never
+      //  emitted, so they showed as dead triggers in the wires UI. Re-add
+      //  alongside the emit when wired. Audit 2026-06-26 follow-up.)
     ],
     api: [],
     actions: [

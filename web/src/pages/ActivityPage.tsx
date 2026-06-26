@@ -8,6 +8,7 @@ import { Filter, KeyRound, ShieldCheck, Wrench, User } from "lucide-react";
 import { api, type ActivityEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { usePageTitle } from "@cobblr/platform-web";
+import { QueryError } from "../components/QueryError";
 
 type AuthMethod = "session" | "api_token" | "system";
 
@@ -76,7 +77,10 @@ export function ActivityPage() {
       {activity.isLoading && (
         <div className="text-xs text-faint">loading…</div>
       )}
-      {!activity.isLoading && items.length === 0 && (
+      {activity.isError && (
+        <QueryError what="activity" onRetry={() => activity.refetch()} />
+      )}
+      {!activity.isLoading && !activity.isError && items.length === 0 && (
         <div className="text-xs text-faint italic">No activity matches these filters.</div>
       )}
 

@@ -58,19 +58,21 @@ export async function applyToLinkedEntity(
       entityId: link.entity_id,
     });
 
-  // PR 2 ships the flagship: inventory:part. Other (entity_kind, mode) pairs —
-  // assets:asset loan from a scan, builds:build run from a count — slot in here
-  // as their target actions land.
-  if (link.entity_kind === "inventory:part") {
-    const reason = `device:${device}`;
-    if (link.mode === "set" && typeof payload.value === "number") {
-      await invoke("inventory:set-stock", { partId: link.entity_id, qty: payload.value, reason });
-      return { ok: true, applied: "inventory:set-stock", entityId: link.entity_id, qty: payload.value };
-    }
-    if (link.mode === "add" && typeof payload.value === "number") {
-      await invoke("inventory:adjust-stock", { partId: link.entity_id, delta: payload.value, reason });
-      return { ok: true, applied: "inventory:adjust-stock", entityId: link.entity_id, delta: payload.value };
-    }
+  // Ask the entity-OWNING module how this reading's mode maps to one of its
+  // OWN actions — core-devices stays kind-agnostic (no hardcoded
+  // `kind === "inventory:part"`). inventory registers its set/add → set-stock/
+  // adjust-stock mapping via platform().entities.registerDeviceApply; other
+  // kinds (assets:asset loan, builds:build run) slot in by registering their
+  // own provider, no change here. (Audit 2026-06-26 follow-up.)
+  const mapped = platform().entities.applyDevice(link.entity_kind, {
+    mode: link.mode,
+    value: typeof payload.value === "number" ? payload.value : null,
+    entityId: link.entity_id,
+    reason: `device:${device}`,
+  });
+  if (mapped) {
+    await invoke(mapped.actionId, mapped.args);
+    return { ok: true, applied: mapped.actionId, entityId: link.entity_id, args: mapped.args };
   }
   return { ok: true, skipped: true, reason: `mode '${link.mode}' on '${link.entity_kind}' not yet supported` };
 }

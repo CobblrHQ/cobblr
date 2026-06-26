@@ -14,6 +14,14 @@ import { registerProjectsCalendarSource } from "./calendar-source.js";
 registerProjectsCalendarSource();
 registerProjectsHandlers();
 registerProjectsNotificationMappers();
+// Date custom-fields on projects:project (deadlines/milestones, …) land on the
+// workspace calendar via the generic kernel source. (Audit 2026-06-26 follow-up.)
+platform().calendar.registerDateFieldSource({
+  kind: "projects:project",
+  table: "projects_projects",
+  entityModule: "projects",
+  entityType: "project",
+});
 
 // Per-instance item count — lets the nav hide an empty auto-created default
 // instance once the workspace has named ones (projects are the primary entity).

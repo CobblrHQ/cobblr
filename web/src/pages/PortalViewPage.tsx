@@ -12,6 +12,7 @@
 
 import { Link, useOutletContext, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { QueryError } from "../components/QueryError";
 import { ArrowLeft, Plus, Search } from "lucide-react";
 import { useState } from "react";
 import { EntityThumb, usePageTitle } from "@cobblr/platform-web";
@@ -98,6 +99,9 @@ export function PortalViewPage() {
 
       {data.isLoading && (
         <div className="text-xs text-faint italic">Loading…</div>
+      )}
+      {data.isError && (
+        <QueryError what="this view" onRetry={() => data.refetch()} />
       )}
       {data.data && data.data.items.length === 0 && (
         <div className="text-xs text-faint italic py-8 text-center">

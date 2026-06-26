@@ -16,6 +16,15 @@ import { z } from "zod";
 import { meta, metaPool } from "../db/meta.js";
 import { provisionTenantDb } from "../db/provision.js";
 import { hashPassword, verifyPassword } from "../auth/password.js";
+
+// A throwaway hash, computed once, so the "no such user / inactive" login
+// path spends the same ~bcrypt time as a real password check — otherwise the
+// timing difference leaks which emails are registered. (Audit 2026-06-26 P2.)
+let _dummyHash: Promise<string> | null = null;
+function dummyPasswordHash(): Promise<string> {
+  if (!_dummyHash) _dummyHash = hashPassword("cobblr-login-timing-equalizer");
+  return _dummyHash;
+}
 import { signSession } from "../auth/jwt.js";
 import { isPlatformAdmin } from "../auth/middleware.js";
 import { publicSignupEnabled, managedAppSignupEnabled, selfServeInvitesEnabled } from "../auth/signup-gate.js";
@@ -528,7 +537,12 @@ authRouter.post("/login", async (req, res, next) => {
         error: { code: "invalid_credentials", message: "Email or password incorrect." },
       });
 
-    if (!user || !user.active) return denied();
+    if (!user || !user.active) {
+      // Spend the same ~bcrypt time as the real path so a missing/inactive
+      // account isn't distinguishable by latency. (Audit 2026-06-26 P2.)
+      await verifyPassword(body.password, await dummyPasswordHash());
+      return denied();
+    }
     const ok = await verifyPassword(body.password, user.password_hash);
     if (!ok) return denied();
 

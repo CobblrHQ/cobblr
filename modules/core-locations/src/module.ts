@@ -48,6 +48,10 @@ export default defineModule({
           { name: "kind", type: "text" },
           { name: "parent_id", type: "text" },
           { name: "depth", type: "number" },
+          // Manual sibling order set by drag (the `position` column). Declared
+          // so it can be exposed (exposableFields must reference declared
+          // fields) — the Labels browser reads it to match the page's order.
+          { name: "position", type: "number" },
           { name: "description", type: "text", role: "summary" },
           { name: "notes", type: "text" },
           { name: "image_path", type: "image-path", role: "image" },
@@ -66,6 +70,11 @@ export default defineModule({
           "kind",
           "parent_id",
           "depth",
+          // `position` (the manual drag order) is exposed so foreign consumers
+          // — the Labels browser — can sort siblings by the SAME (position, then
+          // natural name) order as the Locations page, via the shared
+          // buildLocationForest. Without it they'd fall back to lexical name.
+          "position",
           "description",
           "image_path",
         ],

@@ -6,9 +6,18 @@ import { Router } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
-import { asyncHandler, badBody } from "./util.js";
+import { asyncHandler, badBody, requireRole } from "./util.js";
 
 export const queueRouter = Router({ mergeParams: true });
+
+// Block the read-only `guest` role from every mutating request on this
+// router. (Audit 2026-06-26 P0 #1.)
+queueRouter.use((req, res, next) => {
+  if (req.method !== "GET" && req.method !== "HEAD" && req.method !== "OPTIONS") {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+  }
+  next();
+});
 
 const QueueAdd = z.object({
   module_name: z.string().min(1).max(80),

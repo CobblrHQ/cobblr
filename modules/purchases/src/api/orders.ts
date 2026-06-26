@@ -7,10 +7,20 @@ import { sql } from "kysely";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
-import { asyncHandler, badBody } from "./util.js";
+import { asyncHandler, badBody, requireRole } from "./util.js";
 import { routeUnknownToMetadata } from "./route-helpers.js";
 
 export const ordersRouter = Router({ mergeParams: true });
+
+// Block the read-only `guest` role from every mutating request on this
+// router (covers both the direct mount and the instance-items dispatch
+// path). Finer per-action roles can layer on top. (Audit 2026-06-26 P0 #1.)
+ordersRouter.use((req, res, next) => {
+  if (req.method !== "GET" && req.method !== "HEAD" && req.method !== "OPTIONS") {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+  }
+  next();
+});
 
 const OrderStatus = z.enum(["planned", "ordered", "in-transit", "arrived", "cancelled"]);
 

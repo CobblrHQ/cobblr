@@ -70,7 +70,14 @@ export function registerLocationsResolvers(): void {
         }
       }
       const rows = await q
+        // Match the /locations list endpoint's order EXACTLY so the user's
+        // manual sibling order (set by drag → `position`) is honoured
+        // EVERYWHERE locations surface through the generic layer — pickers,
+        // the labels browser, other modules' location dropdowns — not just on
+        // the Locations page. Shallow first, then manual order, then natural
+        // name as the tiebreaker.
         .orderBy("depth")
+        .orderBy("position")
         .orderBy("name")
         .limit(limit)
         .offset(offset)
@@ -87,6 +94,7 @@ function toResolved(row: {
   kind: "area" | "container";
   parent_id: string | null;
   depth: number;
+  position?: number;
 }): ResolvedEntity {
   return {
     kind: "core-locations:location",
@@ -99,6 +107,7 @@ function toResolved(row: {
       kind: row.kind,
       parent_id: row.parent_id,
       depth: row.depth,
+      position: row.position,
     },
   };
 }

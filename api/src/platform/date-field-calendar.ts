@@ -4,30 +4,21 @@
 // document-expiry / vaccination date lands on the workspace calendar and its
 // iCal feed automatically, with NO per-bundle wire.
 //
-// Platform-level (registered at boot) because it's a cross-cutting calendar
-// feature over the field-def system, not any one module's behaviour. It
-// references the two core entity tables by name — a pragmatic, documented
-// coupling (same as migrate-inventory-locations.ts); the source no-ops when
-// the table / module isn't present.
+// The GENERIC logic lives here (kernel), but WHICH kinds/tables have date
+// fields is no longer hardcoded: each owning module registers its own spec via
+// platform().calendar.registerDateFieldSource({ kind, table, … }) at boot, so
+// the kernel never names inventory/assets/projects. The owner supplies its own
+// table; this helper runs the field-def-driven query against it. The source
+// no-ops when the table / module isn't present.
+// (Audit 2026-06-26 follow-up — was a hardcoded SPECS list in the kernel.)
 
 import { sql, type Kysely } from "kysely";
-import type { CalendarEvent } from "@cobblr/platform-contract";
+import type { CalendarEvent, DateFieldCalendarSpec } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
 import { getTenantDb } from "../db/tenant.js";
 import * as calendar from "./calendar-registry.js";
 
-interface Spec {
-  kind: string;
-  table: string;
-  entityModule: string;
-  entityType: string;
-}
-
-const SPECS: Spec[] = [
-  { kind: "inventory:part", table: "inventory_parts", entityModule: "inventory", entityType: "part" },
-  { kind: "assets:asset", table: "assets_assets", entityModule: "assets", entityType: "asset" },
-  { kind: "projects:project", table: "projects_projects", entityModule: "projects", entityType: "project" },
-];
+type Spec = DateFieldCalendarSpec;
 
 // Date fields a DEDICATED source already puts on the calendar — skip them
 // here so they don't double up. `expires_on` is owned by lists (the food
@@ -40,8 +31,56 @@ interface DateRow {
   dt: string;
 }
 
-export function registerDateFieldCalendarSources(): void {
-  for (const spec of SPECS) {
+// Specs registered by owning modules (kind → spec), so the kernel can resolve a
+// kind's table for queryDateField without the CALLER naming the table.
+const specsByKind = new Map<string, Spec>();
+
+/** Kernel-mediated query backing platform().calendar.queryDateField — rows of
+ *  `kind` whose date metadata `field` is in [fromISO, toISO]. The table comes
+ *  from the kind's registered spec; returns [] when the kind/table is absent.
+ *  Lets a non-owning module (lists' expiry surfaces) read another module's
+ *  dated rows without a raw cross-module table read. (Audit burn-down.) */
+export async function queryDateField(
+  orgId: string,
+  kind: string,
+  field: string,
+  fromISO: string,
+  toISO: string,
+): Promise<Array<{ id: string; name: string; value: string }>> {
+  const spec = specsByKind.get(kind);
+  if (!spec) return [];
+  let tdb: Kysely<unknown>;
+  try {
+    tdb = (await getTenantDb(orgId)) as Kysely<unknown>;
+  } catch {
+    return [];
+  }
+  try {
+    // spec.table is module-declared (never user input) → sql.raw is safe; the
+    // field name + dates are bound as parameters.
+    const compiled = sql<DateRow>`
+      select id::text as id, name, (metadata->>${field}) as dt
+      from ${sql.raw(spec.table)}
+      where metadata->>${field} is not null
+        and (metadata->>${field})::date >= ${fromISO}::date
+        and (metadata->>${field})::date <= ${toISO}::date
+      order by (metadata->>${field})::date asc
+    `.compile(tdb);
+    const { rows } = (await tdb.executeQuery(compiled)) as { rows: DateRow[] };
+    return rows.map((r) => ({ id: r.id, name: r.name, value: r.dt }));
+  } catch (err) {
+    const msg = (err as Error).message;
+    if (msg.includes("does not exist") || msg.includes("invalid input syntax")) return [];
+    throw err;
+  }
+}
+
+/** Register the generic date-field calendar source for ONE owning module's
+ *  kind. Idempotent per source id. Called from the module's boot via
+ *  platform().calendar.registerDateFieldSource(spec). */
+export function registerDateFieldSource(spec: Spec): void {
+  specsByKind.set(spec.kind, spec);
+  {
     calendar.registerSource(`${spec.entityModule}-dates`, async (orgId, from, to) => {
       // Date field defs for this module in this workspace — the base kind AND
       // every instance kind (`<instance>:item`). The data query below reads the

@@ -902,6 +902,49 @@ export type CreateDefaultsProvider = (
   ctx: CreateDefaultsContext,
 ) => Promise<Record<string, unknown>>;
 
+/** A device reading to apply to a linked entity. core-devices resolves the
+ *  (connection, device) → entity link + mode, then asks the entity-OWNING
+ *  module how that mode maps to one of ITS OWN actions — so core-devices never
+ *  hardcodes the entity side and the owner never hardcodes the device side.
+ *  (Audit 2026-06-26 follow-up — replaces the hardcoded
+ *  `if (kind === "inventory:part")` branch in core-devices.) */
+export interface DeviceApplyContext {
+  /** The link's mode, e.g. "set" | "add". The owning module decides support. */
+  mode: string;
+  /** The reading's numeric value (null when the payload had none). */
+  value: number | null;
+  /** The target entity id (within the owner's kind). */
+  entityId: string;
+  /** Reason string to thread into the action (e.g. "device:scale-1"). */
+  reason: string;
+}
+
+/** Maps a device reading to ONE of the owning module's actions. Returns the
+ *  action id + args for core-devices to invoke (with its device-event context),
+ *  or null if the module doesn't support that mode. */
+export type DeviceApplyProvider = (
+  ctx: DeviceApplyContext,
+) => { actionId: string; args: Record<string, unknown> } | null;
+
+/** What an entity-owning module declares so core-scan can treat its kind as a
+ *  scan target — WITHOUT core-scan hardcoding a per-kind allowlist / endpoint /
+ *  field map. Registered at boot via platform().entities.registerScannable.
+ *  (Audit 2026-06-26 follow-up — replaces the hardcoded SCANNABLE set +
+ *  KIND_CREATE_ENDPOINTS + KIND_QTY_FIELD maps in core-scan.) */
+export interface ScannableInfo {
+  /** Singular noun for the scan UI / routing ("part", "asset", "machine"). */
+  noun: string;
+  /** Module HTTP path a confirmed scan POSTs to (under
+   *  /api/v1/orgs/:slug/modules/), e.g. "inventory/parts". */
+  createEndpoint: string;
+  /** The create body's quantity field name ("qty" | "quantity"). */
+  qtyField: string;
+  /** Marks this the fallback scan target when no identify hint matches a noun
+   *  (at most one should set it). Lets core-scan route an unhinted scan without
+   *  hardcoding a default module. */
+  default?: boolean;
+}
+
 /** In-process create/update/delete for one kind, registered by the owning
  *  module. The WRITE counterpart to EntityResolver — used by cross-module
  *  writers (the sync engine) that have no HTTP request / user token. The
@@ -988,6 +1031,33 @@ export interface PlatformEntities {
   /** Remove a previously-registered create-defaults provider (by reference).
    *  Mainly for tests / hot-reload symmetry. */
   unregisterCreateDefaults(kind: string, provider: CreateDefaultsProvider): void;
+  /** Register how a device reading on this kind maps to one of the module's
+   *  OWN actions (e.g. inventory maps set/add → set-stock/adjust-stock). Lets
+   *  core-devices apply a reading without knowing any entity module — and the
+   *  isolation lint can't be fooled by a hardcoded `kind === "…"` branch.
+   *  Example (in modules/inventory):
+   *    platform().entities.registerDeviceApply("inventory:part", (ctx) =>
+   *      ctx.mode === "set" && typeof ctx.value === "number"
+   *        ? { actionId: "inventory:set-stock",
+   *            args: { partId: ctx.entityId, qty: ctx.value, reason: ctx.reason } }
+   *        : null); */
+  registerDeviceApply(kind: string, provider: DeviceApplyProvider): void;
+  /** Resolve a device reading to {actionId,args} via the kind's registered
+   *  provider, or null when none is registered / the mode is unsupported. */
+  applyDevice(
+    kind: string,
+    ctx: DeviceApplyContext,
+  ): { actionId: string; args: Record<string, unknown> } | null;
+  /** Declare a kind as a scan target (core-scan reads this instead of a
+   *  hardcoded allowlist). Called at boot by the owning module, e.g.
+   *  platform().entities.registerScannable("inventory:part",
+   *    { noun: "part", createEndpoint: "inventory/parts", qtyField: "qty" }). */
+  registerScannable(kind: string, info: ScannableInfo): void;
+  /** The scan info for a kind, or null if it isn't a scan target. */
+  getScannable(kind: string): ScannableInfo | null;
+  /** Every registered scan target as { kind, ...info } — core-scan builds its
+   *  scan menu from this (which modules/kinds are scannable + their nouns). */
+  listScannable(): Array<{ kind: string } & ScannableInfo>;
   /** Run every registered provider for `ctx.kind` and return the merged
    *  defaults. The FIRST provider to set a key wins (deterministic); a provider
    *  that throws contributes nothing; null/undefined values are skipped.
@@ -1319,11 +1389,45 @@ export type CalendarSource = (
  *      // query scheduled, not-yet-done entries in [from,to]
  *      return rows.map((r) => ({ id: ..., title: r.name, date: r.scheduled_at, ... }));
  *    }); */
+/** What an entity-owning module passes to register the generic "date
+ *  custom-field → calendar" source for its kind. The owner supplies its OWN
+ *  table; the kernel runs the generic field-def-driven query (every type='date'
+ *  field on the kind + its instance kinds becomes an all-day event). Moves the
+ *  table/module knowledge OUT of the kernel and INTO the owning module.
+ *  (Audit 2026-06-26 follow-up — was a hardcoded SPECS list in the kernel.) */
+export interface DateFieldCalendarSpec {
+  /** Base entity kind, e.g. "inventory:part". */
+  kind: string;
+  /** The module's own table for that kind, e.g. "inventory_parts". */
+  table: string;
+  /** Module name for the event source/category, e.g. "inventory". */
+  entityModule: string;
+  /** Entity type for the event payload, e.g. "part". */
+  entityType: string;
+}
+
 export interface PlatformCalendar {
   registerSource(id: string, source: CalendarSource): void;
+  /** Register the generic date-custom-field calendar source for an entity kind.
+   *  Called by the OWNING module at boot (e.g. inventory for inventory:part),
+   *  so the kernel never hardcodes which modules/tables have date fields. */
+  registerDateFieldSource(spec: DateFieldCalendarSpec): void;
   /** Run every registered source for the window and return the merged,
    *  date-sorted events. Sources that throw contribute nothing. */
   collect(orgId: string, fromISO: string, toISO: string): Promise<CalendarEvent[]>;
+  /** Kernel-mediated query: rows of `kind` whose date metadata field `field`
+   *  falls in [fromISO, toISO]. The table is resolved from the kind's
+   *  registerDateFieldSource spec, so a CALLER (e.g. lists surfacing grocery
+   *  expiry) reads another module's dated rows WITHOUT naming its table. Returns
+   *  [] when the kind isn't registered or its table is absent. (Audit burn-down:
+   *  replaces lists' raw `from inventory_parts` reads.) */
+  queryDateField(
+    orgId: string,
+    kind: string,
+    field: string,
+    fromISO: string,
+    toISO: string,
+  ): Promise<Array<{ id: string; name: string; value: string }>>;
 }
 
 /** core-queue v0.1: persistent background work for modules.
@@ -2049,11 +2153,30 @@ export interface PlatformFiles {
  *  items live in this (org, instance)?" without knowing the module's tables —
  *  used by the nav to hide an auto-created default instance that's empty once
  *  the workspace has named instances. */
+/** A workspace's installed instance of a module — the org-scoped, user-named
+ *  collection the navbar renders (e.g. machines → "3D Printers" + "Laser
+ *  Cutters"). `is_default` marks the module's own auto-created instance
+ *  (instance_name === module_name). `item_count` is the module's registered
+ *  counter (null if it registered none). Lets a module enumerate what the
+ *  workspace ACTUALLY has — enabled, instance-aware — instead of the global
+ *  entity-kind registry. */
+export interface InstanceInfo {
+  module_name: string;
+  instance_name: string;
+  display_name: string;
+  is_default: boolean;
+  item_count: number | null;
+}
+
 export interface PlatformInstances {
   registerItemCounter(
     moduleName: string,
     counter: (orgId: string, instanceName: string) => Promise<number>,
   ): void;
+  /** Every instance in the workspace (all enabled modules' default + named
+   *  instances), each enriched with its item count. Org-scoped — only what
+   *  this workspace has turned on. */
+  list(orgId: string): Promise<InstanceInfo[]>;
 }
 
 // ─────────────────────── Hosted-overlay extension seams ─────────────────────
@@ -2462,6 +2585,20 @@ export function platform(): Platform {
 // ONE source of truth serves every module (modules can't import each other; they
 // all import this contract). Each caller keeps its own thin wrapper for its
 // shape (the matchmaker's `candidates`, core-authoring's `bundle`).
+
+/** The wire engine's source-entity payload-key convention, in ONE place so
+ *  emitters and the engine agree without anyone hardcoding a foreign kind.
+ *  An emitter that references another entity puts its id under the key derived
+ *  from that entity's kind: the suffix after `:` , camelCased, + "Id". So
+ *  "inventory:part" → "partId", "purchases:order_item" → "orderItemId". The
+ *  wire engine derives the same key from a binding's source_kind to read it
+ *  back. (Lets `lists` restock whatever seeded a checked line without a
+ *  `kind === "inventory:part"` branch — audit 2026-06-26 burn-down.) */
+export function sourceIdKey(kind: string): string {
+  const suffix = kind.split(":")[1] ?? "";
+  const camel = suffix.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
+  return `${camel}Id`;
+}
 
 /** Extract the first BALANCED `{…}` object from a model reply, tolerant of
  *  ```fences``` + leading/trailing prose. Brace-matches OUTSIDE strings; returns

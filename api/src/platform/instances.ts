@@ -174,8 +174,11 @@ export async function tearDownInstance(orgId: string, instanceName: string): Pro
         ),
       );
       for (const r of rows) {
+        // Bind the instance value rather than interpolate it; quote the table
+        // name via sql.ref (it's from information_schema, prefix-filtered).
+        // (Audit 2026-06-26 P2.)
         await (tdb as unknown as { executeQuery: (s: unknown) => Promise<unknown> }).executeQuery(
-          sql.raw(`delete from "${r.table_name}" where instance = '${instanceName}'`).compile(tdb as never),
+          sql`delete from ${sql.ref(r.table_name)} where instance = ${instanceName}`.compile(tdb as never),
         );
       }
     } catch (err) {

@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
 import { z } from "zod";
+import { tenantContext, type OrgRole } from "../db.js";
 
 export function asyncHandler<R extends Request = Request>(
   handler: (req: R, res: Response, next: NextFunction) => Promise<void>,
@@ -13,6 +14,19 @@ export function badBody(res: Response, err: z.ZodError, message = "Bad request b
   res.status(400).json({
     error: { code: "invalid_body", message, details: err.issues },
   });
+}
+
+/** Reject the caller unless their workspace role is in `allowed`. Read-only
+ *  `guest` is excluded from every mutating handler. (Audit 2026-06-26 P0 #1.) */
+export function requireRole(req: Request, res: Response, ...allowed: OrgRole[]): boolean {
+  const ctx = tenantContext(req);
+  if (!allowed.includes(ctx.role)) {
+    res.status(403).json({
+      error: { code: "forbidden", message: `This action requires one of: ${allowed.join(", ")}.` },
+    });
+    return false;
+  }
+  return true;
 }
 
 /** Substitute {{key}} tokens in a template with values from data.

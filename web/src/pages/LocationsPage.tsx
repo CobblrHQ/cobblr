@@ -34,41 +34,32 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { BulkActionBar, Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import {
+  BulkActionBar,
+  Modal,
+  useToast,
+  useConfirm,
+  usePageTitle,
+  buildLocationForest,
+  type LocationNode as SharedLocationNode,
+} from "@cobblr/platform-web";
 import { ApiError, api, fetchAuthBlobUrl, type Location } from "../lib/api";
 import { queueLabelsBulk } from "../lib/queue-label";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ImportLocationsDialog } from "../components/ImportLocationsDialog";
 
-interface LocationNode extends Location {
-  children: LocationNode[];
-}
+// The tree model + (position, then natural name) sort live in the shared
+// buildLocationForest — the SAME viewer the Labels browser uses, so the two
+// surfaces can never disagree on structure or order ("Bin 2" before "Bin 10").
+type LocationNode = SharedLocationNode<Location>;
 
-function buildTree(items: Location[]): LocationNode[] {
-  const byId = new Map<string, LocationNode>();
-  for (const it of items) byId.set(it.id, { ...it, children: [] });
-  const roots: LocationNode[] = [];
-  for (const n of byId.values()) {
-    if (n.parent_id && byId.has(n.parent_id)) {
-      byId.get(n.parent_id)!.children.push(n);
-    } else {
-      roots.push(n);
-    }
-  }
-  const sort = (arr: LocationNode[]) => {
-    // Manual order first (set by drag → `position`), then NATURAL name order so
-    // an un-reordered group reads Bin 1, Bin 2, … Bin 10, Bin 11 (not Bin 1,
-    // Bin 10, Bin 11, Bin 2).
-    arr.sort(
-      (a, b) =>
-        a.position - b.position ||
-        a.name.localeCompare(b.name, undefined, { numeric: true }),
-    );
-    for (const c of arr) sort(c.children);
-  };
-  sort(roots);
-  return roots;
-}
+const LOCATION_ACCESSORS = {
+  id: (l: Location) => l.id,
+  parentId: (l: Location) => l.parent_id ?? null,
+  position: (l: Location) => l.position,
+  name: (l: Location) => l.name,
+  isContainer: (l: Location) => l.kind === "container",
+};
 
 interface UsageCounts {
   machines: number;
@@ -203,7 +194,8 @@ export function LocationsPage() {
   });
 
   const items = useMemo(() => list.data?.items ?? [], [list.data]);
-  const tree = useMemo(() => buildTree(items), [items]);
+  // Shared model → the areas tree + loose-container roots, sorted.
+  const forest = useMemo(() => buildLocationForest(items, LOCATION_ACCESSORS), [items]);
 
   const usageByLocation = useMemo(() => {
     const m = new Map<string, UsageCounts>();
@@ -312,8 +304,8 @@ export function LocationsPage() {
   // containers (loose bins not placed in any area) — mirrors how companion app kept
   // unsorted storage in its own section. The big onDelete handler is shared by
   // both sections via this helper rather than duplicated.
-  const rootAreas = tree.filter((n) => n.kind !== "container");
-  const looseContainers = tree.filter((n) => n.kind === "container");
+  const rootAreas = forest.areas;
+  const looseContainers = forest.containers;
   const renderCard = (n: LocationNode) => (
     <LocationCard
       key={n.id}
@@ -410,7 +402,7 @@ export function LocationsPage() {
       {list.isLoading && (
         <div className="text-sm text-muted">Loading…</div>
       )}
-      {tree.length === 0 && !list.isLoading && (
+      {items.length === 0 && !list.isLoading && (
         <div className="text-sm italic text-muted dark:text-slate-400">
           No locations yet. Add a top-level area (a room, a workshop, a garage)
           and start nesting bins and shelves inside it.
@@ -418,6 +410,19 @@ export function LocationsPage() {
       )}
 
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+        {rootAreas.length > 0 && (
+          <div className="flex items-baseline gap-2 mb-1">
+            <h2 className="text-xs font-mono uppercase tracking-widest text-faint dark:text-slate-500">
+              Areas
+            </h2>
+            <span className="text-xs text-muted dark:text-slate-400">
+              {rootAreas.length}
+            </span>
+            <span className="text-xs text-muted dark:text-slate-400">
+              — rooms &amp; regions; containers nest inside. Drag to set your order.
+            </span>
+          </div>
+        )}
         <div className="space-y-2">
           <SortableContext items={rootAreas.map((n) => n.id)} strategy={verticalListSortingStrategy}>
             {rootAreas.map(renderCard)}

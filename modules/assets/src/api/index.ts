@@ -7,6 +7,22 @@ import { registerActionHandlers } from "./action-handlers.js";
 
 registerAssetsResolvers();
 registerActionHandlers();
+// Declare assets:asset as a scan target. (Audit 2026-06-26 follow-up — was a
+// hardcoded entry in core-scan's SCANNABLE/endpoint/qty maps.)
+platform().entities.registerScannable("assets:asset", {
+  noun: "asset",
+  createEndpoint: "assets/assets",
+  qtyField: "quantity",
+});
+// Date custom-fields on assets:asset (renewal/return-by/warranty-expiry, …)
+// land on the workspace calendar via the generic kernel source. (Audit
+// 2026-06-26 follow-up — was a hardcoded kernel SPECS entry.)
+platform().calendar.registerDateFieldSource({
+  kind: "assets:asset",
+  table: "assets_assets",
+  entityModule: "assets",
+  entityType: "asset",
+});
 
 // Per-instance item count — lets the nav hide an empty auto-created default
 // instance once the workspace has named ones.

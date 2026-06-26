@@ -29,6 +29,20 @@ export function registerInventoryActionHandlers(): void {
   if (registered) return;
   registered = true;
 
+  // How a device reading maps to inventory's own stock actions — so
+  // core-devices can apply a scale/counter reading to a part WITHOUT knowing
+  // about inventory (the device-side knowledge lives here, in the owner).
+  // (Audit 2026-06-26 follow-up — replaces core-devices' hardcoded branch.)
+  platform().entities.registerDeviceApply("inventory:part", (ctx) => {
+    if (ctx.mode === "set" && typeof ctx.value === "number") {
+      return { actionId: "inventory:set-stock", args: { partId: ctx.entityId, qty: ctx.value, reason: ctx.reason } };
+    }
+    if (ctx.mode === "add" && typeof ctx.value === "number") {
+      return { actionId: "inventory:adjust-stock", args: { partId: ctx.entityId, delta: ctx.value, reason: ctx.reason } };
+    }
+    return null;
+  });
+
   platform().actions.registerHandler("inventory.adjust-stock", async (ctx) => {
     // Args take precedence (an admin can hardwire a wire to "always
     // add 1"); otherwise we pull from the event payload.

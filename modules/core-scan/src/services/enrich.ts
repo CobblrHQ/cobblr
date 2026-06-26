@@ -195,6 +195,35 @@ interface EnrichContext {
 }
 
 export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
+  // If the user hand-picked a catalog image, NO enrichment path may overwrite it —
+  // it's their explicit choice and must survive a re-run/hint correction. The write
+  // paths below clobber catalog_image_url AND rewrite suggested_metadata (dropping
+  // the `catalog_image_user_set` lock), so we hold the refs up front and re-assert
+  // them (+ re-stamp the lock) after each path. `refreshCatalogImageByName` is the
+  // matching guard on the detached enrichThinHit tail.
+  const lockRow = await ctx.db
+    .selectFrom("core_scan_inbox_items")
+    .select(["catalog_image_url", "catalog_image_file_id", "suggested_metadata"])
+    .where("id", "=", ctx.itemId)
+    .executeTakeFirst();
+  const lockedImg = (lockRow?.suggested_metadata as { catalog_image_user_set?: boolean } | null)
+    ?.catalog_image_user_set
+    ? { url: lockRow!.catalog_image_url, file_id: lockRow!.catalog_image_file_id }
+    : null;
+  const reassertLockedImage = async (): Promise<void> => {
+    if (!lockedImg) return;
+    await ctx.db
+      .updateTable("core_scan_inbox_items")
+      .set({
+        catalog_image_url: lockedImg.url,
+        catalog_image_file_id: lockedImg.file_id,
+        suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || '{"catalog_image_user_set":true}'::jsonb` as never,
+        updated_at: new Date(),
+      })
+      .where("id", "=", ctx.itemId)
+      .execute();
+  };
+
   // 0. Vendor scan-URL fast path. A scanned QR is often a maker's product
   // URL (a Polar spool → 3dqr.co/?i=…); a registered resolver fetches the
   // real product page instead of letting the generic barcode/web-search path
@@ -231,6 +260,7 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
       .where("id", "=", ctx.itemId)
       .execute();
     if (vendor.imageUrl) await downloadCatalogImage(ctx, vendor.imageUrl).catch(() => {});
+    await reassertLockedImage();
     return;
   }
 
@@ -427,6 +457,7 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
       void crossCheckScanPhoto(ctx.orgId, ctx.itemId, web.name).catch((e) =>
         console.error("[core-scan] web-search cross-check threw:", (e as Error).message),
       );
+      await reassertLockedImage();
       return;
     }
     // Nothing from the barcode or web. Before giving up to manual entry, if the
@@ -503,6 +534,10 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
 
   // 3. Download the catalog image into core-files (best-effort).
   if (hit.image_url) await downloadCatalogImage(ctx, hit.image_url);
+  // A user-locked catalog image wins over the provider's — restore it (the hit
+  // write above clobbered the url + dropped the lock; the download replaced the
+  // file). The detached refresh/cross-check below re-read the lock and skip.
+  await reassertLockedImage();
 
   // 3b. On an explicit RE-RUN, the resolver's image can be stale even when the
   // title is right — go-upc corrects titles but keeps the original (wrong)
@@ -641,8 +676,21 @@ async function enrichThinHit(ctx: EnrichContext, hit: BarcodeHit): Promise<void>
   // A non-English provider title replaced by an English one for the same product
   // is always an upgrade, even if it adds no new spec/brand.
   const langUpgrade = looksNonEnglish(thin) && !looksNonEnglish(enriched) && sharesAnyWord;
+  // A brandless thin name that's really just a CATEGORY ("Whiskey", "Beer",
+  // "Beverages" — an Open*Facts category row, not a product) gains a real brand
+  // from the web identify ("Maker's Mark Bourbon Whisky"). That's a valid upgrade
+  // even though the specific product shares NO word with the category: "Whiskey"
+  // (the OFF spelling) vs Maker's "Whisky", "Beverages" vs anything. The same-word /
+  // same-product guards exist to stop gin→vodka, but a *category* legitimately has
+  // no word in common with its product — so when the thin name carried no brand and
+  // the web result grounds it with a confident brand (UPC-searched, not invented),
+  // accept on the brand-grounding alone.
+  const thinHadNoBrand = !(hit.brand && hit.brand.trim().length >= 2);
+  const categoryUpgrade = thinHadNoBrand && (addsBrand || addsSpec);
   if (ctx.wrong) {
     /* adopt */
+  } else if (categoryUpgrade) {
+    /* accept: a brandless category grounded with a real brand from the UPC search */
   } else if (ctx.hint) {
     // A targeted research-hint correction ("it's 1 unit, not 96 packs"): the
     // identify already folded the hint in. Accept a confident SAME-PRODUCT result

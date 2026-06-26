@@ -88,6 +88,10 @@ orgsRouter.get("/:slug/modules", requireAuth, withTenant, async (req, res, next)
         // Module layer (foundational/stock/marketplace/user) — the empty
         // dashboard suggests only `stock` first-party domains.
         band: m.band,
+        // "multi" → the module can host several named instances (the "+ New
+        // thing" funnel offers it). Surfaced from the manifest so the funnel
+        // stops hardcoding the set. (Audit 2026-06-26 follow-up.)
+        instanceability: m.instanceability,
         // Icon-only quick-action for the navbar's right cluster (only
         // surfaced when the module is enabled — the web filters on that).
         headerAction: m.headerAction ?? null,

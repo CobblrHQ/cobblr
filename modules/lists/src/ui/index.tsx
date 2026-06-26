@@ -186,12 +186,12 @@ function ListDetailModal({ listId, api, onClose }: { listId: string; api: ListsA
               <span className={`flex-1 ${it.checked ? "line-through text-faint" : ""}`}>
                 {it.title}
                 {it.qty && <span className="text-xs text-muted ml-2">×{it.qty}</span>}
-                {it.metadata?.source_ref?.kind === "inventory:part" && (
+                {it.metadata?.source_ref?.kind && (
                   <span
                     className="ml-2 inline-flex items-center gap-0.5 rounded bg-emerald-50 dark:bg-emerald-900/30 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300 align-middle"
-                    title="Auto-added from inventory — checking off restocks it"
+                    title="Auto-added from another record — checking off updates the source"
                   >
-                    <RotateCcw size={10} /> inventory
+                    <RotateCcw size={10} /> {it.metadata.source_ref.kind.split(":")[0]}
                   </span>
                 )}
               </span>

@@ -9,10 +9,19 @@ import { sql } from "kysely";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
-import { asyncHandler, badBody } from "./util.js";
+import { asyncHandler, badBody, requireRole } from "./util.js";
 import { routeUnknownToMetadata } from "./route-helpers.js";
 
 export const vendorsRouter = Router({ mergeParams: true });
+
+// Block the read-only `guest` role from every mutating request on this
+// router. (Audit 2026-06-26 P0 #1.)
+vendorsRouter.use((req, res, next) => {
+  if (req.method !== "GET" && req.method !== "HEAD" && req.method !== "OPTIONS") {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+  }
+  next();
+});
 
 const VendorCreate = z.object({
   name: z.string().min(1).max(200),

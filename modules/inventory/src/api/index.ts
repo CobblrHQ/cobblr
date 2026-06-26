@@ -22,6 +22,23 @@ import { registerInventoryComputedContext } from "./computed-context.js";
 registerInventoryResolvers();
 registerInventoryActionHandlers();
 registerInventoryComputedContext();
+// Declare inventory:part as a scan target so core-scan routes a scanned item
+// here without hardcoding the endpoint/qty/noun. (Audit 2026-06-26 follow-up.)
+platform().entities.registerScannable("inventory:part", {
+  noun: "part",
+  createEndpoint: "inventory/parts",
+  qtyField: "qty",
+  default: true, // the fallback scan target when no identify hint matches a noun
+});
+// Any type='date' custom field on inventory:part (or its instances) becomes an
+// all-day calendar event — the owning module declares its kind+table; the
+// kernel runs the generic field-def query. (Audit 2026-06-26 follow-up.)
+platform().calendar.registerDateFieldSource({
+  kind: "inventory:part",
+  table: "inventory_parts",
+  entityModule: "inventory",
+  entityType: "part",
+});
 
 // Per-instance item count — lets the nav hide an empty auto-created default
 // instance once the workspace has named ones (parts are the primary entity).

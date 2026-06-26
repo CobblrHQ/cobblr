@@ -55,11 +55,13 @@ export async function expiryTick(opts: { orgId?: string } = {}): Promise<{ scann
     orgs: { id: string };
     org_modules: { org_id: string; module_name: string };
   }>;
-  // Need BOTH inventory (the parts + expires_on) and lists (the ledger + list).
+  // Orgs with lists enabled (lists owns the ledger + the shopping list). We
+  // DON'T also join on inventory: the kernel date-field query no-ops for an org
+  // without inventory or without any expires_on, so lists needn't name another
+  // module here. (Audit burn-down — was an `org_modules ... "inventory"` join.)
   let orgsQ = meta
     .selectFrom("orgs")
     .innerJoin("org_modules as m_lists", (j) => j.onRef("m_lists.org_id", "=", "orgs.id").on("m_lists.module_name", "=", "lists"))
-    .innerJoin("org_modules as m_inv", (j) => j.onRef("m_inv.org_id", "=", "orgs.id").on("m_inv.module_name", "=", "inventory"))
     .select(["orgs.id"]);
   if (opts.orgId) orgsQ = orgsQ.where("orgs.id", "=", opts.orgId);
 
@@ -83,27 +85,42 @@ export async function expiryTick(opts: { orgId?: string } = {}): Promise<{ scann
     }
 
     try {
-    // Parts expiring soon that we haven't alerted for at THIS expires_on value.
-    // The left join to our ledger lets a re-dated leftover re-alert.
-    let due: ExpiringRow[];
-    try {
-      const compiled = sql<ExpiringRow>`
-        select p.id::text as id, p.name as name, (p.metadata->>'expires_on') as expires_on
-        from inventory_parts p
-        left join lists_expiry_notifications n
-          on n.part_id = p.id::text and n.expires_on = (p.metadata->>'expires_on')::date
-        where p.metadata->>'expires_on' is not null
-          and (p.metadata->>'expires_on')::date <= (current_date + ${EXPIRY_SOON_DAYS} * interval '1 day')
-          and n.part_id is null
-      `.compile(tdb);
-      const result = (await tdb.executeQuery(compiled)) as { rows: ExpiringRow[] };
-      due = result.rows;
-    } catch (err) {
-      const msg = (err as Error).message;
-      // tenant may not have these tables/fields yet (migration mid-flight, or
-      // food-cluster not installed so no expires_on ever set) → skip quietly.
-      if (msg.includes("does not exist") || msg.includes("expires_on")) continue;
-      throw err;
+    // Parts expiring within the window, via the kernel date-field query — no raw
+    // inventory_parts read, no inventory table name here. queryDateField no-ops
+    // (returns []) when inventory/expires_on is absent.
+    const toISO = new Date(Date.now() + EXPIRY_SOON_DAYS * 86_400_000)
+      .toISOString()
+      .slice(0, 10);
+    const candidates = await platform().calendar.queryDateField(
+      org.id,
+      "inventory:part",
+      "expires_on",
+      "1970-01-01", // no lower bound — include already-expired leftovers
+      toISO,
+    );
+
+    // Drop any we've already alerted at THIS expires_on (our own ledger); a
+    // re-dated leftover (different expires_on) re-alerts. Was a SQL left join to
+    // inventory_parts — now a JS filter against lists' own table.
+    let due: ExpiringRow[] = [];
+    if (candidates.length > 0) {
+      const alreadyAtDate = new Map<string, string>();
+      try {
+        const led = sql<{ part_id: string; expires_on: string }>`
+          select part_id::text as part_id, expires_on::text as expires_on
+          from lists_expiry_notifications
+          where part_id = any(${candidates.map((c) => c.id)})
+        `.compile(tdb);
+        const r = (await tdb.executeQuery(led)) as {
+          rows: { part_id: string; expires_on: string }[];
+        };
+        for (const x of r.rows) alreadyAtDate.set(x.part_id, x.expires_on.slice(0, 10));
+      } catch (err) {
+        if (!(err as Error).message.includes("does not exist")) throw err;
+      }
+      due = candidates
+        .filter((c) => alreadyAtDate.get(c.id) !== c.value.slice(0, 10))
+        .map((c) => ({ id: c.id, name: c.name, expires_on: c.value }));
     }
 
     scanned += due.length;

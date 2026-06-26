@@ -13,7 +13,7 @@
 
 import { Router } from "express";
 import { sql } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { platform, sourceIdKey } from "@cobblr/platform-contract";
 import { z } from "zod";
 import { tenantContext, tenantDb, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
@@ -198,20 +198,23 @@ listsRouter.patch(
     const row = await db.updateTable("lists_items").set(patch).where("id", "=", req.params.id!).returningAll().executeTakeFirst();
     if (!row) return void res.status(404).json({ error: { code: "not_found", message: "Item not found." } });
     if (parsed.data.checked !== undefined) {
-      // If this line came from an inventory part (carries a source_ref) and is
-      // being CHECKED (bought), surface the part id under the wire engine's
-      // `partId` convention so a food-cluster wire can restock it. On uncheck —
-      // or for a line with no source_ref — partId is absent, and the wire
-      // engine resolves no source entity and fires nothing (a clean no-op).
+      // If this line was seeded from another entity (carries a source_ref) and
+      // is being CHECKED (bought), surface that entity's id under the wire
+      // engine's <kindSuffix>Id convention — for WHATEVER kind seeded it, via
+      // the shared sourceIdKey() helper, no per-kind branch. A food-cluster wire
+      // (source_kind inventory:part) reads `partId` and restocks; a future
+      // source kind works the same with zero changes here. On uncheck — or a
+      // line with no source_ref — the key is absent and the wire engine resolves
+      // no source entity and fires nothing (a clean no-op).
       const meta = (row.metadata as { source_ref?: { kind?: string; id?: string } } | null) ?? {};
       const ref = meta.source_ref;
-      const partId = parsed.data.checked && ref?.kind === "inventory:part" ? ref.id : undefined;
+      const sourceKey = parsed.data.checked && ref?.kind && ref.id ? sourceIdKey(ref.kind) : undefined;
       void platform().events.emit("lists.item.checked", {
         orgId: ctx.org.id,
         listId: row.list_id,
         itemId: row.id,
         checked: parsed.data.checked,
-        ...(partId ? { partId, sourceRef: ref } : {}),
+        ...(sourceKey ? { [sourceKey]: ref!.id, sourceRef: ref } : {}),
       });
     }
     res.json(row);

@@ -199,8 +199,10 @@ instancesRouter.delete(
             sql`select table_name from information_schema.tables where table_schema='public' and table_name like ${prefix + "%"}`.compile(tdb as never),
           );
           for (const r of rows) {
+            // Bind the instance value rather than interpolate it; quote the
+            // table name via sql.ref. (Audit 2026-06-26 P2.)
             await (tdb as unknown as { executeQuery: (sql: unknown) => Promise<unknown> }).executeQuery(
-              sql.raw(`delete from "${r.table_name}" where instance = '${inst.instance_name}'`).compile(tdb as never),
+              sql`delete from ${sql.ref(r.table_name)} where instance = ${inst.instance_name}`.compile(tdb as never),
             );
           }
         } catch (err) {

@@ -7,6 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Copy, Download, FileText } from "lucide-react";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useToast, usePageTitle } from "@cobblr/platform-web";
+import { QueryError } from "../components/QueryError";
 
 interface OpenApiSpec {
   openapi: string;
@@ -104,6 +105,7 @@ export function OpenApiPage() {
       </p>
 
       {specQ.isLoading && <div className="text-sm text-muted">Loading…</div>}
+      {specQ.isError && <QueryError what="the API spec" onRetry={() => specQ.refetch()} />}
 
       {spec && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

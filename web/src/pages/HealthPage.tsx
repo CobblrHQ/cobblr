@@ -6,6 +6,7 @@ import { HeartPulse, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { api } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { usePageTitle } from "@cobblr/platform-web";
+import { QueryError } from "../components/QueryError";
 
 export function HealthPage() {
   usePageTitle("Health");
@@ -23,6 +24,9 @@ export function HealthPage() {
 
   return (
     <div className="space-y-4">
+      {snap.isError && (
+        <QueryError what="health probes" onRetry={() => snap.refetch()} />
+      )}
       <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
         <HeartPulse size={20} className="text-accent" />
         <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">

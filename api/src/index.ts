@@ -40,10 +40,12 @@ import * as wires from "./platform/wires.js";
 import * as health from "./platform/health.js";
 import * as recurrenceRegistry from "./platform/recurrence-registry.js";
 import * as calendarRegistry from "./platform/calendar-registry.js";
-import { registerDateFieldCalendarSources } from "./platform/date-field-calendar.js";
+import { registerDateFieldSource, queryDateField } from "./platform/date-field-calendar.js";
 import { registerDefaultRequestGuard } from "./platform/default-request-guard.js";
 import * as computedFields from "./platform/computed-fields.js";
 import * as createDefaults from "./platform/create-defaults.js";
+import * as deviceApply from "./platform/device-apply.js";
+import * as scanRegistry from "./platform/scan-registry.js";
 import * as instancesImpl from "./platform/instances.js";
 import * as scanResolvers from "./platform/scan-resolvers.js";
 import * as queue from "./platform/queue.js";
@@ -114,6 +116,11 @@ async function boot() {
       registerCreateDefaults: createDefaults.registerCreateDefaults,
       unregisterCreateDefaults: createDefaults.unregisterCreateDefaults,
       resolveCreateDefaults: createDefaults.resolveCreateDefaults,
+      registerDeviceApply: deviceApply.registerDeviceApply,
+      applyDevice: deviceApply.applyDevice,
+      registerScannable: scanRegistry.registerScannable,
+      getScannable: scanRegistry.getScannable,
+      listScannable: scanRegistry.listScannable,
       lookup: entities.lookup,
       lookupMany: entities.lookupMany,
       list: entities.list,
@@ -145,7 +152,9 @@ async function boot() {
     },
     calendar: {
       registerSource: calendarRegistry.registerSource,
+      registerDateFieldSource,
       collect: calendarRegistry.collect,
+      queryDateField,
     },
     queue: {
       enqueue: queue.enqueue,
@@ -256,6 +265,22 @@ async function boot() {
     },
     instances: {
       registerItemCounter: instancesImpl.registerItemCounter,
+      list: async (orgId: string) => {
+        const rows = await instancesImpl.listInstances(orgId);
+        return Promise.all(
+          rows.map(async (r) => ({
+            module_name: r.module_name,
+            instance_name: r.instance_name,
+            display_name: r.display_name,
+            is_default: r.is_default,
+            item_count: await instancesImpl.countInstanceItems(
+              orgId,
+              r.module_name,
+              r.instance_name,
+            ),
+          })),
+        );
+      },
     },
     scan: {
       registerUrlResolver: scanResolvers.registerScanUrlResolver,
@@ -630,9 +655,9 @@ async function boot() {
     console.log("[cobblr-api] in-core rate-limit guard active (auth/anon/feedback)");
   }
 
-  // Platform-owned calendar source: any date custom-field on the core
-  // entity kinds shows up on the workspace calendar automatically.
-  registerDateFieldCalendarSources();
+  // (The date-custom-field calendar source is now registered per-owning-module
+  // via platform().calendar.registerDateFieldSource — inventory/assets/projects
+  // each opt in at their own boot, so the kernel no longer hardcodes them.)
 
   // Scheduled backups (Blueprint/Backup/Export Phase C) — register the
   // per-destination cron worker, then re-arm any due schedules. Before

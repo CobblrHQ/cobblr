@@ -1,140 +1,80 @@
 [
   {
-    "rule": "A-table-read",
-    "file": "modules/lists/src/calendar-source.ts",
-    "token": "inventory_parts",
-    "reason": "grandfathered 2026-06-10 — pre-existing drift; burn down, never grow. See docs/architecture/module-interactions.md"
-  },
-  {
-    "rule": "A-table-read",
-    "file": "modules/lists/src/expiry-sweeper.ts",
-    "token": "inventory_parts",
-    "reason": "grandfathered 2026-06-10 — pre-existing drift; burn down, never grow. See docs/architecture/module-interactions.md"
-  },
-  {
-    "rule": "C-kernel-names-module",
-    "file": "api/src/middleware/instance.ts",
-    "token": "inventory",
-    "reason": "grandfathered 2026-06-10 — pre-existing drift; burn down, never grow. See docs/architecture/module-interactions.md"
-  },
-  {
-    "rule": "C-kernel-names-module",
-    "file": "api/src/platform/date-field-calendar.ts",
-    "token": "assets",
-    "reason": "grandfathered 2026-06-10 — pre-existing drift; burn down, never grow. See docs/architecture/module-interactions.md"
-  },
-  {
-    "rule": "C-kernel-names-module",
-    "file": "api/src/platform/date-field-calendar.ts",
-    "token": "inventory",
-    "reason": "grandfathered 2026-06-10 — pre-existing drift; burn down, never grow. See docs/architecture/module-interactions.md"
-  },
-  {
-    "rule": "C-kernel-names-module",
-    "file": "api/src/platform/date-field-calendar.ts",
-    "token": "projects",
-    "reason": "grandfathered 2026-06-10 — pre-existing drift; burn down, never grow. See docs/architecture/module-interactions.md"
-  },
-  {
-    "rule": "C-kernel-names-module",
-    "file": "api/src/routes/bundles.ts",
-    "token": "inventory",
-    "reason": "grandfathered 2026-06-10 — pre-existing drift; burn down, never grow. See docs/architecture/module-interactions.md"
-  },
-  {
-    "rule": "C-kernel-names-module",
-    "file": "api/src/routes/bundles.ts",
-    "token": "machines",
-    "reason": "grandfathered 2026-06-10 — pre-existing drift; burn down, never grow. See docs/architecture/module-interactions.md"
-  },
-  {
-    "rule": "C-kernel-names-module",
-    "file": "api/src/routes/super-admin.ts",
-    "token": "core-scan",
-    "reason": "grandfathered 2026-06-10 — pre-existing drift; burn down, never grow. See docs/architecture/module-interactions.md"
-  },
-  {
-    "rule": "C-kernel-names-module",
-    "file": "api/src/sandbox/abi.ts",
-    "token": "inventory",
-    "reason": "grandfathered 2026-06-10 — pre-existing drift; burn down, never grow. See docs/architecture/module-interactions.md"
-  },
-  {
-    "rule": "C-kernel-names-module",
-    "file": "api/src/sandbox/loader.ts",
-    "token": "inventory",
-    "reason": "grandfathered 2026-06-10 — pre-existing drift; burn down, never grow. See docs/architecture/module-interactions.md"
-  },
-  {
     "rule": "D-module-names-module",
     "file": "modules/core-ai/src/providers/anthropic.ts",
     "token": "labels",
-    "reason": "grandfathered 2026-06-10 — pre-existing drift; burn down, never grow. See docs/architecture/module-interactions.md"
+    "reason": "FALSE POSITIVE (name collision, not coupling): `labels` here is the image-classify call's classification-LABEL list (input.labels / the {\"labels\":[…]} JSON reply schema in the AI prompt), not the `labels` module. The literal-match lint can't disambiguate a prompt/JSON key from a module name."
   },
   {
     "rule": "D-module-names-module",
     "file": "modules/core-ai/src/providers/openai.ts",
     "token": "labels",
-    "reason": "grandfathered 2026-06-10 — pre-existing drift; burn down, never grow. See docs/architecture/module-interactions.md"
+    "reason": "FALSE POSITIVE (name collision, not coupling): `labels` here is the image-classify call's classification-LABEL list (input.labels / the {\"labels\":[…]} JSON reply schema in the AI prompt), not the `labels` module. The literal-match lint can't disambiguate a prompt/JSON key from a module name."
   },
   {
     "rule": "D-module-names-module",
     "file": "modules/core-authoring/src/services/templates.ts",
     "token": "assets",
-    "reason": "grandfathered 2026-06-10 — pre-existing drift; burn down, never grow. See docs/architecture/module-interactions.md"
+    "reason": "INTENTIONAL (declaration, not coupling): an authoring template DECLARES the modules it provisions (`requires: [...]`) — the same legitimate module-naming the lint already exempts for module.ts manifests. Declarative data, not code reaching into another module."
   },
   {
     "rule": "D-module-names-module",
     "file": "modules/core-authoring/src/services/templates.ts",
     "token": "inventory",
-    "reason": "grandfathered 2026-06-10 — pre-existing drift; burn down, never grow. See docs/architecture/module-interactions.md"
+    "reason": "INTENTIONAL (declaration, not coupling): an authoring template DECLARES the modules it provisions (`requires: [...]`) — the same legitimate module-naming the lint already exempts for module.ts manifests. Declarative data, not code reaching into another module."
   },
   {
     "rule": "D-module-names-module",
     "file": "modules/core-authoring/src/services/templates.ts",
     "token": "labels",
-    "reason": "grandfathered 2026-06-10 — pre-existing drift; burn down, never grow. See docs/architecture/module-interactions.md"
+    "reason": "INTENTIONAL (declaration, not coupling): an authoring template DECLARES the modules it provisions (`requires: [...]`) — the same legitimate module-naming the lint already exempts for module.ts manifests. Declarative data, not code reaching into another module."
   },
   {
-    "rule": "D-module-names-module",
-    "file": "modules/core-scan/src/api/inbox.ts",
-    "token": "assets",
-    "reason": "grandfathered 2026-06-10 — pre-existing drift; burn down, never grow. See docs/architecture/module-interactions.md"
+    "rule": "C-kernel-names-module",
+    "file": "api/src/modules/enable.ts",
+    "token": "core-files",
+    "reason": "INTENTIONAL (not drift): the maintainer-curated foundational allowlist — the kernel must know which modules are load-bearing so a module can't self-declare itself permanent. See manifest-contract.md + audit-2026-06-26.md P1 #2."
   },
   {
-    "rule": "D-module-names-module",
-    "file": "modules/core-scan/src/api/inbox.ts",
-    "token": "inventory",
-    "reason": "grandfathered 2026-06-10 — pre-existing drift; burn down, never grow. See docs/architecture/module-interactions.md"
+    "rule": "C-kernel-names-module",
+    "file": "api/src/modules/enable.ts",
+    "token": "core-notifications",
+    "reason": "INTENTIONAL (not drift): the maintainer-curated foundational allowlist — the kernel must know which modules are load-bearing so a module can't self-declare itself permanent. See manifest-contract.md + audit-2026-06-26.md P1 #2."
+  },
+  {
+    "rule": "C-kernel-names-module",
+    "file": "api/src/modules/enable.ts",
+    "token": "core-activity-log",
+    "reason": "INTENTIONAL (not drift): the maintainer-curated foundational allowlist — the kernel must know which modules are load-bearing so a module can't self-declare itself permanent. See manifest-contract.md + audit-2026-06-26.md P1 #2."
+  },
+  {
+    "rule": "C-kernel-names-module",
+    "file": "api/src/modules/enable.ts",
+    "token": "core-tags",
+    "reason": "INTENTIONAL (not drift): the maintainer-curated foundational allowlist — the kernel must know which modules are load-bearing so a module can't self-declare itself permanent. See manifest-contract.md + audit-2026-06-26.md P1 #2."
+  },
+  {
+    "rule": "C-kernel-names-module",
+    "file": "api/src/modules/enable.ts",
+    "token": "core-queue",
+    "reason": "INTENTIONAL (not drift): the maintainer-curated foundational allowlist — the kernel must know which modules are load-bearing so a module can't self-declare itself permanent. See manifest-contract.md + audit-2026-06-26.md P1 #2."
+  },
+  {
+    "rule": "C-kernel-names-module",
+    "file": "api/src/modules/enable.ts",
+    "token": "core-healthcheck",
+    "reason": "INTENTIONAL (not drift): the maintainer-curated foundational allowlist — the kernel must know which modules are load-bearing so a module can't self-declare itself permanent. See manifest-contract.md + audit-2026-06-26.md P1 #2."
+  },
+  {
+    "rule": "C-kernel-names-module",
+    "file": "api/src/modules/enable.ts",
+    "token": "core-locations",
+    "reason": "INTENTIONAL (not drift): the maintainer-curated foundational allowlist — the kernel must know which modules are load-bearing so a module can't self-declare itself permanent. See manifest-contract.md + audit-2026-06-26.md P1 #2."
   },
   {
     "rule": "D-module-names-module",
     "file": "modules/core-scan/src/services/matchmaker.ts",
     "token": "assets",
-    "reason": "grandfathered 2026-06-10 — pre-existing drift; burn down, never grow. See docs/architecture/module-interactions.md"
-  },
-  {
-    "rule": "D-module-names-module",
-    "file": "modules/core-scan/src/services/matchmaker.ts",
-    "token": "inventory",
-    "reason": "grandfathered 2026-06-10 — pre-existing drift; burn down, never grow. See docs/architecture/module-interactions.md"
-  },
-  {
-    "rule": "D-module-names-module",
-    "file": "modules/core-scan/src/services/matchmaker.ts",
-    "token": "machines",
-    "reason": "grandfathered 2026-06-10 — pre-existing drift; burn down, never grow. See docs/architecture/module-interactions.md"
-  },
-  {
-    "rule": "D-module-names-module",
-    "file": "modules/lists/src/calendar-source.ts",
-    "token": "inventory",
-    "reason": "grandfathered 2026-06-10 — pre-existing drift; burn down, never grow. See docs/architecture/module-interactions.md"
-  },
-  {
-    "rule": "D-module-names-module",
-    "file": "modules/lists/src/expiry-sweeper.ts",
-    "token": "inventory",
-    "reason": "grandfathered 2026-06-10 — pre-existing drift; burn down, never grow. See docs/architecture/module-interactions.md"
+    "reason": "PROSE in the matchmaker LLM prompt (\"a drill -> 'tools'/'assets'\"), not code coupling — the scannable set is now registry-driven (registerScannable). (Audit 2026-06-26.)"
   }
 ]

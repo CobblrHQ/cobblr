@@ -12,6 +12,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Search, X } from "lucide-react";
 import { EntityThumb, usePageTitle } from "@cobblr/platform-web";
 import { api, type SearchHit } from "../lib/api";
+import { QueryError } from "../components/QueryError";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
 export function SearchPage() {
@@ -156,7 +157,10 @@ export function SearchPage() {
         <div className="text-sm text-muted">Searching…</div>
       )}
 
-      {(q || tag) && !results.isLoading && grouped.length === 0 && (
+      {results.isError && (
+        <QueryError what="search results" onRetry={() => results.refetch()} />
+      )}
+      {(q || tag) && !results.isLoading && !results.isError && grouped.length === 0 && (
         <div className="text-sm text-muted italic">
           No results{q ? ` for "${q}"` : ""}
           {tag ? ` tagged #${tag}` : ""}. Try a different keyword, a different

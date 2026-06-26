@@ -154,6 +154,26 @@ function checkModuleNaming(file: string, rawSrc: string): void {
         });
       }
     }
+    // Colon-literal kind strings ("inventory:part") are normally fine — they're
+    // kernel-mediated references. But BRANCHING on another module's kind in
+    // control flow (=== / !== / case) IS coupling: it's exactly the pattern that
+    // hid core-scan's hardcoded scan maps behind the colon exemption. Flag a
+    // foreign kind compared in control flow; own-module kinds are fine. Reach
+    // for a kernel seam (resolver / trait / registry) instead. (Audit
+    // 2026-06-26.)
+    for (const m of ln.matchAll(/(?:===|!==|\bcase)\s*["']([a-z0-9-]+:[a-z0-9_-]+)["']/g)) {
+      const kind = m[1]!;
+      const mod = kind.split(":")[0]!;
+      if (names.has(mod) && mod !== ownMod) {
+        violations.push({
+          rule: "D-module-names-module",
+          file,
+          line: i + 1,
+          token: kind,
+          detail: `module '${ownMod}' branches on another module's kind '${kind}' — use a kernel seam (resolver / trait / registry), not a hardcoded kind`,
+        });
+      }
+    }
   });
 }
 
@@ -191,10 +211,19 @@ function checkImports(file: string, src: string): void {
 // ── Rule C: kernel string-names a module ─────────────────────────────────────
 // A string literal in api/src equal to a known module name, outside historical
 // migrations / test plumbing. Conservative: only flags exact module-name literals.
-function checkKernelNaming(file: string, src: string): void {
-  const lines = src.split("\n");
+function checkKernelNaming(file: string, rawSrc: string): void {
+  // Match module-name LITERALS against the comment-stripped source — a module
+  // name in a JSDoc example or a `// note` is documentation, never coupling
+  // (rules A and D already strip). Without this the kernel couldn't even
+  // DESCRIBE a module in a doc-comment. (Audit burn-down.)
+  const rawLines = rawSrc.split("\n");
+  const lines = stripComments(rawSrc).split("\n");
   lines.forEach((ln, i) => {
-    if (/HISTORICAL DATA MIGRATION/.test(ln)) return;
+    // `HISTORICAL DATA MIGRATION` is an intentional inline COMMENT marker —
+    // test the RAW line (the marker lives in the comment we strip above).
+    if (/HISTORICAL DATA MIGRATION/.test(rawLines[i] ?? "")) return;
+    // Real console.* calls may name a module (logging) — test the STRIPPED line
+    // so a commented-out console.log can't shield a real literal below it.
     if (/console\.(log|warn|error|info)/.test(ln)) return;
     for (const m of ln.matchAll(/["']([a-z0-9-]+)["']/g)) {
       const lit = m[1]!;

@@ -8,7 +8,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, ArrowUp, ArrowDown, ExternalLink } from "lucide-react";
-import { useConfirm, usePageTitle, useToast } from "@cobblr/platform-web";
+import { Modal, useConfirm, usePageTitle, useToast } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ThemeEditor } from "../components/ThemeEditor";
 import {
@@ -38,6 +38,8 @@ export function AppsConfigPage() {
   const toast = useToast();
   const confirm = useConfirm();
   const [editing, setEditing] = useState<WorkspaceApp | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [newAppName, setNewAppName] = useState("");
 
   const apps = useQuery({
     queryKey: ["config-apps", slug],
@@ -64,13 +66,18 @@ export function AppsConfigPage() {
     const full = await api.getApp(slug, meta.slug);
     setEditing(full);
   }
-  async function createApp() {
-    const name = window.prompt("App name?");
+  function createApp() {
+    setNewAppName("");
+    setCreating(true);
+  }
+  const newAppSlug = newAppName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  async function submitCreateApp() {
+    const name = newAppName.trim();
     if (!name) return;
-    const appSlug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
     try {
-      const created = await api.createApp(slug, { slug: appSlug, name, pages: [] });
+      const created = await api.createApp(slug, { slug: newAppSlug, name, pages: [] });
       await qc.invalidateQueries({ queryKey: ["config-apps", slug] });
+      setCreating(false);
       setEditing(created);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Couldn't create app.");
@@ -146,6 +153,36 @@ export function AppsConfigPage() {
           <Plus size={14} /> New app
         </button>
       </div>
+
+      <Modal
+        open={creating}
+        onClose={() => setCreating(false)}
+        title="New app"
+        subtitle="A structured worker app for the member portal."
+      >
+        <form
+          onSubmit={(e) => { e.preventDefault(); void submitCreateApp(); }}
+          className="flex flex-col gap-3"
+        >
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] font-mono uppercase tracking-widest text-faint">App name</span>
+            <input
+              autoFocus
+              value={newAppName}
+              onChange={(e) => setNewAppName(e.target.value)}
+              placeholder="e.g. Front Desk"
+              className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+            />
+          </label>
+          {newAppName.trim() ? (
+            <p className="text-xs text-faint">URL slug: <span className="font-mono text-accent">{newAppSlug || "—"}</span></p>
+          ) : null}
+          <div className="flex justify-end gap-2 pt-1">
+            <button type="button" onClick={() => setCreating(false)} className="text-sm px-3 py-1.5 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800">Cancel</button>
+            <button type="submit" disabled={!newAppName.trim()} className="inline-flex items-center gap-1.5 rounded-md bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-mortar-50 text-sm font-medium px-3 py-1.5">Create</button>
+          </div>
+        </form>
+      </Modal>
 
       <div className="grid grid-cols-3 gap-4">
         {/* App list */}

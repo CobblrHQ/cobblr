@@ -15,6 +15,36 @@ import { runMigrations } from "../db/migrate.js";
 import { getTenantPool, evictTenantPool } from "../db/tenant.js";
 import { getEntry, listEntries } from "./registry.js";
 import * as activity from "../platform/activity.js";
+
+/** Maintainer-curated foundational set. A module manifest can declare
+ *  `band: "foundational"`, but the kernel only TREATS it as foundational
+ *  (always-on + undisableable) if it's on this list. A `foundational` flag
+ *  on any other module is a stray — we warn and treat it as `stock`
+ *  (disableable), so no module can silently make itself permanent.
+ *  (Audit 2026-06-26 P1 #2 — manifest-contract.md says the flag should be
+ *  informational unless curated.) */
+const FOUNDATIONAL_ALLOWLIST = new Set([
+  "core-files",
+  "core-notifications",
+  "core-activity-log",
+  "core-tags",
+  "core-queue",
+  "core-healthcheck",
+  "core-locations",
+]);
+
+const warnedNonCuratedFoundational = new Set<string>();
+function isFoundational(entry: { manifest: { name: string; band: string } }): boolean {
+  if (entry.manifest.band !== "foundational") return false;
+  if (FOUNDATIONAL_ALLOWLIST.has(entry.manifest.name)) return true;
+  if (!warnedNonCuratedFoundational.has(entry.manifest.name)) {
+    warnedNonCuratedFoundational.add(entry.manifest.name);
+    console.warn(
+      `[modules] ${entry.manifest.name} declares band:"foundational" but is not in the curated foundational allowlist — treating it as a disableable stock module.`,
+    );
+  }
+  return false;
+}
 import { getSandboxedModuleInfo } from "../sandbox/sandboxed-module-info.js";
 import { ensureModuleRole, moduleRolesEnabled } from "../sandbox/module-role.js";
 
@@ -237,7 +267,7 @@ export async function disableModuleForOrg(orgId: string, moduleName: string): Pr
   // they're always there. The web UI hides the toggle, but enforce
   // server-side so API/CLI callers can't bypass it either.
   const entry = getEntry(moduleName);
-  if (entry && entry.manifest.band === "foundational") {
+  if (entry && isFoundational(entry)) {
     throw new Error(
       `Cannot disable ${moduleName}: it's a foundational module and required by the platform.`,
     );
@@ -396,7 +426,7 @@ export async function enableDefaultModulesForOrg(
 ): Promise<string[]> {
   const enabled: string[] = [];
   const foundationals = listEntries().filter(
-    (e) => e.manifest.band === "foundational" || e.manifest.autoEnable === true,
+    (e) => isFoundational(e) || e.manifest.autoEnable === true,
   );
 
   // Sort foundationals so any with deps run AFTER their deps. (Today

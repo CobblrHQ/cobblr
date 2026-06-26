@@ -400,6 +400,9 @@ export interface OrgModuleListItem {
    *  Optional: real modules from the API always carry it, but synthetic nav
    *  entries (instances, lens bundles) have no module band. */
   band?: "foundational" | "stock" | "marketplace" | "user";
+  /** "multi" → the module can host several named instances (the "+ New thing"
+   *  funnel offers it). "single" / absent → one instance only. */
+  instanceability?: "single" | "multi";
   /** Icon-only quick-action pinned to the navbar's right cluster. */
   headerAction: { icon: string; label: string; route: string } | null;
   dependencies: string[];

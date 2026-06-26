@@ -1,4 +1,4 @@
-import { platform, type ResolvedEntity } from "@cobblr/platform-contract";
+import { platform, type EntityListQuery, type ResolvedEntity } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { MachinesDB } from "../db.js";
 
@@ -19,11 +19,20 @@ export function registerMachinesResolvers(): void {
     return toResolvedMachine(row);
   });
 
-  platform().entities.registerListResolver("machines:machine", async (orgId, query) => {
+  // Shared list body — base kind (all instances) AND, with an `instance` arg,
+  // one multi-instance collection ("3d-printers" vs "laser-cutters"). The
+  // instance is a native column, so the generic instance layer (views, the
+  // labels browser) can list a single instance through `<instance_name>:item`.
+  const listMachines = async (
+    orgId: string,
+    query: EntityListQuery,
+    instance?: string,
+  ) => {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<MachinesDB>;
     const limit = Math.min(query.limit ?? 50, 200);
     const offset = query.offset ?? 0;
     let q = db.selectFrom("machines_machines").selectAll();
+    if (instance) q = q.where("instance", "=", instance);
     if (query.q) {
       const needle = `%${query.q.toLowerCase()}%`;
       q = q.where((eb) => eb(eb.fn("lower", ["name"]), "like", needle));
@@ -70,7 +79,17 @@ export function registerMachinesResolvers(): void {
     }
     const rows = await q.orderBy("name", "asc").limit(limit).offset(offset).execute();
     return { items: rows.map((r) => toResolvedMachine(r)) };
-  });
+  };
+
+  platform().entities.registerListResolver("machines:machine", (orgId, query) =>
+    listMachines(orgId, query),
+  );
+  // Multi-instance: `<instance_name>:item` lists just that instance's machines.
+  // Mirrors inventory/assets so a named machines instance (3D Printers) is
+  // listable through the generic layer — what the labels browser uses.
+  platform().entities.registerInstanceListResolver("machines", (orgId, instance, query) =>
+    listMachines(orgId, query, instance),
+  );
 }
 
 function toResolvedMachine(row: {

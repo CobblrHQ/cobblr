@@ -7,6 +7,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { usePageTitle } from "@cobblr/platform-web";
 import { api, type MyFeedbackItem } from "../lib/api";
+import { QueryError } from "../components/QueryError";
 
 const TYPE_EMOJI: Record<string, string> = { bug: "🐛", confusing: "😕", idea: "💡", other: "•" };
 const STATUS_LABEL: Record<string, string> = {
@@ -31,7 +32,10 @@ export function MyFeedbackPage() {
       </div>
 
       {q.isLoading && <div className="text-sm text-faint">loading…</div>}
-      {!q.isLoading && items.length === 0 && (
+      {q.isError && (
+        <QueryError what="your feedback" onRetry={() => q.refetch()} />
+      )}
+      {!q.isLoading && !q.isError && items.length === 0 && (
         <div className="text-sm text-faint italic">
           You haven't sent any feedback yet. Use the <b>Send feedback</b> button (bottom-right) anytime —
           and you'll be able to follow the conversation here.

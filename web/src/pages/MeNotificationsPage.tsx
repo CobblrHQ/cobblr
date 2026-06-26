@@ -10,6 +10,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell, Check, CheckCheck } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
+import { QueryError } from "../components/QueryError";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api, type CrossOrgNotificationEntry } from "../lib/api";
 import { useToast, usePageTitle } from "@cobblr/platform-web";
@@ -118,7 +119,10 @@ export function MeNotificationsPage() {
       </p>
 
       {q.isLoading && <div className="text-sm text-muted">Loading…</div>}
-      {!q.isLoading && items.length === 0 && (
+      {q.isError && (
+        <QueryError what="notifications" onRetry={() => q.refetch()} />
+      )}
+      {!q.isLoading && !q.isError && items.length === 0 && (
         <div className="text-sm text-muted italic">
           {unreadOnly ? "No unread notifications." : "No notifications yet."}
         </div>

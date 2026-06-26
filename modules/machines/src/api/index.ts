@@ -9,6 +9,14 @@ import { registerMachinesWriter } from "./sync-writer.js";
 registerMachinesResolvers();
 registerMachinesActionHandlers();
 registerMachinesWriter(); // opt in as a sync target (e.g. mirror companion app printers)
+// Declare machines:machine as a scan target. (Audit 2026-06-26 follow-up — was
+// a hardcoded entry in core-scan's SCANNABLE/endpoint/qty maps; its noun was
+// the wrong "part" fallback, now correctly "machine".)
+platform().entities.registerScannable("machines:machine", {
+  noun: "machine",
+  createEndpoint: "machines/machines",
+  qtyField: "quantity",
+});
 
 // Per-instance item count — lets the nav hide an empty auto-created default
 // instance once the workspace has named ones.

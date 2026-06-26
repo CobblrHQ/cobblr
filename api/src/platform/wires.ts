@@ -17,7 +17,7 @@
 //   - {rel,dir?,kind?} → walk entity_pairings from the source,
 //                invoke the action once per discovered target.
 
-import type { ActionInvokeActor } from "@cobblr/platform-contract";
+import { sourceIdKey, type ActionInvokeActor } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
 import { invoke } from "./actions.js";
 import { lookup, walkPairings } from "./entities.js";
@@ -139,15 +139,11 @@ export async function fireEvent(
     try {
       // Identify the SOURCE entity ID from the event payload. By
       // convention, emitters put it under <camelCaseKindSuffix>Id
-      // (partId, taskId, orderItemId, etc.) — derive that key from
-      // the source_kind. Multi-word suffixes get camelCased so
-      // 'purchases:order_item' → 'orderItemId' (the natural JS shape
-      // emitters use), not 'order_itemId'.
-      const rawSuffix = b.source_kind.split(":")[1] ?? "";
-      const camelSuffix = rawSuffix.replace(/_([a-z])/g, (_, c: string) =>
-        c.toUpperCase(),
-      );
-      const idKey = `${camelSuffix}Id`;
+      // (partId, taskId, orderItemId, etc.) — the shared sourceIdKey()
+      // helper derives that key from the source_kind, so emitters and the
+      // engine agree without either hardcoding a kind. Multi-word suffixes
+      // camelCase ('purchases:order_item' → 'orderItemId').
+      const idKey = sourceIdKey(b.source_kind);
       const sourceId =
         typeof payload[idKey] === "string" ? (payload[idKey] as string) : "";
 

@@ -45,7 +45,8 @@ export default defineModule({
       "core-maintenance.entry.updated",
       "core-maintenance.entry.deleted",
       "core-maintenance.entry.due-soon",
-      "core-maintenance.entry.overdue",
+      // (removed core-maintenance.entry.overdue — declared but never emitted;
+      //  the sweeper only emits due-soon. Audit 2026-06-26 follow-up.)
     ],
     api: ["sweep"],
     actions: [],

@@ -13,6 +13,14 @@ import { tick } from "./scheduler.js";
 const router = Router({ mergeParams: true });
 
 router.post("/tick", (req, res, next) => {
+  // Ops/test endpoint: force-firing every scheduled wire for the workspace is
+  // privileged — keep a read-only guest (or plain member) from triggering it.
+  // (Audit 2026-06-26 P2.)
+  const role = (req as unknown as { tenant?: { role?: string } }).tenant?.role;
+  if (role && role !== "owner" && role !== "admin") {
+    res.status(403).json({ error: { code: "forbidden", message: "This action requires owner or admin." } });
+    return;
+  }
   void (async () => {
     // Default: scope to the current workspace so a tick from inside
     // a tenant only iterates that tenant's content. Without this,

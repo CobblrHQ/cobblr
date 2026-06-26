@@ -25,6 +25,7 @@
     "lint:scan-keywords": "tsx scripts/lint-scan-keywords.ts",
     "lint:deprecated-fks": "tsx scripts/lint-deprecated-table-fks.ts",
     "lint:self-heal": "tsx scripts/lint-self-heal.ts",
+    "lint:write-guards": "tsx scripts/lint-module-write-guards.ts",
     "build": "pnpm -r run --if-present build",
     "dev:api": "npm run dev -w api",
     "dev:web": "npm run dev -w web",

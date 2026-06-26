@@ -2,6 +2,18 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-06-26
+
+### Improvements
+- The Labels "Add labels" browser now shows a tab for each collection you actually have: your own instances like *3D Printers*, *Laser Cutters*, *Parts*, instead of generic module names, and hides empty collections entirely. So you only see real, non-empty places to pull labels from, matching what's in your navbar.
+- The Labels browser now shows your Locations tab as the real hierarchy: an Areas tree with rooms and their nested bins, and a separate Containers section for loose bins, exactly like the Locations page, instead of one flat list. Easier to find the right shelf or bin to label.
+- Your custom location order now applies everywhere, not just on the Locations page. Drag locations into the order you want and that order is honoured in every location dropdown, the Labels browser, and any module that lists your places. The page also clearly separates Areas (rooms & regions) from Unsorted containers with their own headings.
+
+### Fixes
+- A barcode that resolves only to a generic category ("Whiskey", "Beverages" from Open Food Facts) now upgrades to the real product on re-run / "needs detail": e.g. Maker's Mark Bourbon Whisky. The web identify already found it; an over-strict same-word check ("Whiskey" vs Maker's "Whisky") was discarding the correct answer.
+- Locations now sort the same way everywhere: "Bin 2" before "Bin 10", not lexically. The Locations page and the Labels browser now share ONE location tree viewer, so their structure and order can never drift apart again.
+- A catalog image you hand-pick (the "other photo options" strip or "use my photo") is now sticky: a later re-run / hint correction no longer overwrites it with the provider's image. Reverting to the auto image releases the lock.
+
 ## 2026-06-25
 
 ### Features

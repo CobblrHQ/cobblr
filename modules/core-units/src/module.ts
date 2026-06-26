@@ -7,10 +7,12 @@
 // + a display-mode preference (symbol / name / both). It resolves a stored
 // value to a catalog entry for display and feeds the unit picker.
 //
-// Foundational + ambient: like core-tags / core-locations, it's ON for
-// every workspace and carries no entity kind — it's a vocabulary other
-// modules' fields lean on, not a thing you browse. Storage stays free-text,
-// so nothing it does rewrites existing data.
+// Ambient capability (NOT foundational): ON for every workspace and carries
+// no entity kind — a vocabulary other modules' fields lean on, not a thing
+// you browse. Because storage stays free-text, the platform works without it
+// (it fails the strict "can't work without it" foundational test), so it's a
+// `stock` capability with autoEnable, not foundational — which keeps it
+// disableable. (Audit 2026-06-26 P1 #2.)
 
 import { defineModule } from "@cobblr/platform-contract";
 
@@ -21,7 +23,8 @@ export default defineModule({
   description:
     "Canonical unit vocabulary — built-in units (gram/g, meter/m, each/ea) plus your own, with a shorthand-vs-full-word display toggle. Powers the unit picker on quantity fields.",
   icon: "ruler",
-  band: "foundational",
+  band: "stock",
+  autoEnable: true, // ambient capability — on for every workspace, but disableable
 
   schema: {
     tablePrefix: "core_units_",

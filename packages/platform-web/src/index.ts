@@ -5,6 +5,13 @@ export { PlatformWebProvider, usePlatformWeb } from "./context";
 export { EntityActionsBar } from "./EntityActionsBar";
 export { EntityChip } from "./EntityChip";
 export { EntityThumb } from "./EntityThumb";
+export {
+  buildLocationForest,
+  flattenLocationForest,
+  type LocationNode,
+  type LocationAccessors,
+  type FlatLocation,
+} from "./locationTree";
 export { EntityTile } from "./EntityTile";
 export { ViewModeToggle, useViewMode, type ViewMode } from "./ViewModeToggle";
 export { useImageSrc } from "./useImageSrc";

@@ -113,6 +113,7 @@ export default defineModule({
       "inventory.allocation.reserved",
       "inventory.allocation.consumed",
       "inventory.allocation.released",
+      "inventory.category.created", // emitted by categories.ts — declare so it's bindable (audit 2026-06-26)
     ],
     api: ["getPartById", "searchParts", "adjustStock", "allocate", "release"],
     actions: [

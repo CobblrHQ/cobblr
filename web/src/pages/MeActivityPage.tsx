@@ -10,6 +10,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { History } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { api, type CrossOrgActivityEntry } from "../lib/api";
+import { QueryError } from "../components/QueryError";
 import { usePageTitle } from "@cobblr/platform-web";
 
 export function MeActivityPage() {
@@ -77,7 +78,10 @@ export function MeActivityPage() {
       {q.isLoading && (
         <div className="text-sm text-muted">Loading…</div>
       )}
-      {!q.isLoading && items.length === 0 && (
+      {q.isError && (
+        <QueryError what="activity" onRetry={() => q.refetch()} />
+      )}
+      {!q.isLoading && !q.isError && items.length === 0 && (
         <div className="text-sm text-muted italic">
           {orgFilter
             ? "No activity in this workspace yet."

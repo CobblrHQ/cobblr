@@ -77,13 +77,14 @@ export default defineModule({
     events: [
       "digifab.connection.created",
       "digifab.connection.tested",
-      "digifab.connection.synced",
       "digifab.connection.deleted",
       "digifab.job.sent",
       // Print-lifecycle notifications (the "post updates to Discord" flow): a
       // user routes these to a channel at /me/notification-channels.
-      "digifab.print.started",
-      "digifab.print.progress",
+      // (digifab.connection.synced / print.started / print.progress were
+      //  declared but never emitted — removed so the wires UI doesn't offer
+      //  dead triggers; re-add with the emit when the poll loop wires them.
+      //  Audit 2026-06-26 follow-up.)
       "digifab.print.completed",
       "digifab.print.failed",
       // F-13 — the human's bed-clear verdict. `completed` fires the cheap,

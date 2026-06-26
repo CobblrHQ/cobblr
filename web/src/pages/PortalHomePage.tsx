@@ -10,6 +10,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, LayoutDashboard, LayoutGrid, Settings } from "lucide-react";
 import { api, type AppTheme, type PortalConfig } from "../lib/api";
 import { usePageTitle } from "@cobblr/platform-web";
+import { QueryError } from "../components/QueryError";
 import { accentStyle, cardStyle, mutedStyle, textStyle } from "../lib/appTheme";
 
 interface PortalCtx {
@@ -68,6 +69,13 @@ export function PortalHomePage() {
   const showLauncher = searchParams.get("all") === "1";
   if (!showLauncher && apps.isLoading) {
     return <div className="text-xs text-faint italic p-6">Loading…</div>;
+  }
+  if (!showLauncher && apps.isError) {
+    return (
+      <div className="p-6">
+        <QueryError what="your portal" onRetry={() => apps.refetch()} />
+      </div>
+    );
   }
   if (!showLauncher && apps.isSuccess) {
     const openable = new Set(appItems.map((a) => a.slug));

@@ -28,10 +28,21 @@ export async function refreshCatalogImageByName(
   name: string,
   brand?: string | null,
 ): Promise<void> {
+  const db = (await platform().tenants.getDb(orgId)) as unknown as Kysely<CoreScanDB>;
+  // A user who hand-picked a catalog image (photo-options strip / "use my photo")
+  // OWNS it — a later re-identify (renamed item, hint correction) must NOT clobber
+  // their choice. The catalog-image endpoint stamps `catalog_image_user_set`; honor
+  // it here, the single choke point every re-gen routes through. (Revert clears it,
+  // so the auto-refresh resumes.)
+  const cur = await db
+    .selectFrom("core_scan_inbox_items")
+    .select("suggested_metadata")
+    .where("id", "=", itemId)
+    .executeTakeFirst();
+  if ((cur?.suggested_metadata as { catalog_image_user_set?: boolean } | null)?.catalog_image_user_set) return;
   const pool = await searchImages(imageQuery(name, brand), 24).catch(() => []);
   const best = rankImageOptions(pool, brand)[0]?.url;
   if (!best) return;
-  const db = (await platform().tenants.getDb(orgId)) as unknown as Kysely<CoreScanDB>;
   await db
     .updateTable("core_scan_inbox_items")
     .set({ catalog_image_url: best, catalog_image_file_id: null, updated_at: new Date() })

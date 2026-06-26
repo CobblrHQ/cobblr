@@ -10,12 +10,12 @@
 
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Boxes, FolderPlus } from "lucide-react";
+import { Boxes } from "lucide-react";
 import { Modal, useToast } from "@cobblr/platform-web";
 import { ApiError, api, type OrgModuleListItem } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
-type Step = "choose-shape" | "instance-pick-module" | "instance-name" | "lens-coming-soon";
+type Step = "choose-shape" | "instance-pick-module" | "instance-name";
 
 export function NewThingFunnelModal({
   open,
@@ -36,14 +36,13 @@ export function NewThingFunnelModal({
     queryFn: () => api.orgModules(activeSlug),
     enabled: !!activeSlug && open,
   });
-  // Only modules marked multi-instance show in the picker. Today the
-  // platform doesn't expose instanceability on the OrgModuleListItem
-  // shape; we use a hardcoded allowlist of known multi-instance
-  // modules until the manifest field is on the wire. (TODO: add to
-  // /api/v1/orgs/:slug/modules response.)
-  const MULTI = new Set(["assets", "inventory", "machines", "projects", "purchases"]);
-  const candidates = (modules.data?.items ?? []).filter((m) =>
-    MULTI.has(m.name),
+  // Only multi-instance modules show in the picker — read from the manifest's
+  // `instanceability` field (now on the /orgs/:slug/modules response), so a new
+  // multi-instance module appears automatically and the funnel can't drift from
+  // the real set. (Audit 2026-06-26 follow-up — was a hardcoded allowlist that
+  // had already missed `sales`.)
+  const candidates = (modules.data?.items ?? []).filter(
+    (m) => m.instanceability === "multi",
   );
 
   const create = useMutation({
@@ -120,27 +119,10 @@ export function NewThingFunnelModal({
               </div>
             </div>
           </button>
-          <button
-            type="button"
-            onClick={() => setStep("lens-coming-soon")}
-            className="w-full text-left rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 hover:border-accent dark:hover:border-cobble-700 transition flex items-start gap-3"
-          >
-            <FolderPlus size={20} className="text-accent mt-0.5 shrink-0" />
-            <div className="flex-1">
-              <div className="font-medium text-content dark:text-mortar-100">
-                Sub-category of an existing thing
-              </div>
-              <div className="text-xs text-muted dark:text-slate-400 mt-1">
-                <span className="font-medium text-content dark:text-mortar-200">
-                  Lives inside an existing thing.
-                </span>{" "}
-                Reuses that parent's custom fields and list views, and is browsed
-                alongside its siblings — best for small sets (1–100 rows). Choose
-                this when it's really just a subdivision of something you already
-                track. Example: "Castle sets" inside your Lego inventory.
-              </div>
-            </div>
-          </button>
+          {/* The "Sub-category (lens)" option was removed: it dead-ended on a
+              "ships next" panel, and the product direction is specialisations-
+              as-INSTANCES, not standalone lenses (PR #180). Re-add only if a
+              real lens-creation flow lands. (Audit 2026-06-26 follow-up.) */}
         </div>
       )}
 
@@ -230,33 +212,6 @@ export function NewThingFunnelModal({
         </form>
       )}
 
-      {step === "lens-coming-soon" && (
-        <div className="space-y-3">
-          <p className="text-sm text-content dark:text-mortar-200">
-            Sub-category creation lands as a separate primitive (lens
-            bundles) — it lets one parent thing host multiple shared-shape
-            categories like "Castle sets" / "Star Wars sets" under your
-            Lego inventory. The architecture is spec'd; the UI ships next.
-          </p>
-          <p className="text-sm text-content dark:text-mortar-200">
-            For now, you can:
-          </p>
-          <ul className="list-disc list-inside text-sm text-content dark:text-mortar-200 space-y-1">
-            <li>Install a featured lens bundle from the Bundles page</li>
-            <li>Author your own JSON bundle with <code>provides_lens</code></li>
-            <li>Use tags to group sub-categories within an existing thing</li>
-          </ul>
-          <div className="flex justify-end pt-2">
-            <button
-              type="button"
-              onClick={() => setStep("choose-shape")}
-              className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
-            >
-              Back
-            </button>
-          </div>
-        </div>
-      )}
     </Modal>
   );
 }

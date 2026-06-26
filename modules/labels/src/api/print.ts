@@ -6,12 +6,22 @@ import { Router } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
-import { asyncHandler, badBody } from "./util.js";
+import { asyncHandler, badBody, requireRole } from "./util.js";
 import { qrSvg } from "./qr.js";
 import { renderLabelsPdf, type PrintItem } from "../print/pdf.js";
 import { SIZES } from "../print/layout.js";
 
 export const printRouter = Router({ mergeParams: true });
+
+// Block the read-only `guest` role from every request on this router —
+// these fire physical print jobs, so guests must never reach them.
+// (Audit 2026-06-26 P0 #1.)
+printRouter.use((req, res, next) => {
+  if (req.method !== "GET" && req.method !== "HEAD" && req.method !== "OPTIONS") {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+  }
+  next();
+});
 
 // ── direct-to-printer (CUPS via core-print) ──────────────────────────
 // Render the queue to a print-ready PDF with the companion app renderer
