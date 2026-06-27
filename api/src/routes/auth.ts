@@ -182,9 +182,13 @@ export async function provisionOrgForUser(
           [orgName.trim(), slug, dbName],
         );
         orgId = orgRow.rows[0]!.id;
+        // Append the new workspace at the BOTTOM of the user's switcher
+        // (position = their current max + 1) so a freshly-created one lands last
+        // and they drag it where they want — not above the existing ones.
         await client.query(
-          `insert into org_memberships (user_id, org_id, role)
-           values ($1, $2, 'owner')`,
+          `insert into org_memberships (user_id, org_id, role, position)
+           values ($1, $2, 'owner',
+                   coalesce((select max(position) from org_memberships where user_id = $1), -1) + 1)`,
           [userId, orgId],
         );
         await client.query("commit");

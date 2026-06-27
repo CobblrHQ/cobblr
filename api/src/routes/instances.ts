@@ -9,13 +9,12 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
-import { getEntry } from "../modules/registry.js";
 import {
   createInstance,
-  deleteInstance,
   getInstance,
   listInstances,
   countInstanceItems,
+  tearDownInstance,
 } from "../platform/instances.js";
 import {
   deleteOverride,
@@ -24,8 +23,6 @@ import {
   type OverrideTarget,
 } from "../platform/entity-kind-overrides.js";
 import { meta } from "../db/meta.js";
-import { getTenantDb } from "../db/tenant.js";
-import { sql, type Kysely } from "kysely";
 
 export const instancesRouter = Router({ mergeParams: true });
 export const overridesRouter = Router({ mergeParams: true });
@@ -183,39 +180,13 @@ instancesRouter.delete(
         });
         return;
       }
-      // Best-effort: delete the module's tenant-side rows for this
-      // instance. The platform doesn't know which tables the module
-      // owns, but we know the module name + prefix. Iterate the
-      // manifest's expected tables via tablePrefix.
-      const entry = getEntry(inst.module_name);
-      if (entry?.manifest.schema) {
-        const prefix = entry.manifest.schema.tablePrefix;
-        try {
-          const tdb = (await getTenantDb(inst.org_id)) as unknown as Kysely<Record<string, { instance: string }>>;
-          // Get the list of tables matching the prefix from
-          // information_schema, then DELETE per-table where instance
-          // matches.
-          const { rows } = await (tdb as unknown as { executeQuery: (sql: unknown) => Promise<{ rows: Array<{ table_name: string }> }> }).executeQuery(
-            sql`select table_name from information_schema.tables where table_schema='public' and table_name like ${prefix + "%"}`.compile(tdb as never),
-          );
-          for (const r of rows) {
-            // Bind the instance value rather than interpolate it; quote the
-            // table name via sql.ref. (Audit 2026-06-26 P2.)
-            await (tdb as unknown as { executeQuery: (sql: unknown) => Promise<unknown> }).executeQuery(
-              sql`delete from ${sql.ref(r.table_name)} where instance = ${inst.instance_name}`.compile(tdb as never),
-            );
-          }
-        } catch (err) {
-          console.error(
-            `[instances] tenant cleanup for ${inst.module_name}/${inst.instance_name} failed:`,
-            err,
-          );
-          // Continue — orphaned rows are a smaller problem than a
-          // half-uninstalled instance row in meta.
-        }
-      }
-      await deleteInstance(inst.org_id, instanceName);
-      await deleteOverride(req.tenant!.org.id, "instance", `${inst.module_name}:${inst.instance_name}`);
+      // Full teardown via the SHARED helper: tenant-side rows for this
+      // instance, the workspace_module_instances row, its presentation
+      // override, AND its navbar-menu (nav-heading) membership. Previously this
+      // route hand-rolled the first three and silently skipped the membership —
+      // so a deleted category lingered in the "Inventory" menu's member table
+      // and could resurrect on a same-named recreate. One helper = no drift.
+      await tearDownInstance(req.tenant!.org.id, instanceName);
       res.status(204).end();
     } catch (err) {
       next(err);

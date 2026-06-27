@@ -36,7 +36,7 @@ import "../dashboard/builtinWidgets";
 import { expandInstanceWidgets } from "../dashboard/expandInstanceWidgets";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useAuth } from "../auth/AuthContext";
-import { CaptureFirstPanel } from "../components/CaptureFirstPanel";
+import { WhatToDoPanel } from "../components/WhatToDoPanel";
 import { displaySlug } from "../lib/workspaceSlug";
 import { liveNextStepLabel } from "../lib/featured-bundles";
 import {
@@ -361,12 +361,13 @@ function GettingStartedPanel({
   if (enabled.size > 0 && probe.data === undefined) return null; // still probing
   if ((probe.data ?? 0) > 0) return null; // has content already
 
-  // The default empty-state is the onboarding start: ONE screen with the
-  // capture box (scan / type) AND the ready-made-tracker gallery side by side
-  // (CaptureFirstPanel) — no toggle, no dead-end. The plain action-card
-  // fallback below is reached only for a workspace dismissed before this.
+  // The default empty-state is the onboarding start: "What do you want to do?"
+  // — one question, three converging lanes (ready-made recipes · building
+  // blocks · build-it-yourself) driven by a single distilling search. The plain
+  // action-card fallback below is reached only for a workspace dismissed before
+  // this.
   if (!skippedWizard) {
-    return <CaptureFirstPanel slug={slug} />;
+    return <WhatToDoPanel slug={slug} />;
   }
 
   // Determine the most relevant "first thing to do" based on which

@@ -451,13 +451,19 @@ export function PartsListPage() {
         >
           <FileUp size={14} /> Import CSV
         </button>
-        <button
-          onClick={() => setSpoolmanOpen(true)}
-          className="rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800/70 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
-          title="Sync remaining weight from Spoolman"
-        >
-          <Download size={14} /> Spoolman
-        </button>
+        {/* Spoolman syncs 3D-printing FILAMENT spool weights — irrelevant on a
+            food pantry / medications / generic inventory, where it was just
+            clutter. Gate it to the filament spools instance, the same way the
+            Ravelry import below is gated to the yarn instance. */}
+        {instance === "filament" && (
+          <button
+            onClick={() => setSpoolmanOpen(true)}
+            className="rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800/70 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
+            title="Sync remaining weight from Spoolman"
+          >
+            <Download size={14} /> Spoolman
+          </button>
+        )}
         {/* Import a Ravelry stash straight into the Yarn table (a713b84c). Only
             the yarn instance — the bundle names it "yarn" — since the importer
             maps to yarn fields + the Designs table. */}

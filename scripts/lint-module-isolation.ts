@@ -142,6 +142,12 @@ function checkModuleNaming(file: string, rawSrc: string): void {
   const ownMod = /modules\/([a-z0-9-]+)\//.exec(file.replace(/\\/g, "/"))?.[1];
   const src = stripComments(rawSrc);
   src.split("\n").forEach((ln, i) => {
+    // A declarative dependency list — `requires:` / `dependencies:` /
+    // `subscribes:` — legitimately NAMES other modules (same rationale that
+    // exempts module.ts manifests: it's declaring a relationship, e.g. an
+    // authoring template's `requires: ["inventory", "labels"]`, not code
+    // reaching into another module). Skip the whole line.
+    if (/^\s*(requires|dependencies|subscribes)\s*:/.test(ln)) return;
     for (const m of ln.matchAll(/["']([a-z0-9-]+)["']/g)) {
       const lit = m[1]!;
       if (names.has(lit) && lit !== ownMod) {

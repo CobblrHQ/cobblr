@@ -17,6 +17,16 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 
 type Step = "choose-shape" | "instance-pick-module" | "instance-name";
 
+// Where the new instance shows up in the navbar.
+//   "standalone" → its own top-level entry (the default; preserves the
+//                  specialisations-as-top-level decision, e.g. 3D Printers).
+//   "menu"       → folded into a navbar dropdown (a nav heading), so a
+//                  workspace adding many categories of one kind (Pantry,
+//                  Cleaning, Tools, … under "Inventory") gets ONE tidy menu
+//                  instead of N sprawling top-level entries.
+type Placement = "standalone" | "menu";
+const NEW_MENU = "__new__";
+
 export function NewThingFunnelModal({
   open,
   onClose,
@@ -30,12 +40,58 @@ export function NewThingFunnelModal({
   const [step, setStep] = useState<Step>("choose-shape");
   const [pickedModule, setPickedModule] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState("");
+  // Navbar placement (resolved smartly when a module is picked, below).
+  const [placement, setPlacement] = useState<Placement>("standalone");
+  const [menuId, setMenuId] = useState<string>(NEW_MENU); // heading id or NEW_MENU
+  const [newMenuName, setNewMenuName] = useState("");
 
   const modules = useQuery({
     queryKey: ["org-modules", activeSlug],
     queryFn: () => api.orgModules(activeSlug),
     enabled: !!activeSlug && open,
   });
+  // Existing navbar menus + instances drive the smart placement default.
+  const headings = useQuery({
+    queryKey: ["nav-headings", activeSlug],
+    queryFn: () => api.listNavHeadings(activeSlug),
+    enabled: !!activeSlug && open,
+  });
+  const instances = useQuery({
+    queryKey: ["instances", activeSlug],
+    queryFn: () => api.listInstances(activeSlug),
+    enabled: !!activeSlug && open,
+  });
+
+  // Pick a module → step forward AND resolve the navbar-placement default.
+  // The rule that makes "add many categories" seamless WITHOUT changing the
+  // top-level behaviour for the first one: if a navbar menu already holds an
+  // instance of this same module ("sibling heading"), default the new one INTO
+  // that menu. So the 2nd…Nth Inventory category auto-joins the "Inventory"
+  // menu the 1st one created — no re-choosing — while a lone first instance (or
+  // a Machines workspace that wants 3D Printers / Laser Cutters top-level) stays
+  // standalone by default.
+  function pickModule(name: string, moduleDisplay: string) {
+    setPickedModule(name);
+    const named = (instances.data?.items ?? []).filter(
+      (i) => i.module_name === name && !i.is_default,
+    );
+    const siblingHeading = (headings.data?.items ?? []).find((h) =>
+      h.members.some(
+        (m) =>
+          m.target_kind === "instance" &&
+          named.some((i) => i.instance_name === m.target_id),
+      ),
+    );
+    if (siblingHeading) {
+      setPlacement("menu");
+      setMenuId(siblingHeading.id);
+    } else {
+      setPlacement("standalone");
+      setMenuId(NEW_MENU);
+    }
+    setNewMenuName(moduleDisplay); // sensible prefill: a menu named after the kind
+    setStep("instance-name");
+  }
   // Only multi-instance modules show in the picker — read from the manifest's
   // `instanceability` field (now on the /orgs/:slug/modules response), so a new
   // multi-instance module appears automatically and the funnel can't drift from
@@ -46,19 +102,39 @@ export function NewThingFunnelModal({
   );
 
   const create = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       if (!pickedModule) throw new Error("module not picked");
       const slug = slugify(displayName);
-      return api.createInstance(activeSlug, {
+      const inst = await api.createInstance(activeSlug, {
         module_name: pickedModule,
         instance_name: slug,
         display_name: displayName.trim(),
       });
+      // Fold it into a navbar menu (heading) when asked — creating the menu
+      // first if it's new. This is the seam that makes "add categories → see
+      // them in one dropdown" a single flow instead of a trip to Configuration.
+      if (placement === "menu") {
+        let headingId = menuId;
+        if (menuId === NEW_MENU) {
+          const name = newMenuName.trim() || (pickedModule ?? "Menu");
+          headingId = (await api.createNavHeading(activeSlug, { name })).id;
+        }
+        await api.addNavHeadingMember(activeSlug, headingId, {
+          target_kind: "instance",
+          target_id: slug,
+        });
+      }
+      return inst;
     },
     onSuccess: (inst) => {
-      toast.success(`Created '${inst.display_name}'.`);
+      toast.success(
+        placement === "menu"
+          ? `Created '${inst.display_name}' in the navbar menu.`
+          : `Created '${inst.display_name}'.`,
+      );
       void qc.invalidateQueries({ queryKey: ["instances", activeSlug] });
       void qc.invalidateQueries({ queryKey: ["entity-kind-overrides", activeSlug] });
+      void qc.invalidateQueries({ queryKey: ["nav-headings", activeSlug] });
       reset();
       onClose();
     },
@@ -71,6 +147,9 @@ export function NewThingFunnelModal({
     setStep("choose-shape");
     setPickedModule(null);
     setDisplayName("");
+    setPlacement("standalone");
+    setMenuId(NEW_MENU);
+    setNewMenuName("");
   }
 
   function submit(e: FormEvent) {
@@ -144,10 +223,7 @@ export function NewThingFunnelModal({
             <button
               key={m.name}
               type="button"
-              onClick={() => {
-                setPickedModule(m.name);
-                setStep("instance-name");
-              }}
+              onClick={() => pickModule(m.name, m.displayName ?? m.name)}
               className="w-full text-left rounded border border-line dark:border-slate-700 p-3 hover:border-accent dark:hover:border-cobble-700 transition"
             >
               <div className="text-sm font-medium text-content dark:text-mortar-100">
@@ -193,6 +269,68 @@ export function NewThingFunnelModal({
               </div>
             )}
           </label>
+
+          {/* Navbar placement — the seamless "group categories into one menu" seam. */}
+          <fieldset className="space-y-2 rounded-lg border border-line dark:border-slate-700 p-3">
+            <legend className="px-1 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
+              In the navbar
+            </legend>
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="radio"
+                className="mt-1 accent-cobble-600"
+                checked={placement === "standalone"}
+                onChange={() => setPlacement("standalone")}
+              />
+              <span className="text-sm text-content dark:text-mortar-200">
+                Its own menu item
+                <span className="block text-xs text-muted dark:text-slate-400">
+                  A top-level entry of its own.
+                </span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="radio"
+                className="mt-1 accent-cobble-600"
+                checked={placement === "menu"}
+                onChange={() => setPlacement("menu")}
+              />
+              <span className="flex-1 text-sm text-content dark:text-mortar-200">
+                Inside a menu
+                <span className="block text-xs text-muted dark:text-slate-400">
+                  Grouped under a navbar dropdown — tidy when you have several of
+                  the same kind.
+                </span>
+              </span>
+            </label>
+            {placement === "menu" && (
+              <div className="ml-6 space-y-2">
+                <select
+                  value={menuId}
+                  onChange={(e) => setMenuId(e.target.value)}
+                  className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+                >
+                  {(headings.data?.items ?? []).map((h) => (
+                    <option key={h.id} value={h.id}>
+                      {h.name}
+                    </option>
+                  ))}
+                  <option value={NEW_MENU}>+ New menu…</option>
+                </select>
+                {menuId === NEW_MENU && (
+                  <input
+                    type="text"
+                    value={newMenuName}
+                    onChange={(e) => setNewMenuName(e.target.value)}
+                    placeholder="Menu name — e.g. Inventory"
+                    className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+                  />
+                )}
+              </div>
+            )}
+          </fieldset>
+
           <div className="flex justify-end gap-2 pt-2">
             <button
               type="button"
@@ -203,7 +341,11 @@ export function NewThingFunnelModal({
             </button>
             <button
               type="submit"
-              disabled={!displayName.trim() || create.isPending}
+              disabled={
+                !displayName.trim() ||
+                create.isPending ||
+                (placement === "menu" && menuId === NEW_MENU && !newMenuName.trim())
+              }
               className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white"
             >
               {create.isPending ? "Creating…" : "Create"}

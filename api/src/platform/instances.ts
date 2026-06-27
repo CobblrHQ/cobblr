@@ -10,6 +10,7 @@ import { meta } from "../db/meta.js";
 import { getEntry } from "../modules/registry.js";
 import { getTenantDb } from "../db/tenant.js";
 import { deleteOverride } from "./entity-kind-overrides.js";
+import { removeNavMember } from "./nav-headings.js";
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/;
 
@@ -187,6 +188,10 @@ export async function tearDownInstance(orgId: string, instanceName: string): Pro
   }
   await meta.deleteFrom("workspace_module_instances").where("id", "=", inst.id).execute();
   await deleteOverride(orgId, "instance", `${inst.module_name}:${instanceName}`);
+  // Drop any navbar-menu (heading) membership for this instance. Without this a
+  // deleted category leaves a dangling member row that would silently RESURRECT
+  // the category into the menu if a same-named instance is later created.
+  await removeNavMember(orgId, "instance", instanceName);
 }
 
 /** Build the display name from a slug, used when the user doesn't

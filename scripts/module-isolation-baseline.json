@@ -12,24 +12,6 @@
     "reason": "FALSE POSITIVE (name collision, not coupling): `labels` here is the image-classify call's classification-LABEL list (input.labels / the {\"labels\":[…]} JSON reply schema in the AI prompt), not the `labels` module. The literal-match lint can't disambiguate a prompt/JSON key from a module name."
   },
   {
-    "rule": "D-module-names-module",
-    "file": "modules/core-authoring/src/services/templates.ts",
-    "token": "assets",
-    "reason": "INTENTIONAL (declaration, not coupling): an authoring template DECLARES the modules it provisions (`requires: [...]`) — the same legitimate module-naming the lint already exempts for module.ts manifests. Declarative data, not code reaching into another module."
-  },
-  {
-    "rule": "D-module-names-module",
-    "file": "modules/core-authoring/src/services/templates.ts",
-    "token": "inventory",
-    "reason": "INTENTIONAL (declaration, not coupling): an authoring template DECLARES the modules it provisions (`requires: [...]`) — the same legitimate module-naming the lint already exempts for module.ts manifests. Declarative data, not code reaching into another module."
-  },
-  {
-    "rule": "D-module-names-module",
-    "file": "modules/core-authoring/src/services/templates.ts",
-    "token": "labels",
-    "reason": "INTENTIONAL (declaration, not coupling): an authoring template DECLARES the modules it provisions (`requires: [...]`) — the same legitimate module-naming the lint already exempts for module.ts manifests. Declarative data, not code reaching into another module."
-  },
-  {
     "rule": "C-kernel-names-module",
     "file": "api/src/modules/enable.ts",
     "token": "core-files",
