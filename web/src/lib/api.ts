@@ -573,6 +573,32 @@ export const api = {
     }>("POST", "/auth/magic/request", body),
   magicConsume: (body: { token: string }) =>
     request<AuthResponse>("POST", "/auth/magic/consume", body),
+  // QR pair-login (desktop mints a code → phone scans + claims → signed in to
+  // the same workspace). See api/src/routes/auth.ts "QR pair-login".
+  pairStart: (body: { org_slug: string }) =>
+    request<{
+      code: string;
+      expires_at: string;
+      /** The URL the QR encodes (= claim_options[0]). */
+      claim_url: string;
+      /** Candidate claim URLs (request origin + optional PUBLIC_BASE_URL). */
+      claim_options: { label: string; url: string }[];
+    }>("POST", "/auth/pair/start", body),
+  pairStatus: (code: string) =>
+    request<{ state: "pending" | "claimed" | "expired" }>(
+      "POST",
+      `/auth/pair/status`,
+      { code },
+    ),
+  pairClaim: (code: string) =>
+    // Unauthenticated — the phone has no session yet. Returns the normal auth
+    // response PLUS the workspace slug to make active (null if membership was
+    // revoked between mint and claim → client falls back to the default).
+    request<AuthResponse & { target_org_slug: string | null }>(
+      "POST",
+      "/auth/pair/claim",
+      { code },
+    ),
   // Password reset (forgot → email link → set new password, auto-login).
   passwordForgot: (body: { email: string }) =>
     request<{

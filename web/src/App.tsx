@@ -26,6 +26,7 @@ import { PairsWellWith } from "./components/PairsWellWith";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { ActiveOrgProvider, useActiveOrg, pickDefaultOrg, urlHandleFor } from "./auth/ActiveOrgContext";
 import { AuthPage, MagicConsumePage } from "./pages/AuthPage";
+import { PairPage } from "./pages/PairPage";
 import { StartAppPage } from "./pages/StartAppPage";
 import { FeedbackWidget } from "./components/FeedbackWidget";
 import { Dashboard } from "./pages/Dashboard";
@@ -217,6 +218,10 @@ function PublicRoutes() {
       {/* Emailed magic-link landing: consumes ?token= and signs in. Without it
           the link falls to the catch-all and nothing consumes the token. */}
       <Route path="/auth/magic" element={<MagicConsumePage />} />
+      {/* /pair?code=… — phone-side QR pair-login landing. Claims the code the
+          desktop minted and signs the phone in to that workspace. Reached
+          unauthenticated (the code is the secret). */}
+      <Route path="/pair" element={<PairPage />} />
       {/* /p/:token is the un-auth'd public surface render. Reachable
           signed-in or signed-out — the token is the secret. */}
       <Route path="/p/:token" element={<PublicSurfacePage />} />

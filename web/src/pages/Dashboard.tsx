@@ -359,15 +359,14 @@ function GettingStartedPanel({
   // gains its first entity.
   if (focused) return null; // focused mode: no platform onboarding chrome
   if (enabled.size > 0 && probe.data === undefined) return null; // still probing
-  if ((probe.data ?? 0) > 0) return null; // has content already
 
-  // The default empty-state is the onboarding start: "What do you want to do?"
-  // — one question, three converging lanes (ready-made recipes · building
-  // blocks · build-it-yourself) driven by a single distilling search. The plain
-  // action-card fallback below is reached only for a workspace dismissed before
-  // this.
+  // The guided "What do you want to do?" panel PERSISTS — it no longer vanishes
+  // the moment you add your first thing, because the guided add (and the mini
+  // scan inbox) are useful for adding MORE, not just the first. Once the
+  // workspace has content it renders collapsed (a slim bar that expands), so it
+  // stays one click away without dominating an established dashboard.
   if (!skippedWizard) {
-    return <WhatToDoPanel slug={slug} />;
+    return <WhatToDoPanel slug={slug} startCollapsed={(probe.data ?? 0) > 0} />;
   }
 
   // Determine the most relevant "first thing to do" based on which

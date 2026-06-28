@@ -26,7 +26,7 @@ function dummyPasswordHash(): Promise<string> {
   return _dummyHash;
 }
 import { signSession } from "../auth/jwt.js";
-import { isPlatformAdmin } from "../auth/middleware.js";
+import { isPlatformAdmin, requireAuth } from "../auth/middleware.js";
 import { publicSignupEnabled, managedAppSignupEnabled, selfServeInvitesEnabled } from "../auth/signup-gate.js";
 import { dispatch } from "../platform/notifications.js";
 import { isUndeliverableTestAddress } from "../platform/email-send.js";
@@ -1066,6 +1066,253 @@ authRouter.post("/discord/verify-dm", async (req, res, next) => {
       .where("verify_token", "=", parsed.data.token)
       .execute();
     res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ═══════════════════════ QR pair-login (desktop → phone) ═══════════════════════
+//
+// Ported from companion app, adapted for Cobblr's multi-tenant model. Pattern
+// matches WhatsApp Web / Discord device-pairing:
+//
+//   1. A logged-in DESKTOP (no camera) calls POST /auth/pair/start { org_slug }.
+//      Server mints a 128-bit single-use code with a ~90s expiry, stores it
+//      HASHED, and returns it. The desktop renders it as a QR encoding
+//      /pair?code=<code>.
+//   2. The PHONE scans → opens /pair?code=… → POSTs /auth/pair/claim { code }.
+//      Server atomically consumes the code and returns a normal session JWT for
+//      the SAME user, plus the target workspace slug. The phone stores the
+//      token, sets that workspace active, and lands in its scan inbox.
+//   3. The desktop polls GET /auth/pair/status?code=… to auto-close its modal.
+//
+// Security posture (mirrors the magic-link / reset / verify flows):
+//   - Single-use: claim sets claimed_at in one atomic UPDATE…WHERE…RETURNING;
+//     a second claim returns 410.
+//   - Short TTL (~90s) — an unclaimed row is inert after expiry.
+//   - High entropy: 128-bit randomBytes, URL-safe; stored sha256-HASHED, so the
+//     plaintext only ever transits start-response → QR → claim.
+//   - Rate-limited on BOTH start and claim (in-memory, per-IP) — defense in
+//     depth on top of the already-infeasible brute force.
+//   - Tenant-scoped: org_slug pins the workspace, and membership is verified at
+//     start (the minter) AND claim (a membership revoked in between drops the
+//     phone to its default workspace rather than a workspace it can't see).
+
+const PAIR_CODE_TTL_MS = 90 * 1000;
+
+function hashPairCode(plain: string): string {
+  return createHash("sha256").update(plain).digest("hex");
+}
+
+// Minimal in-memory sliding-window limiter — this api carries no
+// express-rate-limit dependency. Per-instance + best-effort: brute-forcing a
+// 128-bit, 90-second, single-use code is already infeasible; this just caps
+// accidental floods + abusive bursts. Keyed by client IP.
+function makePairLimiter(windowMs: number, max: number): (key: string) => boolean {
+  const hits = new Map<string, number[]>();
+  return (key: string): boolean => {
+    const now = Date.now();
+    const recent = (hits.get(key) ?? []).filter((t) => now - t < windowMs);
+    if (recent.length >= max) {
+      hits.set(key, recent);
+      return false;
+    }
+    recent.push(now);
+    hits.set(key, recent);
+    // Opportunistic cleanup so the map can't grow without bound.
+    if (hits.size > 5000) {
+      for (const [k, v] of hits) {
+        if (v.every((t) => now - t >= windowMs)) hits.delete(k);
+      }
+    }
+    return true;
+  };
+}
+const pairStartLimiter = makePairLimiter(60_000, 20); // 20 mints / min / IP
+const pairClaimLimiter = makePairLimiter(60_000, 30); // 30 claims / min / IP
+
+const PairStartBody = z.object({ org_slug: z.string().min(1).max(120) });
+
+authRouter.post("/pair/start", requireAuth, async (req, res, next) => {
+  try {
+    const userId = req.session!.id;
+    if (!pairStartLimiter(req.ip ?? "unknown")) {
+      res.status(429).json({ error: { code: "rate_limited", message: "Too many pair codes — wait a moment." } });
+      return;
+    }
+    // Reaper (best-effort, fire-and-forget): keep the table bounded by dropping
+    // rows well past expiry. Cheap, runs only on a mint, never blocks the claim.
+    void meta
+      .deleteFrom("auth_pair_codes")
+      .where("expires_at", "<", new Date(Date.now() - 3_600_000))
+      .execute()
+      .catch((err) => console.error("[pair/start] reaper failed:", err));
+    const parsed = PairStartBody.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "org_slug is required" } });
+      return;
+    }
+    const orgSlug = parsed.data.org_slug;
+    // The caller can only pair a phone into a workspace they're a member of.
+    const membership = await meta
+      .selectFrom("org_memberships as m")
+      .innerJoin("orgs as o", "o.id", "m.org_id")
+      .select("o.slug")
+      .where("m.user_id", "=", userId)
+      .where("o.slug", "=", orgSlug)
+      .executeTakeFirst();
+    if (!membership) {
+      res.status(403).json({ error: { code: "not_a_member", message: "You're not a member of that workspace." } });
+      return;
+    }
+    // 128-bit URL-safe code: ample entropy for a 90s single-use code, compact
+    // enough to keep the QR low-density. Stored hashed — plaintext only goes
+    // out in this response (→ QR → phone).
+    const code = randomBytes(16).toString("base64url");
+    const expiresAt = new Date(Date.now() + PAIR_CODE_TTL_MS);
+    await meta
+      .insertInto("auth_pair_codes")
+      .values({
+        user_id: userId,
+        org_slug: orgSlug,
+        code_hash: hashPairCode(code),
+        expires_at: expiresAt,
+        request_ip: (req.ip ?? null) as string | null,
+        request_ua: (req.get("user-agent") ?? null) as string | null,
+      })
+      .execute();
+    // The phone visits /pair?code=… . Offer a claim URL for every base this
+    // server is reachable at — the request origin (on Cobblr's Cloudflare-
+    // tunnel'd prod that IS the phone-reachable public URL, e.g.
+    // https://cobblr.me) plus an optional PUBLIC_BASE_URL for self-hosters who
+    // expose a separate LAN/Tailscale address. localhost bases are dropped when
+    // a real one exists (a phone can't resolve the desktop's localhost).
+    const proto = (req.headers["x-forwarded-proto"] as string | undefined) ?? req.protocol;
+    const host = (req.headers["x-forwarded-host"] as string | undefined) ?? req.get("host");
+    const reqBase = host ? `${proto}://${host}`.replace(/\/+$/, "") : null;
+    const pubBase = process.env.PUBLIC_BASE_URL ? process.env.PUBLIC_BASE_URL.replace(/\/+$/, "") : null;
+    const bases: string[] = [];
+    for (const b of [reqBase, pubBase]) {
+      if (b && !bases.some((x) => x.toLowerCase() === b.toLowerCase())) bases.push(b);
+    }
+    const isLocal = (b: string) => /\/\/(localhost|127\.0\.0\.1)/i.test(b);
+    const usable = bases.some((b) => !isLocal(b)) ? bases.filter((b) => !isLocal(b)) : bases;
+    const claimOptions = usable.map((b) => {
+      let label = b;
+      try {
+        label = new URL(b).host;
+      } catch {
+        /* non-URL base — keep verbatim */
+      }
+      return { label, url: `${b}/pair?code=${code}` };
+    });
+    if (claimOptions.length === 0) claimOptions.push({ label: "default", url: `/pair?code=${code}` });
+    res.json({
+      code,
+      expires_at: expiresAt.toISOString(),
+      claim_url: claimOptions[0]!.url,
+      claim_options: claimOptions,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST (not GET) so the plaintext code travels in the body, never the query
+// string — keeps a still-live code out of access logs.
+authRouter.post("/pair/status", requireAuth, async (req, res, next) => {
+  try {
+    const code = typeof (req.body as { code?: unknown } | undefined)?.code === "string" ? (req.body as { code: string }).code : "";
+    if (!code) {
+      res.status(400).json({ error: { code: "no_code", message: "code is required" } });
+      return;
+    }
+    const row = await meta
+      .selectFrom("auth_pair_codes")
+      .select(["user_id", "claimed_at", "expires_at"])
+      .where("code_hash", "=", hashPairCode(code))
+      .executeTakeFirst();
+    // Only the minter may poll — don't leak another user's code lifecycle.
+    if (!row || row.user_id !== req.session!.id) {
+      res.status(404).json({ error: { code: "not_found", message: "Pair code not found" } });
+      return;
+    }
+    const state = row.claimed_at ? "claimed" : row.expires_at <= new Date() ? "expired" : "pending";
+    res.json({ state });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const PairClaimBody = z.object({ code: z.string().min(1).max(200) });
+
+// Unauthenticated — the phone has no session yet; the code IS the credential.
+authRouter.post("/pair/claim", async (req, res, next) => {
+  try {
+    if (!pairClaimLimiter(req.ip ?? "unknown")) {
+      res.status(429).json({ error: { code: "rate_limited", message: "Too many attempts — wait a moment." } });
+      return;
+    }
+    const parsed = PairClaimBody.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "code is required" } });
+      return;
+    }
+    const now = new Date();
+    // Atomic single-use consume: set claimed_at ONLY if still pending +
+    // unexpired. RETURNING yields the row exactly when WE won the claim; an
+    // empty result means already-claimed, expired, or never existed.
+    const claimed = await meta
+      .updateTable("auth_pair_codes")
+      .set({ claimed_at: now })
+      .where("code_hash", "=", hashPairCode(parsed.data.code))
+      .where("claimed_at", "is", null)
+      .where("expires_at", ">", now)
+      .returning(["user_id", "org_slug"])
+      .executeTakeFirst();
+    if (!claimed) {
+      res.status(410).json({ error: { code: "pair_code_unusable", message: "Pair code expired or already claimed" } });
+      return;
+    }
+    // The account must still be active.
+    const user = await meta
+      .selectFrom("users")
+      .select(["id", "active"])
+      .where("id", "=", claimed.user_id)
+      .executeTakeFirst();
+    if (!user || !user.active) {
+      res.status(410).json({ error: { code: "pair_code_unusable", message: "Account unavailable" } });
+      return;
+    }
+    // ...and the user must STILL be a member of the pinned workspace (it could
+    // have been revoked between start and claim). If it's gone, sign them in
+    // anyway and let the client fall back to their default workspace.
+    const stillMember = await meta
+      .selectFrom("org_memberships as m")
+      .innerJoin("orgs as o", "o.id", "m.org_id")
+      .select("o.slug")
+      .where("m.user_id", "=", claimed.user_id)
+      .where("o.slug", "=", claimed.org_slug)
+      .executeTakeFirst();
+    const targetOrgSlug = stillMember ? claimed.org_slug : null;
+    const out = await buildAuthResponse(claimed.user_id);
+    // Audit the login (best-effort — never block the claim on logging).
+    void activity
+      .log({
+        orgId: (
+          await meta
+            .selectFrom("org_memberships")
+            .select("org_id")
+            .where("user_id", "=", claimed.user_id)
+            .executeTakeFirstOrThrow()
+        ).org_id,
+        userId: claimed.user_id,
+        action: "login",
+        ref: { module: null, entityType: "user", entityId: claimed.user_id },
+        diff: { method: "qr_pair" },
+      })
+      .catch((err) => console.error("[pair/claim] activity log failed:", err));
+    res.json({ ...out, target_org_slug: targetOrgSlug });
   } catch (err) {
     next(err);
   }

@@ -2,6 +2,12 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-06-28
+
+### Features
+- Scan with your phone from a computer. On a desktop (no camera), the Scan card now has a Pair phone button: it shows a QR; you scan it with your phone's camera, and your phone is signed in to the same workspace: its camera scans then flow straight into the inbox your computer is already showing. The pair code is single-use and expires in ~90 seconds; nothing to type, no separate login on the phone.
+- The new-workspace homepage is now a guided "What do you want to do?" funnel that converges modules and ready-made bundles into one place. Pick a kind of thing to track, narrow to a ready-made setup, and the third column walks you the rest of the way, for kinds that hold several collections (Assets, Inventory, Machines, …) it helps you create a category ("Cars", "Printer Parts") and drop you in to add items; for a ready-made setup it installs it and takes you straight in. Examples now match what you picked (a Filament setup suggests "a spool of PLA", not "a pulley"), specialised machine setups (3D Printers, CNC, Lasers) show under both Machines and Digital Fabrication, and the freeform "just add it, we'll figure out the fields" path is always there, including Pair phone on a desktop, so you can scan straight into the workspace with your phone's camera.
+
 ## 2026-06-27
 
 ### Features

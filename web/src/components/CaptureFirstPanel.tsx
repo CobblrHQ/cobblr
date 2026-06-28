@@ -16,6 +16,7 @@ import { api } from "../lib/api";
 import { useBundleCatalog, type CatalogBundle } from "../lib/useBundleCatalog";
 import { fuzzyMatch } from "../lib/fuzzy";
 import { BundleDetailModal } from "./BundleDetailModal";
+import { PairPhoneButton } from "./PairPhoneButton";
 
 /** Name a bare photo capture that couldn't be auto-identified (no vision) —
  *  naming it triggers a server re-match, so the heuristic routes it. */
@@ -213,6 +214,9 @@ export function CaptureFirstPanel({ slug }: { slug: string }) {
         >
           <Camera size={16} /> Scan
         </Link>
+        {/* Desktop has no camera worth using — pair a phone to scan into this
+            same inbox. Renders only on non-touch devices (hidden on phones). */}
+        <PairPhoneButton />
       </div>
 
       {/* While typing: offer to just-add the freeform text (the capture path). */}

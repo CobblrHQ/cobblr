@@ -38,6 +38,7 @@ import {
 import { Modal, useImageSrc, useToast, usePageTitle } from "@cobblr/platform-web";
 import { LocationPicker } from "../components/LocationPicker";
 import { ImageSearchPicker } from "../components/ImageSearchPicker";
+import { PairPhoneButton } from "../components/PairPhoneButton";
 import { decideLocationScan, filingLabel } from "../lib/scanFiling";
 import {
   type AiStatus,
@@ -1351,6 +1352,9 @@ export function ScanPage() {
         >
           <Camera size={16} />
         </Link>
+        {/* Desktop (no camera) → pair a phone to scan into this same inbox.
+            Renders null on touch devices, where the camera above is primary. */}
+        <PairPhoneButton className="inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-700 text-sm text-content hover:bg-subtle dark:hover:bg-slate-800/70 px-2.5 py-1.5 transition shrink-0" />
         </div>
       </div>
 

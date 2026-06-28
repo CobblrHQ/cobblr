@@ -881,6 +881,7 @@ export interface MetaDB {
   auth_magic_tokens: AuthMagicTokensTable;
   auth_password_reset_tokens: AuthPasswordResetTokensTable;
   auth_email_verify_tokens: AuthEmailVerifyTokensTable;
+  auth_pair_codes: AuthPairCodesTable;
   workspace_module_instances: WorkspaceModuleInstancesTable;
   entity_kind_overrides: EntityKindOverridesTable;
   core_labels_qr_tokens: CoreLabelsQrTokensTable;
@@ -974,6 +975,23 @@ export interface AuthEmailVerifyTokensTable {
   token_hash: string;
   expires_at: Generated<Date>;
   consumed_at: Date | null;
+  created_at: Generated<Date>;
+  request_ip: string | null;
+  request_ua: string | null;
+}
+
+/** QR pair-login codes — hashed (sha256), single-use, ~90s default. A logged-in
+ *  DESKTOP mints one (start), renders it as a QR; a PHONE scans + claims it to
+ *  sign in as the SAME user. `org_slug` pins the workspace the phone lands in
+ *  (membership verified at start AND claim). See
+ *  migrations/platform/20260627-070-auth-pair-codes.sql. */
+export interface AuthPairCodesTable {
+  id: Generated<string>;
+  user_id: string;
+  org_slug: string;
+  code_hash: string;
+  expires_at: Generated<Date>;
+  claimed_at: Date | null;
   created_at: Generated<Date>;
   request_ip: string | null;
   request_ua: string | null;

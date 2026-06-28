@@ -43,6 +43,12 @@ export interface FeaturedBundle {
   /** Post-install guided next steps. When omitted, a generic "go to the
    *  modules this set up" list is derived from the manifest's requires. */
   next_steps?: BundleNextStep[];
+  /** Onboarding example for the "add your first item" prompt when this recipe is
+   *  picked on the homepage funnel — e.g. "a spool of PLA". When omitted it's
+   *  derived as "your first <item_noun>" from the bundle's first provided
+   *  instance. Set this when the noun alone is weak (a multi-instance bundle
+   *  whose first noun is a sub-type). See docs/design-decisions/what-to-do-funnel.md. */
+  item_example?: string;
 }
 
 /** Merge a manifest's BASE arrays with its selected features into one
@@ -824,6 +830,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     glyph: "🖨️🧵",
     blurb:
       "Two tables that work together. A filament TYPE (Royal Blue PLA) defines everything about the filament once — material, colour, diameter, the nozzle/bed temps, whether it needs drying. Then your SPOOLS just pick a type and add what's unique to the physical spool: its size, the maker's batch code, and how much is left. Each type rolls up how many spools + total kg you have.",
+    item_example: "a spool of Royal Blue PLA", // first instance noun is "type"; a spool reads better
     // A type first (defines the filament), then spools of it.
     next_steps: [
       { label: "Add a filament type", module: "inventory", path: "/instances/filament-types", hint: "Define the filament once — brand, material, colour, diameter, temps." },
