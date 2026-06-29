@@ -35,6 +35,9 @@ const JOB_COLS = [
   "file_id",
   "linked_machine_id",
   "linked_task_id",
+  "linked_build_id",
+  "build_qty",
+  "build_consumed_at",
   "created_at",
   "updated_at",
   "last_polled_at",
@@ -53,6 +56,9 @@ const JobCreate = z.object({
   file_id: z.string().uuid().nullable().optional(),
   linked_machine_id: z.string().max(200).nullable().optional(),
   linked_task_id: z.string().max(200).nullable().optional(),
+  /** A build (BoM) this job produces — consumed from inventory on send. */
+  linked_build_id: z.string().uuid().nullable().optional(),
+  build_qty: z.number().int().min(1).max(10000).optional(),
   priority: z.number().int().min(0).max(100).optional(),
   max_attempts: z.number().int().min(1).max(10).optional(),
 });
@@ -98,6 +104,7 @@ jobsRouter.get(
         material_part_id: null, material_grams: null, remote_file_id: null, remote_job_id: null,
         status: "printing", priority: 0, attempts: 0, max_attempts: 1, progress: null,
         error: null, file_id: null, linked_machine_id: null, linked_task_id: null,
+        linked_build_id: null, build_qty: 1, build_consumed_at: null,
         created_at: o.started_at ?? o.created_at, updated_at: o.started_at ?? o.created_at,
         last_polled_at: null, external: true,
       })) as typeof base;
@@ -133,6 +140,8 @@ jobsRouter.post(
         file_id: parsed.data.file_id ?? null,
         linked_machine_id: parsed.data.linked_machine_id ?? null,
         linked_task_id: parsed.data.linked_task_id ?? null,
+        linked_build_id: parsed.data.linked_build_id ?? null,
+        build_qty: parsed.data.build_qty ?? 1,
         priority: parsed.data.priority ?? 0,
         max_attempts: parsed.data.max_attempts ?? 1,
       })

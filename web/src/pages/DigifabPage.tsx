@@ -986,6 +986,8 @@ function NewJobModal({
   const [fileId, setFileId] = useState("");
   const [materialPartId, setMaterialPartId] = useState("");
   const [materialGrams, setMaterialGrams] = useState("");
+  const [buildId, setBuildId] = useState("");
+  const [buildQty, setBuildQty] = useState("1");
   const [priority, setPriority] = useState(0);
   const [maxAttempts, setMaxAttempts] = useState(1);
 
@@ -999,6 +1001,14 @@ function NewJobModal({
     queryKey: ["inventory-parts-flat", activeSlug],
     queryFn: () => api.listInventoryParts(activeSlug),
     enabled: !!activeSlug,
+  });
+  // Builds (bills-of-materials) this job can produce — drawn from inventory on
+  // send. 404s + empty when the builds module isn't enabled; the field hides.
+  const builds = useQuery({
+    queryKey: ["digifab-builds-flat", activeSlug],
+    queryFn: () => api.listDigifabBuilds(activeSlug),
+    enabled: !!activeSlug,
+    retry: false,
   });
 
   const machines = useQuery({
@@ -1029,6 +1039,8 @@ function NewJobModal({
         target_pool: routeBy === "pool" ? poolId || null : null,
         material_part_id: materialPartId || null,
         material_grams: materialPartId && materialGrams ? Number(materialGrams) : null,
+        linked_build_id: buildId || null,
+        build_qty: buildId ? Math.max(1, Math.floor(Number(buildQty)) || 1) : undefined,
         file_id: fileId || null,
         linked_machine_id: routeBy === "machine" ? machineId || null : null,
         priority,
@@ -1048,6 +1060,7 @@ function NewJobModal({
   const fileList = files.data?.items ?? [];
   const poolList = pools.data?.items ?? [];
   const partList = parts.data?.items ?? [];
+  const buildList = builds.data?.items ?? [];
   const routeValid =
     routeBy === "file" ||
     (routeBy === "machine" && !!machineId) ||
@@ -1123,6 +1136,32 @@ function NewJobModal({
           </div>
           <span className="text-[11px] text-faint">When the print completes, this many grams is deducted from that spool's stock.</span>
         </label>
+        {buildList.length > 0 && (
+          <label className="block">
+            <span className={lbl}>Produces a build (optional)</span>
+            <div className="flex gap-2">
+              <Combobox
+                value={buildId}
+                onChange={setBuildId}
+                options={buildList.map((b) => ({ value: b.id, label: b.name }))}
+                placeholder="— don't make a build —"
+                allowClear
+                className="flex-1"
+              />
+              <input
+                type="number"
+                min="1"
+                step="1"
+                value={buildQty}
+                onChange={(e) => setBuildQty(e.target.value)}
+                placeholder="qty"
+                disabled={!buildId}
+                className={field + " w-28 disabled:opacity-50"}
+              />
+            </div>
+            <span className="text-[11px] text-faint">When this job is sent to the machine, the build's components are drawn from inventory and the finished part is added (× qty).</span>
+          </label>
+        )}
         <div className="grid grid-cols-2 gap-2">
           <label className="block">
             <span className={lbl}>Priority</span>

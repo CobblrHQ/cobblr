@@ -36,6 +36,7 @@ import { searchImages, rankImageOptions, imageQuery } from "../services/ddg-imag
 import { assembleScanMenu, assembleMergedMenu, runMatchmaker } from "../services/matchmaker.js";
 import { parseReceipt } from "../services/receipt.js";
 import { reportBarcodeCorrection } from "../services/barcode-corrections.js";
+import { extractLocation, type LocationLite } from "../services/note-location.js";
 
 export const inboxRouter = Router({ mergeParams: true });
 
@@ -331,6 +332,9 @@ const NoteBody = z.object({
   text: z.string().trim().min(1).max(2000),
   scan_batch_id: z.string().uuid().optional(),
   scan_area: z.string().max(200).optional(),
+  /** Explicit pre-filed location (the picker, or an integration that already
+   *  resolved one). When set it wins over text extraction. */
+  target_location_id: z.string().uuid().optional(),
 });
 
 inboxRouter.post(
@@ -345,16 +349,47 @@ inboxRouter.post(
     const ctx = tenantContext(req);
     const session = sessionUser(req);
 
+    // Freeform capture often names the place too ("Logic analyzer in cabinet
+    // 002"). Split the location phrase off the item and resolve it against the
+    // workspace's locations, so the item lands pre-filed instead of the whole
+    // sentence becoming its name. Best-effort: any failure leaves the raw text
+    // as the name (the matchmaker still routes it).
+    let itemName = body.text;
+    let locationId: string | null = body.target_location_id ?? null;
+    let scanArea: string | null = body.scan_area ?? null;
+    if (!body.target_location_id) {
+      try {
+        const locs = await platform().entities.list(ctx.org.id, "core-locations:location", {
+          limit: 1000,
+        });
+        const lite: LocationLite[] = locs.items.map((l) => ({
+          id: String(l.id),
+          // name = the location's title role; short_name = its subtitle role.
+          name: l.title ?? String(l.fields.name ?? ""),
+          short_name: l.subtitle ?? (l.fields.short_name as string | null) ?? null,
+        }));
+        const ex = extractLocation(body.text, lite);
+        itemName = ex.itemText || body.text;
+        locationId = ex.locationId;
+        // Keep an explicit scan_area override; otherwise stamp the unresolved
+        // phrase so the location is still captured as a hint for confirm.
+        if (!scanArea && !ex.locationId && ex.locationPhrase) scanArea = ex.locationPhrase;
+      } catch (err) {
+        console.error("[core-scan] note location extraction failed:", (err as Error).message);
+      }
+    }
+
     const inserted = await db
       .insertInto("core_scan_inbox_items")
       .values({
         source_kind: "note",
-        // The raw text is both the provisional name AND the matchmaker's
-        // description — it's all we know until the model reads it.
-        suggested_name: body.text.slice(0, 300),
+        // The cleaned item phrase is the provisional name; the FULL raw text
+        // stays as the matchmaker's description so no extraction context is lost.
+        suggested_name: itemName.slice(0, 300),
         suggested_metadata: JSON.stringify({ description: body.text }) as never,
         scan_batch_id: body.scan_batch_id ?? null,
-        scan_area: body.scan_area ?? null,
+        scan_area: scanArea,
+        target_location_id: locationId,
         created_by_user_id: session.id,
       })
       .returningAll()

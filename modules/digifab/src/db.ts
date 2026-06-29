@@ -34,6 +34,12 @@ export interface DigifabJobsTable {
    *  seeded wire deducts `material_grams` from `material_part_id`'s stock. */
   material_part_id: string | null;
   material_grams: string | null;
+  /** A build (bill-of-materials) this job produces. On send, a seeded wire fires
+   *  builds:build-one to consume the build's components from inventory (and bump
+   *  its output part). build_consumed_at gates it to once per job (resend-safe). */
+  linked_build_id: string | null;
+  build_qty: Generated<number>;
+  build_consumed_at: Date | null;
   remote_file_id: string | null;
   remote_job_id: string | null;
   status: Generated<string>;

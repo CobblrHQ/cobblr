@@ -26,7 +26,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@cobblr/platform-web";
-import { Search, Camera, Sparkles, ArrowRight, Loader2, Boxes, Wand2, Plus, ChevronDown, ChevronUp, Package, X } from "lucide-react";
+import { Search, Camera, Sparkles, ArrowRight, Loader2, Boxes, Wand2, Plus, ChevronDown, ChevronUp, X } from "lucide-react";
 import { api } from "../lib/api";
 import { useBundleCatalog, type CatalogBundle } from "../lib/useBundleCatalog";
 import { fuzzyMatch } from "../lib/fuzzy";
@@ -265,6 +265,19 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
     mutationFn: (id: string) => api.discardScanItem(slug, id),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["capture-inbox", slug] }),
   });
+  // File a captured item into a tracker — a matched existing instance, a matched
+  // module's generic table, or (no body) the backend's generic default home.
+  const confirmMut = useMutation({
+    mutationFn: (v: { id: string; body: { target_module?: string; target_kind?: string; instance?: string } }) =>
+      api.confirmScanItem(slug, v.id, v.body),
+    onSuccess: (_r, v) => {
+      void qc.invalidateQueries();
+      toast.success("Filed it.");
+      if (v.body.instance) navigate(`/instances/${v.body.instance}`);
+      else if (v.body.target_module) navigate(`/${v.body.target_module}`);
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't file that"),
+  });
   // Col 3 for a multi-instance kind: create a new CATEGORY (a named instance) and
   // drop the user in to add items — the kind → category → item model.
   const createInstanceMut = useMutation({
@@ -366,32 +379,6 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
         </span>
         <ArrowRight size={15} className="text-faint group-hover:text-accent transition shrink-0" />
       </Link>
-
-      {/* Captured-things nudge: "these look like yarn — make a Yarn tracker (3)". */}
-      {suggestions.length > 0 && (
-        <div className="space-y-2">
-          {suggestions.map((s) => (
-            <button
-              key={s.bundle_external_id}
-              type="button"
-              disabled={materializeMut.isPending}
-              onClick={() => materializeMut.mutate(s.bundle_external_id)}
-              className="w-full flex items-center gap-3 rounded-lg border border-accent/40 bg-accent/5 dark:bg-cobble-900/20 px-4 py-3 hover:bg-accent/10 transition group text-left disabled:opacity-60"
-            >
-              <span className="w-9 h-9 rounded-full bg-accent/15 text-accent flex items-center justify-center shrink-0">
-                {materializeMut.isPending && materializeMut.variables === s.bundle_external_id ? <Loader2 size={18} className="animate-spin" /> : <Package size={18} />}
-              </span>
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium text-content dark:text-mortar-100">
-                  These look like {s.noun} — make a {s.bundle_name} tracker <span className="ml-1 text-faint">({s.count})</span>
-                </div>
-                <div className="text-xs text-faint dark:text-slate-400 truncate">{s.sample_names.join(" · ") || "File your captures into a ready-made table"}</div>
-              </div>
-              <ArrowRight size={16} className="text-accent group-hover:translate-x-0.5 transition shrink-0" />
-            </button>
-          ))}
-        </div>
-      )}
 
       {/* The three columns. Order: Building blocks · Ready-made · Add your first
           thing. The selection state lives IN the columns (highlights + col 3's
@@ -599,44 +586,63 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
               ? "Scan barcodes or snap photos with your camera — they file themselves."
               : "No camera here? Pair your phone — scan with it and the items land in this workspace."}
           </p>
+
+          {/* What you've added — each capture, its match, and a one-tap CTA to
+              give it a home. This is the funnel's payoff: col 3 fills in. */}
+          {items.length > 0 && (
+            <div className="mt-3 border-t border-line dark:border-slate-800 pt-3 space-y-1.5">
+              <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">what you've added ({items.length})</div>
+              <ul className="space-y-1.5">
+                {items.map((it) => {
+                  const c = it.suggested_candidates?.[0];
+                  const stale = Date.now() - new Date(it.created_at).getTime() > 45_000;
+                  const done = !!it.ai_suggested_at || stale;
+                  const needsName = done && !c && !it.suggested_name && !!it.ai_suggested_at;
+                  const name = c?.name || it.suggested_name || (needsName ? "Couldn’t identify it" : "Captured item");
+                  const removing = discardMut.isPending && discardMut.variables === it.id;
+                  const filing = confirmMut.isPending && confirmMut.variables?.id === it.id;
+                  const making = !!c?.bundle_external_id && materializeMut.isPending && materializeMut.variables === c.bundle_external_id;
+                  const ctaCls = "shrink-0 inline-flex items-center gap-1 rounded-md text-xs font-medium px-2.5 py-1 transition disabled:opacity-50";
+                  return (
+                    <li key={it.id} className="rounded-lg border border-line dark:border-slate-800 bg-surface dark:bg-slate-900 px-3 py-2">
+                      <div className="flex items-center gap-2">
+                        <span className="flex-1 min-w-0 truncate text-sm font-medium text-content dark:text-mortar-100">{name}</span>
+                        <button type="button" disabled={removing} onClick={() => discardMut.mutate(it.id)} title="Remove" className="shrink-0 rounded p-1 text-faint hover:text-content dark:hover:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 transition disabled:opacity-50">
+                          {removing ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />}
+                        </button>
+                      </div>
+                      {needsName ? (
+                        <NameIt slug={slug} itemId={it.id} />
+                      ) : (
+                        <div className="mt-1.5 flex items-center gap-2">
+                          <span className="flex-1 min-w-0 truncate text-xs text-faint dark:text-slate-400">
+                            {c ? <>looks like <span className="text-accent">{c.label}</span></>
+                              : done ? "no match yet — file it anywhere"
+                              : <span className="inline-flex items-center gap-1"><Loader2 size={11} className="animate-spin" /> finding a home…</span>}
+                          </span>
+                          {c?.bundle_external_id ? (
+                            <button type="button" disabled={making} onClick={() => materializeMut.mutate(c.bundle_external_id!)} className={ctaCls + " bg-cobble-600 text-white hover:bg-cobble-700"}>
+                              {making ? <Loader2 size={12} className="animate-spin" /> : <ArrowRight size={12} />} Create {c.label}
+                            </button>
+                          ) : c ? (
+                            <button type="button" disabled={filing} onClick={() => confirmMut.mutate({ id: it.id, body: { target_module: c.module, target_kind: c.kind, ...(c.instance ? { instance: c.instance } : {}) } })} className={ctaCls + " bg-cobble-600 text-white hover:bg-cobble-700"}>
+                              {filing ? <Loader2 size={12} className="animate-spin" /> : <ArrowRight size={12} />} Add to {c.label}
+                            </button>
+                          ) : done ? (
+                            <button type="button" disabled={filing} onClick={() => confirmMut.mutate({ id: it.id, body: {} })} className={ctaCls + " border border-cobble-300 dark:border-cobble-700 text-content dark:text-mortar-100 hover:border-cobble-400"}>
+                              {filing ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} Save it
+                            </button>
+                          ) : null}
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
         </div>
       </div>
-
-      {/* Mini scan inbox — what you've captured so far, with its matches. */}
-      {items.length > 0 && (
-        <div className="space-y-1.5">
-          <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">scan inbox ({items.length})</div>
-          <ul className="space-y-1">
-            {items.map((it) => {
-              const top = it.suggested_candidates?.[0];
-              const matched = !!top;
-              const stale = Date.now() - new Date(it.created_at).getTime() > 45_000;
-              const done = !!it.ai_suggested_at || stale;
-              const needsName = done && !matched && !it.suggested_name && !!it.ai_suggested_at;
-              const name = top?.name || it.suggested_name || (needsName ? "Photo — couldn’t identify it" : "Captured item");
-              const removing = discardMut.isPending && discardMut.variables === it.id;
-              return (
-                <li key={it.id} className="rounded-md border border-line dark:border-slate-800 bg-surface dark:bg-slate-900 px-3 py-2 text-sm">
-                  <div className="flex items-center gap-2">
-                    <span className="flex-1 min-w-0 truncate text-content dark:text-mortar-100">{name}</span>
-                    {matched ? (
-                      <span className="text-xs text-faint dark:text-slate-400 shrink-0">looks like <span className="text-accent">{top.label}</span></span>
-                    ) : !done ? (
-                      <span className="flex items-center gap-1 text-xs text-faint dark:text-slate-500 shrink-0"><Loader2 size={12} className="animate-spin" /> reading…</span>
-                    ) : needsName ? null : (
-                      <span className="text-xs text-faint dark:text-slate-500 shrink-0">captured</span>
-                    )}
-                    <button type="button" disabled={removing} onClick={() => discardMut.mutate(it.id)} title="Remove" className="shrink-0 rounded p-1 text-faint hover:text-content dark:hover:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 transition disabled:opacity-50">
-                      {removing ? <Loader2 size={13} className="animate-spin" /> : <X size={13} />}
-                    </button>
-                  </div>
-                  {needsName && <NameIt slug={slug} itemId={it.id} />}
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      )}
 
       <Link to="/bundles" className="inline-block text-xs text-faint dark:text-slate-400 hover:text-accent transition">
         or browse the full marketplace →

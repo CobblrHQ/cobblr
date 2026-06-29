@@ -2,6 +2,16 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-06-29
+
+### Features
+- Typing where something went now files it for you. A freeform capture like "Logic analyzer in cabinet 002" or "Dial calipers placed in Tool Chest 001" (typed in the scanner, or sent from Slack) now splits the item from the location, resolves the location against your workspace, and drops the item into that bin pre-filed. Zero-padded label-reel numbers match too ("bin 0087" → Bin 87). Ordinary names with an incidental "in" are left alone.
+- Queue a fabrication job and it draws down the materials. A print or laser job can now be linked to a build (a bill-of-materials). When you send the job to the machine, Cobblr consumes that build's components from inventory and bumps the finished-product count, so "order in → subtract stock → queue the laser" happens in one step. Re-sending the same job never double-deducts.
+- Link a fabrication job to a build, right in the New Job dialog. When you queue a print/laser job, you can now pick a Build it produces (and how many) from a dropdown: no API needed. On send, that build's components are drawn from inventory and the finished part is added, just like before. The field only appears once you've defined a build.
+
+### Improvements
+- On the new-workspace homepage, the things you add now show up right in the third column with a one-tap action, instead of dropping into a separate "scan inbox" with the next step stranded in a banner at the top. Each capture shows what it looks like and a button to act: Create [tracker] for a ready-made setup it matches, Add to [tracker] for one you already have, or Save it to file it as a general item. And even with no AI connected, the keyword matcher routes recognised things to a tracker and everything else still gets a home: no capture is left in limbo.
+
 ## 2026-06-28
 
 ### Features

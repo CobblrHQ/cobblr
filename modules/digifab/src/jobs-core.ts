@@ -388,6 +388,36 @@ export async function pollJob(
   return { status, terminal };
 }
 
+/** Queue commits the materials. When a just-placed job (status "sent") produces
+ *  a build (BoM) and hasn't been consumed yet, fire `digifab.job.build_committed`
+ *  ONCE — a seeded builds wire deducts the components from inventory + bumps the
+ *  output part. The build_consumed_at guard (set atomically here) makes a re-send
+ *  / recut idempotent. Best-effort: a failure never blocks the send. */
+async function commitBuildIfLinked(
+  db: Kysely<DigifabDB>,
+  orgId: string,
+  jobId: string,
+  job: { linked_build_id: string | null; build_consumed_at: Date | null; build_qty: number | null },
+  status: string,
+): Promise<void> {
+  if (status !== "sent" || !job.linked_build_id || job.build_consumed_at) return;
+  const res = await db
+    .updateTable("digifab_jobs")
+    .set({ build_consumed_at: new Date() })
+    .where("id", "=", jobId)
+    .where("build_consumed_at", "is", null)
+    .executeTakeFirst();
+  // Only the writer that flipped null→now emits, so concurrent sends can't
+  // double-consume even if they raced past the in-memory guard above.
+  if (Number(res.numUpdatedRows ?? 0n) === 0) return;
+  void platform().events.emit("digifab.job.build_committed", {
+    orgId,
+    jobId,
+    buildId: job.linked_build_id,
+    qty: job.build_qty != null ? Number(job.build_qty) : 1,
+  });
+}
+
 export type SendJobResult =
   | { ok: true; status: string; remoteJobId: string | null; placement: SubmitResult; uploadedBytes: number; shouldPoll: boolean }
   | { ok: false; code: "not_found" | "already_sent" | "no_connection" | "unknown_device" };
@@ -495,6 +525,7 @@ export async function sendJob(
     .where("id", "=", jobId)
     .execute();
   void platform().events.emit("digifab.job.sent", { orgId, jobId, status });
+  await commitBuildIfLinked(db, orgId, jobId, job, status);
   if (sub.queued) {
     const placed = sub.deviceId ?? deviceId;
     const cam = await cameraFor(db, job.connection_id, placed);
@@ -559,6 +590,7 @@ export async function assignJob(
     .where("id", "=", jobId)
     .execute();
   void platform().events.emit("digifab.job.sent", { orgId, jobId, status });
+  await commitBuildIfLinked(db, orgId, jobId, job, status);
   if (sub.queued) {
     const placed = sub.deviceId ?? deviceId;
     const cam = await cameraFor(db, job.connection_id, placed);

@@ -22,11 +22,17 @@ export function registerBuildsActionHandlers(): void {
 
   platform().actions.registerHandler("builds.build-one", async (ctx) => {
     const args = (ctx.args as BuildOneArgs | null) ?? {};
-    // Build id: explicit arg, else the entity the action runs on (target='self').
+    // When fired by a wire (e.g. digifab.job.build_committed on send), the build
+    // + qty ride on the event payload — same fallback as machines:record-usage.
+    const ev = (ctx.event?.payload ?? {}) as { buildId?: string; qty?: number };
+    // Build id: explicit arg, else the wired event, else the entity the action
+    // runs on (target='self').
     const buildId =
-      args.build_id?.trim() || (ctx.entity?.kind === "builds:build" ? ctx.entity.id : undefined);
+      args.build_id?.trim() ||
+      ev.buildId?.trim() ||
+      (ctx.entity?.kind === "builds:build" ? ctx.entity.id : undefined);
     if (!buildId) return { ok: false, skipped: "no build_id" };
-    const qty = Math.max(1, Math.floor(Number(args.qty ?? 1)) || 1);
+    const qty = Math.max(1, Math.floor(Number(args.qty ?? ev.qty ?? 1)) || 1);
 
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<BuildsDB>;
     const build = await db

@@ -17,7 +17,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "builds",
-  version: "0.1.0",
+  version: "0.2.0",
   displayName: "Builds",
   description:
     "Light bill-of-materials: define a build as a recipe of inventory parts, see how many you can build right now (and the limiting component), and consume the parts from stock when you build one. For makers assembling things from tracked parts.",
@@ -97,5 +97,21 @@ export default defineModule({
     ],
   },
 
-  subscribes: [],
+  // A fabrication job that produces this build consumes its components on send.
+  // digifab fires digifab.job.build_committed { buildId, qty }; build-one reads
+  // them off the event. Belongs to builds: it owns the action. Inert for a
+  // workspace without digifab (the event never fires) and for a job with no
+  // linked build (the event never fires).
+  subscribes: ["digifab.job.build_committed"],
+
+  contributes: {
+    wires: [
+      {
+        source_kind: "digifab:job",
+        action_id: "builds:build-one",
+        trigger_type: "event",
+        trigger_event: "digifab.job.build_committed",
+      },
+    ],
+  },
 });

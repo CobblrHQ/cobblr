@@ -1946,6 +1946,16 @@ export interface PlatformAuth {
     userId: string;
     appSlug: string;
   }): Promise<{ token: string; expires_in: number }>;
+  /** Mint a NORMAL member session JWT for `userId` — a full session (NOT
+   *  app-scoped), as if they had logged in. For TRUSTED in-process callers that
+   *  have already authenticated a real member through another channel and need
+   *  to act AS them against the internal API: an inbound integration (a verified
+   *  Slack message, a forwarded receipt email) routing a capture into the
+   *  member's workspace. Mirrors what core's receipt-ingest does directly; this
+   *  seam exposes it to the trusted overlay. In-process only (platform seams are
+   *  never HTTP-reachable); the resulting session is still bounded by the
+   *  member's role + capabilities at every endpoint it hits. */
+  mintSession(args: { userId: string }): Promise<string>;
   /** Register the platform-level auth-email sender (verify / reset / magic
    *  link). A self-hoster wires their own; the overlay injects a managed
    *  sender. Open core registers none — magic-link falls back to the inline

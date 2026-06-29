@@ -22,7 +22,7 @@ import { env } from "./env.js";
 import { meta, metaPool, pingMeta } from "./db/meta.js";
 import { runMigrations } from "./db/migrate.js";
 import { getTenantDb, releaseIdleTenantPool } from "./db/tenant.js";
-import { signAppToken } from "./auth/jwt.js";
+import { signAppToken, signSession } from "./auth/jwt.js";
 import { loadAllModules } from "./modules/loader.js";
 import { loadAllSandboxedModules } from "./sandbox/loader.js";
 import { syncTenantMigrations, reconcileDefaultModules } from "./modules/enable.js";
@@ -338,6 +338,7 @@ async function boot() {
         return !!viaRole;
       },
       mintAppToken: ({ userId, appSlug }) => signAppToken(userId, appSlug),
+      mintSession: ({ userId }) => signSession(userId),
       registerEmailSender: hostedSeams.registerAuthEmailSender,
       hasEmailSender: hostedSeams.hasAuthEmailSender,
       sendEmail: hostedSeams.sendAuthEmail,

@@ -1698,10 +1698,17 @@ export const api = {
       file_id?: string | null;
       linked_machine_id?: string | null;
       linked_task_id?: string | null;
+      /** A build (BoM) this job produces — consumed from inventory on send. */
+      linked_build_id?: string | null;
+      build_qty?: number;
       priority?: number;
       max_attempts?: number;
     },
   ) => request<DigifabJob>("POST", `/orgs/${slug}/modules/digifab/jobs`, body),
+  /** Builds the workspace has defined (for the New-Job "produces a build" picker).
+   *  404s when the builds module isn't enabled — callers tolerate an empty list. */
+  listDigifabBuilds: (slug: string) =>
+    request<{ items: Array<{ id: string; name: string }> }>("GET", `/orgs/${slug}/modules/builds/builds`),
   updateDigifabJob: (slug: string, id: string, body: { priority?: number; max_attempts?: number }) =>
     request<DigifabJob>("PATCH", `/orgs/${slug}/modules/digifab/jobs/${id}`, body),
   // ── Pools: a Cobblr-native set of devices to queue jobs onto (auto-assigned). ──

@@ -9,7 +9,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "digifab",
-  version: "0.22.0",
+  version: "0.23.0",
   displayName: "Digital Fabrication",
   description:
     "Send a design file to the software that runs your machine — FDM Monster, OctoPrint, and friends — and track the job to completion. Map a manager's printers to your machines and route files to them. Talks to each manager's REST API; it sends files, it never drives the hardware.",
@@ -79,6 +79,11 @@ export default defineModule({
       "digifab.connection.tested",
       "digifab.connection.deleted",
       "digifab.job.sent",
+      // Fired on send when the job is linked to a build (BoM). Carries
+      // { buildId, qty } so a seeded builds wire consumes the components from
+      // inventory + bumps the output part. Idempotent (once per job) — the
+      // "job-in → subtract inventory → queue the machine" path.
+      "digifab.job.build_committed",
       // Print-lifecycle notifications (the "post updates to Discord" flow): a
       // user routes these to a channel at /me/notification-channels.
       // (digifab.connection.synced / print.started / print.progress were
