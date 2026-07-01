@@ -10,7 +10,18 @@ import { api } from "../lib/api";
 
 export function EmailVerifyBanner() {
   const { user } = useAuth();
-  const [dismissed, setDismissed] = useState(false);
+  // Dismissal PERSISTS (per user) — the banner used to come back on every page
+  // load forever, permanently taxing the top 40px of every screen (redesign
+  // A4). One dismissal = you've seen it; the account menu still shows the
+  // unverified state and Resend.
+  const dismissKey = user ? `cobblr.verifyBanner.dismissed:${user.id}` : "";
+  const [dismissed, setDismissed] = useState<boolean>(() => {
+    try { return !!dismissKey && localStorage.getItem(dismissKey) === "1"; } catch { return false; }
+  });
+  const dismiss = () => {
+    setDismissed(true);
+    try { localStorage.setItem(dismissKey, "1"); } catch { /* ignore */ }
+  };
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
 
@@ -54,7 +65,7 @@ export function EmailVerifyBanner() {
         )}
         <button
           type="button"
-          onClick={() => setDismissed(true)}
+          onClick={dismiss}
           className="shrink-0 text-faint hover:text-content dark:hover:text-mortar-200 transition"
           title="Dismiss"
           aria-label="Dismiss"

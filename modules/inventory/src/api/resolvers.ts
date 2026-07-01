@@ -175,6 +175,7 @@ function toResolvedPart(row: {
   image_path: string | null;
   notes: string | null;
   instance: string;
+  location_id?: string | null;
   metadata: unknown;
 }): ResolvedEntity {
   const qty = Number(row.qty);
@@ -206,6 +207,9 @@ function toResolvedPart(row: {
       supplier_url: row.supplier_url,
       image_path: row.image_path,
       notes: row.notes,
+      // Where it lives — the scan "already tracked" banner shows it, and
+      // move-mode uses it to skip entities already in the active bin.
+      location_id: row.location_id ?? null,
       metadata: row.metadata,
     },
   };

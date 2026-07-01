@@ -1,0 +1,79 @@
+{
+  "manifest": {
+    "id": "cobblr.flagship.maker-workshop",
+    "version": "0.1.0",
+    "name": "Maker Workshop",
+    "description": "Inventory + Builds + a parts shopping list, pre-wired into the maker loop: define builds as recipes of tracked parts, build them (which consumes stock), and auto-restock low parts through a shopping list you check off. Showcases the Builds (light BOM) module.",
+    "author": "Cobblr",
+    "requires": [
+      {
+        "module": "inventory"
+      },
+      {
+        "module": "builds"
+      },
+      {
+        "module": "lists"
+      }
+    ],
+    "wires": [
+      {
+        "source_kind": "inventory:part",
+        "action_id": "lists:add-item",
+        "trigger_type": "event",
+        "trigger_event": "inventory.stock.low",
+        "args": {
+          "listTitle": "Parts to buy"
+        }
+      },
+      {
+        "source_kind": "inventory:part",
+        "action_id": "inventory:adjust-stock",
+        "trigger_type": "event",
+        "trigger_event": "lists.item.checked",
+        "args": {
+          "delta": 1,
+          "reason": "Restocked — checked off the parts list"
+        }
+      }
+    ],
+    "field_defs": [
+      {
+        "entity_kind": "inventory:part",
+        "name": "part_type",
+        "display_label": "Part type",
+        "type": "text",
+        "position": 1,
+        "choices": [
+          "Mechanical",
+          "Electronic",
+          "Fastener",
+          "Printed",
+          "Raw material",
+          "Consumable"
+        ]
+      },
+      {
+        "entity_kind": "inventory:part",
+        "name": "package",
+        "display_label": "Package / footprint",
+        "type": "text",
+        "position": 2
+      },
+      {
+        "entity_kind": "inventory:part",
+        "name": "value",
+        "display_label": "Value / spec",
+        "type": "text",
+        "position": 3
+      },
+      {
+        "entity_kind": "inventory:part",
+        "name": "datasheet_url",
+        "display_label": "Datasheet / source URL",
+        "type": "url",
+        "position": 4
+      }
+    ]
+  }
+}

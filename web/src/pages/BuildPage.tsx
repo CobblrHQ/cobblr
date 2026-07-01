@@ -8,7 +8,8 @@
 // docs/modules/ai-bundle-builder.md.
 
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { AiOffNotice, useAiStatus } from "../components/AiStatusNotice";
 import { useQuery } from "@tanstack/react-query";
 import { Wand2, Copy, Check, AlertTriangle, Sparkles } from "lucide-react";
 import { usePageTitle, useToast } from "@cobblr/platform-web";
@@ -68,7 +69,16 @@ export function BuildPage() {
   // "tweak" = add a field/wire to existing kinds (pick 1-3). "workspace" = the
   // architect: describe a whole app, the AI enables modules + builds the schema
   // from the full catalog (no kind picker, task=design-workspace).
-  const [mode, setMode] = useState<"tweak" | "workspace" | "app" | "app-custom">("tweak");
+  // Mode init: honor a ?mode= deep-link (the homepage funnel's "Describe what
+  // you have" promises a whole-workspace setup → /build?mode=workspace). The
+  // old default landed funnel users on the wrong task.
+  const [searchParams] = useSearchParams();
+  const aiStatus = useAiStatus();
+  const aiOff = !!aiStatus && !aiStatus.available;
+  const urlMode = searchParams.get("mode");
+  const [mode, setMode] = useState<"tweak" | "workspace" | "app" | "app-custom">(
+    urlMode === "workspace" || urlMode === "app" || urlMode === "app-custom" || urlMode === "tweak" ? urlMode : "tweak",
+  );
   const navigate = useNavigate();
   // The compile/build body per mode: tweak → a bundle scoped to picked kinds;
   // workspace → a whole-workspace bundle; app → a worker app (structured blocks);
@@ -278,9 +288,9 @@ export function BuildPage() {
             </>
           ) : mode === "app" ? (
             <>
-              Describe a <strong>worker app</strong> — a member-facing page of forms, action buttons and a scanner over
+              Describe a <strong>page for your members</strong> — forms, action buttons and a scanner over
               your existing data. The AI assembles it from safe building blocks (no code), and we check it before it goes
-              live. <strong>Write a prompt instead</strong> hands you one to run yourself if your workspace has no AI.
+              live.
             </>
           ) : mode === "workspace" ? (
             <>
@@ -298,6 +308,14 @@ export function BuildPage() {
         </p>
       </div>
 
+      {/* One shared AI-honesty pattern (redesign A1): the primary button needs
+          AI — say so up front instead of failing silently. */}
+      <AiOffNotice status={aiStatus}>
+        <strong>AI isn't connected — "Build it for me" can't run here.</strong>{" "}
+        Use <strong>Write a prompt instead</strong>: it hands you a complete prompt to run in any AI chat, and you paste
+        the result back in — same outcome, your AI.{" "}
+      </AiOffNotice>
+
       {/* Mode — one tweak vs. design the whole workspace */}
       <div className="inline-flex rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-0.5 text-sm">
         {(["tweak", "workspace", "app", "app-custom"] as const).map((m) => (
@@ -312,13 +330,15 @@ export function BuildPage() {
                 : "text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-200")
             }
           >
+            {/* User nouns, not platform jargon ("worker app" meant nothing
+                to a new user — redesign A2). */}
             {m === "tweak"
-              ? "Add to my app"
+              ? "Add to what I have"
               : m === "workspace"
-                ? "Design my whole workspace"
+                ? "Design my workspace"
                 : m === "app"
-                  ? "Build a worker app"
-                  : "Custom app (HTML)"}
+                  ? "A page for members"
+                  : "Custom page (HTML)"}
           </button>
         ))}
       </div>
@@ -378,11 +398,20 @@ export function BuildPage() {
           />
         </label>
         <div className="flex flex-wrap items-center gap-2">
+          {/* With no AI, the roles swap: the copy-paste prompt is the real
+              path, so IT gets the primary style and "Build it for me" is
+              disabled with a reason (not silently inert). */}
           <button
             type="button"
             onClick={buildHosted}
-            disabled={!intent.trim() || busy !== null}
-            className="inline-flex items-center gap-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-3 py-1.5 transition disabled:opacity-50"
+            disabled={!intent.trim() || busy !== null || aiOff}
+            title={aiOff ? "Needs a connected AI provider" : undefined}
+            className={
+              "inline-flex items-center gap-1.5 rounded-md text-sm font-medium px-3 py-1.5 transition disabled:opacity-50 " +
+              (aiOff
+                ? "border border-line dark:border-slate-600 text-muted dark:text-slate-400"
+                : "bg-cobble-600 hover:bg-cobble-700 text-white")
+            }
           >
             <Sparkles size={14} /> {busy === "building" ? "Building…" : "Build it for me"}
           </button>
@@ -390,7 +419,12 @@ export function BuildPage() {
             type="button"
             onClick={buildPrompt}
             disabled={!intent.trim() || busy !== null}
-            className="inline-flex items-center gap-1.5 rounded-md border border-line dark:border-slate-600 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 text-sm font-medium px-3 py-1.5 transition disabled:opacity-50"
+            className={
+              "inline-flex items-center gap-1.5 rounded-md text-sm font-medium px-3 py-1.5 transition disabled:opacity-50 " +
+              (aiOff
+                ? "bg-cobble-600 hover:bg-cobble-700 text-white"
+                : "border border-line dark:border-slate-600 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800")
+            }
           >
             <Wand2 size={14} /> {busy === "compile" ? "Writing…" : "Write a prompt instead"}
           </button>

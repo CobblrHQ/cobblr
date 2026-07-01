@@ -32,6 +32,7 @@ import { useBundleCatalog, type CatalogBundle } from "../lib/useBundleCatalog";
 import { fuzzyMatch } from "../lib/fuzzy";
 import { BundleDetailModal } from "./BundleDetailModal";
 import { PairPhoneButton } from "./PairPhoneButton";
+import { AiOffNotice, useAiStatus } from "./AiStatusNotice";
 
 function firstSentence(s: string): string {
   const m = s.match(/^.*?[.!?](\s|$)/);
@@ -134,10 +135,34 @@ const OPERATES_ON: Record<string, string[]> = {
 const slugifyName = (s: string): string =>
   s.normalize("NFKD").toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").replace(/-+/g, "-");
 
+// Col-1 curated order: the flagship "kinds people start with" first; plumbing-
+// adjacent domains last. Unlisted names sort after, alphabetically.
+const KIND_ORDER = ["inventory", "machines", "assets", "projects", "lists", "purchases", "tracking", "builds", "labels", "digifab"];
+const kindRank = (name: string): number => {
+  const i = KIND_ORDER.indexOf(name);
+  return i === -1 ? KIND_ORDER.length : i;
+};
+
+// Ranked filtering: name-prefix beats name-contains beats description-only, so
+// the FIRST visible card is also what Enter selects ("mach" must rank Machines
+// above Assets, whose description merely contains "…aren't machines").
+function rankMatch(q: string, name: string, rest: string): number {
+  const n = name.toLowerCase();
+  if (!q) return 0;
+  if (n.startsWith(q)) return 3;
+  if (n.includes(q)) return 2;
+  return fuzzyMatch(`${name} ${rest}`, q) ? 1 : 0;
+}
+
+// "Try one of these" starter chips — phrases the heuristic matcher genuinely
+// routes (verified against the bundle menu), so the demo never dead-ends.
+const STARTER_CHIPS = ["a spool of black PLA", "my passport", "blue worsted yarn", "a monstera plant"];
+
 export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; startCollapsed?: boolean }) {
   const toast = useToast();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const aiStatus = useAiStatus();
 
   // The panel persists once the workspace has content (startCollapsed) so you
   // can keep adding via the guided flow — collapsed by default, expandable, and
@@ -181,26 +206,26 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
     queryKey: ["capture-inbox", slug],
     queryFn: () => api.listScanInbox(slug, { status: "pending" }),
     enabled: !!slug,
-    refetchInterval: 4000,
-  });
-  const quick = useQuery({
-    queryKey: ["quickstart", slug],
-    queryFn: () => api.quickstart(slug),
-    enabled: !!slug,
-    refetchInterval: 5000,
+    // Poll fast only while something is pending resolution; idle panels tick
+    // slowly instead of hammering the api every 4s forever.
+    refetchInterval: (q) => ((q.state.data?.items?.length ?? 0) > 0 ? 4000 : 20000),
   });
 
   const domainModules = useMemo(
     () =>
-      (modulesQ.data?.items ?? []).filter(
-        (m) => !m.enabled && m.band === "stock" && !m.name.startsWith("core-"),
-      ),
+      (modulesQ.data?.items ?? [])
+        .filter((m) => !m.enabled && m.band === "stock" && !m.name.startsWith("core-"))
+        .sort((a, b) => kindRank(a.name) - kindRank(b.name) || a.displayName.localeCompare(b.displayName)),
     [modulesQ.data],
   );
   const blockMatches = useMemo(() => {
     const q = blockQ.trim().toLowerCase();
     if (!q) return domainModules;
-    return domainModules.filter((m) => fuzzyMatch(`${m.displayName} ${m.description} ${m.name}`, q));
+    return domainModules
+      .map((m) => ({ m, r: rankMatch(q, m.displayName, `${m.description} ${m.name}`) }))
+      .filter((x) => x.r > 0)
+      .sort((a, b) => b.r - a.r)
+      .map((x) => x.m);
   }, [domainModules, blockQ]);
 
   const recipes = useMemo(() => {
@@ -218,11 +243,17 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
     // Base set: a search OR a chosen kind spans the WHOLE catalog, so the
     // community specialisations (3D Printers, …) show — not just the curated
     // flagship default you see when nothing is picked.
-    const base = q
-      ? catalog.filter((b) => fuzzyMatch(`${b.manifest.name} ${b.blurb ?? ""} ${b.manifest.description ?? ""}`, q))
-      : selectedModule
-        ? catalog
-        : catalog.filter((b) => b.manifest.id.includes(".flagship."));
+    if (q) {
+      // Searching: rank name-prefix > name > blurb/description so the first
+      // visible card is what Enter selects.
+      return catalog
+        .filter(byKind)
+        .map((b) => ({ b, r: rankMatch(q, b.manifest.name, `${b.blurb ?? ""} ${b.manifest.description ?? ""}`) }))
+        .filter((x) => x.r > 0)
+        .sort((a, b) => b.r - a.r)
+        .map((x) => x.b);
+    }
+    const base = selectedModule ? catalog : catalog.filter((b) => b.manifest.id.includes(".flagship."));
     return base
       .filter(byKind)
       .sort(
@@ -257,7 +288,8 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
     onSuccess: (r) => {
       void qc.invalidateQueries();
       toast.success(`Created your ${r.label ?? "tracker"} with ${r.created} item${r.created === 1 ? "" : "s"}.`);
-      if (r.route) navigate(r.route);
+      // ?created powers the landing page's one-time success strip (A3).
+      if (r.route) navigate(`${r.route}${r.route.includes("?") ? "&" : "?"}created=${encodeURIComponent(r.label ?? "Your tracker")}&count=${r.created}`);
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't set that up"),
   });
@@ -270,9 +302,13 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
   const confirmMut = useMutation({
     mutationFn: (v: { id: string; body: { target_module?: string; target_kind?: string; instance?: string } }) =>
       api.confirmScanItem(slug, v.id, v.body),
-    onSuccess: (_r, v) => {
+    onSuccess: (r, v) => {
       void qc.invalidateQueries();
-      toast.success("Filed it.");
+      // ALWAYS say where it went — "Filed it." with no destination left users
+      // hunting (Inventory silently appeared in the navbar).
+      const dest = v.body.instance ?? r.item.target_module ?? v.body.target_module ?? "Inventory";
+      const destLabel = dest.charAt(0).toUpperCase() + dest.slice(1);
+      toast.success(`Saved to ${destLabel} — it's in your navbar.`);
       if (v.body.instance) navigate(`/instances/${v.body.instance}`);
       else if (v.body.target_module) navigate(`/${v.body.target_module}`);
     },
@@ -287,7 +323,25 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
       if (!(modulesQ.data?.items ?? []).find((m) => m.name === module_name)?.enabled) {
         await api.enableModule(slug, module_name).catch(() => undefined);
       }
-      return api.createInstance(slug, { module_name, instance_name: slugifyName(name), display_name: name.trim() });
+      const inst = await api.createInstance(slug, { module_name, instance_name: slugifyName(name), display_name: name.trim() });
+      // Same "sibling heading" rule as the + New thing modal (B3): if a navbar
+      // menu already holds a category of this kind, the new one auto-joins it —
+      // otherwise adding categories from the homepage silently sprawled the
+      // navbar, regressing the one-dropdown flow. First category stays
+      // standalone (matching the modal's default). Best-effort.
+      try {
+        const [instances, headings] = await Promise.all([api.listInstances(slug), api.listNavHeadings(slug)]);
+        const siblings = instances.items.filter(
+          (i) => i.module_name === module_name && !i.is_default && i.instance_name !== inst.instance_name,
+        );
+        const heading = headings.items.find((h) =>
+          h.members.some((m) => m.target_kind === "instance" && siblings.some((i) => i.instance_name === m.target_id)),
+        );
+        if (heading) {
+          await api.addNavHeadingMember(slug, heading.id, { target_kind: "instance", target_id: inst.instance_name });
+        }
+      } catch { /* nav grouping is a nicety — never fail the create over it */ }
+      return inst;
     },
     onSuccess: (inst) => {
       void qc.invalidateQueries();
@@ -304,7 +358,8 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
     onSuccess: (_r, b) => {
       void qc.invalidateQueries();
       toast.success(`Set up ${b.manifest.name}.`);
-      navigate(b.next_steps?.[0]?.path ?? "/dashboard");
+      const dest = b.next_steps?.[0]?.path ?? "/dashboard";
+      navigate(dest === "/dashboard" ? dest : `${dest}${dest.includes("?") ? "&" : "?"}created=${encodeURIComponent(b.manifest.name)}`);
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't set that up"),
   });
@@ -340,11 +395,9 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
     : undefined;
   const itemPlaceholder = recipeItemEg ?? kindVocab?.itemEg ?? "a 3D printer, a box of screws…";
   const items = inbox.data?.items ?? [];
-  const suggestions = quick.data?.suggestions ?? [];
   // Collapse only when there's content AND nothing pending to act on — a pending
-  // scan inbox / "make a tracker" suggestion forces the panel open so your
-  // captures always show on the home page.
-  const hasPending = items.length > 0 || suggestions.length > 0;
+  // scan inbox forces the panel open so your captures always show on the home page.
+  const hasPending = items.length > 0;
   const showToggle = startCollapsed && !hasPending;
   const showBody = showToggle ? open : true;
 
@@ -367,7 +420,7 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
       {showBody && (<>
       {/* Build-it-yourself CTA — a button, not a column (per feedback). */}
       <Link
-        to="/build"
+        to="/build?mode=workspace"
         className="flex items-center gap-3 rounded-lg border border-cobble-300 dark:border-cobble-700 bg-surface dark:bg-slate-900 px-4 py-2.5 hover:border-cobble-400 transition group"
       >
         <span className="w-8 h-8 rounded-lg bg-accent/10 text-accent flex items-center justify-center shrink-0">
@@ -380,12 +433,20 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
         <ArrowRight size={15} className="text-faint group-hover:text-accent transition shrink-0" />
       </Link>
 
-      {/* The three columns. Order: Building blocks · Ready-made · Add your first
-          thing. The selection state lives IN the columns (highlights + col 3's
-          reactive prompt) — no separate breadcrumb bar that pushes content down. */}
+      {/* One shared AI-honesty pattern (redesign A1): say basic-mode up front. */}
+      <AiOffNotice status={aiStatus} compact>
+        <strong>AI isn't connected — matching runs in basic mode.</strong>{" "}
+        Common things still find a home by keywords; connect AI to identify anything (and to use the builder above).{" "}
+      </AiOffNotice>
+
+      {/* The three columns. Desktop order: Building blocks · Ready-made · Add
+          your first thing (left→right funnel). MOBILE inverts: "just add it" is
+          a phone user's most likely intent, so col 3 stacks FIRST — it was 2+
+          screens down under two long lists. The selection state lives IN the
+          columns (highlights + col 3's reactive prompt) — no breadcrumb bar. */}
       <div className="grid gap-3 md:grid-cols-3">
         {/* Col 1 — Building blocks (modules) */}
-        <div className="rounded-xl border border-line dark:border-slate-700 bg-surface/60 dark:bg-slate-900/40 p-3">
+        <div className="order-2 md:order-none rounded-xl border border-line dark:border-slate-700 bg-surface/60 dark:bg-slate-900/40 p-3">
           <LaneHeader kicker="// building blocks" title="Track a kind of thing" count={blockMatches.length} />
           <div className="relative mb-2">
             <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-faint dark:text-slate-500" />
@@ -428,7 +489,7 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
         </div>
 
         {/* Col 2 — Ready-made setups (bundles) */}
-        <div className="rounded-xl border border-line dark:border-slate-700 bg-surface/60 dark:bg-slate-900/40 p-3">
+        <div className="order-3 md:order-none rounded-xl border border-line dark:border-slate-700 bg-surface/60 dark:bg-slate-900/40 p-3">
           <LaneHeader kicker="// recipes" title={selectedModuleObj ? `${selectedModuleObj.displayName} setups` : "Ready-made setups"} count={recipes.length} />
           <div className="relative mb-2">
             <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-faint dark:text-slate-500" />
@@ -451,13 +512,18 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
                 return (
                 <li key={b.manifest.id}>
                   {/* Click SELECTS the recipe (drives col 3) — no install-modal
-                      dead-end. A small "details" link opens the full modal. */}
-                  <button
-                    type="button"
+                      dead-end. A small "details" button opens the full modal.
+                      The card is a div[role=button] (NOT <button>) because it
+                      contains that inner button — nested buttons are invalid
+                      HTML and break keyboard/screen-reader semantics. */}
+                  <div
+                    role="button"
+                    tabIndex={0}
                     onClick={() => pickRecipe(b)}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pickRecipe(b); } }}
                     title={on ? "Click again to deselect" : undefined}
                     className={
-                      "w-full text-left rounded-lg border p-2.5 flex items-start gap-2.5 transition group " +
+                      "w-full cursor-pointer text-left rounded-lg border p-2.5 flex items-start gap-2.5 transition group " +
                       (on ? "border-accent bg-accent/5" : "border-line dark:border-slate-700 bg-surface dark:bg-slate-900 hover:border-cobble-300 dark:hover:border-cobble-700")
                     }
                   >
@@ -468,7 +534,7 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
                       <button type="button" onClick={(e) => { e.stopPropagation(); setPicked(b); }} className="mt-1 text-[11px] text-faint dark:text-slate-500 hover:text-accent transition">details →</button>
                     </div>
                     <ArrowRight size={13} className={(on ? "text-accent" : "text-faint dark:text-slate-600 group-hover:text-accent") + " transition mt-1 shrink-0"} />
-                  </button>
+                  </div>
                 </li>
                 );
               })}
@@ -480,7 +546,7 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
             recipe → "set it up & drop me in"; a chosen kind → "add a blank one";
             nothing → the freeform "type what you've got". */}
         <div className={
-          "rounded-xl border p-3 transition " +
+          "order-1 md:order-none rounded-xl border p-3 transition " +
           (selectedRecipe || selectedModuleObj ? "border-accent/60 bg-accent/5 dark:bg-cobble-900/15" : "border-line dark:border-slate-700 bg-surface/60 dark:bg-slate-900/40")
         }>
           <LaneHeader
@@ -497,7 +563,7 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
               : selectedModuleObj
                 ? (kindIsMulti
                     ? `Name a category${kindVocab ? ` — like ${kindVocab.categoryEg}` : ""} — then add things inside it.`
-                    : `Start a blank ${selectedModuleObj.displayName} and add your first one.`)
+                    : `Turn on ${selectedModuleObj.displayName} and add your first one.`)
                 : "Type what you've got — Cobblr finds or builds the right tracker and files it."}
           </p>
 
@@ -546,7 +612,7 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
               className="w-full mb-2 inline-flex items-center justify-center gap-1.5 rounded-lg bg-cobble-600 text-white text-sm font-medium px-3 py-2 hover:bg-cobble-700 transition disabled:opacity-50"
             >
               {enableModuleMut.isPending ? <Loader2 size={15} className="animate-spin" /> : <ArrowRight size={15} />}
-              Add a blank {selectedModuleObj.displayName} & start
+              Set up {selectedModuleObj.displayName} & start
             </button>
           )}
 
@@ -587,6 +653,25 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
               : "No camera here? Pair your phone — scan with it and the items land in this workspace."}
           </p>
 
+          {/* Starter chips — a fresh panel demos the magic in one tap. Only when
+              there's nothing captured yet and no funnel selection. */}
+          {items.length === 0 && !selectedRecipe && !selectedModuleObj && (
+            <div className="mt-2 flex flex-wrap gap-1.5 items-center">
+              <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">try:</span>
+              {STARTER_CHIPS.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  disabled={noteMut.isPending}
+                  onClick={() => noteMut.mutate(c)}
+                  className="rounded-full border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2.5 py-0.5 text-[11px] text-muted dark:text-slate-300 hover:border-accent hover:text-accent transition disabled:opacity-50"
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+          )}
+
           {/* What you've added — each capture, its match, and a one-tap CTA to
               give it a home. This is the funnel's payoff: col 3 fills in. */}
           {items.length > 0 && (
@@ -617,7 +702,7 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
                         <div className="mt-1.5 flex items-center gap-2">
                           <span className="flex-1 min-w-0 truncate text-xs text-faint dark:text-slate-400">
                             {c ? <>looks like <span className="text-accent">{c.label}</span></>
-                              : done ? "no match yet — file it anywhere"
+                              : done ? "no match — save it as a general item"
                               : <span className="inline-flex items-center gap-1"><Loader2 size={11} className="animate-spin" /> finding a home…</span>}
                           </span>
                           {c?.bundle_external_id ? (
@@ -630,7 +715,7 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
                             </button>
                           ) : done ? (
                             <button type="button" disabled={filing} onClick={() => confirmMut.mutate({ id: it.id, body: {} })} className={ctaCls + " border border-cobble-300 dark:border-cobble-700 text-content dark:text-mortar-100 hover:border-cobble-400"}>
-                              {filing ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} Save it
+                              {filing ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} Save to Inventory
                             </button>
                           ) : null}
                         </div>

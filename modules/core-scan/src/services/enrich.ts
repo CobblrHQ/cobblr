@@ -17,7 +17,7 @@ import { lookupBarcode, type BarcodeHit } from "./barcode-lookup.js";
 import { resolveBarcodeViaWebSearch } from "./barcode-websearch.js";
 import { reportBarcodeCorrection } from "./barcode-corrections.js";
 import { classifyScanCode, resolveIsbn, resolveAsin } from "./scan-router.js";
-import { crossCheckScanPhoto, identifyImage, refreshCatalogImageByName } from "./enrich-photo.js";
+import { crossCheckScanPhoto, identifyImage, parsePackSize, refreshCatalogImageByName } from "./enrich-photo.js";
 import type { CoreScanDB } from "../db.js";
 
 // Cross-tenant barcode cache namespace + value shape. A UPC means the same
@@ -38,6 +38,64 @@ interface BarcodeCacheValue {
   image_url: string | null;
   raw: Record<string, unknown>;
 }
+
+// Cached-hit freshness (stale-while-revalidate): a cache entry older than this
+// is SERVED (instant scan) but re-checked against the box resolver in the
+// background, so a BIdb correction made anywhere propagates to every instance
+// within a day of the next scan — instead of a stale shared-cache entry
+// outliving the fix forever (the "96 Packs survived its own correction" hole).
+// The stamp rides INSIDE raw (__fetched_at) so it survives both cache layers
+// verbatim; entries from before the stamp existed count as stale.
+const CACHE_REVALIDATE_MS = 24 * 60 * 60 * 1000;
+
+function stampFetchedAt(raw: Record<string, unknown> | null | undefined): Record<string, unknown> {
+  return { ...(raw ?? {}), __fetched_at: Date.now() };
+}
+
+/** Detached: re-consult the box resolver for a stale cached hit; on a changed
+ *  answer, refresh both caches and — when the item still shows the stale name —
+ *  the item itself (the same lazy-fill pattern the enrich overrun uses). */
+async function revalidateStaleHit(ctx: EnrichContext, staleTitle: string | null): Promise<void> {
+  const result = await lookupBarcode(ctx.upc);
+  if (result.outcome !== "hit" || !result.hit) return; // keep serving the old value
+  const fresh = result.hit;
+  const value: BarcodeCacheValue = {
+    found: true,
+    source: fresh.source,
+    title: fresh.title ?? null,
+    brand: fresh.brand ?? null,
+    model: fresh.model ?? null,
+    description: fresh.description ?? null,
+    category: fresh.category ?? null,
+    image_url: fresh.image_url ?? null,
+    raw: stampFetchedAt(fresh.raw),
+  };
+  await writeTenantCache(ctx, value).catch(() => {});
+  await platform().sharedCache.put(BARCODE_NS, ctx.upc, value).catch(() => {});
+  const freshTitle = withBrandPrefix(fresh.title || null, fresh.brand);
+  if (!freshTitle || !staleTitle || norm2(freshTitle) === norm2(staleTitle)) return;
+  // The resolver's answer CHANGED (a correction landed). Fix the item too —
+  // only while it's still pending and still wearing the stale name.
+  const cur = await ctx.db
+    .selectFrom("core_scan_inbox_items")
+    .select(["status", "suggested_name"])
+    .where("id", "=", ctx.itemId)
+    .executeTakeFirst();
+  if (!cur || cur.status !== "pending" || norm2(cur.suggested_name ?? "") !== norm2(staleTitle)) return;
+  await ctx.db
+    .updateTable("core_scan_inbox_items")
+    .set({
+      suggested_name: freshTitle,
+      ...(fresh.brand ? { suggested_manufacturer: fresh.brand } : {}),
+      ...(fresh.image_url ? { catalog_image_url: fresh.image_url } : {}),
+      ai_notes: `Identified via ${SOURCE_LABEL[fresh.source] ?? fresh.source} (refreshed — the shared entry was updated).`,
+      updated_at: new Date(),
+    })
+    .where("id", "=", ctx.itemId)
+    .execute();
+}
+
+const norm2 = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
 
 // Human-readable provider names for the "Resolved via …" provenance note (the
 // raw tier ids — openfoodfacts, go-upc — aren't friendly to a user).
@@ -347,6 +405,12 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
       image_url: cacheVal.image_url,
       raw: cacheVal.raw,
     };
+    // Stale-while-revalidate: serve instantly, re-check a day-old (or legacy
+    // unstamped) entry in the background so corrections propagate everywhere.
+    const fetchedAt = Number((cacheVal.raw as { __fetched_at?: number } | null)?.__fetched_at ?? 0);
+    if (!fetchedAt || Date.now() - fetchedAt > CACHE_REVALIDATE_MS) {
+      void revalidateStaleHit(ctx, withBrandPrefix(cacheVal.title, cacheVal.brand)).catch(() => {});
+    }
   } else if (
     codeClass.type === "upc" ||
     (codeClass.type === "isbn" && /^(978|979)[0-9]{10}$/.test(ctx.upc.replace(/\D/g, "")))
@@ -374,7 +438,7 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
         description: hit?.description ?? null,
         category: hit?.category ?? null,
         image_url: hit?.image_url ?? null,
-        raw: hit?.raw ?? {},
+        raw: stampFetchedAt(hit?.raw),
       };
       await writeTenantCache(ctx, value).catch((err) =>
         console.error("[core-scan] tenant cache write failed:", (err as Error).message),
@@ -421,6 +485,7 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
             method: web.method,
             category: web.category,
             entity_type: web.entityType,
+            ...(parsePackSize(web.name) ? { pack_size: parsePackSize(web.name) } : {}),
           })}::jsonb` as never,
           ai_confidence: String(web.confidence),
           ai_notes: web.evidence,
@@ -443,7 +508,7 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
         description: null,
         category: web.category,
         image_url: web.imageUrl,
-        raw: {},
+        raw: stampFetchedAt({}),
       };
       await writeTenantCache(ctx, webValue).catch(() => {});
       await platform()
@@ -515,6 +580,8 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
         description: hit.description,
         raw: hit.raw,
         low_trust: lowTrust || undefined,
+        // Multipack read off the title ("WD-40 2 Pack") — carried to the entity.
+        ...(parsePackSize(hit.title) ? { pack_size: parsePackSize(hit.title) } : {}),
       })}::jsonb` as never,
       ai_confidence: hit.title ? (lowTrust ? "0.6" : "0.85") : null,
       // Provenance: a box-resolver result that came from the shared Barcode
@@ -725,11 +792,48 @@ async function enrichThinHit(ctx: EnrichContext, hit: BarcodeHit): Promise<void>
   // name (brand-aware). Detached/best-effort.
   void refreshCatalogImageByName(ctx.orgId, ctx.itemId, enriched, web.brand ?? hit.brand ?? null).catch(() => {});
 
-  // Supersede the thin BIdb/OFF entry for every future scan (trusted actor →
-  // auto-verified). Best-effort; inert if the resolver/correction token is unset.
-  void reportBarcodeCorrection({ upc: ctx.upc, field: "title", was: thin, now: enriched }).catch(() => {});
+  // The caches must learn the fix too, or the NEXT scan of this UPC — in this
+  // workspace (tenant cache) or any sibling on the instance (shared cache) —
+  // resolves to the same wrong title again (why the author had to fix "96 Packs"
+  // TWICE). Overwrite both with the corrected value.
+  const corrected: BarcodeCacheValue = {
+    found: true,
+    source: hit.source,
+    title: enriched,
+    brand: web.brand ?? hit.brand ?? null,
+    model: hit.model ?? null,
+    description: hit.description ?? null,
+    category: web.category ?? hit.category ?? null,
+    image_url: hit.image_url ?? null,
+    raw: stampFetchedAt({ corrected_from: thin }),
+  };
+  await writeTenantCache(ctx, corrected).catch(() => {});
+  await platform()
+    .sharedCache.put(BARCODE_NS, ctx.upc, corrected)
+    .catch(() => {});
+
+  // Supersede the thin BIdb/OFF entry for every future scan. Attribution
+  // matters: the resolver only VERIFIES (instant-override) a correction that
+  // carries an actor — an anonymous one parks in the review queue and never
+  // fixes lookups (the `by=? verified=false` hole the golden e2e exposed).
+  // The item's creator is the human whose correction this is.
+  const creatorRow = await ctx.db
+    .selectFrom("core_scan_inbox_items")
+    .select("created_by_user_id")
+    .where("id", "=", ctx.itemId)
+    .executeTakeFirst();
+  const creator = creatorRow?.created_by_user_id ?? null;
+  void reportBarcodeCorrection({ upc: ctx.upc, field: "title", was: thin, now: enriched, userId: creator }).catch(
+    () => {},
+  );
   if (web.brand && web.brand !== hit.brand) {
-    void reportBarcodeCorrection({ upc: ctx.upc, field: "brand", was: hit.brand ?? null, now: web.brand }).catch(() => {});
+    void reportBarcodeCorrection({
+      upc: ctx.upc,
+      field: "brand",
+      was: hit.brand ?? null,
+      now: web.brand,
+      userId: creator,
+    }).catch(() => {});
   }
 }
 

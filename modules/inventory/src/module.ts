@@ -55,6 +55,9 @@ export default defineModule({
           // intentionally `object` not a fixed shape; each consumer
           // module stuffs its own namespace under a top-level key.
           { name: "metadata", type: "object" },
+          // Where it lives — the scan "already tracked" banner shows it and
+          // move-mode uses it to skip entities already in the active bin.
+          { name: "location_id", type: "text" },
         ],
         // Cross-module readable: name + description for labels & rendering,
         // qty/min_qty for low-stock / dep-satisfied checks, unit for quantity
@@ -75,6 +78,7 @@ export default defineModule({
           // platform.entities.lookupMany instead of reaching into
           // inventory_parts directly.
           "metadata",
+          "location_id",
           // `cost` IS exposable but capability-gated below — it flows
           // to member-facing reads only for viewers who hold
           // inventory:view-costs. supplier_url / manufacturer / notes

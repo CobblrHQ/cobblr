@@ -37,7 +37,6 @@ import { expandInstanceWidgets } from "../dashboard/expandInstanceWidgets";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useAuth } from "../auth/AuthContext";
 import { WhatToDoPanel } from "../components/WhatToDoPanel";
-import { displaySlug } from "../lib/workspaceSlug";
 import { liveNextStepLabel } from "../lib/featured-bundles";
 import {
   api,
@@ -343,7 +342,10 @@ function GettingStartedPanel({
         .listInstances(slug)
         .then((r) => r.items)
         .catch(() => []);
-      for (const inst of instances)
+      // NAMED instances only: default instances are covered by the module
+      // probes above, and the defaults of core-* capability modules have no
+      // items router at all — probing them 501s on every dashboard load.
+      for (const inst of instances.filter((i) => !i.is_default))
         probes.push(wrap(`/instances/${encodeURIComponent(inst.instance_name)}/items?limit=1`));
       const counts = await Promise.all(probes);
       return counts.reduce((a, b) => a + b, 0);
@@ -506,11 +508,16 @@ function GettingStartedPanel({
 
 // ──────────────────────── workspace header ─────────────────────────
 
+// The old identity bar (name · slug · role chip · "welcome back" · Customize
+// link) is GONE — it spent the dashboard's most valuable row repeating what the
+// navbar's workspace switcher already says (the author: "is this bar actually useful
+// in any way at all?" — no). What remains: the message strip (bundle-update
+// nudges), rendered only when there IS a message, plus a slim "you're a
+// {role} here" note on shared workspaces — the one identity fact with signal.
+// "Customize workspace" now lives in the workspace switcher's footer.
 function WorkspaceHeader({
-  orgName,
   slug,
   role,
-  userName,
 }: {
   orgName: string;
   slug: string;
@@ -528,40 +535,20 @@ function WorkspaceHeader({
   const [completed, setCompleted] = useState<Record<string, { name: string; glyph: string; version: string }>>({});
   const pending = updates.filter((u) => !completed[u.externalId]);
   const completedList = Object.entries(completed);
+  const guest = role !== "owner";
+  if (pending.length === 0 && completedList.length === 0 && !guest) return null;
   return (
-    <header className="rounded-xl border border-line dark:border-slate-700 bg-gradient-to-br from-cobble-50/40 to-white dark:from-slate-900 dark:to-slate-900/40 p-5">
-      <div className="flex items-baseline gap-3 flex-wrap">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title tracking-tight">
-          {orgName}
-        </h1>
-        <span className="text-xs font-mono text-faint dark:text-slate-500">
-          {displaySlug(slug)}
-        </span>
-        <span className="px-1.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider bg-cobble-100 dark:bg-cobble-900/30 text-accent dark:text-cobble-300">
-          {role}
-        </span>
-        {/* Inline greeting — wraps with the title row (feedback 5816bd0d:
-            no need for its own line). */}
-        <span className="text-xs text-muted dark:text-slate-400">
-          welcome back, {userName.split(" ")[0]}
-        </span>
-        <div className="flex-1" />
-        {/* Always-available "grow your workspace" path — the empty-state Enable
-            cards vanish once you have data, so this is how you keep adding
-            modules / starter packs without hunting in the account menu. */}
-        <Link
-          to="/configuration"
-          className="inline-flex items-center gap-1.5 text-xs text-accent hover:text-content dark:hover:text-mortar-100 transition shrink-0"
-          title="Turn on modules, install a starter pack, customize this workspace"
-        >
-          <Sliders size={13} /> Set up workspace
-        </Link>
-      </div>
+    <header className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900/40 px-4 py-2.5">
+      {guest && (
+        <div className="text-[11px] text-faint dark:text-slate-400">
+          you're a <span className="font-mono uppercase text-accent">{role}</span> in this workspace
+        </div>
+      )}
       {/* Compact message strip — one line + action per message. Bundle-update
           nudges live here now (the standalone banner was too noisy). Room for
           other one-line messages later. */}
       {(pending.length > 0 || completedList.length > 0) && (
-        <div className="mt-3 space-y-1 border-t border-line/60 dark:border-slate-800 pt-2">
+        <div className={"space-y-1" + (guest ? " mt-2 border-t border-line/60 dark:border-slate-800 pt-2" : "")}>
           {pending.map((u) => (
             <BundleUpdateRow
               key={u.externalId}

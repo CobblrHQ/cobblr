@@ -1,0 +1,140 @@
+{
+  "manifest": {
+    "id": "cobblr.community.3d-printers",
+    "version": "0.3.0",
+    "name": "3D Printers",
+    "description": "A 3D Printers tracker — your printers with hotend, extruder, board, firmware, bed size, and local IP. It's a named view of your machines, so each printer still drives prints, fleet status, and maintenance.",
+    "author": "Cobblr community",
+    "released_at": "2026-06-19",
+    "changelog": "Your 3D printers now open the full machine page — set every field (hotend, extruder, mainboard, firmware, bed size, local IP), edit in place, attach files, and link the machine straight to its print manager (FDM Monster / OctoPrint) right from its own page, instead of a name-only stub. Installing now offers a checked-by-default “Connect to your 3D printers” option that brings the Print Manager along — send a file to be made and track the job — which you can uncheck for catalog-only use. Existing installs auto-upgrade: your 3D printers move into the 3D Printers tab automatically, no reinstall.",
+    "requires": [
+      {
+        "module": "machines"
+      }
+    ],
+    "features": [
+      {
+        "key": "digifab",
+        "name": "Connect to your 3D printers",
+        "question": "Want to send files to your 3D printers and track the job?",
+        "description": "Adds the Print Manager — map each machine to the software that runs it (FDM Monster, OctoPrint, …), send a file to be made, and track the job to completion. Talks to the manager's API; it never drives the hardware. You can link a machine to its manager right from the machine's page.",
+        "default": true,
+        "requires": [
+          {
+            "module": "digifab"
+          }
+        ]
+      }
+    ],
+    "provides_instances": [
+      {
+        "module": "machines",
+        "instance_name": "3d-printers",
+        "display_name": "3D Printers",
+        "item_noun": "3D printer",
+        "glyph": "🖨️",
+        "field_defs": [
+          {
+            "entity_kind": "machines:machine",
+            "name": "hotend",
+            "display_label": "Hotend",
+            "type": "text",
+            "position": 10,
+            "choices": [
+              "Stock",
+              "E3D V6",
+              "E3D Volcano",
+              "E3D Revo",
+              "Phaetus Dragonfly",
+              "Phaetus Rapido",
+              "Mosquito",
+              "Bondtech CHT"
+            ]
+          },
+          {
+            "entity_kind": "machines:machine",
+            "name": "extruder",
+            "display_label": "Extruder",
+            "type": "text",
+            "position": 11,
+            "choices": [
+              "Stock",
+              "Bondtech LGX",
+              "Bondtech LGX Lite",
+              "Bondtech DDX",
+              "BMG (clone)",
+              "Titan",
+              "Orbiter v2",
+              "Sherpa Mini"
+            ]
+          },
+          {
+            "entity_kind": "machines:machine",
+            "name": "board",
+            "display_label": "Mainboard",
+            "type": "text",
+            "position": 12,
+            "choices": [
+              "Stock",
+              "BTT SKR Mini E3",
+              "BTT SKR 1.4 Turbo",
+              "BTT Octopus",
+              "Duet 3 6HC",
+              "Duet 3 6XD",
+              "MKS Robin Nano"
+            ]
+          },
+          {
+            "entity_kind": "machines:machine",
+            "name": "firmware",
+            "display_label": "Firmware",
+            "type": "text",
+            "position": 13,
+            "choices": [
+              "Stock",
+              "Marlin",
+              "Klipper",
+              "RepRapFirmware",
+              "Prusa Buddy"
+            ]
+          },
+          {
+            "entity_kind": "machines:machine",
+            "name": "bed_size",
+            "display_label": "Bed size (mm)",
+            "type": "text",
+            "position": 14,
+            "choices": [
+              "180×180",
+              "200×200",
+              "220×220",
+              "235×235",
+              "250×250",
+              "300×300",
+              "350×350",
+              "400×400"
+            ]
+          },
+          {
+            "entity_kind": "machines:machine",
+            "name": "local_ip",
+            "display_label": "Local IP / hostname",
+            "type": "text",
+            "position": 15
+          }
+        ],
+        "saved_views": [
+          {
+            "entity_kind": "machines:machine",
+            "name": "Printer fleet by state",
+            "view_type": "kanban",
+            "config": {
+              "group_by": "state"
+            },
+            "pinned": true
+          }
+        ]
+      }
+    ]
+  }
+}

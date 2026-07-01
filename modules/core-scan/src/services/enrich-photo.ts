@@ -50,6 +50,19 @@ export async function refreshCatalogImageByName(
     .execute();
 }
 
+/** Multipack detection (scan-parity Epic D): read "2 Pack" / "12 ct" /
+ *  "6-pack" off a resolved title. Returns the unit count (2–500) or null.
+ *  Guards against sizes-that-aren't-counts ("14.4 oz", "100 ft"). Lives here
+ *  (not enrich.ts) because enrich.ts imports this module — same direction. */
+export function parsePackSize(title: string | null | undefined): number | null {
+  const t = (title ?? "").toLowerCase();
+  if (!t) return null;
+  const m = t.match(/(?:^|[\s(])(\d{1,3})\s*-?\s*(?:pack|pk|ct|count|pcs|pieces)\b/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isInteger(n) && n >= 2 && n <= 500 ? n : null;
+}
+
 interface PhotoEnrichContext {
   db: Kysely<CoreScanDB>;
   /** Org UUID — for the metered core-ai vision call. */
@@ -400,6 +413,7 @@ export async function enrichPhotoItem(ctx: PhotoEnrichContext): Promise<void> {
         category: identity.category,
         entity_type: identity.entityType,
         ...(captureBarcode ? { barcode_source: "ai-photo" } : {}),
+        ...(parsePackSize(identity.name) ? { pack_size: parsePackSize(identity.name) } : {}),
       })}::jsonb` as never,
       ai_confidence: String(identity.confidence),
       ai_notes:

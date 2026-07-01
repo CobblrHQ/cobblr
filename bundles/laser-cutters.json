@@ -1,0 +1,110 @@
+{
+  "manifest": {
+    "id": "cobblr.community.laser-cutters",
+    "version": "0.3.0",
+    "name": "Laser Cutters",
+    "description": "A Laser Cutters tracker — tube type, wattage, bed size, cooling, focal length. A named view of your machines, so each cutter still drives jobs, fleet status, and maintenance.",
+    "author": "Cobblr community",
+    "released_at": "2026-06-19",
+    "changelog": "Your laser cutters now open the full machine page — set every field (tube type, wattage, bed size, cooling, focal length), edit in place, attach files, and link the machine straight to its print manager (FDM Monster / OctoPrint) right from its own page, instead of a name-only stub. Installing now offers a checked-by-default “Connect to your laser cutters” option that brings the Print Manager along — send a file to be made and track the job — which you can uncheck for catalog-only use. Existing installs auto-upgrade: your laser cutters move into the Laser Cutters tab automatically, no reinstall.",
+    "requires": [
+      {
+        "module": "machines"
+      }
+    ],
+    "features": [
+      {
+        "key": "digifab",
+        "name": "Connect to your laser cutters",
+        "question": "Want to send files to your laser cutters and track the job?",
+        "description": "Adds the Print Manager — map each machine to the software that runs it (FDM Monster, OctoPrint, …), send a file to be made, and track the job to completion. Talks to the manager's API; it never drives the hardware. You can link a machine to its manager right from the machine's page.",
+        "default": true,
+        "requires": [
+          {
+            "module": "digifab"
+          }
+        ]
+      }
+    ],
+    "provides_instances": [
+      {
+        "module": "machines",
+        "instance_name": "laser-cutters",
+        "display_name": "Laser Cutters",
+        "item_noun": "laser cutter",
+        "glyph": "🔥",
+        "field_defs": [
+          {
+            "entity_kind": "machines:machine",
+            "name": "tube_type",
+            "display_label": "Tube type",
+            "type": "text",
+            "position": 20,
+            "choices": [
+              "CO2 (sealed)",
+              "CO2 (DC-excited)",
+              "CO2 (RF)",
+              "Diode",
+              "Fiber",
+              "Nd:YAG"
+            ]
+          },
+          {
+            "entity_kind": "machines:machine",
+            "name": "wattage",
+            "display_label": "Wattage (W)",
+            "type": "number",
+            "position": 21
+          },
+          {
+            "entity_kind": "machines:machine",
+            "name": "bed_size_laser",
+            "display_label": "Bed size (mm)",
+            "type": "text",
+            "position": 22,
+            "choices": [
+              "200×300",
+              "300×400",
+              "400×600",
+              "500×700",
+              "600×900",
+              "900×1200",
+              "1200×1600"
+            ]
+          },
+          {
+            "entity_kind": "machines:machine",
+            "name": "cooling_type",
+            "display_label": "Cooling",
+            "type": "text",
+            "position": 23,
+            "choices": [
+              "Passive",
+              "Water (open loop)",
+              "Water (chiller)",
+              "Air-cooled"
+            ]
+          },
+          {
+            "entity_kind": "machines:machine",
+            "name": "focal_length_mm",
+            "display_label": "Focal length (mm)",
+            "type": "number",
+            "position": 24
+          }
+        ],
+        "saved_views": [
+          {
+            "entity_kind": "machines:machine",
+            "name": "Laser fleet by tube type",
+            "view_type": "kanban",
+            "config": {
+              "group_by": "tube_type"
+            },
+            "pinned": true
+          }
+        ]
+      }
+    ]
+  }
+}

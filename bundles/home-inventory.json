@@ -1,34 +1,195 @@
 {
   "manifest": {
     "id": "cobblr.flagship.home-inventory",
+    "version": "0.3.0",
     "name": "Home Inventory",
-    "version": "0.2.0",
-    "description": "Catalog what you own, room by room — make/model, condition, photos — with a grouped 'By room' view. (The marketplace 'Insurance valuation' feature adds replacement value + purchase details for a claim.)",
+    "description": "Your belongings as their own room-by-room catalog — make/model + condition, grouped by room. Optional insurance valuation.",
     "author": "Cobblr",
+    "released_at": "2026-06-08",
+    "changelog": "Home Inventory is now its OWN table (an inventory instance), not generic Inventory with extra columns — its own nav entry, a “New item” button, and only the fields a home catalog needs (the parts/warranty/supplier cruft is hidden). Plain-language hints added; the “By room” view stays pinned. Turn on Insurance valuation for replacement values + a claim-ready view.",
     "requires": [
-      { "module": "inventory" }
-    ],
-    "field_defs": [
-      { "entity_kind": "inventory:part", "name": "room", "display_label": "Room", "type": "text", "position": 1, "choices": ["Living room", "Kitchen", "Primary bedroom", "Bedroom", "Bathroom", "Office", "Garage", "Basement", "Attic", "Outdoor", "Storage"] },
-      { "entity_kind": "inventory:part", "name": "condition", "display_label": "Condition", "type": "text", "position": 2, "choices": ["New", "Excellent", "Good", "Fair", "Poor"] }
-    ],
-    "field_overrides": [
-      { "entity_kind": "inventory:part", "name": "cost", "display_label": "Paid" },
-      { "entity_kind": "inventory:part", "name": "manufacturer", "display_label": "Make / brand" },
-      { "entity_kind": "inventory:part", "name": "model_number", "display_label": "Model" }
-    ],
-    "saved_views": [
       {
-        "entity_kind": "inventory:part",
-        "name": "By room",
-        "view_type": "table",
-        "pinned": true,
-        "config": {
-          "group_by": "room",
-          "visible_fields": ["title", "manufacturer", "model_number", "condition", "qty"]
-        }
+        "module": "inventory"
+      }
+    ],
+    "provides_instances": [
+      {
+        "module": "inventory",
+        "instance_name": "home-inventory",
+        "display_name": "Home Inventory",
+        "glyph": "🏠",
+        "item_noun": "item",
+        "qty_unit": "each",
+        "field_defs": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "room",
+            "display_label": "Room",
+            "type": "text",
+            "position": 1,
+            "choices": [
+              "Living room",
+              "Kitchen",
+              "Primary bedroom",
+              "Bedroom",
+              "Bathroom",
+              "Office",
+              "Garage",
+              "Basement",
+              "Attic",
+              "Outdoor",
+              "Storage"
+            ],
+            "help": "Where it lives — the catalog groups by room so a claim/move is room-by-room."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "condition",
+            "display_label": "Condition",
+            "type": "text",
+            "position": 2,
+            "choices": [
+              "New",
+              "Excellent",
+              "Good",
+              "Fair",
+              "Poor"
+            ],
+            "help": "Rough state, for resale or an insurance claim — New down to Poor."
+          }
+        ],
+        "field_overrides": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "cost",
+            "display_label": "Paid"
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "manufacturer",
+            "display_label": "Make / brand"
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "model_number",
+            "display_label": "Model"
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "category",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "location",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "warranty",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "min_qty",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "supplier_url",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "serial_number",
+            "hidden": true
+          }
+        ],
+        "saved_views": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "By room",
+            "view_type": "table",
+            "pinned": true,
+            "config": {
+              "group_by": "room",
+              "visible_fields": [
+                "title",
+                "manufacturer",
+                "model_number",
+                "condition",
+                "qty"
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "features": [
+      {
+        "key": "insurance",
+        "name": "Insurance valuation",
+        "question": "Add insurance valuation (for a claim)?",
+        "description": "Add replacement value + where/when you bought each item, plus an 'Insurance valuation' view to hand an insurer after a fire/theft/move.",
+        "default": false,
+        "next_steps": [
+          {
+            "label": "Value your items for insurance",
+            "module": "inventory",
+            "path": "/instances/home-inventory",
+            "hint": "Replacement value + where/when you bought each item."
+          }
+        ],
+        "provides_instances": [
+          {
+            "module": "inventory",
+            "instance_name": "home-inventory",
+            "display_name": "Home Inventory",
+            "field_defs": [
+              {
+                "entity_kind": "inventory:part",
+                "name": "replacement_value",
+                "display_label": "Replacement value",
+                "type": "number",
+                "position": 3,
+                "help": "What it'd cost to buy new today — what an insurer pays out (not what you paid)."
+              },
+              {
+                "entity_kind": "inventory:part",
+                "name": "purchased_from",
+                "display_label": "Bought from",
+                "type": "text",
+                "position": 4,
+                "help": "Store or site — proof-of-purchase for a claim."
+              },
+              {
+                "entity_kind": "inventory:part",
+                "name": "purchase_date",
+                "display_label": "Purchased",
+                "type": "date",
+                "position": 5
+              }
+            ],
+            "saved_views": [
+              {
+                "entity_kind": "inventory:part",
+                "name": "Insurance valuation",
+                "view_type": "table",
+                "config": {
+                  "group_by": "room",
+                  "visible_fields": [
+                    "title",
+                    "room",
+                    "replacement_value",
+                    "purchase_date",
+                    "condition"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
       }
     ]
-  },
-  "confirm": true
+  }
 }

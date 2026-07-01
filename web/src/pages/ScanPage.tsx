@@ -26,11 +26,14 @@ import {
   ExternalLink,
   FileText,
   Flag,
+  Image as ImageIcon,
+  LayoutGrid,
   Loader2,
   MapPin,
   MonitorSmartphone,
   RotateCcw,
   ScanLine,
+  Search,
   Sparkles,
   Upload,
   X,
@@ -38,7 +41,10 @@ import {
 import { Modal, useImageSrc, useToast, usePageTitle } from "@cobblr/platform-web";
 import { LocationPicker } from "../components/LocationPicker";
 import { ImageSearchPicker } from "../components/ImageSearchPicker";
+import { TrackedMatchBanner } from "../components/TrackedMatchBanner";
 import { PairPhoneButton } from "../components/PairPhoneButton";
+import { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
+export { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
 import { decideLocationScan, filingLabel } from "../lib/scanFiling";
 import {
   type AiStatus,
@@ -51,7 +57,7 @@ import {
 } from "../lib/api";
 import { matchParentType, readField } from "../lib/parent-type-match";
 import { useBarcodeWedge } from "../lib/useBarcodeWedge";
-import { resolveSessionBatch, clearScanSession, readScanSession, isSessionFresh } from "../lib/scanSession";
+import { resolveSessionBatch, clearScanSession, readScanSession, isSessionFresh, SESSION_GAP_MS } from "../lib/scanSession";
 import { tabBrowserId } from "../hooks/useBrowserDrive";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useAuth } from "../auth/AuthContext";
@@ -105,20 +111,8 @@ function formatSessionTime(ms: number): string {
   return `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}, ${time}`;
 }
 
-/** "Today" / "Yesterday" / "Jun 21" — the DAY header for loose (un-batched) scans
- *  grouped by calendar day. */
-function formatDay(ms: number): string {
-  if (!Number.isFinite(ms) || ms <= 0) return "Earlier";
-  const d = new Date(ms);
-  const now = new Date();
-  const sameDate = (a: Date, b: Date) =>
-    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-  const yest = new Date(now);
-  yest.setDate(now.getDate() - 1);
-  if (sameDate(d, now)) return "Today";
-  if (sameDate(d, yest)) return "Yesterday";
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
+/* (day-bucket helpers removed: batch-less history now clusters into
+   time-gap pseudo-sessions, so every group is a Session header.) */
 
 /** Compact relative time for an inbox item's last touch ("just now", "10 min
  *  ago", "3 h ago", "2 d ago") — so you can see how stale this listing is. */
@@ -257,14 +251,6 @@ function findBarcodeMatchClusters(items: ScanInboxItem[]): ScanInboxItem[][] {
     }
   }
   return out;
-}
-
-/** Local calendar-day key (YYYY-M-D in the viewer's timezone) — groups loose
- *  scans by the day they happened, not UTC (so a late-evening scan doesn't split
- *  across UTC midnight). */
-function localDayKey(ms: number): string {
-  const d = new Date(ms);
-  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
 }
 
 function useScanDrive(slug: string | undefined, batchId: string | undefined): ScanDrive {
@@ -454,46 +440,6 @@ function colorSwatch(value: unknown): string | null {
   return typeof CSS !== "undefined" && CSS.supports?.("color", named) ? named : null;
 }
 
-/** Is AI usable for this workspace/user? Cached well beyond a scan
- *  session — availability only changes when someone reconfigures. */
-export function useAiStatus(): AiStatus | null {
-  const { activeSlug } = useActiveOrg();
-  const q = useQuery({
-    queryKey: ["ai-status", activeSlug],
-    queryFn: () => api.getAiStatus(activeSlug),
-    enabled: !!activeSlug,
-    staleTime: 5 * 60_000,
-  });
-  return q.data ?? null;
-}
-
-/** The up-front "scans run in basic mode" strip for AI-less instances —
- *  the author's rule: tell the user the experience is degraded BEFORE they hit
- *  it, not after a nameless miss confuses them. */
-export function AiOffNotice({ status }: { status: AiStatus | null }) {
-  if (!status || status.available) return null;
-  return (
-    <div className="rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 text-sm text-content dark:text-mortar-100 flex items-start gap-2">
-      <Sparkles size={15} className="text-amber-500 shrink-0 mt-0.5" />
-      <div>
-        <strong>AI isn't connected — scans run in basic mode.</strong> Known
-        barcodes still get a catalog name + photo, but unknown ones won't be
-        auto-named, brands won't fill in, and photo-only items won't be
-        identified — you'll fill those fields in yourself.{" "}
-        {status.reason === "operator_disabled" ? (
-          <span className="text-muted dark:text-slate-400">
-            (AI is switched off for this whole server.)
-          </span>
-        ) : (
-          <Link to="/configuration/ai" className="text-accent hover:underline">
-            Set up a provider →
-          </Link>
-        )}
-      </div>
-    </div>
-  );
-}
-
 /** The at-the-moment-of-pain variant: a nameless miss in the confirm flow. */
 export function AiOffMissHint({ status }: { status: AiStatus | null }) {
   if (!status || status.available) return null;
@@ -648,7 +594,17 @@ export function ScanPage() {
     setUploading(true);
     try {
       const rec = await api.uploadFile(activeSlug, file);
-      await api.scanBarcode(activeSlug, { source_kind: "photo", image_file_id: rec.id });
+      const sessionBatch =
+        batchId ??
+        (await resolveSessionBatch(activeSlug, () =>
+          api.createScanBatch(activeSlug).then((b) => b.id).catch(() => null),
+        )) ??
+        undefined;
+      await api.scanBarcode(activeSlug, {
+        source_kind: "photo",
+        image_file_id: rec.id,
+        scan_batch_id: sessionBatch,
+      });
       toast.success("Photo added — AI is identifying it");
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
     } catch (e) {
@@ -737,7 +693,13 @@ export function ScanPage() {
   // ones, then flip this on to focus only on the ones that need a human.
   const needsReview = (it: ScanInboxItem): boolean => {
     if (it.status !== "pending") return false;
-    const meta = (it.suggested_metadata ?? {}) as { low_trust?: boolean; rate_limited?: boolean };
+    const meta = (it.suggested_metadata ?? {}) as {
+      low_trust?: boolean;
+      rate_limited?: boolean;
+      reviewed?: boolean;
+    };
+    // "Looks fine" — a human already eyeballed it; stop nagging.
+    if (meta.reviewed) return false;
     return (
       !it.suggested_name ||
       !!meta.low_trust ||
@@ -746,8 +708,46 @@ export function ScanPage() {
     );
   };
   const [reviewOnly, setReviewOnly] = useState(false);
+  // Stale nudge (companion app G15): pending items sitting > 2 days (companion app's window —
+  // clutter is the motivator to clear; two days is when it starts to rot).
+  const STALE_MS = 2 * 24 * 60 * 60 * 1000;
+  const isStale = (it: ScanInboxItem) =>
+    it.status === "pending" && Date.now() - new Date(it.created_at).getTime() > STALE_MS;
+  const [staleOnly, setStaleOnly] = useState(false);
+  const staleCount = items.filter(isStale).length;
   const reviewCount = items.filter(needsReview).length;
-  const visibleItems = reviewOnly ? items.filter(needsReview) : items;
+  // Free-text search over the pending queue (companion app): tokenized — every word must
+  // match somewhere across name / barcode / AI notes / brand / scan area.
+  const [searchQ, setSearchQ] = useState("");
+  const searchTokens = searchQ.toLowerCase().split(/\s+/).filter(Boolean);
+  const matchesSearch = (it: ScanInboxItem): boolean => {
+    if (!searchTokens.length) return true;
+    const hay = [
+      it.suggested_name,
+      it.barcode_text,
+      it.ai_notes,
+      it.suggested_manufacturer,
+      it.scan_area,
+      it.suggested_sku,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    return searchTokens.every((tok) => hay.includes(tok));
+  };
+  const searched = searchTokens.length ? items.filter(matchesSearch) : items;
+  const visibleItems = staleOnly
+    ? searched.filter(isStale)
+    : reviewOnly
+      ? searched.filter(needsReview)
+      : searched;
+  // Gallery ⇄ list — a photo-tile grid for visual triage (persisted).
+  const [galleryView, setGalleryView] = useState(() => localStorage.getItem("cobblr-scan-view") === "gallery");
+  const toggleGalleryView = () =>
+    setGalleryView((v) => {
+      localStorage.setItem("cobblr-scan-view", v ? "list" : "gallery");
+      return !v;
+    });
 
   // "Looks like the same product" — clusters of pending items (same brand +
   // overlapping names) we can offer to combine into one line. Dismissed clusters
@@ -879,23 +879,46 @@ export function ScanPage() {
   // "No session" lump. Newest group first; items keep their created_at-desc order.
   const sessionGroups = useMemo(() => {
     if (batchId) return null;
-    const groups = new Map<
-      string,
-      { key: string; isBatch: boolean; items: ScanInboxItem[]; latest: number; area: string | null }
-    >();
+    type Group = {
+      key: string;
+      isBatch: boolean;
+      batchId: string | null;
+      items: ScanInboxItem[];
+      latest: number;
+      area: string | null;
+    };
+    const groups: Group[] = [];
+    const byBatch = new Map<string, Group>();
+    // Batch-less items (older history; intakes that predate batching) cluster
+    // into PSEUDO-sessions by time gap — the companion app look: every scanning burst is
+    // its own session group, whether or not a batch id was minted at the time.
+    let pseudo: Group | null = null;
+    let pseudoLastT = 0;
     for (const it of visibleItems) {
+      // visibleItems arrive newest-first, so the "previous" item is newer.
       const t = Date.parse(it.created_at);
-      const key = it.scan_batch_id ?? `day:${Number.isFinite(t) ? localDayKey(t) : "unknown"}`;
-      let g = groups.get(key);
-      if (!g) {
-        g = { key, isBatch: !!it.scan_batch_id, items: [], latest: 0, area: null };
-        groups.set(key, g);
+      let g: Group;
+      if (it.scan_batch_id) {
+        const existing = byBatch.get(it.scan_batch_id);
+        if (existing) g = existing;
+        else {
+          g = { key: it.scan_batch_id, isBatch: true, batchId: it.scan_batch_id, items: [], latest: 0, area: null };
+          byBatch.set(it.scan_batch_id, g);
+          groups.push(g);
+        }
+      } else {
+        if (!pseudo || !Number.isFinite(t) || pseudoLastT - t > SESSION_GAP_MS) {
+          pseudo = { key: `gap:${it.id}`, isBatch: false, batchId: null, items: [], latest: 0, area: null };
+          groups.push(pseudo);
+        }
+        if (Number.isFinite(t)) pseudoLastT = t;
+        g = pseudo;
       }
       g.items.push(it);
       if (Number.isFinite(t) && t > g.latest) g.latest = t;
       if (!g.area && it.scan_area) g.area = it.scan_area;
     }
-    return [...groups.values()].sort((a, b) => b.latest - a.latest);
+    return groups.sort((a, b) => b.latest - a.latest);
   }, [batchId, visibleItems]);
   // Every group (session or day) carries a meaningful time header now, so show
   // them whenever we're grouping at all.
@@ -983,11 +1006,18 @@ export function ScanPage() {
   // quantity-bumped) row once the refetch lands.
   const [pendingScans, setPendingScans] = useState<{ id: string; code: string }[]>([]);
   const wedgeScan = useMutation({
-    mutationFn: (code: string) =>
+    mutationFn: async (code: string) =>
       api.scanBarcode(activeSlug, {
         barcode: code,
         source_kind: "barcode",
-        scan_batch_id: batchId ?? undefined,
+        // Reviewing a session (?batch) scans into IT; otherwise the time-gap
+        // session, so wedge bursts group like camera bursts (companion app batches).
+        scan_batch_id:
+          batchId ??
+          (await resolveSessionBatch(activeSlug, () =>
+            api.createScanBatch(activeSlug).then((b) => b.id).catch(() => null),
+          )) ??
+          undefined,
         target_location_id: fileBin || undefined,
       }),
     onMutate: (code: string) => {
@@ -1208,6 +1238,52 @@ export function ScanPage() {
       },
     });
   };
+  // Gallery view's focus modal: which item is open as a full triage card.
+  const [galleryFocusId, setGalleryFocusId] = useState<string | null>(null);
+  // Fold one scan session into the previous one (companion app merge-batches).
+  const mergeBatches = useMutation({
+    mutationFn: (v: { from: string; into: string }) => api.mergeScanBatches(activeSlug, v.from, v.into),
+    onSuccess: (r) => {
+      toast.success(`Merged ${r.moved} item${r.moved === 1 ? "" : "s"} into the previous session`);
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+
+  // "Add all to …" — commit the whole selection into ONE explicit table
+  // (overriding each item's own routing). The bulk form of picking a target.
+  const [bulkTargetOpen, setBulkTargetOpen] = useState(false);
+  const bulkAddAllTo = async (entry: ScanMenuEntry) => {
+    setBulkBusy(true);
+    setBulkTargetOpen(false);
+    const byId = new Map(items.map((i) => [i.id, i]));
+    let ok = 0;
+    let skipped = 0;
+    for (const id of selected) {
+      const it = byId.get(id);
+      if (!it || !it.suggested_name) {
+        skipped++;
+        continue;
+      }
+      try {
+        await api.confirmScanItem(activeSlug, id, {
+          target_module: entry.module,
+          target_kind: entry.kind.includes(":") ? entry.kind.split(":")[1] : entry.kind,
+          instance: entry.instance ?? undefined,
+          name: it.suggested_name,
+          quantity: it.quantity ?? undefined,
+          location_id: it.target_location_id ?? undefined,
+        });
+        ok++;
+      } catch {
+        skipped++;
+      }
+    }
+    setBulkBusy(false);
+    clearSelected();
+    void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+    toast.success(`Added ${ok} to ${entry.label}${skipped ? ` — ${skipped} skipped (no name / failed)` : ""}`);
+  };
   const bulkConfirm = async () => {
     setBulkBusy(true);
     const byId = new Map(items.map((i) => [i.id, i]));
@@ -1250,9 +1326,13 @@ export function ScanPage() {
     <div className="space-y-4 max-w-4xl mx-auto">
       {/* ── the ONE header row: identity + intake. Short word labels;
             compact paddings keep it one row on phones. ──────────────── */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center border-b border-line dark:border-slate-700 pb-2.5">
+      {/* flex-wrap at every size: the identity chips are all shrink-0, so
+          without wrapping the two clusters OVERLAP at mid widths (~1500px
+          with several chips visible). Wrapping drops intake to its own row
+          exactly when it needs one. */}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:flex-wrap border-b border-line dark:border-slate-700 pb-2.5">
         {/* identity — title, count, review/session chips */}
-        <div className="flex items-center gap-2 min-w-0">
+        <div className="flex items-center gap-2 min-w-0 flex-wrap">
         <h1 className="text-lg font-semibold text-content dark:text-mortar-100 shrink-0">
           Inbox
         </h1>
@@ -1275,13 +1355,88 @@ export function ScanPage() {
             ⚠ {reviewCount} need{reviewCount === 1 ? "s" : ""} review
           </button>
         )}
+        <div className="relative inline-flex items-center shrink-0">
+          <Search size={12} className="absolute left-2 text-faint pointer-events-none" />
+          <input
+            value={searchQ}
+            onChange={(e) => setSearchQ(e.target.value)}
+            placeholder="search inbox…"
+            aria-label="Search the pending queue"
+            className="w-36 sm:w-44 rounded-full border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 pl-7 pr-6 py-0.5 text-xs text-content focus:border-accent outline-none"
+          />
+          {searchQ && (
+            <button
+              type="button"
+              onClick={() => setSearchQ("")}
+              aria-label="Clear search"
+              className="absolute right-1.5 text-faint hover:text-content"
+            >
+              <X size={11} />
+            </button>
+          )}
+        </div>
+        {searchTokens.length > 0 && (
+          <span className="text-[11px] text-muted shrink-0">
+            {visibleItems.length} / {items.length}
+          </span>
+        )}
+        {staleCount > 0 && (
+          <button
+            type="button"
+            onClick={() => setStaleOnly((v) => !v)}
+            title="Items that have been waiting over two days"
+            className={
+              "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs shrink-0 transition " +
+              (staleOnly
+                ? "border-amber-500 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300"
+                : "border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:border-amber-400")
+            }
+          >
+            🕰 {staleCount} waiting 2d+
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={toggleGalleryView}
+          title={galleryView ? "List view" : "Gallery view — big photo tiles"}
+          className="inline-flex items-center gap-1 rounded-full border border-line dark:border-slate-700 px-2 py-0.5 text-xs text-muted dark:text-slate-400 hover:border-accent shrink-0"
+        >
+          <LayoutGrid size={12} className={galleryView ? "text-accent" : ""} />
+          {galleryView ? "gallery" : "list"}
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            void api
+              .backfillScanCatalogPhotos(activeSlug)
+              .then((r) =>
+                toast.success(
+                  r.queued
+                    ? `Finding photos for ${r.queued} item${r.queued === 1 ? "" : "s"}…`
+                    : "Every named item already has a photo",
+                ),
+              )
+              .catch((e) => toast.error(e instanceof ApiError ? e.message : String(e)))
+          }
+          title="Find catalog photos for named items that don't have one"
+          className="inline-flex items-center gap-1 rounded-full border border-line dark:border-slate-700 px-2 py-0.5 text-xs text-muted dark:text-slate-400 hover:border-accent shrink-0"
+        >
+          <ImageIcon size={12} /> fill photos
+        </button>
         {batchId && (
           <Link
             to="/scan"
             title="Filtered to this scan session — tap to show everything pending"
             className="inline-flex items-center gap-1 rounded-full border border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20 px-2.5 py-0.5 text-xs text-content dark:text-mortar-100 shrink-0 hover:border-cobble-400"
           >
-            session
+            {(() => {
+              // Name the session by its newest item's time (+ area) so the chip
+              // says WHICH burst you're reviewing, not just "session".
+              const newest = items[0];
+              const t = newest ? Date.parse(newest.created_at) : NaN;
+              const area = items.find((i) => i.scan_area)?.scan_area;
+              return `session${Number.isFinite(t) ? ` · ${formatSessionTime(t)}` : ""}${area ? ` · ${area}` : ""}`;
+            })()}
             <X size={12} className="text-faint" />
           </Link>
         )}
@@ -1477,6 +1632,17 @@ export function ScanPage() {
               Set location
             </button>
           )}
+          {(menu?.length ?? 0) > 0 && (
+            <button
+              type="button"
+              disabled={bulkBusy || selected.size === 0}
+              onClick={() => setBulkTargetOpen((o) => !o)}
+              title="Commit the whole selection into one table"
+              className="rounded border border-line dark:border-slate-700 text-sm px-3 py-1 text-content hover:bg-subtle dark:hover:bg-slate-800 transition disabled:opacity-50"
+            >
+              Add all to…
+            </button>
+          )}
           <button
             type="button"
             disabled={bulkBusy || selected.size === 0}
@@ -1496,6 +1662,21 @@ export function ScanPage() {
           <button type="button" onClick={clearSelected} className="text-xs text-faint hover:text-content">
             clear
           </button>
+          {bulkTargetOpen && (menu?.length ?? 0) > 0 && (
+            <div className="w-full pt-1 flex flex-wrap gap-1.5">
+              {menu!.map((entry) => (
+                <button
+                  key={`${entry.module}:${entry.instance ?? ""}:${entry.kind}`}
+                  type="button"
+                  disabled={bulkBusy}
+                  onClick={() => void bulkAddAllTo(entry)}
+                  className="rounded-full border border-line dark:border-slate-700 px-2.5 py-1 text-xs text-content hover:border-accent hover:text-accent transition disabled:opacity-50"
+                >
+                  {entry.label}
+                </button>
+              ))}
+            </div>
+          )}
           {bulkLocOpen && (
             <div className="w-full pt-1">
               <LocationPicker
@@ -1509,19 +1690,33 @@ export function ScanPage() {
       )}
 
       {sessionActive && !batchId && (
-        <div className="mb-2 flex items-center gap-2 rounded-md border border-line dark:border-slate-700 bg-surface/60 dark:bg-slate-800/30 px-2.5 py-1.5 text-xs text-muted">
-          <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
-          <span>Scanning into the current session — scans group together until 30 min idle.</span>
-          <button
-            type="button"
-            onClick={() => {
-              clearScanSession(activeSlug);
-              toast.success("Next scan starts a new session");
-            }}
-            className="ml-auto shrink-0 rounded px-1.5 py-0.5 font-medium text-accent hover:bg-accent/10"
-          >
-            New session
-          </button>
+        <div className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-emerald-300/60 dark:border-emerald-800/60 bg-emerald-50/50 dark:bg-emerald-950/20 px-2.5 py-1.5 text-xs text-muted">
+          <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+          <span className="text-content dark:text-mortar-100 font-medium">
+            Scan session active
+            {activeSession?.count ? ` — ${activeSession.count} item${activeSession.count === 1 ? "" : "s"}` : ""}
+          </span>
+          <span className="hidden sm:inline">· groups until 30 min idle</span>
+          <span className="ml-auto inline-flex items-center gap-2 shrink-0">
+            {activeSession?.batchId && (
+              <Link
+                to={`/scan?batch=${activeSession.batchId}`}
+                className="rounded px-1.5 py-0.5 font-medium text-accent hover:bg-accent/10"
+              >
+                Review session
+              </Link>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                clearScanSession(activeSlug);
+                toast.success("Session ended — the next scan starts a new one");
+              }}
+              className="rounded px-1.5 py-0.5 font-medium text-accent hover:bg-accent/10"
+            >
+              End session
+            </button>
+          </span>
         </div>
       )}
 
@@ -1560,28 +1755,84 @@ export function ScanPage() {
               </Fragment>
             );
           };
+          // Gallery view: a flat photo-tile grid for visual triage; a tap opens
+          // the full card pre-expanded in a modal.
+          if (galleryView) {
+            return (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
+                {visibleItems.map((it) => (
+                  <GalleryTile key={it.id} item={it} slug={activeSlug} onOpen={() => setGalleryFocusId(it.id)} />
+                ))}
+              </div>
+            );
+          }
           // Flat list when there's nothing to group by (scoped ?batch view).
           if (!showSessionHeaders || !sessionGroups) return visibleItems.map(card);
           // Otherwise a collapsible header per group: a real session shows its
           // time (· area); a day bucket shows the day. Both show a count.
-          return sessionGroups.map((g) => {
+          return sessionGroups.map((g, gi) => {
             const collapsed = collapsedSessions.has(g.key);
+            const groupIds = g.items.map((i) => i.id);
+            const allGroupSelected = groupIds.length > 0 && groupIds.every((gid) => selected.has(gid));
+            // Merge target: the NEXT (older) group that is a real batch.
+            const mergeInto = g.isBatch
+              ? sessionGroups.slice(gi + 1).find((o) => o.isBatch && o.batchId)?.batchId ?? null
+              : null;
             return (
               <div key={g.key} className="space-y-2">
-                <button
-                  type="button"
-                  onClick={() => toggleSession(g.key)}
-                  className="flex w-full items-center gap-2 rounded-md bg-mortar-50 dark:bg-slate-800/40 px-2.5 py-1.5 text-left text-xs"
-                >
-                  <ChevronDown size={13} className={`shrink-0 transition ${collapsed ? "-rotate-90" : ""}`} />
-                  <span className="font-medium text-content dark:text-mortar-100">
-                    {g.isBatch ? formatSessionTime(g.latest) : formatDay(g.latest)}
-                  </span>
-                  {g.area && <span className="text-muted truncate">· {g.area}</span>}
-                  <span className="ml-auto shrink-0 text-faint">
-                    {g.items.length} item{g.items.length === 1 ? "" : "s"}
-                  </span>
-                </button>
+                <div className="flex w-full items-center gap-2 rounded-md bg-mortar-50 dark:bg-slate-800/40 px-2.5 py-1.5 text-left text-xs">
+                  {/* Burst select-all (companion app G3): grab the whole session for the
+                      bulk toolbar (location / confirm / discard). */}
+                  <input
+                    type="checkbox"
+                    checked={allGroupSelected}
+                    onChange={() =>
+                      setSelected((s) => {
+                        const n = new Set(s);
+                        if (allGroupSelected) groupIds.forEach((gid) => n.delete(gid));
+                        else groupIds.forEach((gid) => n.add(gid));
+                        return n;
+                      })
+                    }
+                    onClick={(e) => e.stopPropagation()}
+                    aria-label="Select this whole session"
+                    className="shrink-0 h-3.5 w-3.5 accent-cobble-600 cursor-pointer"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => toggleSession(g.key)}
+                    className="flex flex-1 min-w-0 items-center gap-2 text-left"
+                  >
+                    <ChevronDown size={13} className={`shrink-0 transition ${collapsed ? "-rotate-90" : ""}`} />
+                    <span className="font-medium text-content dark:text-mortar-100">
+                      Session · {formatSessionTime(g.latest)}
+                    </span>
+                    {g.area && <span className="text-muted truncate">· {g.area}</span>}
+                    <span className="ml-auto shrink-0 text-faint">
+                      {g.items.length} item{g.items.length === 1 ? "" : "s"}
+                    </span>
+                  </button>
+                  {g.isBatch && g.batchId && (
+                    <Link
+                      to={`/scan?batch=${g.batchId}`}
+                      title="Review just this session"
+                      className="shrink-0 text-faint hover:text-accent"
+                    >
+                      open →
+                    </Link>
+                  )}
+                  {mergeInto && g.batchId && (
+                    <button
+                      type="button"
+                      title="Fold this session into the previous one"
+                      onClick={() => void mergeBatches.mutateAsync({ from: g.batchId!, into: mergeInto })}
+                      disabled={mergeBatches.isPending}
+                      className="shrink-0 text-faint hover:text-accent disabled:opacity-50"
+                    >
+                      merge ↓
+                    </button>
+                  )}
+                </div>
                 {!collapsed && <div className="space-y-2">{g.items.map(card)}</div>}
               </div>
             );
@@ -1594,6 +1845,34 @@ export function ScanPage() {
           </div>
         )}
       </div>
+
+      {/* Gallery focus: the full triage card, pre-expanded, in a modal. */}
+      {galleryFocusId &&
+        (() => {
+          const focus = items.find((i) => i.id === galleryFocusId);
+          if (!focus) return null;
+          // Triage rip-through (companion app): once this item resolves, advance the
+          // modal to the NEXT pending item instead of showing a stale card.
+          if (focus.status !== "pending") {
+            const pending = visibleItems.filter((i) => i.status === "pending" && i.id !== focus.id);
+            const next = pending[0];
+            if (next) setTimeout(() => setGalleryFocusId(next.id), 0);
+            else setTimeout(() => setGalleryFocusId(null), 0);
+            return null;
+          }
+          return (
+            <Modal open onClose={() => setGalleryFocusId(null)} title={focus.suggested_name ?? "Item"} size="lg">
+              <InboxCard
+                item={focus}
+                pageTarget={target}
+                menu={menu}
+                hasLocations={hasLocations}
+                rateLimitGaveUp={rlGaveUp.has(focus.id)}
+                defaultExpanded
+              />
+            </Modal>
+          );
+        })()}
 
       {recentlyDeleted.length > 0 && (
         <div className="mt-3">
@@ -1658,7 +1937,15 @@ function UpcModal({ onClose }: { onClose: () => void }) {
   }, []);
 
   const scan = useMutation({
-    mutationFn: (value: string) => api.scanBarcode(activeSlug, { barcode: value.trim() }),
+    mutationFn: async (value: string) =>
+      api.scanBarcode(activeSlug, {
+        barcode: value.trim(),
+        // Same time-gap session the wedge/camera use — typed UPCs join the burst.
+        scan_batch_id:
+          (await resolveSessionBatch(activeSlug, () =>
+            api.createScanBatch(activeSlug).then((b) => b.id).catch(() => null),
+          )) ?? undefined,
+      }),
     onSuccess: (item) => {
       toast.success(`Scanned: ${item.suggested_name ?? `Barcode ${item.barcode_text}`}`);
       setBarcode("");
@@ -1782,6 +2069,7 @@ function InboxCard({
   selected,
   onToggleSelect,
   rateLimitGaveUp,
+  defaultExpanded,
 }: {
   item: ScanInboxItem;
   pageTarget: ScanTarget | null;
@@ -1790,6 +2078,8 @@ function InboxCard({
   selected?: boolean;
   onToggleSelect?: () => void;
   rateLimitGaveUp?: boolean;
+  /** Open pre-expanded (the gallery view's focus modal). */
+  defaultExpanded?: boolean;
 }) {
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
@@ -1830,6 +2120,12 @@ function InboxCard({
     );
     setExpanded(true);
   }
+
+  // Gallery focus modal opens the card pre-expanded (one tap to triage).
+  useEffect(() => {
+    if (defaultExpanded) openForm();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // The matchmaker is SERVER-OWNED: it runs once at intake (detached) and
   // inline during a rerun. The web never auto-triggers it — a page load
@@ -2038,6 +2334,83 @@ function InboxCard({
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
 
+  // ── image ops (scan-parity-final-mile.md Epic B) ────────────────────
+  const invalidateInbox = () => void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+  const onErr = (e: unknown) => toast.error(e instanceof ApiError ? e.message : String(e));
+  const rotate = useMutation({
+    mutationFn: () => api.rotateScanPhoto(activeSlug, item.id, 90),
+    onSuccess: invalidateInbox,
+    onError: onErr,
+  });
+  const split = useMutation({
+    mutationFn: () => api.splitScanItem(activeSlug, item.id),
+    onSuccess: (r) => {
+      toast.success(`Split into ${r.children.length} items`);
+      invalidateInbox();
+    },
+    onError: onErr,
+  });
+  const addPhoto = useMutation({
+    mutationFn: (f: File) => api.uploadFile(activeSlug, f).then((up) => api.addScanPhoto(activeSlug, item.id, up.id)),
+    onSuccess: () => {
+      toast.success("Photo added");
+      invalidateInbox();
+    },
+    onError: onErr,
+  });
+  const retakeCatalog = useMutation({
+    mutationFn: (f: File) =>
+      api.uploadFile(activeSlug, f).then((up) => api.setScanCatalogFile(activeSlug, item.id, up.id)),
+    onSuccess: () => {
+      toast.success("Catalog photo replaced with your shot");
+      invalidateInbox();
+    },
+    onError: onErr,
+  });
+  const setPrimaryPhoto = useMutation({
+    mutationFn: (fileId: string) => api.setScanPrimaryPhoto(activeSlug, item.id, fileId),
+    onSuccess: invalidateInbox,
+    onError: onErr,
+  });
+  const removeExtraPhoto = useMutation({
+    mutationFn: (fileId: string) => api.removeScanPhoto(activeSlug, item.id, fileId),
+    onSuccess: invalidateInbox,
+    onError: onErr,
+  });
+  const addPhotoRef = useRef<HTMLInputElement>(null);
+  const retakeRef = useRef<HTMLInputElement>(null);
+  const extraPhotos = Array.isArray((item.suggested_metadata as { extra_photos?: unknown })?.extra_photos)
+    ? ((item.suggested_metadata as { extra_photos: string[] }).extra_photos)
+    : [];
+  // Box-state (companion app A13): unset → empty-box → item-in-box → unset.
+  const boxState =
+    (item.suggested_metadata as { box_state?: "item-in-box" | "empty-box" } | null)?.box_state ?? null;
+  const cycleBoxState = useMutation({
+    mutationFn: () =>
+      api.updateScanItem(activeSlug, item.id, {
+        box_state: boxState === null ? "empty-box" : boxState === "empty-box" ? "item-in-box" : null,
+      }),
+    onSuccess: invalidateInbox,
+    onError: onErr,
+  });
+  // "Looks fine" — human eyeballed a flagged item; drop it from needs-review.
+  const alreadyReviewed = !!(item.suggested_metadata as { reviewed?: boolean } | null)?.reviewed;
+  const flaggedForReview =
+    item.status === "pending" &&
+    !alreadyReviewed &&
+    (!item.suggested_name ||
+      lowTrust ||
+      rateLimited ||
+      (item.ai_confidence != null && Number(item.ai_confidence) < 0.5));
+  const markReviewed = useMutation({
+    mutationFn: () => api.updateScanItem(activeSlug, item.id, { reviewed: true }),
+    onSuccess: () => {
+      toast.success("Marked as looks-fine");
+      invalidateInbox();
+    },
+    onError: onErr,
+  });
+
   const ddg = (q: string) => `https://duckduckgo.com/?q=${encodeURIComponent(q)}`;
 
   return (
@@ -2143,6 +2516,40 @@ function InboxCard({
             {item.suggested_manufacturer && ` · ${item.suggested_manufacturer}`}
             {item.suggested_sku && ` · ${item.suggested_sku}`}
             {item.scan_area && ` · 📍${item.scan_area}`}
+            {(() => {
+              const ps = (item.suggested_metadata as { pack_size?: number } | null)?.pack_size;
+              return ps ? <span className="text-accent"> · {ps}-pack</span> : null;
+            })()}
+            {(() => {
+              const bs = (item.suggested_metadata as { box_state?: string } | null)?.box_state;
+              return bs ? <span> · 📦 {bs === "empty-box" ? "empty box" : "in box"}</span> : null;
+            })()}
+            {(item.suggested_metadata as { split_from?: string } | null)?.split_from && (
+              <span className="text-accent"> · ✂ from split</span>
+            )}
+            {item.source_url &&
+              (() => {
+                let host = "";
+                try {
+                  host = new URL(item.source_url).hostname.replace(/^www\./, "");
+                } catch {
+                  /* not a URL */
+                }
+                return host ? (
+                  <>
+                    {" · "}
+                    <a
+                      href={item.source_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-accent hover:underline"
+                    >
+                      {host} ↗
+                    </a>
+                  </>
+                ) : null;
+              })()}
           </div>
           {!expanded && item.ai_notes && (
             <div
@@ -2290,6 +2697,11 @@ function InboxCard({
       {/* ── expanded triage surface — photos left, intel right (lg+) ── */}
       {expanded && (
         <div className="border-t border-line dark:border-slate-800 p-3 space-y-3 bg-subtle/40 dark:bg-slate-950/40">
+          {/* "Already tracked" (companion app A8/A9) — attach to the existing entity
+              instead of creating a duplicate. Lazy: only queried on expand. */}
+          {item.status === "pending" && (
+            <TrackedMatchBanner item={item} locationId={item.target_location_id} />
+          )}
           <div className="grid lg:grid-cols-2 gap-3 items-start">
           <div className="space-y-2">
           {/* Catalog vs YOUR photo, side by side (whichever exist). */}
@@ -2327,31 +2739,133 @@ function InboxCard({
               )}
             </div>
           )}
-          {/* Image tools: revert to the original catalog photo, or use your own. */}
-          {(hasOrigCatalog || (yoursImg && yoursImg !== catalogImg)) && (
+          {/* Extra photos (multi-photo gallery): tap → make primary; × → remove. */}
+          {extraPhotos.length > 0 && (
             <div className="flex flex-wrap gap-1.5" onClick={(e) => e.stopPropagation()}>
-              {hasOrigCatalog && (
-                <button
-                  type="button"
-                  disabled={catalogAction.isPending}
-                  onClick={() => catalogAction.mutate("revert")}
-                  className="text-[11px] rounded border border-line dark:border-slate-700 px-2 py-0.5 text-muted hover:text-content hover:border-accent transition disabled:opacity-50"
-                >
-                  ↺ Revert to original
-                </button>
-              )}
-              {yoursImg && yoursImg !== catalogImg && (
-                <button
-                  type="button"
-                  disabled={catalogAction.isPending}
-                  onClick={() => catalogAction.mutate("use_own_photo")}
-                  className="text-[11px] rounded border border-line dark:border-slate-700 px-2 py-0.5 text-muted hover:text-content hover:border-accent transition disabled:opacity-50"
-                >
-                  Use my photo
-                </button>
-              )}
+              {extraPhotos.map((pid) => (
+                <ExtraPhotoThumb
+                  key={pid}
+                  slug={activeSlug}
+                  fileId={pid}
+                  onMakePrimary={() => setPrimaryPhoto.mutate(pid)}
+                  onRemove={() => removeExtraPhoto.mutate(pid)}
+                  busy={setPrimaryPhoto.isPending || removeExtraPhoto.isPending}
+                />
+              ))}
             </div>
           )}
+          {/* Image tools: rotate / split / retake / add — plus catalog revert. */}
+          <div className="flex flex-wrap gap-1.5" onClick={(e) => e.stopPropagation()}>
+            {hasOrigCatalog && (
+              <button
+                type="button"
+                disabled={catalogAction.isPending}
+                onClick={() => catalogAction.mutate("revert")}
+                className="text-[11px] rounded border border-line dark:border-slate-700 px-2 py-0.5 text-muted hover:text-content hover:border-accent transition disabled:opacity-50"
+              >
+                ↺ Revert to original
+              </button>
+            )}
+            {yoursImg && yoursImg !== catalogImg && (
+              <button
+                type="button"
+                disabled={catalogAction.isPending}
+                onClick={() => catalogAction.mutate("use_own_photo")}
+                className="text-[11px] rounded border border-line dark:border-slate-700 px-2 py-0.5 text-muted hover:text-content hover:border-accent transition disabled:opacity-50"
+              >
+                Use my photo
+              </button>
+            )}
+            {item.image_file_id && (
+              <button
+                type="button"
+                disabled={rotate.isPending}
+                onClick={() => rotate.mutate()}
+                title="Rotate your photo 90°"
+                className="text-[11px] rounded border border-line dark:border-slate-700 px-2 py-0.5 text-muted hover:text-content hover:border-accent transition disabled:opacity-50"
+              >
+                {rotate.isPending ? "Rotating…" : "⟳ Rotate"}
+              </button>
+            )}
+            {item.image_file_id && item.status === "pending" && (
+              <button
+                type="button"
+                disabled={split.isPending}
+                onClick={() => split.mutate()}
+                title="Several different things in one photo? Split them into separate items"
+                className="text-[11px] rounded border border-line dark:border-slate-700 px-2 py-0.5 text-muted hover:text-content hover:border-accent transition disabled:opacity-50"
+              >
+                {split.isPending ? "AI is splitting…" : "✂ Split into items"}
+              </button>
+            )}
+            <button
+              type="button"
+              disabled={retakeCatalog.isPending}
+              onClick={() => retakeRef.current?.click()}
+              title="Take a nice picture — it becomes the catalog/display photo"
+              className="text-[11px] rounded border border-line dark:border-slate-700 px-2 py-0.5 text-muted hover:text-content hover:border-accent transition disabled:opacity-50"
+            >
+              {retakeCatalog.isPending ? "Uploading…" : "📷 Retake for catalog"}
+            </button>
+            <button
+              type="button"
+              disabled={addPhoto.isPending}
+              onClick={() => addPhotoRef.current?.click()}
+              title="Add another photo to this item"
+              className="text-[11px] rounded border border-line dark:border-slate-700 px-2 py-0.5 text-muted hover:text-content hover:border-accent transition disabled:opacity-50"
+            >
+              {addPhoto.isPending ? "Uploading…" : "+ Add photo"}
+            </button>
+            {item.status === "pending" && (
+              <button
+                type="button"
+                disabled={cycleBoxState.isPending}
+                onClick={() => cycleBoxState.mutate()}
+                title="Is this the item, or an empty box you keep? (tap to cycle)"
+                className={`text-[11px] rounded border px-2 py-0.5 transition disabled:opacity-50 ${
+                  boxState
+                    ? "border-accent text-accent"
+                    : "border-line dark:border-slate-700 text-muted hover:text-content hover:border-accent"
+                }`}
+              >
+                📦 {boxState === "empty-box" ? "empty box" : boxState === "item-in-box" ? "item in box" : "box state"}
+              </button>
+            )}
+            {flaggedForReview && (
+              <button
+                type="button"
+                disabled={markReviewed.isPending}
+                onClick={() => markReviewed.mutate()}
+                title="A human looked — this one's fine; stop flagging it"
+                className="text-[11px] rounded border border-emerald-400/60 px-2 py-0.5 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition disabled:opacity-50"
+              >
+                ✓ Looks fine
+              </button>
+            )}
+            <input
+              ref={retakeRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              hidden
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                e.currentTarget.value = "";
+                if (f) retakeCatalog.mutate(f);
+              }}
+            />
+            <input
+              ref={addPhotoRef}
+              type="file"
+              accept="image/*"
+              hidden
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                e.currentTarget.value = "";
+                if (f) addPhoto.mutate(f);
+              }}
+            />
+          </div>
           {zoom &&
             createPortal(
               <div
@@ -2551,6 +3065,91 @@ function InboxCard({
           />
         </div>
       )}
+    </div>
+  );
+}
+
+// ── gallery view tile: big photo + name + status ring; tap = triage ──
+function GalleryTile({
+  item,
+  slug,
+  onOpen,
+}: {
+  item: ScanInboxItem;
+  slug: string;
+  onOpen: () => void;
+}) {
+  const raw =
+    item.catalog_image_file_id
+      ? `/api/v1/orgs/${slug}/modules/core-files/files/${item.catalog_image_file_id}/raw?variant=med`
+      : (item.catalog_image_url ??
+        (item.image_file_id
+          ? `/api/v1/orgs/${slug}/modules/core-files/files/${item.image_file_id}/raw?variant=med`
+          : null));
+  const src = useImageSrc(raw);
+  const meta = (item.suggested_metadata ?? {}) as { low_trust?: boolean; rate_limited?: boolean };
+  const flagged = !item.suggested_name || meta.low_trust || meta.rate_limited;
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className={`group relative rounded-lg overflow-hidden border text-left aspect-square bg-subtle dark:bg-slate-800 ${
+        flagged ? "border-amber-400/70" : "border-line dark:border-slate-700"
+      }`}
+    >
+      {src ? (
+        <img src={src} alt="" className="w-full h-full object-cover" loading="lazy" />
+      ) : (
+        <div className="w-full h-full flex items-center justify-center">
+          <ScanLine size={22} className="text-faint" />
+        </div>
+      )}
+      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent px-2 pt-6 pb-1.5">
+        <div className="text-[11px] leading-tight text-white line-clamp-2">
+          {item.suggested_name ?? <span className="italic text-white/70">unidentified</span>}
+        </div>
+        {(item.quantity ?? 1) > 1 && <div className="text-[10px] text-white/80">×{item.quantity}</div>}
+      </div>
+      {flagged && <span className="absolute top-1 right-1 text-[11px]">⚠</span>}
+    </button>
+  );
+}
+
+// ── extra-photo thumb (multi-photo gallery): tap = primary, × = remove ─
+function ExtraPhotoThumb({
+  slug,
+  fileId,
+  onMakePrimary,
+  onRemove,
+  busy,
+}: {
+  slug: string;
+  fileId: string;
+  onMakePrimary: () => void;
+  onRemove: () => void;
+  busy: boolean;
+}) {
+  const src = useImageSrc(`/api/v1/orgs/${slug}/modules/core-files/files/${fileId}/raw?variant=thumb`);
+  return (
+    <div className="relative w-14 h-14">
+      <button
+        type="button"
+        disabled={busy}
+        onClick={onMakePrimary}
+        title="Make this the primary photo"
+        className="w-14 h-14 rounded-md overflow-hidden border border-line dark:border-slate-700 bg-black flex items-center justify-center disabled:opacity-50"
+      >
+        {src ? <img src={src} alt="" className="w-full h-full object-cover" /> : <ImageIcon size={16} className="text-faint" />}
+      </button>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={onRemove}
+        title="Remove this photo"
+        className="absolute -top-1.5 -right-1.5 rounded-full bg-slate-700 text-white p-0.5 hover:bg-ember-600 disabled:opacity-50"
+      >
+        <X size={10} />
+      </button>
     </div>
   );
 }

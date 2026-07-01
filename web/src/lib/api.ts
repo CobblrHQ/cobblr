@@ -2249,8 +2249,23 @@ export const api = {
   updateScanItem: (
     slug: string,
     id: string,
-    body: { quantity?: number; name?: string; target_location_id?: string | null },
+    body: {
+      quantity?: number;
+      name?: string;
+      target_location_id?: string | null;
+      box_state?: "item-in-box" | "empty-box" | null;
+      reviewed?: boolean;
+    },
   ) => request<ScanInboxItem>("PATCH", `/orgs/${slug}/modules/core-scan/inbox/${id}`, body),
+  /** Fold one scan session into another (batch merge). */
+  mergeScanBatches: (slug: string, fromBatchId: string, intoBatchId: string) =>
+    request<{ moved: number }>("POST", `/orgs/${slug}/modules/core-scan/inbox/merge-batches`, {
+      from_batch_id: fromBatchId,
+      into_batch_id: intoBatchId,
+    }),
+  /** Fill catalog images for pending items that have a name but no catalog art. */
+  backfillScanCatalogPhotos: (slug: string) =>
+    request<{ queued: number }>("POST", `/orgs/${slug}/modules/core-scan/inbox/backfill-catalog-photos`),
   confirmScanItem: (
     slug: string,
     id: string,
@@ -2350,6 +2365,30 @@ export const api = {
   // photo into the shared barcode database for every future scan of this UPC.
   confirmScanBarcode: (slug: string, id: string) =>
     request<ScanInboxItem>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/confirm-barcode`),
+  // "Already tracked?" — entities the workspace already has matching this scan
+  // (exact barcode / name overlap), and attach-to-existing instead of duplicating.
+  scanTrackedMatches: (slug: string, id: string) =>
+    request<{ barcode_matches: TrackedMatch[]; name_matches: TrackedMatch[] }>(
+      "GET",
+      `/orgs/${slug}/modules/core-scan/inbox/${id}/tracked-matches`,
+    ),
+  scanAttach: (
+    slug: string,
+    id: string,
+    body: {
+      kind: string;
+      entity_id: string;
+      instance?: string;
+      mode: "add-qty" | "link-barcode" | "move";
+      location_id?: string;
+    },
+  ) =>
+    request<{
+      item: ScanInboxItem;
+      entity_title: string;
+      new_qty: number | null;
+      prev_location_id: string | null;
+    }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/attach`, body),
   // Merge several similar pending items (same product, different barcodes) into one
   // line with the summed quantity; keepId's name/photo wins, others are discarded.
   combineScanItems: (slug: string, ids: string[], keepId?: string) =>
@@ -2377,6 +2416,26 @@ export const api = {
       `/orgs/${slug}/modules/core-scan/inbox/${id}/catalog-image`,
       { action },
     ),
+  /** "Take a nice picture" — a fresh upload becomes the display/catalog image. */
+  setScanCatalogFile: (slug: string, id: string, fileId: string) =>
+    request<ScanInboxItem>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/catalog-image`, {
+      file_id: fileId,
+    }),
+  /** Rotate the item's own photo (writes a new file; the old one is kept). */
+  rotateScanPhoto: (slug: string, id: string, deg: 90 | 180 | 270) =>
+    request<ScanInboxItem>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/rotate`, { deg }),
+  /** Multi-photo gallery: add / make-primary / remove an extra photo. */
+  addScanPhoto: (slug: string, id: string, fileId: string) =>
+    request<ScanInboxItem>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/photos`, { file_id: fileId }),
+  setScanPrimaryPhoto: (slug: string, id: string, fileId: string) =>
+    request<ScanInboxItem>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/photos/primary`, {
+      file_id: fileId,
+    }),
+  removeScanPhoto: (slug: string, id: string, fileId: string) =>
+    request<ScanInboxItem>("DELETE", `/orgs/${slug}/modules/core-scan/inbox/${id}/photos/${fileId}`),
+  /** Split a group photo into separate items (vision segments + crops). */
+  splitScanItem: (slug: string, id: string) =>
+    request<{ children: ScanInboxItem[] }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/split`),
   createScanBatch: (slug: string) =>
     request<{ id: string }>(
       "POST",
@@ -3444,6 +3503,21 @@ export interface ScanInboxItem {
   created_at: string;
   updated_at: string;
   resolved_at: string | null;
+}
+
+/** "Already tracked" — an existing entity matching a scan (by barcode or name). */
+export interface TrackedMatch {
+  kind: string;
+  id: string;
+  title: string;
+  subtitle: string | null;
+  image_path: string | null;
+  detail_url: string | null;
+  instance: string | null;
+  noun: string;
+  qty: number | null;
+  location_id: string | null;
+  matched_by: "barcode" | "name";
 }
 
 /** Capture-first: pending captures grouped by the flagship bundle they fit. */

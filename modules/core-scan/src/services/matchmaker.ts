@@ -232,14 +232,22 @@ export async function assembleMergedMenu(
   token: string,
 ): Promise<ScanMenuEntry[]> {
   const live = await assembleScanMenu(baseUrl, slug, token);
-  if (live.length > 0) return live;
+  // MERGE live tables with the not-yet-installed bundle menu — never shadow.
+  // The old `if (live.length) return live` meant ONE item filed into generic
+  // Inventory collapsed the whole suggestion engine: every later capture could
+  // only route to "Inventory part", and yarn/plants/subscriptions were never
+  // suggested again. Live tables come first (the model + heuristic both bias
+  // toward earlier entries); bundle entries whose instance already exists live
+  // are dropped as duplicates.
   try {
     const res = await fetch(`${baseUrl}/api/v1/orgs/${slug}/quickstart/bundle-menu`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) return live;
     const body = (await res.json()) as { items?: ScanMenuEntry[] };
-    return Array.isArray(body.items) ? body.items : [];
+    const bundle = Array.isArray(body.items) ? body.items : [];
+    const liveKeys = new Set(live.map((e) => `${e.module}::${e.instance ?? ""}`));
+    return [...live, ...bundle.filter((e) => !liveKeys.has(`${e.module}::${e.instance ?? ""}`))];
   } catch {
     return live;
   }
@@ -287,6 +295,9 @@ export function parseMatchmakerCandidates(content: string): unknown[] | null {
  *  "3 skeins of blue worsted wool" → "Blue worsted wool". */
 function cleanCaptureName(raw: string): string {
   const s = raw
+    // leading article first — "A spool of black PLA" must still strip to
+    // "Black PLA" (the article used to defeat the unit strip entirely)
+    .replace(/^\s*(a|an|the)\s+/i, "")
     .replace(/^\s*\d+\s*(x|×)?\s*/i, "")
     .replace(/^(skeins?|balls?|spools?|rolls?|packs?|boxes?|bottles?|cans?|bags?|units?|pcs?|pieces?)\b\s*/i, "")
     .replace(/^of\s+/i, "")
@@ -364,12 +375,27 @@ export function heuristicMatch(item: PerceivedItem, menuIn: ScanMenuEntry[]): Ma
   if (menu.length === 0) return [];
   const hay = `${item.name ?? ""} ${item.description ?? ""} ${item.category ?? ""} ${item.notes ?? ""} ${
     item.metadata ? JSON.stringify(item.metadata) : ""
-  }`.toLowerCase();
-  const tokens = new Set(hay.split(/[^a-z0-9]+/).filter((t) => t.length >= 3));
+  }`
+    .toLowerCase()
+    // "a BAG of screws" / "3 BOXES of nails": the container word describes the
+    // packaging, not the item — drop it so it can't hit an unrelated table's
+    // choice vocabulary ("bag" is a Wardrobe accessory choice; screws aren't).
+    .replace(/\b(\d+\s*)?(skeins?|balls?|spools?|rolls?|packs?|boxe?s?|bottles?|cans?|bags?|tubes?|jars?|cases?)\s+of\s+/g, "");
+  // Light stemming so plural/singular pairs match ("Netflix subscription" hits
+  // a "subscriptions" table; "screws" hits a "screw" choice): compare tokens by
+  // their stem — trailing -ies→y, -es, -s stripped (conservative; ≥4 chars so
+  // "gas"/"its" survive).
+  const stem = (w: string): string => {
+    if (w.length >= 5 && w.endsWith("ies")) return w.slice(0, -3) + "y";
+    if (w.length >= 5 && w.endsWith("es")) return w.slice(0, -2);
+    if (w.length >= 4 && w.endsWith("s")) return w.slice(0, -1);
+    return w;
+  };
+  const tokens = new Set(hay.split(/[^a-z0-9]+/).filter((t) => t.length >= 3).map(stem));
   const hasWord = (phrase: string): boolean => {
     const p = phrase.toLowerCase();
     if (p.length >= 3 && hay.includes(p)) return true;
-    return p.split(/[^a-z0-9]+/).some((w) => w.length >= 3 && tokens.has(w));
+    return p.split(/[^a-z0-9]+/).some((w) => w.length >= 3 && tokens.has(stem(w)));
   };
 
   const scored = menu
@@ -389,7 +415,8 @@ export function heuristicMatch(item: PerceivedItem, menuIn: ScanMenuEntry[]): Ma
       const nounWords = new Set(
         [entry.noun, ...(entry.scan_keywords ?? [])]
           .flatMap((s) => s.toLowerCase().split(/[^a-z0-9]+/))
-          .filter((w) => w.length >= 3),
+          .filter((w) => w.length >= 3)
+          .map(stem),
       );
       if (entry.noun && hasWord(entry.noun)) {
         score += 2;
@@ -404,7 +431,7 @@ export function heuristicMatch(item: PerceivedItem, menuIn: ScanMenuEntry[]): Ma
       // A choice matches only on a NON-noun capture token (whole-phrase hits the
       // noun-word guard too: every matched word must be a non-noun word).
       const choiceHit = (ch: string): boolean => {
-        const words = ch.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3);
+        const words = ch.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3).map(stem);
         return words.some((w) => tokens.has(w) && !nounWords.has(w));
       };
       for (const f of entry.fields) {

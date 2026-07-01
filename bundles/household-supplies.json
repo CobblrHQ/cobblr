@@ -1,40 +1,136 @@
 {
   "manifest": {
     "id": "cobblr.flagship.household-supplies",
+    "version": "0.2.0",
     "name": "Household Supplies auto-reorder",
-    "version": "0.1.0",
-    "description": "Toiletries, cleaning products, batteries, paper goods — set a reorder level on each, and when stock drops to it the item lands on your shopping list automatically. Check it off after you shop and it restocks. A 'By area' view groups the cupboard from the garage.",
+    "description": "Your household supplies as their own table — reorder level per supply auto-adds to a shopping list on low stock; check off → it restocks. Grouped by area.",
     "author": "Cobblr",
+    "released_at": "2026-06-08",
+    "changelog": "Now its OWN table (an inventory instance), not generic Inventory with extra columns — its own nav entry, a “New supply” button, only the fields a supplies tracker needs. The low-stock → shopping-list → restock automation now lives on the Supplies table. Plain-language hints + a pinned “By area” view.",
     "requires": [
-      { "module": "inventory" },
-      { "module": "lists" }
-    ],
-    "wires": [
-      { "source_kind": "inventory:part", "action_id": "lists:add-item", "trigger_type": "event", "trigger_event": "inventory.stock.low", "args": { "listTitle": "Shopping list" } },
-      { "source_kind": "inventory:part", "action_id": "inventory:adjust-stock", "trigger_type": "event", "trigger_event": "lists.item.checked", "args": { "delta": 1, "reason": "Restocked — checked off the shopping list" } }
-    ],
-    "field_defs": [
-      { "entity_kind": "inventory:part", "name": "area", "display_label": "Area", "type": "text", "position": 1, "choices": ["Bathroom", "Kitchen", "Laundry", "Cleaning", "Garage", "Office", "General"] },
-      { "entity_kind": "inventory:part", "name": "typical_pack", "display_label": "Usual pack", "type": "text", "position": 2 }
-    ],
-    "field_overrides": [
-      { "entity_kind": "inventory:part", "name": "min_qty", "display_label": "Reorder at" },
-      { "entity_kind": "inventory:part", "name": "manufacturer", "display_label": "Brand" },
-      { "entity_kind": "inventory:part", "name": "serial_number", "hidden": true },
-      { "entity_kind": "inventory:part", "name": "model_number", "hidden": true }
-    ],
-    "saved_views": [
       {
-        "entity_kind": "inventory:part",
-        "name": "Supplies by area",
-        "view_type": "table",
-        "pinned": true,
-        "config": {
-          "group_by": "area",
-          "visible_fields": ["title", "qty", "unit", "typical_pack"]
-        }
+        "module": "inventory"
+      },
+      {
+        "module": "lists"
+      }
+    ],
+    "provides_instances": [
+      {
+        "module": "inventory",
+        "instance_name": "supplies",
+        "display_name": "Household Supplies",
+        "glyph": "🧻",
+        "item_noun": "supply",
+        "qty_unit": "each",
+        "wires": [
+          {
+            "source_kind": "inventory:part",
+            "action_id": "lists:add-item",
+            "trigger_type": "event",
+            "trigger_event": "inventory.stock.low",
+            "args": {
+              "listTitle": "Shopping list"
+            }
+          },
+          {
+            "source_kind": "inventory:part",
+            "action_id": "inventory:adjust-stock",
+            "trigger_type": "event",
+            "trigger_event": "lists.item.checked",
+            "args": {
+              "delta": 1,
+              "reason": "Restocked — checked off the shopping list"
+            }
+          }
+        ],
+        "field_defs": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "area",
+            "display_label": "Area",
+            "type": "text",
+            "position": 1,
+            "choices": [
+              "Bathroom",
+              "Kitchen",
+              "Laundry",
+              "Cleaning",
+              "Garage",
+              "Office",
+              "General"
+            ],
+            "help": "Where it's used/stored — the table groups by this."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "typical_pack",
+            "display_label": "Usual pack",
+            "type": "text",
+            "position": 2,
+            "help": "The pack size you usually buy — e.g. “12-pack”, “2 L” — so the shopping list is specific."
+          }
+        ],
+        "field_overrides": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "min_qty",
+            "display_label": "Reorder at"
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "manufacturer",
+            "display_label": "Brand"
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "category",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "location",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "warranty",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "supplier_url",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "serial_number",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "model_number",
+            "hidden": true
+          }
+        ],
+        "saved_views": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "By area",
+            "view_type": "table",
+            "pinned": true,
+            "config": {
+              "group_by": "area",
+              "visible_fields": [
+                "title",
+                "qty",
+                "unit",
+                "typical_pack"
+              ]
+            }
+          }
+        ]
       }
     ]
-  },
-  "confirm": true
+  }
 }

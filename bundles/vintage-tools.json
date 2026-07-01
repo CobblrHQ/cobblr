@@ -1,0 +1,62 @@
+{
+  "manifest": {
+    "id": "cobblr.community.vintage-tools",
+    "version": "0.1.0",
+    "name": "Vintage Tools",
+    "description": "Custom fields + label wires for vintage hand tools.",
+    "author": "Cobblr community",
+    "requires": [
+      {
+        "module": "inventory"
+      },
+      {
+        "module": "labels"
+      }
+    ],
+    "wires": [
+      {
+        "source_kind": "inventory:part",
+        "action_id": "labels:print",
+        "trigger_type": "user-invoked",
+        "template": "{{maker | default: \"—\"}} {{model | default: \"?\"}} · {{era | default: \"??\"}} · {{name}}"
+      }
+    ],
+    "field_defs": [
+      {
+        "entity_kind": "inventory:part",
+        "name": "maker",
+        "display_label": "Maker",
+        "type": "text",
+        "position": 1
+      },
+      {
+        "entity_kind": "inventory:part",
+        "name": "model",
+        "display_label": "Model",
+        "type": "text",
+        "position": 2
+      },
+      {
+        "entity_kind": "inventory:part",
+        "name": "era",
+        "display_label": "Era",
+        "type": "text",
+        "position": 3
+      },
+      {
+        "entity_kind": "inventory:part",
+        "name": "finish",
+        "display_label": "Finish",
+        "type": "text",
+        "position": 4
+      },
+      {
+        "entity_kind": "inventory:part",
+        "name": "provenance",
+        "display_label": "Provenance",
+        "type": "text",
+        "position": 5
+      }
+    ]
+  }
+}

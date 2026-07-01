@@ -1,0 +1,48 @@
+{
+  "manifest": {
+    "id": "cobblr.community.printer-parts",
+    "version": "0.2.0",
+    "name": "3D Printer Parts",
+    "description": "Datasheet-aware part fields + a narrow-bin label template. Manufacturer is a native inventory:part field; this bundle adds the electronics-specific extras.",
+    "author": "Cobblr community",
+    "requires": [
+      {
+        "module": "inventory"
+      },
+      {
+        "module": "labels"
+      }
+    ],
+    "wires": [
+      {
+        "source_kind": "inventory:part",
+        "action_id": "labels:print",
+        "trigger_type": "user-invoked",
+        "template": "{{name}}\n{{manufacturer | default: \"\"}} {{voltage | default: \"\"}}"
+      }
+    ],
+    "field_defs": [
+      {
+        "entity_kind": "inventory:part",
+        "name": "voltage",
+        "display_label": "Voltage",
+        "type": "text",
+        "position": 1
+      },
+      {
+        "entity_kind": "inventory:part",
+        "name": "datasheet_url",
+        "display_label": "Datasheet URL",
+        "type": "url",
+        "position": 2
+      },
+      {
+        "entity_kind": "inventory:part",
+        "name": "footprint",
+        "display_label": "Footprint / mount",
+        "type": "text",
+        "position": 3
+      }
+    ]
+  }
+}

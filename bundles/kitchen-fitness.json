@@ -1,13 +1,17 @@
 {
   "manifest": {
     "id": "cobblr.flagship.kitchen-fitness",
+    "version": "0.1.1",
     "name": "Kitchen × Fitness — grocery spend",
-    "version": "0.1.0",
-    "description": "Bridge bundle: every grocery order you receive logs its cost as a 'Grocery spend' measurement, so your spending trends like any other metric — set a monthly budget as the goal. Connects the Kitchen & Groceries flow to the Tracking module without either one knowing about the other.",
+    "description": "Connects the grocery flow to the Tracking module: order received → log spend into a metric. Neither module knows about the other.",
     "author": "Cobblr",
     "requires": [
-      { "module": "purchases" },
-      { "module": "tracking" }
+      {
+        "module": "purchases"
+      },
+      {
+        "module": "tracking"
+      }
     ],
     "wires": [
       {
@@ -24,6 +28,5 @@
         }
       }
     ]
-  },
-  "confirm": true
+  }
 }

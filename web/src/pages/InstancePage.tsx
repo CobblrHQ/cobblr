@@ -10,9 +10,10 @@
 // (/instances/:name/items) already works for every module.
 
 import { useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2 } from "lucide-react";
+import { CheckCircle2, Camera, Plus, Trash2, X } from "lucide-react";
 import { useConfirm, useToast } from "@cobblr/platform-web";
 import { InventoryUI } from "@cobblr/inventory/ui";
 import { ProjectsUI } from "@cobblr/projects/ui";
@@ -65,6 +66,9 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
     parent?: { instance: string; label?: string; relationship_kind?: string };
   };
 
+  // The whole dispatch is wrapped so the one-time "created from your capture"
+  // success strip (redesign A3) renders above WHICHEVER module UI wins.
+  const body = (() => {
   // Per-module UI dispatch. Inventory + projects render their packaged
   // list UIs scoped to the instance; host-page modules (machines /
   // assets / purchases) fall through to the placeholder for now.
@@ -139,6 +143,48 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
         </code>
         . Per-module dashboard views are landing one at a time.
       </div>
+    </div>
+  );
+  })();
+
+  return (
+    <div className="space-y-3">
+      <CreatedSuccessStrip />
+      {body}
+    </div>
+  );
+}
+
+/** One-time "here's what just happened" strip (redesign A3): shown when the
+ *  funnel/materialize lands here with ?created=…&count=… — names the win and
+ *  channels the momentum (scan more / keep adding) instead of dropping the
+ *  user into a bare table. Dismiss = strip the params (no storage needed). */
+function CreatedSuccessStrip() {
+  const [params, setParams] = useSearchParams();
+  const created = params.get("created");
+  if (!created) return null;
+  const count = Number(params.get("count") ?? "0");
+  const clear = () => {
+    const next = new URLSearchParams(params);
+    next.delete("created");
+    next.delete("count");
+    setParams(next, { replace: true });
+  };
+  return (
+    <div className="rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20 px-3 py-2.5 flex items-center gap-2.5 text-sm">
+      <CheckCircle2 size={16} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
+      <div className="flex-1 min-w-0 text-content dark:text-mortar-100">
+        <strong>{created}</strong> is set up{count > 0 ? <> — {count} item{count === 1 ? "" : "s"} filed from your capture{count === 1 ? "" : "s"}</> : null}. This is its home now.
+      </div>
+      <Link to="/scan/camera" onClick={clear} className="shrink-0 inline-flex items-center gap-1 rounded-md border border-emerald-300 dark:border-emerald-700 px-2 py-1 text-xs font-medium text-content dark:text-mortar-100 hover:border-emerald-400 transition">
+        <Camera size={12} /> Scan more
+      </Link>
+      <Link to="/dashboard" onClick={clear} className="shrink-0 inline-flex items-center gap-1 rounded-md border border-emerald-300 dark:border-emerald-700 px-2 py-1 text-xs font-medium text-content dark:text-mortar-100 hover:border-emerald-400 transition">
+        <Plus size={12} /> Add more
+      </Link>
+      <button type="button" onClick={clear} aria-label="Dismiss" className="shrink-0 rounded p-1 text-faint hover:text-content transition">
+        <X size={13} />
+      </button>
     </div>
   );
 }

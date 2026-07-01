@@ -1,0 +1,52 @@
+{
+  "manifest": {
+    "id": "cobblr.community.tool-library",
+    "version": "0.1.0",
+    "name": "Tool Library",
+    "description": "Track who's borrowed a tool, when it's due back, and its condition. Custom machine:machine fields.",
+    "author": "Cobblr community",
+    "requires": [
+      {
+        "module": "machines"
+      }
+    ],
+    "wires": [],
+    "field_defs": [
+      {
+        "entity_kind": "machines:machine",
+        "name": "borrower",
+        "display_label": "Borrower",
+        "type": "text",
+        "position": 1
+      },
+      {
+        "entity_kind": "machines:machine",
+        "name": "due_date",
+        "display_label": "Due back",
+        "type": "date",
+        "position": 2
+      },
+      {
+        "entity_kind": "machines:machine",
+        "name": "condition",
+        "display_label": "Condition (1-5)",
+        "type": "number",
+        "position": 3
+      },
+      {
+        "entity_kind": "machines:machine",
+        "name": "deposit_paid",
+        "display_label": "Deposit paid?",
+        "type": "text",
+        "position": 4
+      },
+      {
+        "entity_kind": "machines:machine",
+        "name": "tool_category",
+        "display_label": "Category",
+        "type": "text",
+        "position": 5
+      }
+    ]
+  }
+}

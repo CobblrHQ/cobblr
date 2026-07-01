@@ -105,7 +105,9 @@ function load(): { manifests: RawManifest[]; byId: Map<string, RawManifest> } {
         const raw = JSON.parse(fs.readFileSync(path.join(dir, f), "utf8")) as Record<string, unknown>;
         // bundles/*.json wrap the manifest in { manifest, confirm } — accept both.
         const m = (raw.manifest ?? raw) as RawManifest;
-        if (typeof m?.id === "string" && m.id.includes(".flagship.")) manifests.push(m);
+        // Flagship AND community bundles route captures — "LEGO set" should
+        // suggest the community Lego bundle, "M3 screws" → Printer Parts.
+        if (typeof m?.id === "string" && (m.id.includes(".flagship.") || m.id.includes(".community."))) manifests.push(m);
       } catch {
         /* a malformed manifest shouldn't sink the whole catalog */
       }

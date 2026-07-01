@@ -36,6 +36,8 @@ import { searchImages, rankImageOptions, imageQuery } from "../services/ddg-imag
 import { assembleScanMenu, assembleMergedMenu, runMatchmaker } from "../services/matchmaker.js";
 import { parseReceipt } from "../services/receipt.js";
 import { reportBarcodeCorrection } from "../services/barcode-corrections.js";
+import { findTracked } from "../services/entity-match.js";
+import { cropRegion, detectSplitItems, rotateImage } from "../services/image-ops.js";
 import { extractLocation, type LocationLite } from "../services/note-location.js";
 
 export const inboxRouter = Router({ mergeParams: true });
@@ -767,6 +769,11 @@ const PatchBody = z.object({
   // Set/clear the filing location on an existing item (bulk "Set location" in
   // triage stamps the same value across a selection). null clears it.
   target_location_id: z.string().uuid().nullable().optional(),
+  // companion app A13/H4: is this the ITEM (possibly in its box) or an EMPTY box you keep?
+  // Rides suggested_metadata.box_state and lands on the entity at confirm.
+  box_state: z.enum(["item-in-box", "empty-box"]).nullable().optional(),
+  // "Looks fine" — a human eyeballed a ⚠-flagged item; drop it from needs-review.
+  reviewed: z.boolean().optional(),
 });
 
 inboxRouter.patch(
@@ -785,6 +792,22 @@ inboxRouter.patch(
     if (parsed.data.name !== undefined) patch.suggested_name = parsed.data.name;
     if (parsed.data.target_location_id !== undefined) patch.target_location_id = parsed.data.target_location_id;
     const db = tenantDb(req);
+    // Metadata-riders (box_state / reviewed): merge into suggested_metadata
+    // without clobbering the rest of the blob.
+    if (parsed.data.box_state !== undefined || parsed.data.reviewed !== undefined) {
+      const cur = await db
+        .selectFrom("core_scan_inbox_items")
+        .select("suggested_metadata")
+        .where("id", "=", id)
+        .executeTakeFirst();
+      const meta = ((cur?.suggested_metadata ?? {}) as Record<string, unknown>) ?? {};
+      if (parsed.data.box_state !== undefined) {
+        if (parsed.data.box_state === null) delete meta.box_state;
+        else meta.box_state = parsed.data.box_state;
+      }
+      if (parsed.data.reviewed !== undefined) meta.reviewed = parsed.data.reviewed;
+      patch.suggested_metadata = JSON.stringify(meta);
+    }
     // Capture the prior name first: renaming a barcode item is a correction we
     // feed back to the shared Barcode Intelligence DB (below), and we need the
     // value the resolver gave to record what was wrong.
@@ -1007,6 +1030,15 @@ inboxRouter.post(
         sku: row.suggested_sku ?? undefined,
         category: (meta as { category?: string }).category ?? undefined,
         scan_source: (meta as { source?: string }).source ?? undefined,
+        // Physical annotations the triage captured (scan-parity Epic D).
+        pack_size: (meta as { pack_size?: number }).pack_size ?? undefined,
+        box_state: (meta as { box_state?: string }).box_state ?? undefined,
+        // Empty box: the scan location is the BOX's home, not the item's — say
+        // so instead of silently mislocating the entity (companion app semantics).
+        ...((meta as { box_state?: string }).box_state === "empty-box" &&
+        (row.scan_area || parsed.data.location_id)
+          ? { box_note: `Empty box kept at: ${row.scan_area ?? "the scan location"}` }
+          : {}),
         // Fields a scan-URL resolver seeded (e.g. a Polar spool's size /
         // batch_code). Generic: the kernel doesn't know the vendor — it
         // just carries whatever `fields` the resolver stamped. Matchmaker
@@ -1016,7 +1048,11 @@ inboxRouter.post(
         ...typedMetadata,
       },
       ...(qtyField && qty ? { [qtyField]: qty } : {}),
-      ...(parsed.data.location_id ? { location_id: parsed.data.location_id } : {}),
+      // Empty box → do NOT file the entity at the scan location: that's where
+      // the BOX lives; the item itself is deployed elsewhere (companion app box-state).
+      ...(parsed.data.location_id && (meta as { box_state?: string }).box_state !== "empty-box"
+        ? { location_id: parsed.data.location_id }
+        : {}),
       ...restExtras,
     };
 
@@ -1163,6 +1199,34 @@ inboxRouter.post(
       });
     }
 
+    // Flywheel (scan-parity Epic D): committing an item whose barcode was
+    // RECOVERED from the photo (ai-photo OCR) is a human confirmation of the
+    // (barcode → identity) pair — safe to teach BIdb now. The auto-poison risk
+    // that deferred this was an UNconfirmed OCR name; a commit is the opposite.
+    if (row.barcode_text && (meta as { barcode_source?: string }).barcode_source === "ai-photo") {
+      const confirmedName = String(body.name ?? row.suggested_name ?? "").trim();
+      if (confirmedName) {
+        void reportBarcodeCorrection({
+          upc: row.barcode_text,
+          field: "title",
+          was: row.suggested_name,
+          now: confirmedName,
+          userId: sess.id,
+          confirm: true,
+        });
+        if (row.suggested_manufacturer) {
+          void reportBarcodeCorrection({
+            upc: row.barcode_text,
+            field: "brand",
+            was: row.suggested_manufacturer,
+            now: row.suggested_manufacturer,
+            userId: sess.id,
+            confirm: true,
+          });
+        }
+      }
+    }
+
     if (parsed.data.save_eval_case && sess.is_platform_admin) {
       try {
         const menu = await assembleMergedMenu(baseUrl, ctx.org.slug, token);
@@ -1268,7 +1332,10 @@ inboxRouter.post(
 async function appendScanHistory(
   db: ReturnType<typeof tenantDb>,
   id: string,
-  entry: { action: "rerun" | "wrong" | "enrich" | "confirm" | "combine"; note?: string | null },
+  entry: {
+    action: "rerun" | "wrong" | "enrich" | "confirm" | "combine" | "attached" | "split";
+    note?: string | null;
+  },
 ): Promise<void> {
   try {
     const cur = await db
@@ -1509,6 +1576,9 @@ inboxRouter.get(
 const CatalogImageBody = z.union([
   z.object({ url: z.string().url().max(2000) }),
   z.object({ action: z.enum(["revert", "use_own_photo"]) }),
+  // "Take a nice picture" — a freshly-captured upload becomes the DISPLAY
+  // (catalog) image; the identify photo is untouched (companion app's photo roles).
+  z.object({ file_id: z.string().uuid() }),
 ]);
 
 interface OrigCatalog {
@@ -1597,6 +1667,23 @@ inboxRouter.post(
       return;
     }
 
+    // A freshly-captured upload → the display/catalog image (retake-for-catalog).
+    if ("file_id" in parsed.data) {
+      await db
+        .updateTable("core_scan_inbox_items")
+        .set({
+          catalog_image_file_id: parsed.data.file_id,
+          catalog_image_url: null,
+          // The user chose this image → lock it so a re-identify won't clobber it.
+          suggested_metadata: sql`${JSON.stringify({ ...metaWithOrig, catalog_image_user_set: true })}::jsonb` as never,
+          updated_at: new Date(),
+        })
+        .where("id", "=", row.id)
+        .execute();
+      res.json(await fresh());
+      return;
+    }
+
     // A picked/pasted URL: stash the original, set + download it.
     const url = (parsed.data as { url: string }).url;
     await db
@@ -1624,6 +1711,514 @@ inboxRouter.post(
       });
     }
     res.json(await fresh());
+  }),
+);
+
+// ─────────────────── GET /inbox/:id/tracked-matches ─────────────────
+// "Already tracked?" — entities the workspace ALREADY has that match this
+// scan, by exact barcode (metadata.barcode, stamped by every confirm) or by
+// name-token overlap. Powers the companion app A8/A9 heads-up banner + attach targets.
+inboxRouter.get(
+  "/inbox/:id/tracked-matches",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const id = req.params.id;
+    const db = tenantDb(req);
+    const ctx = tenantContext(req);
+    const row = await db
+      .selectFrom("core_scan_inbox_items")
+      .select(["barcode_text", "suggested_name", "status", "target_entity_id"])
+      .where("id", "=", id ?? "")
+      .executeTakeFirst();
+    if (!row) {
+      res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
+      return;
+    }
+    const matches = await findTracked(ctx.org.id, {
+      barcode: row.barcode_text,
+      name: row.suggested_name,
+    });
+    res.json(matches);
+  }),
+);
+
+// ─────────────────────── POST /inbox/:id/attach ─────────────────────
+// Attach this scan to an entity the workspace ALREADY tracks, instead of
+// creating a duplicate. Three modes (scan-parity-final-mile.md, Epic A):
+//   add-qty      — "+N, more of the same": bump the kind's qty field by the
+//                  item's quantity; append the scanned barcode when the entity
+//                  lacks one; attach the item's photo when the entity has none.
+//   link-barcode — write metadata.barcode only (teach an existing entity its
+//                  barcode; the next scan matches instantly).
+//   move         — set the entity's location_id (move mode's unit action).
+// All writes go through the module's OWN HTTP endpoint under the caller's
+// bearer (same inherited-capability pattern as confirm) — never raw SQL into
+// another module's table. The inbox item resolves as "attached".
+const AttachBody = z.object({
+  kind: z.string().min(1),
+  entity_id: z.string().min(1),
+  /** Instance slug when the entity lives in a skinned instance (the bare
+   *  module route filters to the default instance and would 404). */
+  instance: z.string().optional(),
+  mode: z.enum(["add-qty", "link-barcode", "move"]),
+  /** For mode=move: target location; defaults to the item's own
+   *  target_location_id (the active bin it was scanned into). */
+  location_id: z.string().optional(),
+});
+
+inboxRouter.post(
+  "/inbox/:id/attach",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const id = req.params.id;
+    const parsed = AttachBody.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const db = tenantDb(req);
+    const ctx = tenantContext(req);
+    const token = bearer(req);
+    if (!token) {
+      res.status(401).json({ error: { code: "no_auth", message: "Bearer token required" } });
+      return;
+    }
+    const row = await db
+      .selectFrom("core_scan_inbox_items")
+      .selectAll()
+      .where("id", "=", id ?? "")
+      .executeTakeFirst();
+    if (!row) {
+      res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
+      return;
+    }
+    // Only a PENDING item can attach: a resolved item was already committed or
+    // attached — attaching again would double-count its quantity (found by the
+    // golden e2e: confirm(1) + attach(+2) on the same dedup-bumped row → 3).
+    if (row.status !== "pending") {
+      res.status(409).json({
+        error: { code: "already_resolved", message: "this item was already committed or attached" },
+      });
+      return;
+    }
+    const scannable = platform().entities.getScannable(parsed.data.kind);
+    if (!scannable) {
+      res.status(400).json({
+        error: { code: "not_scannable", message: `${parsed.data.kind} is not a scan target` },
+      });
+      return;
+    }
+    const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+    // The entity's CRUD path: instance items live under /instances/:slug/items,
+    // everything else under the module's own route (same rule confirm uses).
+    const entityPath = parsed.data.instance
+      ? `${baseUrl}/api/v1/orgs/${ctx.org.slug}/instances/${parsed.data.instance}/items/${parsed.data.entity_id}`
+      : `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/${scannable.createEndpoint}/${parsed.data.entity_id}`;
+    const authHeaders = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+
+    // Read the CURRENT entity through its own module (authoritative + fresh —
+    // qty for the bump, metadata for the barcode merge, location for undo).
+    const getRes = await fetch(entityPath, { headers: authHeaders });
+    if (!getRes.ok) {
+      res.status(getRes.status === 404 ? 404 : 502).json({
+        error: { code: "entity_unreachable", message: `Target entity read returned ${getRes.status}` },
+      });
+      return;
+    }
+    const entity = (await getRes.json()) as Record<string, unknown>;
+    const entityName = typeof entity.name === "string" ? entity.name : parsed.data.entity_id;
+    const entityMeta = (entity.metadata ?? {}) as Record<string, unknown>;
+    const prevLocationId = typeof entity.location_id === "string" ? entity.location_id : null;
+
+    const patch: Record<string, unknown> = {};
+    let newQty: number | null = null;
+    if (parsed.data.mode === "add-qty") {
+      const cur = Number(entity[scannable.qtyField] ?? 0);
+      const add = Math.max(1, Number(row.quantity ?? 1));
+      newQty = (Number.isFinite(cur) ? cur : 0) + add;
+      patch[scannable.qtyField] = newQty;
+      // Barcode-append: a scanned (not AI-read) code the entity doesn't have yet.
+      const aiRead =
+        (row.suggested_metadata as { barcode_source?: string } | null)?.barcode_source === "ai-photo";
+      if (row.barcode_text && !aiRead && !entityMeta.barcode) {
+        patch.metadata = { ...entityMeta, barcode: row.barcode_text };
+      }
+    } else if (parsed.data.mode === "link-barcode") {
+      if (!row.barcode_text) {
+        res.status(400).json({ error: { code: "no_barcode", message: "this item has no barcode to link" } });
+        return;
+      }
+      patch.metadata = { ...entityMeta, barcode: row.barcode_text };
+      // companion app semantics: linking a barcode while an active bin is set ALSO files
+      // the entity into that bin — the scan meant "this thing, into here".
+      const linkLoc = parsed.data.location_id ?? row.target_location_id;
+      if (linkLoc) patch.location_id = linkLoc;
+    } else {
+      const loc = parsed.data.location_id ?? row.target_location_id;
+      if (!loc) {
+        res.status(400).json({
+          error: { code: "no_location", message: "no target location — set an active bin or pass location_id" },
+        });
+        return;
+      }
+      patch.location_id = loc;
+    }
+
+    const patchRes = await fetch(entityPath, {
+      method: "PATCH",
+      headers: authHeaders,
+      body: JSON.stringify(patch),
+    });
+    if (!patchRes.ok) {
+      const errText = await patchRes.text();
+      let targetMsg: string | undefined;
+      try {
+        targetMsg = (JSON.parse(errText) as { error?: { message?: string } }).error?.message;
+      } catch {
+        /* non-JSON */
+      }
+      res.status(patchRes.status).json({
+        error: { code: "attach_failed", message: targetMsg ?? `Target update returned ${patchRes.status}`, details: errText },
+      });
+      return;
+    }
+
+    // add-qty: give the entity the scan's photo when it has none (best-effort).
+    if (parsed.data.mode === "add-qty" && !entity.image_path) {
+      const photoId = row.catalog_image_file_id ?? row.image_file_id;
+      if (photoId) {
+        const [module] = parsed.data.kind.split(":");
+        void fetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/core-files/attachments`, {
+          method: "POST",
+          headers: authHeaders,
+          body: JSON.stringify({
+            file_id: photoId,
+            source_module: module,
+            source_type: parsed.data.kind,
+            source_id: parsed.data.entity_id,
+            role: "gallery",
+          }),
+        })
+          .then(() =>
+            fetch(entityPath, {
+              method: "PATCH",
+              headers: authHeaders,
+              body: JSON.stringify({
+                image_path: `/api/v1/orgs/${ctx.org.slug}/modules/core-files/files/${photoId}/raw`,
+              }),
+            }),
+          )
+          .catch((err) => console.error("[core-scan] attach photo failed:", (err as Error).message));
+      }
+    }
+
+    // Resolve the inbox item as "attached" (history + metadata carry the ref).
+    const meta = (row.suggested_metadata ?? {}) as Record<string, unknown>;
+    const [module] = parsed.data.kind.split(":");
+    const resolvedRow = await db
+      .updateTable("core_scan_inbox_items")
+      .set({
+        status: "resolved",
+        target_module: module ?? null,
+        target_kind: parsed.data.kind,
+        target_entity_id: parsed.data.entity_id,
+        suggested_metadata: JSON.stringify({
+          ...meta,
+          attached_to: { kind: parsed.data.kind, id: parsed.data.entity_id, mode: parsed.data.mode },
+        }) as never,
+        resolved_at: new Date(),
+        updated_at: new Date(),
+      })
+      .where("id", "=", id ?? "")
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    await appendScanHistory(db, id ?? "", {
+      action: "attached",
+      note: `${parsed.data.mode} → ${entityName}`,
+    });
+    void platform().events.emit("core-scan.scan.attached", {
+      orgId: ctx.org.id,
+      itemId: id,
+      targetKind: parsed.data.kind,
+      entityId: parsed.data.entity_id,
+      mode: parsed.data.mode,
+    });
+
+    res.json({
+      item: resolvedRow,
+      entity_title: entityName,
+      new_qty: newQty,
+      prev_location_id: prevLocationId,
+    });
+  }),
+);
+
+// ─────────────────────── POST /inbox/:id/rotate ─────────────────────
+// Rotate the item's OWN photo (a sideways phone shot). Writes a NEW file and
+// swaps it in; the original is kept in metadata.extra_photos — nothing lost.
+const RotateBody = z.object({ deg: z.union([z.literal(90), z.literal(180), z.literal(270)]) });
+inboxRouter.post(
+  "/inbox/:id/rotate",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const id = req.params.id;
+    const parsed = RotateBody.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const db = tenantDb(req);
+    const ctx = tenantContext(req);
+    const row = await db
+      .selectFrom("core_scan_inbox_items")
+      .select(["image_file_id", "suggested_metadata"])
+      .where("id", "=", id ?? "")
+      .executeTakeFirst();
+    if (!row) {
+      res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
+      return;
+    }
+    if (!row.image_file_id) {
+      res.status(400).json({ error: { code: "no_photo", message: "this item has no photo of yours to rotate" } });
+      return;
+    }
+    const newId = await rotateImage(ctx.org.id, row.image_file_id, parsed.data.deg);
+    if (!newId) {
+      res.status(502).json({ error: { code: "rotate_failed", message: "couldn't read or rewrite the image" } });
+      return;
+    }
+    const meta = (row.suggested_metadata ?? {}) as Record<string, unknown>;
+    const extras = Array.isArray(meta.extra_photos) ? (meta.extra_photos as string[]) : [];
+    const updated = await db
+      .updateTable("core_scan_inbox_items")
+      .set({
+        image_file_id: newId,
+        suggested_metadata: JSON.stringify({
+          ...meta,
+          extra_photos: [...extras.filter((p) => p !== newId), row.image_file_id].slice(-8),
+        }) as never,
+        updated_at: new Date(),
+      })
+      .where("id", "=", id ?? "")
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    res.json(updated);
+  }),
+);
+
+// ─────────────────────── /inbox/:id/photos (gallery) ────────────────
+// Multi-photo per item: the primary is image_file_id; extras live in
+// metadata.extra_photos (capped 8). Add / make-primary / remove.
+const PhotoBody = z.object({ file_id: z.string().uuid() });
+inboxRouter.post(
+  "/inbox/:id/photos",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const id = req.params.id;
+    const parsed = PhotoBody.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const db = tenantDb(req);
+    const row = await db
+      .selectFrom("core_scan_inbox_items")
+      .select(["image_file_id", "suggested_metadata"])
+      .where("id", "=", id ?? "")
+      .executeTakeFirst();
+    if (!row) {
+      res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
+      return;
+    }
+    const meta = (row.suggested_metadata ?? {}) as Record<string, unknown>;
+    const extras = Array.isArray(meta.extra_photos) ? (meta.extra_photos as string[]) : [];
+    // No primary yet → the new photo IS the primary; else append to extras.
+    const asPrimary = !row.image_file_id;
+    const updated = await db
+      .updateTable("core_scan_inbox_items")
+      .set({
+        ...(asPrimary ? { image_file_id: parsed.data.file_id } : {}),
+        suggested_metadata: JSON.stringify({
+          ...meta,
+          ...(asPrimary
+            ? {}
+            : { extra_photos: [...extras.filter((p) => p !== parsed.data.file_id), parsed.data.file_id].slice(-8) }),
+        }) as never,
+        updated_at: new Date(),
+      })
+      .where("id", "=", id ?? "")
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    res.json(updated);
+  }),
+);
+
+inboxRouter.post(
+  "/inbox/:id/photos/primary",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const id = req.params.id;
+    const parsed = PhotoBody.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const db = tenantDb(req);
+    const row = await db
+      .selectFrom("core_scan_inbox_items")
+      .select(["image_file_id", "suggested_metadata"])
+      .where("id", "=", id ?? "")
+      .executeTakeFirst();
+    if (!row) {
+      res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
+      return;
+    }
+    const meta = (row.suggested_metadata ?? {}) as Record<string, unknown>;
+    const extras = Array.isArray(meta.extra_photos) ? (meta.extra_photos as string[]) : [];
+    if (!extras.includes(parsed.data.file_id)) {
+      res.status(400).json({ error: { code: "not_in_gallery", message: "that photo isn't in this item's gallery" } });
+      return;
+    }
+    const updated = await db
+      .updateTable("core_scan_inbox_items")
+      .set({
+        image_file_id: parsed.data.file_id,
+        suggested_metadata: JSON.stringify({
+          ...meta,
+          extra_photos: [
+            ...extras.filter((p) => p !== parsed.data.file_id),
+            ...(row.image_file_id ? [row.image_file_id] : []),
+          ].slice(-8),
+        }) as never,
+        updated_at: new Date(),
+      })
+      .where("id", "=", id ?? "")
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    res.json(updated);
+  }),
+);
+
+inboxRouter.delete(
+  "/inbox/:id/photos/:fileId",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const { id, fileId } = req.params;
+    const db = tenantDb(req);
+    const row = await db
+      .selectFrom("core_scan_inbox_items")
+      .select(["suggested_metadata"])
+      .where("id", "=", id ?? "")
+      .executeTakeFirst();
+    if (!row) {
+      res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
+      return;
+    }
+    const meta = (row.suggested_metadata ?? {}) as Record<string, unknown>;
+    const extras = Array.isArray(meta.extra_photos) ? (meta.extra_photos as string[]) : [];
+    const updated = await db
+      .updateTable("core_scan_inbox_items")
+      .set({
+        suggested_metadata: JSON.stringify({ ...meta, extra_photos: extras.filter((p) => p !== fileId) }) as never,
+        updated_at: new Date(),
+      })
+      .where("id", "=", id ?? "")
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    res.json(updated);
+  }),
+);
+
+// ─────────────────────── POST /inbox/:id/split ──────────────────────
+// Split a GROUP photo (one shot of several different things) into separate
+// inbox items: vision segments the photo (name + brand + qty + bounding box
+// per distinct item), each region is cropped into its own photo, and each
+// becomes a child item that runs the normal matchmaker. The parent resolves
+// with a "split into N" note (restorable). scan-parity-final-mile.md Epic B.
+inboxRouter.post(
+  "/inbox/:id/split",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const id = req.params.id;
+    const db = tenantDb(req);
+    const ctx = tenantContext(req);
+    const token = bearer(req);
+    const row = await db
+      .selectFrom("core_scan_inbox_items")
+      .selectAll()
+      .where("id", "=", id ?? "")
+      .executeTakeFirst();
+    if (!row) {
+      res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
+      return;
+    }
+    if (!row.image_file_id) {
+      res.status(400).json({ error: { code: "no_photo", message: "only a photo item can be split" } });
+      return;
+    }
+    const userId = sessionUser(req).id;
+    const detected = await detectSplitItems(ctx.org.id, row.image_file_id, userId);
+    if (detected.length < 2) {
+      res.status(409).json({
+        error: {
+          code: "nothing_to_split",
+          message: "The AI sees one item in this photo (or couldn't segment it) — nothing to split.",
+        },
+      });
+      return;
+    }
+    const children: unknown[] = [];
+    for (const it of detected) {
+      const cropId = await cropRegion(ctx.org.id, row.image_file_id, it.box).catch(() => null);
+      const child = await db
+        .insertInto("core_scan_inbox_items")
+        .values({
+          source_kind: "photo",
+          barcode_text: null,
+          source_url: null,
+          image_file_id: cropId ?? row.image_file_id,
+          scan_batch_id: row.scan_batch_id,
+          scan_area: row.scan_area,
+          target_location_id: row.target_location_id,
+          created_by_user_id: userId,
+          suggested_name: it.name,
+          suggested_manufacturer: it.brand,
+          quantity: it.qty,
+          ai_confidence: "0.6",
+          ai_notes: "Split from a group photo by vision — double-check the crop.",
+          ai_suggested_at: new Date(),
+          suggested_metadata: JSON.stringify({
+            source: "vision-split",
+            split_from: row.id,
+          }) as never,
+        } as never)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      children.push(child);
+      void platform().events.emit("core-scan.scan.received", {
+        orgId: ctx.org.id,
+        itemId: (child as { id: string }).id,
+        barcode: null,
+        sourceKind: "photo",
+      });
+      if (token) {
+        const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+        void matchItem({
+          orgId: ctx.org.id,
+          orgSlug: ctx.org.slug,
+          token,
+          baseUrl,
+          itemId: (child as { id: string }).id,
+          force: true,
+        }).catch((err) => console.error("[core-scan] split-child match threw:", (err as Error).message));
+      }
+    }
+    // Parent resolves (restorable) — its photo stays for the audit trail.
+    const meta = (row.suggested_metadata ?? {}) as Record<string, unknown>;
+    await db
+      .updateTable("core_scan_inbox_items")
+      .set({
+        status: "resolved",
+        suggested_metadata: JSON.stringify({
+          ...meta,
+          split_into: children.map((c) => (c as { id: string }).id),
+        }) as never,
+        ai_notes: `Split into ${children.length} items.`,
+        resolved_at: new Date(),
+        updated_at: new Date(),
+      })
+      .where("id", "=", id ?? "")
+      .execute();
+    await appendScanHistory(db, id ?? "", { action: "split", note: `${children.length} items` });
+    res.json({ children });
   }),
 );
 
@@ -1669,6 +2264,63 @@ inboxRouter.post(
     ]);
     await appendScanHistory(db, id, { action: "confirm" });
     res.json(await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", id).executeTakeFirst());
+  }),
+);
+
+// ─────────────────────── POST /inbox/merge-batches ──────────────────
+// Fold one scan session into another (two walk-around bursts that are really
+// one job): every item in from_batch_id moves to into_batch_id, so the inbox
+// shows a single session group and a ?batch review covers both.
+const MergeBatchesBody = z.object({
+  from_batch_id: z.string().min(1),
+  into_batch_id: z.string().min(1),
+});
+inboxRouter.post(
+  "/inbox/merge-batches",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const parsed = MergeBatchesBody.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    if (parsed.data.from_batch_id === parsed.data.into_batch_id) {
+      res.status(400).json({ error: { code: "same_batch", message: "those are the same session" } });
+      return;
+    }
+    const db = tenantDb(req);
+    const r = await db
+      .updateTable("core_scan_inbox_items")
+      .set({ scan_batch_id: parsed.data.into_batch_id, updated_at: new Date() })
+      .where("scan_batch_id", "=", parsed.data.from_batch_id)
+      .executeTakeFirst();
+    res.json({ moved: Number(r.numUpdatedRows ?? 0) });
+  }),
+);
+
+// ──────────────── POST /inbox/backfill-catalog-photos ───────────────
+// Fill catalog images for pending items that have a real name but no catalog
+// art (image-search by name, same as a re-identify's refresh — honors the
+// user-picked-image lock). Detached per item; returns how many were queued.
+inboxRouter.post(
+  "/inbox/backfill-catalog-photos",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const db = tenantDb(req);
+    const ctx = tenantContext(req);
+    const rows = await db
+      .selectFrom("core_scan_inbox_items")
+      .select(["id", "suggested_name", "suggested_manufacturer"])
+      .where("status", "in", ["pending", "enriching"])
+      .where("catalog_image_url", "is", null)
+      .where("catalog_image_file_id", "is", null)
+      .where("suggested_name", "is not", null)
+      .limit(30)
+      .execute();
+    const targets = rows.filter((r) => !isJunkName(r.suggested_name));
+    for (const r of targets) {
+      void refreshCatalogImageByName(ctx.org.id, r.id, r.suggested_name!, r.suggested_manufacturer).catch(
+        (err) => console.error("[core-scan] backfill catalog photo failed:", (err as Error).message),
+      );
+    }
+    res.json({ queued: targets.length });
   }),
 );
 

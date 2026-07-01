@@ -1,36 +1,124 @@
 {
   "manifest": {
     "id": "cobblr.flagship.warranties-receipts",
+    "version": "0.2.0",
     "name": "Warranties & Receipts",
-    "version": "0.1.0",
-    "description": "Snap the receipt the day you buy something and never miss a warranty or return window again. Records where and when you bought it, the warranty expiry (or lifetime), the serial number, and the return-by date; a 'Warranties' view sorts everything by what lapses next. Inventory already carries the warranty fields — this skins them into a clean appliance/electronics tracker.",
+    "description": "Your appliances/electronics as their own table — where/when you bought it + warranty and return-by dates, grouped by category.",
     "author": "Cobblr",
+    "released_at": "2026-06-08",
+    "changelog": "Now its OWN table (an inventory instance), not generic Inventory with extra columns — its own nav entry, a “New item” button, only the fields a receipt/warranty tracker needs (the parts/stock cruft is hidden). Plain-language hints + a pinned “By category” view.",
     "requires": [
-      { "module": "inventory" }
-    ],
-    "field_defs": [
-      { "entity_kind": "inventory:part", "name": "purchased_from", "display_label": "Bought from", "type": "text", "position": 1 },
-      { "entity_kind": "inventory:part", "name": "purchase_date", "display_label": "Purchased", "type": "date", "position": 2 },
-      { "entity_kind": "inventory:part", "name": "return_by", "display_label": "Return by", "type": "date", "position": 3 },
-      { "entity_kind": "inventory:part", "name": "category", "display_label": "Category", "type": "text", "position": 4, "choices": ["Appliance", "Electronics", "Tools", "Furniture", "Vehicle", "Other"] }
-    ],
-    "field_overrides": [
-      { "entity_kind": "inventory:part", "name": "manufacturer", "display_label": "Make / brand" },
-      { "entity_kind": "inventory:part", "name": "model_number", "display_label": "Model" },
-      { "entity_kind": "inventory:part", "name": "cost", "display_label": "Paid" }
-    ],
-    "saved_views": [
       {
-        "entity_kind": "inventory:part",
-        "name": "Warranties",
-        "view_type": "table",
-        "pinned": true,
-        "config": {
-          "group_by": "category",
-          "visible_fields": ["title", "purchase_date", "return_by"]
-        }
+        "module": "inventory"
+      }
+    ],
+    "provides_instances": [
+      {
+        "module": "inventory",
+        "instance_name": "warranties",
+        "display_name": "Warranties & Receipts",
+        "glyph": "🧾",
+        "item_noun": "item",
+        "qty_unit": "each",
+        "field_defs": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "purchased_from",
+            "display_label": "Bought from",
+            "type": "text",
+            "position": 1,
+            "help": "Store or site — proof-of-purchase for a warranty/return."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "purchase_date",
+            "display_label": "Purchased",
+            "type": "date",
+            "position": 2
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "return_by",
+            "display_label": "Return by",
+            "type": "date",
+            "position": 3,
+            "help": "The last day you can return it for a refund."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "category",
+            "display_label": "Category",
+            "type": "text",
+            "position": 4,
+            "choices": [
+              "Appliance",
+              "Electronics",
+              "Tools",
+              "Furniture",
+              "Vehicle",
+              "Other"
+            ]
+          }
+        ],
+        "field_overrides": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "manufacturer",
+            "display_label": "Make / brand"
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "model_number",
+            "display_label": "Model"
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "cost",
+            "display_label": "Paid"
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "location",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "warranty",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "min_qty",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "supplier_url",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "serial_number",
+            "hidden": true
+          }
+        ],
+        "saved_views": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "By category",
+            "view_type": "table",
+            "pinned": true,
+            "config": {
+              "group_by": "category",
+              "visible_fields": [
+                "title",
+                "purchase_date",
+                "return_by"
+              ]
+            }
+          }
+        ]
       }
     ]
-  },
-  "confirm": true
+  }
 }

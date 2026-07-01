@@ -1,0 +1,122 @@
+{
+  "manifest": {
+    "id": "cobblr.community.cnc-machines",
+    "version": "0.3.0",
+    "name": "CNC Machines",
+    "description": "A CNC Machines tracker — spindle, axes, work area, controller, coolant. A named view of your machines, so each mill still drives jobs, fleet status, and maintenance.",
+    "author": "Cobblr community",
+    "released_at": "2026-06-19",
+    "changelog": "Your CNC machines now open the full machine page — set every field (spindle, axes, work area, controller, coolant), edit in place, attach files, and link the machine straight to its print manager (FDM Monster / OctoPrint) right from its own page, instead of a name-only stub. Installing now offers a checked-by-default “Connect to your CNC machines” option that brings the Print Manager along — send a file to be made and track the job — which you can uncheck for catalog-only use. Existing installs auto-upgrade: your CNC machines move into the CNC Machines tab automatically, no reinstall.",
+    "requires": [
+      {
+        "module": "machines"
+      }
+    ],
+    "features": [
+      {
+        "key": "digifab",
+        "name": "Connect to your CNC machines",
+        "question": "Want to send files to your CNC machines and track the job?",
+        "description": "Adds the Print Manager — map each machine to the software that runs it (FDM Monster, OctoPrint, …), send a file to be made, and track the job to completion. Talks to the manager's API; it never drives the hardware. You can link a machine to its manager right from the machine's page.",
+        "default": true,
+        "requires": [
+          {
+            "module": "digifab"
+          }
+        ]
+      }
+    ],
+    "provides_instances": [
+      {
+        "module": "machines",
+        "instance_name": "cnc-machines",
+        "display_name": "CNC Machines",
+        "item_noun": "CNC machine",
+        "glyph": "⚙️",
+        "field_defs": [
+          {
+            "entity_kind": "machines:machine",
+            "name": "spindle",
+            "display_label": "Spindle",
+            "type": "text",
+            "position": 30,
+            "choices": [
+              "Stock",
+              "Makita RT0701C router",
+              "DeWalt 611 router",
+              "0.8kW VFD water-cooled",
+              "1.5kW VFD water-cooled",
+              "2.2kW VFD water-cooled",
+              "ER11 air-cooled",
+              "ER20 air-cooled"
+            ]
+          },
+          {
+            "entity_kind": "machines:machine",
+            "name": "axis_count",
+            "display_label": "Axes",
+            "type": "number",
+            "position": 31
+          },
+          {
+            "entity_kind": "machines:machine",
+            "name": "work_area",
+            "display_label": "Work area (mm)",
+            "type": "text",
+            "position": 32,
+            "choices": [
+              "200×200×80",
+              "300×300×100",
+              "400×400×120",
+              "600×900×150",
+              "1200×1200×200",
+              "1200×2400×200"
+            ]
+          },
+          {
+            "entity_kind": "machines:machine",
+            "name": "controller",
+            "display_label": "Controller",
+            "type": "text",
+            "position": 33,
+            "choices": [
+              "GRBL",
+              "Mach3",
+              "Mach4",
+              "LinuxCNC",
+              "Buildbotics",
+              "Acorn",
+              "Centroid",
+              "Fanuc"
+            ]
+          },
+          {
+            "entity_kind": "machines:machine",
+            "name": "coolant_type",
+            "display_label": "Coolant",
+            "type": "text",
+            "position": 34,
+            "choices": [
+              "None",
+              "Air blast",
+              "Mist",
+              "Flood",
+              "MQL"
+            ]
+          }
+        ],
+        "saved_views": [
+          {
+            "entity_kind": "machines:machine",
+            "name": "CNC fleet by controller",
+            "view_type": "kanban",
+            "config": {
+              "group_by": "controller"
+            },
+            "pinned": true
+          }
+        ]
+      }
+    ]
+  }
+}

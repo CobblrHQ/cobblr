@@ -634,6 +634,9 @@ importers:
       pdf-parse:
         specifier: ^2.4.5
         version: 2.4.5
+      sharp:
+        specifier: ^0.33.5
+        version: 0.33.5
       zod:
         specifier: ^3.24.1
         version: 3.25.76

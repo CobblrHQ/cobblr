@@ -10,8 +10,9 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
+import { useNavigate } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
-import { Check, ChevronDown, GripVertical, Pencil, Plus, Users } from "lucide-react";
+import { Check, ChevronDown, GripVertical, Pencil, Plus, Sliders, Users } from "lucide-react";
 import {
   DndContext,
   PointerSensor,
@@ -37,6 +38,7 @@ import { MembersModal } from "./MembersModal";
 export function WorkspaceSwitcher() {
   const { orgs, setOrgs, refreshMe } = useAuth();
   const { activeOrg, activeSlug, setActiveSlug } = useActiveOrg();
+  const navigate = useNavigate();
   const toast = useToast();
   const [open, setOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
@@ -189,6 +191,17 @@ export function WorkspaceSwitcher() {
               />
             ))}
           </ul>
+          {/* Workspace-level actions live HERE, not as a dashboard bar — the old
+              identity header spent the dashboard's top row repeating what this
+              switcher already says. */}
+          <button
+            onClick={() => { setOpen(false); navigate("/configuration"); }}
+            className="w-full text-left px-3 py-2 border-t border-line dark:border-slate-700 hover:bg-subtle dark:hover:bg-slate-800 transition flex items-center gap-2 text-sm text-content dark:text-mortar-200"
+            title="Turn on modules, install a starter pack, customize this workspace"
+          >
+            <Sliders size={13} className="text-accent" />
+            Customize workspace
+          </button>
           <button
             onClick={openCreate}
             className="w-full text-left px-3 py-2 border-t border-line dark:border-slate-700 hover:bg-subtle dark:hover:bg-slate-800 transition flex items-center gap-2 text-sm text-accent dark:text-cobble-300"

@@ -227,6 +227,24 @@ export function PartsListPage() {
 
   const partItems = parts.data?.pages.flatMap((p) => p.items) ?? [];
 
+  // Progressive column density (redesign B6): a young table used to open as a
+  // wall of "—" (every bundle field = a column, mostly empty at 1-5 rows).
+  // While the table is SPARSE (≤25 loaded rows, no active view), show only the
+  // columns that actually hold data somewhere + offer "+N more columns".
+  // Established tables (>25 rows) and saved views keep the full/declared grid.
+  const [showAllCols, setShowAllCols] = useState(false);
+  const sparse = !viewFields && partItems.length > 0 && partItems.length <= 25 && !showAllCols;
+  const filledCols = sparse
+    ? customCols.filter((c) =>
+        partItems.some((p) => {
+          const v = (p.metadata as Record<string, unknown> | null)?.[c.name];
+          return v !== undefined && v !== null && v !== "";
+        }),
+      )
+    : customCols;
+  const shownCols = sparse ? filledCols : customCols;
+  const hiddenColCount = customCols.length - shownCols.length;
+
   function toggleRow(id: string, checked: boolean) {
     setSelected((s) => {
       const n = new Set(s);
@@ -556,6 +574,25 @@ export function PartsListPage() {
           </div>
         );
       })()}
+      {hiddenColCount > 0 && (
+        <button
+          type="button"
+          onClick={() => setShowAllCols(true)}
+          className="self-end text-[11px] text-faint dark:text-slate-500 hover:text-accent transition"
+          title="Show every field as a column, including ones with no data yet"
+        >
+          + {hiddenColCount} more column{hiddenColCount === 1 ? "" : "s"}
+        </button>
+      )}
+      {showAllCols && !viewFields && partItems.length <= 25 && (
+        <button
+          type="button"
+          onClick={() => setShowAllCols(false)}
+          className="self-end text-[11px] text-faint dark:text-slate-500 hover:text-accent transition"
+        >
+          hide empty columns
+        </button>
+      )}
       {/* Grouped (a view with group_by) → one section per group; else flat. */}
       {partItems.length > 0 && groupBy
         ? groupItems(partItems, groupBy).map((g) => (
@@ -567,7 +604,7 @@ export function PartsListPage() {
                 <PartsTable
                   items={g.rows}
                   basePath={basePath}
-                  customCols={customCols}
+                  customCols={shownCols}
                   selected={selected}
                   allChecked={g.rows.every((r) => selected.has(r.id))}
                   onToggle={toggleRow}
@@ -589,7 +626,7 @@ export function PartsListPage() {
               <PartsTable
                 items={partItems}
                 basePath={basePath}
-                customCols={customCols}
+                customCols={shownCols}
                 selected={selected}
                 allChecked={allChecked}
                 onToggle={toggleRow}

@@ -1,42 +1,358 @@
 {
   "manifest": {
     "id": "cobblr.flagship.filament-stash",
-    "name": "Filament Stash",
-    "version": "0.1.0",
-    "description": "The 3D-printer sibling of Yarn Stash. Track each spool by material, colour, diameter and brand; how much is left (weigh the spool — set the unit to grams — or track by metres); the empty-spool tare weight so a scale tells you what's left; and the print temps that worked. A 'My filament' view groups the shelf by material so you grab the right PETG fast. Same idea as yarn: a consumable measured by length or weight.",
+    "version": "0.5.3",
+    "name": "Filament",
+    "description": "A filament TYPE (Royal Blue PLA) defines the filament once — material, colour, diameter, nozzle/bed temps, needs-drying. SPOOLS pick a type + add only what's per-spool: size, batch code, remaining, state. Each type rolls up its spool count + total kg.",
     "author": "Cobblr",
+    "released_at": "2026-06-17",
+    "changelog": "Types and Spools now sit together in the navbar as one element — a quiet \"Filament\" stem with \"Types │ Spools\" links — so the two related tables read as one thing. (0.5.1: scanning a spool's QR find-or-creates its filament TYPE and links the spool automatically — a scan lands in the type→spool model instead of a flat row. 0.5.0: the TYPE defines the whole filament — colour, diameter, nozzle/bed temps and needs-drying live on the type, not re-entered per spool; a SPOOL just picks its type and carries the per-spool facts — size, batch code, remaining, state. Upgrading carries your existing temps + colour up onto the type automatically.)",
     "requires": [
-      { "module": "inventory" }
-    ],
-    "field_defs": [
-      { "entity_kind": "inventory:part", "name": "material", "display_label": "Material", "type": "text", "position": 1, "choices": ["PLA", "PLA+", "PETG", "ABS", "ASA", "TPU", "Nylon", "PC", "PVA", "Other"] },
-      { "entity_kind": "inventory:part", "name": "color", "display_label": "Colour", "type": "text", "position": 2 },
-      { "entity_kind": "inventory:part", "name": "diameter", "display_label": "Diameter", "type": "text", "position": 3, "choices": ["1.75 mm", "2.85 mm"] },
-      { "entity_kind": "inventory:part", "name": "length_per_spool", "display_label": "Length / spool (m)", "type": "number", "position": 4 },
-      { "entity_kind": "inventory:part", "name": "spool_weight", "display_label": "Empty spool (g)", "type": "number", "position": 5 },
-      { "entity_kind": "inventory:part", "name": "nozzle_temp", "display_label": "Nozzle °C", "type": "number", "position": 6 },
-      { "entity_kind": "inventory:part", "name": "bed_temp", "display_label": "Bed °C", "type": "number", "position": 7 },
-      { "entity_kind": "inventory:part", "name": "needs_drying", "display_label": "Needs drying", "type": "boolean", "position": 8 },
-      { "entity_kind": "inventory:part", "name": "spool_summary", "display_label": "Summary", "type": "computed", "position": 9, "template": "{{material}} {{color}} · {{diameter}} · {{nozzle_temp | default: \"?\"}}/{{bed_temp | default: \"?\"}} °C" }
-    ],
-    "field_overrides": [
-      { "entity_kind": "inventory:part", "name": "manufacturer", "display_label": "Brand" },
-      { "entity_kind": "inventory:part", "name": "cost", "display_label": "Price / spool" },
-      { "entity_kind": "inventory:part", "name": "serial_number", "hidden": true },
-      { "entity_kind": "inventory:part", "name": "model_number", "hidden": true }
-    ],
-    "saved_views": [
       {
-        "entity_kind": "inventory:part",
-        "name": "My filament",
-        "view_type": "table",
-        "pinned": true,
-        "config": {
-          "group_by": "material",
-          "visible_fields": ["title", "color", "diameter", "qty", "unit", "nozzle_temp"]
+        "module": "inventory"
+      }
+    ],
+    "migrations": [
+      {
+        "to_version": "0.4.1",
+        "action": "inventory:lift-to-type",
+        "args": {
+          "source_instance": "filament",
+          "type_instance": "filament-types",
+          "key_fields": [
+            "manufacturer",
+            "material",
+            "color",
+            "diameter"
+          ],
+          "copy_fields": [
+            "nozzle_temp",
+            "bed_temp",
+            "needs_drying"
+          ],
+          "relationship_kind": "instance-of",
+          "convert_qty": {
+            "from_unit": "g",
+            "to_unit": "kg",
+            "factor": 0.001
+          }
         }
       }
+    ],
+    "provides_instances": [
+      {
+        "module": "inventory",
+        "instance_name": "filament-types",
+        "display_name": "Filament Types",
+        "glyph": "🧵",
+        "item_noun": "type",
+        "nav_group": {
+          "key": "filament",
+          "label": "Filament"
+        },
+        "field_defs": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "material",
+            "display_label": "Material",
+            "type": "text",
+            "position": 1,
+            "choices": [
+              "PLA",
+              "PLA+",
+              "PETG",
+              "ABS",
+              "ASA",
+              "TPU",
+              "Nylon",
+              "PC",
+              "PVA",
+              "Other"
+            ],
+            "help": "The plastic type — PLA is the easy default; PETG/ABS for tougher parts."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "color",
+            "display_label": "Colour",
+            "type": "text",
+            "position": 2,
+            "renderer": "color-hex",
+            "help": "Pick a swatch so the table shows the colour at a glance."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "diameter",
+            "display_label": "Diameter",
+            "type": "text",
+            "position": 3,
+            "choices": [
+              "1.75 mm",
+              "2.85 mm"
+            ],
+            "help": "Filament thickness — 1.75 mm is by far the most common; 2.85 mm for some older/large printers."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "nozzle_temp",
+            "display_label": "Nozzle °C",
+            "type": "number",
+            "position": 4,
+            "help": "The hot-end temperature that prints this filament cleanly — same for every spool of it."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "bed_temp",
+            "display_label": "Bed °C",
+            "type": "number",
+            "position": 5,
+            "help": "The bed temperature that makes the first layer stick."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "needs_drying",
+            "display_label": "Needs drying",
+            "type": "boolean",
+            "position": 6,
+            "choices": [
+              "Stable",
+              "Hygroscopic"
+            ],
+            "help": "Whether this filament tends to absorb moisture and should be kept dry / dried before use."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "spool_count",
+            "display_label": "Spools",
+            "type": "computed",
+            "position": 7,
+            "template": "{{instances.count}}",
+            "help": "How many physical spools of this type you own."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "total_remaining",
+            "display_label": "In stock",
+            "type": "computed",
+            "position": 8,
+            "template": "{{instances.total_qty}} kg",
+            "help": "Total filament remaining across all your spools of this type."
+          }
+        ],
+        "field_overrides": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "manufacturer",
+            "display_label": "Brand"
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "qty",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "unit",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "cost",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "category",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "location",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "warranty",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "min_qty",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "supplier_url",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "serial_number",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "model_number",
+            "hidden": true
+          }
+        ],
+        "saved_views": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "By material",
+            "view_type": "table",
+            "pinned": true,
+            "config": {
+              "group_by": "material",
+              "visible_fields": [
+                "title",
+                "color",
+                "diameter",
+                "spool_count",
+                "total_remaining"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "module": "inventory",
+        "instance_name": "filament",
+        "display_name": "Spools",
+        "glyph": "🧵",
+        "item_noun": "spool",
+        "qty_unit": "kg",
+        "nav_group": {
+          "key": "filament",
+          "label": "Filament"
+        },
+        "parent": {
+          "instance": "filament-types",
+          "label": "Type",
+          "key_fields": [
+            "manufacturer",
+            "material",
+            "color",
+            "diameter"
+          ],
+          "copy_fields": [
+            "nozzle_temp",
+            "bed_temp",
+            "needs_drying"
+          ]
+        },
+        "field_defs": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "size",
+            "display_label": "Spool size",
+            "type": "text",
+            "position": 1,
+            "choices": [
+              "0.5 kg",
+              "1 kg",
+              "2 kg",
+              "3 kg",
+              "4 kg",
+              "5 kg",
+              "25 kg"
+            ],
+            "help": "The full-spool size you bought (the label weight) — the remaining amount is tracked separately."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "batch_code",
+            "display_label": "Batch / lot code",
+            "type": "text",
+            "position": 2,
+            "help": "The batch or lot code from the maker's label (e.g. Polar's spool code) — for traceability of this exact spool."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "state",
+            "display_label": "State",
+            "type": "text",
+            "position": 3,
+            "choices": [
+              "sealed",
+              "open",
+              "empty"
+            ],
+            "help": "Sealed = unopened; open = in use; empty = used up (keep it for the record or delete it)."
+          }
+        ],
+        "field_overrides": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "qty",
+            "display_label": "Remaining (kg)"
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "manufacturer",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "cost",
+            "display_label": "Price / spool"
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "category",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "location",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "warranty",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "min_qty",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "supplier_url",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "serial_number",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "model_number",
+            "hidden": true
+          }
+        ],
+        "saved_views": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "By state",
+            "view_type": "table",
+            "pinned": true,
+            "config": {
+              "group_by": "state",
+              "visible_fields": [
+                "title",
+                "size",
+                "batch_code",
+                "qty",
+                "unit",
+                "state"
+              ]
+            }
+          }
+        ]
+      }
     ]
-  },
-  "confirm": true
+  }
 }

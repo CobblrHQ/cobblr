@@ -30,7 +30,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useTheme } from "../theme/ThemeContext";
 import { UpdateBadge } from "./UpdateBadge";
 import { GrowModal } from "./GrowModal";
-import { isFocused, setFocused } from "../lib/api";
+import { api, isFocused, setFocused } from "../lib/api";
 
 // `themed` = a workspace admin_theme owns the palette, so the per-user
 // light/dark toggle is hidden (it would just fight the theme).
@@ -138,6 +138,17 @@ export function UserMenu({ themed }: { themed: boolean }) {
               {user.display_name}
             </div>
             <div className="text-[11px] text-faint dark:text-slate-400 truncate">{user.email}</div>
+            {/* Unverified state lives here permanently (the top banner is
+                one-dismissal now) — the action stays reachable. */}
+            {user.email_verified === false && (
+              <button
+                type="button"
+                onClick={() => void api.resendVerification().catch(() => undefined)}
+                className="mt-1 text-[11px] text-amber-600 dark:text-amber-400 hover:underline"
+              >
+                email unverified — resend link
+              </button>
+            )}
             {isAdmin && (
               <div className="mt-1.5">
                 <SuperAdminChip />

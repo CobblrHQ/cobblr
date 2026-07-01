@@ -1,0 +1,62 @@
+{
+  "manifest": {
+    "id": "cobblr.community.bookshelf",
+    "version": "0.1.0",
+    "name": "Bookshelf",
+    "description": "Catalog books as inventory parts. Each gets author + ISBN + year + read status. Spine-label wire bundled.",
+    "author": "Cobblr community",
+    "requires": [
+      {
+        "module": "inventory"
+      },
+      {
+        "module": "labels"
+      }
+    ],
+    "wires": [
+      {
+        "source_kind": "inventory:part",
+        "action_id": "labels:print",
+        "trigger_type": "user-invoked",
+        "template": "{{author | default: \"Unknown\"}}\n{{name}}\n{{year | default: \"?\"}}"
+      }
+    ],
+    "field_defs": [
+      {
+        "entity_kind": "inventory:part",
+        "name": "author",
+        "display_label": "Author",
+        "type": "text",
+        "position": 1
+      },
+      {
+        "entity_kind": "inventory:part",
+        "name": "isbn",
+        "display_label": "ISBN",
+        "type": "text",
+        "position": 2
+      },
+      {
+        "entity_kind": "inventory:part",
+        "name": "year",
+        "display_label": "Year",
+        "type": "number",
+        "position": 3
+      },
+      {
+        "entity_kind": "inventory:part",
+        "name": "read_status",
+        "display_label": "Status",
+        "type": "text",
+        "position": 4
+      },
+      {
+        "entity_kind": "inventory:part",
+        "name": "rating",
+        "display_label": "Rating (1-5)",
+        "type": "number",
+        "position": 5
+      }
+    ]
+  }
+}

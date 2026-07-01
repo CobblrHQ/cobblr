@@ -1,0 +1,4 @@
+---
+type: improvement
+---
+A friendlier first week: the homepage and the Build page now say up front when AI isn't connected (and what still works without it) instead of failing quietly — with a one-tap "Connect AI" path. "Describe what you have" now lands on the right Build tab, and the Build tabs speak plainly ("Design my workspace", "A page for members"). When AI is off, "Write a prompt instead" becomes the primary path. Creating a tracker from a capture now lands with a "here's what just happened" strip (scan more / add more) instead of a bare table, and captured names drop leading articles ("A spool of black PLA" files as "Black PLA"). The verify-email banner stays dismissed once dismissed (the reminder lives in your account menu), and young tables hide their all-empty columns behind "+N more columns" until you have real data.

@@ -1,42 +1,151 @@
 {
   "manifest": {
     "id": "cobblr.flagship.gifts-occasions",
+    "version": "0.2.0",
     "name": "Gifts & Occasions",
-    "version": "0.1.0",
-    "description": "Stash gift ideas year-round so you're never caught out — who it's for, the occasion and its date, a link to the idea, a budget, and where it is in the pipeline (idea → bought → wrapped → given). A 'By recipient' view keeps it organised, and every occasion date lands on your calendar so the birthday never sneaks up.",
+    "description": "Gift ideas as their own table — who, occasion + date (calendar-reminded), budget, and an idea→bought→wrapped→given pipeline.",
     "author": "Cobblr",
+    "released_at": "2026-06-08",
+    "changelog": "Now its OWN table (an inventory instance), not generic Inventory with extra columns — its own nav entry, a “New gift” button, only gift-list fields (stock/parts cruft hidden). Plain-language hints + a pinned “By recipient” view.",
     "requires": [
-      { "module": "inventory" }
-    ],
-    "field_defs": [
-      { "entity_kind": "inventory:part", "name": "recipient", "display_label": "For", "type": "text", "position": 1 },
-      { "entity_kind": "inventory:part", "name": "occasion", "display_label": "Occasion", "type": "text", "position": 2, "choices": ["Birthday", "Christmas", "Anniversary", "Wedding", "Graduation", "Holiday", "Just because", "Other"] },
-      { "entity_kind": "inventory:part", "name": "occasion_date", "display_label": "Occasion date", "type": "date", "position": 3 },
-      { "entity_kind": "inventory:part", "name": "budget", "display_label": "Budget", "type": "number", "position": 4 },
-      { "entity_kind": "inventory:part", "name": "status", "display_label": "Status", "type": "text", "position": 5, "choices": ["Idea", "Bought", "Wrapped", "Given"] }
-    ],
-    "field_overrides": [
-      { "entity_kind": "inventory:part", "name": "supplier_url", "display_label": "Idea link" },
-      { "entity_kind": "inventory:part", "name": "manufacturer", "display_label": "Store" },
-      { "entity_kind": "inventory:part", "name": "cost", "display_label": "Spent" },
-      { "entity_kind": "inventory:part", "name": "qty", "hidden": true },
-      { "entity_kind": "inventory:part", "name": "unit", "hidden": true },
-      { "entity_kind": "inventory:part", "name": "min_qty", "hidden": true },
-      { "entity_kind": "inventory:part", "name": "serial_number", "hidden": true },
-      { "entity_kind": "inventory:part", "name": "model_number", "hidden": true }
-    ],
-    "saved_views": [
       {
-        "entity_kind": "inventory:part",
-        "name": "Gift list",
-        "view_type": "table",
-        "pinned": true,
-        "config": {
-          "group_by": "recipient",
-          "visible_fields": ["title", "occasion", "occasion_date", "budget", "status"]
-        }
+        "module": "inventory"
+      }
+    ],
+    "provides_instances": [
+      {
+        "module": "inventory",
+        "instance_name": "gifts",
+        "display_name": "Gifts & Occasions",
+        "glyph": "🎁",
+        "item_noun": "gift",
+        "field_defs": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "recipient",
+            "display_label": "For",
+            "type": "text",
+            "position": 1,
+            "help": "Who the gift is for — the table groups by this."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "occasion",
+            "display_label": "Occasion",
+            "type": "text",
+            "position": 2,
+            "choices": [
+              "Birthday",
+              "Christmas",
+              "Anniversary",
+              "Wedding",
+              "Graduation",
+              "Holiday",
+              "Just because",
+              "Other"
+            ]
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "occasion_date",
+            "display_label": "Occasion date",
+            "type": "date",
+            "position": 3,
+            "help": "When you need it by — lands on your calendar."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "budget",
+            "display_label": "Budget",
+            "type": "number",
+            "position": 4
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "status",
+            "display_label": "Status",
+            "type": "text",
+            "position": 5,
+            "choices": [
+              "Idea",
+              "Bought",
+              "Wrapped",
+              "Given"
+            ],
+            "help": "Where it is in the pipeline — Idea → Bought → Wrapped → Given."
+          }
+        ],
+        "field_overrides": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "supplier_url",
+            "display_label": "Idea link"
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "manufacturer",
+            "display_label": "Store"
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "cost",
+            "display_label": "Spent"
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "qty",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "unit",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "location",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "warranty",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "min_qty",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "serial_number",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "model_number",
+            "hidden": true
+          }
+        ],
+        "saved_views": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "By recipient",
+            "view_type": "table",
+            "pinned": true,
+            "config": {
+              "group_by": "recipient",
+              "visible_fields": [
+                "title",
+                "occasion",
+                "occasion_date",
+                "budget",
+                "status"
+              ]
+            }
+          }
+        ]
       }
     ]
-  },
-  "confirm": true
+  }
 }

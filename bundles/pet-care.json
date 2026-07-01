@@ -1,42 +1,143 @@
 {
   "manifest": {
     "id": "cobblr.flagship.pet-care",
+    "version": "0.2.0",
     "name": "Pet Care",
-    "version": "0.1.0",
-    "description": "Each pet's vitals and schedule in one place — species, breed, birthday, vet, microchip, current weight, and the dates that matter: next vet visit and when the rabies shot is due. A 'My pets' view groups by species, and the vet/vaccination dates land on your calendar automatically so nothing lapses.",
+    "description": "Your pets as their own table — vitals + vet/vaccination dates (calendar-reminded), grouped by species.",
     "author": "Cobblr",
+    "released_at": "2026-06-08",
+    "changelog": "Now its OWN table (an assets instance), not generic Assets with extra columns — its own nav entry, a “New pet” button, only pet fields (make/model/serial cruft hidden). Plain-language hints + a pinned “By species” view.",
     "requires": [
-      { "module": "assets" }
-    ],
-    "field_defs": [
-      { "entity_kind": "assets:asset", "name": "species", "display_label": "Species", "type": "text", "position": 1, "choices": ["Dog", "Cat", "Rabbit", "Bird", "Reptile", "Fish", "Horse", "Other"] },
-      { "entity_kind": "assets:asset", "name": "breed", "display_label": "Breed", "type": "text", "position": 2 },
-      { "entity_kind": "assets:asset", "name": "birthdate", "display_label": "Birthday", "type": "date", "position": 3 },
-      { "entity_kind": "assets:asset", "name": "weight_kg", "display_label": "Weight (kg)", "type": "number", "position": 4 },
-      { "entity_kind": "assets:asset", "name": "vet", "display_label": "Vet", "type": "text", "position": 5 },
-      { "entity_kind": "assets:asset", "name": "microchip", "display_label": "Microchip", "type": "text", "position": 6 },
-      { "entity_kind": "assets:asset", "name": "next_vet_visit", "display_label": "Next vet visit", "type": "date", "position": 7 },
-      { "entity_kind": "assets:asset", "name": "rabies_due", "display_label": "Rabies due", "type": "date", "position": 8 }
-    ],
-    "field_overrides": [
-      { "entity_kind": "assets:asset", "name": "manufacturer", "hidden": true },
-      { "entity_kind": "assets:asset", "name": "model", "hidden": true },
-      { "entity_kind": "assets:asset", "name": "serial_number", "hidden": true },
-      { "entity_kind": "assets:asset", "name": "short_name", "hidden": true },
-      { "entity_kind": "assets:asset", "name": "excitement", "hidden": true }
-    ],
-    "saved_views": [
       {
-        "entity_kind": "assets:asset",
-        "name": "My pets",
-        "view_type": "table",
-        "pinned": true,
-        "config": {
-          "group_by": "species",
-          "visible_fields": ["title", "breed", "weight_kg", "next_vet_visit", "rabies_due"]
-        }
+        "module": "assets"
+      }
+    ],
+    "provides_instances": [
+      {
+        "module": "assets",
+        "instance_name": "pets",
+        "display_name": "Pet Care",
+        "glyph": "🐾",
+        "item_noun": "pet",
+        "field_defs": [
+          {
+            "entity_kind": "assets:asset",
+            "name": "species",
+            "display_label": "Species",
+            "type": "text",
+            "position": 1,
+            "choices": [
+              "Dog",
+              "Cat",
+              "Rabbit",
+              "Bird",
+              "Reptile",
+              "Fish",
+              "Horse",
+              "Other"
+            ],
+            "help": "The table groups pets by this."
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "breed",
+            "display_label": "Breed",
+            "type": "text",
+            "position": 2
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "birthdate",
+            "display_label": "Birthday",
+            "type": "date",
+            "position": 3
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "weight_kg",
+            "display_label": "Weight (kg)",
+            "type": "number",
+            "position": 4,
+            "help": "Current weight — handy for dosing meds + spotting changes."
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "vet",
+            "display_label": "Vet",
+            "type": "text",
+            "position": 5
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "microchip",
+            "display_label": "Microchip",
+            "type": "text",
+            "position": 6,
+            "help": "The chip ID registered to you — vets/shelters scan it to find the owner."
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "next_vet_visit",
+            "display_label": "Next vet visit",
+            "type": "date",
+            "position": 7,
+            "help": "Next check-up — lands on your calendar."
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "rabies_due",
+            "display_label": "Rabies due",
+            "type": "date",
+            "position": 8,
+            "help": "When the rabies vaccination is next due."
+          }
+        ],
+        "field_overrides": [
+          {
+            "entity_kind": "assets:asset",
+            "name": "manufacturer",
+            "hidden": true
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "model",
+            "hidden": true
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "serial_number",
+            "hidden": true
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "short_name",
+            "hidden": true
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "excitement",
+            "hidden": true
+          }
+        ],
+        "saved_views": [
+          {
+            "entity_kind": "assets:asset",
+            "name": "By species",
+            "view_type": "table",
+            "pinned": true,
+            "config": {
+              "group_by": "species",
+              "visible_fields": [
+                "title",
+                "breed",
+                "weight_kg",
+                "next_vet_visit",
+                "rabies_due"
+              ]
+            }
+          }
+        ]
       }
     ]
-  },
-  "confirm": true
+  }
 }

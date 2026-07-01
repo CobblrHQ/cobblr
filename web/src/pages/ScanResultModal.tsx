@@ -10,8 +10,9 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Camera, Check, CheckCircle, MapPin, Minus, Plus, ScanLine, Sparkles, Trash2 } from "lucide-react";
 import { Modal, useToast } from "@cobblr/platform-web";
-import { ApiError, api, type ScanCandidate, type ScanInboxItem } from "../lib/api";
+import { ApiError, api, type ScanCandidate, type ScanInboxItem, type TrackedMatch } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { TrackedMatchBanner } from "../components/TrackedMatchBanner";
 import { AiOffMissHint, useAiStatus } from "./ScanPage";
 
 export interface CameraScanTarget {
@@ -34,6 +35,8 @@ export function ScanResultModal({
   scanTarget,
   onSaved,
   onClose,
+  moveMode,
+  onAttached,
 }: {
   barcode: string;
   /** The scanner session's area (a location name) — stamped on the item as
@@ -52,6 +55,15 @@ export function ScanResultModal({
   scanTarget: CameraScanTarget;
   onSaved: (item: ScanInboxItem) => void;
   onClose: () => void;
+  /** Move mode (companion app A10): a single exact "already tracked" barcode match
+   *  auto-moves that entity to the active bin — no triage stop. */
+  moveMode?: boolean;
+  /** Fired after an attach (manual or auto-move) so the camera can offer undo. */
+  onAttached?: (
+    r: { itemId: string; prevLocationId: string | null; entityTitle: string },
+    match: TrackedMatch,
+    mode: "add-qty" | "link-barcode" | "move",
+  ) => void;
 }) {
   const { activeSlug } = useActiveOrg();
   const aiStatus = useAiStatus();
@@ -257,6 +269,22 @@ export function ScanResultModal({
     },
   });
 
+  // "Take a nice picture" — a fresh capture becomes the DISPLAY/catalog image
+  // (the identify photo is untouched). companion app's photo-roles, phone-first.
+  const niceRef = useRef<HTMLInputElement>(null);
+  const nicePhoto = useMutation({
+    mutationFn: async (file: File) => {
+      const f = await api.uploadFile(activeSlug, file);
+      return api.setScanCatalogFile(activeSlug, item!.id, f.id);
+    },
+    onSuccess: (fresh) => {
+      setItem(fresh);
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      toast.success("Catalog photo replaced with your shot");
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+
   const looking =
     scan.isPending || rerunWrong.isPending || (!!item && !item.suggested_name && !match.isFetched);
   // Catalog image first; the user's own photo as the fallback (photo scans
@@ -355,6 +383,26 @@ export function ScanResultModal({
           </div>
         </div>
 
+        {/* "Already tracked" (companion app A8/A9/A10) — act on the EXISTING entity
+            instead of duplicating; in Move mode a single exact barcode match
+            auto-moves to the active bin and re-arms the camera. */}
+        {item && item.status === "pending" && (
+          <TrackedMatchBanner
+            item={item}
+            locationId={scanAreaId ?? null}
+            locationName={scanArea ?? null}
+            autoMove={moveMode}
+            onAttached={(r, m, mode) => {
+              onAttached?.(
+                { itemId: item.id, prevLocationId: r.prev_location_id, entityTitle: r.entity_title },
+                m,
+                mode,
+              );
+              onClose();
+            }}
+          />
+        )}
+
         {/* One-tap routing: the ?into= target first, else matchmaker chips. */}
         {scanTarget.into ? (
           <button
@@ -420,7 +468,8 @@ export function ScanResultModal({
             <Trash2 size={13} /> Discard
           </button>
           {/* Phone wrong-path: photograph the product and identify from the package
-              — the only thing that rescues a junk / non-product barcode. */}
+              — the only thing that rescues a junk / non-product barcode. Plus the
+              nice-shot: a fresh capture as the DISPLAY photo (identify untouched). */}
           {item && (
             <>
               <button
@@ -432,6 +481,17 @@ export function ScanResultModal({
                 <Camera size={13} className={photoIdentify.isPending ? "animate-pulse" : ""} /> Not it —
                 photograph it
               </button>
+              {item.suggested_name && (
+                <button
+                  type="button"
+                  disabled={busy || nicePhoto.isPending}
+                  onClick={() => niceRef.current?.click()}
+                  title="Take a nice picture — it becomes the catalog/display photo"
+                  className="inline-flex items-center gap-1 text-xs text-muted hover:text-content disabled:opacity-40"
+                >
+                  <Camera size={13} className={nicePhoto.isPending ? "animate-pulse" : ""} /> Nice photo
+                </button>
+              )}
               <input
                 ref={photoRef}
                 type="file"
@@ -442,6 +502,18 @@ export function ScanResultModal({
                   const f = e.target.files?.[0];
                   e.currentTarget.value = "";
                   if (f) photoIdentify.mutate(f);
+                }}
+              />
+              <input
+                ref={niceRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                hidden
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  e.currentTarget.value = "";
+                  if (f) nicePhoto.mutate(f);
                 }}
               />
             </>

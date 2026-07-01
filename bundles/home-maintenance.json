@@ -1,40 +1,125 @@
 {
   "manifest": {
     "id": "cobblr.flagship.home-maintenance",
+    "version": "0.2.0",
     "name": "Home Maintenance Schedule",
-    "version": "0.1.0",
-    "description": "The home version of Vehicle Maintenance. Track each system in your house — furnace, water heater, HVAC filter, smoke detectors, gutters, sump pump — with its location, install date and filter size, then log every service with its cost and set the next-due date. Filter-change-every-3-months and flush-the-water-heater-yearly land on your calendar so the house stays on schedule instead of in your head.",
+    "description": "Your home's systems as their own table — furnace, water heater, HVAC filters, detectors — with service logs + next-due dates on your calendar.",
     "author": "Cobblr",
+    "released_at": "2026-06-08",
+    "changelog": "Now its OWN table (an assets instance), not generic Assets with extra columns — its own nav entry, a “New system” button, only the fields a maintenance schedule needs. Plain-language hints + a pinned “By system” view; service logs come from core-maintenance.",
     "requires": [
-      { "module": "assets" },
-      { "module": "core-maintenance" }
-    ],
-    "field_defs": [
-      { "entity_kind": "assets:asset", "name": "system_type", "display_label": "System", "type": "text", "position": 1, "choices": ["Furnace", "Air conditioner", "Water heater", "HVAC filter", "Smoke / CO detector", "Gutters", "Sump pump", "Dishwasher", "Washer", "Dryer", "Refrigerator", "Garage door", "Other"] },
-      { "entity_kind": "assets:asset", "name": "location", "display_label": "Location", "type": "text", "position": 2 },
-      { "entity_kind": "assets:asset", "name": "installed_date", "display_label": "Installed", "type": "date", "position": 3 },
-      { "entity_kind": "assets:asset", "name": "filter_size", "display_label": "Filter / part size", "type": "text", "position": 4 }
-    ],
-    "field_overrides": [
-      { "entity_kind": "assets:asset", "name": "manufacturer", "display_label": "Brand" },
-      { "entity_kind": "assets:asset", "name": "model", "display_label": "Model" },
-      { "entity_kind": "assets:asset", "name": "short_name", "hidden": true },
-      { "entity_kind": "assets:asset", "name": "type", "hidden": true },
-      { "entity_kind": "assets:asset", "name": "serial_number", "hidden": true },
-      { "entity_kind": "assets:asset", "name": "excitement", "hidden": true }
-    ],
-    "saved_views": [
       {
-        "entity_kind": "assets:asset",
-        "name": "Home systems",
-        "view_type": "table",
-        "pinned": true,
-        "config": {
-          "group_by": "system_type",
-          "visible_fields": ["title", "location", "installed_date", "filter_size"]
-        }
+        "module": "assets"
+      },
+      {
+        "module": "core-maintenance"
+      }
+    ],
+    "provides_instances": [
+      {
+        "module": "assets",
+        "instance_name": "maintenance",
+        "display_name": "Home Maintenance",
+        "glyph": "🔧",
+        "item_noun": "system",
+        "field_defs": [
+          {
+            "entity_kind": "assets:asset",
+            "name": "system_type",
+            "display_label": "System",
+            "type": "text",
+            "position": 1,
+            "choices": [
+              "Furnace",
+              "Air conditioner",
+              "Water heater",
+              "HVAC filter",
+              "Smoke / CO detector",
+              "Gutters",
+              "Sump pump",
+              "Dishwasher",
+              "Washer",
+              "Dryer",
+              "Refrigerator",
+              "Garage door",
+              "Other"
+            ],
+            "help": "Which home system — the table groups by this."
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "location",
+            "display_label": "Location",
+            "type": "text",
+            "position": 2,
+            "help": "Where it is — “Basement”, “Attic”, “Hallway ceiling”."
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "installed_date",
+            "display_label": "Installed",
+            "type": "date",
+            "position": 3
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "filter_size",
+            "display_label": "Filter / part size",
+            "type": "text",
+            "position": 4,
+            "help": "The filter or replacement-part size to buy — e.g. “16×25×1” for a furnace filter."
+          }
+        ],
+        "field_overrides": [
+          {
+            "entity_kind": "assets:asset",
+            "name": "manufacturer",
+            "display_label": "Brand"
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "model",
+            "display_label": "Model"
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "short_name",
+            "hidden": true
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "type",
+            "hidden": true
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "serial_number",
+            "hidden": true
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "excitement",
+            "hidden": true
+          }
+        ],
+        "saved_views": [
+          {
+            "entity_kind": "assets:asset",
+            "name": "By system",
+            "view_type": "table",
+            "pinned": true,
+            "config": {
+              "group_by": "system_type",
+              "visible_fields": [
+                "title",
+                "location",
+                "installed_date",
+                "filter_size"
+              ]
+            }
+          }
+        ]
       }
     ]
-  },
-  "confirm": true
+  }
 }

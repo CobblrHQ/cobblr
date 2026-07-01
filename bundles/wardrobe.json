@@ -1,0 +1,314 @@
+{
+  "manifest": {
+    "id": "cobblr.flagship.wardrobe",
+    "version": "0.1.1",
+    "name": "Wardrobe",
+    "description": "Catalog your clothing as its own table — type, colour, season, formality, a photo each — grouped by type. Optional Outfits table for planning looks.",
+    "author": "Cobblr",
+    "released_at": "2026-06-08",
+    "changelog": "First release — your wardrobe as its own inventory table (a “New garment” button, only clothing fields, the parts/stock cruft hidden), with a pinned “By type” view + plain-language hints. Turn on Outfits to plan looks by occasion + the date you'll wear them (they land on your calendar); the Outfit Planner app drags garments onto a figure.",
+    "requires": [
+      {
+        "module": "inventory"
+      }
+    ],
+    "provides_instances": [
+      {
+        "module": "inventory",
+        "instance_name": "wardrobe",
+        "display_name": "Wardrobe",
+        "glyph": "👗",
+        "item_noun": "garment",
+        "qty_unit": "each",
+        "field_defs": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "garment_type",
+            "display_label": "Type",
+            "type": "text",
+            "position": 1,
+            "choices": [
+              "Top",
+              "Bottom",
+              "Dress",
+              "Outerwear",
+              "Shoes",
+              "Bag",
+              "Accessory",
+              "Jewelry",
+              "Activewear",
+              "Underwear",
+              "Other"
+            ],
+            "help": "What kind of piece — the closet groups by this."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "color",
+            "display_label": "Colour",
+            "type": "text",
+            "position": 2,
+            "renderer": "color-hex",
+            "help": "Pick a swatch so the closet shows the colour at a glance."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "season",
+            "display_label": "Season",
+            "type": "text",
+            "position": 3,
+            "choices": [
+              "Spring",
+              "Summer",
+              "Fall",
+              "Winter",
+              "All-season"
+            ],
+            "help": "When you wear it — filter to the right season fast."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "formality",
+            "display_label": "Formality",
+            "type": "text",
+            "position": 4,
+            "choices": [
+              "Loungewear",
+              "Casual",
+              "Smart casual",
+              "Work",
+              "Formal",
+              "Athletic"
+            ],
+            "help": "How dressed-up it is — for building work vs weekend looks."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "fabric",
+            "display_label": "Fabric",
+            "type": "text",
+            "position": 5,
+            "choices": [
+              "Cotton",
+              "Wool",
+              "Linen",
+              "Denim",
+              "Leather",
+              "Silk",
+              "Knit",
+              "Synthetic",
+              "Blend",
+              "Other"
+            ],
+            "help": "Main material — handy for care + seasonality."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "size",
+            "display_label": "Size",
+            "type": "text",
+            "position": 6
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "last_worn",
+            "display_label": "Last worn",
+            "type": "date",
+            "position": 7,
+            "help": "Update when you wear it — surfaces the pieces you never reach for."
+          }
+        ],
+        "field_overrides": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "manufacturer",
+            "display_label": "Brand"
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "cost",
+            "display_label": "Paid"
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "category",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "location",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "warranty",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "min_qty",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "supplier_url",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "serial_number",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "model_number",
+            "hidden": true
+          }
+        ],
+        "saved_views": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "By type",
+            "view_type": "table",
+            "pinned": true,
+            "config": {
+              "group_by": "garment_type",
+              "visible_fields": [
+                "title",
+                "color",
+                "season",
+                "formality",
+                "manufacturer"
+              ]
+            }
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "By season",
+            "view_type": "table",
+            "config": {
+              "group_by": "season",
+              "visible_fields": [
+                "title",
+                "garment_type",
+                "color",
+                "formality"
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "features": [
+      {
+        "key": "outfits",
+        "name": "Outfit planning",
+        "question": "Plan outfits from your wardrobe?",
+        "description": "Adds an 'Outfits' table — each look by occasion + the date you'll wear it (so it lands on your calendar) — plus the Outfit Planner app, where you drag garments onto a figure to compose a look visually.",
+        "default": true,
+        "requires": [
+          {
+            "module": "projects"
+          },
+          {
+            "module": "core-apps"
+          }
+        ],
+        "next_steps": [
+          {
+            "label": "Open the Outfit Planner",
+            "module": "core-apps",
+            "path": "/app/outfit-planner",
+            "hint": "Drag garments onto a figure and save the look."
+          },
+          {
+            "label": "Plan an outfit",
+            "module": "projects",
+            "path": "/instances/outfits",
+            "hint": "Name the look, set the occasion + when you'll wear it."
+          }
+        ],
+        "provides_apps": [
+          {
+            "slug": "outfit-planner",
+            "name": "Outfit Planner",
+            "icon": "👗",
+            "pages": [
+              {
+                "slug": "plan",
+                "title": "Plan an outfit",
+                "blocks": [
+                  {
+                    "type": "custom",
+                    "html": "\n<style>\n  :root{--line:#e6e2da;--muted:#8a8377;--accent:#7c6f5a;--bg:#f3efe7;}\n  *{box-sizing:border-box}\n  .op-wrap{display:flex;flex-direction:column;gap:10px;font:14px system-ui,-apple-system,sans-serif;color:#332f28}\n  .op-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}\n  .op-stagewrap{position:relative;width:100%;max-width:340px;margin:0 auto;aspect-ratio:9/16;background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden;touch-action:none}\n  .op-figure{position:absolute;inset:0;width:100%;height:100%;opacity:.5;pointer-events:none}\n  .op-item{position:absolute;touch-action:none;cursor:grab;border-radius:8px;user-select:none}\n  .op-item img{width:100%;height:100%;object-fit:contain;pointer-events:none;-webkit-user-drag:none}\n  .op-item.sel{outline:2px solid var(--accent);outline-offset:1px}\n  .op-chip{display:flex;flex-direction:column;align-items:center;gap:3px;width:64px;cursor:grab;touch-action:none}\n  .op-chip .sw{width:58px;height:58px;border-radius:9px;border:1px solid var(--line);background:#fafafa center/contain no-repeat;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--muted);text-align:center;overflow:hidden}\n  .op-chip .nm{font-size:10px;line-height:1.1;text-align:center;color:#4a463d;max-width:64px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\n  .op-palette{display:flex;gap:8px;overflow-x:auto;padding:4px 2px;min-height:84px}\n  .op-pal-cat{font:10px ui-monospace,monospace;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:6px 0 0}\n  .op-btn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:6px 10px;font:13px system-ui;color:#332f28;cursor:pointer}\n  .op-btn.primary{background:var(--accent);color:#fff;border-color:var(--accent)}\n  .op-btn:disabled{opacity:.5;cursor:default}\n  .op-looks{display:flex;gap:8px;overflow-x:auto;padding-bottom:2px}\n  .op-look{flex:0 0 auto;border:1px solid var(--line);border-radius:8px;padding:6px 9px;background:#fff;cursor:pointer;font-size:12px;display:flex;gap:6px;align-items:center}\n  .op-look .x{color:var(--muted);cursor:pointer}\n  .op-empty{color:var(--muted);font-size:12px;padding:8px}\n  .op-hint{font-size:11px;color:var(--muted)}\n  input.op-name{flex:1;min-width:120px;border:1px solid var(--line);border-radius:8px;padding:7px 9px;font:13px system-ui}\n  .op-size{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}\n</style>\n<div class=\"op-wrap\">\n  <div id=\"op-status\" class=\"op-hint\">Loading your wardrobe…</div>\n  <div class=\"op-stagewrap\" id=\"op-stage\">\n    <svg class=\"op-figure\" viewBox=\"0 0 90 160\" xmlns=\"http://www.w3.org/2000/svg\" aria-hidden=\"true\">\n      <g fill=\"none\" stroke=\"#b9b1a2\" stroke-width=\"1.4\" stroke-linejoin=\"round\" stroke-linecap=\"round\">\n        <circle cx=\"45\" cy=\"15\" r=\"9\"/>\n        <path d=\"M45 24 C40 24 38 28 38 33 L38 40 C30 43 24 49 22 60 L26 62 C29 53 33 49 38 47 L38 70 C36 88 35 104 36 110 L34 150 L41 150 L44 112 L46 112 L49 150 L56 150 L54 110 C55 104 54 88 52 70 L52 47 C57 49 61 53 64 62 L68 60 C66 49 60 43 52 40 L52 33 C52 28 50 24 45 24 Z\"/>\n      </g>\n    </svg>\n  </div>\n  <div class=\"op-row\" id=\"op-selbar\" style=\"display:none\">\n    <button class=\"op-btn\" id=\"op-front\">Bring front</button>\n    <button class=\"op-btn\" id=\"op-remove\">Remove</button>\n    <span class=\"op-size\">size <input id=\"op-resize\" type=\"range\" min=\"36\" max=\"200\" value=\"92\"></span>\n  </div>\n  <div class=\"op-pal-cat\">// your garments — tap or drag onto the figure</div>\n  <div class=\"op-palette\" id=\"op-palette\"></div>\n  <div class=\"op-row\">\n    <input class=\"op-name\" id=\"op-lookname\" placeholder=\"Name this look (e.g. Friday work)\"/>\n    <button class=\"op-btn primary\" id=\"op-save\">Save look</button>\n    <button class=\"op-btn\" id=\"op-clear\">Clear</button>\n  </div>\n  <div class=\"op-pal-cat\">// saved looks</div>\n  <div class=\"op-looks\" id=\"op-looks\"><span class=\"op-empty\">No saved looks yet.</span></div>\n</div>\n<script>\n(function(){\n  var stage=document.getElementById('op-stage');\n  var palette=document.getElementById('op-palette');\n  var status=document.getElementById('op-status');\n  var looksEl=document.getElementById('op-looks');\n  var selbar=document.getElementById('op-selbar');\n  var resize=document.getElementById('op-resize');\n  var garments=[];      // {id,title,color,type,src}\n  var items=[];         // placed: {garmentId,el,x,y,w,z,src,title}\n  var looks=[];         // saved\n  var sel=null, z=1;\n\n  function rect(){return stage.getBoundingClientRect();}\n  function isHex(c){return typeof c==='string' && /^#?[0-9a-fA-F]{3,8}$/.test(c.trim());}\n  function hex(c){c=String(c).trim();return c[0]==='#'?c:'#'+c;}\n\n  function chipBg(g){\n    if(g.src) return 'background-image:url('+g.src+')';\n    if(isHex(g.color)) return 'background:'+hex(g.color);\n    return '';\n  }\n\n  // ---- placing + dragging (Pointer Events: mouse + touch) ----\n  function place(g,x,y,w,zz){\n    var el=document.createElement('div');\n    el.className='op-item';\n    var s=w||92;\n    el.style.width=s+'px';el.style.height=s+'px';\n    el.style.left=(x-s/2)+'px';el.style.top=(y-s/2)+'px';\n    el.style.zIndex=zz||(++z);\n    if(g.src){var im=document.createElement('img');im.src=g.src;el.appendChild(im);}\n    else{el.style.background=isHex(g.color)?hex(g.color):'#d9d4c8';el.style.border='1px solid #cfc9bb';\n         var lab=document.createElement('div');lab.style.cssText='font:10px system-ui;color:#fff;text-align:center;line-height:'+s+'px;text-shadow:0 1px 2px rgba(0,0,0,.4)';lab.textContent=g.title;el.appendChild(lab);}\n    var rec={garmentId:g.id,el:el,x:x,y:y,w:s,z:Number(el.style.zIndex),src:g.src,title:g.title,color:g.color};\n    items.push(rec);\n    enableDrag(el,rec);\n    stage.appendChild(el);\n    select(rec);\n    return rec;\n  }\n  function enableDrag(el,rec){\n    var sx,sy,ox,oy,drag=false;\n    el.addEventListener('pointerdown',function(e){\n      e.preventDefault();select(rec);drag=true;el.setPointerCapture(e.pointerId);el.style.cursor='grabbing';\n      sx=e.clientX;sy=e.clientY;ox=rec.x;oy=rec.y;\n    });\n    el.addEventListener('pointermove',function(e){\n      if(!drag)return;var r=rect();\n      rec.x=ox+(e.clientX-sx);rec.y=oy+(e.clientY-sy);\n      el.style.left=(rec.x-rec.w/2)+'px';el.style.top=(rec.y-rec.w/2)+'px';\n    });\n    el.addEventListener('pointerup',function(e){drag=false;el.style.cursor='grab';try{el.releasePointerCapture(e.pointerId);}catch(_){}});\n  }\n  function select(rec){\n    sel=rec;\n    items.forEach(function(it){it.el.classList.toggle('sel',it===rec);});\n    selbar.style.display=rec?'flex':'none';\n    if(rec)resize.value=rec.w;\n  }\n  stage.addEventListener('pointerdown',function(e){if(e.target===stage||e.target.tagName==='svg'||e.target.tagName==='path'||e.target.tagName==='circle'||e.target.tagName==='g'){select(null);}});\n\n  document.getElementById('op-remove').onclick=function(){if(!sel)return;sel.el.remove();items=items.filter(function(i){return i!==sel;});select(null);};\n  document.getElementById('op-front').onclick=function(){if(!sel)return;sel.z=++z;sel.el.style.zIndex=sel.z;};\n  resize.oninput=function(){if(!sel)return;var s=Number(resize.value);sel.w=s;sel.el.style.width=s+'px';sel.el.style.height=s+'px';sel.el.style.left=(sel.x-s/2)+'px';sel.el.style.top=(sel.y-s/2)+'px';};\n  document.getElementById('op-clear').onclick=function(){items.forEach(function(i){i.el.remove();});items=[];select(null);};\n\n  // ---- palette → drag a garment onto the stage (clone follows pointer) ----\n  function makeChip(g){\n    var chip=document.createElement('div');chip.className='op-chip';\n    var sw=document.createElement('div');sw.className='sw';var bg=chipBg(g);if(bg)sw.style.cssText+=';'+bg;if(!g.src&&!isHex(g.color))sw.textContent=g.title;\n    var nm=document.createElement('div');nm.className='nm';nm.textContent=g.title;\n    chip.appendChild(sw);chip.appendChild(nm);\n    // Tap to add it to the figure (mobile-friendly), or drag to drop it exactly\n    // where you want. A tap (no real movement) lands it stacked near the torso;\n    // either way you can drag the placed garment to reposition.\n    chip.addEventListener('pointerdown',function(e){\n      e.preventDefault();\n      var sx=e.clientX,sy=e.clientY,moved=false;\n      var ghost=sw.cloneNode(true);ghost.style.cssText+=';position:fixed;width:64px;height:64px;opacity:.85;pointer-events:none;z-index:9999;border-radius:9px';\n      document.body.appendChild(ghost);\n      function mv(ev){if(Math.abs(ev.clientX-sx)+Math.abs(ev.clientY-sy)>6)moved=true;ghost.style.left=(ev.clientX-32)+'px';ghost.style.top=(ev.clientY-32)+'px';}\n      mv(e);\n      function up(ev){\n        document.removeEventListener('pointermove',mv);document.removeEventListener('pointerup',up);\n        ghost.remove();\n        var r=rect();\n        if(ev.clientX>=r.left&&ev.clientX<=r.right&&ev.clientY>=r.top&&ev.clientY<=r.bottom){\n          place(g,ev.clientX-r.left,ev.clientY-r.top);\n        }else if(!moved){\n          var k=items.length;place(g,r.width*0.5,r.height*0.30+(k%4)*44);\n        }\n      }\n      document.addEventListener('pointermove',mv);document.addEventListener('pointerup',up);\n    });\n    return chip;\n  }\n\n  // ---- saved looks ----\n  function snapshot(){var r=rect();return items.map(function(i){return {garmentId:i.garmentId,xr:i.x/r.width,yr:i.y/r.height,w:i.w,z:i.z};});}\n  function gById(id){for(var i=0;i<garments.length;i++)if(garments[i].id===id)return garments[i];return null;}\n  function loadLook(look){\n    items.forEach(function(i){i.el.remove();});items=[];select(null);\n    var r=rect();\n    (look.items||[]).slice().sort(function(a,b){return (a.z||0)-(b.z||0);}).forEach(function(p){\n      var g=gById(p.garmentId);if(!g)return;\n      place(g,(p.xr||0.5)*r.width,(p.yr||0.5)*r.height,p.w,p.z);\n    });\n    select(null);\n  }\n  function renderLooks(){\n    looksEl.innerHTML='';\n    if(!looks.length){looksEl.innerHTML='<span class=\"op-empty\">No saved looks yet.</span>';return;}\n    looks.forEach(function(L,idx){\n      var el=document.createElement('div');el.className='op-look';\n      var t=document.createElement('span');t.textContent=L.name||('Look '+(idx+1));t.onclick=function(){loadLook(L);};\n      var x=document.createElement('span');x.className='x';x.textContent='×';x.title='Delete';\n      x.onclick=function(e){e.stopPropagation();looks.splice(idx,1);persist();renderLooks();};\n      el.appendChild(t);el.appendChild(x);looksEl.appendChild(el);\n    });\n  }\n  function persist(){return window.cobblr.appSave('looks',looks);}\n  document.getElementById('op-save').onclick=function(){\n    var nameEl=document.getElementById('op-lookname');\n    var nm=(nameEl.value||'').trim()||('Look '+(looks.length+1));\n    if(!items.length){status.textContent='Add a few garments to the figure first.';return;}\n    looks.unshift({name:nm,at:Date.now(),items:snapshot()});\n    nameEl.value='';persist().then(function(){renderLooks();status.textContent='Saved “'+nm+'”.';});\n  };\n\n  // ---- boot: list garments from the Wardrobe instance's saved view ----\n  // Through core-views /data — instance kinds now resolve there (H2-scoped),\n  // so no raw instance API. Custom values land under row.fields.metadata.\n  function garmentFromRow(row){\n    var f=row.fields||{}; var meta=f.metadata||{};\n    // Load the ORIGINAL (drop ?variant=) so a cut-out garment keeps its\n    // transparency — the resized medium/thumb variants flatten alpha to black.\n    var ip=row.image_path||f.image_path;\n    if(ip)ip=ip.replace(/\\?variant=[^&]*/,'').replace(/&variant=[^&]*/,'');\n    return {id:row.id,title:row.title||f.name||'Garment',color:meta.color,type:meta.garment_type,image_path:ip};\n  }\n  function renderGarments(rows){\n    if(!rows.length){status.textContent='Your Wardrobe is empty — add some garments (with photos) first.';return Promise.resolve();}\n    status.textContent=rows.length+' garments — tap (or drag) any onto the figure, arrange, then Save look.';\n    return Promise.all(rows.map(function(row){\n      var g=garmentFromRow(row);\n      if(!g.image_path)return Promise.resolve(g);\n      return window.cobblr.image(g.image_path).then(function(d){g.src=d;return g;}).catch(function(){return g;});\n    })).then(function(gs){\n      gs.sort(function(a,b){return String(a.type||'~').localeCompare(String(b.type||'~'));});\n      garments=gs;palette.innerHTML='';\n      gs.forEach(function(g){palette.appendChild(makeChip(g));});\n    });\n  }\n  window.cobblr.get('/modules/core-views/views').then(function(r){\n    var views=(r&&(r.items||r))||[];\n    var v=views.filter(function(x){return (x.entity_kind||'')==='wardrobe:item';});\n    var view=v.filter(function(x){return x.pinned;})[0]||v[0];\n    if(!view){status.textContent='No Wardrobe table found — add a garment to your Wardrobe first.';return;}\n    return window.cobblr.viewData(view.id,{limit:200}).then(renderGarments);\n  }).catch(function(err){status.textContent='Could not load wardrobe: '+((err&&err.message)||err);});\n\n  window.cobblr.appLoad('looks').then(function(v){looks=Array.isArray(v)?v:[];renderLooks();}).catch(function(){});\n})();\n</script>\n",
+                    "height": 760
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "provides_instances": [
+          {
+            "module": "projects",
+            "instance_name": "outfits",
+            "display_name": "Outfits",
+            "glyph": "👚",
+            "item_noun": "outfit",
+            "field_defs": [
+              {
+                "entity_kind": "projects:project",
+                "name": "occasion",
+                "display_label": "Occasion",
+                "type": "text",
+                "position": 1,
+                "choices": [
+                  "Everyday",
+                  "Work",
+                  "Date",
+                  "Event",
+                  "Travel",
+                  "Workout",
+                  "Special"
+                ],
+                "help": "What the look is for — the table groups by this."
+              },
+              {
+                "entity_kind": "projects:project",
+                "name": "wear_date",
+                "display_label": "Wear on",
+                "type": "date",
+                "position": 2,
+                "help": "When you'll wear it — lands on your calendar as “what to wear”."
+              },
+              {
+                "entity_kind": "projects:project",
+                "name": "pieces",
+                "display_label": "Pieces",
+                "type": "text",
+                "position": 3,
+                "help": "The garments in this look — jot them here, or build it visually in the Outfit Planner app."
+              }
+            ],
+            "saved_views": [
+              {
+                "entity_kind": "projects:project",
+                "name": "By occasion",
+                "view_type": "table",
+                "pinned": true,
+                "config": {
+                  "group_by": "occasion",
+                  "visible_fields": [
+                    "title",
+                    "occasion",
+                    "wear_date"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

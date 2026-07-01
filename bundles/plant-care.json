@@ -1,40 +1,184 @@
 {
   "manifest": {
     "id": "cobblr.flagship.plant-care",
+    "version": "0.3.0",
     "name": "Plant Care",
-    "version": "0.1.0",
-    "description": "Stop killing your houseplants. Each plant tracks its species, where it lives, how much light it likes, how often to water, when you last watered and its pot size. A 'By light' view groups the windowsill crowd from the shady corner. Log a watering and set the next one on your calendar so the fern never goes a fortnight dry again.",
+    "description": "Your houseplants as their own table — species, light, watering interval + pot size, grouped by light.",
     "author": "Cobblr",
+    "released_at": "2026-06-10",
+    "changelog": "Turn on Smart irrigation to let each plant water itself — its watering interval fires a Home Assistant service (or any controller) for that plant's zone + seconds, hands-free. — Now its OWN table (an assets instance), not generic Assets with extra columns — its own nav entry, a “New plant” button, only plant fields (the make/model/serial cruft is hidden). Plain-language hints + a pinned “By light” view.",
     "requires": [
-      { "module": "assets" }
-    ],
-    "field_defs": [
-      { "entity_kind": "assets:asset", "name": "species", "display_label": "Species", "type": "text", "position": 1 },
-      { "entity_kind": "assets:asset", "name": "light", "display_label": "Light", "type": "text", "position": 2, "choices": ["Low", "Medium", "Bright indirect", "Direct sun"] },
-      { "entity_kind": "assets:asset", "name": "water_every_days", "display_label": "Water every (days)", "type": "number", "position": 3 },
-      { "entity_kind": "assets:asset", "name": "last_watered", "display_label": "Last watered", "type": "date", "position": 4 },
-      { "entity_kind": "assets:asset", "name": "pot_size", "display_label": "Pot size", "type": "text", "position": 5 },
-      { "entity_kind": "assets:asset", "name": "care_summary", "display_label": "Care", "type": "computed", "position": 6, "template": "{{light | default: \"?\"}} light · water every {{water_every_days | default: \"?\"}}d" }
-    ],
-    "field_overrides": [
-      { "entity_kind": "assets:asset", "name": "manufacturer", "hidden": true },
-      { "entity_kind": "assets:asset", "name": "model", "hidden": true },
-      { "entity_kind": "assets:asset", "name": "serial_number", "hidden": true },
-      { "entity_kind": "assets:asset", "name": "short_name", "hidden": true },
-      { "entity_kind": "assets:asset", "name": "excitement", "hidden": true }
-    ],
-    "saved_views": [
       {
-        "entity_kind": "assets:asset",
-        "name": "By light",
-        "view_type": "table",
-        "pinned": true,
-        "config": {
-          "group_by": "light",
-          "visible_fields": ["title", "species", "water_every_days", "last_watered", "pot_size"]
-        }
+        "module": "assets"
+      }
+    ],
+    "provides_instances": [
+      {
+        "module": "assets",
+        "instance_name": "plants",
+        "display_name": "Plant Care",
+        "glyph": "🪴",
+        "item_noun": "plant",
+        "field_defs": [
+          {
+            "entity_kind": "assets:asset",
+            "name": "species",
+            "display_label": "Species",
+            "type": "text",
+            "position": 1,
+            "help": "The plant's name/type — e.g. “Monstera”, “Snake plant”."
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "light",
+            "display_label": "Light",
+            "type": "text",
+            "position": 2,
+            "choices": [
+              "Low",
+              "Medium",
+              "Bright indirect",
+              "Direct sun"
+            ],
+            "help": "How much light its spot gets — the table groups by this so similar plants sit together."
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "water_every_days",
+            "display_label": "Water every (days)",
+            "type": "number",
+            "position": 3,
+            "help": "Days between waterings — e.g. 7 for weekly."
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "last_watered",
+            "display_label": "Last watered",
+            "type": "date",
+            "position": 4
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "pot_size",
+            "display_label": "Pot size",
+            "type": "text",
+            "position": 5,
+            "help": "Pot diameter — e.g. “6 in”, “15 cm”."
+          }
+        ],
+        "field_overrides": [
+          {
+            "entity_kind": "assets:asset",
+            "name": "manufacturer",
+            "hidden": true
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "model",
+            "hidden": true
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "serial_number",
+            "hidden": true
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "short_name",
+            "hidden": true
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "excitement",
+            "hidden": true
+          }
+        ],
+        "saved_views": [
+          {
+            "entity_kind": "assets:asset",
+            "name": "By light",
+            "view_type": "table",
+            "pinned": true,
+            "config": {
+              "group_by": "light",
+              "visible_fields": [
+                "title",
+                "species",
+                "water_every_days",
+                "last_watered",
+                "pot_size"
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "features": [
+      {
+        "key": "irrigation",
+        "name": "Smart irrigation",
+        "question": "Let plants water themselves?",
+        "description": "Each plant's watering interval fires a command at your irrigation controller for THAT plant's zone + duration — hands-free. Ships pointed at a Home Assistant `script.water_zone` service; connect Home Assistant (label it “Irrigation”) and it just works. Works with any HTTP controller via a driver manifest.",
+        "default": false,
+        "requires": [
+          {
+            "module": "digifab"
+          }
+        ],
+        "next_steps": [
+          {
+            "label": "Connect your controller",
+            "module": "digifab",
+            "path": "/configuration/farm",
+            "hint": "Install the Home Assistant driver, add a connection labelled “Irrigation”, paste a long-lived token."
+          },
+          {
+            "label": "Set each plant's zone + seconds",
+            "module": "assets",
+            "path": "/instances/plants",
+            "hint": "Which valve/zone waters it, and for how long."
+          }
+        ],
+        "provides_instances": [
+          {
+            "module": "assets",
+            "instance_name": "plants",
+            "display_name": "Plant Care",
+            "field_defs": [
+              {
+                "entity_kind": "assets:asset",
+                "name": "zone",
+                "display_label": "Irrigation zone",
+                "type": "text",
+                "position": 7,
+                "help": "Which valve/zone waters this plant — passed to the controller (e.g. “3”)."
+              },
+              {
+                "entity_kind": "assets:asset",
+                "name": "water_seconds",
+                "display_label": "Water (seconds)",
+                "type": "number",
+                "position": 8,
+                "help": "How long to run the zone each watering — in seconds."
+              }
+            ]
+          }
+        ],
+        "wires": [
+          {
+            "source_kind": "assets:asset",
+            "action_id": "digifab:run-command",
+            "trigger_type": "event",
+            "trigger_event": "assets.asset.recurred",
+            "args": {
+              "connection": "Irrigation",
+              "command": "run-zone",
+              "zone": "{{metadata.zone}}",
+              "seconds": "{{metadata.water_seconds}}"
+            }
+          }
+        ]
       }
     ]
-  },
-  "confirm": true
+  }
 }

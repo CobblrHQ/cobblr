@@ -33,10 +33,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Camera, Check, Flashlight, Loader2, MapPin, ScanLine, X } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowLeftRight, Camera, Check, Flashlight, Loader2, MapPin, ScanLine, Undo2, X } from "lucide-react";
 import { Modal, usePageTitle, useToast } from "@cobblr/platform-web";
-import { ApiError, api, type ScanInboxItem } from "../lib/api";
+import { ApiError, api, type ScanInboxItem, type TrackedMatch } from "../lib/api";
 import { decideLocationScan, filingLabel } from "../lib/scanFiling";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { LocationPicker } from "../components/LocationPicker";
@@ -140,6 +140,37 @@ export function ScanCameraPage() {
   const [assignOpen, setAssignOpen] = useState(false);
   const [shutterBusy, setShutterBusy] = useState(false);
   const [flash, setFlash] = useState(false);
+  // Move mode (companion app A10): scanning something already tracked (single exact
+  // barcode match) auto-moves it into the active bin instead of triaging.
+  const [moveMode, setMoveMode] = useState(() => localStorage.getItem("cobblr-scan-move-mode") === "1");
+  const toggleMoveMode = useCallback(() => {
+    setMoveMode((v) => {
+      localStorage.setItem("cobblr-scan-move-mode", v ? "0" : "1");
+      return !v;
+    });
+  }, []);
+  // In-session MOVE HISTORY (companion app "↶ Undo last N"): every auto/manual move
+  // pushes here; each undo pops the most recent and re-files the entity where
+  // it was — repeated taps walk back through the whole run. Only moves with a
+  // known previous location are undoable (the endpoint needs a target).
+  type MoveRec = { itemId: string; match: TrackedMatch; prevLocationId: string | null; title: string };
+  const [moveStack, setMoveStack] = useState<MoveRec[]>([]);
+  const undoableMoves = moveStack.filter((m) => m.prevLocationId);
+  const undoMove = useMutation({
+    mutationFn: (mv: MoveRec) =>
+      api.scanAttach(activeSlug, mv.itemId, {
+        kind: mv.match.kind,
+        entity_id: mv.match.id,
+        instance: mv.match.instance ?? undefined,
+        mode: "move",
+        location_id: mv.prevLocationId ?? undefined,
+      }),
+    onSuccess: (_r, mv) => {
+      toast.success(`Moved ${mv.title} back`);
+      setMoveStack((s) => s.filter((x) => x !== mv));
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
   const locations = useQuery({
     queryKey: ["core-locations", activeSlug],
     queryFn: () => api.listLocations(activeSlug),
@@ -618,6 +649,18 @@ export function ScanCameraPage() {
           <MapPin size={13} className={areaName ? "text-emerald-400" : "text-white/60"} />
           <span className="truncate max-w-[40vw]">{areaName ?? "Set area"}</span>
         </button>
+        {/* Move mode — scan a tracked item → it MOVES to the active bin,
+            no triage stop (needs an area set to have somewhere to move to). */}
+        <button
+          type="button"
+          onClick={toggleMoveMode}
+          title="Move mode: scanning something you already track moves it to the active area"
+          className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs shrink-0 ${
+            moveMode ? "bg-emerald-500 text-white" : "bg-black/50 text-white/70 hover:bg-black/70"
+          }`}
+        >
+          <ArrowLeftRight size={13} /> Move
+        </button>
         <div className="flex items-center gap-2 shrink-0">
           {running && (
             <span className="inline-flex items-center gap-1.5 bg-black/50 rounded-full px-2.5 py-1 text-white text-xs">
@@ -713,18 +756,53 @@ export function ScanCameraPage() {
         className="absolute bottom-0 inset-x-0 p-4 space-y-3"
         style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
       >
-        {lastSaved && (
-          <Link
-            to={batchIdRef.current ? `/scan?batch=${batchIdRef.current}` : backToScan}
-            className="flex items-center gap-2 bg-black/55 rounded-full px-3 py-2 text-white text-xs max-w-md mx-auto"
-          >
-            <Check size={14} className="text-emerald-400 shrink-0" />
+        {undoableMoves.length > 0 && (
+          <div className="flex items-center gap-2 bg-black/55 rounded-full px-3 py-2 text-white text-xs max-w-md mx-auto">
+            <ArrowLeftRight size={14} className="text-emerald-400 shrink-0" />
             <span className="min-w-0 flex-1 truncate">
+              Moved {undoableMoves[undoableMoves.length - 1]!.title}
+              {undoableMoves.length > 1 && ` (+${undoableMoves.length - 1} more)`}
+            </span>
+            <button
+              type="button"
+              disabled={undoMove.isPending}
+              onClick={() => undoMove.mutate(undoableMoves[undoableMoves.length - 1]!)}
+              className="inline-flex items-center gap-1 text-emerald-300 hover:text-emerald-200 shrink-0 disabled:opacity-50"
+            >
+              <Undo2 size={13} /> Undo last {undoableMoves.length > 1 ? undoableMoves.length : ""}
+            </button>
+          </div>
+        )}
+        {lastSaved && (
+          <div className="flex items-center gap-2 bg-black/55 rounded-full px-3 py-2 text-white text-xs max-w-md mx-auto">
+            <Check size={14} className="text-emerald-400 shrink-0" />
+            <Link
+              to={batchIdRef.current ? `/scan?batch=${batchIdRef.current}` : backToScan}
+              className="min-w-0 flex-1 truncate"
+            >
               {lastSaved.suggested_name ?? lastSaved.barcode_text}
               {savedCount > 1 && ` · ${savedCount} this session`}
-            </span>
-            <span className="text-white/70 shrink-0">Open inbox →</span>
-          </Link>
+              <span className="text-white/70"> · Open inbox →</span>
+            </Link>
+            {/* Undo the last save (companion app A11) — discards it (restorable). */}
+            <button
+              type="button"
+              onClick={() => {
+                const it = lastSaved;
+                void api
+                  .discardScanItem(activeSlug, it.id)
+                  .then(() => {
+                    setRecent((prev) => prev.filter((p) => p.id !== it.id));
+                    void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+                    toast.success("Undone — removed from the inbox");
+                  })
+                  .catch((e) => toast.error(e instanceof ApiError ? e.message : String(e)));
+              }}
+              className="inline-flex items-center gap-1 text-white/80 hover:text-white shrink-0"
+            >
+              <Undo2 size={13} /> Undo
+            </button>
+          </div>
         )}
         <form
           onSubmit={(e) => {
@@ -846,6 +924,15 @@ export function ScanCameraPage() {
           }}
           onSaved={onSaved}
           onClose={rearm}
+          moveMode={moveMode}
+          onAttached={(r, m, mode) => {
+            if (mode === "move") {
+              setMoveStack((s) => [
+                ...s,
+                { itemId: r.itemId, match: m, prevLocationId: r.prevLocationId, title: r.entityTitle },
+              ]);
+            }
+          }}
         />
       )}
     </div>,
