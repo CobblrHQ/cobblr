@@ -9,6 +9,7 @@
 // + 2026-05-25-audit.md S2.
 
 import { useState, type FormEvent } from "react";
+import { AreaTabs, ACCESS_TABS } from "../components/AreaTabs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Pencil, Plus, Trash2 } from "lucide-react";
 import { Modal, useConfirm, usePageTitle, useToast } from "@cobblr/platform-web";
@@ -62,6 +63,7 @@ export function RolesPage() {
 
   return (
     <div className="space-y-5 max-w-5xl mx-auto">
+      <AreaTabs tabs={ACCESS_TABS} area="access" />
       <div className="flex items-baseline justify-between border-b border-line dark:border-slate-700 pb-3">
         <div>
           <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">

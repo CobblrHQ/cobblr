@@ -36,9 +36,10 @@ import { searchImages, rankImageOptions, imageQuery } from "../services/ddg-imag
 import { assembleScanMenu, assembleMergedMenu, runMatchmaker } from "../services/matchmaker.js";
 import { parseReceipt } from "../services/receipt.js";
 import { reportBarcodeCorrection } from "../services/barcode-corrections.js";
-import { findTracked } from "../services/entity-match.js";
+import { findBinContents, findTracked } from "../services/entity-match.js";
 import { cropRegion, detectSplitItems, rotateImage } from "../services/image-ops.js";
 import { extractLocation, type LocationLite } from "../services/note-location.js";
+import { suggestLocationForItem } from "../services/suggest-location.js";
 
 export const inboxRouter = Router({ mergeParams: true });
 
@@ -1950,6 +1951,103 @@ inboxRouter.post(
   }),
 );
 
+// ─────────────────── GET /bin/:locationId/contents ──────────────────
+// What lives in this bin, across the scannable kinds. `single: true` = the
+// bin holds exactly ONE SKU (a bin of M3 screws with only the bin labeled) —
+// the scanner then offers direct qty adjust instead of the filing flow.
+inboxRouter.get(
+  "/bin/:locationId/contents",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const ctx = tenantContext(req);
+    res.json(await findBinContents(ctx.org.id, req.params.locationId ?? ""));
+  }),
+);
+
+// ─────────────────── POST /bin/:locationId/adjust ───────────────────
+// "Adding 10 of this item / removing 5" — adjust the SKU that lives in this
+// bin, straight from its QR label. Bin-scoped by construction: the entity must
+// still CALL this bin home (409 if it moved since the contents read). The
+// write goes through the module's OWN endpoint under the caller's bearer, the
+// same inherited-capability pattern confirm/attach use. Clamped at zero.
+const BinAdjustBody = z.object({
+  kind: z.string().min(1),
+  entity_id: z.string().min(1),
+  instance: z.string().optional(),
+  /** Signed change (+10 / −5) … */
+  delta: z.number().int().min(-100_000).max(100_000).optional(),
+  /** … or an absolute recount. Exactly one of delta/set. */
+  set: z.number().int().min(0).max(1_000_000).optional(),
+});
+inboxRouter.post(
+  "/bin/:locationId/adjust",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const parsed = BinAdjustBody.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    if ((parsed.data.delta == null) === (parsed.data.set == null)) {
+      res.status(400).json({ error: { code: "delta_or_set", message: "pass exactly one of delta / set" } });
+      return;
+    }
+    const ctx = tenantContext(req);
+    const token = bearer(req);
+    if (!token) {
+      res.status(401).json({ error: { code: "no_auth", message: "Bearer token required" } });
+      return;
+    }
+    const scannable = platform().entities.getScannable(parsed.data.kind);
+    if (!scannable) {
+      res.status(400).json({ error: { code: "not_scannable", message: `${parsed.data.kind} is not a scan target` } });
+      return;
+    }
+    const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+    const entityPath = parsed.data.instance
+      ? `${baseUrl}/api/v1/orgs/${ctx.org.slug}/instances/${parsed.data.instance}/items/${parsed.data.entity_id}`
+      : `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/${scannable.createEndpoint}/${parsed.data.entity_id}`;
+    const authHeaders = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+    const getRes = await fetch(entityPath, { headers: authHeaders });
+    if (!getRes.ok) {
+      res.status(getRes.status === 404 ? 404 : 502).json({
+        error: { code: "entity_unreachable", message: `Entity read returned ${getRes.status}` },
+      });
+      return;
+    }
+    const entity = (await getRes.json()) as Record<string, unknown>;
+    if (entity.location_id !== req.params.locationId) {
+      res.status(409).json({
+        error: { code: "moved", message: "This item no longer lives in that bin — rescan the label." },
+      });
+      return;
+    }
+    const cur = Number(entity[scannable.qtyField] ?? 0);
+    const oldQty = Number.isFinite(cur) ? cur : 0;
+    const newQty = parsed.data.set != null ? parsed.data.set : Math.max(0, oldQty + (parsed.data.delta ?? 0));
+    const patchRes = await fetch(entityPath, {
+      method: "PATCH",
+      headers: authHeaders,
+      body: JSON.stringify({ [scannable.qtyField]: newQty }),
+    });
+    if (!patchRes.ok) {
+      const errText = await patchRes.text();
+      let targetMsg: string | undefined;
+      try {
+        targetMsg = (JSON.parse(errText) as { error?: { message?: string } }).error?.message;
+      } catch {
+        /* non-JSON */
+      }
+      res.status(patchRes.status).json({
+        error: { code: "adjust_failed", message: targetMsg ?? `Update returned ${patchRes.status}` },
+      });
+      return;
+    }
+    res.json({
+      entity_title: typeof entity.name === "string" ? entity.name : parsed.data.entity_id,
+      old_qty: oldQty,
+      new_qty: newQty,
+    });
+  }),
+);
+
 // ─────────────────────── POST /inbox/:id/rotate ─────────────────────
 // Rotate the item's OWN photo (a sideways phone shot). Writes a NEW file and
 // swaps it in; the original is kept in metadata.extra_photos — nothing lost.
@@ -2553,6 +2651,38 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
       })
       .where("id", "=", opts.itemId)
       .execute();
+
+    // "Where should this go?" — with the item identified + routed, suggest a
+    // home from where its siblings already live. Only when the user hasn't
+    // already set a location (a scan-session bin, or a note like "…in Bin 4").
+    // Detached-safe: it's the last step and best-effort; a failure never affects
+    // the match. Re-reads the row (adoptName above may have changed the name).
+    try {
+      if (!row.target_location_id) {
+        const identified = adoptName ? candName : row.suggested_name;
+        const sug = await suggestLocationForItem(opts.orgId, {
+          name: identified,
+          category: meta.category ?? null,
+          excludeId: opts.itemId,
+        });
+        if (sug) {
+          const dbSug = (await platform().tenants.getDb(opts.orgId)) as unknown as ReturnType<typeof tenantDb>;
+          // Guard the write: skip if the user set a location while we looked.
+          await dbSug
+            .updateTable("core_scan_inbox_items")
+            .set({
+              suggested_location_id: sug.location_id,
+              suggested_location_note: `${sug.location_name} — ${sug.reason}`,
+              updated_at: new Date(),
+            })
+            .where("id", "=", opts.itemId)
+            .where("target_location_id", "is", null)
+            .execute();
+        }
+      }
+    } catch (e) {
+      console.error(`[core-scan] location suggestion for ${opts.itemId} failed:`, (e as Error).message);
+    }
     return candidates;
   } catch (err) {
     // The match FAILED before stamping matched_at — the menu fetch, the model

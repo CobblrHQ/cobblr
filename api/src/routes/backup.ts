@@ -278,6 +278,27 @@ backupRouter.post("/restore", requireAuth, withTenant, upload.single("file"), as
     // Total rows we'll restore = every dumped row (the blueprint apply creates
     // the module tables to receive them).
     const totalRows = [...tables.values()].reduce((n, rows) => n + rows.length, 0);
+
+    // Dry-run (audit F8): validate the archive + report exactly what a real
+    // restore WOULD do — parse, manifest check, row/file/table/bundle counts,
+    // whether the target has data — as a 200, never mutating anything. Turns
+    // "you discover schema mismatches at commit time" into a preflight.
+    if (String((req.body as { dry_run?: unknown }).dry_run ?? "") === "true") {
+      res.json({
+        ok: true,
+        dry_run: true,
+        would: {
+          restore_rows: totalRows,
+          restore_files: files.size,
+          restore_tables: tables.size,
+          install_bundles: (manifest.bundles ?? []).length,
+          replace_existing_data: targetHasData,
+        },
+        tables: [...tables.entries()].map(([name, rows]) => ({ name, rows: rows.length })),
+      });
+      return;
+    }
+
     if (confirm !== "replace" && confirm !== "true") {
       res.status(409).json({
         error: {

@@ -307,6 +307,9 @@ export interface SignupInvitesTable {
   consumed_at: Date | null;
   consumed_by_user: string | null;
   revoked_at: Date | null;
+  /** Optional workspace blueprint (routes/blueprint.ts manifest) applied to
+   *  the new workspace at redemption — a premade, configured workspace. */
+  blueprint: unknown | null;
   created_at: Generated<Date>;
 }
 
@@ -345,6 +348,33 @@ export interface TagAssignmentsTable {
 }
 
 export type AuthMethod = "session" | "api_token" | "system";
+
+/** Sparse product telemetry — the thesis metrics (walls-hit, adoption).
+ *  Best-effort writes from api/src/platform/product-events.ts; NOT an audit
+ *  trail (that's activity_log). ~180-day self-pruning retention. */
+export interface ProductEventsTable {
+  id: Generated<string>;
+  org_id: string;
+  user_id: string | null;
+  event: string;
+  detail: unknown | null;
+  created_at: Generated<Date>;
+}
+
+/** Bundle version history (audit F3): the full manifest + enabled features of
+ *  every bundle row that gets removed (update-replace / uninstall / revert),
+ *  written by uninstallBundleId() so any prior version can be re-applied. */
+export interface BundleSnapshotsTable {
+  id: Generated<string>;
+  org_id: string;
+  external_id: string;
+  name: string;
+  version: string;
+  reason: string;
+  manifest: unknown;
+  enabled_features: string[];
+  created_at: Generated<Date>;
+}
 
 export interface ActivityLogTable {
   id: Generated<number>;
@@ -856,6 +886,8 @@ export interface MetaDB {
   tags: TagsTable;
   tag_assignments: TagAssignmentsTable;
   activity_log: ActivityLogTable;
+  product_events: ProductEventsTable;
+  bundle_snapshots: BundleSnapshotsTable;
   notifications: NotificationsTable;
   notification_subscriptions: NotificationSubscriptionsTable;
   notification_account_prefs: NotificationAccountPrefsTable;

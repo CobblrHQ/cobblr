@@ -17,10 +17,13 @@ import { tenantDb, tenantContext } from "../db.js";
 import { asyncHandler, requireRole } from "./util.js";
 import { putSnapshot, getSnapshot, freshSnapshotKeys } from "../snapshot-store.js";
 import { getBambuStatusMap } from "../bambu-status-store.js";
-import { buildDriverById, bambuLanDriverFor, parseBambuLan, bambuLanMode, type BambuLan } from "../jobs-core.js";
+import { buildDriverById, bambuLanDriverFor, parseBambuLan, bambuLanMode, reverseBuildIfCommitted, sendJob, type BambuLan } from "../jobs-core.js";
+import { enqueuePoll } from "../poll-worker.js";
 import { availableDriverKeys } from "../drivers/registry.js";
 import { classify } from "../state.js";
 import type { MachineDriver, RemoteDevice } from "../drivers/types.js";
+import type { Kysely } from "kysely";
+import type { DigifabDB } from "../db.js";
 import { readCachedList, readCachedInfo, refreshList, ensureInfo, ensureWarming } from "../printer-file-cache.js";
 
 export const fleetRouter = Router({ mergeParams: true });
@@ -49,6 +52,21 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
     t = setTimeout(() => reject(new Error(label)), ms);
   });
   return Promise.race([p.finally(() => clearTimeout(t)), timeout]);
+}
+
+/** The driver to use for on-machine FILE ops (list / info / print-existing).
+ *  A Bambu connection's CLOUD driver can't touch files — those go over the LAN
+ *  bridge (FTPS + MQTT) — so prefer the per-printer LAN driver when configured,
+ *  exactly like the camera + control routes. Any other connection just uses its
+ *  normal driver. */
+async function fileDriverFor(
+  db: Kysely<DigifabDB>,
+  orgId: string,
+  connId: string,
+  deviceId: string,
+): Promise<MachineDriver | null> {
+  const lan = await bambuLanDriverFor(orgId, connId, deviceId);
+  return lan ?? (await buildDriverById(db, orgId, connId));
 }
 
 /** Cached + timeout-bounded device fetch for one connection. Fresh cache hit →
@@ -100,9 +118,15 @@ fleetRouter.get(
     // (connection, target_device). One active job per device shown.
     const jobs = await db
       .selectFrom("digifab_jobs")
-      .select(["id", "connection_id", "target_device", "file_ref", "status", "progress", "priority", "attempts", "max_attempts"])
+      .select(["id", "connection_id", "target_device", "target_pool", "file_ref", "status", "progress", "priority", "attempts", "max_attempts", "eta_sec", "created_at"])
       .where("status", "not in", TERMINAL)
       .execute();
+    // Farm view "next up": the highest-priority queued job aimed at a device
+    // (directly, or at a pool the device belongs to). Shown on the tile so an
+    // operator sees what each machine will do next, not just what it's doing.
+    const queuedSorted = jobs
+      .filter((j) => j.status === "queued")
+      .sort((a, b) => b.priority - a.priority || new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 
     // Cobblr machine ↔ remote device links, so the UI can name the device by
     // the user's own machine (and a future Machines-page overlay can match).
@@ -130,7 +154,7 @@ fleetRouter.get(
     // report). Merged over any driver-reported camera below.
     const settings = await db
       .selectFrom("digifab_device_settings")
-      .select(["connection_id", "remote_device_id", "camera_url", "snapshot_relay"])
+      .select(["connection_id", "remote_device_id", "camera_url", "snapshot_relay", "grid_x", "grid_y"])
       .execute();
     const freshSnaps = await freshSnapshotKeys(db); // which devices have a recent relayed frame
 
@@ -145,7 +169,10 @@ fleetRouter.get(
           // (real-time temps/progress/state) over the slower HTTP list.
           const bambuLive = c.type === "bambu" ? await getBambuStatusMap(db, c.id) : null;
           const mapped = devices.map((d) => {
-            const job = jobs.find((j) => j.connection_id === c.id && j.target_device === d.id) ?? null;
+            const job = jobs.find((j) => j.connection_id === c.id && j.target_device === d.id && j.status !== "queued") ?? null;
+            const next = queuedSorted.find(
+              (j) => (j.connection_id === c.id && j.target_device === d.id) || (j.target_pool != null && j.target_pool === (poolRows.find((p) => p.connection_id === c.id && p.remote_device_id === d.id)?.pool_id ?? "")),
+            ) ?? null;
             const link = links.find((l) => l.connection_id === c.id && l.remote_device_id === d.id) ?? null;
             const pool = poolRows.find((p) => p.connection_id === c.id && p.remote_device_id === d.id) ?? null;
             const att = attention.find((a) => a.connection_id === c.id && a.remote_device_id === d.id) ?? null;
@@ -179,11 +206,15 @@ fleetRouter.get(
               // /snapshot route (remote-viewable) instead of the LAN camera_url.
               snapshot_relay: setting?.snapshot_relay ?? false,
               snapshot_fresh: !!setting?.snapshot_relay && freshSnaps.has(`${c.id}:${d.id}`),
+              // ⑦ Spatial floor position (null = unplaced, flows after placed).
+              position: setting?.grid_x != null && setting?.grid_y != null ? { x: setting.grid_x, y: setting.grid_y } : null,
               // F-1: needs a bed-clear ack before it's assignable again.
               needs_attention: att ? { reason: att.reason, since: att.created_at } : null,
               active_job: job
-                ? { id: job.id, file_ref: job.file_ref, status: job.status, progress: job.progress, priority: job.priority, attempts: job.attempts, max_attempts: job.max_attempts }
+                ? { id: job.id, file_ref: job.file_ref, status: job.status, progress: job.progress, priority: job.priority, attempts: job.attempts, max_attempts: job.max_attempts, eta_sec: job.eta_sec }
                 : null,
+              // What this machine will do next (queued to it or its pool).
+              next_job: next ? { id: next.id, file_ref: next.file_ref, pooled: !!next.target_pool } : null,
             };
           });
           return { connection_id: c.id, label: c.label, type: c.type, error: null, fetched_at: new Date(at).toISOString(), devices: mapped };
@@ -274,6 +305,9 @@ fleetRouter.post(
             linkedMachineId: job.linked_machine_id,
             prints: -1,
           });
+          // A scrapped print never produced its build's output either — undo the
+          // send-time component consumption + output credit (idempotent).
+          await reverseBuildIfCommitted(db, orgId, job.id, "print scrapped at bed clear");
         }
       }
     }
@@ -283,12 +317,53 @@ fleetRouter.post(
       .where("connection_id", "=", connectionId)
       .where("remote_device_id", "=", deviceId)
       .execute();
-    res.json({ ok: true, outcome });
+
+    // Bed cleared → resume anything that was HELD for it: a device-targeted
+    // auto-retry sits `queued` (jobs-core wrote the attention row instead of
+    // re-sending onto a dirty bed); send it now. Pool retries resume via the
+    // assign worker's normal attention check — just kick a pass.
+    const held = await db
+      .selectFrom("digifab_jobs")
+      .select(["id"])
+      .where("status", "=", "queued")
+      .where("connection_id", "=", connectionId)
+      .where("target_device", "=", deviceId)
+      .where("target_pool", "is", null)
+      .where("attempts", ">", 0)
+      .execute();
+    for (const h of held) {
+      try {
+        const r = await sendJob(db, orgId, h.id);
+        if (r.ok && r.shouldPoll) await enqueuePoll(orgId, h.id);
+      } catch {
+        /* left queued — visible in the queue with its retry note */
+      }
+    }
+    void import("../assign-worker.js").then((m) => m.kickAssign(orgId)).catch(() => {});
+    res.json({ ok: true, outcome, resumed: held.length });
   }),
 );
 
 // Cockpit: set (or clear) a device's camera stream URL — a manual override for a
 // manager that doesn't report one. Upserts the per-device settings row.
+// ⑦ Pin (or unpin) a device to a floor-grid cell — the fleet arrange mode.
+const PositionBody = z.object({ x: z.number().int().min(0).max(63).nullable(), y: z.number().int().min(0).max(255).nullable() });
+fleetRouter.put(
+  "/:connectionId/:deviceId/position",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const parsed = PositionBody.safeParse(req.body);
+    if (!parsed.success) return void res.status(400).json({ error: { code: "bad_body", message: "x + y (or nulls to unpin) required" } });
+    const db = tenantDb(req);
+    await db
+      .insertInto("digifab_device_settings")
+      .values({ connection_id: req.params.connectionId!, remote_device_id: req.params.deviceId!, grid_x: parsed.data.x, grid_y: parsed.data.y })
+      .onConflict((oc) => oc.columns(["connection_id", "remote_device_id"]).doUpdateSet({ grid_x: parsed.data.x, grid_y: parsed.data.y, updated_at: new Date() }))
+      .execute();
+    res.json({ ok: true });
+  }),
+);
+
 const CameraBody = z.object({ camera_url: z.string().url().max(1000).nullable() });
 fleetRouter.post(
   "/:connectionId/:deviceId/camera",
@@ -418,7 +493,7 @@ fleetRouter.get(
     let files = cached.files;
     let live = false;
     if (refresh || cached.listFetchedAt == null) {
-      const driver = await buildDriverById(db, orgId, connId);
+      const driver = await fileDriverFor(db, orgId, connId, deviceId);
       if (driver?.listFiles) {
         try {
           files = await withTimeout(refreshList(db, driver, connId, deviceId), 15_000, "listFiles timed out");
@@ -449,7 +524,7 @@ fleetRouter.get(
     const deviceId = req.params.deviceId!;
     const cached = await readCachedInfo(db, connId, deviceId, name);
     if (cached.fetched) return void res.json({ info: cached.info, cached: true });
-    const driver = await buildDriverById(db, orgId, connId);
+    const driver = await fileDriverFor(db, orgId, connId, deviceId);
     if (!driver?.fileInfo) return void res.json({ info: null, cached: false });
     try {
       const info = await withTimeout(ensureInfo(db, driver, connId, deviceId, name), 15_000, "fileInfo timed out");
@@ -487,7 +562,7 @@ fleetRouter.post(
     if (!requireRole(req, res, "owner", "admin")) return;
     const parsed = PrintBody.safeParse(req.body);
     if (!parsed.success) return void res.status(400).json({ error: { code: "bad_body", message: "file name required" } });
-    const driver = await buildDriverById(tenantDb(req), tenantContext(req).org.id, req.params.connectionId!);
+    const driver = await fileDriverFor(tenantDb(req), tenantContext(req).org.id, req.params.connectionId!, req.params.deviceId!);
     if (!driver?.printFile) return void res.status(501).json({ error: { code: "unsupported", message: "this printer can't start an on-disk file here" } });
     const r = await driver.printFile(req.params.deviceId!, parsed.data.name);
     if (!r.ok) return void res.status(502).json({ error: { code: "print_failed", message: r.detail ?? "the printer didn't accept the print" } });

@@ -1,7 +1,7 @@
 {
   "manifest": {
     "id": "cobblr.flagship.household-supplies",
-    "version": "0.2.0",
+    "version": "0.2.1",
     "name": "Household Supplies auto-reorder",
     "description": "Your household supplies as their own table — reorder level per supply auto-adds to a shopping list on low stock; check off → it restocks. Grouped by area.",
     "author": "Cobblr",
@@ -22,6 +22,28 @@
         "display_name": "Household Supplies",
         "glyph": "🧻",
         "item_noun": "supply",
+        "scan_keywords": [
+          "detergent",
+          "cleaner",
+          "soap",
+          "shampoo",
+          "toothpaste",
+          "deodorant",
+          "paper towel",
+          "toilet paper",
+          "tissue",
+          "battery",
+          "batteries",
+          "trash bag",
+          "garbage bag",
+          "sponge",
+          "bleach",
+          "wipes",
+          "laundry",
+          "dish soap",
+          "air freshener",
+          "light bulb"
+        ],
         "qty_unit": "each",
         "wires": [
           {

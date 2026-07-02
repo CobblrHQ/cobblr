@@ -10,6 +10,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { AiOffNotice, useAiStatus } from "../components/AiStatusNotice";
+import { generateYourApp } from "../lib/generate-your-app";
 import { useQuery } from "@tanstack/react-query";
 import { Wand2, Copy, Check, AlertTriangle, Sparkles } from "lucide-react";
 import { usePageTitle, useToast } from "@cobblr/platform-web";
@@ -103,6 +104,7 @@ export function BuildPage() {
   const [candidate, setCandidate] = useState<unknown>(null);
   const [interpretation, setInterpretation] = useState<string | null>(null);
   const [seedCount, setSeedCount] = useState(0); // starter records apply will create
+  const [refineText, setRefineText] = useState(""); // Phase 3: "now change X" on the current candidate
   const [busy, setBusy] = useState<null | "building" | "compile" | "validate" | "apply" | "repair">(null);
 
   const kinds = useQuery({
@@ -191,6 +193,58 @@ export function BuildPage() {
       setWarnings(r.warnings ?? []);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Couldn't build the prompt.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // Phase 3 refine: revise the CURRENT candidate against a change request —
+  // "now add a price column" — instead of re-describing from scratch. A new
+  // draft (parent lineage) replaces the current one; same poll, same gate.
+  // No AI provider → fall back to the copy-paste refine prompt.
+  async function refine() {
+    const change = refineText.trim();
+    const parentId = draftId;
+    if (!change || !parentId) return;
+    setBusy("building");
+    try {
+      const r = await api.authoringRefine(slug, parentId, { intent: change, run: true });
+      setDraftId(r.draft_id);
+      setRefineText("");
+      const started = Date.now();
+      while (Date.now() - started < 330_000) {
+        await new Promise((res) => setTimeout(res, 3000));
+        let d;
+        try {
+          d = await api.authoringDraft(slug, r.draft_id);
+        } catch {
+          continue; // transient — keep polling
+        }
+        if (d.status === "building") continue;
+        if (d.status === "failed") {
+          const err = d.validation?.errors?.[0];
+          if (err?.code === "no_ai_provider") {
+            // Copy-paste path: fresh refine draft carrying the prompt.
+            const p = await api.authoringRefine(slug, parentId, { intent: change, run: false });
+            setDraftId(p.draft_id);
+            setPrompt(p.prompt ?? null);
+            setWarnings(p.warnings ?? []);
+            toast.success("AI isn't enabled here — copy the refine prompt into your agent and paste the result back.");
+            return;
+          }
+          toast.error(err?.message ?? "Refine failed.");
+          return;
+        }
+        setCandidate(d.candidate ?? null);
+        setInterpretation(d.interpretation ?? null);
+        if (d.validation) setValidation(d.validation);
+        if (d.status === "validated") toast.success("Refined — review and apply.");
+        else toast.error("The refined result didn't pass validation — see the errors below.");
+        return;
+      }
+      toast.error("That took longer than expected — try again in a moment.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Refine failed.");
     } finally {
       setBusy(null);
     }
@@ -290,7 +344,8 @@ export function BuildPage() {
             <>
               Describe a <strong>page for your members</strong> — forms, action buttons and a scanner over
               your existing data. The AI assembles it from safe building blocks (no code), and we check it before it goes
-              live.
+              live. Or skip the prompt: <strong>Generate from my workspace</strong> builds one instantly from your
+              trackers — no AI needed — and you can regenerate it any time they change.
             </>
           ) : mode === "workspace" ? (
             <>
@@ -315,6 +370,23 @@ export function BuildPage() {
         Use <strong>Write a prompt instead</strong>: it hands you a complete prompt to run in any AI chat, and you paste
         the result back in — same outcome, your AI.{" "}
       </AiOffNotice>
+
+      {mode === "app" && (
+        <button
+          type="button"
+          onClick={() =>
+            void generateYourApp(slug)
+              .then((r) => {
+                toast.success(`${r.created ? "Generated" : "Regenerated"} "Your app" — ${r.pages} pages from your trackers.`);
+                navigate(`/app/${r.app.slug}`);
+              })
+              .catch((e) => toast.error(e instanceof Error ? e.message : "Couldn't generate the app"))
+          }
+          className="inline-flex items-center gap-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-3 py-1.5 transition"
+        >
+          <Sparkles size={14} /> Generate from my workspace — no AI needed
+        </button>
+      )}
 
       {/* Mode — one tweak vs. design the whole workspace */}
       <div className="inline-flex rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-0.5 text-sm">
@@ -547,6 +619,31 @@ export function BuildPage() {
               >
                 {busy === "apply" ? "Applying…" : "Apply"}
               </button>
+              {/* Phase 3 — react by ITERATING, not re-describing: refine the
+                  current result with a change request before (or instead of)
+                  applying. */}
+              <div className="pt-3 mt-1 border-t border-line dark:border-slate-700">
+                <div className="text-xs text-faint dark:text-slate-400 mb-1.5">
+                  Not quite right? Describe a change and refine it:
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    value={refineText}
+                    onChange={(e) => setRefineText(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") void refine(); }}
+                    placeholder='e.g. "also add a price column" or "drop the label wire"'
+                    className="input !py-1.5 !text-sm flex-1"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void refine()}
+                    disabled={busy === "building" || !refineText.trim()}
+                    className="shrink-0 inline-flex items-center gap-1.5 rounded-md border border-line dark:border-slate-600 text-sm font-medium px-3 py-1.5 text-content dark:text-mortar-100 hover:border-accent hover:text-accent transition disabled:opacity-50"
+                  >
+                    {busy === "building" ? "Refining…" : "Refine"}
+                  </button>
+                </div>
+              </div>
             </>
           ) : isAppMode && validation.valid ? (
             <>
@@ -562,6 +659,30 @@ export function BuildPage() {
               >
                 {busy === "apply" ? "Creating…" : "Create app"}
               </button>
+              {/* Phase 3 — apps refine too: same box as bundles, the route
+                  picks refine-app from the parent draft's task. */}
+              <div className="pt-3 mt-1 border-t border-line dark:border-slate-700">
+                <div className="text-xs text-faint dark:text-slate-400 mb-1.5">
+                  Not quite right? Describe a change and refine it:
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    value={refineText}
+                    onChange={(e) => setRefineText(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") void refine(); }}
+                    placeholder='e.g. "add a scan block" or "make the intro friendlier"'
+                    className="input !py-1.5 !text-sm flex-1"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void refine()}
+                    disabled={busy === "building" || !refineText.trim()}
+                    className="shrink-0 inline-flex items-center gap-1.5 rounded-md border border-line dark:border-slate-600 text-sm font-medium px-3 py-1.5 text-content dark:text-mortar-100 hover:border-accent hover:text-accent transition disabled:opacity-50"
+                  >
+                    {busy === "building" ? "Refining…" : "Refine"}
+                  </button>
+                </div>
+              </div>
             </>
           ) : validation.valid ? (
             <>

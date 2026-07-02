@@ -1,5 +1,6 @@
 ---
 type: improvement
+date: 2026-06-18
 ---
 The print-farm cockpit now shows **chamber temperature** and the **current job stage**
 ("Preheating bed", "Calibrating extrusion", …) on each printer card — so you can see *why*

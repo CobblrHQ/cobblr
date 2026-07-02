@@ -7,7 +7,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "purchases",
-  version: "0.2.0",
+  version: "0.3.0",
   displayName: "Purchases",
   description:
     "Orders, line items, and cost rollup. Each order is a vendor purchase; line items can link to inventory parts and to whatever consumed them — printer mods, projects, anything.",
@@ -110,7 +110,40 @@ export default defineModule({
       "purchases.vendor.created",
     ],
     api: [],
-    actions: [],
+    actions: [
+      {
+        // "Stock that reorders itself": wire inventory.stock.low here (the
+        // contributed default below does exactly that) and a low part lands
+        // as a line on a DRAFT (status:"planned") purchase order for its
+        // usual vendor at its usual quantity — derived from the part's own
+        // purchase history, zero per-part setup. Idempotent per open order;
+        // the human approves (planned → ordered) and the existing arrival
+        // wire restocks. Also user-invokable: a "Draft a purchase order"
+        // button on any part.
+        id: "purchases:draft-po",
+        label: "Draft a purchase order",
+        description:
+          "Add this part to a draft (planned) purchase order for its usual vendor at its usual quantity — derived from purchase history. Skips parts already on an open order. Args (all optional): { partId, qty, vendorId }.",
+        appliesTo: { kinds: ["inventory:part"] },
+        invokeHandler: "purchases.draft-po",
+        userInvokable: true,
+      },
+    ],
+  },
+
+  contributes: {
+    fieldDefs: [],
+    wires: [
+      {
+        // The homepage sentence, verbatim: "When a part runs low → draft a
+        // PO to the usual vendor." Materialises when purchases is enabled;
+        // fully visible + editable on /bindings like any wire.
+        source_kind: "inventory:part",
+        action_id: "purchases:draft-po",
+        trigger_type: "event",
+        trigger_event: "inventory.stock.low",
+      },
+    ],
   },
 
   subscribes: [],

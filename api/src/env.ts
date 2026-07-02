@@ -32,6 +32,12 @@ const Schema = z.object({
   //  • GOOGLE_OAUTH_* — a Google Cloud OAuth app, required to enable the
   //    Google Drive destination. Unset → the Drive driver is unavailable.
   BACKUP_FS_ROOT: z.string().optional(),
+
+  // Audit-log retention window in days. UNSET (default) = keep every row
+  // forever (the original behaviour, right for a personal box). Set on a
+  // public host to bound the table; a probabilistic sweep on write prunes
+  // rows past the window (platform/activity.ts).
+  ACTIVITY_LOG_RETENTION_DAYS: z.coerce.number().int().positive().optional(),
   GOOGLE_OAUTH_CLIENT_ID: z.string().optional(),
   GOOGLE_OAUTH_CLIENT_SECRET: z.string().optional(),
   GOOGLE_OAUTH_REDIRECT_URL: z.string().optional(),

@@ -87,10 +87,29 @@ if (reasons.length === 0) {
   process.exit(0);
 }
 
-// ── satisfied? a changeset file, OR a bundle version bump (manifest changelog covers it) ──
-const hasChangeset = changed.some(
+// ── every touched entry must carry full frontmatter (type + date) ──
+// 200+ entries once piled up under "Unreleased" (missing date:) and three
+// features never reached the digest (missing type:) — enforce at the gate.
+const touchedEntries = changed.filter(
   (f) => /^changelog\.d\/.+\.md$/.test(f) && !f.endsWith("/README.md") && existsSync(f),
 );
+const malformed: string[] = [];
+for (const f of touchedEntries) {
+  const raw = readFileSync(f, "utf8");
+  const fm = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
+  if (!/^type:\s*(feature|improvement|fix)\s*$/m.test(fm)) malformed.push(`${f}: missing/invalid type:`);
+  if (!/^date:\s*\d{4}-\d{2}-\d{2}\s*$/m.test(fm)) malformed.push(`${f}: missing/invalid date: YYYY-MM-DD`);
+}
+if (malformed.length) {
+  console.error(
+    "[lint:changelog] ✗ changelog entries need frontmatter with type: AND date: (else they sit under 'Unreleased' and never reach the digest):\n  " +
+      malformed.join("\n  "),
+  );
+  process.exit(1);
+}
+
+// ── satisfied? a changeset file, OR a bundle version bump (manifest changelog covers it) ──
+const hasChangeset = touchedEntries.length > 0;
 let bundleBumped = false;
 for (const f of changed.filter((f) => /^bundles\/[^/]+\.json$/.test(f))) {
   const oldRaw = tryGit(`show ${base}:${f}`);

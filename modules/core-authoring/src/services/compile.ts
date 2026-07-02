@@ -34,6 +34,11 @@ export interface AuthoringContext {
   outputContract: string;
   /** Present only for task "customize-template": the manifest to start from. */
   baseTemplate?: { id: string; name: string; manifest: Record<string, unknown> };
+  /** Present only for task "refine-bundle" (Phase 3): the draft's own current
+   *  artifact — the model revises THIS, not a catalog template. Attached by
+   *  the /drafts/:id/refine route after assembleContext (it comes from the
+   *  parent draft row, not the platform). */
+  baseArtifact?: Record<string, unknown>;
   /** The requesting user's workspace role — part of the read-only context block
    *  (spec §Feature 2). Surfaced so the user/preview can see that e.g. only an
    *  owner/admin can apply a bundle that enables new modules. Kept OUT of the
@@ -201,6 +206,51 @@ RULES:
 - id = "cobblr.user.<kebab-slug>"; version = "0.1.0".`;
   },
 
+  // refine-bundle (Phase 3): the describe→react loop's missing half. The
+  // model revises the draft's OWN current artifact against a change request
+  // — "now add a price column" — instead of the user re-describing from
+  // scratch or hand-editing JSON. Same output contract, same kernel gate;
+  // the revised candidate lands on a NEW draft linked via parent_draft_id.
+  "refine-bundle": (ctx, intent) => {
+    if (!ctx.baseArtifact) throw new Error("refine-bundle requires the draft's current artifact in context.");
+    const kinds = ctx.kinds
+      .map(
+        (k) =>
+          `- ${k.id} (${k.displayName}) — existing fields: ${
+            k.fields.map((f) => `${f.name}:${f.type}`).join(", ") || "(none)"
+          }`,
+      )
+      .join("\n");
+    const actions = ctx.actions.length
+      ? ctx.actions.map((a) => `- ${a.id} — ${a.label}: ${a.description}`).join("\n")
+      : "(none — the selected kinds have no wireable actions; you can only add field_defs)";
+    return `You are REVISING an existing Cobblr "bundle" (a JSON config of custom fields and event→action wires). Apply ONLY the requested change; preserve everything you were not asked to touch EXACTLY as it is — same id, same field names, same wires. Bump the version's patch number. Output ONLY one JSON object — your "interpretation" (what you changed and why) plus the full revised "bundle" — in the exact shape below, nothing else.
+
+THE CURRENT BUNDLE (revise this):
+${JSON.stringify(ctx.baseArtifact, null, 2)}
+
+ENTITY KINDS you may use (use these ids exactly; do not invent kinds or fields):
+${kinds}
+
+ACTIONS you may wire to (use these action ids exactly):
+${actions}
+
+THE REQUESTED CHANGE:
+"${intent}"
+
+OUTPUT — match this shape exactly:
+${ctx.outputContract}
+
+RULES:
+- Return the WHOLE revised bundle, not a diff — unchanged parts must round-trip verbatim.
+- field_defs add a column to entity_kind. type is one of {text,number,boolean,date,url}.
+- field_defs.name must match ^[a-z][a-z0-9_]*$ (snake_case).
+- wires.source_kind must be one of the entity kind ids above; wires.action_id must be one of the action ids above. Never reference an id not listed.
+- trigger_type is one of {user-invoked,event,on-create,on-update,on-delete}; for "event" also set trigger_event.
+- requires must list every module owning a referenced kind/action.
+- Keep the same bundle id. If the change is impossible with the kinds/actions above, say so in "interpretation" and return the bundle unchanged.`;
+  },
+
   // customize-template: start from a refined template and DIFF it for the
   // user's intent. Cheaper + higher quality than from-scratch — the model
   // edits a known-good manifest instead of inventing one. Same output
@@ -352,6 +402,44 @@ RULES:
 - form.kind / action.kind must be one of the kind ids above; action.action_id must be one of the action ids above AND apply to its kind. Never reference an id not listed.
 - Keep it to 1-3 pages. Build something usable: typically a markdown intro + a create form + the relevant action buttons (+ a scan block if they capture physical items).
 - Do NOT use saved-view, record, stat, or custom-HTML blocks — they need existing data/views and are out of scope here. If the user asked for something only those could do, say so plainly in "interpretation" and build what you can.`;
+  },
+
+  // refine-app (Phase 3, app half): revise the draft's OWN current app —
+  // structured blocks or a custom-HTML block, whichever the artifact carries —
+  // against a change request. Same preserve-unchanged discipline as
+  // refine-bundle; the /apps/validate gate stays the arbiter.
+  "refine-app": (ctx, intent) => {
+    if (!ctx.baseArtifact) throw new Error("refine-app requires the draft's current app in context.");
+    const kinds = ctx.kinds.map((k) => `- ${k.id} (${k.displayName})`).join("\n");
+    const actions = ctx.actions.length
+      ? ctx.actions.map((a) => `- ${a.id} — ${a.label}: ${a.description}`).join("\n")
+      : "(none)";
+    return `You are REVISING an existing Cobblr "app" (a member-facing page rendered by the App Player). Apply ONLY the requested change; preserve every page and block you were not asked to touch EXACTLY as it is — same slugs, same block order, same markdown, same custom HTML. Output ONLY one JSON object — your "interpretation" (what you changed) plus the full revised "app" — nothing else.
+
+THE CURRENT APP (revise this):
+${JSON.stringify(ctx.baseArtifact, null, 2)}
+
+ENTITY KINDS you may bind forms/actions to (use these ids exactly):
+${kinds}
+
+ACTIONS you may add as buttons (use these ids exactly; each needs its kind):
+${actions}
+
+THE REQUESTED CHANGE:
+"${intent}"
+
+OUTPUT — one JSON object, this exact shape:
+{
+  "interpretation": "<1-2 sentences: what you changed and why>",
+  "app": { "slug": "<same slug>", "name": "<name>", "pages": [ ... the FULL revised pages ... ] }
+}
+
+RULES:
+- Return the WHOLE revised app, not a diff — unchanged pages/blocks must round-trip verbatim. Keep the same app slug.
+- STRUCTURED blocks you may use: markdown / form (kind, mode:"create", fields?) / action (action_id + kind) / scan. form.kind + action ids must come from the lists above.
+- CUSTOM blocks ({ "type": "custom", "html": ... }) stay self-contained fragments: inline <style>/<script>, no external scripts, no fetch(), data only via the injected window.cobblr bridge (viewData/entity/me/can/invoke/appLoad/appSave), under ~12,000 characters.
+- slugs kebab-case (^[a-z0-9-]+$); 1-3 pages.
+- If the change is impossible with the kinds/actions/blocks above, say so in "interpretation" and return the app unchanged.`;
   },
 
   // design-app-custom: the spec's "generate an app (HTML)" path. The app is ONE

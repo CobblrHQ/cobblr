@@ -34,7 +34,7 @@ type SelectedBundle =
   | null;
 
 export function BundlesPage() {
-  usePageTitle("Bundles");
+  usePageTitle("Setups & trackers");
   const { activeSlug: slug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
@@ -275,7 +275,7 @@ export function BundlesPage() {
     <div className="space-y-5 max-w-6xl">
       <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
         <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
-          bundles
+          setups &amp; trackers
         </h1>
         <span className="page-subtitle">
           publishable presets that wire modules together

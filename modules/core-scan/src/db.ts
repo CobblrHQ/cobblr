@@ -28,6 +28,10 @@ export interface CoreScanInboxItemsTable {
   target_kind: string | null;
   target_entity_id: string | null;
   target_location_id: string | null;
+  /** Suggested home from where similar items live (services/suggest-location.ts).
+   *  A hint for the review UI, never applied without the user accepting it. */
+  suggested_location_id: string | null;
+  suggested_location_note: string | null;
   scan_batch_id: string | null;
   scan_area: string | null;
   quantity: Generated<number>;

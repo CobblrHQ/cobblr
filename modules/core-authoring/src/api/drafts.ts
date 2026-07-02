@@ -87,7 +87,8 @@ async function callApps(
 // Both app tasks (structured blocks + custom HTML) produce a WorkspaceApp and
 // validate/apply via core-apps; everything else is a bundle.
 function isAppTask(task: string): boolean {
-  return task === "design-app" || task === "design-app-custom";
+  // refine-app included: its output is a WorkspaceApp (unwrapApp + /apps/validate).
+  return task === "design-app" || task === "design-app-custom" || task === "refine-app";
 }
 
 async function validateArtifact(
@@ -438,6 +439,87 @@ draftsRouter.post(
     void runBuild(req, draft.id, orgId, basePrompt, user?.id ?? null, ctx.task);
 
     res.status(202).json({ draft_id: draft.id, status: "building" });
+  }),
+);
+
+// ── POST /drafts/:id/refine — Phase 3: revise this draft's artifact ──
+// The other half of describe-and-react: "now change X" instead of starting
+// over or hand-editing JSON. Takes the parent draft's candidate, compiles a
+// refine-bundle prompt around it, and creates a NEW draft (parent_draft_id
+// lineage). run:true (default when an AI provider exists is still explicit —
+// the caller chooses) drives the same hosted build/repair loop as /build;
+// run:false returns the prompt for the copy-paste flow. Same kernel gate.
+const RefineBody = z.object({
+  intent: z.string().min(1).max(4000),
+  run: z.boolean().optional(),
+});
+draftsRouter.post(
+  "/drafts/:id/refine",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const parsed = RefineBody.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const tc = tenantContext(req);
+    const user = sessionUser(req);
+    const db = tenantDb(req);
+
+    const parent = await db
+      .selectFrom("core_authoring_drafts")
+      .selectAll()
+      .where("id", "=", req.params.id!)
+      .executeTakeFirst();
+    if (!parent) {
+      res.status(404).json({ error: { code: "not_found", message: "No such draft." } });
+      return;
+    }
+    const artifact = parent.candidate as Record<string, unknown> | null;
+    if (!artifact || typeof artifact !== "object") {
+      res.status(409).json({ error: { code: "no_artifact", message: "This draft has no candidate to refine — build or paste one first." } });
+      return;
+    }
+
+    // Bundle drafts revise as bundles; app drafts (design-app / design-app-custom
+    // / refine-app lineage) revise as apps — same gate their creator used.
+    const refineTask = isAppTask(parent.task) ? "refine-app" : "refine-bundle";
+    let ctx;
+    try {
+      ctx = await assembleContext(
+        tc.org.id,
+        (parent.selected_kinds as string[] | null) ?? undefined,
+        refineTask,
+        undefined,
+        tc.role,
+      );
+    } catch (e) {
+      res.status(400).json({ error: { code: "bad_task", message: e instanceof Error ? e.message : String(e) } });
+      return;
+    }
+    ctx.baseArtifact = artifact;
+    const basePrompt = compilePrompt(ctx, parsed.data.intent);
+    const run = parsed.data.run ?? false;
+
+    const draft = await db
+      .insertInto("core_authoring_drafts")
+      .values({
+        task: refineTask,
+        intent: parsed.data.intent,
+        selected_kinds: jsonb(parent.selected_kinds ?? []) as never,
+        context_snapshot: jsonb(ctx) as never,
+        compiled_prompt: basePrompt,
+        mode: run ? "hosted" : "copy-paste",
+        status: run ? "building" : "prompt-built",
+        parent_draft_id: parent.id,
+        created_by: user?.id ?? null,
+      })
+      .returning(["id"])
+      .executeTakeFirstOrThrow();
+
+    if (run) {
+      void runBuild(req, draft.id, tc.org.id, basePrompt, user?.id ?? null, refineTask);
+      res.status(202).json({ draft_id: draft.id, parent_draft_id: parent.id, status: "building" });
+      return;
+    }
+    res.status(201).json({ draft_id: draft.id, parent_draft_id: parent.id, prompt: basePrompt, warnings: ctx.warnings });
   }),
 );
 

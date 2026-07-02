@@ -674,7 +674,11 @@ mount:function(target,loader,render){var el=typeof target==="string"?document.qu
  *  capability-scoped token — GET-only, scoped to this org's API. So the
  *  untrusted code can't steal the session, can't write, can't leave the
  *  org, and can't see anything the member's capabilities + H2 disallow. */
-function CustomBlock({
+// Exported for the app editor's live preview (B3): the SAME sandbox +
+// mediated bridge the player uses, so the preview IS the real thing, not a
+// lookalike. Token mints once per mount — the editor keys remounts off a
+// refresh button rather than every keystroke.
+export function CustomBlock({
   slug,
   appSlug,
   html,

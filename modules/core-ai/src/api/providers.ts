@@ -221,7 +221,9 @@ providersRouter.post(
       ctx.org.id,
       row.credentials_enc,
     );
-    const result = await def.testConnection(creds);
+    // Inject the org so a bridge-transit provider can derive its channel key
+    // (testConnection gets credentials only — no invoke ctx).
+    const result = await def.testConnection({ ...creds, __org_id: ctx.org.id });
     res.json(result);
   }),
 );

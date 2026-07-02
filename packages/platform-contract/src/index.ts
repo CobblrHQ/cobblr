@@ -469,6 +469,16 @@ const ModuleManifest = z.object({
   // See docs/architecture/instances.md.
   instanceability: z.enum(["single", "multi"]).default("single"),
 
+  // Modules this module OPERATES ON — an opt-in operator/capability
+  // (digifab sends files to machines' managers; labels prints labels for
+  // inventory/assets/machines) rather than a kind of thing you track.
+  // A non-empty list means "not a trackable kind": the new-workspace
+  // funnel's "Track a kind of thing" column excludes it and offers it as
+  // a capability instead. Promotes the funnel's interim OPERATES_ON UI
+  // map to declared manifest data — option (a)→(c) in
+  // docs/design-decisions/what-to-do-funnel.md.
+  operatesOn: z.array(z.string()).default([]),
+
   // Optional icon-only quick-action pinned to the navbar's RIGHT
   // cluster — a module's single most-used action that earns prime,
   // always-visible placement (e.g. core-scan's camera button, which a
@@ -1700,10 +1710,19 @@ export const AiCapabilities = [
 
 export type AiCapability = (typeof AiCapabilities)[number];
 
+/** One credential field an AI provider asks for. `choices` renders as a
+ *  select (generic in every credential form) — e.g. the `transit` field on
+ *  URL-based providers: direct fetch vs via the user's edge bridge. */
+export interface AiCredentialField {
+  label: string;
+  secret: boolean;
+  choices?: Array<{ value: string; label: string }>;
+}
+
 export interface AiProviderDef {
   id: string;
   label: string;
-  describeCredentials: () => Record<string, { label: string; secret: boolean }>;
+  describeCredentials: () => Record<string, AiCredentialField>;
   /** Map capability → models the provider supports for it. */
   capabilities: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>>;
   /** Whether a workspace that has configured NO provider may have this one
@@ -1853,6 +1872,40 @@ export interface EdgeResponse {
  *  an agent connects, removed (via the returned unregister fn) when it drops. */
 export type EdgeChannelSender = (req: EdgeRequest) => Promise<EdgeResponse>;
 
+/** One queued relay request as delivered to a polling bridge. */
+export interface EdgeRelayItem {
+  id: string;
+  path: string;
+  method: "GET" | "POST";
+  body?: unknown;
+  instance?: EdgeRequest["instance"];
+  source?: EdgeRequest["source"];
+}
+
+/** A connected relay agent, as reported by the pane of glass. */
+export interface EdgeAgentInfo {
+  /** Named bridge id, or null for the workspace's default bridge. */
+  bridge: string | null;
+  last_seen_ms: number;
+  queued: number;
+  in_flight: number;
+  /** A long-poll is parked = healthy idle bridge waiting for work. */
+  parked: boolean;
+}
+
+/** A module that can attach things to an edge bridge. Registered at module api
+ *  load; the generic Edge-bridges page renders one card per consumer, so the
+ *  kernel page never hardcodes module names. */
+export interface EdgeConsumer {
+  /** The registering module's name — the page greys the card + offers Enable
+   *  when the module isn't enabled in the viewing workspace. */
+  module: string;
+  label: string;
+  description: string;
+  /** In-app route where the attach/manage flow lives (e.g. "/digifab"). */
+  href: string;
+}
+
 export interface PlatformEdge {
   /** Hosted relay: register a live channel for a workspace. Returns an
    *  unregister fn. One channel per workspace — a newer connection replaces an
@@ -1862,6 +1915,38 @@ export interface PlatformEdge {
   hasChannel(orgId: string): boolean;
   /** Send a request to the workspace's edge; rejects if none is connected. */
   send(orgId: string, req: EdgeRequest): Promise<EdgeResponse>;
+
+  // ── HTTP relay primitives — the queue mechanics behind the dial-out tunnel.
+  // The kernel owns the state; routers (the kernel /orgs/:slug/edge wire and
+  // any module-mounted legacy alias) are thin HTTP shims over these, so every
+  // path lands on the SAME channels and modules stay isolated. Keys follow
+  // edgeChannelKey: `orgId` for the default bridge, `orgId::<name>` for a
+  // named one, or a bare userId for a personal (account-scoped) agent.
+
+  /** Announce/refresh a bridge: registers the channel on first touch and
+   *  bumps its liveness clock. */
+  relayTouch(key: string): void;
+  /** Long-poll for the next queued request; resolves null on keep-alive
+   *  timeout or when the poller hangs up (pass an abort signal). */
+  relayPoll(key: string, opts?: { signal?: AbortSignal }): Promise<EdgeRelayItem | null>;
+  /** Deliver a polled request's result. Returns false if the id is unknown
+   *  (already timed out). */
+  relayRespond(key: string, r: { id: string; status: number; body?: unknown }): boolean;
+  /** Connected agents for a workspace (default + named bridges). */
+  relayAgents(orgId: string): EdgeAgentInfo[];
+  /** One bridge's liveness — `bridge` null = the default channel. */
+  relayInfo(orgId: string, bridge?: string | null): { connected: boolean; last_seen: number | null };
+
+  // ── Consumer registry — modules declare "I can use a bridge" here.
+  registerConsumer(c: EdgeConsumer): void;
+  listConsumers(): EdgeConsumer[];
+
+  // ── Bridge release — the self-update artifact the bridge downloads.
+  getRelease(): { version: string; sha256: string };
+  getReleaseBundle(): string;
+  /** Registry-free bootstrap: a stock node image fetches this loader from
+   *  /release/loader and runs it — it pulls the bundle and self-updates. */
+  getReleaseLoader(): string;
 }
 
 /** The single per-tenant egress policy every external-HTTP path routes through —

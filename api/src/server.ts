@@ -27,6 +27,8 @@ import { platformOrgRouter } from "./routes/platform.js";
 import { calendarOrgRouter, calendarPublicRouter } from "./routes/calendar.js";
 import { bundlesRouter } from "./routes/bundles.js";
 import { quickstartRouter } from "./routes/quickstart.js";
+import { attentionRouter } from "./routes/attention.js";
+import { edgeRouter } from "./routes/edge.js";
 import { blueprintRouter } from "./routes/blueprint.js";
 import { backupRouter, backupGoogleCallbackRouter } from "./routes/backup.js";
 import { membersRouter, invitesRootRouter } from "./routes/members.js";
@@ -54,6 +56,7 @@ import { qrScanRouter } from "./routes/qr-scan.js";
 import { integrationsInboundRouter } from "./routes/integrations-inbound.js";
 import { hooksRouter } from "./routes/hooks.js";
 import { hostedPanelsRouter } from "./routes/hosted-panels.js";
+import { productEventsObserver } from "./platform/product-events.js";
 
 export interface AppHandles {
   app: Application;
@@ -112,6 +115,11 @@ export function createApp(): AppHandles {
     app.use(morgan(env.NODE_ENV === "production" ? "combined" : "dev"));
   }
 
+  // Thesis telemetry: every org-scoped 403 that leaves the api is a WALL a
+  // real user hit — recorded as a product_events row. One observer covers
+  // kernel routes and every module router. See platform/product-events.ts.
+  app.use(productEventsObserver);
+
   const v1 = express.Router();
 
   v1.get("/healthz", (_req, res) => {
@@ -122,6 +130,9 @@ export function createApp(): AppHandles {
       // Deploy label (staging/production/development) for the web's env
       // indicator. `||` not `??`: COBBLR_ENV arrives as "" when unset.
       deploy_env: env.COBBLR_ENV || env.NODE_ENV,
+      // Runtime build sha (set by the deploy env, not baked in the image) —
+      // the web polls this to offer "new version — refresh" to open tabs.
+      build_sha: process.env.COBBLR_BUILD_SHA || null,
       time: new Date().toISOString(),
     });
   });
@@ -206,6 +217,11 @@ export function createApp(): AppHandles {
   // rollup, and materialize (install a bundle + batch-commit captures). See
   // docs/design-decisions/capture-first-onboarding.md.
   v1.use("/orgs/:slug/quickstart", quickstartRouter);
+  v1.use("/orgs/:slug/attention", attentionRouter);
+  // Generic edge-bridge surface: the dial-out relay wire, the pane of glass,
+  // the consumer registry, and the bridge self-update release. Module paths
+  // (digifab's /modules/digifab/edge/*) remain as wire-compatible aliases.
+  v1.use("/orgs/:slug/edge", edgeRouter);
   // Blueprint (workspace setup snapshot) + Backup (setup + data + files).
   // Both sit at the workspace level above bundles. See
   // docs/architecture/blueprint-backup-export.md.

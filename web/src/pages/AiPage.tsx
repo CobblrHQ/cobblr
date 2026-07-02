@@ -429,12 +429,29 @@ function ProviderAddModal({
           Object.entries(picked.credentials).map(([key, d]) => (
             <div key={key}>
               <label className="block text-sm font-medium mb-1">{d.label}</label>
-              <input
-                type={d.secret ? "password" : "text"}
-                value={creds[key] ?? ""}
-                onChange={(e) => setCreds({ ...creds, [key]: e.target.value })}
-                className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900 font-mono"
-              />
+              {d.choices ? (
+                <>
+                  <select
+                    value={creds[key] ?? ""}
+                    onChange={(e) => setCreds({ ...creds, [key]: e.target.value })}
+                    className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900"
+                  >
+                    {d.choices.map((c) => (
+                      <option key={c.value} value={c.value}>
+                        {c.label}
+                      </option>
+                    ))}
+                  </select>
+                  {key === "transit" && (creds[key] ?? "").startsWith("bridge") && <WorkspaceBridgeHint />}
+                </>
+              ) : (
+                <input
+                  type={d.secret ? "password" : "text"}
+                  value={creds[key] ?? ""}
+                  onChange={(e) => setCreds({ ...creds, [key]: e.target.value })}
+                  className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900 font-mono"
+                />
+              )}
             </div>
           ))}
         <div>
@@ -549,12 +566,29 @@ function ProviderEditModal({
           Object.entries(def.credentials).map(([key, d]) => (
             <div key={key}>
               <label className="block text-sm font-medium mb-1">{d.label}</label>
-              <input
-                type={d.secret ? "password" : "text"}
-                value={creds[key] ?? ""}
-                onChange={(e) => setCreds({ ...creds, [key]: e.target.value })}
-                className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900 font-mono"
-              />
+              {d.choices ? (
+                <>
+                  <select
+                    value={creds[key] ?? ""}
+                    onChange={(e) => setCreds({ ...creds, [key]: e.target.value })}
+                    className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900"
+                  >
+                    {d.choices.map((c) => (
+                      <option key={c.value} value={c.value}>
+                        {c.label}
+                      </option>
+                    ))}
+                  </select>
+                  {key === "transit" && (creds[key] ?? "").startsWith("bridge") && <WorkspaceBridgeHint />}
+                </>
+              ) : (
+                <input
+                  type={d.secret ? "password" : "text"}
+                  value={creds[key] ?? ""}
+                  onChange={(e) => setCreds({ ...creds, [key]: e.target.value })}
+                  className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900 font-mono"
+                />
+              )}
             </div>
           ))}
         <div className="flex justify-end gap-2 pt-2">
@@ -806,5 +840,32 @@ function AiActivityDetail({ slug, item, onClose }: { slug: string; item: AiActiv
         )}
       </div>
     </Modal>
+  );
+}
+
+/** Live workspace-bridge status under the bridge-transit choice: is there a
+ *  bridge connected for this workspace right now? Links to the pane of glass. */
+function WorkspaceBridgeHint() {
+  const { activeSlug } = useActiveOrg();
+  const status = useQuery({
+    queryKey: ["edge-status", activeSlug],
+    queryFn: () => api.getEdgeStatus(activeSlug ?? ""),
+    enabled: !!activeSlug,
+    refetchInterval: 5000,
+  });
+  const agents = status.data?.agents ?? [];
+  const stale = status.data?.stale_after_ms ?? 60_000;
+  const live = agents.filter((a) => a.last_seen_ms < stale);
+  const on = live.length > 0;
+  return (
+    <div className={"flex items-center gap-2 text-[11px] mt-1 rounded border p-1.5 " + (on ? "border-moss-500/40 bg-moss-50 dark:bg-moss-950/30 text-moss-700 dark:text-moss-300" : "border-amber-500/40 bg-amber-50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-400")}>
+      <span className={"w-1.5 h-1.5 rounded-full shrink-0 " + (on ? "bg-moss-500" : "bg-amber-500 animate-pulse")} />
+      <span className="flex-1">
+        {on
+          ? `${live.length === 1 ? "Your workspace bridge is" : `${live.length} workspace bridges are`} connected — calls route through it to your LAN.`
+          : "No workspace bridge is connected — calls will fail until one dials in."}{" "}
+        <Link to="/configuration/edge" className="underline">Edge bridges</Link>
+      </span>
+    </div>
   );
 }

@@ -1,24 +1,34 @@
 {
   "manifest": {
     "id": "cobblr.community.printer-parts",
-    "version": "0.2.0",
+    "version": "0.2.1",
     "name": "3D Printer Parts",
     "description": "Datasheet-aware part fields + a narrow-bin label template. Manufacturer is a native inventory:part field; this bundle adds the electronics-specific extras.",
     "author": "Cobblr community",
     "requires": [
       {
         "module": "inventory"
-      },
-      {
-        "module": "labels"
       }
     ],
-    "wires": [
+    "features": [
       {
-        "source_kind": "inventory:part",
-        "action_id": "labels:print",
-        "trigger_type": "user-invoked",
-        "template": "{{name}}\n{{manufacturer | default: \"\"}} {{voltage | default: \"\"}}"
+        "key": "labels",
+        "name": "Label printing",
+        "question": "Print QR labels for these?",
+        "description": "Adds the Labels module + a one-tap print action on each item.",
+        "requires": [
+          {
+            "module": "labels"
+          }
+        ],
+        "wires": [
+          {
+            "source_kind": "inventory:part",
+            "action_id": "labels:print",
+            "trigger_type": "user-invoked",
+            "template": "{{name}}\n{{manufacturer | default: \"\"}} {{voltage | default: \"\"}}"
+          }
+        ]
       }
     ],
     "field_defs": [

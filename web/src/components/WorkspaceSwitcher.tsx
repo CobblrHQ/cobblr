@@ -493,17 +493,29 @@ export function CreateWorkspaceModal({
   onCreated: (slug: string) => void;
 }) {
   const [name, setName] = useState("");
+  // "A friend sent me their setup" — an exported blueprint file seeds the new
+  // workspace's whole configuration (modules, trackers, fields, views).
+  const [blueprint, setBlueprint] = useState<{ manifest: unknown; label: string } | null>(null);
+  const [bpError, setBpError] = useState<string | null>(null);
   const toast = useToast();
 
   // Reset the form whenever the modal re-opens.
   useEffect(() => {
-    if (open) setName("");
+    if (open) {
+      setName("");
+      setBlueprint(null);
+      setBpError(null);
+    }
   }, [open]);
 
   const create = useMutation({
-    mutationFn: () => api.createOrg(name.trim()),
+    mutationFn: () => api.createOrg(name.trim(), blueprint ? { blueprint: blueprint.manifest } : undefined),
     onSuccess: (r) => {
-      toast.success(`Workspace "${r.org.name}" created.`);
+      toast.success(
+        r.blueprint_applied
+          ? `Workspace "${r.org.name}" created from "${r.blueprint_applied.name}".`
+          : `Workspace "${r.org.name}" created.`,
+      );
       onCreated(r.slug);
     },
     onError: (e: unknown) => {
@@ -538,6 +550,37 @@ export function CreateWorkspaceModal({
             autoFocus
             maxLength={120}
           />
+        </label>
+        <label className="block">
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+            Start from a blueprint (optional)
+          </span>
+          <input
+            type="file"
+            accept="application/json,.json"
+            onChange={(e) => {
+              setBpError(null);
+              setBlueprint(null);
+              const f = e.target.files?.[0];
+              if (!f) return;
+              void f.text().then((txt) => {
+                try {
+                  const manifest = JSON.parse(txt) as { name?: unknown };
+                  setBlueprint({ manifest, label: typeof manifest.name === "string" ? manifest.name : f.name });
+                  if (!name.trim() && typeof manifest.name === "string") setName(manifest.name.slice(0, 120));
+                } catch {
+                  setBpError("That file isn't valid JSON — export a blueprint from Settings → Blueprint.");
+                }
+              });
+            }}
+            className="block w-full text-xs text-muted dark:text-slate-400 file:mr-2 file:rounded file:border-0 file:bg-subtle dark:file:bg-slate-800 file:px-2 file:py-1 file:text-xs file:text-content dark:file:text-mortar-200"
+          />
+          {blueprint && (
+            <span className="mt-1 block text-[11px] text-moss-700 dark:text-moss-300">
+              Will be set up from “{blueprint.label}” — a friend's exported setup works here (config only, no data).
+            </span>
+          )}
+          {bpError && <span className="mt-1 block text-[11px] text-ember-600 dark:text-ember-300">{bpError}</span>}
         </label>
         <p className="text-xs text-muted dark:text-slate-400">
           Cobblr will provision a fresh tenant Postgres database, enable

@@ -130,7 +130,7 @@ export function register(): void {
   });
 }
 
-function buildMessages(
+export function buildMessages(
   capability: AiCapability,
   input: Record<string, unknown>,
 ): Array<{ role: string; content: unknown }> {

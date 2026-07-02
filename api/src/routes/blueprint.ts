@@ -62,7 +62,7 @@ interface BlueprintTenantDB {
 // ── Manifest schema ──────────────────────────────────────────────────
 // Additive by design (blueprint-backup-export.md §10): new fields slot in
 // next to the existing ones without breaking earlier exports.
-const BlueprintManifest = z.object({
+export const BlueprintManifest = z.object({
   kind: z.literal("cobblr.blueprint").default("cobblr.blueprint"),
   id: z.string().min(1),
   version: z.string().min(1),

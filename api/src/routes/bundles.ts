@@ -3,6 +3,8 @@
 // state, import + apply a bundle, uninstall cleanly.
 
 import { Router } from "express";
+import { trackProductEvent } from "../platform/product-events.js";
+import { parseWireFilter } from "../platform/wire-filter.js";
 import { z } from "zod";
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
@@ -571,6 +573,15 @@ export async function validateBundle(
         message: `Action "${w.action_id}" can't be wired to "${w.source_kind}". Actions available for "${w.source_kind}": ${list}.`,
       });
     }
+    // B7: a bundle-shipped condition must be a valid structured filter —
+    // a typo'd op shouldn't install as a wire that silently never fires
+    // (the engine ignores malformed filters by design).
+    if (w.filter != null) {
+      const { error } = parseWireFilter(w.filter);
+      if (error) {
+        errors.push({ path: "wires.filter", code: "invalid_wire_filter", message: error });
+      }
+    }
   }
 
   // requires[] must name the module owning every referenced kind + action.
@@ -1025,6 +1036,16 @@ bundlesRouter.post(
         return;
       }
       const result = await validateBundle(req.tenant!.org.id, body.data.manifest, { autoEnable: body.data.autoEnable ?? false });
+      if (!result.valid) {
+        // Thesis telemetry: a rejected artifact is a WALL for whoever authored
+        // it (human paste or AI build) — counted, never blocking.
+        trackProductEvent({
+          orgId: req.tenant!.org.id,
+          userId: req.session?.id ?? null,
+          event: "validation_rejected",
+          detail: { source: "bundles/validate", error_codes: result.errors.map((e) => e.code) },
+        });
+      }
       res.json({ valid: result.valid, errors: result.errors, preview: result.preview });
     } catch (err) {
       next(err);
@@ -1117,7 +1138,7 @@ export async function applyValidatedBundle(
     }
   }
   for (const old of existing) {
-    await uninstallBundleId(old.id);
+    await uninstallBundleId(old.id, { snapshotReason: "replaced" });
   }
 
   // Create the module instances this bundle ships (skinned copies of a
@@ -1684,6 +1705,12 @@ bundlesRouter.post(
         enabledFeatures: body.data.enabled_features,
       });
       if (!v.valid) {
+        trackProductEvent({
+          orgId: req.tenant!.org.id,
+          userId: req.session?.id ?? null,
+          event: "validation_rejected",
+          detail: { source: "bundles/install", error_codes: v.errors.map((e) => e.code) },
+        });
         const unknownModule = v.errors.find((e) => e.code === "unknown_module");
         if (unknownModule) {
           res.status(400).json({ error: { code: "unknown_module", message: unknownModule.message, details: unknownModule.detail } });
@@ -1788,6 +1815,108 @@ async function previewBundleUninstall(
   return { instances, modules };
 }
 
+// ── Version history (audit F3): list snapshots + revert to one ─────
+// Every removed bundle row (update-replace / uninstall / revert) is kept in
+// bundle_snapshots by uninstallBundleId(); these endpoints read that history
+// and re-apply a chosen version through the SAME validate+apply path as any
+// install — a revert that no longer validates (modules/kinds changed since)
+// comes back 409 with the errors instead of half-applying.
+bundlesRouter.get(
+  "/history/:externalId",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      const rows = await meta
+        .selectFrom("bundle_snapshots")
+        .select(["id", "external_id", "name", "version", "reason", "enabled_features", "created_at", "manifest"])
+        .where("org_id", "=", req.tenant!.org.id)
+        .where("external_id", "=", req.params.externalId!)
+        .orderBy("created_at", "desc")
+        .limit(50)
+        .execute();
+      res.json({
+        items: rows.map((r) => {
+          const m = (typeof r.manifest === "string" ? JSON.parse(r.manifest) : r.manifest) as {
+            field_defs?: unknown[];
+            wires?: unknown[];
+            provides_instances?: unknown[];
+          } | null;
+          return {
+            id: r.id,
+            external_id: r.external_id,
+            name: r.name,
+            version: r.version,
+            reason: r.reason,
+            enabled_features: r.enabled_features,
+            created_at: r.created_at,
+            counts: {
+              field_defs: m?.field_defs?.length ?? 0,
+              wires: m?.wires?.length ?? 0,
+              instances: m?.provides_instances?.length ?? 0,
+            },
+          };
+        }),
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+bundlesRouter.post(
+  "/history/:snapshotId/revert",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      if (!requireRole(req, res, "owner", "admin")) return;
+      const snap = await meta
+        .selectFrom("bundle_snapshots")
+        .selectAll()
+        .where("id", "=", req.params.snapshotId!)
+        .where("org_id", "=", req.tenant!.org.id)
+        .executeTakeFirst();
+      if (!snap) {
+        res.status(404).json({ error: { code: "not_found", message: "No such snapshot." } });
+        return;
+      }
+      const manifest = typeof snap.manifest === "string" ? JSON.parse(snap.manifest) : snap.manifest;
+      const v = await validateBundle(req.tenant!.org.id, manifest, {
+        autoEnable: true,
+        enabledFeatures: snap.enabled_features,
+      });
+      if (!v.valid) {
+        res.status(409).json({
+          error: {
+            code: "revert_invalid",
+            message:
+              "This version no longer validates against the workspace (modules or kinds may have changed since). Nothing was changed.",
+            details: v.errors,
+          },
+        });
+        return;
+      }
+      // applyValidatedBundle replaces any currently-installed version — which
+      // itself snapshots as 'replaced', so a revert is also undoable.
+      const result = await applyValidatedBundle(
+        req.tenant!.org.id,
+        { id: req.session!.id, display_name: req.session!.display_name ?? null, auth_method: req.session!.auth_method, api_token_id: req.session!.api_token_id ?? null },
+        v,
+      );
+      await activity.log({
+        orgId: req.tenant!.org.id,
+        action: "bundle_reverted",
+        ref: { module: null, entityType: "bundle", entityId: result.bundle.id },
+        diff: { name: snap.name, to_version: snap.version, snapshot_id: snap.id },
+      });
+      res.status(201).json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 bundlesRouter.delete(
   "/:id",
   requireAuth,
@@ -1828,7 +1957,7 @@ bundlesRouter.delete(
 
 async function uninstallBundleId(
   bundleId: string,
-  opts?: { teardownResources?: boolean },
+  opts?: { teardownResources?: boolean; snapshotReason?: "replaced" | "uninstalled" },
 ): Promise<void> {
   // v1.5: bundles can also have installed saved views in the
   // tenant DB. Delete those FIRST (so they're gone whether or not
@@ -1836,10 +1965,32 @@ async function uninstallBundleId(
   // in a transaction.
   const bundleRow = await meta
     .selectFrom("bundles")
-    .select(["org_id", "external_id"])
+    .select(["org_id", "external_id", "name", "version", "manifest", "enabled_features"])
     .where("id", "=", bundleId)
     .executeTakeFirst();
   if (bundleRow) {
+    // Version history (audit F3): before anything is deleted, keep the FULL
+    // stored manifest + enabled features so this exact version can be
+    // re-validated and re-applied later ("revert"). EVERY removal path goes
+    // through here — update-replace, explicit uninstall, revert-overwrite —
+    // so one write point covers them all. Best-effort: history must never
+    // block an uninstall.
+    try {
+      await meta
+        .insertInto("bundle_snapshots")
+        .values({
+          org_id: bundleRow.org_id,
+          external_id: bundleRow.external_id,
+          name: bundleRow.name,
+          version: bundleRow.version,
+          reason: opts?.snapshotReason ?? "uninstalled",
+          manifest: sql`${JSON.stringify(bundleRow.manifest)}::jsonb`,
+          enabled_features: bundleRow.enabled_features ?? [],
+        })
+        .execute();
+    } catch (err) {
+      console.error(`[bundle-uninstall] snapshot failed for ${bundleRow.external_id}:`, err);
+    }
     try {
       const tdb = (await getTenantDb(bundleRow.org_id)) as unknown as Kysely<BundleTenantDB>;
       await tdb

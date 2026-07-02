@@ -10,10 +10,9 @@ import { EdgeAdapterDriver, type EdgeRelay } from "./drivers/edge-adapter.js";
 import type { MachineDriver, RemoteDevice, SubmitResult } from "./drivers/types.js";
 import { isAssignable } from "./state.js";
 import { notifyPrint, progressBucket } from "./notify.js";
-// Call-time only (reprint-on-fail re-queue) — both modules import from this one,
-// so these are lazy/circular by design; ESM resolves them when the retry fires.
+// Call-time only (reprint-on-fail re-queue) — lazy/circular by design; ESM
+// resolves it when the retry fires.
 import { kickAssign } from "./assign-worker.js";
-import { enqueuePoll } from "./poll-worker.js";
 
 /** The manual camera URL set for a device (for the "Live view" link in print
  *  notifications). Null when none or no device. */
@@ -28,10 +27,17 @@ async function cameraFor(db: Kysely<DigifabDB>, connectionId: string | null, dev
   return row?.camera_url ?? null;
 }
 
-const TERMINAL = new Set(["completed", "failed", "cancelled"]);
+export const TERMINAL = new Set(["completed", "failed", "cancelled"]);
 /** Consecutive poll errors before a live job is declared `failed` (F-12) — so a
- *  transient network blip doesn't kill a healthy print. */
-const POLL_ERROR_THRESHOLD = 3;
+ *  transient network blip doesn't kill a healthy print. Driver-aware: the mock
+ *  fails fast for tests/demos; a REAL farm gets a much longer grace window — a
+ *  manager restart or a network flap must never fail (or worse, re-send onto) a
+ *  print that's physically still running. */
+function pollTuning(connType: string | null): { intervalMs: number; errorThreshold: number } {
+  return connType === "mock"
+    ? { intervalMs: 4_000, errorThreshold: 3 } // ~12s to give up — tests stay fast
+    : { intervalMs: 30_000, errorThreshold: 6 }; // ~3min of unreachability tolerated
+}
 
 /** Build a live driver from a connection ref (id OR label; decrypts creds). The
  *  connection now lives in core-devices — fetch it via the platform store; the
@@ -209,22 +215,26 @@ export function buildEdgeRelay(
 }
 
 /** Poll one job: getJobStatus → persist → emit on terminal. Returns the
- *  new status + whether it's terminal (so the worker stops re-enqueuing). */
+ *  new status + whether it's terminal (so the worker stops re-enqueuing) +
+ *  the driver-appropriate re-poll interval. */
 export async function pollJob(
   db: Kysely<DigifabDB>,
   orgId: string,
   jobId: string,
-): Promise<{ status: string; terminal: boolean } | null> {
+): Promise<{ status: string; terminal: boolean; intervalMs: number } | null> {
   const job = await db
     .selectFrom("digifab_jobs")
     .selectAll()
     .where("id", "=", jobId)
     .executeTakeFirst();
   if (!job || !job.remote_job_id || !job.connection_id) return null;
-  // Whether the job was ALREADY terminal — so the terminal side-effects (filament
-  // deduct, bed-clear attention, notifications, kick-assign) fire only on the
-  // transition, not on every poll of an already-finished job.
-  const wasTerminal = TERMINAL.has(job.status);
+  // A job Cobblr already considers finished is NEVER overwritten by the manager's
+  // view. Without this guard a locally-cancelled job (driver has no cancelJob —
+  // FDM Monster) was resurrected by its next poll: cancelled → printing → later a
+  // spurious print.completed + filament deduction. Local terminal is final.
+  if (TERMINAL.has(job.status)) return { status: job.status, terminal: true, intervalMs: 0 };
+  const conn = await platform().devices.connections().getInternal(orgId, job.connection_id);
+  const { intervalMs, errorThreshold } = pollTuning(conn?.type ?? null);
   const driver = await buildDriverById(db, orgId, job.connection_id);
   if (!driver) return null;
 
@@ -246,15 +256,15 @@ export async function pollJob(
   } catch (e) {
     const errs = (job.poll_errors ?? 0) + 1;
     error = (e as Error).message.slice(0, 300);
-    if (errs < POLL_ERROR_THRESHOLD) {
+    if (errs < errorThreshold) {
       // Keep the job's current (non-terminal) status; just record the transient
       // error + the count, and try again next tick. Not terminal.
       await db
         .updateTable("digifab_jobs")
-        .set({ error: `unreachable (${errs}/${POLL_ERROR_THRESHOLD}): ${error}`, poll_errors: errs, last_polled_at: new Date(), updated_at: new Date() })
+        .set({ error: `unreachable (${errs}/${errorThreshold}): ${error}`, poll_errors: errs, last_polled_at: new Date(), updated_at: new Date() })
         .where("id", "=", jobId)
         .execute();
-      return { status: job.status, terminal: false };
+      return { status: job.status, terminal: false, intervalMs };
     }
     // Repeatedly unreachable → give up.
     status = "failed";
@@ -262,28 +272,38 @@ export async function pollJob(
   }
 
   // Reprint-on-fail — a failed print with attempts left goes BACK to the queue
-  // and re-sends instead of going terminal (no failed event, no bed-clear yet).
-  // Pool jobs clear their device and re-drip; device-targeted jobs re-send to the
-  // same printer. Out of attempts → fall through to the terminal path below.
+  // instead of going terminal (no failed event). The failed print very likely
+  // left debris on the bed, so the retry does NOT bypass the F-1 bed-clear gate:
+  // the device gets its attention row NOW, and the retry proceeds only once a
+  // human clears the bed (pool jobs re-drip via the assign worker's attention
+  // check; device-targeted jobs are auto-resent by the fleet `ready` route).
+  // Out of attempts → fall through to the terminal path below.
   if (status === "failed") {
     const att = (job.attempts ?? 0) + 1;
     const max = job.max_attempts ?? 1;
     if (att < max) {
-      const note = `auto-retry ${att}/${max}: ${error ?? "failed"}`.slice(0, 300);
+      const note = `auto-retry ${att}/${max} waiting for bed clear: ${error ?? "failed"}`.slice(0, 300);
       const base = { status: "queued", attempts: att, remote_job_id: null, remote_file_id: null, progress: 0, error: note, poll_errors: 0, last_polled_at: new Date(), updated_at: new Date() };
+      if (job.connection_id && job.target_device) {
+        await db
+          .insertInto("digifab_device_attention")
+          .values({ connection_id: job.connection_id, remote_device_id: job.target_device, job_id: jobId, reason: "print-failed" })
+          .onConflict((oc) =>
+            oc.columns(["connection_id", "remote_device_id"]).doUpdateSet({ job_id: jobId, reason: "print-failed", created_at: new Date() }),
+          )
+          .execute();
+      }
       if (job.target_pool) {
         await db.updateTable("digifab_jobs").set({ ...base, connection_id: null, target_device: null }).where("id", "=", jobId).execute();
         await kickAssign(orgId);
       } else {
         await db.updateTable("digifab_jobs").set(base).where("id", "=", jobId).execute();
-        try {
-          const r = await sendJob(db, orgId, jobId);
-          if (r.ok && r.shouldPoll) await enqueuePoll(orgId, jobId);
-        } catch {
-          /* leave it queued for a manual retry */
-        }
       }
-      return { status: "queued", terminal: false };
+      // NOT terminal, but the send path owns any new poll chain — returning
+      // terminal:true here stops THIS chain so a resend can't end up with two
+      // self-re-enqueuing pollers on one job (they double manager load and race
+      // the milestone notifications).
+      return { status: "queued", terminal: true, intervalMs };
     }
   }
 
@@ -294,11 +314,12 @@ export async function pollJob(
   // BEFORE the attention row exists, and drip the next queued job straight onto
   // the uncleared bed — the digifab-pools flake (3rd job not held; ≤2 cap blipped).
   // One transaction closes that window: any pass reads both-after or both-before.
-  const markAttention = terminal && !wasTerminal && !!job.connection_id && !!job.target_device;
+  // (The early local-terminal guard above means this is always a fresh transition.)
+  const markAttention = terminal && !!job.connection_id && !!job.target_device;
   await db.transaction().execute(async (trx) => {
     await trx
       .updateTable("digifab_jobs")
-      .set({ status, progress, error, poll_errors: 0, last_polled_at: new Date(), updated_at: new Date() })
+      .set({ status, progress, error, eta_sec: etaSec != null ? Math.round(etaSec) : null, poll_errors: 0, last_polled_at: new Date(), updated_at: new Date() })
       .where("id", "=", jobId)
       .execute();
     if (markAttention) {
@@ -333,7 +354,7 @@ export async function pollJob(
     }
   }
 
-  if (terminal && !wasTerminal) {
+  if (terminal) {
     // (F-1 bed-clear `needs_attention` was already written atomically with the
     // status flip above — see the transaction — so an assign pass can never see
     // the freed bed without the attention row.)
@@ -356,17 +377,28 @@ export async function pollJob(
             sourceId: jobId,
           }
         : {};
-    void platform().events.emit(
-      status === "completed" ? "digifab.print.completed" : "digifab.print.failed",
-      {
-        orgId,
-        jobId,
-        connectionId: job.connection_id,
-        linkedMachineId: job.linked_machine_id,
-        linkedTaskId: job.linked_task_id,
-        ...material,
-      },
-    );
+    // A driver-reported `cancelled` (someone stopped it at the printer) is NOT a
+    // failure — firing print.failed for it ran failure wires + posted "❌ Print
+    // failed" for a deliberate stop. Cancelled emits nothing; completed/failed
+    // emit their events as before.
+    if (status !== "cancelled") {
+      void platform().events.emit(
+        status === "completed" ? "digifab.print.completed" : "digifab.print.failed",
+        {
+          orgId,
+          jobId,
+          connectionId: job.connection_id,
+          linkedMachineId: job.linked_machine_id,
+          linkedTaskId: job.linked_task_id,
+          ...material,
+        },
+      );
+    }
+    // A failed/cancelled job whose build was committed at send never made its
+    // output — undo the consumption (idempotent; no-op if never committed).
+    if (status !== "completed") {
+      await reverseBuildIfCommitted(db, orgId, jobId, `print ${status}`);
+    }
     // Discord/in-app update on the terminal outcome.
     const cam = await cameraFor(db, job.connection_id, job.target_device);
     void notifyPrint(orgId, {
@@ -378,14 +410,14 @@ export async function pollJob(
       progress,
       elapsedSec,
       gramsUsed,
-      error,
+      error: status === "cancelled" ? (error ?? "cancelled at the printer") : error,
     });
     // A freed printer should immediately pull the next queued pool job, rather
     // than wait for the worker's next re-tick. Dynamic import avoids a static
     // cycle (assign-worker imports this file).
     void import("./assign-worker.js").then((m) => m.kickAssign(orgId)).catch(() => {});
   }
-  return { status, terminal };
+  return { status, terminal, intervalMs };
 }
 
 /** Queue commits the materials. When a just-placed job (status "sent") produces
@@ -401,6 +433,19 @@ async function commitBuildIfLinked(
   status: string,
 ): Promise<void> {
   if (status !== "sent" || !job.linked_build_id || job.build_consumed_at) return;
+  // A dangling build id (deleted since job creation, or the builds module is
+  // off) must not be SILENTLY stamped consumed — the wire would no-op and the
+  // job would forever claim it drew inventory it never touched. Surface it on
+  // the job instead and leave build_consumed_at null.
+  const build = await platform().entities.lookup(orgId, "builds:build", job.linked_build_id).catch(() => null);
+  if (!build) {
+    await db
+      .updateTable("digifab_jobs")
+      .set({ error: "linked build not found — no inventory was consumed", updated_at: new Date() })
+      .where("id", "=", jobId)
+      .execute();
+    return;
+  }
   const res = await db
     .updateTable("digifab_jobs")
     .set({ build_consumed_at: new Date() })
@@ -418,9 +463,45 @@ async function commitBuildIfLinked(
   });
 }
 
+/** The reversal twin of commitBuildIfLinked. A job whose build was committed at
+ *  send but that then failed / was cancelled / was scrapped at the bed-clear
+ *  verdict never produced its output — emit `digifab.job.build_reversed` ONCE
+ *  (a seeded builds wire puts the components back and removes the output credit).
+ *  Same null→now atomic flip (`build_reversed_at`) so cancel + scrap + fail can
+ *  all call this and only the first reverses. Exported for the cancel route and
+ *  the bed-clear verdict route. */
+export async function reverseBuildIfCommitted(
+  db: Kysely<DigifabDB>,
+  orgId: string,
+  jobId: string,
+  reason: string,
+): Promise<boolean> {
+  const job = await db
+    .selectFrom("digifab_jobs")
+    .select(["linked_build_id", "build_qty", "build_consumed_at", "build_reversed_at"])
+    .where("id", "=", jobId)
+    .executeTakeFirst();
+  if (!job?.linked_build_id || !job.build_consumed_at || job.build_reversed_at) return false;
+  const res = await db
+    .updateTable("digifab_jobs")
+    .set({ build_reversed_at: new Date() })
+    .where("id", "=", jobId)
+    .where("build_reversed_at", "is", null)
+    .executeTakeFirst();
+  if (Number(res.numUpdatedRows ?? 0n) === 0) return false;
+  void platform().events.emit("digifab.job.build_reversed", {
+    orgId,
+    jobId,
+    buildId: job.linked_build_id,
+    qty: job.build_qty != null ? Number(job.build_qty) : 1,
+    reason,
+  });
+  return true;
+}
+
 export type SendJobResult =
   | { ok: true; status: string; remoteJobId: string | null; placement: SubmitResult; uploadedBytes: number; shouldPoll: boolean }
-  | { ok: false; code: "not_found" | "already_sent" | "no_connection" | "unknown_device" };
+  | { ok: false; code: "not_found" | "already_sent" | "already_terminal" | "no_connection" | "unknown_device" | "file_missing" };
 
 /** Upload + place a job on its connection's farm. Pure (no express, no poll
  *  enqueue) so the send ROUTE and the assignment WORKER share it — the caller
@@ -435,6 +516,10 @@ export async function sendJob(
   const job = await db.selectFrom("digifab_jobs").selectAll().where("id", "=", jobId).executeTakeFirst();
   if (!job) return { ok: false, code: "not_found" };
   if (job.remote_job_id) return { ok: false, code: "already_sent" };
+  // A finished/cancelled job can't be quietly re-sent (a cancelled-before-send or
+  // assign-failed job has no remote_job_id, so the guard above alone let a
+  // terminal job flip straight back to `sent`). Retry is an explicit endpoint.
+  if (TERMINAL.has(job.status)) return { ok: false, code: "already_terminal" };
   if (!job.connection_id) return { ok: false, code: "no_connection" };
 
   const driver = await buildDriverById(db, orgId, job.connection_id);
@@ -494,10 +579,18 @@ export async function sendJob(
   let uploadName = job.file_ref;
   if (job.file_id) {
     const f = await platform().files.read(orgId, job.file_id);
-    if (f) {
-      fileBytes = new Uint8Array(f.bytes);
-      uploadName = f.filename;
+    if (!f) {
+      // The stored file was deleted since the job was created. Refuse rather
+      // than silently upload a ZERO-BYTE gcode to a real farm.
+      await db
+        .updateTable("digifab_jobs")
+        .set({ error: "the job's stored file no longer exists — re-create the job with a file", updated_at: new Date() })
+        .where("id", "=", jobId)
+        .execute();
+      return { ok: false, code: "file_missing" };
     }
+    fileBytes = new Uint8Array(f.bytes);
+    uploadName = f.filename;
   }
 
   // HYBRID Bambu LAN: the cloud can't accept an arbitrary file, but the on-site
@@ -513,13 +606,20 @@ export async function sendJob(
   const up = await sendDriver.uploadFile(fileBytes, uploadName);
   const sub = await sendDriver.submitJob({ fileId: up.fileId, deviceId, tag: job.target_tag });
   const status = sub.queued ? "sent" : "awaiting-assignment";
+  // Normalize a driver's ""/undefined job id to null, and make the dead end LOUD:
+  // a queued job with no remote id can never be polled — it would sit in `sent`
+  // forever with nothing on the row saying why. Surface it so the user knows to
+  // track it at the manager (manual poll can't help either).
+  const remoteJobId = sub.jobId ? String(sub.jobId) : null;
+  const untrackable = sub.queued && !remoteJobId;
   await db
     .updateTable("digifab_jobs")
     .set({
       remote_file_id: up.fileId,
-      remote_job_id: sub.jobId,
+      remote_job_id: remoteJobId,
       target_device: sub.deviceId ?? deviceId,
       status,
+      ...(untrackable ? { error: "the manager accepted the job but returned no job id — Cobblr can't track it to completion" } : {}),
       updated_at: new Date(),
     })
     .where("id", "=", jobId)
@@ -534,10 +634,10 @@ export async function sendJob(
   return {
     ok: true,
     status,
-    remoteJobId: sub.jobId ?? null,
+    remoteJobId,
     placement: sub,
     uploadedBytes: fileBytes.byteLength,
-    shouldPoll: !!(sub.queued && sub.jobId),
+    shouldPoll: !!(sub.queued && remoteJobId),
   };
 }
 
@@ -578,13 +678,15 @@ export async function assignJob(
 
   const sub = await driver.submitJob({ fileId: job.remote_file_id, deviceId });
   const status = sub.queued ? "sent" : "awaiting-assignment";
+  const remoteJobId = sub.jobId ? String(sub.jobId) : null; // ""/undefined → null (see sendJob)
   await db
     .updateTable("digifab_jobs")
     .set({
-      remote_job_id: sub.jobId,
+      remote_job_id: remoteJobId,
       target_device: sub.deviceId ?? deviceId,
       target_tag: null, // a specific printer was chosen — drop the ambiguous tag
       status,
+      ...(sub.queued && !remoteJobId ? { error: "the manager accepted the job but returned no job id — Cobblr can't track it to completion" } : {}),
       updated_at: new Date(),
     })
     .where("id", "=", jobId)
@@ -596,5 +698,5 @@ export async function assignJob(
     const cam = await cameraFor(db, job.connection_id, placed);
     void notifyPrint(orgId, { kind: "started", jobId, fileRef: job.file_ref, device: placed, cameraUrl: cam, gramsUsed: job.material_grams != null ? Number(job.material_grams) : null });
   }
-  return { ok: true, status, remoteJobId: sub.jobId ?? null, placement: sub, shouldPoll: !!(sub.queued && sub.jobId) };
+  return { ok: true, status, remoteJobId, placement: sub, shouldPoll: !!(sub.queued && remoteJobId) };
 }

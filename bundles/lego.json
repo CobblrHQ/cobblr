@@ -1,24 +1,34 @@
 {
   "manifest": {
     "id": "cobblr.community.lego",
-    "version": "0.3.1",
+    "version": "0.3.2",
     "name": "Lego",
     "description": "Custom inventory fields + label wires for Lego set collections.",
     "author": "Cobblr community",
     "requires": [
       {
         "module": "inventory"
-      },
-      {
-        "module": "labels"
       }
     ],
-    "wires": [
+    "features": [
       {
-        "source_kind": "inventory:part",
-        "action_id": "labels:print",
-        "trigger_type": "user-invoked",
-        "template": "LEGO {{theme | default: \"misc\"}} #{{set_id | default: \"---\"}} • {{name}} ({{year | default: \"???\"}})"
+        "key": "labels",
+        "name": "Label printing",
+        "question": "Print QR labels for these?",
+        "description": "Adds the Labels module + a one-tap print action on each item.",
+        "requires": [
+          {
+            "module": "labels"
+          }
+        ],
+        "wires": [
+          {
+            "source_kind": "inventory:part",
+            "action_id": "labels:print",
+            "trigger_type": "user-invoked",
+            "template": "LEGO {{theme | default: \"misc\"}} #{{set_id | default: \"---\"}} • {{name}} ({{year | default: \"???\"}})"
+          }
+        ]
       }
     ],
     "field_defs": [

@@ -23,6 +23,7 @@
     "lint:docs": "tsx scripts/lint-docs.ts",
     "lint:changelog": "tsx scripts/lint-changelog.ts",
     "lint:scan-keywords": "tsx scripts/lint-scan-keywords.ts",
+    "lint:bundle-quality": "tsx scripts/lint-bundle-quality.ts",
     "lint:deprecated-fks": "tsx scripts/lint-deprecated-table-fks.ts",
     "lint:self-heal": "tsx scripts/lint-self-heal.ts",
     "lint:write-guards": "tsx scripts/lint-module-write-guards.ts",

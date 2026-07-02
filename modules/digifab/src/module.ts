@@ -9,12 +9,16 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "digifab",
-  version: "0.23.0",
+  version: "0.28.1",
   displayName: "Digital Fabrication",
   description:
     "Send a design file to the software that runs your machine — FDM Monster, OctoPrint, and friends — and track the job to completion. Map a manager's printers to your machines and route files to them. Talks to each manager's REST API; it sends files, it never drives the hardware.",
   icon: "printer",
   band: "stock",
+  // An operator, not a trackable kind: digifab acts ON machines (sends
+  // files to their managers). Keeps it out of the funnel's "track a
+  // kind of thing" column — what-to-do-funnel.md option (c).
+  operatesOn: ["machines"],
 
   schema: {
     tablePrefix: "digifab_",
@@ -77,6 +81,7 @@ export default defineModule({
     events: [
       "digifab.connection.created",
       "digifab.connection.tested",
+      "digifab.connection.updated",
       "digifab.connection.deleted",
       "digifab.job.sent",
       // Fired on send when the job is linked to a build (BoM). Carries
@@ -84,6 +89,11 @@ export default defineModule({
       // inventory + bumps the output part. Idempotent (once per job) — the
       // "job-in → subtract inventory → queue the machine" path.
       "digifab.job.build_committed",
+      // The reversal twin: a committed build whose job then failed / was
+      // cancelled / was scrapped at the bed-clear verdict. Carries the same
+      // { buildId, qty } (+ reason) so the seeded builds wire puts the
+      // components back and removes the never-made output credit.
+      "digifab.job.build_reversed",
       // Print-lifecycle notifications (the "post updates to Discord" flow): a
       // user routes these to a channel at /me/notification-channels.
       // (digifab.connection.synced / print.started / print.progress were

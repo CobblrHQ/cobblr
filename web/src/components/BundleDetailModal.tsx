@@ -27,6 +27,7 @@ import {
   FEATURED_BUNDLES,
   type BundleNextStep,
 } from "../lib/featured-bundles";
+import { diffManifests, type Manifestish } from "../lib/bundle-diff";
 import { recordSetup } from "../lib/setupCards";
 import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
 
@@ -134,6 +135,46 @@ export function BundleDetailModal(props: Props) {
     () => new Set((orgModules.data?.items ?? []).filter((m) => m.enabled).map((m) => m.name)),
     [orgModules.data],
   );
+
+  // Audit F3 — the "react" half needs take-backs. Version history: every
+  // removed bundle row (update-replace / uninstall / revert) was snapshotted
+  // server-side; list them here with one-tap restore. And on an update, a
+  // field/wire-level DIFF of installed → incoming, so "v2.0" is a concrete
+  // list, not a leap of faith.
+  const histExternalId =
+    props.mode === "installed"
+      ? props.bundle.external_id
+      : props.mode === "featured"
+        ? (props.manifest?.id ?? "")
+        : "";
+  const history = useQuery({
+    queryKey: ["bundle-history", slug, histExternalId],
+    queryFn: () => api.bundleHistory(slug, histExternalId),
+    enabled: open && !!histExternalId && (props.mode === "installed" || isUpdate),
+  });
+  const revertMut = useMutation({
+    mutationFn: (snapshotId: string) => api.bundleRevert(slug, snapshotId),
+    onSuccess: (r) => {
+      toast.success(`Restored ${r.bundle.name} v${r.bundle.version}.`);
+      void qc.invalidateQueries();
+      onClose();
+    },
+    onError: (e) =>
+      toast.error(
+        e instanceof ApiError && e.status === 409
+          ? "That version no longer fits this workspace (modules or kinds changed) — nothing was altered."
+          : e instanceof Error
+            ? e.message
+            : "Restore failed.",
+      ),
+  });
+  const incomingManifest = props.mode === "featured" ? props.manifest : null;
+  const updateDiff = useMemo(() => {
+    const installedManifest = detail.data?.bundle?.manifest;
+    if (!isUpdate || !installedManifest || !incomingManifest) return null;
+    const d = diffManifests(installedManifest as Manifestish, incomingManifest as Manifestish);
+    return d.empty ? null : d;
+  }, [isUpdate, detail.data, incomingManifest]);
 
   // Seed the feature checkboxes from the bundle's stored enabled_features so the
   // checkboxes reflect what was ACTUALLY installed — for the installed modal and
@@ -703,6 +744,82 @@ export function BundleDetailModal(props: Props) {
             </div>
             <p className="text-sm text-content dark:text-mortar-200 whitespace-pre-line">{manifest.changelog}</p>
           </div>
+        )}
+
+        {/* Update diff — what this version CONCRETELY changes vs what's
+            installed (field/wire/view level), not just a changelog sentence. */}
+        {updateDiff && (
+          <div className="rounded-md border border-line dark:border-slate-700 bg-subtle/50 dark:bg-slate-800/40 p-3 space-y-1.5">
+            <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
+              what this update changes
+            </div>
+            {updateDiff.fields.added.length > 0 && (
+              <div className="text-sm text-content dark:text-mortar-200">
+                <span className="text-emerald-600 dark:text-emerald-400 font-medium">+ fields:</span>{" "}
+                {updateDiff.fields.added.join(", ")}
+              </div>
+            )}
+            {updateDiff.fields.changed.length > 0 && (
+              <div className="text-sm text-content dark:text-mortar-200">
+                <span className="text-amber-600 dark:text-amber-400 font-medium">± fields:</span>{" "}
+                {updateDiff.fields.changed.join(", ")}
+              </div>
+            )}
+            {updateDiff.fields.removed.length > 0 && (
+              <div className="text-sm text-content dark:text-mortar-200">
+                <span className="text-ember-600 dark:text-ember-400 font-medium">− fields:</span>{" "}
+                {updateDiff.fields.removed.join(", ")}
+              </div>
+            )}
+            {updateDiff.wires.added.length > 0 && (
+              <div className="text-sm text-content dark:text-mortar-200">
+                <span className="text-emerald-600 dark:text-emerald-400 font-medium">+ wires:</span>{" "}
+                {updateDiff.wires.added.join(", ")}
+              </div>
+            )}
+            {updateDiff.wires.removed.length > 0 && (
+              <div className="text-sm text-content dark:text-mortar-200">
+                <span className="text-ember-600 dark:text-ember-400 font-medium">− wires:</span>{" "}
+                {updateDiff.wires.removed.join(", ")}
+              </div>
+            )}
+            {(updateDiff.views.added.length > 0 || updateDiff.views.removed.length > 0) && (
+              <div className="text-sm text-content dark:text-mortar-200">
+                <span className="font-medium">views:</span>{" "}
+                {[...updateDiff.views.added.map((v) => `+ ${v}`), ...updateDiff.views.removed.map((v) => `− ${v}`)].join(", ")}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Version history — restore any previously-installed version. The
+            restore itself snapshots the current state, so it's also undoable. */}
+        {(props.mode === "installed" || isUpdate) && (history.data?.items?.length ?? 0) > 0 && (
+          <Section title={`version history (${history.data!.items.length})`}>
+            <ul className="space-y-1.5">
+              {history.data!.items.map((h) => (
+                <li key={h.id} className="flex items-center gap-2 text-sm">
+                  <span className="font-mono text-xs text-content dark:text-mortar-100 shrink-0">v{h.version}</span>
+                  <span className="text-xs text-faint dark:text-slate-500 shrink-0">
+                    {h.reason === "replaced" ? "replaced" : "uninstalled"} ·{" "}
+                    {new Date(h.created_at).toLocaleDateString()}
+                  </span>
+                  <span className="text-xs text-faint dark:text-slate-500 flex-1 min-w-0 truncate">
+                    {h.counts.field_defs} fields · {h.counts.wires} wires
+                    {h.counts.instances ? ` · ${h.counts.instances} tracker${h.counts.instances === 1 ? "" : "s"}` : ""}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={revertMut.isPending}
+                    onClick={() => revertMut.mutate(h.id)}
+                    className="shrink-0 rounded border border-line dark:border-slate-600 px-2 py-0.5 text-xs text-content dark:text-mortar-100 hover:border-accent hover:text-accent transition disabled:opacity-50"
+                  >
+                    {revertMut.isPending ? "Restoring…" : "Restore"}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </Section>
         )}
 
         {screenshots.length > 0 && (

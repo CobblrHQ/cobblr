@@ -1,24 +1,34 @@
 {
   "manifest": {
     "id": "cobblr.community.vintage-tools",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "name": "Vintage Tools",
     "description": "Custom fields + label wires for vintage hand tools.",
     "author": "Cobblr community",
     "requires": [
       {
         "module": "inventory"
-      },
-      {
-        "module": "labels"
       }
     ],
-    "wires": [
+    "features": [
       {
-        "source_kind": "inventory:part",
-        "action_id": "labels:print",
-        "trigger_type": "user-invoked",
-        "template": "{{maker | default: \"—\"}} {{model | default: \"?\"}} · {{era | default: \"??\"}} · {{name}}"
+        "key": "labels",
+        "name": "Label printing",
+        "question": "Print QR labels for these?",
+        "description": "Adds the Labels module + a one-tap print action on each item.",
+        "requires": [
+          {
+            "module": "labels"
+          }
+        ],
+        "wires": [
+          {
+            "source_kind": "inventory:part",
+            "action_id": "labels:print",
+            "trigger_type": "user-invoked",
+            "template": "{{maker | default: \"—\"}} {{model | default: \"?\"}} · {{era | default: \"??\"}} · {{name}}"
+          }
+        ]
       }
     ],
     "field_defs": [

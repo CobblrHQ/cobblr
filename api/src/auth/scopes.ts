@@ -29,6 +29,11 @@ export const TOKEN_SCOPES: TokenScopeDef[] = [
       "workspace (register / poll / respond / status) and self-update its own code " +
       "(release). No other access — safe to hand to a bridge running on a Pi/NAS/mini-PC.",
     allow: [
+      // The generic kernel wire (canonical since the edge surface moved out of
+      // digifab) AND the historic digifab alias — field bridges installed
+      // before the move keep polling + self-updating without a reinstall.
+      ["POST", /^\/orgs\/[^/]+\/edge\/(register|respond)$/],
+      ["GET", /^\/orgs\/[^/]+\/edge\/(poll|status|release|release\/bundle|release\/loader)$/],
       ["POST", /^\/orgs\/[^/]+\/modules\/digifab\/edge\/(register|respond)$/],
       // poll/status + the self-update endpoints the loader fetches (release + its bundle).
       ["GET", /^\/orgs\/[^/]+\/modules\/digifab\/edge\/(poll|status|release|release\/bundle)$/],

@@ -15,6 +15,7 @@ import * as activity from "../platform/activity.js";
 import { hasAuthEmailSender, sendAuthEmail } from "../platform/hosted-seams.js";
 import { selfServeInvitesEnabled } from "../auth/signup-gate.js";
 import { issueAndSendVerifyEmail } from "./auth.js";
+import { captureBlueprint } from "./blueprint.js";
 import {
   discordOAuthConfigured,
   discordInviteUrl,
@@ -1202,6 +1203,10 @@ const FriendInvite = z.object({
   email: z.string().email().max(255).optional(),
   note: z.string().max(200).optional(),
   expires_in_days: z.number().int().min(1).max(365).optional(),
+  /** Seed the invitee's new workspace from this workspace's blueprint (the
+   *  caller must be owner/admin there). The config snapshot is embedded into
+   *  the invite at mint time, so later edits don't retroactively change it. */
+  from_workspace: z.string().max(80).optional(),
 });
 // Deliberately low for alpha — the on/off switch (selfServeInvitesEnabled) is
 // the primary control; this caps the rate per owner once it's open.
@@ -1266,6 +1271,25 @@ meRouter.post("/me/signup-invites", requireAuth, async (req, res, next) => {
       });
       return;
     }
+    // Premade workspace: capture the source workspace's blueprint NOW (an
+    // embedded snapshot — later edits to the source don't change the invite).
+    let blueprint: unknown = null;
+    if (parsed.data.from_workspace) {
+      const org = await meta
+        .selectFrom("orgs")
+        .innerJoin("org_memberships as m", "m.org_id", "orgs.id")
+        .select(["orgs.id", "m.role"])
+        .where("orgs.slug", "=", parsed.data.from_workspace)
+        .where("m.user_id", "=", userId)
+        .executeTakeFirst();
+      if (!org || (org.role !== "owner" && org.role !== "admin")) {
+        res.status(403).json({
+          error: { code: "forbidden", message: "You must be an owner/admin of the workspace you seed from." },
+        });
+        return;
+      }
+      blueprint = await captureBlueprint(org.id);
+    }
     const token = randomBytes(24).toString("base64url");
     const expires_at = parsed.data.expires_in_days
       ? new Date(Date.now() + parsed.data.expires_in_days * 86_400_000)
@@ -1278,6 +1302,7 @@ meRouter.post("/me/signup-invites", requireAuth, async (req, res, next) => {
         invited_email: parsed.data.email?.toLowerCase().trim() ?? null,
         note: parsed.data.note ?? null,
         expires_at,
+        blueprint: blueprint === null ? null : JSON.stringify(blueprint),
       })
       .returning(["id", "token", "invited_email", "note", "expires_at", "created_at"])
       .executeTakeFirstOrThrow();

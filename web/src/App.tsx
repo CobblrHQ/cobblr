@@ -47,6 +47,7 @@ import { TagsPage } from "./pages/TagsPage";
 import { FilesPage } from "./pages/FilesPage";
 import { ViewsPage } from "./pages/ViewsPage";
 import { ConfigurationPage } from "./pages/ConfigurationPage";
+import { ConfigurationLayout } from "./components/ConfigurationLayout";
 // Lazy: rarely-visited admin / drill-down pages. Splitting these
 // out keeps the dashboard's initial bundle smaller. Each becomes
 // its own chunk; the chunk loads on first navigation.
@@ -69,6 +70,7 @@ const ApiTokensPage = lazy(() => import("./pages/ApiTokensPage").then((m) => ({ 
 const ActivityPage = lazy(() => import("./pages/ActivityPage").then((m) => ({ default: m.ActivityPage })));
 const SurfacesPage = lazy(() => import("./pages/SurfacesPage").then((m) => ({ default: m.SurfacesPage })));
 const DigifabPage = lazy(() => import("./pages/DigifabPage").then((m) => ({ default: m.DigifabPage })));
+const EdgeBridgesPage = lazy(() => import("./pages/EdgeBridgesPage").then((m) => ({ default: m.EdgeBridgesPage })));
 const PrintPage = lazy(() => import("./pages/PrintPage").then((m) => ({ default: m.PrintPage })));
 const MaintenancePage = lazy(() => import("./pages/MaintenancePage").then((m) => ({ default: m.MaintenancePage })));
 const UnitsPage = lazy(() => import("./pages/UnitsPage").then((m) => ({ default: m.UnitsPage })));
@@ -477,60 +479,74 @@ function ActiveOrgScopedRoutes() {
           <Route path="/assets/:id" element={<AssetsPage />} />
           <Route path="/purchases" element={<PurchasesPage />} />
           <Route path="/purchases/:id" element={<PurchasesPage />} />
-          <Route path="/configuration" element={<ConfigurationPage />} />
+          {/* Every /configuration/* page renders inside ConfigurationLayout —
+              a persistent grouped sidebar (2026-07 settings rework) so moving
+              between settings never bounces back through the hub. Routes are
+              unchanged; only the shell around them is new. */}
+          <Route element={<ConfigurationLayout />}>
+            <Route path="/configuration" element={<ConfigurationPage />} />
+            <Route path="/configuration/form-builder" element={<FormBuilderPage />} />
+            <Route path="/configuration/tokens" element={<ApiTokensPage />} />
+            <Route path="/configuration/surfaces" element={<SurfacesPage />} />
+            <Route path="/configuration/digifab" element={<DigifabPage />} />
+            <Route path="/configuration/edge" element={<EdgeBridgesPage />} />
+            <Route path="/configuration/print" element={<PrintPage />} />
+            <Route path="/configuration/maintenance" element={<MaintenancePage />} />
+            <Route path="/configuration/units" element={<UnitsPage />} />
+            <Route path="/configuration/backup" element={<BackupPage />} />
+            <Route path="/configuration/qr-tokens" element={<QrPage />} />
+            {/* Consolidated into the QR codes page (External rules tab). */}
+            <Route path="/configuration/scan-rules" element={<Navigate to="/configuration/qr-tokens?tab=rules" replace />} />
+            <Route path="/configuration/health" element={<HealthPage />} />
+            <Route path="/configuration/locations" element={<LocationsPage />} />
+            <Route path="/configuration/locations/:id" element={<LocationDetailPage />} />
+            <Route path="/configuration/templates" element={<TemplatesPage />} />
+            <Route path="/configuration/presentation" element={<PresentationPage />} />
+            <Route path="/configuration/integrations" element={<IntegrationsPage />} />
+            <Route path="/configuration/ai" element={<AiPage />} />
+            <Route path="/configuration/x/:panelId" element={<HostedPanelPage />} />
+            <Route path="/configuration/catalogs" element={<CatalogsPage />} />
+            <Route path="/configuration/catalogs/match" element={<CatalogMatchPage />} />
+            <Route path="/configuration/catalogs/:id" element={<CatalogDetailPage />} />
+            <Route path="/configuration/portal" element={<PortalConfigPage />} />
+            <Route path="/configuration/apps" element={<AppsConfigPage />} />
+            <Route path="/configuration/permissions" element={<PermissionsPage />} />
+            <Route path="/configuration/users" element={<UsersPage />} />
+            <Route path="/configuration/roles" element={<RolesPage />} />
+            <Route path="/configuration/openapi" element={<OpenApiPage />} />
+            <Route path="/configuration/queue" element={<QueuePage />} />
+            <Route path="/configuration/links" element={<LinksPage />} />
+          </Route>
           <Route path="/bindings" element={<BindingsPage />} />
           <Route path="/actions" element={<ActionsPage />} />
           <Route path="/bundles" element={<BundlesPage />} />
           <Route path="/build" element={<BuildPage />} />
           <Route path="/bundles/compose" element={<BundleComposerPage />} />
           <Route path="/fields" element={<FieldsPage />} />
-          <Route path="/configuration/form-builder" element={<FormBuilderPage />} />
-          <Route path="/configuration/tokens" element={<ApiTokensPage />} />
-          <Route path="/configuration/surfaces" element={<SurfacesPage />} />
           {/* digifab is a domain (bare module name) → the navbar links to its
               top path `/digifab`. Route it there as well as the Configuration
               deep-link, or the nav entry falls through to the home redirect. */}
           <Route path="/digifab" element={<DigifabPage />} />
-          <Route path="/configuration/digifab" element={<DigifabPage />} />
-          <Route path="/configuration/print" element={<PrintPage />} />
-          <Route path="/configuration/maintenance" element={<MaintenancePage />} />
-          <Route path="/configuration/units" element={<UnitsPage />} />
-          <Route path="/configuration/backup" element={<BackupPage />} />
           <Route path="/calendar" element={<CalendarPage />} />
-          <Route path="/configuration/qr-tokens" element={<QrPage />} />
-          {/* Consolidated into the QR codes page (External rules tab). */}
-          <Route path="/configuration/scan-rules" element={<Navigate to="/configuration/qr-tokens?tab=rules" replace />} />
-          <Route path="/configuration/health" element={<HealthPage />} />
-          <Route path="/configuration/locations" element={<LocationsPage />} />
-          <Route path="/configuration/locations/:id" element={<LocationDetailPage />} />
           {/* Nav alias — the synthetic "Locations" top routes here (useNavModules). */}
           <Route path="/locations" element={<LocationsPage />} />
           <Route path="/locations/:id" element={<LocationDetailPage />} />
-          <Route path="/configuration/templates" element={<TemplatesPage />} />
           <Route path="/scan" element={<ScanPage />} />
           <Route path="/scan/camera" element={<ScanCameraPage />} />
           {/* QR-label resolve inside the workspace: the in-app scanner
               navigates here on a label hit, and LandingRedirect rewrites
               bare /qr/<token> URLs into /w/<default>/qr/<token>. */}
           <Route path="/qr/*" element={<QrResolvePage />} />
-          <Route path="/configuration/presentation" element={<PresentationPage />} />
-          <Route path="/configuration/integrations" element={<IntegrationsPage />} />
-          <Route path="/configuration/ai" element={<AiPage />} />
-          <Route path="/configuration/x/:panelId" element={<HostedPanelPage />} />
-          <Route path="/configuration/catalogs" element={<CatalogsPage />} />
-          <Route path="/configuration/catalogs/match" element={<CatalogMatchPage />} />
-          <Route path="/configuration/catalogs/:id" element={<CatalogDetailPage />} />
           <Route path="/bricklink-connector" element={<BrickLinkPage />} />
           {/* Legacy alias — pre-rename. Bookmarks keep working. */}
           <Route path="/bricklink" element={<BrickLinkPage />} />
-          <Route path="/configuration/portal" element={<PortalConfigPage />} />
-          <Route path="/configuration/apps" element={<AppsConfigPage />} />
-          <Route path="/configuration/permissions" element={<PermissionsPage />} />
-          <Route path="/configuration/users" element={<UsersPage />} />
-          <Route path="/configuration/roles" element={<RolesPage />} />
-          <Route path="/configuration/openapi" element={<OpenApiPage />} />
-          <Route path="/configuration/queue" element={<QueuePage />} />
-          <Route path="/configuration/links" element={<LinksPage />} />
+          {/* "What's new" from the account menu. The authed app mounts under the
+              /w/:slug BASENAME, so the menu's <Link to="/changelog"> resolves to
+              /w/<slug>/changelog — which fell through to the workspace catch-all
+              (the link "did nothing"). The un-auth'd top-level /changelog route
+              (public feed) only serves signed-out visitors. Same page, workspace
+              chrome kept. */}
+          <Route path="/changelog" element={<ChangelogPage />} />
           <Route path="/search" element={<SearchPage />} />
           <Route path="/activity" element={<ActivityPage />} />
           <Route path="/me/activity" element={<MeActivityPage />} />

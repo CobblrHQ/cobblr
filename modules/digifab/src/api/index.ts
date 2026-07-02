@@ -2,6 +2,7 @@
 //   /api/v1/orgs/:slug/modules/digifab/.
 
 import { Router } from "express";
+import { platform } from "@cobblr/platform-contract";
 import { connectionsRouter } from "./connections.js";
 import { jobsRouter } from "./jobs.js";
 import { linksRouter } from "./links.js";
@@ -21,6 +22,17 @@ import { registerDeviceSeam } from "./device-provider.js";
 
 registerFarmResolvers();
 registerDeviceSeam(); // back platform().devices.getDriver + the digifab:run-command alias
+
+// Edge-bridge consumer: the generic Edge-bridges page renders this card, so a
+// user who already has a bridge connected sees "attach machine managers"
+// without the page hardcoding digifab.
+platform().edge.registerConsumer({
+  module: "digifab",
+  label: "Machine managers",
+  description:
+    "Attach the software that runs your machines — Klipper, PrusaLink, Duet, a LAN Bambu, LightBurn — through your bridge as edge-adapter connections.",
+  href: "/digifab",
+});
 
 const router = Router({ mergeParams: true });
 router.use("/connections", connectionsRouter);

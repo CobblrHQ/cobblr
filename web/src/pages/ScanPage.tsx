@@ -42,6 +42,7 @@ import { Modal, useImageSrc, useToast, usePageTitle } from "@cobblr/platform-web
 import { LocationPicker } from "../components/LocationPicker";
 import { ImageSearchPicker } from "../components/ImageSearchPicker";
 import { TrackedMatchBanner } from "../components/TrackedMatchBanner";
+import { BinAdjustModal } from "../components/BinAdjustModal";
 import { PairPhoneButton } from "../components/PairPhoneButton";
 import { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
 export { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
@@ -54,6 +55,7 @@ import {
   type ScanInboxItem,
   type ScanCandidate,
   type ScanMenuEntry,
+  type TrackedMatch,
 } from "../lib/api";
 import { matchParentType, readField } from "../lib/parent-type-match";
 import { useBarcodeWedge } from "../lib/useBarcodeWedge";
@@ -1068,6 +1070,22 @@ export function ScanPage() {
           locId &&
           (!resolved.org_slug || resolved.org_slug === activeSlug)
         ) {
+          // Single-SKU bin → straight to the qty-adjust card (the bin's QR is
+          // the item's only label). Multi-SKU / empty → filing flow below.
+          try {
+            const contents = await api.binContents(activeSlug, locId);
+            if (contents.single && contents.items[0]) {
+              const loc0 = (locsQ.data?.items ?? []).find((l) => l.id === locId);
+              setWedgeBinAdjust({
+                locationId: locId,
+                locationName: loc0 ? filingLabel(loc0) : "this bin",
+                item: contents.items[0],
+              });
+              return;
+            }
+          } catch {
+            /* contents unavailable → normal filing flow */
+          }
           const items = locsQ.data?.items ?? [];
           const byId = new Map(
             items.map((l) => [
@@ -1238,6 +1256,12 @@ export function ScanPage() {
       },
     });
   };
+  // Wedge-scanned a single-SKU bin's QR → the direct qty-adjust card.
+  const [wedgeBinAdjust, setWedgeBinAdjust] = useState<{
+    locationId: string;
+    locationName: string;
+    item: TrackedMatch;
+  } | null>(null);
   // Gallery view's focus modal: which item is open as a full triage card.
   const [galleryFocusId, setGalleryFocusId] = useState<string | null>(null);
   // Fold one scan session into the previous one (companion app merge-batches).
@@ -1846,6 +1870,19 @@ export function ScanPage() {
         )}
       </div>
 
+      {wedgeBinAdjust && (
+        <BinAdjustModal
+          locationId={wedgeBinAdjust.locationId}
+          locationName={wedgeBinAdjust.locationName}
+          item={wedgeBinAdjust.item}
+          onClose={() => setWedgeBinAdjust(null)}
+          onAddSomethingElse={() => {
+            setFileBin(wedgeBinAdjust.locationId);
+            toast.success(`Filing into ${wedgeBinAdjust.locationName} — scan the new item`);
+            setWedgeBinAdjust(null);
+          }}
+        />
+      )}
       {/* Gallery focus: the full triage card, pre-expanded, in a modal. */}
       {galleryFocusId &&
         (() => {
@@ -2402,6 +2439,16 @@ function InboxCard({
       lowTrust ||
       rateLimited ||
       (item.ai_confidence != null && Number(item.ai_confidence) < 0.5));
+  // "Where should this go?" — accept the suggested home (from where siblings
+  // live). One tap sets it as the item's filed location.
+  const acceptSuggestedLocation = useMutation({
+    mutationFn: () => api.updateScanItem(activeSlug, item.id, { target_location_id: item.suggested_location_id }),
+    onSuccess: () => {
+      toast.success(`Filed into ${item.suggested_location_note?.split(" — ")[0] ?? "the suggested spot"}`);
+      invalidateInbox();
+    },
+    onError: onErr,
+  });
   const markReviewed = useMutation({
     mutationFn: () => api.updateScanItem(activeSlug, item.id, { reviewed: true }),
     onSuccess: () => {
@@ -3012,6 +3059,21 @@ function InboxCard({
             {item.scan_area && (
               <span className="inline-flex items-center gap-1 text-muted dark:text-slate-400">
                 <MapPin size={11} className="text-accent" /> {item.scan_area}
+              </span>
+            )}
+            {/* Suggested home from where similar items live — one-tap accept.
+                Only when we have a suggestion and the user hasn't filed it yet. */}
+            {item.suggested_location_id && !item.target_location_id && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-moss-500/10 text-moss-700 dark:text-moss-400 px-2 py-0.5">
+                <MapPin size={11} /> Suggested: {item.suggested_location_note ?? "a spot"}
+                <button
+                  type="button"
+                  onClick={() => acceptSuggestedLocation.mutate()}
+                  disabled={acceptSuggestedLocation.isPending}
+                  className="ml-0.5 rounded bg-moss-600 hover:bg-moss-700 text-white px-1.5 py-0.5 text-[10px] transition disabled:opacity-50"
+                >
+                  {acceptSuggestedLocation.isPending ? "…" : "Put here"}
+                </button>
               </span>
             )}
             <span className="text-faint">Sanity-check on the web:</span>

@@ -60,6 +60,10 @@ export default {
           // raised. See web/src/index.css for how they're applied.
           800: "#1E293B",
           900: "#334155",
+          // 950: deep inset/well — darker than the 800 page background. Added
+          // 2026-07-02: dark:*-950 classes were silently generating NOTHING
+          // (palette stopped at 900), so light shades leaked into dark mode.
+          950: "#0F172A",
         },
         cobble: {
           DEFAULT: "#8B7355",
@@ -73,6 +77,7 @@ export default {
           700: "#544533",
           800: "#382E22",
           900: "#1C1711",
+          950: "#110D09",
         },
         mortar: {
           DEFAULT: "#E8E2D5",
@@ -95,6 +100,7 @@ export default {
           700: "#3F542F",
           800: "#29381F",
           900: "#141C0F",
+          950: "#0C120A",
         },
         ember: {
           DEFAULT: "#C7593E",
@@ -107,6 +113,8 @@ export default {
           600: "#7B3525",
           700: "#54241A",
           800: "#2D140E",
+          900: "#1F0D09",
+          950: "#140806",
         },
       },
       fontFamily: {

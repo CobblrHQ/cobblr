@@ -8,10 +8,11 @@
 
 import { Router } from "express";
 import { z } from "zod";
+import { platform } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { pollJob, sendJob, assignJob, buildDriverById } from "../jobs-core.js";
-import { enqueuePoll } from "../poll-worker.js";
+import { pollJob, sendJob, assignJob, buildDriverById, reverseBuildIfCommitted, TERMINAL } from "../jobs-core.js";
+import { enqueuePoll, reconcilePolls } from "../poll-worker.js";
 
 export const jobsRouter = Router({ mergeParams: true });
 
@@ -31,6 +32,7 @@ const JOB_COLS = [
   "attempts",
   "max_attempts",
   "progress",
+  "eta_sec",
   "error",
   "file_id",
   "linked_machine_id",
@@ -38,6 +40,7 @@ const JOB_COLS = [
   "linked_build_id",
   "build_qty",
   "build_consumed_at",
+  "build_reversed_at",
   "created_at",
   "updated_at",
   "last_polled_at",
@@ -102,15 +105,27 @@ jobsRouter.get(
         id: o.id, connection_id: o.connection_id, file_ref: o.file_ref ?? "(started on the printer)",
         target_device: o.serial, target_tag: null, target_pool: null,
         material_part_id: null, material_grams: null, remote_file_id: null, remote_job_id: null,
-        status: "printing", priority: 0, attempts: 0, max_attempts: 1, progress: null,
+        status: "printing", priority: 0, attempts: 0, max_attempts: 1, progress: null, eta_sec: null,
         error: null, file_id: null, linked_machine_id: null, linked_task_id: null,
-        linked_build_id: null, build_qty: 1, build_consumed_at: null,
+        linked_build_id: null, build_qty: 1, build_consumed_at: null, build_reversed_at: null,
         created_at: o.started_at ?? o.created_at, updated_at: o.started_at ?? o.created_at,
         last_polled_at: null, external: true,
       })) as typeof base;
       items = [...ext, ...base];
     }
-    res.json({ items, next_cursor });
+    // Total matching rows (ignoring pagination) so the UI's count can say
+    // "12 of 400", not just how many happen to be loaded.
+    const totalRow = await (status
+      ? tenantDb(req).selectFrom("digifab_jobs").select(({ fn }) => fn.countAll().as("n")).where("status", "=", status)
+      : tenantDb(req).selectFrom("digifab_jobs").select(({ fn }) => fn.countAll().as("n"))
+    ).executeTakeFirst();
+    // Self-heal dead poll chains: live jobs with a remote id but nothing pending
+    // on the poll queue get their polls re-enqueued (the UI refetches this route
+    // every 5s while jobs are active, so recovery is near-immediate and free
+    // when healthy). Detached — never slows the list response.
+    const live = base.filter((j) => !TERMINAL.has(j.status) && j.remote_job_id).map((j) => j.id);
+    void reconcilePolls(tenantContext(req).org.id, live).catch(() => {});
+    res.json({ items, next_cursor, total: Number(totalRow?.n ?? items.length) });
   }),
 );
 
@@ -204,15 +219,19 @@ jobsRouter.post(
     const ctx = tenantContext(req);
     const r = await sendJob(tenantDb(req), ctx.org.id, req.params.id!);
     if (!r.ok) {
-      const status = r.code === "already_sent" || r.code === "unknown_device" ? 409 : 404;
+      const status = r.code === "not_found" ? 404 : 409;
       const message =
         r.code === "already_sent"
           ? "job already sent"
-          : r.code === "unknown_device"
-            ? "target printer is not on this connection"
-            : r.code === "no_connection"
-              ? "connection missing"
-              : "no such job";
+          : r.code === "already_terminal"
+            ? "job already finished — use retry"
+            : r.code === "unknown_device"
+              ? "target printer is not on this connection"
+              : r.code === "file_missing"
+                ? "the job's stored file no longer exists"
+                : r.code === "no_connection"
+                  ? "connection missing"
+                  : "no such job";
       return void res.status(status).json({ error: { code: r.code, message } });
     }
     if (r.shouldPoll) await enqueuePoll(ctx.org.id, req.params.id!);
@@ -251,10 +270,111 @@ jobsRouter.post(
   }),
 );
 
+// ── RETRY — explicitly re-queue a terminal failed/cancelled job and send it
+// again. The deliberate path back from terminal (sendJob itself refuses terminal
+// statuses): resets the remote ids + error, then reuses the normal send/assign
+// machinery. A pool job goes back to the pool. The build link's consumed/reversed
+// stamps reset together: the fail/cancel already reversed the commit, so the
+// fresh send commits the materials again — one net commit per successful run.
+jobsRouter.post(
+  "/:id/retry",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const ctx = tenantContext(req);
+    const db = tenantDb(req);
+    const job = await db.selectFrom("digifab_jobs").select(["id", "status", "target_pool"]).where("id", "=", req.params.id!).executeTakeFirst();
+    if (!job) return void res.status(404).json({ error: { code: "not_found", message: "no such job" } });
+    if (job.status !== "failed" && job.status !== "cancelled") {
+      return void res.status(409).json({ error: { code: "not_retryable", message: "only a failed or cancelled job can be retried" } });
+    }
+    // A build whose consumption was reversed can commit again on this send.
+    await db
+      .updateTable("digifab_jobs")
+      .set({
+        status: "queued",
+        remote_job_id: null,
+        remote_file_id: null,
+        progress: 0,
+        error: null,
+        poll_errors: 0,
+        build_consumed_at: null,
+        build_reversed_at: null,
+        ...(job.target_pool ? { connection_id: null, target_device: null } : {}),
+        updated_at: new Date(),
+      })
+      .where("id", "=", job.id)
+      .execute();
+    if (job.target_pool) {
+      const { kickAssign } = await import("../assign-worker.js");
+      await kickAssign(ctx.org.id);
+      return void res.json({ status: "queued", pooled: true });
+    }
+    const r = await sendJob(db, ctx.org.id, job.id);
+    if (!r.ok) {
+      // Left queued — the user can fix the cause and Send manually.
+      return void res.json({ status: "queued", sent: false, reason: r.code });
+    }
+    if (r.shouldPoll) await enqueuePoll(ctx.org.id, job.id);
+    res.json({ status: r.status, sent: true, remote_job_id: r.remoteJobId });
+  }),
+);
+
+// ── REPRINT — "print this again": CLONE a (typically completed) job into a
+// fresh queued one and send it. Distinct from retry (which re-runs the SAME
+// terminal-failed row in place): the source job's history stays untouched, and
+// the clone carries everything that made the print reproducible — file, routing,
+// material draw, build link (fresh commit stamps), priority, retry cap.
+jobsRouter.post(
+  "/:id/reprint",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const ctx = tenantContext(req);
+    const db = tenantDb(req);
+    const src = await db.selectFrom("digifab_jobs").selectAll().where("id", "=", req.params.id!).executeTakeFirst();
+    if (!src) return void res.status(404).json({ error: { code: "not_found", message: "no such job" } });
+    const clone = await db
+      .insertInto("digifab_jobs")
+      .values({
+        connection_id: src.target_pool ? null : src.connection_id,
+        file_ref: src.file_ref,
+        target_device: src.target_pool ? null : src.target_device,
+        target_tag: src.target_tag,
+        target_pool: src.target_pool,
+        material_part_id: src.material_part_id,
+        material_grams: src.material_grams,
+        file_id: src.file_id,
+        linked_machine_id: src.linked_machine_id,
+        linked_task_id: src.linked_task_id,
+        linked_build_id: src.linked_build_id,
+        build_qty: src.build_qty,
+        priority: src.priority,
+        max_attempts: src.max_attempts,
+      })
+      .returning(JOB_COLS)
+      .executeTakeFirstOrThrow();
+    if (src.target_pool) {
+      const { kickAssign } = await import("../assign-worker.js");
+      await kickAssign(ctx.org.id);
+      return void res.json({ job: clone, status: "queued", pooled: true });
+    }
+    const r = await sendJob(db, ctx.org.id, clone.id);
+    if (!r.ok) {
+      // Clone stays queued (e.g. its stored file was deleted) — visible in the
+      // queue with the reason, sendable manually once fixed.
+      return void res.json({ job: clone, status: "queued", sent: false, reason: r.code });
+    }
+    if (r.shouldPoll) await enqueuePoll(ctx.org.id, clone.id);
+    res.json({ job: clone, status: r.status, sent: true, remote_job_id: r.remoteJobId });
+  }),
+);
+
 // ── manual poll (a "refresh status" button; the worker does this too) ──
+// Mutates job state (status/progress/attention), so it takes the same roles as
+// the other job mutations — it was unauthenticated-role before the audit.
 jobsRouter.post(
   "/:id/poll",
   asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin")) return;
     const ctx = tenantContext(req);
     const result = await pollJob(tenantDb(req), ctx.org.id, req.params.id!);
     if (!result) return void res.status(409).json({ error: { code: "not_pollable", message: "job has no farm job id yet" } });
@@ -266,7 +386,6 @@ jobsRouter.post(
 // the poll loop. Best-effort tells the manager to abort where the driver supports
 // it; otherwise it's local-only (the physical print may keep running — stop it at
 // the machine). Refuses to "cancel" an already-terminal job.
-const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
 jobsRouter.post(
   "/:id/cancel",
   asyncHandler(async (req, res) => {
@@ -275,7 +394,7 @@ jobsRouter.post(
     const db = tenantDb(req);
     const job = await db.selectFrom("digifab_jobs").select(["id", "status", "connection_id", "remote_job_id"]).where("id", "=", req.params.id!).executeTakeFirst();
     if (!job) return void res.status(404).json({ error: { code: "not_found", message: "no such job" } });
-    if (TERMINAL_STATUSES.has(job.status)) return void res.status(409).json({ error: { code: "already_terminal", message: `job is ${job.status}` } });
+    if (TERMINAL.has(job.status)) return void res.status(409).json({ error: { code: "already_terminal", message: `job is ${job.status}` } });
 
     // Best-effort: ask the manager to abort if the driver + the job support it.
     let remoteCancelled = false;
@@ -291,6 +410,9 @@ jobsRouter.post(
       }
     }
     await db.updateTable("digifab_jobs").set({ status: "cancelled", updated_at: new Date() }).where("id", "=", job.id).execute();
+    // A cancelled job never produces its build — undo the send-time commit
+    // (idempotent no-op when nothing was committed).
+    await reverseBuildIfCommitted(db, ctx.org.id, job.id, "print cancelled");
     res.json({ status: "cancelled", remote_cancelled: remoteCancelled });
   }),
 );
@@ -303,7 +425,7 @@ async function controlJob(req: import("express").Request, res: import("express")
   const db = tenantDb(req);
   const job = await db.selectFrom("digifab_jobs").select(["id", "status", "connection_id", "remote_job_id"]).where("id", "=", req.params.id!).executeTakeFirst();
   if (!job) return void res.status(404).json({ error: { code: "not_found", message: "no such job" } });
-  if (TERMINAL_STATUSES.has(job.status)) return void res.status(409).json({ error: { code: "already_terminal", message: `job is ${job.status}` } });
+  if (TERMINAL.has(job.status)) return void res.status(409).json({ error: { code: "already_terminal", message: `job is ${job.status}` } });
   if (!job.connection_id || !job.remote_job_id) return void res.status(409).json({ error: { code: "not_running", message: "job isn't on a printer yet" } });
   const driver = await buildDriverById(db, ctx.org.id, job.connection_id);
   if (action === "pause") {
@@ -330,8 +452,11 @@ jobsRouter.delete(
     const db = tenantDb(req);
     const job = await db.selectFrom("digifab_jobs").select(["id", "status"]).where("id", "=", req.params.id!).executeTakeFirst();
     if (!job) return void res.status(404).json({ error: { code: "not_found", message: "no such job" } });
-    if (job.status === "sent" || job.status === "printing") {
-      return void res.status(409).json({ error: { code: "active", message: "cancel the job before deleting (it's still on a printer)" } });
+    // `paused` is physically mid-print too, and an `unknown`-status job may be —
+    // anything that isn't locally terminal or pre-send must be cancelled first,
+    // so a live print can't silently vanish from tracking.
+    if (!["queued", "awaiting-assignment", "completed", "failed", "cancelled"].includes(job.status)) {
+      return void res.status(409).json({ error: { code: "active", message: "cancel the job before deleting (it may still be on a printer)" } });
     }
     await db.deleteFrom("digifab_jobs").where("id", "=", job.id).execute();
     res.status(204).end();

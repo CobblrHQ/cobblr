@@ -58,6 +58,9 @@ export function MembersModal({ open, onClose, slug }: Props) {
   // "workspace" = join THIS workspace as a member; "platform" = start their own
   // Cobblr (their own fresh workspace). The two are genuinely different invites.
   const [inviteKind, setInviteKind] = useState<"workspace" | "platform">("workspace");
+  // Platform invite: optionally seed the invitee's brand-new workspace with a
+  // copy of THIS workspace's setup (its blueprint — config only, no data).
+  const [seedFromHere, setSeedFromHere] = useState(false);
 
   const createInvite = useMutation({
     mutationFn: () =>
@@ -85,7 +88,7 @@ export function MembersModal({ open, onClose, slug }: Props) {
   // Platform invite: mint a "start your own Cobblr" link (their own workspace),
   // attributed to this owner. Copies the /join link to the clipboard.
   const createSignupInvite = useMutation({
-    mutationFn: () => api.mintMySignupInvite({ email: inviteEmail.trim() || undefined }),
+    mutationFn: () => api.mintMySignupInvite({ email: inviteEmail.trim() || undefined, ...(seedFromHere ? { from_workspace: slug } : {}) }),
     onSuccess: (inv) => {
       const sentTo = inviteEmail.trim();
       setInviteEmail("");
@@ -380,11 +383,27 @@ export function MembersModal({ open, onClose, slug }: Props) {
                 in-app if they already have an account); it's copied to your clipboard either way.
               </p>
             ) : (
-              <p className="text-[11px] text-faint dark:text-slate-500 leading-relaxed">
-                They get their <span className="font-semibold">own</span> brand-new Cobblr workspace — they are{" "}
-                <span className="font-semibold">not</span> added to {displaySlug(slug)}. Best for inviting a friend to
-                try Cobblr. We email the join link if you add an address; it's copied to your clipboard too.
-              </p>
+              <>
+                <label className="flex items-start gap-2 text-xs text-content dark:text-mortar-200 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={seedFromHere}
+                    onChange={(e) => setSeedFromHere(e.target.checked)}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    <span className="font-medium">Send them a premade workspace</span> — seed their new workspace with a
+                    copy of <span className="font-semibold">{displaySlug(slug)}</span>'s setup (modules, trackers, fields,
+                    views — <span className="font-semibold">no data</span>). Configure this workspace for them first,
+                    then mint.
+                  </span>
+                </label>
+                <p className="text-[11px] text-faint dark:text-slate-500 leading-relaxed">
+                  They get their <span className="font-semibold">own</span> brand-new Cobblr workspace — they are{" "}
+                  <span className="font-semibold">not</span> added to {displaySlug(slug)}. Best for inviting a friend to
+                  try Cobblr. We email the join link if you add an address; it's copied to your clipboard too.
+                </p>
+              </>
             )}
           </form>
         )}

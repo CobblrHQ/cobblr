@@ -33,7 +33,7 @@ export interface TrackedMatch {
   /** Where it lives now — shown on the banner ("· 📍Garage Shelf") and used
    *  by move-mode to skip entities already in the active bin (companion app parity). */
   location_id: string | null;
-  matched_by: "barcode" | "name";
+  matched_by: "barcode" | "name" | "bin";
 }
 
 const STOP = new Set([
@@ -57,7 +57,7 @@ function metaBarcode(fields: Record<string, unknown>): string | null {
 function toMatch(
   e: { kind: string; id: string; title: string; subtitle?: string; image_path?: string; detailUrl?: string; fields: Record<string, unknown> },
   info: { noun: string; qtyField: string },
-  matchedBy: "barcode" | "name",
+  matchedBy: "barcode" | "name" | "bin",
 ): TrackedMatch {
   const rawQty = e.fields[info.qtyField];
   const qty = typeof rawQty === "number" ? rawQty : Number(rawQty);
@@ -154,4 +154,36 @@ export async function findTracked(
   }
 
   return { barcode_matches: barcodeMatches, name_matches: nameMatches };
+}
+
+/** Everything that LIVES in one bin (location), across the scannable kinds.
+ *  The single-SKU-bin shortcut (scan the bin's QR → adjust that item's count
+ *  directly): `single` is true when EXACTLY one item calls this bin home — its
+ *  qty IS the bin count (Cobblr multi-location = one row per location, so the
+ *  count is bin-scoped by construction). Derived, never declared: drop a second
+ *  SKU in the bin and the shortcut stops firing on its own. Same defensive
+ *  post-verify as the barcode tier — a resolver that ignores the location_id
+ *  filter can't fake a single-SKU bin. */
+export async function findBinContents(
+  orgId: string,
+  locationId: string,
+): Promise<{ items: TrackedMatch[]; single: boolean }> {
+  const kinds = platform().entities.listScannable();
+  const perKind = await Promise.all(
+    kinds.map(async (k) => {
+      try {
+        const res = await platform().entities.list(orgId, k.kind, {
+          filter: { location_id: locationId },
+          limit: 6,
+        });
+        return res.items
+          .filter((e) => typeof e.fields.location_id === "string" && e.fields.location_id === locationId)
+          .map((e) => toMatch(e, k, "bin"));
+      } catch {
+        return [];
+      }
+    }),
+  );
+  const items = perKind.flat();
+  return { items, single: items.length === 1 };
 }

@@ -9,12 +9,17 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "labels",
-  version: "0.4.0",
+  version: "0.4.1",
   displayName: "Labels",
   description:
     "QR codes, label templates, per-user print queue. Polymorphic — any module's entity can have a label.",
   icon: "tag",
   band: "stock",
+  // An operator, not a trackable kind: labels are printed FOR things
+  // (parts, assets, machines) — nobody "tracks labels". Keeps it out of
+  // the funnel's "track a kind of thing" column; recipes offer label
+  // printing as an opt-in feature instead.
+  operatesOn: ["inventory", "assets", "machines"],
 
   schema: {
     tablePrefix: "labels_",

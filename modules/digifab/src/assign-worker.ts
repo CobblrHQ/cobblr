@@ -116,11 +116,23 @@ export async function assignPoolJobs(db: Kysely<DigifabDB>, orgId: string): Prom
       if (!dev || !dev.enabled || classify(dev.state ?? "") !== "idle") continue;
 
       // Assign: stamp the connection + device, then send through the shared path.
-      await db
+      // Status-guarded CLAIM — two overlapping passes (a slow tick overrunning the
+      // next, or kickAssign racing the 15s re-tick) both read the same `queued`
+      // job; only the pass that flips queued→assigning owns it. The loser skips,
+      // so one job can never be physically sent to two printers.
+      const claim = await db
         .updateTable("digifab_jobs")
-        .set({ connection_id: m.connection_id, target_device: m.remote_device_id, updated_at: new Date() })
+        .set({ connection_id: m.connection_id, target_device: m.remote_device_id, status: "assigning", updated_at: new Date() })
         .where("id", "=", job.id)
-        .execute();
+        .where("status", "=", "queued")
+        .executeTakeFirst();
+      if (Number(claim.numUpdatedRows ?? 0n) === 0) {
+        resolved = true; // another pass owns it
+        break;
+      }
+      // The job rides through sendJob as `assigning` (not terminal, so sendJob
+      // accepts it; not `queued`, so no concurrent pass can re-claim it). sendJob
+      // flips it to sent/awaiting-assignment; a failure path marks it failed.
       // F-3: a send that returns {ok:false} OR throws must be surfaced on the job
       // (status:failed + error), NOT silently treated as "assigned" — and a throw
       // must not reject the whole pass and stall every other queued job.

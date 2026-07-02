@@ -17,13 +17,29 @@
 //   - {rel,dir?,kind?} → walk entity_pairings from the source,
 //                invoke the action once per discovered target.
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { sourceIdKey, type ActionInvokeActor } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
 import { invoke } from "./actions.js";
 import { lookup, walkPairings } from "./entities.js";
 import { render } from "./templates.js";
 import { log as logActivity } from "./activity.js";
+import { parseWireFilter, passesWireFilter } from "./wire-filter.js";
 import { currentActor } from "../lib/request-context.js";
+
+// Cycle guard. A wire's action may emit() further events — that's how
+// multi-step wires compose — but nothing stops a user-authored cycle
+// (e.g. a wire on inventory.stock.changed whose action is
+// inventory:adjust-stock on self: the action re-emits the trigger and
+// the chain never ends). Firing depth rides an AsyncLocalStorage so it
+// survives the async hops between fireEvent → invoke → emit → fireEvent
+// without threading a parameter through module code. Past
+// MAX_WIRE_DEPTH the engine refuses to fire, writes one
+// wire_depth_exceeded activity row (visible on /activity and the
+// /wires firings panel), and lets the chain settle. 8 is far above any
+// legitimate chain — the deepest shipped bundle composes 2.
+const wireDepth = new AsyncLocalStorage<number>();
+const MAX_WIRE_DEPTH = 8;
 
 type WireTargetDecl =
   | "self"
@@ -128,6 +144,46 @@ export async function fireEvent(
     .execute();
   if (bindings.length === 0) return;
 
+  const depth = wireDepth.getStore() ?? 0;
+  if (depth >= MAX_WIRE_DEPTH) {
+    console.error(
+      `[wires] firing depth ${depth} reached on ${eventName} — ` +
+        `likely a wire cycle; refusing to fire ${bindings.length} binding(s)`,
+    );
+    try {
+      await logActivity({
+        orgId,
+        userId: null,
+        action: "wire_depth_exceeded",
+        ref: { module: null, entityType: "binding", entityId: bindings[0]!.id },
+        diff: {
+          event: eventName,
+          depth,
+          skipped_bindings: bindings.map((b) => ({ id: b.id, action: b.action_id })),
+        },
+      });
+    } catch {
+      /* swallow — guard logging is best-effort */
+    }
+    return;
+  }
+  await wireDepth.run(depth + 1, () => fireBindings(eventName, orgId, payload, bindings));
+}
+
+async function fireBindings(
+  eventName: string,
+  orgId: string,
+  payload: Record<string, unknown>,
+  bindings: Array<{
+    id: string;
+    source_kind: string;
+    action_id: string;
+    template: string | null;
+    filter: unknown;
+    args: unknown;
+    target: unknown;
+  }>,
+): Promise<void> {
   // Resolve the request actor once per fire — every target of the
   // same firing shares the originating user/token (same audit identity).
   const actor = await resolveActor();
@@ -184,6 +240,17 @@ export async function fireEvent(
             trigger_type: "event" as const,
           },
         };
+        // Wire CONDITION (B7): a structured predicate over the same data
+        // the template sees. All conditions must hold or this target is
+        // skipped — silently, like an event that matched no wire (a
+        // condition doing its job isn't a failure). A malformed stored
+        // filter (pre-validation rows, hand-written SQL) fails SAFE to
+        // "no filter" with a console warning rather than killing firings.
+        const { filter, error: filterErr } = parseWireFilter(b.filter);
+        if (filterErr) {
+          console.warn(`[wires] binding ${b.id} carries a malformed filter (ignored): ${filterErr}`);
+        }
+        if (!passesWireFilter(filter, templateData)) continue;
         if (b.template) {
           rendered = render(b.template, templateData);
         }

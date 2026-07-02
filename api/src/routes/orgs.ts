@@ -21,6 +21,7 @@ import { withTenant } from "../middleware/tenant.js";
 import * as activity from "../platform/activity.js";
 import * as notifications from "../platform/notifications.js";
 import { provisionOrgForUser } from "./auth.js";
+import { applyBlueprint, BlueprintManifest } from "./blueprint.js";
 import { provisionAppWorkspace, ProvisionAppError, refreshManagedApp, importAppData } from "../platform/provision-app.js";
 import { checkEntitlement } from "../platform/hosted-seams.js";
 import { disableModuleForOrg, enableModuleForOrg } from "../modules/enable.js";
@@ -60,6 +61,10 @@ const CreateOrgBody = z.object({
   // override; production resolves the bundle from the registry server-side.
   app: z.string().min(1).optional(),
   manifest: z.unknown().optional(),
+  /** Optional workspace blueprint (routes/blueprint.ts manifest) applied
+   *  right after provisioning — "a friend sent me their setup; make me a new
+   *  workspace from it". Mutually exclusive with `app`. */
+  blueprint: z.unknown().optional(),
 });
 
 // POST /orgs — create a new workspace for the current user. The user
@@ -92,6 +97,9 @@ orgsRouter.get("/:slug/modules", requireAuth, withTenant, async (req, res, next)
         // thing" funnel offers it). Surfaced from the manifest so the funnel
         // stops hardcoding the set. (Audit 2026-06-26 follow-up.)
         instanceability: m.instanceability,
+        // Non-empty → an operator/capability (acts ON these modules'
+        // things), not a trackable kind; the funnel's col 1 excludes it.
+        operates_on: m.operatesOn,
         // Icon-only quick-action for the navbar's right cluster (only
         // surfaced when the module is enabled — the web filters on that).
         headerAction: m.headerAction ?? null,
@@ -457,6 +465,31 @@ orgsRouter.post("/", requireAuth, async (req, res, next) => {
     } else {
       ({ orgId, slug } = await provisionOrgForUser(req.session!.id, parsed.data.name));
     }
+    // Seed the fresh workspace from a blueprint (validated; the caller is the
+    // brand-new org's owner, so the same trust as the Settings→Blueprint
+    // import applies). A bad manifest fails the request BEFORE anything else
+    // sees the workspace — the org exists but is empty, same as a plain create.
+    let blueprintApplied: { name: string } | null = null;
+    if (parsed.data.blueprint !== undefined && !parsed.data.app) {
+      const bp = BlueprintManifest.safeParse(parsed.data.blueprint);
+      if (!bp.success) {
+        res.status(400).json({
+          error: { code: "invalid_blueprint", message: "Blueprint manifest failed validation", details: bp.error.issues },
+        });
+        return;
+      }
+      await applyBlueprint(
+        orgId,
+        {
+          id: req.session!.id,
+          display_name: req.session!.display_name ?? null,
+          auth_method: req.session!.auth_method,
+          api_token_id: req.session!.api_token_id ?? null,
+        },
+        bp.data,
+      );
+      blueprintApplied = { name: bp.data.name };
+    }
     const row = await meta
       .selectFrom("org_memberships as m")
       .innerJoin("orgs as o", "o.id", "m.org_id")
@@ -464,7 +497,7 @@ orgsRouter.post("/", requireAuth, async (req, res, next) => {
       .where("m.user_id", "=", req.session!.id)
       .where("o.id", "=", orgId)
       .executeTakeFirstOrThrow();
-    res.status(201).json({ org: row, slug });
+    res.status(201).json({ org: row, slug, ...(blueprintApplied ? { blueprint_applied: blueprintApplied } : {}) });
   } catch (err) {
     if (err instanceof ProvisionAppError) {
       res.status(400).json({ error: { code: err.code, message: err.message, details: err.detail } });

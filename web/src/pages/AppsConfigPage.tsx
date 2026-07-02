@@ -11,9 +11,11 @@ import { Plus, Trash2, ArrowUp, ArrowDown, ExternalLink } from "lucide-react";
 import { Modal, useConfirm, usePageTitle, useToast } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ThemeEditor } from "../components/ThemeEditor";
+import { CustomBlock } from "./AppPlayerPage";
 import {
   api,
   type AppBlock,
+  type AppTheme,
   type AppPage,
   type WorkspaceApp,
   type WorkspaceAppMeta,
@@ -313,6 +315,9 @@ export function AppsConfigPage() {
                           views={views.data?.items ?? []}
                           kinds={(kinds.data?.items ?? []).map((k) => k.id)}
                           onChange={(b) => updateBlock(pi, bi, b)}
+                          slug={slug}
+                          appSlug={editing.slug}
+                          appTheme={editing.theme ?? null}
                         />
                       </div>
                       <button type="button" onClick={() => removeBlock(pi, bi)} className="text-faint hover:text-ember-500 p-1">
@@ -375,12 +380,25 @@ function BlockEditor({
   views,
   kinds,
   onChange,
+  slug,
+  appSlug,
+  appTheme,
 }: {
   block: AppBlock;
   views: { id: string; name: string; entity_kind: string }[];
   kinds: string[];
   onChange: (b: AppBlock) => void;
+  slug: string;
+  appSlug: string;
+  appTheme: AppTheme | null;
 }) {
+  // B3 — live preview for custom blocks: the player's real sandbox, on
+  // demand. previewNonce keys the iframe so "refresh" remounts it with the
+  // CURRENT html (a per-keystroke remount would re-mint tokens + lose the
+  // block's own state mid-typing).
+  const [showPreview, setShowPreview] = useState(false);
+  const [previewNonce, setPreviewNonce] = useState(0);
+  const [previewHtml, setPreviewHtml] = useState<string | null>(null);
   const labelCls = "text-[10px] font-mono uppercase tracking-widest text-faint";
   const inputCls = "w-full px-2 py-1 text-xs border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900";
   const ViewSelect = ({ value, onPick }: { value: string; onPick: (v: string) => void }) => (
@@ -439,6 +457,47 @@ function BlockEditor({
             rows={6}
             className={inputCls + " font-mono text-[11px]"}
           />
+          <div className="flex items-center gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => {
+                setPreviewHtml(block.html);
+                setShowPreview((v) => !v);
+                setPreviewNonce((n) => n + 1);
+              }}
+              className="text-[11px] text-accent hover:underline"
+            >
+              {showPreview ? "▾ hide live preview" : "▸ live preview"}
+            </button>
+            {showPreview && (
+              <button
+                type="button"
+                onClick={() => {
+                  setPreviewHtml(block.html);
+                  setPreviewNonce((n) => n + 1);
+                }}
+                className="text-[11px] text-faint hover:text-accent transition"
+              >
+                ↻ refresh with current code
+              </button>
+            )}
+          </div>
+          {showPreview && previewHtml !== null && (
+            <div className="pt-1">
+              {/* The REAL sandbox + bridge the player uses — reads are live
+                  and scoped to YOUR capabilities, so what you see is what a
+                  member with your access gets. Unsaved edits preview via the
+                  refresh button; saving is still what ships them. */}
+              <CustomBlock
+                key={previewNonce}
+                slug={slug}
+                appSlug={appSlug}
+                html={previewHtml}
+                height={280}
+                theme={appTheme}
+              />
+            </div>
+          )}
         </div>
       )}
     </div>

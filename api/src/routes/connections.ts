@@ -8,6 +8,7 @@
 // values).
 
 import { Router } from "express";
+import { platform } from "@cobblr/platform-contract";
 import { z } from "zod";
 import { meta } from "../db/meta.js";
 import { requireAuth } from "../auth/middleware.js";
@@ -100,6 +101,12 @@ async function notifyOwnersOfOffers(
 // so the "add a personal connection" form can render the right credential fields.
 connectionsRouter.get("/me/connections/catalogue", requireAuth, (_req, res) => {
   res.json({ items: aiImpl.listProviders() });
+});
+
+// Is MY personal edge agent connected right now? Drives the transit hint in
+// the add-a-connection dialog (a bridge-transit provider routes through it).
+connectionsRouter.get("/me/edge-agent", requireAuth, (req, res) => {
+  res.json({ connected: platform().edge.hasChannel(req.session!.id) });
 });
 
 connectionsRouter.get("/me/connections", requireAuth, async (req, res, next) => {

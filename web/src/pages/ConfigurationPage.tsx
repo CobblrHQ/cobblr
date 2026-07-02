@@ -8,43 +8,25 @@
 // dark mode, language, profile). Configuration changes how the
 // workspace operates; settings change how you personally see it.
 
-import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
-  Activity,
   ArrowUpCircle,
-  Boxes,
   ChevronRight,
-  FileArchive,
-  FileText,
-  Files,
   Eye,
-  Globe,
-  HeartPulse,
-  KeyRound,
-  LayoutGrid,
-  LayoutList,
-  Library,
-  CopyPlus,
-  FolderPlus,
-  Link2,
-  ListTodo,
-  MapPin,
-  MousePointerClick,
-  Package,
-  Plug,
-  Printer,
-  QrCode,
-  Ruler,
   Search,
-  Sliders,
-  Sparkles,
-  Tag,
-  Shield,
-  Users,
-  Wrench,
+  UserCircle,
   X,
+  type LucideIcon,
 } from "lucide-react";
+import {
+  CONFIG_DESTINATIONS,
+  CONFIG_GROUPS,
+  CONFIG_GROUP_ORDER,
+  LEGACY_GROUP_MAP,
+  destinationMatches,
+  type ConfigGroup,
+} from "../lib/configuration-nav";
 import { ModulePickerModal } from "../components/ModulePickerModal";
 import { MembersModal } from "../components/MembersModal";
 import { NewThingFunnelModal } from "../components/NewThingFunnelModal";
@@ -57,53 +39,31 @@ import { api, setFocused, isFocused } from "../lib/api";
 import { iconForName as iconForPanel } from "../lib/panel-icons";
 import { useBundleUpdates } from "../lib/useBundleUpdates";
 
+// Tiles are derived from the ONE registry in lib/configuration-nav.ts (shared
+// with the ConfigurationLayout sidebar) — this local shape just resolves a
+// destination's `modal` id into an onClick for the hub's modals. The
+// primary/advanced split and the search keywords live on the registry.
 interface Tile {
-  icon: typeof Wrench;
+  icon: LucideIcon;
   label: string;
   description: string;
   to?: string;
   onClick?: () => void;
-  /** Section the tile belongs to, used for the grouped layout. */
-  group: "modules" | "data" | "access" | "extend" | "admin";
+  group: ConfigGroup;
+  primary?: boolean;
+  keywords?: string[];
 }
 
-// The everyday handful most workspaces actually touch. Everything else is real
-// but rarely-visited, so it's tucked behind "Show advanced settings" — the page
-// reads as a short menu (~11 tiles), not a 35-card wall (feedback b746e0e4).
-// Matched by label, so a tile lands in "advanced" simply by NOT being listed
-// here. Search ignores the split and always searches every tile.
-const PRIMARY_TILES = new Set<string>([
-  "+ New thing in workspace",
-  "Modules",
-  "Bundles",
-  "Saved views",
-  "Tags",
-  "Locations",
-  "Custom fields",
-  "Form builder",
-  "Members + invites",
-  "AI",
-  "Integrations",
-]);
-
-const GROUP_LABELS: Record<Tile["group"], string> = {
-  modules: "set up your workspace",
-  data: "customize your data",
-  access: "people & access",
-  extend: "connect & automate",
-  admin: "system & diagnostics",
-};
-const GROUP_ORDER: Tile["group"][] = ["modules", "data", "access", "extend", "admin"];
-// Groups open on arrival — but each shows only its PRIMARY tiles (~11 total),
-// so the page reads as a short, fully-visible menu rather than a 35-card wall.
-// The other two dozen settings stay behind "Show advanced settings". (`admin`
-// has no primary tiles, so it doesn't render at all until advanced is on.)
-const DEFAULT_OPEN: Record<Tile["group"], boolean> = {
-  modules: true,
+// Groups open on arrival — each shows only its PRIMARY tiles (~11 total), so
+// the page reads as a short, fully-visible menu rather than a 35-card wall.
+// The other two dozen settings stay behind "Show advanced settings".
+const DEFAULT_OPEN: Record<ConfigGroup, boolean> = {
+  setup: true,
   data: true,
   access: true,
-  extend: true,
-  admin: true,
+  automation: true,
+  devices: true,
+  system: true,
 };
 
 /** Owner/admin control to flip the workspace into (or out of) FOCUSED mode —
@@ -169,6 +129,7 @@ export function ConfigurationPage() {
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(DEFAULT_OPEN);
   const [query, setQuery] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
   const focused = isFocused(activeOrg);
 
   // Hosted-only settings panels (billing, Slack, …) contributed by the cloud
@@ -187,322 +148,70 @@ export function ConfigurationPage() {
     staleTime: 5 * 60_000,
   });
 
-  const tiles: Tile[] = [
-    // ── modules + bundles ──────────────────────────────────────────
-    {
-      group: "modules",
-      icon: FolderPlus,
-      label: "+ New thing in workspace",
-      description:
-        "Add a new top-level entity to your workspace. Pick whether it's a sub-category of something existing or its own separate thing.",
-      onClick: () => setNewThingOpen(true),
-    },
-    {
-      group: "modules",
-      icon: Boxes,
-      label: "Modules",
-      description:
-        "Enable / disable modules and their specialisations for this workspace.",
-      onClick: () => setModulesOpen(true),
-    },
-    {
-      group: "modules",
-      icon: Package,
-      label: "Bundles",
-      description:
-        "One-click presets that ship a set of custom fields and wires. Browse the featured catalog, paste a manifest, or export your own.",
-      to: "/bundles",
-    },
-    // ── your data ──────────────────────────────────────────────────
-    {
-      group: "data",
-      icon: LayoutList,
-      label: "Saved views",
-      description:
-        "List / table / kanban views over your entities. Saved here, renderable from the dashboard, publishable as public surfaces.",
-      to: "/views",
-    },
-    {
-      group: "data",
-      icon: Tag,
-      label: "Tags",
-      description:
-        "Cross-cutting labels you can attach to anything. Filter by tag in saved views or searches.",
-      to: "/tags",
-    },
-    {
-      group: "data",
-      icon: LayoutGrid,
-      label: "Presentation",
-      description:
-        "Rename / re-icon / hide / reorder any nav entry in your workspace. Workspace edits override module + bundle defaults.",
-      to: "/configuration/presentation",
-    },
-    {
-      group: "data",
-      icon: MapPin,
-      label: "Locations",
-      description:
-        "Hierarchical tree of physical places — rooms, shelves, bins. Everything tangible (machines, assets, parts) can point at a row here.",
-      to: "/configuration/locations",
-    },
-    {
-      group: "data",
-      icon: Library,
-      label: "Catalogs",
-      description:
-        "Imported reference datasets (Rebrickable parts, McMaster, USDA, ISBN). Your own entities can be matched to entries inside a catalog so the catalog's photo + metadata appears alongside.",
-      to: "/configuration/catalogs",
-    },
-    {
-      group: "data",
-      icon: Files,
-      label: "Files",
-      description:
-        "Uploaded photos / docs. Files attach to entities via the Tags + Files panel on each detail page.",
-      to: "/files",
-    },
-    {
-      group: "data",
-      icon: Sliders,
-      label: "Custom fields",
-      description:
-        "Per-entity-kind custom field defs — text, number, date, url, dropdown choices, or computed (a read-only {{ }} template over the entity's fields + related data).",
-      to: "/fields",
-    },
-    {
-      group: "data",
-      icon: LayoutList,
-      label: "Form builder",
-      description:
-        "Visually drag your custom fields into order and group them under section headings (Specs, Purchase info…). The layout shows on every create/edit form.",
-      to: "/configuration/form-builder",
-    },
-    {
-      group: "data",
-      icon: Ruler,
-      label: "Units",
-      description:
-        "The workspace unit vocabulary — built-in units (gram/g, meter/m, each/ea) plus your own. Pick whether quantities show the shorthand symbol, the full word, or both.",
-      to: "/configuration/units",
-    },
-    {
-      group: "data",
-      icon: CopyPlus,
-      label: "Templates",
-      description:
-        "Per-workspace entity templates — stamp out new parts / assets / machines pre-filled with defaults + tags. \"Household appliance template\" / \"new Voron printer\" / \"Lego set acquired\".",
-      to: "/configuration/templates",
-    },
-    {
-      group: "data",
-      icon: Wrench,
-      label: "Maintenance",
-      description:
-        "Workspace-wide service log — everything scheduled, what's overdue, and the full history across every machine / asset / part. Complete, edit, or delete entries in one place.",
-      to: "/configuration/maintenance",
-    },
-    {
-      group: "data",
-      icon: FileArchive,
-      label: "Backup & blueprints",
-      description:
-        "Download a blueprint of your workspace SETUP to share, or a full BACKUP (setup + every row + every file) to keep in your Google Drive / NAS. Install a blueprint or restore a backup into a fresh workspace.",
-      to: "/configuration/backup",
-    },
-    {
-      group: "data",
-      icon: QrCode,
-      label: "QR codes",
-      description:
-        "The QR tokens the workspace has minted (copy a scan URL, revoke a token whose label walked off), plus external-QR rules that teach the scanner to read labels printed by another app — two tabs in one window.",
-      to: "/configuration/qr-tokens",
-    },
-    // ── people + access ────────────────────────────────────────────
-    {
-      group: "access",
-      icon: Users,
-      label: "Members + invites",
-      description:
-        "Invite collaborators to this workspace, change roles, revoke access.",
-      onClick: () => setMembersOpen(true),
-    },
-    {
-      group: "access",
-      icon: KeyRound,
-      label: "API tokens",
-      description:
-        "Long-lived `cbt_*` tokens for CLI / AI / automation. Mint, list, revoke.",
-      to: "/configuration/tokens",
-    },
-    {
-      group: "access",
-      icon: Link2,
-      label: "Workspace links",
-      description:
-        "Cross-workspace data sharing — read selected entity kinds from another workspace you own (or invite-share). Accept / revoke per link.",
-      to: "/configuration/links",
-    },
-    {
-      group: "access",
-      icon: Globe,
-      label: "Public surfaces",
-      description:
-        "Token-gated URLs that share a saved view with anyone — no account needed.",
-      to: "/configuration/surfaces",
-    },
-    // ── extend + integrate ─────────────────────────────────────────
-    {
-      group: "extend",
-      icon: Plug,
-      label: "Wires",
-      description:
-        "Event-triggered or click-triggered actions that connect modules. The user-editable connector layer.",
-      to: "/bindings",
-    },
-    {
-      group: "extend",
-      icon: MousePointerClick,
-      label: "Actions",
-      description:
-        "Tune which entities each cross-module action appears on — broaden or narrow a trait predicate per-axis.",
-      to: "/actions",
-    },
-    {
-      group: "extend",
-      icon: Sparkles,
-      label: "AI",
-      description:
-        "Configure AI providers (OpenAI, Anthropic, Ollama). Set per-capability defaults. Track spend. Match user entities to catalogs with an LLM.",
-      to: "/configuration/ai",
-    },
-    {
-      group: "extend",
-      icon: Plug,
-      label: "Integrations",
-      description:
-        "Connect to Slack, Discord, email, or any webhook — outbound and inbound. Wire entity events to messages, or accept external webhooks as platform events.",
-      to: "/configuration/integrations",
-    },
-    {
-      group: "extend",
-      icon: Printer,
-      label: "Printers",
-      description:
-        "Send documents to a real printer through a print manager (CUPS) — a Rollo label printer, shipping labels, an office laser. Direct on your LAN, or via the edge-bridge from cloud.",
-      to: "/configuration/print",
-    },
-    {
-      group: "extend",
-      icon: FileText,
-      label: "OpenAPI",
-      description:
-        "Auto-generated OpenAPI 3.1 spec — entity-kind schemas + platform paths. Drop into Swagger UI or Insomnia.",
-      to: "/configuration/openapi",
-    },
-    {
-      group: "access",
-      icon: Users,
-      label: "Users",
-      description:
-        "Mint workspace accounts with a temp password (no email required). The user resets on first login. Also: reset a forgotten password for an existing member.",
-      to: "/configuration/users",
-    },
-    {
-      group: "access",
-      icon: LayoutGrid,
-      label: "Member portal",
-      description:
-        "Branding + pinned views for the slimmed-down member portal at /portal/:slug. Members + guests land here by default; admins can preview.",
-      to: "/configuration/portal",
-    },
-    {
-      group: "access",
-      icon: LayoutGrid,
-      label: "Apps",
-      description:
-        "Build structured worker apps (pages of views, stats, forms, actions) that members open in the portal. Capability-gated; members see only what they're allowed.",
-      to: "/configuration/apps",
-    },
-    {
-      group: "access",
-      icon: Users,
-      label: "Custom roles",
-      description:
-        "Bundle multiple capabilities under a name (e.g. \"Sorter\" = create-part + assign-location). Assign roles to members in addition to their stock role.",
-      to: "/configuration/roles",
-    },
-    {
-      group: "access",
-      icon: Shield,
-      label: "Permissions",
-      description:
-        "Per-member capability grants. Admins implicitly have everything; members can be granted specific verbs like 'create parts' or 'receive orders'.",
-      to: "/configuration/permissions",
-    },
-    // ── ops + diagnostics ──────────────────────────────────────────
-    {
-      group: "admin",
-      icon: Activity,
-      label: "Activity log",
-      description:
-        "Every mutation, attributed to who (UI / api token / system) and when. Filterable.",
-      to: "/activity",
-    },
-    {
-      group: "admin",
-      icon: ListTodo,
-      label: "Background queue",
-      description:
-        "Persistent background work — view queued / running / done / failed jobs for this workspace. Worker polls every 5s; failed jobs retry with exponential backoff.",
-      to: "/configuration/queue",
-    },
-    {
-      group: "admin",
-      icon: HeartPulse,
-      label: "Healthcheck",
-      description:
-        "Live status rollup of every module's probes. Polled every 30s; 503 on red.",
-      to: "/configuration/health",
-    },
-  ];
+  const modalOpeners: Record<string, () => void> = {
+    "new-thing": () => setNewThingOpen(true),
+    modules: () => setModulesOpen(true),
+    members: () => setMembersOpen(true),
+  };
 
-  // Hosted-only panels (billing/Slack/…) — one tile each, only when the overlay
-  // registers them. Label/icon/group come from the overlay at runtime.
-  for (const p of hostedPanelsQ.data?.panels ?? []) {
-    const group = (p.group ?? "access") as Tile["group"];
-    tiles.push({
-      group,
+  // Tiles come from the shared registry (lib/configuration-nav.ts) + the
+  // hosted-overlay panels (billing/Slack/…) the cloud registers at runtime.
+  const tiles: Tile[] = [
+    ...CONFIG_DESTINATIONS.map((d) => ({
+      icon: d.icon,
+      label: d.label,
+      description: d.description,
+      to: d.to,
+      onClick: d.modal ? modalOpeners[d.modal] : undefined,
+      group: d.group,
+      primary: d.primary,
+      keywords: d.keywords,
+    })),
+    ...(hostedPanelsQ.data?.panels ?? []).map((p) => ({
       icon: iconForPanel(p.icon),
       label: p.label,
       description: "",
       to: `/configuration/x/${p.id}`,
-    });
-  }
+      group: LEGACY_GROUP_MAP[p.group ?? "extend"] ?? ("automation" as ConfigGroup),
+    })),
+  ];
 
-  // A search bar over every tile so the dense control room is navigable by
-  // name instead of by hunting through five collapsed sections (feedback
-  // b746e0e4: "nightmare of complexity… and a search bar at the top").
+  // Deep-linkable modal launchers — /configuration?open=modules|members|new-thing.
+  // The ConfigurationLayout sidebar (and anyone's bookmark) reaches the modals
+  // this way; the param is consumed + cleared so closing doesn't re-open.
+  useEffect(() => {
+    const open = searchParams.get("open");
+    if (!open) return;
+    modalOpeners[open]?.();
+    const next = new URLSearchParams(searchParams);
+    next.delete("open");
+    setSearchParams(next, { replace: true });
+    // modalOpeners is stable-enough (same setters every render); the param is
+    // the only real trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  // Search over label + description + registry keywords ("roles" finds
+  // Permissions) + group name. Ignores the primary/advanced split.
   const q = query.trim().toLowerCase();
   const matches = (t: Tile) =>
     !q ||
-    t.label.toLowerCase().includes(q) ||
-    t.description.toLowerCase().includes(q) ||
-    GROUP_LABELS[t.group].toLowerCase().includes(q);
+    destinationMatches(t, query) ||
+    CONFIG_GROUPS[t.group].label.toLowerCase().includes(q);
 
-  const grouped = GROUP_ORDER.map((group) => ({
+  const grouped = CONFIG_GROUP_ORDER.map((group) => ({
     group,
-    label: GROUP_LABELS[group],
+    label: CONFIG_GROUPS[group].label,
     items: tiles.filter(
       (t) =>
         t.group === group &&
         matches(t) &&
         // Advanced tiles only show while searching or when explicitly revealed.
-        (q || showAdvanced || PRIMARY_TILES.has(t.label)),
+        (q || showAdvanced || t.primary),
     ),
   })).filter((g) => g.items.length > 0);
 
-  const advancedCount = tiles.filter((t) => !PRIMARY_TILES.has(t.label)).length;
+  const advancedCount = tiles.filter((t) => !t.primary).length;
 
   return (
     <div className="space-y-5 max-w-4xl mx-auto">
@@ -589,6 +298,20 @@ export function ConfigurationPage() {
               (saved on this device).
             </span>
           </div>
+
+          {/* This page is the WORKSPACE's settings. The recurring "where do I
+              change MY stuff" dead-end gets an explicit signpost instead. */}
+          <Link
+            to="/me"
+            className="flex items-center gap-3 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-4 py-3 hover:border-cobble-300 dark:hover:border-cobble-700 transition"
+          >
+            <UserCircle size={18} className="text-accent shrink-0" />
+            <span className="text-sm text-content dark:text-mortar-200">
+              Looking for <span className="font-medium">your personal settings</span> — profile,
+              notifications, personal AI connections? They live under your account menu.
+            </span>
+            <ChevronRight size={14} className="ml-auto shrink-0 text-faint dark:text-slate-500" />
+          </Link>
         </>
       )}
 

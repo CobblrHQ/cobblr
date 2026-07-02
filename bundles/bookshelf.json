@@ -1,24 +1,34 @@
 {
   "manifest": {
     "id": "cobblr.community.bookshelf",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "name": "Bookshelf",
     "description": "Catalog books as inventory parts. Each gets author + ISBN + year + read status. Spine-label wire bundled.",
     "author": "Cobblr community",
     "requires": [
       {
         "module": "inventory"
-      },
-      {
-        "module": "labels"
       }
     ],
-    "wires": [
+    "features": [
       {
-        "source_kind": "inventory:part",
-        "action_id": "labels:print",
-        "trigger_type": "user-invoked",
-        "template": "{{author | default: \"Unknown\"}}\n{{name}}\n{{year | default: \"?\"}}"
+        "key": "labels",
+        "name": "Label printing",
+        "question": "Print QR labels for these?",
+        "description": "Adds the Labels module + a one-tap print action on each item.",
+        "requires": [
+          {
+            "module": "labels"
+          }
+        ],
+        "wires": [
+          {
+            "source_kind": "inventory:part",
+            "action_id": "labels:print",
+            "trigger_type": "user-invoked",
+            "template": "{{author | default: \"Unknown\"}}\n{{name}}\n{{year | default: \"?\"}}"
+          }
+        ]
       }
     ],
     "field_defs": [

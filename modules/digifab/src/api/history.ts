@@ -95,7 +95,7 @@ historyRouter.get(
     // richer than the MQTT-observed rows: model name (translated), cover thumbnail,
     // weight, duration. One row per cloud task; supersedes digifab_observed_prints
     // for Bambu (which the pump can no longer name well).
-    type Item = { id: string; file_ref: string; sub_label: string | null; cover: string | null; device: string; status: string; filament_g: number | null; at: string; duration_s: number };
+    type Item = { id: string; file_ref: string; sub_label: string | null; cover: string | null; device: string; connection_id: string | null; device_id: string | null; status: string; filament_g: number | null; at: string; duration_s: number };
     const taskRows = await db.selectFrom("digifab_bambu_tasks").select(["task_id", "raw", "captured_at"]).execute();
     const taskItems: Item[] = taskRows
       .map((t) => {
@@ -109,6 +109,8 @@ historyRouter.get(
           sub_label: tidyProfile(r.title as string),
           cover: (r.cover as string) || null,
           device: (r.deviceName as string) || "—",
+          connection_id: null,
+          device_id: null,
           status: r.status === 3 ? "failed" : "completed",
           filament_g: r.weight != null ? Number(r.weight) : null,
           at,
@@ -143,6 +145,11 @@ historyRouter.get(
         sub_label: null as string | null,
         cover: null as string | null,
         device: nameOf(r.connection_id, r.target_device),
+        // Identity, so the cockpit can match "prints on THIS printer" by id
+        // instead of display-name string equality (audit B2.6: renames + raw
+        // device ids silently orphaned a printer's history).
+        connection_id: r.connection_id,
+        device_id: r.target_device,
         status: r.status,
         filament_g: r.material_grams == null ? null : Number(r.material_grams),
         at: new Date(r.updated_at).toISOString(),

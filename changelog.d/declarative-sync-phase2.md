@@ -1,1 +1,5 @@
+---
+type: feature
+date: 2026-06-24
+---
 - Declarative sync sources, Phase 2: install table + API (POST/GET/DELETE a SyncSourceManifest per workspace), org-aware connector resolution (built-in ∪ installed, mirroring digifab resolveDriver), and removal of the hardcoded companion app connector. A sync source is now installable data; Cobblr ships no source-specific code.

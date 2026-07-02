@@ -61,6 +61,7 @@ export function AdminConsole() {
       {active === "modules" && <ModulesTab />}
       {active === "marketplace" && <MarketplaceTab />}
       {active === "activity" && <ActivityTab />}
+      {active === "metrics" && <ProductMetricsTab />}
       {active === "ai" && <AiActivityTab />}
       {active === "barcodes" && <BarcodeCacheTab />}
       {active === "tokens" && <TokenManager variant="operator" />}
@@ -2336,5 +2337,96 @@ function FeedbackCard({
         className="w-full text-xs rounded border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800/70 px-2 py-1 text-content dark:text-mortar-200"
       />
     </li>
+  );
+}
+
+// ── Product Metrics — the thesis dashboard (audit F2) ────────────────────────
+// Walls-hit-per-week per workspace (permission_denied / validation_rejected /
+// wire failures) + time-to-first-working-app. The strategy docs' north star:
+// walls/week trending to ZERO for a genuine non-dev workspace is the proof.
+// Founder-owned workspaces should be read with the founder-proxy trap in mind.
+function ProductMetricsTab() {
+  const q = useQuery({
+    queryKey: ["super-admin-product-metrics"],
+    queryFn: () => api.superAdminProductMetrics(),
+    refetchInterval: 60_000,
+  });
+  const ws = [...(q.data?.workspaces ?? [])].sort((a, b) => b.walls_7d - a.walls_7d);
+  const fmtTtfw = (m: number | null) =>
+    m === null ? "—" : m < 60 ? `${m}m` : m < 60 * 24 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`;
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-muted">
+        The thesis, measured: <b>walls hit</b> (permission denials, artifacts that failed
+        validation, wires that errored or cycled) per workspace, and <b>time to first working
+        app</b> (signup → first real item). The goal is walls/week trending to zero for
+        genuine non-dev workspaces — your own workspaces don't count as proof.
+        Interpretation notes: docs/operations/product-metrics.md.
+      </p>
+      {q.isLoading ? (
+        <div className="text-sm text-muted">Loading…</div>
+      ) : ws.length === 0 ? (
+        <div className="text-sm text-muted">No workspaces yet.</div>
+      ) : (
+        <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-subtle/50 dark:bg-slate-800/40">
+              <tr>
+                <Th>Workspace</Th>
+                <Th>Created</Th>
+                <Th>First item (TTFW)</Th>
+                <Th>Walls 7d</Th>
+                <Th>Walls 30d</Th>
+                <Th>What they hit (7d)</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {ws.map((w) => (
+                <tr key={w.org_id} className="border-t border-line dark:border-slate-700 align-top">
+                  <td className="px-3 py-2">
+                    <div className="font-medium text-content dark:text-mortar-100">{w.name}</div>
+                    <div className="text-xs text-muted font-mono">{w.slug}</div>
+                  </td>
+                  <td className="px-3 py-2">{new Date(w.created_at).toLocaleDateString()}</td>
+                  <td className="px-3 py-2">
+                    {w.first_item_at ? (
+                      <span title={new Date(w.first_item_at).toLocaleString()}>{fmtTtfw(w.ttfw_minutes)}</span>
+                    ) : (
+                      <span className="text-muted" title="Never committed an item — the other half of the thesis">
+                        never
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2">
+                    <span className={w.walls_7d > 0 ? "font-semibold text-amber-600 dark:text-amber-400" : "text-muted"}>
+                      {w.walls_7d}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 text-muted">{w.walls_30d}</td>
+                  <td className="px-3 py-2">
+                    {w.walls.filter((x) => x.d7 > 0).length === 0 ? (
+                      <span className="text-muted">—</span>
+                    ) : (
+                      <div className="flex flex-wrap gap-1">
+                        {w.walls
+                          .filter((x) => x.d7 > 0)
+                          .map((x) => (
+                            <span
+                              key={x.event}
+                              className="inline-flex items-center gap-1 rounded-full border border-line dark:border-slate-600 px-2 py-0.5 text-xs"
+                            >
+                              {x.event} <b>{x.d7}</b>
+                            </span>
+                          ))}
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }

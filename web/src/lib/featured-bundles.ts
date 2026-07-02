@@ -229,14 +229,23 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       description:
         "Custom inventory fields + label wires for Lego set collections.",
       author: "Cobblr community",
-      requires: [{ module: "inventory" }, { module: "labels" }],
-      wires: [
+      requires: [{ module: "inventory" }],
+      features: [
+        {
+          key: "labels",
+          name: "Label printing",
+          question: "Print QR labels for these?",
+          description: "Adds the Labels module + a one-tap print action on each item.",
+          requires: [{ module: "labels" }],
+          wires: [
         {
           source_kind: "inventory:part",
           action_id: "labels:print",
           trigger_type: "user-invoked",
           template:
             'LEGO {{theme | default: "misc"}} #{{set_id | default: "---"}} • {{name}} ({{year | default: "???"}})',
+        },
+          ],
         },
       ],
       field_defs: [
@@ -267,13 +276,22 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       name: "Vintage Tools",
       description: "Custom fields + label wires for vintage hand tools.",
       author: "Cobblr community",
-      requires: [{ module: "inventory" }, { module: "labels" }],
-      wires: [
+      requires: [{ module: "inventory" }],
+      features: [
+        {
+          key: "labels",
+          name: "Label printing",
+          question: "Print QR labels for these?",
+          description: "Adds the Labels module + a one-tap print action on each item.",
+          requires: [{ module: "labels" }],
+          wires: [
         {
           source_kind: "inventory:part",
           action_id: "labels:print",
           trigger_type: "user-invoked",
           template: '{{maker | default: "—"}} {{model | default: "?"}} · {{era | default: "??"}} · {{name}}',
+        },
+          ],
         },
       ],
       field_defs: [
@@ -296,13 +314,22 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       description:
         "Datasheet-aware part fields + a narrow-bin label template. Manufacturer is a native inventory:part field; this bundle adds the electronics-specific extras.",
       author: "Cobblr community",
-      requires: [{ module: "inventory" }, { module: "labels" }],
-      wires: [
+      requires: [{ module: "inventory" }],
+      features: [
+        {
+          key: "labels",
+          name: "Label printing",
+          question: "Print QR labels for these?",
+          description: "Adds the Labels module + a one-tap print action on each item.",
+          requires: [{ module: "labels" }],
+          wires: [
         {
           source_kind: "inventory:part",
           action_id: "labels:print",
           trigger_type: "user-invoked",
           template: '{{name}}\n{{manufacturer | default: ""}} {{voltage | default: ""}}',
+        },
+          ],
         },
       ],
       field_defs: [
@@ -344,14 +371,23 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       description:
         "Catalog books as inventory parts. Each gets author + ISBN + year + read status. Spine-label wire bundled.",
       author: "Cobblr community",
-      requires: [{ module: "inventory" }, { module: "labels" }],
-      wires: [
+      requires: [{ module: "inventory" }],
+      features: [
+        {
+          key: "labels",
+          name: "Label printing",
+          question: "Print QR labels for these?",
+          description: "Adds the Labels module + a one-tap print action on each item.",
+          requires: [{ module: "labels" }],
+          wires: [
         {
           source_kind: "inventory:part",
           action_id: "labels:print",
           trigger_type: "user-invoked",
           template:
             '{{author | default: "Unknown"}}\n{{name}}\n{{year | default: "?"}}',
+        },
+          ],
         },
       ],
       field_defs: [
@@ -980,6 +1016,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           display_name: "Home Inventory",
           glyph: "🏠",
           item_noun: "item",
+          scan_keywords: ["bedsheet", "bed sheet", "bedding", "linen", "towel", "pillow", "blanket", "comforter", "duvet", "curtain", "rug", "mattress", "furniture", "dresser", "sofa", "couch", "recliner", "desk", "lamp", "mirror", "shelf", "appliance", "vacuum", "fan", "heater", "cookware", "skillet", "utensil", "dishes", "monitor", "router", "cabinet"],
           qty_unit: "each",
           field_defs: [
             { entity_kind: "inventory:part", name: "room", display_label: "Room", type: "text", position: 1, choices: ["Living room", "Kitchen", "Primary bedroom", "Bedroom", "Bathroom", "Office", "Garage", "Basement", "Attic", "Outdoor", "Storage"], help: "Where it lives — the catalog groups by room so a claim/move is room-by-room." },
@@ -1105,6 +1142,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           display_name: "Medications",
           glyph: "💊",
           item_noun: "medication",
+          scan_keywords: ["vitamin", "supplement", "ibuprofen", "acetaminophen", "aspirin", "bandage", "first aid", "ointment", "antacid", "allergy relief"],
           qty_unit: "each",
           field_defs: [
             { entity_kind: "inventory:part", name: "dose", display_label: "Dose", type: "text", position: 1, help: "How much per take — e.g. “10 mg”, “1 tablet”, “5 mL”." },
@@ -1161,6 +1199,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           display_name: "Plant Care",
           glyph: "🪴",
           item_noun: "plant",
+          scan_keywords: ["fertilizer", "potting soil", "planter", "seeds", "watering can"],
           field_defs: [
             { entity_kind: "assets:asset", name: "species", display_label: "Species", type: "text", position: 1, help: "The plant's name/type — e.g. “Monstera”, “Snake plant”." },
             { entity_kind: "assets:asset", name: "light", display_label: "Light", type: "text", position: 2, choices: ["Low", "Medium", "Bright indirect", "Direct sun"], help: "How much light its spot gets — the table groups by this so similar plants sit together." },
@@ -1332,6 +1371,80 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     },
   },
   {
+    glyph: "🔩",
+    blurb:
+      "Screws, bolts, nuts, washers — thread, length, head and drive as real columns, grouped by thread, so you find an M3×8 in seconds.",
+    next_steps: [
+      { label: "Add your first fastener", module: "inventory", path: "/instances/fasteners", hint: "Type, thread (M3, 1/4-20…), length, head + drive — and how many you've got." },
+    ],
+    item_example: "a bag of M3×8 socket head screws",
+    manifest: {
+      id: "cobblr.flagship.fasteners",
+      version: "0.1.0",
+      name: "Fasteners",
+      description:
+        "Your fastener drawers as their own table — an inventory instance with thread, length, head, drive and material pre-shaped, quantities + reorder thresholds kept, grouped by thread.",
+      author: "Cobblr",
+      released_at: "2026-07-02",
+      requires: [{ module: "inventory" }],
+      features: [
+        {
+          key: "labels",
+          name: "Label printing",
+          question: "Print QR labels for the drawers?",
+          description: "Adds the Labels module + a one-tap print action on each fastener.",
+          requires: [{ module: "labels" }],
+          wires: [
+            {
+              source_kind: "inventory:part",
+              action_id: "labels:print",
+              trigger_type: "user-invoked",
+              template:
+                '{{fastener_type | default: "Fastener"}} {{thread | default: "?"}}×{{length_mm | default: "?"}} {{head | default: ""}}',
+            },
+          ],
+        },
+      ],
+      provides_instances: [
+        {
+          module: "inventory",
+          instance_name: "fasteners",
+          display_name: "Fasteners",
+          glyph: "🔩",
+          item_noun: "fastener",
+          qty_unit: "each",
+          // Disambiguation-only (lint-scan-keywords): the fields' choices/help
+          // already carry screw/bolt/nut/washer/M3/torx… — list only capture
+          // phrasings the fields don't.
+          scan_keywords: ["heat set insert", "wood screw", "machine screw", "sheet metal screw", "hardware assortment"],
+          field_defs: [
+            { entity_kind: "inventory:part", name: "fastener_type", display_label: "Type", type: "text", position: 1, choices: ["Screw", "Bolt", "Nut", "Washer", "Standoff", "Threaded insert", "Rivet", "Anchor"] },
+            { entity_kind: "inventory:part", name: "thread", display_label: "Thread", type: "text", position: 2, help: "M3, M5, 1/4-20, #6-32… — the table groups by this." },
+            { entity_kind: "inventory:part", name: "length_mm", display_label: "Length (mm)", type: "number", position: 3, help: "Shaft length, not counting the head. Leave blank for nuts/washers." },
+            { entity_kind: "inventory:part", name: "head", display_label: "Head", type: "text", position: 4, choices: ["Socket cap", "Button", "Countersunk (flat)", "Pan", "Hex", "Flanged", "None"] },
+            { entity_kind: "inventory:part", name: "drive", display_label: "Drive", type: "text", position: 5, choices: ["Hex (Allen)", "Phillips", "Torx", "Slotted", "External hex", "None"] },
+            { entity_kind: "inventory:part", name: "material", display_label: "Material", type: "text", position: 6, choices: ["Steel (black oxide)", "Stainless", "Zinc-plated", "Brass", "Nylon", "Titanium"] },
+          ],
+          field_overrides: [
+            // Quantity + reorder threshold are the POINT of a fastener
+            // tracker — keep qty/min_qty/location; hide the product-catalog
+            // cruft a drawer of M3s never needs.
+            { entity_kind: "inventory:part", name: "supplier_url", display_label: "Reorder URL" },
+            { entity_kind: "inventory:part", name: "category", hidden: true },
+            { entity_kind: "inventory:part", name: "manufacturer", hidden: true },
+            { entity_kind: "inventory:part", name: "model_number", hidden: true },
+            { entity_kind: "inventory:part", name: "serial_number", hidden: true },
+            { entity_kind: "inventory:part", name: "warranty", hidden: true },
+          ],
+          saved_views: [
+            { entity_kind: "inventory:part", name: "By thread", view_type: "table", pinned: true, config: { group_by: "thread", visible_fields: ["title", "fastener_type", "length_mm", "head", "qty"] } },
+            { entity_kind: "inventory:part", name: "Running low", view_type: "table", config: { filter: { _low_stock: true }, visible_fields: ["title", "thread", "qty", "min_qty"] } },
+          ],
+        },
+      ],
+    },
+  },
+  {
     glyph: "🪪",
     blurb:
       "Passport, license, registration, insurance — every document that expires, with its number + issuer. Expiry dates land on your calendar automatically.",
@@ -1400,6 +1513,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           display_name: "Pet Care",
           glyph: "🐾",
           item_noun: "pet",
+          scan_keywords: ["leash", "collar", "litter", "kibble", "dog food", "cat food", "treats", "aquarium", "pet bed"],
           field_defs: [
             { entity_kind: "assets:asset", name: "species", display_label: "Species", type: "text", position: 1, choices: ["Dog", "Cat", "Rabbit", "Bird", "Reptile", "Fish", "Horse", "Other"], help: "The table groups pets by this." },
             { entity_kind: "assets:asset", name: "breed", display_label: "Breed", type: "text", position: 2 },
@@ -1498,6 +1612,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           display_name: "Household Supplies",
           glyph: "🧻",
           item_noun: "supply",
+          scan_keywords: ["detergent", "cleaner", "soap", "shampoo", "toothpaste", "deodorant", "paper towel", "toilet paper", "tissue", "battery", "batteries", "trash bag", "garbage bag", "sponge", "bleach", "wipes", "laundry", "dish soap", "air freshener", "light bulb"],
           qty_unit: "each",
           // Low-stock → shopping list, and check-off → restock, scoped to this
           // instance (the installer rewrites source_kind to supplies:item).
@@ -1598,6 +1713,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           display_name: "Wardrobe",
           glyph: "👗",
           item_noun: "garment",
+          scan_keywords: ["shirt", "pants", "jeans", "jacket", "coat", "sweater", "socks", "shoes", "sneakers", "boots", "dress", "skirt", "hat", "gloves", "belt", "hoodie", "scarf"],
           qty_unit: "each",
           field_defs: [
             { entity_kind: "inventory:part", name: "garment_type", display_label: "Type", type: "text", position: 1, choices: ["Top", "Bottom", "Dress", "Outerwear", "Shoes", "Bag", "Accessory", "Jewelry", "Activewear", "Underwear", "Other"], help: "What kind of piece — the closet groups by this." },

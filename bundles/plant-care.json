@@ -1,7 +1,7 @@
 {
   "manifest": {
     "id": "cobblr.flagship.plant-care",
-    "version": "0.3.0",
+    "version": "0.3.1",
     "name": "Plant Care",
     "description": "Your houseplants as their own table — species, light, watering interval + pot size, grouped by light.",
     "author": "Cobblr",
@@ -19,6 +19,13 @@
         "display_name": "Plant Care",
         "glyph": "🪴",
         "item_noun": "plant",
+        "scan_keywords": [
+          "fertilizer",
+          "potting soil",
+          "planter",
+          "seeds",
+          "watering can"
+        ],
         "field_defs": [
           {
             "entity_kind": "assets:asset",

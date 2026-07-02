@@ -420,14 +420,31 @@ function ConnectionForm({
               <span className="text-faint"> · set (leave blank to keep)</span>
             )}
           </div>
-          <input
-            type={def.secret ? "password" : "text"}
-            value={creds[key] ?? ""}
-            onChange={(e) => setCreds((m) => ({ ...m, [key]: e.target.value }))}
-            autoComplete="off"
-            placeholder={isEdit && existing?.credential_keys.includes(key) ? "•••••• (unchanged)" : ""}
-            className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900 font-mono"
-          />
+          {def.choices ? (
+            <>
+              <select
+                value={creds[key] ?? ""}
+                onChange={(e) => setCreds((m) => ({ ...m, [key]: e.target.value }))}
+                className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+              >
+                {def.choices.map((c) => (
+                  <option key={c.value} value={c.value}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+              {key === "transit" && (creds[key] ?? "").startsWith("bridge") && <PersonalAgentHint />}
+            </>
+          ) : (
+            <input
+              type={def.secret ? "password" : "text"}
+              value={creds[key] ?? ""}
+              onChange={(e) => setCreds((m) => ({ ...m, [key]: e.target.value }))}
+              autoComplete="off"
+              placeholder={isEdit && existing?.credential_keys.includes(key) ? "•••••• (unchanged)" : ""}
+              className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900 font-mono"
+            />
+          )}
         </label>
       ))}
       {credFields.length === 0 && (
@@ -508,5 +525,20 @@ function ConnectionForm({
         </button>
       </div>
     </section>
+  );
+}
+
+/** Live "is my personal edge agent connected?" line under the bridge-transit
+ *  choice — the answer to "will my local URL actually work?". */
+function PersonalAgentHint() {
+  const agent = useQuery({ queryKey: ["me-edge-agent"], queryFn: api.getMyEdgeAgent, refetchInterval: 5000 });
+  const on = agent.data?.connected ?? false;
+  return (
+    <div className={"flex items-center gap-2 text-[11px] mt-1 rounded border p-1.5 " + (on ? "border-moss-500/40 bg-moss-50 dark:bg-moss-950/30 text-moss-700 dark:text-moss-300" : "border-amber-500/40 bg-amber-50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-400")}>
+      <span className={"w-1.5 h-1.5 rounded-full shrink-0 " + (on ? "bg-moss-500" : "bg-amber-500 animate-pulse")} />
+      {on
+        ? "Your personal edge agent is connected — calls to this endpoint will route through it to your LAN."
+        : "No personal edge agent is connected yet. Calls will fail until one dials in — set it up like the Local-AI edge bridge agent (it serves every bridge-transit connection you add)."}
+    </div>
   );
 }

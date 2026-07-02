@@ -13,7 +13,7 @@ import { NavLink, Outlet } from "react-router-dom";
 import { ArrowLeft, LogOut, Moon, ShieldCheck, Sun } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
-import { ADMIN_SECTIONS } from "../lib/adminSections";
+import { ADMIN_GROUP_ORDER, ADMIN_SECTIONS } from "../lib/adminSections";
 
 export function AdminLayout() {
   const { user, loading, logout } = useAuth();
@@ -92,23 +92,39 @@ export function AdminLayout() {
         {/* Section nav — deep-linked /admin/<id>. */}
         {/* Mobile: one scrollable row (15 sections were eating half the
             screen as wrapped rows); desktop wraps as before. */}
-        <nav className="max-w-6xl mx-auto px-5 flex flex-nowrap overflow-x-auto md:flex-wrap md:overflow-visible gap-0.5">
-          {ADMIN_SECTIONS.map((s) => {
-            const Icon = s.icon;
+        {/* B5: 18 flat tabs were unscannable — cluster them under tiny group
+            labels (registry-driven). Overview stays ungrouped up front. Same
+            single scroll row on mobile; the labels ride along. */}
+        <nav className="max-w-6xl mx-auto px-5 flex flex-nowrap overflow-x-auto md:flex-wrap md:overflow-visible items-end gap-0.5">
+          {[undefined, ...ADMIN_GROUP_ORDER].map((g) => {
+            const members = ADMIN_SECTIONS.filter((s) => s.group === g);
+            if (members.length === 0) return null;
             return (
-              <NavLink
-                key={s.id}
-                to={`/admin/${s.id}`}
-                className={({ isActive }) =>
-                  "inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition border-b-2 " +
-                  (isActive
-                    ? "border-cobble-400 text-mortar-100"
-                    : "border-transparent text-slate-400 hover:text-mortar-200")
-                }
-              >
-                <Icon size={12} />
-                {s.label}
-              </NavLink>
+              <div key={g ?? "__front__"} className="flex flex-col shrink-0">
+                <span className={"px-3 pt-1 text-[9px] font-mono uppercase tracking-widest " + (g ? "text-slate-500" : "text-transparent select-none")}>
+                  {g ?? "·"}
+                </span>
+                <div className={"flex flex-nowrap gap-0.5 " + (g ? "border-l border-slate-700/60 ml-1 pl-1" : "")}>
+                  {members.map((s) => {
+                    const Icon = s.icon;
+                    return (
+                      <NavLink
+                        key={s.id}
+                        to={`/admin/${s.id}`}
+                        className={({ isActive }) =>
+                          "inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition border-b-2 whitespace-nowrap " +
+                          (isActive
+                            ? "border-cobble-400 text-mortar-100"
+                            : "border-transparent text-slate-400 hover:text-mortar-200")
+                        }
+                      >
+                        <Icon size={12} />
+                        {s.label}
+                      </NavLink>
+                    );
+                  })}
+                </div>
+              </div>
             );
           })}
         </nav>

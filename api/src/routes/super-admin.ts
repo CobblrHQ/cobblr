@@ -482,6 +482,96 @@ superAdminRouter.get("/modules", async (_req, res, next) => {
   }
 });
 
+// GET /super-admin/product-metrics — the thesis dashboard (2026-07 audit F2).
+// Per workspace: time-to-first-working-app (org created → first `created`
+// activity row) and walls-hit (product_events: permission_denied,
+// validation_rejected, … + wire failures from activity_log), windowed 7d/30d.
+// Strategy docs: "walls-hit-per-week trending to zero for a genuine non-dev
+// is the proof" — this is where that number lives. HTTP-first by design;
+// an operator-console section can render it later.
+superAdminRouter.get("/product-metrics", async (_req, res, next) => {
+  try {
+    const orgs = await meta
+      .selectFrom("orgs")
+      .select(["id", "name", "slug", "created_at"])
+      .orderBy("created_at", "desc")
+      .execute();
+
+    // First ITEM per org — the "working app" half of TTFW. Module creates log
+    // as `<noun>_created` (part_created, machine_created, …); org/user
+    // lifecycle rows share the suffix but aren't items, so they're excluded.
+    const firstCreated = await meta
+      .selectFrom("activity_log")
+      .select(["org_id", sql<Date>`min(occurred_at)`.as("first_at")])
+      .where("action", "like", "%_created")
+      .where("action", "not in", ["org_created", "user_created", "tenant_created", "wire_created"])
+      .groupBy("org_id")
+      .execute();
+    const firstByOrg = new Map(firstCreated.map((r) => [r.org_id, r.first_at]));
+
+    // Walls: product_events grouped by org+event, 7d and 30d windows.
+    const walls = await meta
+      .selectFrom("product_events")
+      .select([
+        "org_id",
+        "event",
+        sql<number>`count(*) filter (where created_at > now() - interval '7 days')`.as("d7"),
+        sql<number>`count(*) filter (where created_at > now() - interval '30 days')`.as("d30"),
+      ])
+      .where("created_at", ">", sql<Date>`now() - interval '30 days'`)
+      .groupBy(["org_id", "event"])
+      .execute();
+    const wallsByOrg = new Map<string, Array<{ event: string; d7: number; d30: number }>>();
+    for (const w of walls) {
+      const list = wallsByOrg.get(w.org_id) ?? [];
+      list.push({ event: w.event, d7: Number(w.d7), d30: Number(w.d30) });
+      wallsByOrg.set(w.org_id, list);
+    }
+
+    // Wire failures live in activity_log (wire_failed / wire_depth_exceeded)
+    // — they're walls too, just recorded by the wire engine.
+    const wireWalls = await meta
+      .selectFrom("activity_log")
+      .select([
+        "org_id",
+        "action",
+        sql<number>`count(*) filter (where occurred_at > now() - interval '7 days')`.as("d7"),
+        sql<number>`count(*) filter (where occurred_at > now() - interval '30 days')`.as("d30"),
+      ])
+      .where("action", "in", ["wire_failed", "wire_depth_exceeded"])
+      .where("occurred_at", ">", sql<Date>`now() - interval '30 days'`)
+      .groupBy(["org_id", "action"])
+      .execute();
+    for (const w of wireWalls) {
+      const list = wallsByOrg.get(w.org_id) ?? [];
+      list.push({ event: w.action, d7: Number(w.d7), d30: Number(w.d30) });
+      wallsByOrg.set(w.org_id, list);
+    }
+
+    res.json({
+      workspaces: orgs.map((o) => {
+        const first = firstByOrg.get(o.id) ?? null;
+        const wallList = wallsByOrg.get(o.id) ?? [];
+        return {
+          org_id: o.id,
+          name: o.name,
+          slug: o.slug,
+          created_at: o.created_at,
+          first_item_at: first,
+          ttfw_minutes: first
+            ? Math.round((new Date(first).getTime() - new Date(o.created_at).getTime()) / 60_000)
+            : null,
+          walls: wallList.sort((a, b) => b.d7 - a.d7),
+          walls_7d: wallList.reduce((n, w) => n + w.d7, 0),
+          walls_30d: wallList.reduce((n, w) => n + w.d30, 0),
+        };
+      }),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /super-admin/activity — cross-workspace activity feed. Same
 // shape as /me/activity but un-scoped to the caller's memberships.
 superAdminRouter.get("/activity", async (req, res, next) => {
@@ -2531,9 +2621,14 @@ superAdminRouter.delete("/scan-eval-cases/:orgId/:id", async (req, res, next) =>
 // install) IS the structural scorer. Runnable with an `authoring:eval` token.
 const AuthoringEvalBody = z.object({
   intent: z.string().min(1).max(4000),
-  task: z.enum(["create-bundle", "customize-template", "design-workspace"]).default("create-bundle"),
+  // refine-bundle (B17): the harness supplies the artifact to revise via
+  // base_artifact — same context shape the /drafts/:id/refine route builds
+  // from the parent draft. (refine-APP scoring needs the app contract in the
+  // harness first — bundle refine only here.)
+  task: z.enum(["create-bundle", "customize-template", "design-workspace", "refine-bundle"]).default("create-bundle"),
   selected_kinds: z.array(z.string().max(120)).max(20).optional(),
   base_template_id: z.string().max(120).optional(),
+  base_artifact: z.record(z.unknown()).optional(),
   org: z.string().optional(),
 });
 
@@ -2569,6 +2664,13 @@ superAdminRouter.post("/authoring-eval", async (req, res, next) => {
     }
 
     const ctx = await assembleContext(orgId, parsed.data.selected_kinds, parsed.data.task, parsed.data.base_template_id);
+    if (parsed.data.task === "refine-bundle") {
+      if (!parsed.data.base_artifact) {
+        res.status(400).json({ error: { code: "missing_base_artifact", message: "task refine-bundle requires base_artifact (the bundle to revise)." } });
+        return;
+      }
+      ctx.baseArtifact = parsed.data.base_artifact;
+    }
     const prompt = compilePrompt(ctx, parsed.data.intent);
     let text = "";
     try {

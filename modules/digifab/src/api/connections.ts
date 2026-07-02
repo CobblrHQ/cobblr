@@ -15,7 +15,7 @@ import { platform } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { resolveDriver, availableDriverKeys } from "../drivers/registry.js";
-import { buildEdgeRelay } from "../jobs-core.js";
+import { buildEdgeRelay, reverseBuildIfCommitted } from "../jobs-core.js";
 import { assertSafeMachineUrl } from "../drivers/ssrf.js";
 import type { Kysely } from "kysely";
 import type { DigifabDB } from "../db.js";
@@ -152,18 +152,27 @@ connectionsRouter.patch(
     if (!parsed.success) return badBody(res, parsed.error);
     const ctx = tenantContext(req);
     if (parsed.data.base_url !== undefined && !(await safeUrl(res, parsed.data.base_url))) return;
-    const creds: Record<string, string | null> = {};
+    const existing = await store().get(ctx.org.id, req.params.id!);
+    if (!existing) return void res.status(404).json({ error: { code: "not_found", message: "no such connection" } });
+    const creds: Record<string, unknown> = {};
     if (parsed.data.api_key !== undefined) creds.apiKey = parsed.data.api_key;
     if (parsed.data.username !== undefined) creds.username = parsed.data.username;
     if (parsed.data.password !== undefined) creds.password = parsed.data.password;
+    // Mirror the CREATE path for an edge machine: its `config` (driver + host +
+    // apiKey) is what rides down the tunnel — it belongs ENCRYPTED in creds.edge.
+    // Writing it to the plaintext config column both leaked the printer key and
+    // was a silent no-op (the driver-build path only reads creds.edge).
+    const isEdge = existing.type === "edge_adapter";
+    if (isEdge && parsed.data.config) creds.edge = parsed.data.config;
     const row = await store().update(ctx.org.id, req.params.id!, {
       label: parsed.data.label,
       base_url: parsed.data.base_url,
       enabled: parsed.data.enabled,
-      config: parsed.data.config,
-      creds: Object.keys(creds).length ? creds : undefined,
+      config: isEdge ? undefined : parsed.data.config,
+      creds: Object.keys(creds).length ? (creds as Record<string, string | null>) : undefined,
     });
     if (!row) return void res.status(404).json({ error: { code: "not_found", message: "no such connection" } });
+    void platform().events.emit("digifab.connection.updated", { orgId: ctx.org.id, rowId: row.id });
     res.json(row);
   }),
 );
@@ -173,8 +182,33 @@ connectionsRouter.delete(
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin")) return;
     const ctx = tenantContext(req);
-    await store().remove(ctx.org.id, req.params.id!);
-    void platform().events.emit("digifab.connection.deleted", { orgId: ctx.org.id, rowId: req.params.id! });
+    const id = req.params.id!;
+    const db = tenantDb(req);
+    // Clean up everything hanging off the connection (the FKs were deliberately
+    // dropped in 0008). Orphans weren't cosmetic: a live job kept a dead poll
+    // loop, and a pool member pointing at a dead connection made every assign
+    // pass build-and-fail a driver forever.
+    const live = await db
+      .selectFrom("digifab_jobs")
+      .select(["id", "status"])
+      .where("connection_id", "=", id)
+      .where("status", "not in", ["completed", "failed", "cancelled"])
+      .execute();
+    for (const j of live) {
+      await db
+        .updateTable("digifab_jobs")
+        .set({ status: "cancelled", error: "connection removed", updated_at: new Date() })
+        .where("id", "=", j.id)
+        .execute();
+      await reverseBuildIfCommitted(db, ctx.org.id, j.id, "connection removed");
+    }
+    await db.deleteFrom("digifab_device_links").where("connection_id", "=", id).execute();
+    await db.deleteFrom("digifab_pool_members").where("connection_id", "=", id).execute();
+    await db.deleteFrom("digifab_device_attention").where("connection_id", "=", id).execute();
+    await db.deleteFrom("digifab_device_settings").where("connection_id", "=", id).execute();
+    await db.deleteFrom("digifab_device_snapshots").where("connection_id", "=", id).execute();
+    await store().remove(ctx.org.id, id);
+    void platform().events.emit("digifab.connection.deleted", { orgId: ctx.org.id, rowId: id });
     res.status(204).end();
   }),
 );

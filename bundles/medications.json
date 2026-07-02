@@ -1,7 +1,7 @@
 {
   "manifest": {
     "id": "cobblr.flagship.medications",
-    "version": "0.3.0",
+    "version": "0.3.1",
     "name": "Medications & Refills",
     "description": "Your medications as their own table — dose, schedule, instructions, prescriber/pharmacy, refills left + a refill-by date. Caregiver-friendly.",
     "author": "Cobblr",
@@ -19,6 +19,18 @@
         "display_name": "Medications",
         "glyph": "💊",
         "item_noun": "medication",
+        "scan_keywords": [
+          "vitamin",
+          "supplement",
+          "ibuprofen",
+          "acetaminophen",
+          "aspirin",
+          "bandage",
+          "first aid",
+          "ointment",
+          "antacid",
+          "allergy relief"
+        ],
         "qty_unit": "each",
         "field_defs": [
           {

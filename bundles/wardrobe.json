@@ -1,7 +1,7 @@
 {
   "manifest": {
     "id": "cobblr.flagship.wardrobe",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "name": "Wardrobe",
     "description": "Catalog your clothing as its own table — type, colour, season, formality, a photo each — grouped by type. Optional Outfits table for planning looks.",
     "author": "Cobblr",
@@ -19,6 +19,25 @@
         "display_name": "Wardrobe",
         "glyph": "👗",
         "item_noun": "garment",
+        "scan_keywords": [
+          "shirt",
+          "pants",
+          "jeans",
+          "jacket",
+          "coat",
+          "sweater",
+          "socks",
+          "shoes",
+          "sneakers",
+          "boots",
+          "dress",
+          "skirt",
+          "hat",
+          "gloves",
+          "belt",
+          "hoodie",
+          "scarf"
+        ],
         "qty_unit": "each",
         "field_defs": [
           {

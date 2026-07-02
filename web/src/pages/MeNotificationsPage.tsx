@@ -6,6 +6,7 @@
 // right workspace.
 
 import { useState } from "react";
+import { AreaTabs, NOTIFICATION_TABS } from "../components/AreaTabs";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell, Check, CheckCheck } from "lucide-react";
@@ -73,6 +74,7 @@ export function MeNotificationsPage() {
 
   return (
     <div className="space-y-4">
+      <AreaTabs tabs={NOTIFICATION_TABS} area="notifications" />
       <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3 flex-wrap">
         <Bell size={20} className="text-accent" />
         <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">

@@ -7,6 +7,7 @@
 
 import { useMemo, useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
+import { BinAdjustModal } from "../components/BinAdjustModal";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ChevronRight, MapPin, Save, Trash2 } from "lucide-react";
 import { EntityActionsBar,
@@ -50,6 +51,14 @@ export function LocationDetailPage() {
     enabled: !!activeSlug && !!id,
   });
   usePageTitle(location.data?.name ?? "Location");
+  // Single-SKU bin? Offer the direct qty-adjust card (the "bin of M3 screws"
+  // flow — same card the scanner pops on the bin's QR).
+  const binContents = useQuery({
+    queryKey: ["bin-contents", activeSlug, id],
+    queryFn: () => api.binContents(activeSlug, id!),
+    enabled: !!activeSlug && !!id,
+    staleTime: 30_000,
+  });
 
   const allLocations = useQuery({
     queryKey: ["locations", activeSlug],
@@ -148,6 +157,15 @@ export function LocationDetailPage() {
           ))}
           <span className="text-content dark:text-mortar-200">{l.name}</span>
         </nav>
+      )}
+
+      {binContents.data?.single && binContents.data.items[0] && (
+        <BinAdjustModal
+          inline
+          locationId={l.id}
+          locationName={l.name}
+          item={binContents.data.items[0]}
+        />
       )}
 
       <header className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5">

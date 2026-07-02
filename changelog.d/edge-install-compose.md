@@ -1,5 +1,6 @@
 ---
 type: improvement
+date: 2026-06-20
 ---
 The edge-bridge install step now offers a **docker compose** snippet alongside the `docker run` command — toggle between them and copy whichever fits how you run things.
 

@@ -48,6 +48,7 @@ import {
   setTorch,
 } from "../lib/barcodeScanner";
 import { ScanResultModal } from "./ScanResultModal";
+import { BinAdjustModal } from "../components/BinAdjustModal";
 
 // BarcodeDetector type — not in lib.dom.d.ts as of TS 5.7. Local shim.
 interface BarcodeDetectorCtor {
@@ -140,6 +141,13 @@ export function ScanCameraPage() {
   const [assignOpen, setAssignOpen] = useState(false);
   const [shutterBusy, setShutterBusy] = useState(false);
   const [flash, setFlash] = useState(false);
+  // Single-SKU bin (scanned its QR): direct qty-adjust modal for the one SKU
+  // that lives there — the "bin of M3 screws" flow.
+  const [binAdjust, setBinAdjust] = useState<{
+    locationId: string;
+    locationName: string;
+    item: import("../lib/api").TrackedMatch;
+  } | null>(null);
   // Move mode (companion app A10): scanning something already tracked (single exact
   // barcode match) auto-moves it into the active bin instead of triaging.
   const [moveMode, setMoveMode] = useState(() => localStorage.getItem("cobblr-scan-move-mode") === "1");
@@ -362,6 +370,24 @@ export function ScanCameraPage() {
             locId &&
             (!resolved.org_slug || resolved.org_slug === activeSlug)
           ) {
+            // Single-SKU bin? Then the bin's QR IS the item's label (loose
+            // M3 screws carry no codes) — go straight to adjusting ITS count
+            // in THIS bin. Multi-SKU / empty bins keep the filing flow below.
+            try {
+              const contents = await api.binContents(activeSlug, locId);
+              if (contents.single && contents.items[0]) {
+                const items0 = locsRef.current ?? [];
+                const loc = items0.find((l) => l.id === locId);
+                setBinAdjust({
+                  locationId: locId,
+                  locationName: loc ? filingLabel(loc) : "this bin",
+                  item: contents.items[0],
+                });
+                return; // phase stays "idle" while the modal is up
+              }
+            } catch {
+              /* contents unavailable → normal filing flow */
+            }
             const items = locsRef.current ?? [];
             const byId = new Map(
               items.map((l) => [
@@ -909,6 +935,25 @@ export function ScanCameraPage() {
         </Modal>
       )}
 
+      {binAdjust && (
+        <BinAdjustModal
+          locationId={binAdjust.locationId}
+          locationName={binAdjust.locationName}
+          item={binAdjust.item}
+          onClose={() => {
+            setBinAdjust(null);
+            setPhase("scanning");
+          }}
+          onAddSomethingElse={() => {
+            // The bin is gaining a second SKU — flip to the filing flow: set it
+            // as the active bin and keep scanning into it.
+            setAreaId(binAdjust.locationId);
+            toast.success(`Filing into ${binAdjust.locationName} — scan the new item`);
+            setBinAdjust(null);
+            setPhase("scanning");
+          }}
+        />
+      )}
       {phase === "result" && pendingBarcode && (
         <ScanResultModal
           barcode={pendingBarcode}

@@ -16,6 +16,8 @@
 //     the matrix above.
 
 import { useState } from "react";
+import { AreaTabs, ACCESS_TABS } from "../components/AreaTabs";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, EyeOff, Plus, Shield, X } from "lucide-react";
 import { useToast, usePageTitle } from "@cobblr/platform-web";
@@ -43,6 +45,15 @@ export function PermissionsPage() {
   const scopesQ = useQuery({
     queryKey: ["field-scopes", activeSlug],
     queryFn: () => api.listFieldScopes(activeSlug),
+  });
+  // Who-can-do-what overview (2026-07 audit: access control spans four UIs —
+  // stock roles in the Members modal, custom roles, direct grants here, field
+  // scopes below — with no single place that answers "what can THIS member
+  // do". The overview reads it all together; each piece still edits where it
+  // lives, via the links.)
+  const customRolesQ = useQuery({
+    queryKey: ["custom-roles", activeSlug],
+    queryFn: () => api.listCustomRoles(activeSlug),
   });
 
   const toggle = useMutation({
@@ -137,6 +148,7 @@ export function PermissionsPage() {
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
+      <AreaTabs tabs={ACCESS_TABS} area="access" />
       <div className="border-b border-line dark:border-slate-700 pb-3">
         <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
           permissions
@@ -146,6 +158,58 @@ export function PermissionsPage() {
           everything implicitly.
         </span>
       </div>
+
+      {members.length > 0 && (
+        <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-2">
+          <div className="flex items-baseline gap-2">
+            <span className="text-[10px] font-mono uppercase tracking-widest text-accent">
+              // who can do what
+            </span>
+            <span className="text-xs text-faint dark:text-slate-400">
+              stock role (set in <Link className="underline hover:text-accent" to="/configuration?open=members">Members</Link>) ·
+              custom roles (<Link className="underline hover:text-accent" to="/configuration/roles">manage</Link>) ·
+              direct grants (the matrix below)
+            </span>
+          </div>
+          <ul className="divide-y divide-line dark:divide-slate-800">
+            {members.map((m) => {
+              const roleNames = (m.custom_role_ids ?? [])
+                .map((id) => (customRolesQ.data?.items ?? []).find((r) => r.id === id)?.name)
+                .filter(Boolean) as string[];
+              const adminish = m.role === "owner" || m.role === "admin" || m.role === "editor";
+              return (
+                <li key={m.id} className="py-2 flex flex-wrap items-center gap-2">
+                  <span className="font-medium text-content dark:text-mortar-100 min-w-0 truncate">
+                    {m.display_name || m.email}
+                  </span>
+                  <span className={
+                    "inline-flex rounded-full px-2 py-0.5 text-[11px] font-mono " +
+                    (adminish
+                      ? "bg-accent/10 text-accent"
+                      : "border border-line dark:border-slate-600 text-content dark:text-mortar-200")
+                  }>
+                    {m.role}
+                  </span>
+                  {roleNames.map((n) => (
+                    <span key={n} className="inline-flex rounded-full border border-cobble-300 dark:border-cobble-700 px-2 py-0.5 text-[11px] text-content dark:text-mortar-200">
+                      {n}
+                    </span>
+                  ))}
+                  <span className="text-xs text-faint dark:text-slate-400 flex-1 min-w-0 truncate">
+                    {adminish
+                      ? "everything, implicitly"
+                      : m.grants.length + roleNames.length === 0
+                        ? "read-only — no grants"
+                        : (m.grants.length > 0 ? `${m.grants.length} direct grant${m.grants.length === 1 ? "" : "s"}` : "") +
+                          (m.grants.length > 0 && roleNames.length > 0 ? " + " : "") +
+                          (roleNames.length > 0 ? `${roleNames.length} role${roleNames.length === 1 ? "" : "s"}` : "")}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
 
       {actions.length === 0 && (
         <div className="text-xs text-faint italic">

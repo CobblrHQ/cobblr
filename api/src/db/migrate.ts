@@ -52,6 +52,24 @@ export async function runMigrations(opts: MigrationRunOptions): Promise<Migratio
     const files = await listMigrationFiles(directory);
     const pending = files.filter((f) => !applied.has(f));
 
+    // Downgrade detector (audit F8): the DB has applied migrations this build
+    // has never heard of ⇒ an OLDER api image is running against a NEWER
+    // schema. Migrations are additive by convention so this often still
+    // works, which is exactly why it must be LOUD — a silent version skew is
+    // how "works on my box" prod mysteries start. Warn, don't crash: crashing
+    // would turn every emergency image rollback into an outage.
+    const onDisk = new Set(files);
+    const unknown = [...applied].filter((f) => !onDisk.has(f));
+    if (unknown.length > 0) {
+      console.error(
+        `[migrate:${scope}] ⚠ DOWNGRADE DETECTED — the database has ${unknown.length} applied ` +
+          `migration(s) this build does not ship (${unknown.slice(0, 3).join(", ")}${unknown.length > 3 ? ", …" : ""}). ` +
+          `An older api image is running against a newer schema. This is unsupported: ` +
+          `roll the image forward, or restore the DB from a backup taken before the newer image ran. ` +
+          `See docs/operations/PRODUCTION_DEPLOY.md ("No downgrades").`,
+      );
+    }
+
     const justRan: string[] = [];
     for (const file of pending) {
       const sql = await readFile(join(directory, file), "utf8");

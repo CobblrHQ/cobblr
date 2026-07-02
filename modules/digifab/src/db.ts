@@ -40,6 +40,9 @@ export interface DigifabJobsTable {
   linked_build_id: string | null;
   build_qty: Generated<number>;
   build_consumed_at: Date | null;
+  /** The reversal twin: a scrapped/failed/cancelled job whose build was already
+   *  committed gets its consumption undone exactly once (null→now atomic flip). */
+  build_reversed_at: Date | null;
   remote_file_id: string | null;
   remote_job_id: string | null;
   status: Generated<string>;
@@ -49,6 +52,8 @@ export interface DigifabJobsTable {
   attempts: Generated<number>;
   max_attempts: Generated<number>;
   progress: number | null;
+  /** Driver-reported seconds remaining (updated each poll; null when unknown). */
+  eta_sec: number | null;
   error: string | null;
   /** Consecutive poll errors (F-12) — reset to 0 on a successful poll; a job is
    *  only declared `failed` after this crosses the threshold. */
@@ -119,6 +124,9 @@ export interface DigifabDeviceSettingsTable {
   remote_device_id: string;
   camera_url: string | null;
   snapshot_relay: Generated<boolean>;
+  /** ⑦ Spatial floor position (grid cell); null = unplaced. */
+  grid_x: number | null;
+  grid_y: number | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }

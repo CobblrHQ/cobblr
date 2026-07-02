@@ -1,5 +1,6 @@
 ---
 type: feature
+date: 2026-06-22
 ---
 **Rename the Locations nav entry to your word.** The top-level **Locations** entry now honors the org-wide display-name override (Configuration → Presentation) — call it "Rooms", "Areas", whatever fits your workspace, consistent on every device.
 

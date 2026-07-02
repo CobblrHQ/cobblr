@@ -5,6 +5,7 @@
 // import here.
 
 import { Router } from "express";
+import { platform } from "@cobblr/platform-contract";
 import { providersRouter } from "./providers.js";
 import { capabilitiesRouter } from "./capabilities.js";
 import { invokeRouter } from "./invoke.js";
@@ -14,6 +15,7 @@ import { chatRouter } from "./chat.js";
 import { activityRouter } from "./activity.js";
 import { register as registerOllama } from "../providers/ollama.js";
 import { register as registerOpenAI } from "../providers/openai.js";
+import { register as registerOpenAICompat } from "../providers/openai-compat.js";
 import { register as registerAnthropic } from "../providers/anthropic.js";
 import { register as registerEdgeBridge } from "../providers/edge-bridge.js";
 import { edgeStatusRouter } from "./edge-status.js";
@@ -24,11 +26,22 @@ function registerBuiltins(): void {
   registered = true;
   registerOllama();
   registerOpenAI();
+  registerOpenAICompat();
   registerAnthropic();
   // Reaches an Ollama-API endpoint on the workspace's own device via a live
   // edge channel (the proprietary relay registers channels into platform().edge).
   // Credential-less; inert until an edge agent connects — usable on self-host too.
   registerEdgeBridge();
+  // Edge-bridge consumer card for the generic Edge-bridges page: a personal
+  // agent (set up in Your connections) routes AI capabilities to a model on
+  // the user's own machine — Ollama, LM Studio, a local Claude bridge.
+  platform().edge.registerConsumer({
+    module: "core-ai",
+    label: "Local AI",
+    description:
+      "Route AI capabilities to a model running on your own machine (Ollama, LM Studio, …) — set up a personal AI bridge under Your connections, then pick the edge provider in AI settings.",
+    href: "/me/connections",
+  });
 }
 
 registerBuiltins();

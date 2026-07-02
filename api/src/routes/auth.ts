@@ -14,6 +14,7 @@
 import { Router, type Request } from "express";
 import { z } from "zod";
 import { meta, metaPool } from "../db/meta.js";
+import { applyBlueprint, BlueprintManifest } from "./blueprint.js";
 import { provisionTenantDb } from "../db/provision.js";
 import { hashPassword, verifyPassword } from "../auth/password.js";
 
@@ -331,20 +332,23 @@ authRouter.post("/signup", async (req, res, next) => {
     // valid single-use signup-invite. Validate (status + email-lock) now; the
     // atomic claim happens just before user creation (race-safe).
     const isManagedAppSignup = !!body.app && managedAppSignupEnabled();
-    let invite: { id: string; invited_email: string | null; created_by: string } | null = null;
-    if (!publicSignupEnabled() && !isManagedAppSignup) {
-      if (!body.invite_token) {
-        return res.status(403).json({
-          error: {
-            code: "signup_disabled",
-            message:
-              "Public signup is disabled on this deployment. You need an invite link to sign up.",
-          },
-        });
-      }
+    let invite: { id: string; invited_email: string | null; created_by: string; blueprint: unknown | null } | null = null;
+    if (!publicSignupEnabled() && !isManagedAppSignup && !body.invite_token) {
+      return res.status(403).json({
+        error: {
+          code: "signup_disabled",
+          message:
+            "Public signup is disabled on this deployment. You need an invite link to sign up.",
+        },
+      });
+    }
+    // A provided token is honoured REGARDLESS of the public-signup gate: it
+    // must be consumed (single-use bookkeeping) and it may carry a premade
+    // workspace blueprint that should apply even on an open deployment.
+    if (body.invite_token && !isManagedAppSignup) {
       const row = await meta
         .selectFrom("signup_invites")
-        .select(["id", "invited_email", "created_by", "expires_at", "consumed_at", "revoked_at"])
+        .select(["id", "invited_email", "created_by", "expires_at", "consumed_at", "revoked_at", "blueprint"])
         .where("token", "=", body.invite_token)
         .executeTakeFirst();
       const expired = row?.expires_at && new Date(row.expires_at) < new Date();
@@ -358,7 +362,7 @@ authRouter.post("/signup", async (req, res, next) => {
           error: { code: "invite_email_mismatch", message: `This invite is for ${row.invited_email}.` },
         });
       }
-      invite = { id: row.id, invited_email: row.invited_email, created_by: row.created_by };
+      invite = { id: row.id, invited_email: row.invited_email, created_by: row.created_by, blueprint: row.blueprint ?? null };
     }
 
     // Cheap existence check before the more expensive bcrypt+insert.
@@ -452,6 +456,25 @@ authRouter.post("/signup", async (req, res, next) => {
     // Lifecycle seam: the hosted overlay attaches here. No-op in open core.
     await fireSignup({ userId, email, orgId: provisioned.orgId });
 
+    // Premade workspace: the invite carried a blueprint — apply it so the
+    // invitee lands in a workspace already configured for them (modules,
+    // bundles, fields, views). Best-effort by design: a bad blueprint must
+    // never brick a signup; they just get the normal empty workspace.
+    let blueprintApplied: { name: string } | null = null;
+    if (invite?.blueprint && !body.app) {
+      const bp = BlueprintManifest.safeParse(invite.blueprint);
+      if (bp.success) {
+        try {
+          await applyBlueprint(provisioned.orgId, { id: userId, display_name: body.display_name.trim(), auth_method: "session" }, bp.data);
+          blueprintApplied = { name: bp.data.name };
+        } catch (err) {
+          console.error("[signup] invite blueprint apply failed:", err);
+        }
+      } else {
+        console.error("[signup] invite blueprint failed validation:", bp.error.issues.slice(0, 3));
+      }
+    }
+
     // Send an email-verification link (best-effort — never blocks signup;
     // no-op delivery when no auth-email sender is configured).
     void issueAndSendVerifyEmail(userId, email, req).catch((err) =>
@@ -473,7 +496,7 @@ authRouter.post("/signup", async (req, res, next) => {
     }
 
     const out = await buildAuthResponse(userId);
-    return res.status(201).json(out);
+    return res.status(201).json({ ...out, ...(blueprintApplied ? { blueprint_applied: blueprintApplied } : {}) });
   } catch (err) {
     if (err instanceof z.ZodError) {
       return res.status(400).json({
@@ -500,7 +523,7 @@ authRouter.get("/signup-invite/:token", async (req, res, next) => {
     }
     const row = await meta
       .selectFrom("signup_invites")
-      .select(["invited_email", "note", "expires_at", "consumed_at", "revoked_at"])
+      .select(["invited_email", "note", "expires_at", "consumed_at", "revoked_at", "blueprint"])
       .where("token", "=", token)
       .executeTakeFirst();
     if (!row) {
@@ -515,7 +538,11 @@ authRouter.get("/signup-invite/:token", async (req, res, next) => {
         : expired
           ? "expired"
           : "open";
-    res.json({ status, invited_email: row.invited_email, note: row.note });
+    const bpName =
+      row.blueprint && typeof row.blueprint === "object" && typeof (row.blueprint as { name?: unknown }).name === "string"
+        ? (row.blueprint as { name: string }).name
+        : null;
+    res.json({ status, invited_email: row.invited_email, note: row.note, blueprint_name: bpName });
   } catch (err) {
     next(err);
   }

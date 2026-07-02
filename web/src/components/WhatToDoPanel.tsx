@@ -22,7 +22,7 @@
 // feedback (swap the first two columns; build-it-yourself is a CTA, not a lane;
 // the 3rd column is the guided add + scan; a mini scan inbox lives below).
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@cobblr/platform-web";
@@ -55,21 +55,50 @@ function LaneHeader({ kicker, title, count }: { kicker: string; title: string; c
   );
 }
 
-/** A scrollable card list that makes "there's more below" obvious: a bottom
- *  fade-out + a "↓ N more" hint when the list overflows its max height. Tall by
- *  default — the homepage has the vertical room, so show as many entries as fit
- *  before scrolling kicks in. */
-function ScrollList({ count, visible = 9, children }: { count: number; visible?: number; children: ReactNode }) {
-  const overflow = count > visible;
+/** A scrollable card list that makes "there's more below" obvious — but
+ *  HONESTLY: overflow + at-bottom come from real scroll metrics (the old
+ *  static "N more" pill kept showing at the bottom of the scroll, and its
+ *  count went stale as the column height changed). On md+ the list FILLS the
+ *  column height (absolute-inset inside a flex-1 wrapper, so it doesn't
+ *  contribute intrinsic height) — the row is driven by the tallest column
+ *  (e.g. a busy col 3), with the old 40rem cap kept as the MINIMUM. */
+function ScrollList({ children }: { children: ReactNode }) {
+  const ref = useRef<HTMLUListElement | null>(null);
+  const [flags, setFlags] = useState({ overflow: false, atBottom: false });
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () =>
+      setFlags({
+        overflow: el.scrollHeight > el.clientHeight + 4,
+        atBottom: el.scrollTop + el.clientHeight >= el.scrollHeight - 4,
+      });
+    measure();
+    el.addEventListener("scroll", measure, { passive: true });
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    window.addEventListener("resize", measure);
+    return () => {
+      el.removeEventListener("scroll", measure);
+      ro.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, []);
+  const hint = flags.overflow && !flags.atBottom;
   return (
-    <div className="relative">
-      <ul className={"space-y-1.5 overflow-y-auto pr-1 " + (overflow ? "max-h-[40rem] pb-5" : "")}>{children}</ul>
-      {overflow && (
+    <div className="relative md:flex-1 md:min-h-[40rem]">
+      <ul
+        ref={ref}
+        className={"space-y-1.5 overflow-y-auto pr-1 max-h-[40rem] md:max-h-none md:absolute md:inset-0 " + (hint ? "pb-5" : "")}
+      >
+        {children}
+      </ul>
+      {hint && (
         <>
           <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-cobble-50 via-cobble-50/90 dark:from-slate-900 dark:via-slate-900/90 to-transparent rounded-b" />
           <div className="pointer-events-none absolute inset-x-0 bottom-1 flex justify-center">
             <span className="rounded-full bg-surface dark:bg-slate-800 border border-line dark:border-slate-700 px-2 py-0.5 text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-300 shadow-sm">
-              ↓ {count - visible} more
+              ↓ more
             </span>
           </div>
         </>
@@ -112,6 +141,53 @@ function NameIt({ slug, itemId }: { slug: string; itemId: string }) {
   );
 }
 
+/** One scanned item as a small square tile — the photo IS the identifier for
+ *  scans. LADDERS through candidate sources on failure (catalog file →
+ *  catalog URL → own scan photo → initials) — the ScanPage lesson: a cached
+ *  catalog file or hotlink-blocked URL must fall through, not go blank. */
+function CaptureTile({ slug, it }: { slug: string; it: { catalog_image_file_id: string | null; catalog_image_url: string | null; image_file_id: string | null; suggested_name: string | null; suggested_candidates: Array<{ name: string }> } }) {
+  const candidates = useMemo(
+    () =>
+      [
+        it.catalog_image_file_id
+          ? `/api/v1/orgs/${slug}/modules/core-files/files/${it.catalog_image_file_id}/raw?variant=thumb`
+          : null,
+        it.catalog_image_url,
+        it.image_file_id ? `/api/v1/orgs/${slug}/modules/core-files/files/${it.image_file_id}/raw?variant=thumb` : null,
+      ].filter((u): u is string => !!u),
+    [slug, it.catalog_image_file_id, it.catalog_image_url, it.image_file_id],
+  );
+  const [idx, setIdx] = useState(0);
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    const url = candidates[idx];
+    if (!url) { setSrc(null); return; }
+    const internal = url.startsWith("/api/v1/");
+    if (!internal) { setSrc(url); return; } // external → <img onError> advances
+    let cancelled = false;
+    let blobUrl: string | null = null;
+    const token = localStorage.getItem("cobblr.token");
+    fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.blob(); })
+      .then((b) => { if (cancelled) return; blobUrl = URL.createObjectURL(b); setSrc(blobUrl); })
+      .catch(() => { if (!cancelled) setIdx((i) => i + 1); });
+    return () => { cancelled = true; if (blobUrl) URL.revokeObjectURL(blobUrl); };
+  }, [candidates, idx]);
+  const name = it.suggested_candidates?.[0]?.name || it.suggested_name || "item";
+  return (
+    <div
+      title={name}
+      className="flex-1 min-w-14 max-w-36 aspect-square rounded-md border border-line dark:border-slate-700 overflow-hidden bg-surface dark:bg-slate-900 grid place-items-center"
+    >
+      {src ? (
+        <img src={src} alt={name} loading="lazy" className="w-full h-full object-cover" onError={() => { setSrc(null); setIdx((i) => i + 1); }} />
+      ) : (
+        <span className="text-[11px] font-medium text-faint dark:text-slate-500 uppercase">{name.slice(0, 2)}</span>
+      )}
+    </div>
+  );
+}
+
 // Per-kind onboarding vocabulary — see docs/design-decisions/what-to-do-funnel.md.
 // Multi-instance domains create a *category* (a named instance) first, then items
 // inside it; the examples make the LEVEL concrete so col 3 never offers an item
@@ -124,20 +200,16 @@ const KIND_VOCAB: Record<string, { categoryEg: string; itemEg: string }> = {
   purchases: { categoryEg: "Amazon, Hardware Store", itemEg: "an order" },
 };
 
-// Option (a): capability modules that OPERATE ON a domain — their recipes surface
-// under the capability too (Digital Fabrication fabricates *with* machines, so
-// 3D Printers/CNC/Lasers show under it). Interim affinity until it's a declared
-// module relationship — see the design doc.
-const OPERATES_ON: Record<string, string[]> = {
-  digifab: ["machines"],
-};
-
 const slugifyName = (s: string): string =>
   s.normalize("NFKD").toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").replace(/-+/g, "-");
 
 // Col-1 curated order: the flagship "kinds people start with" first; plumbing-
-// adjacent domains last. Unlisted names sort after, alphabetically.
-const KIND_ORDER = ["inventory", "machines", "assets", "projects", "lists", "purchases", "tracking", "builds", "labels", "digifab"];
+// adjacent domains last. Unlisted names sort after, alphabetically. Operators
+// (labels, digifab — manifest `operatesOn`) never appear here: they act ON
+// things, they aren't a kind of thing you track. What-to-do-funnel.md option
+// (c), chosen 2026-07-02 — the interim OPERATES_ON affinity map died with it
+// (an operator that isn't a col-1 kind needs no recipe affinity).
+const KIND_ORDER = ["inventory", "machines", "assets", "projects", "lists", "purchases", "tracking", "builds"];
 const kindRank = (name: string): number => {
   const i = KIND_ORDER.indexOf(name);
   return i === -1 ? KIND_ORDER.length : i;
@@ -214,8 +286,30 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
   const domainModules = useMemo(
     () =>
       (modulesQ.data?.items ?? [])
-        .filter((m) => !m.enabled && m.band === "stock" && !m.name.startsWith("core-"))
+        .filter(
+          (m) =>
+            !m.enabled &&
+            m.band === "stock" &&
+            !m.name.startsWith("core-") &&
+            // Operators (labels, digifab) act ON things — not a kind you track.
+            (m.operates_on?.length ?? 0) === 0,
+        )
         .sort((a, b) => kindRank(a.name) - kindRank(b.name) || a.displayName.localeCompare(b.displayName)),
+    [modulesQ.data],
+  );
+  // The operators, offered as a quiet "also add" strip under col 1 so they stay
+  // discoverable without masquerading as trackable kinds.
+  const capabilityModules = useMemo(
+    () =>
+      (modulesQ.data?.items ?? [])
+        .filter(
+          (m) =>
+            !m.enabled &&
+            m.band === "stock" &&
+            !m.name.startsWith("core-") &&
+            (m.operates_on?.length ?? 0) > 0,
+        )
+        .sort((a, b) => a.displayName.localeCompare(b.displayName)),
     [modulesQ.data],
   );
   const blockMatches = useMemo(() => {
@@ -228,40 +322,49 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
       .map((x) => x.m);
   }, [domainModules, blockQ]);
 
-  const recipes = useMemo(() => {
+  // Skins vs setups (the author's baby-bundle model, inverted 2026-07-02): a SKIN is a
+  // pre-shaped tracker of ONE kind (an instance + a few ready-made fields —
+  // Fasteners, Filament, Yarn); a SETUP genuinely spans modules (Maker
+  // Workshop). Skins are the relatable front door, so col 2 leads with them
+  // ALWAYS — unscoped too — and the multi-module setups sit under a quieter
+  // "Full setups" subheading instead of being the default face of the column.
+  const { skins, setups } = useMemo(() => {
     const q = recipeQ.trim().toLowerCase();
     // A recipe belongs to a kind if it REQUIRES it OR PROVISIONS an instance of
     // it. The machine specialisations (3D Printers / Laser Cutters / CNC) are
     // provides_instances of `machines`, so this surfaces them under Machines.
-    const operatesOn = OPERATES_ON[selectedModule ?? ""] ?? [];
     const relatesTo = (b: CatalogBundle, mod: string) =>
       (b.manifest.requires ?? []).some((r) => r.module === mod) ||
-      (b.manifest.provides_instances ?? []).some((i) => i.module === mod) ||
-      // option (a): a capability's recipes = the recipes of the domains it operates on
-      operatesOn.some((dom) => (b.manifest.requires ?? []).some((r) => r.module === dom) || (b.manifest.provides_instances ?? []).some((i) => i.module === dom));
+      (b.manifest.provides_instances ?? []).some((i) => i.module === mod);
     const byKind = (b: CatalogBundle) => !selectedModule || relatesTo(b, selectedModule);
-    // Base set: a search OR a chosen kind spans the WHOLE catalog, so the
-    // community specialisations (3D Printers, …) show — not just the curated
-    // flagship default you see when nothing is picked.
+    const moduleSpan = (b: CatalogBundle) =>
+      new Set([
+        ...(b.manifest.requires ?? []).map((r) => r.module),
+        ...(b.manifest.provides_instances ?? []).map((i) => i.module),
+      ]).size;
+    const isSkin = (b: CatalogBundle) =>
+      moduleSpan(b) <= 1 && (b.manifest.provides_instances?.length ?? 0) >= 1;
+
+    let base = catalog.filter(byKind);
     if (q) {
       // Searching: rank name-prefix > name > blurb/description so the first
-      // visible card is what Enter selects.
-      return catalog
-        .filter(byKind)
+      // visible card is what Enter selects. Rank order is preserved within
+      // each section.
+      base = base
         .map((b) => ({ b, r: rankMatch(q, b.manifest.name, `${b.blurb ?? ""} ${b.manifest.description ?? ""}`) }))
         .filter((x) => x.r > 0)
         .sort((a, b) => b.r - a.r)
         .map((x) => x.b);
-    }
-    const base = selectedModule ? catalog : catalog.filter((b) => b.manifest.id.includes(".flagship."));
-    return base
-      .filter(byKind)
-      .sort(
+    } else {
+      base = [...base].sort(
         (a, b) =>
           (a.manifest.requires?.length ?? 0) - (b.manifest.requires?.length ?? 0) ||
           a.manifest.name.localeCompare(b.manifest.name),
       );
+    }
+    return { skins: base.filter(isSkin), setups: base.filter((b) => !isSkin(b)) };
   }, [catalog, recipeQ, selectedModule]);
+  const recipes = useMemo(() => [...skins, ...setups], [skins, setups]);
 
   // ── actions ─────────────────────────────────────────────────────────────
   const enableModuleMut = useMutation({
@@ -378,6 +481,38 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
     // (Maker Workshop depends on inventory, but you got there via Builds).
     setSelectedRecipe((cur) => (cur?.manifest.id === b.manifest.id ? null : b));
 
+  // One recipe card, used by both col-2 sections (trackers + full setups).
+  // Click SELECTS the recipe (drives col 3) — no install-modal dead-end. A
+  // small "details" button opens the full modal. The card is a
+  // div[role=button] (NOT <button>) because it contains that inner button —
+  // nested buttons are invalid HTML and break keyboard/screen-reader semantics.
+  const recipeCard = (b: CatalogBundle) => {
+    const on = selectedRecipe?.manifest.id === b.manifest.id;
+    return (
+      <li key={b.manifest.id}>
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => pickRecipe(b)}
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pickRecipe(b); } }}
+          title={on ? "Click again to deselect" : undefined}
+          className={
+            "w-full cursor-pointer text-left rounded-lg border p-2.5 flex items-start gap-2.5 transition group " +
+            (on ? "border-accent bg-accent/5" : "border-line dark:border-slate-700 bg-surface dark:bg-slate-900 hover:border-cobble-300 dark:hover:border-cobble-700")
+          }
+        >
+          <div className="text-xl shrink-0 leading-none mt-0.5">{b.glyph}</div>
+          <div className="flex-1 min-w-0">
+            <div className="font-medium text-content dark:text-mortar-100 text-sm">{b.manifest.name}</div>
+            <div className="text-xs text-faint dark:text-slate-400 line-clamp-2">{b.blurb}</div>
+            <button type="button" onClick={(e) => { e.stopPropagation(); setPicked(b); }} className="mt-1 text-[11px] text-faint dark:text-slate-500 hover:text-accent transition">details →</button>
+          </div>
+          <ArrowRight size={13} className={(on ? "text-accent" : "text-faint dark:text-slate-600 group-hover:text-accent") + " transition mt-1 shrink-0"} />
+        </div>
+      </li>
+    );
+  };
+
   const selectedModuleObj = selectedModule ? (modulesQ.data?.items ?? []).find((m) => m.name === selectedModule) : undefined;
   // A multi-instance kind has a CATEGORY level (create a named instance first);
   // single-instance kinds go straight in. Vocab keeps col 3's examples on the
@@ -395,13 +530,105 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
     : undefined;
   const itemPlaceholder = recipeItemEg ?? kindVocab?.itemEg ?? "a 3D printer, a box of screws…";
   const items = inbox.data?.items ?? [];
-  // Collapse only when there's content AND nothing pending to act on — a pending
-  // scan inbox forces the panel open so your captures always show on the home page.
-  const hasPending = items.length > 0;
+  // Provenance split (the author): TYPED captures are part of the funnel conversation
+  // and stay in col 3; SCANNED ones (barcode/photo/url/receipt) are a batch
+  // stream and get their own queue section BELOW the whole panel.
+  const typed = items.filter((i) => i.source_kind === "note");
+  const scanned = items.filter((i) => i.source_kind !== "note");
+  // Consolidate the scanner stream by its match (the author): "20 look like Filament
+  // Stash → create it & file all 20" beats 20 cards. Sorted biggest-first;
+  // unmatched/still-reading collapse to one review link at the end.
+  const scanGroups = useMemo(() => {
+    const map = new Map<string, { key: string; label: string; bundleId?: string; target?: { module: string; kind: string; instance?: string }; items: typeof scanned }>();
+    let residual = 0;
+    for (const it of scanned) {
+      const c = it.suggested_candidates?.[0];
+      if (!c) { residual++; continue; }
+      const key = c.bundle_external_id ? `b:${c.bundle_external_id}` : `i:${c.module}:${c.instance ?? ""}`;
+      const g = map.get(key) ?? {
+        key,
+        label: c.label,
+        ...(c.bundle_external_id
+          ? { bundleId: c.bundle_external_id }
+          : { target: { module: c.module, kind: c.kind, ...(c.instance ? { instance: c.instance } : {}) } }),
+        items: [] as typeof scanned,
+      };
+      g.items.push(it);
+      map.set(key, g);
+    }
+    return { groups: [...map.values()].sort((a, b) => b.items.length - a.items.length), residual };
+  }, [scanned]);
+  // "Add all N to <existing tracker>" — sequential confirms (small groups; no
+  // bulk endpoint needed).
+  const confirmGroupMut = useMutation({
+    mutationFn: async (g: { label: string; target: { module: string; kind: string; instance?: string }; ids: string[] }) => {
+      for (const id of g.ids) {
+        await api.confirmScanItem(slug, id, { target_module: g.target.module, target_kind: g.target.kind, ...(g.target.instance ? { instance: g.target.instance } : {}) });
+      }
+      return g;
+    },
+    onSuccess: (g) => {
+      void qc.invalidateQueries();
+      toast.success(`Filed ${g.ids.length} into ${g.label}.`);
+      if (g.target.instance) navigate(`/instances/${g.target.instance}`);
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't file those"),
+  });
+  // Collapse only when there's content AND no TYPED capture pending — scans
+  // live below the panel, so they don't force it open.
+  const hasPending = typed.length > 0;
   const showToggle = startCollapsed && !hasPending;
   const showBody = showToggle ? open : true;
 
+  // One capture card — shared by col 3 (typed) and the scanned queue below.
+  const renderCapture = (it: (typeof items)[number]) => {
+    const c = it.suggested_candidates?.[0];
+                  const stale = Date.now() - new Date(it.created_at).getTime() > 45_000;
+                  const done = !!it.ai_suggested_at || stale;
+                  const needsName = done && !c && !it.suggested_name && !!it.ai_suggested_at;
+                  const name = c?.name || it.suggested_name || (needsName ? "Couldn’t identify it" : "Captured item");
+                  const removing = discardMut.isPending && discardMut.variables === it.id;
+                  const filing = confirmMut.isPending && confirmMut.variables?.id === it.id;
+                  const making = !!c?.bundle_external_id && materializeMut.isPending && materializeMut.variables === c.bundle_external_id;
+                  const ctaCls = "shrink-0 inline-flex items-center gap-1 rounded-md text-xs font-medium px-2.5 py-1 transition disabled:opacity-50";
+                  return (
+                    <li key={it.id} className="rounded-lg border border-line dark:border-slate-800 bg-surface dark:bg-slate-900 px-3 py-2">
+                      <div className="flex items-center gap-2">
+                        <span className="flex-1 min-w-0 truncate text-sm font-medium text-content dark:text-mortar-100">{name}</span>
+                        <button type="button" disabled={removing} onClick={() => discardMut.mutate(it.id)} title="Remove" className="shrink-0 rounded p-1 text-faint hover:text-content dark:hover:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 transition disabled:opacity-50">
+                          {removing ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />}
+                        </button>
+                      </div>
+                      {needsName ? (
+                        <NameIt slug={slug} itemId={it.id} />
+                      ) : (
+                        <div className="mt-1.5 flex items-center gap-2">
+                          <span className="flex-1 min-w-0 truncate text-xs text-faint dark:text-slate-400">
+                            {c ? <>looks like <span className="text-accent">{c.label}</span></>
+                              : done ? "no match — save it as a general item"
+                              : <span className="inline-flex items-center gap-1"><Loader2 size={11} className="animate-spin" /> finding a home…</span>}
+                          </span>
+                          {c?.bundle_external_id ? (
+                            <button type="button" disabled={making} onClick={() => materializeMut.mutate(c.bundle_external_id!)} className={ctaCls + " bg-cobble-600 text-white hover:bg-cobble-700"}>
+                              {making ? <Loader2 size={12} className="animate-spin" /> : <ArrowRight size={12} />} Create {c.label}
+                            </button>
+                          ) : c ? (
+                            <button type="button" disabled={filing} onClick={() => confirmMut.mutate({ id: it.id, body: { target_module: c.module, target_kind: c.kind, ...(c.instance ? { instance: c.instance } : {}) } })} className={ctaCls + " bg-cobble-600 text-white hover:bg-cobble-700"}>
+                              {filing ? <Loader2 size={12} className="animate-spin" /> : <ArrowRight size={12} />} Add to {c.label}
+                            </button>
+                          ) : done ? (
+                            <button type="button" disabled={filing} onClick={() => confirmMut.mutate({ id: it.id, body: {} })} className={ctaCls + " border border-cobble-300 dark:border-cobble-700 text-content dark:text-mortar-100 hover:border-cobble-400"}>
+                              {filing ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} Save to Inventory
+                            </button>
+                          ) : null}
+                        </div>
+                      )}
+                    </li>
+    );
+  };
+
   return (
+    <>
     <section className="rounded-xl border-2 border-dashed border-cobble-300 dark:border-cobble-700 bg-cobble-50/30 dark:bg-cobble-900/10 p-5 space-y-4">
       <div className="flex items-center gap-2">
         <Sparkles size={16} className="text-accent" />
@@ -446,7 +673,7 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
           columns (highlights + col 3's reactive prompt) — no breadcrumb bar. */}
       <div className="grid gap-3 md:grid-cols-3">
         {/* Col 1 — Building blocks (modules) */}
-        <div className="order-2 md:order-none rounded-xl border border-line dark:border-slate-700 bg-surface/60 dark:bg-slate-900/40 p-3">
+        <div className="order-2 md:order-none rounded-xl border border-line dark:border-slate-700 bg-surface/60 dark:bg-slate-900/40 p-3 md:flex md:flex-col">
           <LaneHeader kicker="// building blocks" title="Track a kind of thing" count={blockMatches.length} />
           <div className="relative mb-2">
             <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-faint dark:text-slate-500" />
@@ -459,9 +686,9 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
             />
           </div>
           {blockMatches.length === 0 ? (
-            <p className="text-xs text-faint dark:text-slate-500 py-1">{blockQ ? `No capability matches “${blockQ.trim()}”.` : "All set."}</p>
+            <p className="text-xs text-faint dark:text-slate-500 py-1">{blockQ ? `No kind matches “${blockQ.trim()}”.` : "All set."}</p>
           ) : (
-            <ScrollList count={blockMatches.length}>
+            <ScrollList>
               {blockMatches.map((m) => (
                 <li key={m.name}>
                   <button
@@ -486,17 +713,42 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
               ))}
             </ScrollList>
           )}
+          {/* Operators (labels, digifab) — capabilities that act ON your
+              things, not kinds you track. A quiet strip keeps them one tap
+              away without letting them masquerade as trackable kinds. */}
+          {capabilityModules.length > 0 && !blockQ && (
+            <div className="mt-2 pt-2 border-t border-line/60 dark:border-slate-700/60">
+              <div className="text-[10px] uppercase tracking-wider text-faint dark:text-slate-500 mb-1.5">
+                Add a capability
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {capabilityModules.map((m) => (
+                  <button
+                    key={m.name}
+                    type="button"
+                    disabled={enableModuleMut.isPending}
+                    onClick={() => enableModuleMut.mutate(m.name)}
+                    title={firstSentence(m.description)}
+                    className="inline-flex items-center gap-1 rounded-full border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2.5 py-1 text-xs text-content dark:text-mortar-100 hover:border-accent hover:text-accent transition disabled:opacity-50"
+                  >
+                    <Plus size={11} />
+                    {m.displayName}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Col 2 — Ready-made setups (bundles) */}
-        <div className="order-3 md:order-none rounded-xl border border-line dark:border-slate-700 bg-surface/60 dark:bg-slate-900/40 p-3">
-          <LaneHeader kicker="// recipes" title={selectedModuleObj ? `${selectedModuleObj.displayName} setups` : "Ready-made setups"} count={recipes.length} />
+        {/* Col 2 — trackers (skins) first, full setups under a quiet subheading */}
+        <div className="order-3 md:order-none rounded-xl border border-line dark:border-slate-700 bg-surface/60 dark:bg-slate-900/40 p-3 md:flex md:flex-col">
+          <LaneHeader kicker="// recipes" title={selectedModuleObj ? `${selectedModuleObj.displayName} trackers` : "Pre-shaped trackers"} count={recipes.length} />
           <div className="relative mb-2">
             <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-faint dark:text-slate-500" />
             <input
               value={recipeQ}
               onChange={(e) => setRecipeQ(e.target.value)}
-              placeholder="e.g. yarn, filament…"
+              placeholder="e.g. yarn, filament, fasteners…"
               className="input !pl-8 !py-1.5 !text-sm"
               onKeyDown={(e) => { if (e.key === "Enter" && recipes[0]) pickRecipe(recipes[0]); }}
             />
@@ -504,40 +756,22 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
           {registry.isLoading && recipes.length === 0 ? (
             <div className="text-xs text-faint dark:text-slate-500 py-2">Loading…</div>
           ) : recipes.length === 0 ? (
-            <p className="text-xs text-faint dark:text-slate-500 py-1">{recipeQ ? `No ready-made setup for “${recipeQ.trim()}”.` : "Nothing here yet."}</p>
+            <p className="text-xs text-faint dark:text-slate-500 py-1">{recipeQ ? `No ready-made tracker for “${recipeQ.trim()}”.` : "Nothing here yet."}</p>
           ) : (
-            <ScrollList count={recipes.length}>
-              {recipes.map((b) => {
-                const on = selectedRecipe?.manifest.id === b.manifest.id;
-                return (
-                <li key={b.manifest.id}>
-                  {/* Click SELECTS the recipe (drives col 3) — no install-modal
-                      dead-end. A small "details" button opens the full modal.
-                      The card is a div[role=button] (NOT <button>) because it
-                      contains that inner button — nested buttons are invalid
-                      HTML and break keyboard/screen-reader semantics. */}
-                  <div
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => pickRecipe(b)}
-                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pickRecipe(b); } }}
-                    title={on ? "Click again to deselect" : undefined}
-                    className={
-                      "w-full cursor-pointer text-left rounded-lg border p-2.5 flex items-start gap-2.5 transition group " +
-                      (on ? "border-accent bg-accent/5" : "border-line dark:border-slate-700 bg-surface dark:bg-slate-900 hover:border-cobble-300 dark:hover:border-cobble-700")
-                    }
-                  >
-                    <div className="text-xl shrink-0 leading-none mt-0.5">{b.glyph}</div>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium text-content dark:text-mortar-100 text-sm">{b.manifest.name}</div>
-                      <div className="text-xs text-faint dark:text-slate-400 line-clamp-2">{b.blurb}</div>
-                      <button type="button" onClick={(e) => { e.stopPropagation(); setPicked(b); }} className="mt-1 text-[11px] text-faint dark:text-slate-500 hover:text-accent transition">details →</button>
-                    </div>
-                    <ArrowRight size={13} className={(on ? "text-accent" : "text-faint dark:text-slate-600 group-hover:text-accent") + " transition mt-1 shrink-0"} />
+            <ScrollList>
+              {/* Skins lead: one-kind trackers with the fields pre-shaped —
+                  the relatable front door. Multi-module setups follow under
+                  their own quiet subheading instead of being the default face
+                  of the column (the author, 2026-07-02). */}
+              {skins.map((b) => recipeCard(b))}
+              {setups.length > 0 && (
+                <li aria-hidden className="pt-1.5 pb-0.5">
+                  <div className="text-[10px] uppercase tracking-wider text-faint dark:text-slate-500">
+                    Full setups — several parts working together
                   </div>
                 </li>
-                );
-              })}
+              )}
+              {setups.map((b) => recipeCard(b))}
             </ScrollList>
           )}
         </div>
@@ -674,55 +908,11 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
 
           {/* What you've added — each capture, its match, and a one-tap CTA to
               give it a home. This is the funnel's payoff: col 3 fills in. */}
-          {items.length > 0 && (
+          {typed.length > 0 && (
             <div className="mt-3 border-t border-line dark:border-slate-800 pt-3 space-y-1.5">
-              <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">what you've added ({items.length})</div>
+              <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">what you've added ({typed.length})</div>
               <ul className="space-y-1.5">
-                {items.map((it) => {
-                  const c = it.suggested_candidates?.[0];
-                  const stale = Date.now() - new Date(it.created_at).getTime() > 45_000;
-                  const done = !!it.ai_suggested_at || stale;
-                  const needsName = done && !c && !it.suggested_name && !!it.ai_suggested_at;
-                  const name = c?.name || it.suggested_name || (needsName ? "Couldn’t identify it" : "Captured item");
-                  const removing = discardMut.isPending && discardMut.variables === it.id;
-                  const filing = confirmMut.isPending && confirmMut.variables?.id === it.id;
-                  const making = !!c?.bundle_external_id && materializeMut.isPending && materializeMut.variables === c.bundle_external_id;
-                  const ctaCls = "shrink-0 inline-flex items-center gap-1 rounded-md text-xs font-medium px-2.5 py-1 transition disabled:opacity-50";
-                  return (
-                    <li key={it.id} className="rounded-lg border border-line dark:border-slate-800 bg-surface dark:bg-slate-900 px-3 py-2">
-                      <div className="flex items-center gap-2">
-                        <span className="flex-1 min-w-0 truncate text-sm font-medium text-content dark:text-mortar-100">{name}</span>
-                        <button type="button" disabled={removing} onClick={() => discardMut.mutate(it.id)} title="Remove" className="shrink-0 rounded p-1 text-faint hover:text-content dark:hover:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 transition disabled:opacity-50">
-                          {removing ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />}
-                        </button>
-                      </div>
-                      {needsName ? (
-                        <NameIt slug={slug} itemId={it.id} />
-                      ) : (
-                        <div className="mt-1.5 flex items-center gap-2">
-                          <span className="flex-1 min-w-0 truncate text-xs text-faint dark:text-slate-400">
-                            {c ? <>looks like <span className="text-accent">{c.label}</span></>
-                              : done ? "no match — save it as a general item"
-                              : <span className="inline-flex items-center gap-1"><Loader2 size={11} className="animate-spin" /> finding a home…</span>}
-                          </span>
-                          {c?.bundle_external_id ? (
-                            <button type="button" disabled={making} onClick={() => materializeMut.mutate(c.bundle_external_id!)} className={ctaCls + " bg-cobble-600 text-white hover:bg-cobble-700"}>
-                              {making ? <Loader2 size={12} className="animate-spin" /> : <ArrowRight size={12} />} Create {c.label}
-                            </button>
-                          ) : c ? (
-                            <button type="button" disabled={filing} onClick={() => confirmMut.mutate({ id: it.id, body: { target_module: c.module, target_kind: c.kind, ...(c.instance ? { instance: c.instance } : {}) } })} className={ctaCls + " bg-cobble-600 text-white hover:bg-cobble-700"}>
-                              {filing ? <Loader2 size={12} className="animate-spin" /> : <ArrowRight size={12} />} Add to {c.label}
-                            </button>
-                          ) : done ? (
-                            <button type="button" disabled={filing} onClick={() => confirmMut.mutate({ id: it.id, body: {} })} className={ctaCls + " border border-cobble-300 dark:border-cobble-700 text-content dark:text-mortar-100 hover:border-cobble-400"}>
-                              {filing ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} Save to Inventory
-                            </button>
-                          ) : null}
-                        </div>
-                      )}
-                    </li>
-                  );
-                })}
+                {typed.map(renderCapture)}
               </ul>
             </div>
           )}
@@ -730,7 +920,7 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
       </div>
 
       <Link to="/bundles" className="inline-block text-xs text-faint dark:text-slate-400 hover:text-accent transition">
-        or browse the full marketplace →
+        browse all setups & trackers →
       </Link>
 
       {picked && (
@@ -738,5 +928,76 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
       )}
       </>)}
     </section>
+
+    {/* Scanned captures — the batch stream from your scanner/phone, OWN queue
+        below the guided panel (typed things stay in col 3). Capped preview;
+        heavy review lives on /scan (sessions, gallery, bulk tools). */}
+    {scanned.length > 0 && (
+      <section className="space-y-1.5">
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">// from your scanner — waiting to file ({scanned.length})</span>
+          <div className="flex-1" />
+          <Link to="/scan" className="text-xs text-accent hover:underline shrink-0">
+            review all in the Scan Inbox →
+          </Link>
+        </div>
+        <ul className="space-y-1.5">
+          {scanGroups.groups.map((g) => {
+            const busy = g.bundleId
+              ? materializeMut.isPending && materializeMut.variables === g.bundleId
+              : confirmGroupMut.isPending && confirmGroupMut.variables?.label === g.label;
+            return (
+              <li key={g.key} className="rounded-lg border border-cobble-300 dark:border-cobble-700 bg-cobble-50/50 dark:bg-cobble-900/15 px-3 py-2.5 space-y-1.5">
+                {/* Header row: count/label + a COMPACT inline CTA — the tile
+                    strip below gets the full card width (the author). */}
+                <div className="flex items-center gap-3 flex-wrap">
+                  <div className="flex-1 min-w-0 text-sm text-content dark:text-mortar-100">
+                    <strong>{g.items.length}</strong> look{g.items.length === 1 ? "s" : ""} like <span className="text-accent font-medium">{g.label}</span>
+                  </div>
+                  {g.bundleId ? (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => materializeMut.mutate(g.bundleId!)}
+                      className="shrink-0 inline-flex items-center gap-1 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-xs font-medium px-2.5 py-1 transition disabled:opacity-50"
+                    >
+                      {busy ? <Loader2 size={12} className="animate-spin" /> : <ArrowRight size={12} />}
+                      Create {g.label} & file all {g.items.length}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => confirmGroupMut.mutate({ label: g.label, target: g.target!, ids: g.items.map((i) => i.id) })}
+                      className="shrink-0 inline-flex items-center gap-1 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-xs font-medium px-2.5 py-1 transition disabled:opacity-50"
+                    >
+                      {busy ? <Loader2 size={12} className="animate-spin" /> : <ArrowRight size={12} />}
+                      Add all {g.items.length} to {g.label}
+                    </button>
+                  )}
+                </div>
+                {/* Full-width tile strip. */}
+                <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+                  {g.items.slice(0, 12).map((i) => (
+                    <CaptureTile key={i.id} slug={slug} it={i} />
+                  ))}
+                  {g.items.length > 12 && (
+                    <Link to="/scan" className="flex-1 min-w-14 max-w-36 aspect-square rounded-md border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 grid place-items-center text-xs font-medium text-muted dark:text-slate-300 hover:border-accent hover:text-accent transition">
+                      +{g.items.length - 12}
+                    </Link>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+        {scanGroups.residual > 0 && (
+          <Link to="/scan" className="block rounded-lg border border-line dark:border-slate-800 bg-surface dark:bg-slate-900 px-3 py-2 text-xs text-faint dark:text-slate-400 hover:text-accent hover:border-accent transition">
+            {scanGroups.residual} unidentified or still reading — review in the Scan Inbox →
+          </Link>
+        )}
+      </section>
+    )}
+    </>
   );
 }

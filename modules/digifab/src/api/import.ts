@@ -19,6 +19,7 @@ import { tenantDb, tenantContext } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { buildDriverById } from "../jobs-core.js";
 import { resolveDriver } from "../drivers/registry.js";
+import { assertSafeMachineUrl } from "../drivers/ssrf.js";
 import { FdmMonsterDriver } from "../drivers/fdm-monster.js";
 import { ensureDeclarativeDrivers, createPool, addPoolMember } from "./farm-build.js";
 
@@ -48,6 +49,16 @@ importRouter.post(
     const parsed = Body.safeParse(req.body);
     if (!parsed.success) return void badBody(res, parsed.error);
     const { mode } = parsed.data;
+
+    // SSRF: fresh credentials mean a user-supplied URL we're about to fetch —
+    // same gate as connection create/bulk (this route forgot it in the audit).
+    if (!parsed.data.connection_id && parsed.data.base_url && /^https?:\/\//i.test(parsed.data.base_url)) {
+      try {
+        await assertSafeMachineUrl(parsed.data.base_url);
+      } catch (e) {
+        return void res.status(400).json({ error: { code: "unsafe_url", message: (e as Error).message } });
+      }
+    }
 
     // Build the FDMM driver — from the existing connection or fresh creds.
     let fdmmConnId = parsed.data.connection_id ?? null;
@@ -107,6 +118,16 @@ importRouter.post(
       if (!t.url) {
         skipped++; // FDMM didn't expose this printer's controller URL — can't go direct
         continue;
+      }
+      // SSRF: these URLs came from the REMOTE FDMM's own printer records — treat
+      // them as untrusted input, same as a hand-typed connection URL.
+      if (/^https?:\/\//i.test(t.url)) {
+        try {
+          await assertSafeMachineUrl(t.url);
+        } catch {
+          skipped++;
+          continue;
+        }
       }
       const conn = await store().create(ctx.org.id, {
         type: t.driverType,

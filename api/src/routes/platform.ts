@@ -6,6 +6,7 @@
 
 import { Router } from "express";
 import { z } from "zod";
+import { parseWireFilter } from "../platform/wire-filter.js";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { requireAuth } from "../auth/middleware.js";
@@ -535,6 +536,13 @@ platformOrgRouter.post(
         });
         return;
       }
+      if (parsed.data.filter != null) {
+        const { error: ferr } = parseWireFilter(parsed.data.filter);
+        if (ferr) {
+          res.status(400).json({ error: { code: "invalid_wire_filter", message: ferr } });
+          return;
+        }
+      }
       const inserted = await meta
         .insertInto("entity_action_bindings")
         .values({
@@ -612,6 +620,13 @@ platformOrgRouter.patch(
           error: { code: "invalid_body", message: "Bad patch", details: parsed.error.issues },
         });
         return;
+      }
+      if (parsed.data.filter != null) {
+        const { error: ferr } = parseWireFilter(parsed.data.filter);
+        if (ferr) {
+          res.status(400).json({ error: { code: "invalid_wire_filter", message: ferr } });
+          return;
+        }
       }
       // Build the SET only from supplied keys; jsonb columns (filter/args/target)
       // serialise the same way the create route does.

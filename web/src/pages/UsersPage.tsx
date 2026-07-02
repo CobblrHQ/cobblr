@@ -7,6 +7,7 @@
 // admin can leave open until they've shared it.
 
 import { useState, type FormEvent } from "react";
+import { AreaTabs, ACCESS_TABS } from "../components/AreaTabs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ClipboardCopy, Plus, RefreshCw } from "lucide-react";
 import { useToast, usePageTitle, Modal } from "@cobblr/platform-web";
@@ -86,6 +87,7 @@ export function UsersPage() {
 
   return (
     <div className="space-y-5 max-w-4xl mx-auto">
+      <AreaTabs tabs={ACCESS_TABS} area="access" />
       <div className="flex items-baseline justify-between border-b border-line dark:border-slate-700 pb-3">
         <div>
           <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">

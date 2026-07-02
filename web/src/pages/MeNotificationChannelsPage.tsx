@@ -10,6 +10,7 @@
 // works without waiting for a real event.
 
 import { useState } from "react";
+import { AreaTabs, NOTIFICATION_TABS } from "../components/AreaTabs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell, Plus, Send, Trash2, Zap } from "lucide-react";
 import {
@@ -156,6 +157,7 @@ export function MeNotificationChannelsPage() {
 
   return (
     <div className="space-y-5 max-w-3xl mx-auto">
+      <AreaTabs tabs={NOTIFICATION_TABS} area="notifications" />
       <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
         <Bell size={20} className="text-accent" />
         <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">

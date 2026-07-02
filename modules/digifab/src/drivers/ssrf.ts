@@ -84,11 +84,20 @@ export async function assertSafeMachineUrl(raw: string): Promise<void> {
   }
   if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("only http(s) URLs are allowed");
   const host = u.hostname.replace(/^\[|\]$/g, "").toLowerCase();
-  if (host === "localhost" || host === "ip6-localhost" || host.endsWith(".localhost")) {
+  // CI/test-only escape: the FDMM-import + webhook tests spin a fake manager on
+  // loopback (127.0.0.1 / ::1) next to the api. Mirrors the webhook guard's
+  // COBBLR_WEBHOOK_ALLOW_INTERNAL. NEVER set in any deployed environment, so it
+  // can't loosen prod — the guard's real policy is unchanged there.
+  const allowInternal = process.env.COBBLR_MACHINE_ALLOW_INTERNAL === "1";
+  const isLoopbackIp = (ip: string) => ip === "::1" || (isIP(ip) === 4 && ip.split(".")[0] === "127");
+  if (!allowInternal && (host === "localhost" || host === "ip6-localhost" || host.endsWith(".localhost"))) {
     throw new Error("loopback host is not allowed");
   }
   const strict = platform().ai.getEndpointPolicy() === "strict";
-  const blocked = (ip: string) => (strict ? isPrivateIp(ip) : isDangerousIp(ip));
+  const blocked = (ip: string) => {
+    if (allowInternal && isLoopbackIp(ip)) return false;
+    return strict ? isPrivateIp(ip) : isDangerousIp(ip);
+  };
 
   if (isIP(host)) {
     if (blocked(host)) throw new Error(`address ${host} is not allowed (${strict ? "strict" : "lan"} egress policy)`);

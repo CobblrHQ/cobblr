@@ -17,7 +17,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "builds",
-  version: "0.2.0",
+  version: "0.3.0",
   displayName: "Builds",
   description:
     "Light bill-of-materials: define a build as a recipe of inventory parts, see how many you can build right now (and the limiting component), and consume the parts from stock when you build one. For makers assembling things from tracked parts.",
@@ -61,6 +61,9 @@ export default defineModule({
       // Fired when a build is recorded (components consumed). Carries build_id +
       // qty_built so a wire can react (e.g. mark a linked task done).
       "builds.build.completed",
+      // The undo: a recorded build was reversed (components returned, output
+      // credit removed) — a scrapped/failed fabrication run.
+      "builds.build.reversed",
       // Fired when a target build count can't be met — carries the per-component
       // shortfall. Wire it to a purchasing shopping list to auto-restock.
       "builds.shortfall.detected",
@@ -94,6 +97,15 @@ export default defineModule({
           qty: { label: "How many to build", type: "number" },
         },
       },
+      {
+        id: "builds:reverse-one",
+        label: "Reverse a build",
+        description:
+          "Undo a recorded build of N: put each component back into inventory stock and — if the build has an output part — decrement that. The failure leg of builds:build-one (a scrapped/failed fabrication run). Args: { build_id, qty? }.",
+        appliesTo: { kinds: ["builds:build"] },
+        invokeHandler: "builds.reverse-one",
+        userInvokable: false,
+      },
     ],
   },
 
@@ -102,7 +114,7 @@ export default defineModule({
   // them off the event. Belongs to builds: it owns the action. Inert for a
   // workspace without digifab (the event never fires) and for a job with no
   // linked build (the event never fires).
-  subscribes: ["digifab.job.build_committed"],
+  subscribes: ["digifab.job.build_committed", "digifab.job.build_reversed"],
 
   contributes: {
     wires: [
@@ -111,6 +123,15 @@ export default defineModule({
         action_id: "builds:build-one",
         trigger_type: "event",
         trigger_event: "digifab.job.build_committed",
+      },
+      // The failure leg: a committed build whose job then failed / was cancelled
+      // / was scrapped never produced its output — put the components back and
+      // remove the output credit. Same payload shape ({ buildId, qty }).
+      {
+        source_kind: "digifab:job",
+        action_id: "builds:reverse-one",
+        trigger_type: "event",
+        trigger_event: "digifab.job.build_reversed",
       },
     ],
   },

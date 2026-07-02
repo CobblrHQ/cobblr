@@ -403,6 +403,10 @@ export interface OrgModuleListItem {
   /** "multi" → the module can host several named instances (the "+ New thing"
    *  funnel offers it). "single" / absent → one instance only. */
   instanceability?: "single" | "multi";
+  /** Non-empty → an operator/capability (labels, digifab): it acts ON other
+   *  modules' things and is not itself a trackable kind, so the funnel's
+   *  "track a kind of thing" column excludes it. */
+  operates_on?: string[];
   /** Icon-only quick-action pinned to the navbar's right cluster. */
   headerAction: { icon: string; label: string; route: string } | null;
   dependencies: string[];
@@ -461,7 +465,7 @@ export const api = {
   }) => request<AuthResponse>("POST", "/auth/signup", body),
   // Public preview of a single-use signup invite (the /join/:token page).
   previewSignupInvite: (token: string) =>
-    request<{ status: string; invited_email: string | null; note: string | null }>(
+    request<{ status: string; invited_email: string | null; note: string | null; blueprint_name?: string | null }>(
       "GET",
       `/auth/signup-invite/${encodeURIComponent(token)}`,
     ),
@@ -499,7 +503,7 @@ export const api = {
   // Any workspace OWNER: invite a friend to Cobblr who gets their OWN
   // workspace (distinct from a workspace-member invite). Reuses the
   // signup-invite machinery, attributed to the caller.
-  mintMySignupInvite: (body: { email?: string; note?: string; expires_in_days?: number }) =>
+  mintMySignupInvite: (body: { email?: string; note?: string; expires_in_days?: number; from_workspace?: string }) =>
     request<SignupInvite & { token: string; emailed: boolean }>("POST", "/me/signup-invites", body),
   listMySignupInvites: () =>
     request<{ items: SignupInvite[] }>("GET", "/me/signup-invites"),
@@ -621,8 +625,11 @@ export const api = {
   me: () => request<MeResponse>("GET", "/me"),
   orgLocal: (slug: string) => request<OrgLocalResponse>("GET", `/orgs/${slug}/local`),
   listOrgs: () => request<{ items: OrgMembership[] }>("GET", "/orgs"),
-  createOrg: (name: string) =>
-    request<{ org: OrgMembership; slug: string }>("POST", "/orgs", { name }),
+  createOrg: (name: string, opts?: { blueprint?: unknown }) =>
+    request<{ org: OrgMembership; slug: string; blueprint_applied?: { name: string } }>("POST", "/orgs", {
+      name,
+      ...(opts?.blueprint !== undefined ? { blueprint: opts.blueprint } : {}),
+    }),
   /** Persist the signed-in user's switcher order (drag-to-reorder). `slugs` is
    *  the user's workspaces in the desired order. */
   reorderWorkspaces: (slugs: string[]) =>
@@ -782,6 +789,8 @@ export const api = {
   // Personal (user-scoped) connections — BYO AI creds routed to your workspaces.
   listConnections: () =>
     request<{ items: UserConnection[] }>("GET", "/me/connections"),
+  /** Is my personal edge agent connected right now? (transit hint) */
+  getMyEdgeAgent: () => request<{ connected: boolean }>("GET", "/me/edge-agent"),
   connectionCatalogue: () =>
     request<{ items: AiProviderDef[] }>("GET", "/me/connections/catalogue"),
   addConnection: (body: UserConnectionInput) =>
@@ -1040,6 +1049,15 @@ export const api = {
       /** design-workspace: starter records that apply will create. */
       seed_plan?: { kind: string; records: Record<string, unknown>[] }[] | null;
     }>("GET", `/orgs/${slug}/modules/core-authoring/drafts/${draftId}`),
+  /** Phase 3 refine: revise a draft's artifact against a change request. A NEW
+   *  draft is created (parent_draft_id lineage). run:true → hosted build (202,
+   *  poll authoringDraft); run:false → copy-paste prompt (201). */
+  authoringRefine: (slug: string, draftId: string, body: { intent: string; run?: boolean }) =>
+    request<{ draft_id: string; parent_draft_id: string; status?: string; prompt?: string; warnings?: string[] }>(
+      "POST",
+      `/orgs/${slug}/modules/core-authoring/drafts/${draftId}/refine`,
+      body,
+    ),
   authoringCandidate: (slug: string, draftId: string, manifest: unknown) =>
     request<BundleValidation>(
       "POST",
@@ -1059,6 +1077,28 @@ export const api = {
       "POST",
       `/orgs/${slug}/modules/core-authoring/drafts/${draftId}/apply`,
       { confirm },
+    ),
+  /** Version history (audit F3): every removed bundle row (update-replace /
+   *  uninstall / revert) is snapshotted; list them for one external_id. */
+  bundleHistory: (slug: string, externalId: string) =>
+    request<{
+      items: Array<{
+        id: string;
+        external_id: string;
+        name: string;
+        version: string;
+        reason: string;
+        enabled_features: string[];
+        created_at: string;
+        counts: { field_defs: number; wires: number; instances: number };
+      }>;
+    }>("GET", `/orgs/${slug}/bundles/history/${encodeURIComponent(externalId)}`),
+  /** Re-validate + re-apply a snapshot. 409 revert_invalid when the workspace
+   *  has drifted (modules/kinds changed) — nothing is half-applied. */
+  bundleRevert: (slug: string, snapshotId: string) =>
+    request<{ bundle: { id: string; external_id: string; name: string; version: string } }>(
+      "POST",
+      `/orgs/${slug}/bundles/history/${snapshotId}/revert`,
     ),
   getBundle: (slug: string, id: string) =>
     request<{
@@ -1471,6 +1511,8 @@ export const api = {
   markDigifabDeviceReady: (slug: string, connectionId: string, deviceId: string, outcome: "good" | "scrapped" = "good") =>
     request<{ ok: boolean; outcome: string }>("POST", `/orgs/${slug}/modules/digifab/fleet/${connectionId}/${encodeURIComponent(deviceId)}/ready`, { outcome }),
   // Cockpit: set/clear a device's camera stream URL (manual override).
+  setDigifabDevicePosition: (slug: string, connId: string, deviceId: string, pos: { x: number; y: number } | null) =>
+    request<{ ok: boolean }>("PUT", `/orgs/${slug}/modules/digifab/fleet/${connId}/${encodeURIComponent(deviceId)}/position`, pos ?? { x: null, y: null }),
   setDigifabDeviceCamera: (slug: string, connectionId: string, deviceId: string, cameraUrl: string | null) =>
     request<{ ok: boolean; camera_url: string | null }>("POST", `/orgs/${slug}/modules/digifab/fleet/${connectionId}/${encodeURIComponent(deviceId)}/camera`, { camera_url: cameraUrl }),
   // Snapshot relay (opt-in, off by default): toggle whether the cloud accepts +
@@ -1558,6 +1600,19 @@ export const api = {
     request<{ ok: boolean; printer: string }>("POST", `/orgs/${slug}/modules/digifab/print-rules/test-fire`, body),
   runDigifabControl: (slug: string, connId: string, deviceId: string, id: string, params?: Record<string, unknown>) =>
     request<{ ok: boolean; ref?: string }>("POST", `/orgs/${slug}/modules/digifab/fleet/${connId}/${encodeURIComponent(deviceId)}/control`, { id, params }),
+  /** Edge-bridge pane of glass: workspace agents + the caller's personal agent. */
+  getEdgeStatus: (slug: string) =>
+    request<{
+      agents: Array<{ bridge: string | null; last_seen_ms: number; queued: number; in_flight: number; parked: boolean }>;
+      personal: { connected: boolean; backs?: string[] };
+      stale_after_ms: number;
+    }>("GET", `/orgs/${slug}/edge/status`),
+  /** Modules that can attach to a bridge — data-driven consumer registry. */
+  getEdgeConsumers: (slug: string) =>
+    request<{ consumers: Array<{ module: string; label: string; description: string; href: string; enabled: boolean }> }>(
+      "GET",
+      `/orgs/${slug}/edge/consumers`,
+    ),
   testDigifabConnection: (slug: string, id: string) =>
     request<{ ok: boolean; detail?: string; capabilities: { routing: boolean } }>(
       "POST",
@@ -1569,6 +1624,11 @@ export const api = {
       "GET",
       `/orgs/${slug}/modules/digifab/connections/${id}/printers`,
     ),
+  updateDigifabConnection: (
+    slug: string,
+    id: string,
+    body: { label?: string; base_url?: string; enabled?: boolean; api_key?: string | null; username?: string | null; password?: string | null; config?: Record<string, unknown> },
+  ) => request<DigifabConnection>("PATCH", `/orgs/${slug}/modules/digifab/connections/${id}`, body),
   deleteDigifabConnection: (slug: string, id: string) =>
     request<void>("DELETE", `/orgs/${slug}/modules/digifab/connections/${id}`),
   // Edge tunnel: is an on-site bridge currently dialed in for this workspace?
@@ -1674,10 +1734,18 @@ export const api = {
     if (opts?.cursor) q.set("cursor", opts.cursor);
     if (opts?.status) q.set("status", opts.status);
     const qs = q.toString();
-    return request<{ items: DigifabJob[]; next_cursor: string | null }>("GET", `/orgs/${slug}/modules/digifab/jobs${qs ? `?${qs}` : ""}`);
+    return request<{ items: DigifabJob[]; next_cursor: string | null; total?: number }>("GET", `/orgs/${slug}/modules/digifab/jobs${qs ? `?${qs}` : ""}`);
   },
+  getDigifabJob: (slug: string, id: string) =>
+    request<DigifabJob>("GET", `/orgs/${slug}/modules/digifab/jobs/${id}`),
   cancelDigifabJob: (slug: string, id: string) =>
     request<{ status: string; remote_cancelled: boolean }>("POST", `/orgs/${slug}/modules/digifab/jobs/${id}/cancel`, {}),
+  // Explicit path back from a failed/cancelled job — re-queues + re-sends.
+  retryDigifabJob: (slug: string, id: string) =>
+    request<{ status: string; sent?: boolean; pooled?: boolean; remote_job_id?: string | null; reason?: string }>("POST", `/orgs/${slug}/modules/digifab/jobs/${id}/retry`, {}),
+  // "Print this again" — clones a (typically completed) job into a fresh one and sends it.
+  reprintDigifabJob: (slug: string, id: string) =>
+    request<{ job: DigifabJob; status: string; sent?: boolean; pooled?: boolean; reason?: string }>("POST", `/orgs/${slug}/modules/digifab/jobs/${id}/reprint`, {}),
   // Cockpit live-control: pause / resume a running job (501 if the driver can't).
   pauseDigifabJob: (slug: string, id: string) =>
     request<{ status: string }>("POST", `/orgs/${slug}/modules/digifab/jobs/${id}/pause`, {}),
@@ -2372,6 +2440,22 @@ export const api = {
       "GET",
       `/orgs/${slug}/modules/core-scan/inbox/${id}/tracked-matches`,
     ),
+  /** Single-SKU bin: what lives in this bin + direct qty adjust off its QR. */
+  binContents: (slug: string, locationId: string) =>
+    request<{ items: TrackedMatch[]; single: boolean }>(
+      "GET",
+      `/orgs/${slug}/modules/core-scan/bin/${locationId}/contents`,
+    ),
+  binAdjust: (
+    slug: string,
+    locationId: string,
+    body: { kind: string; entity_id: string; instance?: string; delta?: number; set?: number },
+  ) =>
+    request<{ entity_title: string; old_qty: number; new_qty: number }>(
+      "POST",
+      `/orgs/${slug}/modules/core-scan/bin/${locationId}/adjust`,
+      body,
+    ),
   scanAttach: (
     slug: string,
     id: string,
@@ -2462,6 +2546,13 @@ export const api = {
   // Would an AI call work right now (kill-switch → personal connection →
   // workspace/managed provider → entitlement)? Member-accessible, so
   // AI-consuming UI can warn about the degraded no-AI experience up front.
+  /** The dashboard "what needs me" feed (attention.ts) — derived from field
+   *  semantics: low stock, overdue/upcoming dates, pending captures. */
+  getAttention: (slug: string) =>
+    request<{ items: Array<{ kind: "low_stock" | "overdue" | "upcoming" | "pending_scans"; label: string; count: number; sample: string[]; route: string }> }>(
+      "GET",
+      `/orgs/${slug}/attention`,
+    ),
   getAiStatus: (slug: string) =>
     request<AiStatus>("GET", `/orgs/${slug}/ai-status`),
 
@@ -2849,6 +2940,22 @@ export const api = {
 
   // Super-admin (platform operator) — gated by SUPERADMIN_EMAILS.
   // The web shell renders /super-admin/* only when user.is_platform_admin.
+  /** The thesis dashboard (audit F2): per workspace, walls-hit 7d/30d by event
+   *  + time-to-first-working-app. Operator only. */
+  superAdminProductMetrics: () =>
+    request<{
+      workspaces: Array<{
+        org_id: string;
+        name: string;
+        slug: string;
+        created_at: string;
+        first_item_at: string | null;
+        ttfw_minutes: number | null;
+        walls: Array<{ event: string; d7: number; d30: number }>;
+        walls_7d: number;
+        walls_30d: number;
+      }>;
+    }>("GET", "/super-admin/product-metrics"),
   superAdminOverview: () =>
     request<{
       orgs_count: number;
@@ -3087,7 +3194,7 @@ export interface AiProvider {
 export interface AiProviderDef {
   id: string;
   label: string;
-  credentials: Record<string, { label: string; secret: boolean }>;
+  credentials: Record<string, { label: string; secret: boolean; choices?: Array<{ value: string; label: string }> }>;
   capabilities: Record<string, { models: string[]; defaultModel?: string }>;
 }
 
@@ -3189,7 +3296,7 @@ export interface IntegrationConnector {
 export interface IntegrationConnectorDef {
   id: string;
   label: string;
-  credentials: Record<string, { label: string; secret: boolean }>;
+  credentials: Record<string, { label: string; secret: boolean; choices?: Array<{ value: string; label: string }> }>;
   actions: Array<{
     id: string;
     label: string;
@@ -3229,7 +3336,7 @@ export interface EdgeBridge {
 export interface SyncConnectorDef {
   id: string;
   label: string;
-  credentials: Record<string, { label: string; secret: boolean }>;
+  credentials: Record<string, { label: string; secret: boolean; choices?: Array<{ value: string; label: string }> }>;
   config: Record<string, { label: string; placeholder?: string }>;
   entityTypes: Array<{ key: string; label: string; targetKind: string }>;
 }
@@ -3497,6 +3604,9 @@ export interface ScanInboxItem {
   target_kind: string | null;
   target_entity_id: string | null;
   target_location_id: string | null;
+  /** Suggested home from where similar items live; the review UI offers a one-tap accept. */
+  suggested_location_id: string | null;
+  suggested_location_note: string | null;
   scan_batch_id: string | null;
   scan_area: string | null;
   quantity: number;
@@ -3517,7 +3627,7 @@ export interface TrackedMatch {
   noun: string;
   qty: number | null;
   location_id: string | null;
-  matched_by: "barcode" | "name";
+  matched_by: "barcode" | "name" | "bin";
 }
 
 /** Capture-first: pending captures grouped by the flagship bundle they fit. */
@@ -3967,7 +4077,7 @@ export interface DigifabHistory {
   days: number;
   summary: { total: number; completed: number; failed: number; cancelled: number; filament_g: number; hours: number };
   by_device: { name: string; total: number; completed: number; failed: number; filament_g: number }[];
-  recent: { id: string; file_ref: string; sub_label?: string | null; cover?: string | null; device: string; status: string; filament_g: number | null; at: string; duration_s?: number }[];
+  recent: { id: string; file_ref: string; sub_label?: string | null; cover?: string | null; device: string; connection_id?: string | null; device_id?: string | null; status: string; filament_g: number | null; at: string; duration_s?: number }[];
 }
 
 export interface DigifabLibraryItem {
@@ -4092,7 +4202,11 @@ export interface DigifabFleetDevice {
   snapshot_fresh: boolean;
   /** F-1: finished/failed a print — needs a human bed-clear before it's assignable. */
   needs_attention: { reason: string; since: string } | null;
-  active_job: { id: string; file_ref: string; status: string; progress: number | null; priority: number; attempts: number; max_attempts: number } | null;
+  active_job: { id: string; file_ref: string; status: string; progress: number | null; priority: number; attempts: number; max_attempts: number; eta_sec: number | null } | null;
+  /** What this machine will do next — the top queued job aimed at it (or its pool). */
+  next_job: { id: string; file_ref: string; pooled: boolean } | null;
+  /** Spatial floor-grid cell (arrange mode); null = unplaced. */
+  position: { x: number; y: number } | null;
   /** Real-time print telemetry from the printer itself (e.g. Bambu cloud MQTT) —
    *  for a print Cobblr didn't start, so there's no active_job to carry it. */
   live: { progress: number | null; remaining_min: number | null; layer_num: number | null; total_layers: number | null } | null;
@@ -4220,6 +4334,12 @@ export interface DigifabJob {
   file_id: string | null;
   linked_machine_id: string | null;
   linked_task_id: string | null;
+  /** A build (BoM) this job produces — consumed from inventory on send; reversed
+   *  on scrap/cancel/fail. */
+  linked_build_id: string | null;
+  build_qty: number;
+  build_consumed_at: string | null;
+  build_reversed_at: string | null;
   created_at: string;
   updated_at: string;
   last_polled_at: string | null;

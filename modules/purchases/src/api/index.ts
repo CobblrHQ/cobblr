@@ -7,9 +7,11 @@ import { platform } from "@cobblr/platform-contract";
 import { ordersRouter } from "./orders.js";
 import { vendorsRouter } from "./vendors.js";
 import { registerPurchasesResolvers } from "./resolvers.js";
+import { registerPurchasesActionHandlers } from "./action-handlers.js";
 import { registerPurchasesCalendarSource } from "./calendar-source.js";
 
 registerPurchasesResolvers();
+registerPurchasesActionHandlers();
 registerPurchasesCalendarSource();
 
 // Per-instance item count — lets the nav hide an empty auto-created default

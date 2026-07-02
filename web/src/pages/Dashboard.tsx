@@ -85,6 +85,10 @@ export function Dashboard() {
         userName={user?.display_name ?? user?.email ?? ""}
       />
 
+      {/* The cockpit (redesign B2): what needs me TODAY, derived from the
+          trackers' own field semantics. Renders nothing when nothing needs you. */}
+      <AttentionFeed slug={activeSlug} />
+
       <SetupCardsPanel slug={activeSlug} />
 
       {/* The standing "Scan something" entry — but NOT on a brand-new workspace
@@ -107,6 +111,54 @@ export function Dashboard() {
           activity, reorderable/hideable per workspace via one Arrange mode. */}
       <ArrangeableBody slug={activeSlug} enabled={enabled} role={activeOrg.role} />
     </div>
+  );
+}
+
+// "What needs me" — the dashboard's attention feed (redesign B2). Every row is
+// one tap to act; severity-ordered (overdue → low stock → captures → upcoming).
+function AttentionFeed({ slug }: { slug: string }) {
+  const q = useQuery({
+    queryKey: ["attention", slug],
+    queryFn: () => api.getAttention(slug),
+    enabled: !!slug,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
+  // pending_scans is dropped HERE (not in the endpoint): the dashboard already
+  // shows the scanned queue + col-3 typed captures right below — a third
+  // "N captures waiting" line was pure double-count.
+  const items = (q.data?.items ?? []).filter((i) => i.kind !== "pending_scans");
+  if (items.length === 0) return null;
+  const tone: Record<string, string> = {
+    overdue: "border-red-300 dark:border-red-800 bg-red-50/70 dark:bg-red-950/20",
+    low_stock: "border-amber-300 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/20",
+    pending_scans: "border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20",
+    upcoming: "border-line dark:border-slate-700 bg-surface dark:bg-slate-900",
+  };
+  const glyph: Record<string, string> = { overdue: "⏰", low_stock: "📉", pending_scans: "📷", upcoming: "📅" };
+  return (
+    <section className="space-y-1.5">
+      <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">// needs you</div>
+      <ul className="space-y-1.5">
+        {items.map((it, i) => (
+          <li key={`${it.kind}-${it.route}-${i}`}>
+            <Link
+              to={it.route}
+              className={`flex items-center gap-3 rounded-lg border px-3 py-2 text-sm hover:border-accent transition group ${tone[it.kind] ?? tone.upcoming}`}
+            >
+              <span className="shrink-0">{glyph[it.kind] ?? "•"}</span>
+              <span className="flex-1 min-w-0 truncate text-content dark:text-mortar-100">
+                <strong>{it.count}</strong> {it.label}
+                {it.sample.length > 0 && (
+                  <span className="text-faint dark:text-slate-400"> — {it.sample.join(" · ")}{it.count > it.sample.length ? " …" : ""}</span>
+                )}
+              </span>
+              <ArrowRight size={14} className="shrink-0 text-faint group-hover:text-accent transition" />
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

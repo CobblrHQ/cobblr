@@ -397,6 +397,19 @@ export function heuristicMatch(item: PerceivedItem, menuIn: ScanMenuEntry[]): Ma
     if (p.length >= 3 && hay.includes(p)) return true;
     return p.split(/[^a-z0-9]+/).some((w) => w.length >= 3 && tokens.has(stem(w)));
   };
+  // The capture's HEAD NOUN — the last content token of the NAME after
+  // stripping trailing size/pack tails ("Fieldcrest Bath Towels 4 Pack" →
+  // "towel"). A keyword matching the head noun is what the item IS, not an
+  // incidental word ("Lcd Ribbon Cable" heads "cable", so Yarn's "ribbon"
+  // keyword stays weak — the original false-positive guard holds).
+  const TAIL = new Set(["pack", "packs", "count", "ct", "pcs", "pc", "set", "sets", "oz", "ml", "lb", "lbs", "kg", "inch", "in", "ft", "each", "roll", "rolls"]);
+  const nameTokens = (item.name ?? "").toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length >= 3 && !/^\d+$/.test(t));
+  // Pop size/pack TAIL tokens and anything digit-bearing ("20lb", "4pk") —
+  // the head noun is the thing itself, never its packaging arithmetic.
+  while (nameTokens.length > 1 && (TAIL.has(nameTokens[nameTokens.length - 1]!) || /\d/.test(nameTokens[nameTokens.length - 1]!))) nameTokens.pop();
+  const headStem = nameTokens.length ? stem(nameTokens[nameTokens.length - 1]!) : "";
+  const hitsHead = (phrase: string): boolean =>
+    !!headStem && phrase.toLowerCase().split(/[^a-z0-9]+/).some((w) => w.length >= 3 && stem(w) === headStem);
 
   const scored = menu
     .map((entry) => {
@@ -422,10 +435,18 @@ export function heuristicMatch(item: PerceivedItem, menuIn: ScanMenuEntry[]): Ma
         score += 2;
         strong = true;
       }
+      // Multi-word keywords match as FULL PHRASES only — "paper towel" must
+      // not claim every "towel" via its words (bath towels are linens, not
+      // supplies). Single words keep stemmed token matching.
+      const kwHit = (term: string): boolean =>
+        /\s/.test(term.trim()) ? hay.includes(term.toLowerCase()) : hasWord(term);
       for (const term of entry.scan_keywords ?? []) {
-        if (term && hasWord(term)) {
+        if (term && kwHit(term)) {
           score += 2;
           keywordHits += 1;
+          // A keyword that IS the capture's head noun ("…Bath Towels" →
+          // keyword "towel") identifies the thing itself → strong on its own.
+          if (hitsHead(term)) strong = true;
         }
       }
       // A choice matches only on a NON-noun capture token (whole-phrase hits the
@@ -553,7 +574,42 @@ export async function runMatchmaker(
     "with single quotes ('medium weight') — or the JSON will not parse. " +
     "Order candidates best-first. confidence is how well the table fits the item.";
 
-  const compactMenu = menu.map((m) => ({
+  // Prompt-size guard for the skins-at-scale era: the heuristic scales
+  // linearly with menu size, but the MODEL prompt does not — with 100s of
+  // installable skins in the catalog the full menu would blow the context (and
+  // the model's attention). Keep every LIVE table (the user's real data always
+  // routes) and only the most lexically-plausible bundle entries.
+  const MENU_PROMPT_CAP = 40;
+  let promptMenu = menu;
+  if (menu.length > MENU_PROMPT_CAP) {
+    const live = menu.filter((e) => !e.bundle_external_id);
+    const bundle = menu.filter((e) => e.bundle_external_id);
+    const hay = `${item.name ?? ""} ${item.description ?? ""} ${item.category ?? ""} ${
+      item.metadata ? JSON.stringify(item.metadata) : ""
+    }`.toLowerCase();
+    const lexScore = (e: ScanMenuEntry): number => {
+      let s = 0;
+      const probe = (t: string | undefined, w: number) => {
+        for (const word of (t ?? "").toLowerCase().split(/[^a-z0-9]+/))
+          if (word.length >= 3 && hay.includes(word)) s += w;
+      };
+      probe(e.noun, 3);
+      probe(e.label, 2);
+      for (const k of e.scan_keywords ?? []) probe(k, 2);
+      for (const f of e.fields) for (const c of f.choices ?? []) probe(c, 1);
+      return s;
+    };
+    promptMenu = [
+      ...live,
+      ...bundle
+        .map((e) => ({ e, s: lexScore(e) }))
+        .sort((a, b) => b.s - a.s)
+        .slice(0, Math.max(8, MENU_PROMPT_CAP - live.length))
+        .map((x) => x.e),
+    ];
+  }
+
+  const compactMenu = promptMenu.map((m) => ({
     module: m.module,
     instance: m.instance,
     noun: m.noun,

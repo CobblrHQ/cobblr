@@ -1,8 +1,16 @@
 // ActivityLog primitive. Every CRUD that matters routes through
 // here; modules will call `activity.log(...)` from their handlers.
-// Append-only — no updates, no deletes.
+// Append-only — no updates, no deletes by hand.
+//
+// Retention (audit F8): the table grows forever by default — fine for a
+// personal box, a liability on a public host. Setting
+// ACTIVITY_LOG_RETENTION_DAYS enables a probabilistic sweep (~1% of writes
+// prune rows past the window; best-effort, never blocks the write) — same
+// pattern as product_events. Unset (default) = keep everything.
 
+import { sql } from "kysely";
 import { meta } from "../db/meta.js";
+import { env } from "../env.js";
 import { currentActor } from "../lib/request-context.js";
 import type { AuthMethod } from "../db/schema.js";
 
@@ -55,6 +63,15 @@ export async function log(p: LogParams): Promise<void> {
       api_token_id: apiTokenId,
     })
     .execute();
+
+  const days = env.ACTIVITY_LOG_RETENTION_DAYS;
+  if (days && Math.random() < 0.01) {
+    void meta
+      .deleteFrom("activity_log")
+      .where("occurred_at", "<", sql<Date>`now() - interval '${sql.raw(String(days))} days'`)
+      .execute()
+      .catch((err) => console.error("[activity] retention sweep failed:", (err as Error).message));
+  }
 }
 
 export interface ListParams {

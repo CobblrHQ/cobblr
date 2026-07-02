@@ -52,6 +52,24 @@ export function WireComposer({
   const [template, setTemplate] = useState(ed?.template ?? "");
   const [target, setTarget] = useState<WireTarget>(ed?.target && ed.target !== "self" ? ed.target : "self");
   const [showTarget, setShowTarget] = useState(!!(ed?.target && ed.target !== "self"));
+  // B7 — conditions: {all:[{path,op,value}]} evaluated per firing against the
+  // same data templates see (target fields + event.*). AND-joined; empty = fire always.
+  type Cond = { path: string; op: string; value: string };
+  const initialConds: Cond[] = (() => {
+    const f = ed?.filter as { all?: Array<{ path?: string; op?: string; value?: unknown }> } | null | undefined;
+    return Array.isArray(f?.all)
+      ? f!.all!.map((c) => ({ path: String(c.path ?? ""), op: String(c.op ?? "eq"), value: c.value === undefined ? "" : String(c.value) }))
+      : [];
+  })();
+  const [conditions, setConditions] = useState<Cond[]>(initialConds);
+  const [showConds, setShowConds] = useState(initialConds.length > 0);
+  const COND_OPS = ["eq", "neq", "lt", "lte", "gt", "gte", "contains", "not_contains", "empty", "not_empty"] as const;
+  const builtFilter = (): { all: Array<{ path: string; op: string; value?: string }> } | null => {
+    const rows = conditions
+      .filter((c) => c.path.trim() !== "")
+      .map((c) => (c.op === "empty" || c.op === "not_empty" ? { path: c.path.trim(), op: c.op } : { path: c.path.trim(), op: c.op, value: c.value }));
+    return rows.length > 0 ? { all: rows } : null;
+  };
   const [err, setErr] = useState<string | null>(null);
   // Structured action args (per the action's argsSchema): each value is a
   // literal or a {{token}}. The field picker inserts into whichever field
@@ -111,6 +129,7 @@ export function WireComposer({
         trigger_schedule: triggerType === "schedule" ? buildRRule(recurrence) : null,
         template: template.trim() || null,
         // null (not undefined) so editing CLEARS removed args/target, not "leave as-is".
+        filter: builtFilter(),
         args: filledArgs() ?? null,
         target: target === "self" ? "self" : target,
       } as Partial<PlatformBinding>;
@@ -269,6 +288,69 @@ export function WireComposer({
                 {`{{${f.name}}}`}
               </button>
             ))}
+          </div>
+        )}
+      </div>
+
+      {/* CONDITIONS — B7: "only fire when …" */}
+      <div>
+        <button
+          type="button"
+          onClick={() => setShowConds((v) => !v)}
+          className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 hover:text-accent transition"
+        >
+          {showConds ? "▾" : "▸"} only when {conditions.filter((c) => c.path.trim()).length > 0 ? `${conditions.filter((c) => c.path.trim()).length} condition${conditions.filter((c) => c.path.trim()).length === 1 ? "" : "s"} hold` : "… (conditions, optional)"}
+        </button>
+        {showConds && (
+          <div className="mt-2 space-y-2 rounded-lg border border-line dark:border-slate-700 p-3">
+            <p className="text-xs text-muted dark:text-slate-400">
+              Fire only when ALL of these hold. Paths read the same data as the template —
+              a field name (<span className="font-mono">qty</span>, <span className="font-mono">material</span>)
+              or <span className="font-mono">event.*</span> (<span className="font-mono">event.newQty</span>,{" "}
+              <span className="font-mono">event.delta</span>). Numbers compare numerically.
+            </p>
+            {conditions.map((c, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <input
+                  value={c.path}
+                  onChange={(e) => setConditions((cs) => cs.map((x, j) => (j === i ? { ...x, path: e.target.value } : x)))}
+                  placeholder="event.newQty"
+                  className="input !py-1 !text-xs font-mono flex-1"
+                />
+                <select
+                  value={c.op}
+                  onChange={(e) => setConditions((cs) => cs.map((x, j) => (j === i ? { ...x, op: e.target.value } : x)))}
+                  className="input !py-1 !text-xs !w-auto"
+                >
+                  {COND_OPS.map((o) => (
+                    <option key={o} value={o}>{o}</option>
+                  ))}
+                </select>
+                {c.op !== "empty" && c.op !== "not_empty" && (
+                  <input
+                    value={c.value}
+                    onChange={(e) => setConditions((cs) => cs.map((x, j) => (j === i ? { ...x, value: e.target.value } : x)))}
+                    placeholder="5"
+                    className="input !py-1 !text-xs font-mono flex-1"
+                  />
+                )}
+                <button
+                  type="button"
+                  aria-label="Remove condition"
+                  onClick={() => setConditions((cs) => cs.filter((_, j) => j !== i))}
+                  className="text-muted hover:text-ember-600 transition text-sm px-1"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={() => setConditions((cs) => [...cs, { path: "", op: "eq", value: "" }])}
+              className="text-xs text-accent hover:underline"
+            >
+              + add condition
+            </button>
           </div>
         )}
       </div>

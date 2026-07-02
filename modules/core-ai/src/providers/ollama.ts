@@ -8,7 +8,8 @@
 // `Authorization: Bearer …`.
 
 import { platform, type AiCapability } from "@cobblr/platform-contract";
-import { assertSafeAiEndpoint, pinnedFetch } from "../ssrf.js";
+import { assertSafeAiEndpoint, pinnedFetch, type PinnedResponse } from "../ssrf.js";
+import { TRANSIT_FIELD, viaBridge, edgeKeyFor, edgeFetch } from "./edge-transit.js";
 
 /** Optional bearer auth for the endpoint. Returns {} when no token is
  *  configured (a bare local Ollama). A remote endpoint behind a
@@ -44,20 +45,27 @@ export function register(): void {
         label: "Bearer token (optional — for a remote/proxied endpoint; sent as Authorization: Bearer …)",
         secret: true,
       },
+      ...TRANSIT_FIELD,
     }),
     capabilities: SUPPORTED,
     invoke: async (ctx) => {
       const base = String(ctx.credentials.base_url ?? "http://ollama:11434").replace(/\/$/, "");
-      // SSRF guard: base_url is workspace-supplied. Block internal /
-      // loopback / cloud-metadata targets per the deployment policy
-      // (strict on cloud, allow-LAN self-hosted), and PIN the connection to the
-      // validated IP via pinnedFetch (closes the DNS-rebinding TOCTOU). See ../ssrf.ts.
-      const pin = await assertSafeAiEndpoint(base, platform().ai.getEndpointPolicy());
+      // Transit: direct = SSRF-guarded fetch (block internal/loopback/metadata
+      // per deployment policy, pin the connection — see ../ssrf.ts). Bridge =
+      // the request rides the user's dial-out edge relay and the bridge does
+      // the LAN call, so the guard doesn't apply (the cloud never dials the
+      // address). See ./edge-transit.ts.
+      const bridged = viaBridge(ctx.credentials);
+      const pin = bridged ? null : await assertSafeAiEndpoint(base, platform().ai.getEndpointPolicy());
       const authHeaders = authHeadersFor(ctx.credentials);
+      const call = (path: string, init: { method?: "GET" | "POST"; headers?: Record<string, string>; body?: string }): Promise<PinnedResponse> =>
+        bridged
+          ? edgeFetch(edgeKeyFor(ctx.credentials, ctx.orgId), base, path, init)
+          : pinnedFetch(`${base}${path}`, pin!, init);
       switch (ctx.capability) {
         case "embed-text": {
           const input = String(ctx.input.text ?? "");
-          const res = await pinnedFetch(`${base}/api/embeddings`, pin, {
+          const res = await call("/api/embeddings", {
             method: "POST",
             headers: { "content-type": "application/json", ...authHeaders },
             body: JSON.stringify({ model: ctx.model, prompt: input }),
@@ -70,7 +78,7 @@ export function register(): void {
         }
         case "chat": {
           const messages = (ctx.input.messages as Array<{ role: string; content: string }>) ?? [];
-          const res = await pinnedFetch(`${base}/api/chat`, pin, {
+          const res = await call("/api/chat", {
             method: "POST",
             headers: { "content-type": "application/json", ...authHeaders },
             body: JSON.stringify({ model: ctx.model, messages, stream: false }),
@@ -93,7 +101,7 @@ export function register(): void {
         case "summarise": {
           const text = String(ctx.input.text ?? "");
           const lengthHint = String(ctx.input.lengthHint ?? "3 sentences");
-          const res = await pinnedFetch(`${base}/api/chat`, pin, {
+          const res = await call("/api/chat", {
             method: "POST",
             headers: { "content-type": "application/json", ...authHeaders },
             body: JSON.stringify({
@@ -124,7 +132,7 @@ export function register(): void {
           const imageB64 = typeof ctx.input.image_b64 === "string" ? ctx.input.image_b64 : null;
           const msg: Record<string, unknown> = { role: "user", content: prompt };
           if (imageB64) msg.images = [imageB64];
-          const res = await pinnedFetch(`${base}/api/chat`, pin, {
+          const res = await call("/api/chat", {
             method: "POST",
             headers: { "content-type": "application/json", ...authHeaders },
             body: JSON.stringify({
@@ -147,10 +155,15 @@ export function register(): void {
     testConnection: async (credentials) => {
       const base = String(credentials.base_url ?? "http://ollama:11434").replace(/\/$/, "");
       try {
-        const pin = await assertSafeAiEndpoint(base, platform().ai.getEndpointPolicy());
-        const res = await pinnedFetch(`${base}/api/tags`, pin, {
-          headers: authHeadersFor(credentials),
-        });
+        let res: PinnedResponse;
+        if (viaBridge(credentials)) {
+          res = await edgeFetch(edgeKeyFor(credentials), base, "/api/tags", { headers: authHeadersFor(credentials) });
+        } else {
+          const pin = await assertSafeAiEndpoint(base, platform().ai.getEndpointPolicy());
+          res = await pinnedFetch(`${base}/api/tags`, pin, {
+            headers: authHeadersFor(credentials),
+          });
+        }
         return { ok: res.ok };
       } catch (err) {
         return { ok: false, error: (err as Error).message };

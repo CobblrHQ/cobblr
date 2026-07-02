@@ -23,6 +23,9 @@ import { EmailVerifyBanner } from "./EmailVerifyBanner";
 import { ChatWidget } from "./ChatWidget";
 import { GlobalScanWedge } from "./GlobalScanWedge";
 import { SearchBar } from "./SearchBar";
+import { MobileActionBar } from "./MobileActionBar";
+import { CommandPalette } from "./CommandPalette";
+import { NewVersionNudge } from "./NewVersionNudge";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { api } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -227,7 +230,8 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           its width on wide screens so the centered content shifts LEFT into its
           margin and the two coexist — no overlap, no compression (xl+ has room). */}
       <main className={`min-w-0 transition-[padding] duration-200 ${chatOpen ? "xl:pr-[456px]" : ""}`}>
-        <div className="max-w-6xl mx-auto w-full px-5 py-6">
+        {/* pb clears the mobile bottom action bar; md+ has no bar. */}
+        <div className="max-w-6xl mx-auto w-full px-5 py-6 pb-20 md:pb-6">
           {/* Per-page boundary: a crash in one page shows a fallback but
               keeps the nav/chrome, and keying on pathname resets it when
               you navigate away. Also catches lazy-chunk load errors that
@@ -241,6 +245,12 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           from any screen (off the Scan tab) and always toasts — no silent drop.
           Stands down on the Scan page, which owns the wedge there. */}
       {activeSlug ? <GlobalScanWedge activeSlug={activeSlug} /> : null}
+      {/* Mobile thumb bar: Scan · Add · Search (redesign A5). */}
+      <MobileActionBar />
+      {/* ⌘K — do or find anything (redesign B4). */}
+      <CommandPalette />
+      {/* Stale-tab nudge: deploys are frequent; open tabs must find out. */}
+      <NewVersionNudge />
       {/* Feature 3: the drive prompt + green/red indicator (renders only when a
           drive grant is set and a session is live). */}
       <DriveBanner />
