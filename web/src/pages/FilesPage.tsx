@@ -6,11 +6,12 @@
 // flips deleted_at; the row drops out of the list).
 
 import { useRef, useState } from "react";
+import { openAuthedFile } from "../lib/authed-file";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { File as FileIcon, Trash2, Upload } from "lucide-react";
 import { api, type FileRecord } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { useImageSrc, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 
 export function FilesPage() {
   usePageTitle("Files");
@@ -134,14 +135,15 @@ export function FilesPage() {
                 className="flex items-center gap-3 px-3 py-2 text-sm"
               >
                 <FileIcon size={16} className="text-faint" />
-                <a
-                  href={api.fileRawUrl(activeSlug, f.id, "original")}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex-1 truncate hover:text-accent"
+                {/* Bearer-only auth: a plain href would 401 — blob-fetch
+                    with the token and hand the browser an object URL. */}
+                <button
+                  type="button"
+                  onClick={() => void openAuthedFile(activeSlug, f.id)}
+                  className="flex-1 truncate text-left hover:text-accent"
                 >
                   {f.filename}
-                </a>
+                </button>
                 <span className="text-xs text-muted dark:text-slate-400 tabular-nums">
                   {formatBytes(f.size_bytes)}
                 </span>
@@ -180,11 +182,10 @@ function ImageTile({
 }) {
   return (
     <div className="group relative aspect-square rounded overflow-hidden border border-line dark:border-slate-700">
-      <img
-        src={api.fileRawUrl(slug, file.id, "thumb")}
-        alt={file.filename}
-        className="w-full h-full object-cover"
-      />
+      {/* Auth is Bearer-header-only — a plain <img src> sends no credentials
+          and 401s (the "all I see is broken images" report). useImageSrc
+          blob-fetches with the token, like every other thumbnail. */}
+      <AuthedThumb slug={slug} file={file} />
       <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-2 opacity-0 group-hover:opacity-100 transition">
         <div className="text-xs text-white truncate" title={file.filename}>
           {file.filename}
@@ -206,4 +207,14 @@ function formatBytes(n: number): string {
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
   return `${(n / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+
+/** Image-grid thumbnail via useImageSrc (token-authenticated blob). */
+function AuthedThumb({ slug, file }: { slug: string; file: FileRecord }) {
+  const src = useImageSrc(api.fileRawUrl(slug, file.id, "thumb"));
+  if (!src) {
+    return <div className="w-full h-full bg-subtle/60 dark:bg-slate-800/60 animate-pulse" />;
+  }
+  return <img src={src} alt={file.filename} className="w-full h-full object-cover" />;
 }

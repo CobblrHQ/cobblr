@@ -12,7 +12,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "re
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
-import { Check, ChevronDown, GripVertical, Pencil, Plus, Sliders, Users } from "lucide-react";
+import { Check, Star, ChevronDown, GripVertical, Pencil, Plus, Sliders, Users } from "lucide-react";
 import {
   DndContext,
   PointerSensor,
@@ -35,7 +35,7 @@ import { displaySlug, slugifyHandle } from "../lib/workspaceSlug";
 import { Modal, useToast } from "@cobblr/platform-web";
 import { MembersModal } from "./MembersModal";
 
-export function WorkspaceSwitcher() {
+export function WorkspaceSwitcher({ inline = false }: { inline?: boolean } = {}) {
   const { orgs, setOrgs, refreshMe } = useAuth();
   const { activeOrg, activeSlug, setActiveSlug } = useActiveOrg();
   const navigate = useNavigate();
@@ -55,7 +55,7 @@ export function WorkspaceSwitcher() {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
   useLayoutEffect(() => {
-    if (!open) return;
+    if (!open || inline) return;
     const place = () => {
       const r = btnRef.current?.getBoundingClientRect();
       if (r) {
@@ -89,6 +89,18 @@ export function WorkspaceSwitcher() {
   function pick(slug: string) {
     setActiveSlug(slug);
     setOpen(false);
+  }
+
+  // Star = the workspace a fresh device opens into. Optimistic (flip the flag
+  // locally so the star updates instantly), then persist; refreshMe reconciles.
+  const defaultMut = useMutation({
+    mutationFn: (slug: string | null) => api.setDefaultWorkspace(slug),
+    onSuccess: () => { void refreshMe(); },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't set the default"),
+  });
+  function toggleDefault(slug: string, isDefault: boolean) {
+    setOrgs(orgs.map((o) => ({ ...o, is_default: o.slug === slug ? !isDefault : false })));
+    defaultMut.mutate(isDefault ? null : slug);
   }
 
   function openCreate() {
@@ -156,7 +168,65 @@ export function WorkspaceSwitcher() {
         <span className="truncate max-w-[10rem]">{activeOrg?.name ?? "—"}</span>
         <ChevronDown size={12} className="text-faint shrink-0" />
       </button>
-      {open && pos && createPortal(
+      {open && inline && (
+        // Sidebar accordion ("no dropdowns in the sidebar"): the same body,
+        // in-flow under the workspace row. Drag-reorder + manage/rename all
+        // work identically — only the container changed. menuRef keeps the
+        // click-outside handler from eating clicks INSIDE the accordion
+        // (mousedown-close would fire before a row's onClick and swallow it).
+        <div ref={menuRef} className="border-b border-line dark:border-slate-800 max-h-[50vh] overflow-y-auto">
+          <ul className="max-h-80 overflow-y-auto">
+            {owned.length > 0 && header("your workspaces", false)}
+            {owned.length > 0 && (
+              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+                <SortableContext items={owned.map((o) => o.slug)} strategy={verticalListSortingStrategy}>
+                  {owned.map((o) => (
+                    <SortableRow
+                      key={o.id}
+                      org={o}
+                      active={o.slug === activeSlug}
+                      onPick={() => pick(o.slug)}
+                      onManage={() => { setOpen(false); setManageSlug(o.slug); }}
+                      onRename={() => { setOpen(false); setRenameSlug(o.slug); }}
+                      onSetDefault={() => toggleDefault(o.slug, !!o.is_default)}
+                    />
+                  ))}
+                </SortableContext>
+              </DndContext>
+            )}
+            {shared.length > 0 && header("shared with you", owned.length > 0)}
+            {shared.map((o) => (
+              <WorkspaceRow
+                key={o.id}
+                org={o}
+                active={o.slug === activeSlug}
+                onPick={() => pick(o.slug)}
+                onManage={o.role === "admin" ? () => { setOpen(false); setManageSlug(o.slug); } : undefined}
+                onSetDefault={() => toggleDefault(o.slug, !!o.is_default)}
+              />
+            ))}
+          </ul>
+          {/* Workspace-level actions live HERE, not as a dashboard bar — the old
+              identity header spent the dashboard's top row repeating what this
+              switcher already says. */}
+          <button
+            onClick={() => { setOpen(false); navigate("/configuration"); }}
+            className="w-full text-left px-3 py-2 border-t border-line dark:border-slate-700 hover:bg-subtle dark:hover:bg-slate-800 transition flex items-center gap-2 text-sm text-content dark:text-mortar-200"
+            title="Turn on modules, install a starter pack, customize this workspace"
+          >
+            <Sliders size={13} className="text-accent" />
+            Customize workspace
+          </button>
+          <button
+            onClick={openCreate}
+            className="w-full text-left px-3 py-2 border-t border-line dark:border-slate-700 hover:bg-subtle dark:hover:bg-slate-800 transition flex items-center gap-2 text-sm text-accent dark:text-cobble-300"
+          >
+            <Plus size={13} />
+            Create new workspace
+          </button>
+        </div>
+      )}
+      {open && !inline && pos && createPortal(
         <div
           ref={menuRef}
           style={{ position: "fixed", top: pos.top, left: pos.left }}
@@ -175,6 +245,7 @@ export function WorkspaceSwitcher() {
                       onPick={() => pick(o.slug)}
                       onManage={() => { setOpen(false); setManageSlug(o.slug); }}
                       onRename={() => { setOpen(false); setRenameSlug(o.slug); }}
+                      onSetDefault={() => toggleDefault(o.slug, !!o.is_default)}
                     />
                   ))}
                 </SortableContext>
@@ -188,6 +259,7 @@ export function WorkspaceSwitcher() {
                 active={o.slug === activeSlug}
                 onPick={() => pick(o.slug)}
                 onManage={o.role === "admin" ? () => { setOpen(false); setManageSlug(o.slug); } : undefined}
+                onSetDefault={() => toggleDefault(o.slug, !!o.is_default)}
               />
             ))}
           </ul>
@@ -239,6 +311,7 @@ function WorkspaceRow({
   onPick,
   onManage,
   onRename,
+  onSetDefault,
   dragHandle,
 }: {
   org: OrgMembership;
@@ -246,6 +319,7 @@ function WorkspaceRow({
   onPick: () => void;
   onManage?: () => void;
   onRename?: () => void;
+  onSetDefault?: () => void;
   dragHandle?: React.ReactNode;
 }) {
   return (
@@ -269,6 +343,18 @@ function WorkspaceRow({
           </div>
         </div>
       </button>
+      {onSetDefault && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onSetDefault(); }}
+          className={"px-2 transition focus:opacity-100 " + (o.is_default
+            ? "text-accent dark:text-cobble-300 opacity-100"
+            : "text-faint dark:text-slate-500 hover:text-accent dark:hover:text-cobble-300 opacity-0 group-hover:opacity-100")}
+          title={o.is_default ? "Default workspace — opens on a fresh device. Click to unset." : `Make ${o.name} the default a fresh device opens into`}
+          aria-label={o.is_default ? "Unset default workspace" : "Set as default workspace"}
+        >
+          <Star size={13} className={o.is_default ? "fill-current" : ""} />
+        </button>
+      )}
       {onRename && (
         <button
           onClick={(e) => { e.stopPropagation(); onRename(); }}
@@ -298,6 +384,7 @@ function SortableRow(props: {
   onPick: () => void;
   onManage: () => void;
   onRename: () => void;
+  onSetDefault: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: props.org.slug });
   return (

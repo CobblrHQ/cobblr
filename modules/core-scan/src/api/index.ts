@@ -3,6 +3,7 @@
 
 import { Router } from "express";
 import { inboxRouter } from "./inbox.js";
+import { importRouter } from "./import.js";
 import { entityImageRouter } from "./entity-image.js";
 import { qrRulesRouter } from "./qr-rules.js";
 import { registerScanHandlers } from "./handlers.js";
@@ -13,6 +14,7 @@ registerEmailInbound();
 
 const router = Router({ mergeParams: true });
 router.use("/", inboxRouter);
+router.use("/", importRouter); // bulk import (companion app interop + generic CSV)
 router.use("/", entityImageRouter);
 router.use("/", qrRulesRouter);
 

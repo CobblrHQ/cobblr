@@ -14,7 +14,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "tracking",
-  version: "0.1.0",
+  version: "0.1.1",
   displayName: "Tracking",
   description:
     "Log a number over time toward a goal, and see the trend. Weight, runs, habits, budgets, mood — any measurement with a target. Ships a trend-chart view.",
@@ -79,6 +79,9 @@ export default defineModule({
         label: "Log a measurement",
         description:
           "Record a number against a metric (by id, or by name — created on miss). Wire it to an event to feed a metric automatically (e.g. an order arriving → a 'Grocery spend' trend). Value comes from a static arg, a named event-payload key, or the wire template.",
+        // DELIBERATELY universal: feeding a metric from ANY event is the
+        // module's whole point (order arrives → grocery-spend trend); the
+        // value comes from args/payload, not the source entity's kind.
         appliesTo: { any: true },
         invokeHandler: "tracking.log-measurement",
         userInvokable: false,

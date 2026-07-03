@@ -18,6 +18,7 @@ import { enableModuleForOrg } from "../modules/enable.js";
 import { getEntry } from "../modules/registry.js";
 import { upsertOverride, deleteOverride } from "../platform/entity-kind-overrides.js";
 import { createInstance, getInstance } from "../platform/instances.js";
+import { listNavHeadings, createNavHeading, addNavMember } from "../platform/nav-headings.js";
 import { tearDownInstance, countInstanceItems } from "../platform/instances.js";
 import { disableModuleForOrg } from "../modules/enable.js";
 import {
@@ -311,6 +312,28 @@ export const BundleManifest = z.object({
     .default([]),
   /** WorkspaceApps this bundle seeds on install (e.g. the Outfit Planner). */
   provides_apps: z.array(AppEntry).default([]),
+  /** Navbar headings the bundle creates on install — a named parent entry
+   *  (e.g. "Machines") whose members are module and/or instance nav entries.
+   *  Members may reference entries this bundle creates OR ones that already
+   *  exist in the workspace ("move Digifab under Machines"). Idempotent by
+   *  heading name; attaching a member MOVES it (a nav entry lives under at
+   *  most one heading — same semantics as the Headings builder UI). */
+  nav_headings: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(80),
+        icon: z.string().max(80).optional(),
+        members: z
+          .array(
+            z.object({
+              target_kind: z.enum(["module", "instance"]),
+              target_id: z.string().min(1).max(160),
+            }),
+          )
+          .default([]),
+      }),
+    )
+    .default([]),
   /** Bundles can ship catalog SHELLS — name + schema config, no
    *  rows. Used so a "Rebrickable Lego" bundle can install the six
    *  catalogs with their hero_field / image_column / field_renderer
@@ -423,6 +446,19 @@ export interface BundleValidationPreview {
   wires_added: Array<{ source_kind: string; action_id: string; trigger_type: string }>;
   modules_required: string[];
   modules_to_enable: string[];
+  /** Named instances this bundle creates (e.g. a "Bookshelf" of Assets) — each
+   *  its own nav entry + page. Their fields live here, NOT in fields_added, so
+   *  the plan must show them or it silently under-reports the whole build. */
+  instances_created: Array<{
+    module: string;
+    instance_name: string;
+    display_name: string;
+    item_noun: string | null;
+    fields: Array<{ name: string; type: string; display_label: string }>;
+    wires: number;
+  }>;
+  /** Navbar parent headings this bundle creates + what moves under each. */
+  nav_headings: Array<{ name: string; members: Array<{ target_kind: string; target_id: string }> }>;
   /** Phase 2 — when this is a self-upgrade and the new version changes a field the
    *  user customized. The user layer survives by construction; this lets the
    *  install offer keep-yours (default) / take-theirs per field. Empty on a fresh
@@ -764,6 +800,15 @@ export async function validateBundle(
   const preview: BundleValidationPreview = {
     fields_added: m.field_defs.map((f) => ({ entity_kind: f.entity_kind, name: f.name, type: f.type, display_label: f.display_label })),
     wires_added: m.wires.map((w) => ({ source_kind: w.source_kind, action_id: w.action_id, trigger_type: w.trigger_type })),
+    instances_created: m.provides_instances.map((i) => ({
+      module: i.module,
+      instance_name: i.instance_name,
+      display_name: i.display_name,
+      item_noun: i.item_noun ?? null,
+      fields: i.field_defs.map((f) => ({ name: f.name, type: f.type, display_label: f.display_label })),
+      wires: i.wires.length,
+    })),
+    nav_headings: m.nav_headings.map((h) => ({ name: h.name, members: h.members.map((mem) => ({ target_kind: mem.target_kind, target_id: mem.target_id })) })),
     modules_required: [...declaredRequires],
     modules_to_enable: modulesToEnable,
     upgrade_conflicts: upgradeConflicts,
@@ -1592,6 +1637,24 @@ export async function applyValidatedBundle(
       );
       // Continue — overrides are presentation, not data. Re-install
       // recovers.
+    }
+  }
+
+  // Navbar headings the bundle declares: create each (idempotent by name,
+  // case-insensitive) and attach members. Runs AFTER instances exist so a
+  // member can reference an instance this same bundle created. addNavMember
+  // MOVES a target that already sits under another heading.
+  for (const h of m.nav_headings) {
+    try {
+      const existingHeadings = await listNavHeadings(orgId);
+      const found = existingHeadings.find((e) => e.name.toLowerCase() === h.name.toLowerCase());
+      const heading = found ?? (await createNavHeading({ orgId, name: h.name, icon: h.icon ?? null }));
+      for (const mem of h.members) {
+        await addNavMember({ orgId, headingId: heading.id, targetKind: mem.target_kind, targetId: mem.target_id });
+      }
+    } catch (err) {
+      // Presentation, not data — a bad member id must not fail the install.
+      console.error(`[bundle-install] nav heading "${h.name}" failed:`, err);
     }
   }
 

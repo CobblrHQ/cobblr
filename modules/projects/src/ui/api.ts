@@ -141,6 +141,36 @@ export class ProjectsApi {
   extractPatternFile = (designId: string, fileId: string) =>
     this.request<PatternExtract>("POST", `/projects/${designId}/extract-pattern-file`, { file_id: fileId });
 
+  /** Pull the finished-object photo out of the design's pattern PDF: the
+   *  server extracts the embedded images, saves the largest as a core-file and
+   *  attaches it to this design as role=photo. `fileId` is optional — omit to
+   *  use the design's most-recent pattern PDF. */
+  extractPatternImages = (designId: string, fileId?: string) =>
+    this.request<PatternPhoto>(
+      "POST",
+      `/projects/${designId}/extract-pattern-images`,
+      fileId ? { file_id: fileId } : {},
+    );
+
+  // ── core-files: the photos attached to a design ────────────────────
+  private filesBase(): string {
+    return `/api/v1/orgs/${this.slug}/modules/core-files`;
+  }
+  /** The photos attached to a design (role=photo). The attachments list
+   *  endpoint doesn't filter by role, so we filter here. */
+  listDesignPhotos = async (designId: string) => {
+    const all = await this.requestUrl<{ items: Attachment[] }>(
+      "GET",
+      `${this.filesBase()}/attachments?source_module=projects&source_type=project&source_id=${encodeURIComponent(
+        designId,
+      )}`,
+    );
+    return { items: all.items.filter((a) => a.role === "photo") };
+  };
+  /** The served (auth'd) URL for a stored file's medium variant. */
+  fileUrl = (fileId: string, variant: "medium" | "thumb" | "original" = "medium") =>
+    `${this.filesBase()}/files/${fileId}/raw${variant === "original" ? "" : `?variant=${variant}`}`;
+
   // ── Cross-module: yarn allocation (inventory) for a design ──────────
   // The inventory module owns the allocation engine; we call it directly
   // (same org + auth). Reserve yarn against this project (target_entity_id),
@@ -176,6 +206,23 @@ export interface PatternExtract {
   reason?: string;
   yarn: Array<{ fiber?: string | null; weight?: string | null; color?: string | null; length_m?: number | null; skeins?: number | null }>;
   hooks: Array<{ gauge?: string | null }>;
+}
+export interface PatternPhoto {
+  ok: boolean;
+  reason?: string;
+  file?: { id: string; width: number; height: number; bytes: number; mime_type: string };
+  attachment_id?: string;
+  candidates?: number;
+}
+export interface Attachment {
+  id: string;
+  file_id: string;
+  role: string | null;
+  filename: string;
+  mime_type: string;
+  kind: string;
+  width: number | null;
+  height: number | null;
 }
 export interface InvPart {
   id: string;

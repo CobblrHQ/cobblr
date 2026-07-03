@@ -17,17 +17,17 @@
 // /projects/tasks?blocked=1 and 404. Each query stays cached for
 // 30s so navigating away + back doesn't refire everything.
 
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpCircle, Camera, CheckCircle2, Compass, Eye, EyeOff, GripVertical, LayoutList, Maximize2, Minimize2, Plus, ScanLine, Sliders, Sparkles, X } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpCircle, CheckCircle2, ChevronDown, Compass, Eye, EyeOff, GripVertical, LayoutList, Maximize2, Minimize2, Pin, Plus, Sliders, Sparkles, X } from "lucide-react";
 import { useBundleUpdates, type BundleUpdate } from "../lib/useBundleUpdates";
 import { useSetupCards, dismissSetup } from "../lib/setupCards";
 import { EntityThumb,
   EntityTile,
   ViewModeToggle,
   useViewMode, usePageTitle, useToast,
-  useDashboardWidgets, type DashboardWidgetSpec } from "@cobblr/platform-web";
+  useDashboardWidgets, TileCollapseContext, type DashboardWidgetSpec } from "@cobblr/platform-web";
 // Side-effect: registers the host's built-in "at a glance" widgets (machines /
 // assets / purchases) through the public registerDashboardWidget seam. The
 // TileGrid renders whatever's registered for an enabled module — no per-module
@@ -91,16 +91,6 @@ export function Dashboard() {
 
       <SetupCardsPanel slug={activeSlug} />
 
-      {/* The standing "Scan something" entry — but NOT on a brand-new workspace
-          with no domain module yet, where the capture-first hero below owns the
-          scan/write CTA (a second "Scan something" card would be redundant). It
-          returns once the workspace has a domain (e.g. after materializing a
-          bundle). */}
-      {enabled.has("core-scan") &&
-        [...enabled].some((m) => !m.startsWith("core-") && m !== "cobblr-cloud") && (
-          <ScanCard slug={activeSlug} />
-        )}
-
       <GettingStartedPanel
         slug={activeSlug}
         enabled={enabled}
@@ -110,6 +100,16 @@ export function Dashboard() {
       {/* The arrangeable body — at-a-glance tiles + pinned views + recent
           activity, reorderable/hideable per workspace via one Arrange mode. */}
       <ArrangeableBody slug={activeSlug} enabled={enabled} role={activeOrg.role} />
+
+      {/* The collapsed "add more" funnel bar — demoted below the data on an
+          established workspace (audit 2026-07-03). Renders nothing when the
+          workspace is empty (the hero above owns that state). */}
+      <GettingStartedPanel
+        slug={activeSlug}
+        enabled={enabled}
+        modules={modulesQ.data?.items ?? []}
+        collapsedOnly
+      />
     </div>
   );
 }
@@ -141,75 +141,156 @@ function AttentionFeed({ slug }: { slug: string }) {
       <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">// needs you</div>
       <ul className="space-y-1.5">
         {items.map((it, i) => (
-          <li key={`${it.kind}-${it.route}-${i}`}>
-            <Link
-              to={it.route}
-              className={`flex items-center gap-3 rounded-lg border px-3 py-2 text-sm hover:border-accent transition group ${tone[it.kind] ?? tone.upcoming}`}
-            >
-              <span className="shrink-0">{glyph[it.kind] ?? "•"}</span>
-              <span className="flex-1 min-w-0 truncate text-content dark:text-mortar-100">
-                <strong>{it.count}</strong> {it.label}
-                {it.sample.length > 0 && (
-                  <span className="text-faint dark:text-slate-400"> — {it.sample.join(" · ")}{it.count > it.sample.length ? " …" : ""}</span>
-                )}
-              </span>
-              <ArrowRight size={14} className="shrink-0 text-faint group-hover:text-accent transition" />
-            </Link>
-          </li>
+          <AttentionRow key={`${it.kind}-${it.route}-${i}`} slug={slug} item={it} tone={tone[it.kind] ?? tone.upcoming ?? ""} glyph={glyph[it.kind] ?? "•"} />
         ))}
       </ul>
     </section>
   );
 }
 
-// "Scan something" — the dashboard's camera-first intake CTA (companion app parity:
-// the scanner is the workshop's most-used action, so it gets a standing,
-// labelled entry point, not just the header icon). One tap → the full-screen
-// scanner with a live camera. When scanned items are waiting to be filed, a
-// second row links to the inbox with the count.
-function ScanCard({ slug }: { slug: string }) {
-  const inbox = useQuery({
-    queryKey: ["scan-inbox", slug, "pending"],
-    queryFn: () => api.listScanInbox(slug, { status: "pending" }),
-    enabled: !!slug,
-    refetchInterval: 30_000,
+type AttentionItem = Awaited<ReturnType<typeof api.getAttention>>["items"][number];
+
+/** One attention row. The ROW expands in place to its individual items — each
+ *  with an inline quick action where one exists (tasks: check off; bed-clear:
+ *  Good/Scrapped verdict) — so you act where you see it (the author). The trailing
+ *  arrow still jumps to the module page. */
+function AttentionRow({ slug, item: it, tone, glyph }: { slug: string; item: AttentionItem; tone: string; glyph: string }) {
+  const [open, setOpen] = useState(false);
+  const qc = useQueryClient();
+  const toast = useToast();
+  const refresh = () => void qc.invalidateQueries({ queryKey: ["attention", slug] });
+  const doneTask = useMutation({
+    mutationFn: (id: string) => api.request("PATCH", `/orgs/${slug}/modules/projects/tasks/${id}`, { status: "done" }),
+    onSuccess: () => { toast.success("Task done."); refresh(); },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't complete the task"),
   });
-  const n = inbox.data?.items.length ?? 0;
+  const verdict = useMutation({
+    mutationFn: (v: { conn: string; dev: string; outcome: "good" | "scrapped" }) =>
+      api.markDigifabDeviceReady(slug, v.conn, v.dev, v.outcome),
+    onSuccess: (_r, v) => { toast.success(v.outcome === "good" ? "Marked good — printer freed." : "Scrapped — effects reversed."); refresh(); },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't record the verdict"),
+  });
+  const entries = it.entries ?? [];
+  const expandable = entries.length > 0;
+  // Few items → their ACTIONS live on the closed row itself (the author: "I have to
+  // open the overdue task to check it off"). Many items → expand first.
+  const inlineActs = entries.length > 0 && entries.length <= 3 && entries.some((e) => e.action);
+  const taskCheck = (id: string) => (
+    <button
+      type="button"
+      onClick={(ev) => { ev.stopPropagation(); doneTask.mutate(id); }}
+      disabled={doneTask.isPending}
+      title="Mark done"
+      className="shrink-0 w-4 h-4 rounded border border-line dark:border-slate-500 hover:border-accent hover:bg-accent/10 transition inline-flex items-center justify-center align-[-2px] group/cb"
+    >
+      <CheckCircle2 size={11} className="opacity-0 group-hover/cb:opacity-100 text-accent" />
+    </button>
+  );
+  const verdictBtns = (conn: string, dev: string) => (
+    <span className="shrink-0 inline-flex items-center gap-1" onClick={(ev) => ev.stopPropagation()}>
+      <button type="button" onClick={() => verdict.mutate({ conn, dev, outcome: "good" })} disabled={verdict.isPending}
+        className="rounded bg-moss-600 hover:bg-moss-700 text-white text-[11px] font-medium px-2 py-0.5 transition">Good</button>
+      <button type="button" onClick={() => verdict.mutate({ conn, dev, outcome: "scrapped" })} disabled={verdict.isPending}
+        className="rounded border border-ember-300 dark:border-ember-700 text-ember-600 dark:text-ember-400 text-[11px] font-medium px-2 py-0.5 hover:bg-ember-50 dark:hover:bg-ember-950/30 transition">Scrapped</button>
+    </span>
+  );
   return (
-    <div className="rounded-xl border border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20 overflow-hidden">
-      <Link
-        to="/scan/camera"
-        className="flex items-center gap-3 px-4 py-3 hover:bg-cobble-100/60 dark:hover:bg-cobble-900/40 transition group"
-      >
-        <span className="w-9 h-9 rounded-full bg-cobble-600 text-white flex items-center justify-center shrink-0">
-          <Camera size={18} />
-        </span>
-        <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium text-content dark:text-mortar-100">
-            Scan something
-          </div>
-          <div className="text-xs text-faint dark:text-slate-400">
-            Point your camera at a product barcode — it lands here ready to file.
-          </div>
+    <li>
+      <div className={`rounded-lg border text-sm transition ${tone} ${open ? "" : "hover:border-accent"}`}>
+        <div className="flex items-center gap-3 px-3 py-2 group">
+          <button
+            type="button"
+            disabled={!expandable}
+            onClick={() => setOpen((o) => !o)}
+            className={"min-w-0 flex items-center gap-3 text-left disabled:cursor-default shrink-0" + (inlineActs && !open ? "" : " flex-1")}
+            title={expandable ? (open ? "Collapse" : "Show the items — act on them right here") : undefined}
+          >
+            <span className="shrink-0">{glyph}</span>
+            <span className="min-w-0 truncate text-content dark:text-mortar-100">
+              <strong>{it.count}</strong> {it.label}
+              {!open && !inlineActs && it.sample.length > 0 && (
+                <span className="text-faint dark:text-slate-400"> — {it.sample.join(" · ")}{it.count > it.sample.length ? " …" : ""}</span>
+              )}
+            </span>
+          </button>
+          {/* Few-item rows carry their actions ON the closed row — as SIBLINGS
+              of the expand button (a nested <button> is invalid HTML and eats
+              clicks). */}
+          {!open && inlineActs && (
+            <span className="flex-1 min-w-0 truncate text-[13px] text-faint dark:text-slate-400 flex items-center gap-2">
+              {entries.map((e, i) => (
+                <span key={e.id} className="whitespace-nowrap inline-flex items-center gap-1.5">
+                  {i > 0 && <span className="text-faint/60">·</span>}
+                  {e.action?.task && taskCheck(e.action.task)}
+                  <span className="truncate">{e.title}</span>
+                  {e.action?.connection_id && e.action?.device_id && verdictBtns(e.action.connection_id, e.action.device_id)}
+                </span>
+              ))}
+            </span>
+          )}
+          {expandable && (
+            <button
+              type="button"
+              onClick={() => setOpen((o) => !o)}
+              className="shrink-0"
+              aria-label={open ? "Collapse" : "Expand"}
+            >
+              <ChevronDown size={13} className={"text-faint transition-transform " + (open ? "rotate-180" : "")} />
+            </button>
+          )}
+          <Link to={it.route} className="shrink-0" title="Open the page" aria-label="Open the page">
+            <ArrowRight size={14} className="text-faint group-hover:text-accent transition" />
+          </Link>
         </div>
-        <ArrowRight size={16} className="text-faint group-hover:text-accent transition shrink-0" />
-      </Link>
-      {n > 0 && (
-        <Link
-          to="/scan"
-          className="flex items-center gap-3 px-4 py-2.5 border-t border-cobble-200 dark:border-cobble-800 hover:bg-cobble-100/60 dark:hover:bg-cobble-900/40 transition group"
-        >
-          <ScanLine size={16} className="text-accent shrink-0" />
-          <div className="flex-1 min-w-0 text-xs text-content dark:text-mortar-100">
-            <span className="font-medium">
-              {n} scanned {n === 1 ? "item" : "items"}
-            </span>{" "}
-            waiting in your inbox — review + file them.
-          </div>
-          <ArrowRight size={14} className="text-faint group-hover:text-accent transition shrink-0" />
-        </Link>
-      )}
-    </div>
+        {open && expandable && (
+          <ul className="border-t border-line/60 dark:border-slate-700/60 divide-y divide-line/40 dark:divide-slate-800/40">
+            {entries.map((e) => (
+              <li key={e.id} className="flex items-center gap-2.5 pl-9 pr-3 py-1.5 text-[13px]">
+                {e.action?.task ? (
+                  <button
+                    type="button"
+                    onClick={() => doneTask.mutate(e.action!.task!)}
+                    disabled={doneTask.isPending}
+                    title="Mark done"
+                    className="shrink-0 w-4 h-4 rounded border border-line dark:border-slate-600 hover:border-accent hover:bg-accent/10 transition flex items-center justify-center"
+                  >
+                    <CheckCircle2 size={11} className="opacity-0 hover:opacity-100 text-accent" />
+                  </button>
+                ) : (
+                  <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-faint/50" />
+                )}
+                <span className="flex-1 min-w-0 truncate text-content dark:text-mortar-100">{e.title}</span>
+                {e.action?.connection_id && e.action?.device_id && (
+                  <span className="shrink-0 flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => verdict.mutate({ conn: e.action!.connection_id!, dev: e.action!.device_id!, outcome: "good" })}
+                      disabled={verdict.isPending}
+                      className="rounded bg-moss-600 hover:bg-moss-700 text-white text-[11px] font-medium px-2 py-0.5 transition"
+                    >
+                      Good
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => verdict.mutate({ conn: e.action!.connection_id!, dev: e.action!.device_id!, outcome: "scrapped" })}
+                      disabled={verdict.isPending}
+                      className="rounded border border-ember-300 dark:border-ember-700 text-ember-600 dark:text-ember-400 text-[11px] font-medium px-2 py-0.5 hover:bg-ember-50 dark:hover:bg-ember-950/30 transition"
+                    >
+                      Scrapped
+                    </button>
+                  </span>
+                )}
+              </li>
+            ))}
+            {it.count > entries.length && (
+              <li className="pl-9 pr-3 py-1.5 text-xs text-faint dark:text-slate-500">
+                <Link to={it.route} className="hover:text-accent">+{it.count - entries.length} more — open the page</Link>
+              </li>
+            )}
+          </ul>
+        )}
+      </div>
+    </li>
   );
 }
 
@@ -324,10 +405,14 @@ function GettingStartedPanel({
   slug,
   enabled,
   modules,
+  collapsedOnly = false,
 }: {
   slug: string;
   enabled: Set<string>;
   modules: OrgModuleListItem[];
+  /** Bottom slot: render ONLY the collapsed add-more bar (non-empty
+   *  workspaces); the top slot renders only the empty-state hero. */
+  collapsedOnly?: boolean;
 }) {
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -420,8 +505,16 @@ function GettingStartedPanel({
   // workspace has content it renders collapsed (a slim bar that expands), so it
   // stays one click away without dominating an established dashboard.
   if (!skippedWizard) {
-    return <WhatToDoPanel slug={slug} startCollapsed={(probe.data ?? 0) > 0} />;
+    const hasContent = (probe.data ?? 0) > 0;
+    // Audit 2026-07-03: the collapsed "Add more" bar lives BELOW the data
+    // sections on an established workspace — prime rows belong to the
+    // workspace's own state, not a growth affordance. The empty-state hero
+    // keeps the top slot.
+    if (collapsedOnly) return hasContent ? <WhatToDoPanel slug={slug} startCollapsed /> : null;
+    if (hasContent) return null;
+    return <WhatToDoPanel slug={slug} startCollapsed={false} />;
   }
+  if (collapsedOnly) return null;
 
   // Determine the most relevant "first thing to do" based on which
   // user-facing modules are enabled.
@@ -1056,6 +1149,22 @@ function TileGrid({
 }) {
   const [dragTile, setDragTile] = useState<number | null>(null);
   const spanCls = (span: number) => (span === 2 ? "col-span-2" : "");
+  // Zero-tile collapse (audit 2026-07-03): empty tiles vanish from the grid
+  // and reappear as one quiet "Also enabled" line — a workspace with three
+  // empty modules stops burning a tile row on zeros. Arrange mode shows every
+  // tile (you can still hide/reorder empties there).
+  const [empties, setEmpties] = useState<Map<string, string>>(new Map());
+  const reportEmpty = useCallback((label: string, to: string, empty: boolean) => {
+    setEmpties((prev) => {
+      const has = prev.has(label);
+      if (empty === has && (!empty || prev.get(label) === to)) return prev;
+      const next = new Map(prev);
+      if (empty) next.set(label, to);
+      else next.delete(label);
+      return next;
+    });
+  }, []);
+  const collapseCtx = useMemo(() => ({ editing, reportEmpty }), [editing, reportEmpty]);
 
   if (!hasModules) {
     // The GettingStartedPanel above already owns the empty-workspace message
@@ -1074,6 +1183,7 @@ function TileGrid({
             All tiles are hidden — use Arrange to show some.
           </p>
         ) : (
+          <TileCollapseContext.Provider value={collapseCtx}>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
             {visible.map((a) => {
               const Widget = a.spec.component;
@@ -1084,6 +1194,21 @@ function TileGrid({
               );
             })}
           </div>
+          {empties.size > 0 && (
+            <p className="mt-2 text-xs text-faint dark:text-slate-500">
+              Also enabled:{" "}
+              {[...empties.entries()].map(([label, to], i) => (
+                <span key={label}>
+                  {i > 0 && " · "}
+                  <Link to={to} className="hover:text-accent underline decoration-dotted underline-offset-2">
+                    {label}
+                  </Link>
+                </span>
+              ))}
+              <span> — nothing in them yet.</span>
+            </p>
+          )}
+          </TileCollapseContext.Provider>
         )}
       </section>
     );
@@ -1149,6 +1274,35 @@ function TileGrid({
 
 // ──────────────────────── pinned saved views ────────────────────────
 
+function PinnedViewsGhost({ slug }: { slug: string }) {
+  const key = `cobblr.pinnedViewsGhost.dismissed.${slug}`;
+  const [dismissed, setDismissed] = useState(() => {
+    try { return localStorage.getItem(key) === "1"; } catch { return false; }
+  });
+  if (dismissed) return null;
+  return (
+    <section>
+      <SectionTitle>your views</SectionTitle>
+      <div className="rounded-xl border-2 border-dashed border-line dark:border-slate-700 px-4 py-3 flex items-center gap-3">
+        <Pin size={15} className="shrink-0 text-faint dark:text-slate-500" />
+        <div className="flex-1 min-w-0 text-sm text-muted dark:text-slate-400">
+          <Link to="/views" className="text-accent hover:underline font-medium">Pin a saved view</Link>
+          {" "}here — your table, your filters, live on the dashboard.
+        </div>
+        <button
+          type="button"
+          onClick={() => { setDismissed(true); try { localStorage.setItem(key, "1"); } catch { /* ignore */ } }}
+          className="shrink-0 text-faint hover:text-content dark:hover:text-mortar-200 transition"
+          title="Dismiss"
+          aria-label="Dismiss"
+        >
+          <X size={14} />
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function PinnedViews({ slug, editing = false }: { slug: string; editing?: boolean }) {
   const views = useQuery({
     queryKey: ["dash-views", slug],
@@ -1168,10 +1322,15 @@ function PinnedViews({ slug, editing = false }: { slug: string; editing?: boolea
   const [mode, setMode] = useViewMode("dashboard-pinned-views", "list");
   // When arranging, the section bar (ArrangeableBody) supplies the title, and
   // an empty section must still show SOMETHING so it stays reorderable.
-  if (pinned.length === 0)
-    return editing ? (
-      <p className="text-xs text-faint dark:text-slate-500 italic">No pinned views yet.</p>
-    ) : null;
+  if (pinned.length === 0) {
+    if (editing)
+      return <p className="text-xs text-faint dark:text-slate-500 italic">No pinned views yet.</p>;
+    // Ghost card (prototype, the author sign-off pending): the section used to hide
+    // entirely when nothing was pinned, so most users never learned it exists.
+    // One dismissible dashed invitation; gone forever once dismissed or once
+    // anything is pinned.
+    return <PinnedViewsGhost slug={slug} />;
+  }
   return (
     <section>
       {!editing && (
@@ -1368,6 +1527,23 @@ function ActivityGroupRow({ group }: { group: ActivityGroup }) {
   const last = group.items[group.items.length - 1]!;
   const action = humanAction(first.action);
   const actor = actorLabel(first);
+  // The summary must not LIE: "created K1 Max ×2" for two different machines
+  // read as two copies of K1 Max. Distinct titles → summarize by entity kind
+  // ("2 machines"); identical titles keep the title (a true ×N of one thing).
+  const titles = group.items.map((e) => pickString((e.diff ?? {}) as Record<string, unknown>, ["title", "name", "label"]) ?? "");
+  const allSame = titles.every((t) => t === titles[0] && t !== "");
+  const noun = (first.entity_type ?? "item").split(":").pop()!.replace(/[_-]/g, " ");
+  const summary = allSame ? (
+    <>{activityTitle(first)}</>
+  ) : (
+    <>
+      <strong>{group.items.length}</strong> {noun}
+      {group.items.length === 1 ? "" : "s"}
+      <span className="text-faint dark:text-slate-400"> — {titles.filter(Boolean).slice(0, 2).join(", ")}{titles.filter(Boolean).length > 2 ? ", …" : ""}</span>
+    </>
+  );
+  const spanStart = relativeTime(last.occurred_at);
+  const spanEnd = relativeTime(first.occurred_at);
   const rowContent = (
     <div className="flex items-baseline gap-3 text-sm w-full">
       <span className="text-muted dark:text-slate-400 shrink-0">
@@ -1377,16 +1553,22 @@ function ActivityGroupRow({ group }: { group: ActivityGroup }) {
         {action}
       </span>
       <span className="text-content dark:text-mortar-100 truncate">
-        {activityTitle(first)}
-        <span className="ml-1.5 inline-flex items-center text-[10px] font-mono uppercase tracking-widest text-accent dark:text-cobble-400 bg-cobble-50 dark:bg-cobble-900/40 rounded px-1.5 py-0.5">
-          ×{group.items.length}
-        </span>
+        {summary}
+        {allSame && (
+          <span className="ml-1.5 inline-flex items-center text-[10px] font-mono uppercase tracking-widest text-accent dark:text-cobble-400 bg-cobble-50 dark:bg-cobble-900/40 rounded px-1.5 py-0.5">
+            ×{group.items.length}
+          </span>
+        )}
       </span>
       <span className="flex-1" />
       <span className="font-mono text-[10px] text-faint shrink-0">
-        {relativeTime(last.occurred_at)}
-        <span className="text-faint dark:text-slate-600"> → </span>
-        {relativeTime(first.occurred_at)}
+        {spanStart === spanEnd ? spanStart : (
+          <>
+            {spanStart}
+            <span className="text-faint dark:text-slate-600"> → </span>
+            {spanEnd}
+          </>
+        )}
       </span>
     </div>
   );

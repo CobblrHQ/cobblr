@@ -11,7 +11,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "projects",
-  version: "0.1.0",
+  version: "0.1.1",
   displayName: "Projects",
   description:
     "Projects + tasks + dependencies. Tasks can wait on other tasks or on any module's entity — the platform brokers.",
@@ -108,6 +108,9 @@ export default defineModule({
         label: "Mark task dependencies satisfied",
         description:
           "For every task dep referencing the triggering entity, flip satisfied = true",
+        // DELIBERATELY universal: a task dependency can reference ANY kind
+        // (a part restocks, an order arrives, a print finishes) — the dep
+        // table names the triggering entity; scoping would break the pattern.
         appliesTo: { any: true },
         invokeHandler: "projects.set-dep-satisfied",
         // Wire-only — fired by the stock-changed wire, not a button.
@@ -119,6 +122,8 @@ export default defineModule({
         label: "Mark linked task done",
         description:
           "Set the task named by the event's linkedTaskId to done (e.g. when a linked print completes)",
+        // DELIBERATELY universal: fired by upstream completion events; the
+        // task is located from the event's linkedTaskId, not the source kind.
         appliesTo: { any: true },
         invokeHandler: "projects.mark-task-done",
         // Wire-only — fired by an upstream completion event, not a button.

@@ -6,8 +6,8 @@
 
 import { useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileText, Trash2, Upload } from "lucide-react";
-import { useConfirm, useImageSrc } from "@cobblr/platform-web";
+import { FileText, ImageDown, Trash2, Upload } from "lucide-react";
+import { useConfirm, useImageSrc, useToast } from "@cobblr/platform-web";
 import { useProjects } from "./context";
 
 interface AttachmentRow {
@@ -20,9 +20,10 @@ interface AttachmentRow {
 }
 
 export function DesignFiles({ designId }: { designId: string }) {
-  const { orgSlug, getToken } = useProjects();
+  const { orgSlug, getToken, api } = useProjects();
   const qc = useQueryClient();
   const confirm = useConfirm();
+  const toast = useToast();
   const fileInput = useRef<HTMLInputElement>(null);
 
   const auth = (): Record<string, string> => {
@@ -76,9 +77,26 @@ export function DesignFiles({ designId }: { designId: string }) {
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["design-files", orgSlug, designId] }),
   });
 
+  // Pull the finished-object photo straight out of the attached pattern PDF —
+  // no separate upload needed. The server extracts the embedded images, saves
+  // the largest as a core-file and attaches it as role=photo.
+  const pullPhoto = useMutation({
+    mutationFn: () => api.extractPatternImages(designId),
+    onSuccess: (r) => {
+      if (r.ok && r.file) {
+        toast.success(`Pulled a ${r.file.width}×${r.file.height} photo from the pattern.`);
+        void qc.invalidateQueries({ queryKey: ["design-files", orgSlug, designId] });
+      } else {
+        toast.info(r.reason ?? "No photo found in that pattern.");
+      }
+    },
+    onError: (e) => toast.error(`Couldn't read the pattern: ${(e as Error).message}`),
+  });
+
   const items = list.data ?? [];
   const images = items.filter((a) => a.kind === "image" || a.mime_type.startsWith("image/"));
   const files = items.filter((a) => !(a.kind === "image" || a.mime_type.startsWith("image/")));
+  const hasPattern = files.some((a) => a.role === "pattern" || a.mime_type === "application/pdf");
 
   return (
     <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5">
@@ -86,13 +104,26 @@ export function DesignFiles({ designId }: { designId: string }) {
         <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
           // pattern &amp; photos
         </div>
-        <button
-          type="button"
-          onClick={() => fileInput.current?.click()}
-          className="inline-flex items-center gap-1.5 text-xs text-accent hover:text-content dark:hover:text-mortar-100 transition"
-        >
-          <Upload size={13} /> add
-        </button>
+        <div className="flex items-center gap-3">
+          {hasPattern && (
+            <button
+              type="button"
+              onClick={() => pullPhoto.mutate()}
+              disabled={pullPhoto.isPending}
+              className="inline-flex items-center gap-1.5 text-xs text-accent hover:text-content dark:hover:text-mortar-100 transition disabled:opacity-40"
+              title="Extract the finished-object photo embedded in the pattern PDF"
+            >
+              <ImageDown size={13} /> {pullPhoto.isPending ? "reading…" : "pull photo from PDF"}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => fileInput.current?.click()}
+            className="inline-flex items-center gap-1.5 text-xs text-accent hover:text-content dark:hover:text-mortar-100 transition"
+          >
+            <Upload size={13} /> add
+          </button>
+        </div>
         <input
           ref={fileInput}
           type="file"

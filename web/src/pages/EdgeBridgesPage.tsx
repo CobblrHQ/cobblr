@@ -3,7 +3,13 @@
 // merely its consumers. So this page renders three data-driven sections and
 // hardcodes no module anywhere:
 //
-//   · connected right now  — workspace bridges + your personal (account) agent
+//   · connected right now  — workspace bridges. The caller's personal agent
+//                            (their /me/connections AI relay) is a FOOTNOTE
+//                            under the list, named by its connection label —
+//                            never a peer row: two rows both titled "main edge
+//                            bridge" (workspace + a hardcoded personal title)
+//                            read as a duplicate bridge nobody remembers
+//                            setting up.
 //   · set up a bridge      — mint the token + copy the run command, right here
 //   · what can use it      — one card per REGISTERED edge consumer; a consumer
 //                            whose module is off renders greyed with Enable, so
@@ -50,7 +56,6 @@ export function EdgeBridgesPage() {
   const personal = status.data?.personal?.connected ?? false;
   const personalBacks = status.data?.personal?.backs ?? [];
   const staleMs = status.data?.stale_after_ms ?? 60_000;
-  const nothingConnected = agents.length === 0 && !personal;
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
@@ -71,9 +76,9 @@ export function EdgeBridgesPage() {
           <h2 className="text-sm font-semibold text-content dark:text-mortar-100 flex-1">Connected right now</h2>
           <span className="text-[11px] text-faint dark:text-slate-500">auto-refreshes</span>
         </div>
-        {nothingConnected ? (
+        {agents.length === 0 ? (
           <p className="text-sm text-faint dark:text-slate-400">
-            No bridge is connected. Set one up below — the moment it dials in, it appears here.
+            No bridge is connected in this workspace. Set one up below — the moment it dials in, it appears here.
           </p>
         ) : (
           <ul className="space-y-1.5">
@@ -83,7 +88,6 @@ export function EdgeBridgesPage() {
                 <li key={a.bridge ?? "default"} className="flex items-center gap-3 rounded-lg border border-line dark:border-slate-800 px-3 py-2 text-sm">
                   {fresh ? <CheckCircle2 size={15} className="text-emerald-500 shrink-0" /> : <XCircle size={15} className="text-red-500 shrink-0" />}
                   <span className="font-medium text-content dark:text-mortar-100">{a.bridge ?? "main edge bridge"}</span>
-                  <span className="text-[10px] font-mono uppercase rounded-full px-1.5 py-0.5 bg-subtle dark:bg-slate-800 text-muted dark:text-slate-400">workspace</span>
                   <span className="text-xs text-faint dark:text-slate-400 flex-1">
                     polled {Math.round(a.last_seen_ms / 1000)}s ago
                     {a.parked ? " · idle, waiting for work" : a.in_flight > 0 ? ` · ${a.in_flight} request${a.in_flight === 1 ? "" : "s"} in flight` : ""}
@@ -92,21 +96,24 @@ export function EdgeBridgesPage() {
                 </li>
               );
             })}
-            {personal && (
-              <li className="flex items-center gap-3 rounded-lg border border-line dark:border-slate-800 px-3 py-2 text-sm">
-                <CheckCircle2 size={15} className="text-emerald-500 shrink-0" />
-                <span className="font-medium text-content dark:text-mortar-100 inline-flex items-center gap-1.5">
-                  <User size={13} className="text-accent" /> main edge bridge
-                </span>
-                <span className="text-[10px] font-mono uppercase rounded-full px-1.5 py-0.5 bg-cobble-100 dark:bg-cobble-900/40 text-accent">account</span>
-                <span className="text-xs text-faint dark:text-slate-400 flex-1">
-                  runs on your own machine; follows your account into every workspace you route it to (manage in{" "}
-                  <Link to="/me/connections" className="text-accent hover:underline">Your connections</Link>)
-                  {personalBacks.length > 0 ? <> · backing: {personalBacks.join(", ")}</> : null}
-                </span>
-              </li>
-            )}
           </ul>
+        )}
+        {/* The caller's personal AI connection is NOT a workspace bridge — it
+            follows their account and serves only them. A footnote, not a row:
+            as a peer row (previously hardcoded "main edge bridge") it read as
+            a duplicate bridge nobody remembered setting up. */}
+        {personal && (
+          <p className="flex items-start gap-1.5 border-t border-line dark:border-slate-800 pt-2 mt-2 text-xs text-faint dark:text-slate-400">
+            <User size={13} className="text-accent shrink-0 mt-0.5" />
+            <span>
+              Separate from workspace bridges: your personal connection
+              {personalBacks.length > 0 ? (
+                <> <span className="font-medium text-muted dark:text-slate-300">{personalBacks.join(", ")}</span></>
+              ) : null}{" "}
+              also reaches this workspace. It follows your account — only you can use it, and it shows only for you. Manage it in{" "}
+              <Link to="/me/connections" className="text-accent hover:underline">Your connections</Link>.
+            </span>
+          </p>
         )}
       </section>
 

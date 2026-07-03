@@ -548,7 +548,12 @@ const ModuleManifest = z.object({
             entity_kind: z.string(),
             name: z.string().regex(/^[a-z][a-z0-9_]*$/),
             display_label: z.string().min(1),
-            type: z.enum(["text", "number", "boolean", "date", "url"]),
+            type: z.enum(["text", "number", "boolean", "date", "url", "relation"]),
+            /** For type='relation': the entity-kind id this field references
+             *  (e.g. "core-locations:location"). The stored value is the target
+             *  entity's id (in metadata); the read layer resolves it to the
+             *  target's title and injects `<name>_label` for display. */
+            ref_kind: z.string().optional(),
             required: z.boolean().optional(),
             position: z.number().int().optional(),
             choices: z.array(z.string()).optional(),
@@ -558,6 +563,13 @@ const ModuleManifest = z.object({
             renderer: z
               .enum(["text", "color-hex", "image-url", "url-link", "year", "boolean", "code"])
               .optional(),
+            /** Server-managed: the value is computed/stamped server-side
+             *  (e.g. core-mobility's `away_since`) and a client write is
+             *  never accepted — the write router preserves the stored
+             *  value across an unrelated edit rather than taking the
+             *  client's. Server-side writers (wire action handlers)
+             *  bypass the router and write it directly. Default false. */
+            server_managed: z.boolean().optional(),
           }),
         )
         .default([]),
@@ -1154,11 +1166,23 @@ export interface PlatformEntities {
   listKinds(): Promise<EntityKindRecord[]>;
   /** Get a single kind's full declaration. */
   getKind(kind: string): Promise<EntityKindRecord | null>;
+  /** The names of a kind's SERVER-MANAGED custom fields (field defs with
+   *  `server_managed = true`, e.g. core-mobility's `away_since`). A write
+   *  route uses this to preserve the stored value across an unrelated client
+   *  edit rather than accepting the client's — metadata is written wholesale
+   *  (read-modify-write), so a stale client value would otherwise clobber a
+   *  server-stamped one. Empty for kinds with no such fields (a no-op). */
+  serverManagedFields(orgId: string, kind: string): Promise<string[]>;
 }
 
 export interface EntityKindRecord {
   id: string;
   module_name: string;
+  /** The owning module's instanceability ("multi" = a workspace can create
+   *  named instances of it — the AI builder uses this to know which modules
+   *  can back a new provides_instances entry). Resolved from the registry at
+   *  read time; "single" when unknown. */
+  module_instanceability?: "single" | "multi";
   display_name: string;
   display_name_plural: string | null;
   icon: string | null;

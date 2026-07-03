@@ -27,9 +27,6 @@ import {
   destinationMatches,
   type ConfigGroup,
 } from "../lib/configuration-nav";
-import { ModulePickerModal } from "../components/ModulePickerModal";
-import { MembersModal } from "../components/MembersModal";
-import { NewThingFunnelModal } from "../components/NewThingFunnelModal";
 import { NavCustomizeMenu } from "../components/NavCustomizeMenu";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { displaySlug } from "../lib/workspaceSlug";
@@ -123,13 +120,11 @@ function FocusedModeToggle({ slug, focused }: { slug: string; focused: boolean }
 export function ConfigurationPage() {
   usePageTitle("Configuration");
   const { activeOrg, activeSlug } = useActiveOrg();
-  const [modulesOpen, setModulesOpen] = useState(false);
-  const [membersOpen, setMembersOpen] = useState(false);
-  const [newThingOpen, setNewThingOpen] = useState(false);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(DEFAULT_OPEN);
   const [query, setQuery] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const focused = isFocused(activeOrg);
 
   // Hosted-only settings panels (billing, Slack, …) contributed by the cloud
@@ -148,10 +143,12 @@ export function ConfigurationPage() {
     staleTime: 5 * 60_000,
   });
 
-  const modalOpeners: Record<string, () => void> = {
-    "new-thing": () => setNewThingOpen(true),
-    modules: () => setModulesOpen(true),
-    members: () => setMembersOpen(true),
+  // Settings-cohesion (2026-07-03): the launchers are PAGES now — these
+  // targets serve the tiles and the legacy ?open= redirect below.
+  const modalRoutes: Record<string, string> = {
+    "new-thing": "/configuration/new-thing",
+    modules: "/configuration/modules",
+    members: "/configuration/members",
   };
 
   // Tiles come from the shared registry (lib/configuration-nav.ts) + the
@@ -161,8 +158,7 @@ export function ConfigurationPage() {
       icon: d.icon,
       label: d.label,
       description: d.description,
-      to: d.to,
-      onClick: d.modal ? modalOpeners[d.modal] : undefined,
+      to: d.to ?? (d.modal ? modalRoutes[d.modal] : undefined),
       group: d.group,
       primary: d.primary,
       keywords: d.keywords,
@@ -180,14 +176,16 @@ export function ConfigurationPage() {
   // The ConfigurationLayout sidebar (and anyone's bookmark) reaches the modals
   // this way; the param is consumed + cleared so closing doesn't re-open.
   useEffect(() => {
+    // Legacy deep links: /configuration?open=modules → the page.
     const open = searchParams.get("open");
     if (!open) return;
-    modalOpeners[open]?.();
-    const next = new URLSearchParams(searchParams);
-    next.delete("open");
-    setSearchParams(next, { replace: true });
-    // modalOpeners is stable-enough (same setters every render); the param is
-    // the only real trigger.
+    const dest = modalRoutes[open];
+    if (dest) navigate(dest, { replace: true });
+    else {
+      const next = new URLSearchParams(searchParams);
+      next.delete("open");
+      setSearchParams(next, { replace: true });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
@@ -403,19 +401,6 @@ export function ConfigurationPage() {
       </>
       )}
 
-      <ModulePickerModal
-        open={modulesOpen}
-        onClose={() => setModulesOpen(false)}
-      />
-      <MembersModal
-        open={membersOpen}
-        onClose={() => setMembersOpen(false)}
-        slug={activeSlug}
-      />
-      <NewThingFunnelModal
-        open={newThingOpen}
-        onClose={() => setNewThingOpen(false)}
-      />
     </div>
   );
 }

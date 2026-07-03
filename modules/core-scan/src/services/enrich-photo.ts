@@ -15,7 +15,7 @@ import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { CoreScanDB } from "../db.js";
 import { reportBarcodeCorrection } from "./barcode-corrections.js";
-import { searchImages, rankImageOptions, imageQuery } from "./ddg-images.js";
+import { searchImages, rankImageOptions, imageQuery, mediaSearchExtras } from "./ddg-images.js";
 
 /** Re-fetch the catalog image to match a (corrected) name. The card prefers the
  *  downloaded `catalog_image_file_id` over `catalog_image_url`, so a rename left
@@ -36,11 +36,15 @@ export async function refreshCatalogImageByName(
   // so the auto-refresh resumes.)
   const cur = await db
     .selectFrom("core_scan_inbox_items")
-    .select("suggested_metadata")
+    .select(["suggested_metadata", "suggested_candidates"])
     .where("id", "=", itemId)
     .executeTakeFirst();
   if ((cur?.suggested_metadata as { catalog_image_user_set?: boolean } | null)?.catalog_image_user_set) return;
-  const pool = await searchImages(imageQuery(name, brand), 24).catch(() => []);
+  // Sharpen a weak title with author + media word (the same extras the
+  // photo-options strip uses) so a book finds its cover, not generic images.
+  const { author, mediaWord } = mediaSearchExtras(cur?.suggested_candidates as Array<{ fields?: Record<string, unknown> }> | null);
+  const extra = [author, mediaWord].filter(Boolean).join(" ") || null;
+  const pool = await searchImages(imageQuery(name, brand, extra), 24).catch(() => []);
   const best = rankImageOptions(pool, brand)[0]?.url;
   if (!best) return;
   await db
@@ -80,6 +84,10 @@ interface PhotoEnrichContext {
   /** A user-triggered re-run → bypass the AI cache so the identify reflects the
    *  current prompt, not a stale result cached for this image. */
   force?: boolean;
+  /** The user's research hint ("RA200 headset") — folded into the vision
+   *  identify as an AUTHORITATIVE correction that overrides the visual read, so
+   *  a hint naming a DIFFERENT item than the obvious one re-identifies to it. */
+  hint?: string;
 }
 
 function clamp01(n: number): number {
@@ -93,6 +101,9 @@ export interface PhotoIdentity {
   brand: string | null;
   category: string | null;
   entityType: "asset" | "part" | null;
+  /** A known series/franchise this titled work belongs to (Harry Potter,
+   *  Little House on the Prairie), or null. Used to group + tag siblings. */
+  series: string | null;
   confidence: number;
   /** A UPC/EAN the vision model read off the package (digits only), or null.
    *  OCR'd — lower trust than a hardware scan, so it's captured as AI-read. */
@@ -113,13 +124,14 @@ export async function identifyImage(
   sourceId?: string,
   userId?: string | null,
   bypassCache?: boolean,
+  hint?: string,
 ): Promise<PhotoIdentity | null> {
   let parsed: Record<string, unknown> | null = null;
   try {
     const r = await platform().ai.invoke({
       orgId,
       capability: "identify-image",
-      input: { image_b64: imageB64, image_media_type: mediaType },
+      input: { image_b64: imageB64, image_media_type: mediaType, ...(hint ? { user_hint: hint } : {}) },
       source: { kind: "core-scan:photo", id: sourceId ?? "eval" },
       // Route through the caller's own AI connection (the 'own' path), not only
       // the workspace-default share path. Without it a detached photo enrich on a
@@ -161,6 +173,7 @@ export async function identifyImage(
     brand: str(p.brand) || str(p.manufacturer).split(",")[0]?.trim() || null,
     category: str(p.category) || str(p.product_line) || null,
     entityType: et,
+    series: str(p.series) || str(p.franchise) || null,
     // A richer-shape reply with no confidence field WAS confident enough to
     // describe the item — don't read that as a 0.5 maybe.
     confidence: clamp01(typeof p.confidence === "number" ? p.confidence : str(p.name) ? 0.5 : 0.75),
@@ -372,7 +385,15 @@ export async function enrichPhotoItem(ctx: PhotoEnrichContext): Promise<void> {
   }
   const imageB64 = Buffer.from(file.bytes).toString("base64");
 
-  const identity = await identifyImage(ctx.orgId, imageB64, file.mimeType, ctx.itemId, ctx.userId, ctx.force);
+  const identity = await identifyImage(
+    ctx.orgId,
+    imageB64,
+    file.mimeType,
+    ctx.itemId,
+    ctx.userId,
+    ctx.force || !!ctx.hint,
+    ctx.hint,
+  );
   // identifyImage's vision call can run tens of seconds. When enrichPhotoItem
   // runs detached (after the HTTP response has returned), the request's tenant
   // pool may have been reaped meanwhile — a later write then throws "Cannot use
@@ -412,8 +433,12 @@ export async function enrichPhotoItem(ctx: PhotoEnrichContext): Promise<void> {
         source: "vision",
         category: identity.category,
         entity_type: identity.entityType,
+        ...(identity.series ? { series: identity.series } : {}),
         ...(captureBarcode ? { barcode_source: "ai-photo" } : {}),
         ...(parsePackSize(identity.name) ? { pack_size: parsePackSize(identity.name) } : {}),
+        // Preserve the correction so the matchmaker (which runs after this
+        // wholesale metadata rewrite) still sees it as an authoritative hint.
+        ...(ctx.hint ? { user_hint: ctx.hint } : {}),
       })}::jsonb` as never,
       ai_confidence: String(identity.confidence),
       ai_notes:
@@ -425,4 +450,11 @@ export async function enrichPhotoItem(ctx: PhotoEnrichContext): Promise<void> {
     })
     .where("id", "=", ctx.itemId)
     .execute();
+
+  // Auto-suggest a clean CATALOG image for a photographed item — the user's own
+  // photo stays as "yours", but a studio shot from an image search on the
+  // resolved name gives a nicer display. Previously this only ran on a barcode
+  // mismatch, so a clean photo identify never got a catalog photo. Best-effort;
+  // honors a user-picked image (refreshCatalogImageByName checks the lock).
+  void refreshCatalogImageByName(ctx.orgId, ctx.itemId, identity.name, identity.brand).catch(() => {});
 }

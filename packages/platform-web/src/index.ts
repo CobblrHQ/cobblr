@@ -30,12 +30,14 @@ export {
 export { SandboxedRenderer, registerSandboxedRenderer } from "./SandboxedRenderer";
 export {
   DashboardTile,
+  TileCollapseContext,
   registerDashboardWidget,
   unregisterDashboardWidget,
   useDashboardWidgets,
   type DashboardWidgetProps,
   type DashboardWidgetSpec,
   type DashboardInstance,
+  type TileCollapse,
 } from "./dashboardWidgets";
 export { BackToTop } from "./BackToTop";
 export { CatalogTypeahead, type CatalogTypeaheadHit } from "./CatalogTypeahead";

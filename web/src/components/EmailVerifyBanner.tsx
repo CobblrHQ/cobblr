@@ -8,7 +8,7 @@ import { MailWarning, X } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../lib/api";
 
-export function EmailVerifyBanner() {
+export function EmailVerifyBanner({ variant = "bar" }: { variant?: "bar" | "sidebar" } = {}) {
   const { user } = useAuth();
   // Dismissal PERSISTS (per user) — the banner used to come back on every page
   // load forever, permanently taxing the top 40px of every screen (redesign
@@ -37,6 +37,35 @@ export function EmailVerifyBanner() {
     } finally {
       setBusy(false);
     }
+  }
+
+  // Sidebar-card variant (full-sidebar mode): a compact notice docked above
+  // the action cluster — one consistent home instead of a thin bar of varying
+  // width on top of some pages. Same dismissal + resend.
+  if (variant === "sidebar") {
+    return (
+      <div className="mx-2 mb-1.5 rounded-lg border border-cobble-200 dark:border-cobble-900/40 bg-cobble-50 dark:bg-cobble-900/20 px-2.5 py-2 text-[11px] text-content dark:text-mortar-200">
+        <div className="flex items-start gap-1.5">
+          <MailWarning size={12} className="shrink-0 mt-0.5 text-accent" />
+          <span className="flex-1 min-w-0">
+            {sent ? "Verification email sent — check your inbox." : "Verify your email to secure your account."}
+          </span>
+          <button type="button" onClick={dismiss} className="shrink-0 text-faint hover:text-content dark:hover:text-mortar-200 transition" title="Dismiss" aria-label="Dismiss">
+            <X size={12} />
+          </button>
+        </div>
+        {!sent && (
+          <button
+            type="button"
+            onClick={() => void resend()}
+            disabled={busy}
+            className="mt-1 ml-[18px] font-medium text-accent underline hover:no-underline disabled:opacity-50"
+          >
+            {busy ? "Sending…" : "Resend link"}
+          </button>
+        )}
+      </div>
+    );
   }
 
   return (

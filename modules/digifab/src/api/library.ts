@@ -11,6 +11,7 @@ import { platform } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { extractThumbnail, isLibraryFile } from "../library/extract-thumbnail.js";
+import { extractPlateMetadata } from "../library/extract-metadata.js";
 import { enqueuePoll } from "../poll-worker.js";
 
 export const libraryRouter = Router({ mergeParams: true });
@@ -18,7 +19,7 @@ export const libraryRouter = Router({ mergeParams: true });
 const MAX_BYTES = 200 * 1024 * 1024; // 200 MB — a large multi-plate 3MF fits.
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_BYTES, files: 1 } });
 
-const ROW = ["id", "name", "file_id", "thumbnail_file_id", "kind", "size_bytes", "plate_count", "notes", "created_at", "updated_at"] as const;
+const ROW = ["id", "name", "file_id", "thumbnail_file_id", "kind", "size_bytes", "plate_count", "notes", "metadata", "created_at", "updated_at"] as const;
 
 // GET / — list library items, newest first.
 libraryRouter.get(
@@ -60,9 +61,18 @@ libraryRouter.post(
 
     const name = (typeof req.body?.name === "string" && req.body.name.trim()) || file.originalname;
     const kind = /\.3mf$/i.test(file.originalname) ? "3mf" : "gcode";
+    // Slicer metadata (est time / material / layer / grams / parts-per-plate):
+    // comment headers first, the `Nx …_PLA_…_5h11m` filename convention as
+    // fallback. Best-effort — a parse failure must never block an upload.
+    let metadata: Record<string, unknown> = {};
+    try {
+      metadata = extractPlateMetadata(file.originalname, file.buffer) as Record<string, unknown>;
+    } catch (e) {
+      console.warn(`[digifab] metadata extract failed for ${file.originalname}:`, (e as Error).message);
+    }
     const row = await tenantDb(req)
       .insertInto("digifab_library")
-      .values({ name: String(name).slice(0, 300), file_id: stored.fileId, thumbnail_file_id: thumbId, kind, size_bytes: Math.min(file.size, 2_000_000_000), plate_count: plateCount, notes: null })
+      .values({ name: String(name).slice(0, 300), file_id: stored.fileId, thumbnail_file_id: thumbId, kind, size_bytes: Math.min(file.size, 2_000_000_000), plate_count: plateCount, notes: null, metadata })
       .returning(ROW)
       .executeTakeFirstOrThrow();
     res.status(201).json(row);

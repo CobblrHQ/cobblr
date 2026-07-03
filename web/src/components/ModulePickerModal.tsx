@@ -20,6 +20,8 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { applyNavOrder, readNavOrder, writeNavOrder } from "../lib/nav-order";
 
 interface Props {
+  /** Render in-flow (settings page mode) instead of as an overlay. */
+  inline?: boolean;
   open: boolean;
   onClose: () => void;
   /** When set, the modal opens scoped to specialisations of this
@@ -28,7 +30,7 @@ interface Props {
   scopeToParent?: string;
 }
 
-export function ModulePickerModal({ open, onClose, scopeToParent }: Props) {
+export function ModulePickerModal({ open, onClose, scopeToParent, inline }: Props) {
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
@@ -160,7 +162,7 @@ export function ModulePickerModal({ open, onClose, scopeToParent }: Props) {
     : "enable, disable, and reorder per-workspace";
 
   return (
-    <Modal open={open} onClose={onClose} title={title} subtitle={subtitle} size="lg">
+    <Modal open={open} onClose={onClose} title={title} subtitle={subtitle} size="lg" inline={inline}>
       <div className="space-y-3">
         {scopeToParent && (
           <div className="flex items-center justify-between text-xs">

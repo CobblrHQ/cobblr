@@ -764,7 +764,24 @@ platformOrgRouter.get(
         .orderBy("entity_kind")
         .orderBy("position");
       if (kind) q = q.where("entity_kind", "=", kind);
-      const items = await q.execute();
+      const rawItems = await q.execute();
+      // Bundled fields carry their PARENT's identity so the UI can link to
+      // bundle management ("uninstall the parent bundle to remove" must be a
+      // door, not a dead end — the author, 2026-07-03).
+      const bundleIds = [...new Set(rawItems.map((f) => f.bundle_id).filter((b): b is string => !!b))];
+      const bundleRows = bundleIds.length
+        ? await meta
+            .selectFrom("bundles")
+            .select(["id", "external_id", "name"])
+            .where("id", "in", bundleIds)
+            .execute()
+        : [];
+      const bundleById = new Map(bundleRows.map((b) => [b.id, b]));
+      const items = rawItems.map((f) => ({
+        ...f,
+        bundle_external_id: f.bundle_id ? (bundleById.get(f.bundle_id)?.external_id ?? null) : null,
+        bundle_name: f.bundle_id ? (bundleById.get(f.bundle_id)?.name ?? null) : null,
+      }));
       if (!effective) {
         res.json({ items });
         return;

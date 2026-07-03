@@ -24,6 +24,7 @@ import { FilePreviewGate } from "./components/FilePreviewGate";
 import { InstalledRenderers } from "./components/InstalledRenderers";
 import { PairsWellWith } from "./components/PairsWellWith";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
+import { useTheme } from "./theme/ThemeContext";
 import { ActiveOrgProvider, useActiveOrg, pickDefaultOrg, urlHandleFor } from "./auth/ActiveOrgContext";
 import { AuthPage, MagicConsumePage } from "./pages/AuthPage";
 import { PairPage } from "./pages/PairPage";
@@ -48,6 +49,7 @@ import { FilesPage } from "./pages/FilesPage";
 import { ViewsPage } from "./pages/ViewsPage";
 import { ConfigurationPage } from "./pages/ConfigurationPage";
 import { ConfigurationLayout } from "./components/ConfigurationLayout";
+import { ConfigMembersPage, ConfigModulesPage, ConfigNewThingPage } from "./pages/ConfigLauncherPages";
 // Lazy: rarely-visited admin / drill-down pages. Splitting these
 // out keeps the dashboard's initial bundle smaller. Each becomes
 // its own chunk; the chunk loads on first navigation.
@@ -127,10 +129,24 @@ function RouteFallback() {
   );
 }
 
+/** Applies the signed-in user's server-stored theme preference on login, so a
+ *  fresh device follows the user's choice instead of the OS default. Renders
+ *  nothing; lives inside AuthProvider (the ThemeProvider is an ancestor from
+ *  main.tsx). Only syncs — the user's own toggle owns changes + persistence. */
+function ThemeSync() {
+  const { user } = useAuth();
+  const { syncFromServer } = useTheme();
+  useEffect(() => {
+    syncFromServer(user?.theme_pref ?? null);
+  }, [user?.theme_pref, syncFromServer]);
+  return null;
+}
+
 export function App() {
   return (
     <ErrorBoundary scope="app">
       <AuthProvider>
+        <ThemeSync />
         <ToastProvider>
           <ConfirmProvider>
             <Shell />
@@ -485,10 +501,14 @@ function ActiveOrgScopedRoutes() {
               unchanged; only the shell around them is new. */}
           <Route element={<ConfigurationLayout />}>
             <Route path="/configuration" element={<ConfigurationPage />} />
+            {/* Launcher PAGES (settings-cohesion): the dialogs, in-flow. */}
+            <Route path="/configuration/modules" element={<ConfigModulesPage />} />
+            <Route path="/configuration/members" element={<ConfigMembersPage />} />
+            <Route path="/configuration/new-thing" element={<ConfigNewThingPage />} />
             <Route path="/configuration/form-builder" element={<FormBuilderPage />} />
             <Route path="/configuration/tokens" element={<ApiTokensPage />} />
             <Route path="/configuration/surfaces" element={<SurfacesPage />} />
-            <Route path="/configuration/digifab" element={<DigifabPage />} />
+            <Route path="/configuration/digifab" element={<DigifabPage setupOnly />} />
             <Route path="/configuration/edge" element={<EdgeBridgesPage />} />
             <Route path="/configuration/print" element={<PrintPage />} />
             <Route path="/configuration/maintenance" element={<MaintenancePage />} />
@@ -516,13 +536,22 @@ function ActiveOrgScopedRoutes() {
             <Route path="/configuration/openapi" element={<OpenApiPage />} />
             <Route path="/configuration/queue" element={<QueuePage />} />
             <Route path="/configuration/links" element={<LinksPage />} />
+            {/* The settings FAMILY pages that live outside /configuration/*
+                (views, tags, fields, files, wires, actions, activity, bundles)
+                render inside the same sidebar — feedback 2026-07-03: sidebar
+                links must never drop the sidebar. Routes unchanged; only the
+                shell around them. */}
+            <Route path="/bindings" element={<BindingsPage />} />
+            <Route path="/actions" element={<ActionsPage />} />
+            <Route path="/bundles" element={<BundlesPage />} />
+            <Route path="/bundles/compose" element={<BundleComposerPage />} />
+            <Route path="/fields" element={<FieldsPage />} />
+            <Route path="/activity" element={<ActivityPage />} />
+            <Route path="/files" element={<FilesPage />} />
+            <Route path="/views" element={<ViewsPage />} />
+            <Route path="/tags" element={<TagsPage />} />
           </Route>
-          <Route path="/bindings" element={<BindingsPage />} />
-          <Route path="/actions" element={<ActionsPage />} />
-          <Route path="/bundles" element={<BundlesPage />} />
           <Route path="/build" element={<BuildPage />} />
-          <Route path="/bundles/compose" element={<BundleComposerPage />} />
-          <Route path="/fields" element={<FieldsPage />} />
           {/* digifab is a domain (bare module name) → the navbar links to its
               top path `/digifab`. Route it there as well as the Configuration
               deep-link, or the nav entry falls through to the home redirect. */}
@@ -548,7 +577,6 @@ function ActiveOrgScopedRoutes() {
               chrome kept. */}
           <Route path="/changelog" element={<ChangelogPage />} />
           <Route path="/search" element={<SearchPage />} />
-          <Route path="/activity" element={<ActivityPage />} />
           <Route path="/me/activity" element={<MeActivityPage />} />
           <Route path="/me/notifications" element={<MeNotificationsPage />} />
           <Route path="/me/notification-channels" element={<MeNotificationChannelsPage />} />
@@ -564,9 +592,6 @@ function ActiveOrgScopedRoutes() {
           <Route path="/core-views" element={<ViewsPage />} />
           <Route path="/core-tags" element={<TagsPage />} />
           {/* Short aliases for human-friendly URLs. */}
-          <Route path="/files" element={<FilesPage />} />
-          <Route path="/views" element={<ViewsPage />} />
-          <Route path="/tags" element={<TagsPage />} />
           {/* Catch-all. The clean per-instance routes above (`/3d-printers`) are
               registered from instancesQ, which is async — so on a FULL page load
               (refresh / direct link) the instance route doesn't exist yet and the

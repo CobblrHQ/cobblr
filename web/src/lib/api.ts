@@ -105,6 +105,9 @@ export interface SessionUser {
   id: string;
   email: string;
   display_name: string;
+  /** Per-user theme preference — follows you across devices + workspaces.
+   *  null/absent = follow the device/OS. */
+  theme_pref?: "light" | "dark" | null;
   /** True when an admin minted this account with a temp password. UI
    *  redirects to /me/force-password-reset until cleared. PATCH
    *  /me/password clears it. */
@@ -142,6 +145,8 @@ export interface OrgMembership {
   /** Per-user switcher order (0-based). The orgs list arrives already sorted by
    *  it; drag-to-reorder persists via reorderWorkspaces. */
   position?: number;
+  /** Per-user default workspace — a fresh device opens into it. */
+  is_default?: boolean;
 }
 
 /** True when the active workspace is a managed single-purpose app — the shell
@@ -634,6 +639,13 @@ export const api = {
    *  the user's workspaces in the desired order. */
   reorderWorkspaces: (slugs: string[]) =>
     request<{ ok: boolean; order: string[] }>("PATCH", "/me/workspaces/order", { slugs }),
+  /** Pin (or clear, slug=null) the workspace a fresh device opens into. */
+  setDefaultWorkspace: (slug: string | null) =>
+    request<{ ok: boolean; default_slug: string | null }>("PATCH", "/me/default-workspace", { slug }),
+  /** Persist the per-user theme preference (follows you across devices +
+   *  workspaces). null = follow the device/OS. */
+  setThemePref: (theme_pref: "light" | "dark" | null) =>
+    request<{ user: { theme_pref: "light" | "dark" | null } }>("PATCH", "/me", { theme_pref }),
   /** Owner-only rename. `name` = display name (safe). `slug` = the URL handle
    *  (risky — breaks existing links). Returns the new name + slug. */
   renameOrg: (slug: string, body: { name?: string; slug?: string }) =>
@@ -1513,6 +1525,8 @@ export const api = {
   // Cockpit: set/clear a device's camera stream URL (manual override).
   setDigifabDevicePosition: (slug: string, connId: string, deviceId: string, pos: { x: number; y: number } | null) =>
     request<{ ok: boolean }>("PUT", `/orgs/${slug}/modules/digifab/fleet/${connId}/${encodeURIComponent(deviceId)}/position`, pos ?? { x: null, y: null }),
+  saveDigifabFleetLayout: (slug: string, items: Array<{ connection_id: string; device_id: string; row_break?: boolean }>) =>
+    request<{ ok: boolean; placed: number }>("PUT", `/orgs/${slug}/modules/digifab/fleet/layout`, { items }),
   setDigifabDeviceCamera: (slug: string, connectionId: string, deviceId: string, cameraUrl: string | null) =>
     request<{ ok: boolean; camera_url: string | null }>("POST", `/orgs/${slug}/modules/digifab/fleet/${connectionId}/${encodeURIComponent(deviceId)}/camera`, { camera_url: cameraUrl }),
   // Snapshot relay (opt-in, off by default): toggle whether the cloud accepts +
@@ -1653,6 +1667,15 @@ export const api = {
     request<{ ok: boolean }>("POST", `/orgs/${slug}/modules/digifab/edge-shares/${id}/revoke`, {}),
   getDigifabHistory: (slug: string, days = 30) =>
     request<DigifabHistory>("GET", `/orgs/${slug}/modules/digifab/history?days=${days}`),
+  // ── AI print-failure detection ────────────────────────────────────────────
+  getDigifabFailureConfig: (slug: string) =>
+    request<DigifabFailureConfig>("GET", `/orgs/${slug}/modules/digifab/failure/config`),
+  setDigifabFailureConfig: (slug: string, patch: Partial<DigifabFailureConfig>) =>
+    request<DigifabFailureConfig>("PUT", `/orgs/${slug}/modules/digifab/failure/config`, patch),
+  getDigifabFailureStatus: (slug: string, connId: string, deviceId: string) =>
+    request<DigifabFailureStatus>("GET", `/orgs/${slug}/modules/digifab/failure/${connId}/${encodeURIComponent(deviceId)}/status`),
+  checkDigifabFailure: (slug: string, connId: string, deviceId: string) =>
+    request<DigifabFailureCheck>("POST", `/orgs/${slug}/modules/digifab/failure/${connId}/${encodeURIComponent(deviceId)}/check`, {}),
   // ── File library (stored 3MF/gcode + send-to-machine) ─────────────────────
   listDigifabLibrary: (slug: string) =>
     request<{ items: DigifabLibraryItem[] }>("GET", `/orgs/${slug}/modules/digifab/library`),
@@ -1780,6 +1803,15 @@ export const api = {
   updateDigifabJob: (slug: string, id: string, body: { priority?: number; max_attempts?: number }) =>
     request<DigifabJob>("PATCH", `/orgs/${slug}/modules/digifab/jobs/${id}`, body),
   // ── Pools: a Cobblr-native set of devices to queue jobs onto (auto-assigned). ──
+  // ─── digifab production runs (quantity-driven scheduler on pools) ───
+  listDigifabRuns: (slug: string) =>
+    request<{ items: DigifabRun[] }>("GET", `/orgs/${slug}/modules/digifab/runs`),
+  createDigifabRun: (
+    slug: string,
+    body: { name: string; pool_id: string; file_id?: string; file_ref?: string; parts_per_plate: number; target_qty: number; material_part_id?: string; material_grams?: number },
+  ) => request<{ id: string; status: string }>("POST", `/orgs/${slug}/modules/digifab/runs`, body),
+  patchDigifabRun: (slug: string, id: string, body: { status?: "active" | "paused" | "cancelled"; completed_qty?: number }) =>
+    request<{ id: string; status: string; completed_qty: number }>("PATCH", `/orgs/${slug}/modules/digifab/runs/${id}`, body),
   listDigifabPools: (slug: string) =>
     request<{ items: DigifabPool[] }>("GET", `/orgs/${slug}/modules/digifab/pools`),
   createDigifabPool: (slug: string, name: string) =>
@@ -2334,6 +2366,57 @@ export const api = {
   /** Fill catalog images for pending items that have a name but no catalog art. */
   backfillScanCatalogPhotos: (slug: string) =>
     request<{ queued: number }>("POST", `/orgs/${slug}/modules/core-scan/inbox/backfill-catalog-photos`),
+  /** Bulk import (companion app interop + generic CSV). `file` is the picked File;
+   *  mapping only matters for non-companion app CSVs. */
+  scanImportPreview: async (slug: string, file: File, mapping?: Record<string, string>) => {
+    const form = new FormData();
+    form.set("file", file);
+    if (mapping) form.set("mapping", JSON.stringify(mapping));
+    const token = getToken();
+    const res = await fetch(`/api/v1/orgs/${slug}/modules/core-scan/import/preview`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: form,
+    });
+    if (!res.ok) throw new ApiError(res.status, "import_preview_failed", await res.text());
+    return (await res.json()) as {
+      source: string | null;
+      source_instance: string | null;
+      count: number;
+      columns: Array<{ header: string; field: string | null }> | null;
+      errors: Array<{ row: number; field: string; message: string }>;
+      rows: Array<{ row: number; name: string | null; barcode: string | null; status: string; source_kind: string; quantity: number; scan_area: string | null; hint_category: unknown; has_photo: boolean }>;
+    };
+  },
+  scanImport: async (
+    slug: string,
+    file: File,
+    opts: { dryRun?: boolean; duplicatePolicy?: "skip" | "append" | "replace"; fetchPhotos?: boolean; mapping?: Record<string, string> },
+  ) => {
+    const form = new FormData();
+    form.set("file", file);
+    if (opts.mapping) form.set("mapping", JSON.stringify(opts.mapping));
+    const qs = new URLSearchParams();
+    if (opts.dryRun) qs.set("dry_run", "true");
+    if (opts.duplicatePolicy) qs.set("duplicate_policy", opts.duplicatePolicy);
+    if (opts.fetchPhotos === false) qs.set("fetch_photos", "false");
+    const token = getToken();
+    const res = await fetch(`/api/v1/orgs/${slug}/modules/core-scan/import?${qs.toString()}`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: form,
+    });
+    if (!res.ok) throw new ApiError(res.status, "import_failed", await res.text());
+    return (await res.json()) as {
+      imported_count: number;
+      skipped_count: number;
+      errors: Array<{ row: number; field: string; message: string }>;
+      created_ids: string[];
+      photos_fetched: number;
+      photos_failed: number;
+      dry_run?: boolean;
+    };
+  },
   confirmScanItem: (
     slug: string,
     id: string,
@@ -2347,6 +2430,8 @@ export const api = {
       name?: string;
       location_id?: string;
       quantity?: number;
+      /** Tags to attach to the created entity (union'd with pending_tags). */
+      tags?: string[];
       extras?: Record<string, unknown>;
       /** Platform-admin only: also record this commit as a matchmaker eval
        *  case (the corrected answer = ground truth). Ignored for non-admins. */
@@ -2480,12 +2565,25 @@ export const api = {
       ids,
       ...(keepId ? { keep_id: keepId } : {}),
     }),
+  /** Session theme: derive a shared tag + category across the pending inbox. */
+  scanSessionTheme: (slug: string) =>
+    request<{
+      tag: string | null;
+      tag_item_ids: string[];
+      category: { value: string; item_ids: string[] } | null;
+    }>("GET", `/orgs/${slug}/modules/core-scan/inbox/session-theme`),
+  /** Stash the accepted theme onto the pending items (tag + category hint). */
+  applyScanTheme: (
+    slug: string,
+    body: { tag?: string; tag_item_ids?: string[]; category?: { value: string; item_ids: string[] } },
+  ) =>
+    request<{ tagged: number; categorized: number }>("POST", `/orgs/${slug}/modules/core-scan/inbox/apply-theme`, body),
   // Alternative catalog photos (DDG image search on the resolved name) +
   // pick-one-as-catalog. The companion app "OTHER PHOTO OPTIONS" strip.
-  scanPhotoOptions: (slug: string, id: string) =>
+  scanPhotoOptions: (slug: string, id: string, q?: string) =>
     request<{ items: ImageOption[] }>(
       "GET",
-      `/orgs/${slug}/modules/core-scan/inbox/${id}/photo-options`,
+      `/orgs/${slug}/modules/core-scan/inbox/${id}/photo-options${q && q.trim() ? `?q=${encodeURIComponent(q.trim())}` : ""}`,
     ),
   setScanCatalogImage: (slug: string, id: string, url: string) =>
     request<ScanInboxItem>(
@@ -2549,7 +2647,7 @@ export const api = {
   /** The dashboard "what needs me" feed (attention.ts) — derived from field
    *  semantics: low stock, overdue/upcoming dates, pending captures. */
   getAttention: (slug: string) =>
-    request<{ items: Array<{ kind: "low_stock" | "overdue" | "upcoming" | "pending_scans"; label: string; count: number; sample: string[]; route: string }> }>(
+    request<{ items: Array<{ kind: "low_stock" | "overdue" | "upcoming" | "pending_scans"; label: string; count: number; sample: string[]; route: string; entries?: Array<{ id: string; title: string; action?: Record<string, string> }> }> }>(
       "GET",
       `/orgs/${slug}/attention`,
     ),
@@ -4073,8 +4171,27 @@ export interface SurfaceRecord {
   public_url: string;
 }
 
+export interface DigifabFailureConfig {
+  enabled: boolean;
+  threshold: number;
+  sample_interval_sec: number;
+  auto_pause: boolean;
+  backend: "auto" | "edge" | "llm";
+}
+export interface DigifabFailureStatus {
+  watching: boolean; score: number; samples: number;
+  last_probability: number | null; last_source: "edge" | "llm" | null;
+  paused: boolean; paused_at: string | null; last_sample_at: string | null;
+}
+export interface DigifabFailureCheck {
+  available: boolean; reason?: string;
+  probability?: number; source?: "edge" | "llm"; would_trip?: boolean; projected_score?: number;
+}
+
 export interface DigifabHistory {
   days: number;
+  /** Dense daily trend over the window (zero-filled) — jobs + Bambu cloud tasks. */
+  series?: { date: string; completed: number; failed: number; filament_g: number }[];
   summary: { total: number; completed: number; failed: number; cancelled: number; filament_g: number; hours: number };
   by_device: { name: string; total: number; completed: number; failed: number; filament_g: number }[];
   recent: { id: string; file_ref: string; sub_label?: string | null; cover?: string | null; device: string; connection_id?: string | null; device_id?: string | null; status: string; filament_g: number | null; at: string; duration_s?: number }[];
@@ -4089,6 +4206,16 @@ export interface DigifabLibraryItem {
   size_bytes: number;
   plate_count: number;
   notes: string | null;
+  /** Slicer metadata parsed at upload: est time / material / layer / ppp. */
+  metadata?: {
+    estimated_sec?: number;
+    material?: string;
+    layer_height_mm?: number;
+    nozzle_mm?: number;
+    filament_g?: number;
+    parts_per_plate?: number;
+    slicer?: string;
+  };
   created_at: string;
   updated_at: string;
 }
@@ -4200,6 +4327,11 @@ export interface DigifabFleetDevice {
    *  available right now (the web prefers it over camera_url for remote viewing). */
   snapshot_relay: boolean;
   snapshot_fresh: boolean;
+  /** The bridge can grab this printer's own camera (the cockpit /camera route) —
+   *  the camera wall shows it with no manual URL and no relay. */
+  lan_camera?: boolean;
+  /** AI failure-watch: live rolling score while printing + whether it auto-paused. */
+  failure?: { score: number; watching: boolean; paused: boolean } | null;
   /** F-1: finished/failed a print — needs a human bed-clear before it's assignable. */
   needs_attention: { reason: string; since: string } | null;
   active_job: { id: string; file_ref: string; status: string; progress: number | null; priority: number; attempts: number; max_attempts: number; eta_sec: number | null } | null;
@@ -4207,6 +4339,10 @@ export interface DigifabFleetDevice {
   next_job: { id: string; file_ref: string; pooled: boolean } | null;
   /** Spatial floor-grid cell (arrange mode); null = unplaced. */
   position: { x: number; y: number } | null;
+  /** Free-form layout: order in the flow (null = unplaced, trails in its own
+   *  row) + whether this machine starts a new row. */
+  sort_order?: number | null;
+  row_break?: boolean;
   /** Real-time print telemetry from the printer itself (e.g. Bambu cloud MQTT) —
    *  for a print Cobblr didn't start, so there's no active_job to carry it. */
   live: { progress: number | null; remaining_min: number | null; layer_num: number | null; total_layers: number | null } | null;
@@ -4220,10 +4356,14 @@ export interface DigifabFleetConnection {
   /** When this connection's device list was last fetched from its manager (F-11
    *  cache); null when the connection errored. May be up to ~10s stale. */
   fetched_at: string | null;
+  /** Served from the last-good cache while a live refresh runs server-side. */
+  stale?: boolean;
   devices: DigifabFleetDevice[];
 }
 
 export interface DigifabFleet {
+  /** Any connection served stale — a quick follow-up refetch will be fresher. */
+  stale?: boolean;
   connections: DigifabFleetConnection[];
   summary: {
     devices: number;
@@ -4352,6 +4492,24 @@ export interface DigifabPoolMember {
   connection_id: string;
   remote_device_id: string;
   loaded_material: string | null;
+}
+
+export interface DigifabRun {
+  id: string;
+  name: string;
+  pool_id: string;
+  file_id: string | null;
+  file_ref: string;
+  parts_per_plate: number;
+  target_qty: number;
+  completed_qty: number;
+  status: "active" | "paused" | "completed" | "cancelled";
+  jobs_queued: number;
+  jobs_printing: number;
+  jobs_awaiting_verdict: number;
+  jobs_scrapped: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface DigifabPool {
@@ -4615,6 +4773,15 @@ export interface BundleValidationPreview {
   wires_added: { source_kind: string; action_id: string; trigger_type: string }[];
   modules_required: string[];
   modules_to_enable: string[];
+  instances_created?: {
+    module: string;
+    instance_name: string;
+    display_name: string;
+    item_noun: string | null;
+    fields: { name: string; type: string; display_label: string }[];
+    wires: number;
+  }[];
+  nav_headings?: { name: string; members: { target_kind: string; target_id: string }[] }[];
   /** Phase 2 — on a self-upgrade, fields the user customized that this version
    *  changes. Empty on a fresh install. */
   upgrade_conflicts?: BundleUpgradeConflict[];
@@ -4763,6 +4930,9 @@ export interface NativeFieldOverride {
 }
 
 export interface PlatformFieldDef {
+  /** Owning bundle's identity when bundle-shipped — powers the manage-the-bundle link. */
+  bundle_external_id?: string | null;
+  bundle_name?: string | null;
   id: string;
   org_id: string;
   entity_kind: string;

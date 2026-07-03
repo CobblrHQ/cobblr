@@ -19,6 +19,7 @@ import { putSnapshot, getSnapshot, freshSnapshotKeys } from "../snapshot-store.j
 import { getBambuStatusMap } from "../bambu-status-store.js";
 import { buildDriverById, bambuLanDriverFor, parseBambuLan, bambuLanMode, reverseBuildIfCommitted, sendJob, type BambuLan } from "../jobs-core.js";
 import { enqueuePoll } from "../poll-worker.js";
+import { recordRunVerdict } from "../runs-core.js";
 import { availableDriverKeys } from "../drivers/registry.js";
 import { classify } from "../state.js";
 import type { MachineDriver, RemoteDevice } from "../drivers/types.js";
@@ -69,20 +70,87 @@ async function fileDriverFor(
   return lan ?? (await buildDriverById(db, orgId, connId));
 }
 
-/** Cached + timeout-bounded device fetch for one connection. Fresh cache hit →
- *  reuse it; live-fetch error/timeout → fall back to the last-good cache (stale)
- *  if any, else rethrow so the caller renders the connection's error card. */
-async function fetchDevicesCached(driver: MachineDriver, connId: string): Promise<{ devices: RemoteDevice[]; at: number }> {
+/** Persist one connection's last-good device list (survives process restarts —
+ *  the durable half of the stale-while-revalidate below). */
+async function putDeviceCacheRow(db: Kysely<DigifabDB>, connId: string, devices: RemoteDevice[]): Promise<void> {
+  try {
+    await db
+      .insertInto("digifab_fleet_device_cache")
+      .values({ connection_id: connId, devices: JSON.stringify(devices) as never, fetched_at: new Date() })
+      .onConflict((oc) => oc.column("connection_id").doUpdateSet({ devices: JSON.stringify(devices) as never, fetched_at: new Date() }))
+      .execute();
+  } catch (err) {
+    console.warn(`[digifab] fleet device-cache write failed for ${connId}:`, (err as Error).message);
+  }
+}
+
+// One in-flight background refresh per connection — a burst of stale-serves
+// must not stack N live fetches onto one slow manager.
+const refreshing = new Set<string>();
+
+/** Cached + timeout-bounded device fetch for one connection, served
+ *  STALE-WHILE-REVALIDATE so the fleet answers instantly:
+ *    fresh memory hit (≤10s) → serve it.
+ *    anything older — the memory entry, or the DURABLE per-connection row
+ *    (survives restarts) → serve it IMMEDIATELY (marked stale) and kick ONE
+ *    detached live refresh; the next poll gets fresh state.
+ *    nothing cached at all (first ever look) → block on the live fetch.
+ *  Live-fetch error → last-good cache if any, else rethrow so the caller
+ *  renders the connection's error card. */
+async function fetchDevicesCached(
+  db: Kysely<DigifabDB>,
+  driver: MachineDriver,
+  connId: string,
+): Promise<{ devices: RemoteDevice[]; at: number; stale: boolean }> {
   const now = Date.now();
   const hit = deviceCache.get(connId);
-  if (hit && now - hit.at < DEVICE_CACHE_TTL_MS) return { devices: hit.devices, at: hit.at };
-  try {
+  if (hit && now - hit.at < DEVICE_CACHE_TTL_MS) return { devices: hit.devices, at: hit.at, stale: false };
+
+  const liveFetch = async (): Promise<{ devices: RemoteDevice[]; at: number }> => {
     const devices = await withTimeout(driver.listDevices(), LIST_TIMEOUT_MS, "listDevices timed out");
-    const entry = { at: now, devices };
+    const entry = { at: Date.now(), devices };
     deviceCache.set(connId, entry);
+    void putDeviceCacheRow(db, connId, devices);
     return entry;
+  };
+
+  // A stale memory entry, or the durable row from before a restart → serve it
+  // now, refresh detached.
+  let stale = hit ?? null;
+  if (!stale) {
+    try {
+      const row = await db
+        .selectFrom("digifab_fleet_device_cache")
+        .select(["devices", "fetched_at"])
+        .where("connection_id", "=", connId)
+        .executeTakeFirst();
+      if (row) {
+        const devices = (typeof row.devices === "string" ? JSON.parse(row.devices) : row.devices) as RemoteDevice[];
+        if (Array.isArray(devices)) stale = { at: new Date(row.fetched_at).getTime(), devices };
+      }
+    } catch {
+      /* unreadable row → treat as no cache */
+    }
+  }
+  if (stale) {
+    if (!refreshing.has(connId)) {
+      refreshing.add(connId);
+      void liveFetch()
+        .catch(() => {})
+        .finally(() => refreshing.delete(connId));
+    }
+    // Seed memory for the stale-on-error window — but never clobber an entry a
+    // just-finished background refresh may have written.
+    if (!deviceCache.has(connId)) deviceCache.set(connId, stale);
+    return { devices: stale.devices, at: stale.at, stale: true };
+  }
+
+  // First ever look at this connection — nothing to serve, wait for live.
+  try {
+    return { ...(await liveFetch()), stale: false };
   } catch (err) {
-    if (hit) return { devices: hit.devices, at: hit.at }; // stale-on-error: keep the floor visible
+    const fallback = deviceCache.get(connId);
+    if (fallback) return { devices: fallback.devices, at: fallback.at, stale: true };
     throw err;
   }
 }
@@ -154,9 +222,14 @@ fleetRouter.get(
     // report). Merged over any driver-reported camera below.
     const settings = await db
       .selectFrom("digifab_device_settings")
-      .select(["connection_id", "remote_device_id", "camera_url", "snapshot_relay", "grid_x", "grid_y"])
+      .select(["connection_id", "remote_device_id", "camera_url", "snapshot_relay", "grid_x", "grid_y", "sort_order", "row_break"])
       .execute();
     const freshSnaps = await freshSnapshotKeys(db); // which devices have a recent relayed frame
+    // AI failure-watch state per device (one query for the whole floor).
+    const failureRows = await db
+      .selectFrom("digifab_failure_watch")
+      .select(["connection_id", "device_id", "score", "paused_at", "watch_at"])
+      .execute();
 
     const connections = await mapLimit(conns, MAX_CONCURRENT_LISTS, async (c) => {
         try {
@@ -164,10 +237,24 @@ fleetRouter.get(
           if (!driver) {
             return { connection_id: c.id, label: c.label, type: c.type, error: "driver unavailable", fetched_at: null, devices: [] };
           }
-          const { devices, at } = await fetchDevicesCached(driver, c.id);
+          const { devices, at, stale } = await fetchDevicesCached(db, driver, c.id);
           // For a cloud Bambu, prefer the live MQTT telemetry the pump caches
           // (real-time temps/progress/state) over the slower HTTP list.
           const bambuLive = c.type === "bambu" ? await getBambuStatusMap(db, c.id) : null;
+          // Per-printer LAN config → the cams wall knows this device has a real
+          // camera reachable over the bridge (the cockpit's /camera route), even
+          // with no manual camera_url and no snapshot relay.
+          let bambuLan: Record<string, BambuLan> = {};
+          if (c.type === "bambu") {
+            try {
+              const internal = await platform().devices.connections().getInternal(orgId, c.id);
+              if (internal?.credentials_enc) {
+                bambuLan = parseBambuLan(await platform().integrations.decryptCredentials(orgId, internal.credentials_enc));
+              }
+            } catch {
+              /* creds unreadable → no LAN camera flag, nothing else degrades */
+            }
+          }
           const mapped = devices.map((d) => {
             const job = jobs.find((j) => j.connection_id === c.id && j.target_device === d.id && j.status !== "queued") ?? null;
             const next = queuedSorted.find(
@@ -177,6 +264,7 @@ fleetRouter.get(
             const pool = poolRows.find((p) => p.connection_id === c.id && p.remote_device_id === d.id) ?? null;
             const att = attention.find((a) => a.connection_id === c.id && a.remote_device_id === d.id) ?? null;
             const setting = settings.find((s) => s.connection_id === c.id && s.remote_device_id === d.id) ?? null;
+            const fw = failureRows.find((f) => f.connection_id === c.id && f.device_id === d.id) ?? null;
             const live = bambuLive?.get(d.id) ?? null;
             const state = live?.state ?? d.state ?? "unknown";
             return {
@@ -201,6 +289,10 @@ fleetRouter.get(
                 ? { progress: live.progress, remaining_min: live.remaining_min, layer_num: live.layer_num, total_layers: live.total_layers }
                 : null,
               camera_url: setting?.camera_url ?? d.camera_url ?? null,
+              // The bridge can grab frames from this printer's own camera (the
+              // cockpit /camera route) — lets the camera wall show it without a
+              // manual URL or the snapshot relay.
+              lan_camera: !!bambuLan[d.id]?.host && !!bambuLan[d.id]?.access_code && bambuLanMode(bambuLan[d.id]) !== "cloud",
               // Snapshot relay (opt-in, off by default). When on AND a fresh
               // agent-pushed frame exists, the web auth-fetches it from the
               // /snapshot route (remote-viewable) instead of the LAN camera_url.
@@ -208,8 +300,13 @@ fleetRouter.get(
               snapshot_fresh: !!setting?.snapshot_relay && freshSnaps.has(`${c.id}:${d.id}`),
               // ⑦ Spatial floor position (null = unplaced, flows after placed).
               position: setting?.grid_x != null && setting?.grid_y != null ? { x: setting.grid_x, y: setting.grid_y } : null,
+              // Free-form layout: order in the flow + explicit row start.
+              sort_order: setting?.sort_order ?? null,
+              row_break: setting?.row_break ?? false,
               // F-1: needs a bed-clear ack before it's assignable again.
               needs_attention: att ? { reason: att.reason, since: att.created_at } : null,
+              // AI failure watch: live score while printing + whether it auto-paused.
+              failure: fw && (fw.watch_at || fw.paused_at) ? { score: Number(fw.score), watching: !!fw.watch_at, paused: !!fw.paused_at } : null,
               active_job: job
                 ? { id: job.id, file_ref: job.file_ref, status: job.status, progress: job.progress, priority: job.priority, attempts: job.attempts, max_attempts: job.max_attempts, eta_sec: job.eta_sec }
                 : null,
@@ -217,7 +314,7 @@ fleetRouter.get(
               next_job: next ? { id: next.id, file_ref: next.file_ref, pooled: !!next.target_pool } : null,
             };
           });
-          return { connection_id: c.id, label: c.label, type: c.type, error: null, fetched_at: new Date(at).toISOString(), devices: mapped };
+          return { connection_id: c.id, label: c.label, type: c.type, error: null, fetched_at: new Date(at).toISOString(), stale, devices: mapped };
         } catch (err) {
           return {
             connection_id: c.id,
@@ -243,7 +340,11 @@ fleetRouter.get(
       needs_attention: all.filter((d) => d.needs_attention).length,
     };
 
-    res.json({ connections, summary });
+    // Any connection served from a stale cache → the client knows a quick
+    // follow-up refetch will have fresher state (the detached refresh is
+    // already running server-side).
+    const stale = connections.some((c) => (c as { stale?: boolean }).stale);
+    res.json({ connections, summary, stale });
   }),
 );
 
@@ -277,6 +378,10 @@ fleetRouter.post(
 
     // Resolve the print's downstream context from its job, for the wires.
     if (att?.reason === "print-completed" && att.job_id) {
+      // Production runs: the human verdict is what counts a plate — good
+      // increments the run (and may close it), scrapped marks the plate
+      // non-covering so the assign worker mints a replacement. Idempotent.
+      await recordRunVerdict(db, orgId, att.job_id, outcome);
       const job = await db
         .selectFrom("digifab_jobs")
         .select(["id", "linked_task_id", "linked_machine_id", "material_part_id", "material_grams"])
@@ -361,6 +466,46 @@ fleetRouter.put(
       .onConflict((oc) => oc.columns(["connection_id", "remote_device_id"]).doUpdateSet({ grid_x: parsed.data.x, grid_y: parsed.data.y, updated_at: new Date() }))
       .execute();
     res.json({ ok: true });
+  }),
+);
+
+// Free-form fleet layout — the whole floor in one PUT: an ordered device list
+// with explicit row starts. Replaces the 0027 cell-grid arrange UX (the tiles
+// themselves are the layout; rows can be partial). Devices NOT in the list keep
+// their settings row but lose any manual order (they flow in the trailing
+// "unplaced" row). Per-workspace, like every settings row here.
+const LayoutBody = z.object({
+  items: z
+    .array(
+      z.object({
+        connection_id: z.string().min(1).max(200),
+        device_id: z.string().min(1).max(200),
+        row_break: z.boolean().optional(),
+      }),
+    )
+    .max(500),
+});
+fleetRouter.put(
+  "/layout",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const parsed = LayoutBody.safeParse(req.body);
+    if (!parsed.success) return void res.status(400).json({ error: { code: "bad_body", message: "items: [{connection_id, device_id, row_break?}] required" } });
+    const db = tenantDb(req);
+    // Clear stale order everywhere first, so a device dropped from the list
+    // reverts to unplaced instead of keeping a phantom slot.
+    await db.updateTable("digifab_device_settings").set({ sort_order: null, row_break: false, updated_at: new Date() }).execute();
+    let i = 0;
+    for (const it of parsed.data.items) {
+      const fields = { sort_order: i * 10, row_break: it.row_break ?? false, updated_at: new Date() };
+      await db
+        .insertInto("digifab_device_settings")
+        .values({ connection_id: it.connection_id, remote_device_id: it.device_id, ...fields })
+        .onConflict((oc) => oc.columns(["connection_id", "remote_device_id"]).doUpdateSet(fields))
+        .execute();
+      i++;
+    }
+    res.json({ ok: true, placed: i });
   }),
 );
 
@@ -671,7 +816,7 @@ fleetRouter.get(
       try {
         const driver = await buildDriverById(tenantDb(req), tenantContext(req).org.id, req.params.connectionId!);
         if (driver) {
-          const { devices, at } = await fetchDevicesCached(driver, req.params.connectionId!);
+          const { devices, at } = await fetchDevicesCached(tenantDb(req), driver, req.params.connectionId!);
           const dev = devices.find((x) => x.id === req.params.deviceId);
           const t = dev?.temps;
           const st = dev?.state;

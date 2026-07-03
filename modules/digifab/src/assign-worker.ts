@@ -12,6 +12,7 @@ import { platform } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import type { DigifabDB } from "./db.js";
 import { buildDriverById, sendJob } from "./jobs-core.js";
+import { mintRunJobs, runStatuses } from "./runs-core.js";
 import { enqueuePoll } from "./poll-worker.js";
 import { classify } from "./state.js";
 import type { RemoteDevice } from "./drivers/types.js";
@@ -46,6 +47,13 @@ export async function kickAssign(orgId: string): Promise<void> {
 /** One assignment pass: drip queued pool jobs onto free member devices.
  *  Returns how many remain queued (so the worker knows whether to re-tick). */
 export async function assignPoolJobs(db: Kysely<DigifabDB>, orgId: string): Promise<number> {
+  // Production runs mint their queued pool jobs first (up to the over-dispatch
+  // ceiling), so the same pass that frees a printer can hand it the next plate.
+  try {
+    await mintRunJobs(db, orgId);
+  } catch {
+    /* minting must never stall the drip for already-queued jobs */
+  }
   const queued = await db
     .selectFrom("digifab_jobs")
     .selectAll()
@@ -95,9 +103,14 @@ export async function assignPoolJobs(db: Kysely<DigifabDB>, orgId: string): Prom
     return devs ?? [];
   }
 
+  // A paused run's minted-but-unsent jobs stay queued without dispatching
+  // (in-flight plates finish normally — the PFM pause semantics).
+  const runStates = await runStatuses(db, [...new Set(queued.map((j) => j.run_id).filter((x): x is string => !!x))]);
+
   let stillQueued = 0;
   for (const job of queued) {
     if (!job.target_pool) continue;
+    if (job.run_id && runStates.get(job.run_id) !== "active") continue;
     const members = await db
       .selectFrom("digifab_pool_members")
       .select(["connection_id", "remote_device_id", "loaded_material"])

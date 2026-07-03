@@ -128,6 +128,7 @@ async function boot() {
       walkPath: entities.walkPath,
       listKinds: entities.listKinds,
       getKind: entities.getKind,
+      serverManagedFields: entities.serverManagedFields,
     },
     actions: {
       registerHandler: actions.registerHandler,

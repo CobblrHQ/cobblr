@@ -35,6 +35,7 @@ function LabelsDashboardWidget({ slug, getToken }: DashboardWidgetProps) {
       icon={Tags}
       label="labels"
       primary={queued}
+      empty={!q.isLoading && queued === 0}
       secondary={queued === 0 ? "queue empty" : "in queue"}
     />
   );

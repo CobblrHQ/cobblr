@@ -26,7 +26,7 @@ const kindLabel = (id: string) => id.split(":")[1] ?? id;
 
 /** `open`/`setOpen` are lifted to AppLayout so the main content can shift left
  *  when the panel opens (the two breakpoint-gated instances share one state). */
-export function ChatWidget({ open, setOpen }: { open: boolean; setOpen: (v: boolean) => void }) {
+export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; setOpen: (v: boolean) => void; asRow?: boolean }) {
   const { activeSlug } = useActiveOrg();
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
@@ -158,11 +158,12 @@ export function ChatWidget({ open, setOpen }: { open: boolean; setOpen: (v: bool
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="transition p-1.5 text-faint dark:text-slate-500 hover:text-accent"
+        className={asRow ? "w-full flex items-center gap-2.5 px-3 py-1.5 rounded text-[13px] text-muted dark:text-slate-400 hover:text-accent hover:bg-subtle/60 dark:hover:bg-slate-800/40 transition" : "transition p-1.5 text-faint dark:text-slate-500 hover:text-accent"}
         title="Ask Cobblr"
         aria-label="Ask Cobblr"
       >
-        <Sparkles size={16} />
+        <Sparkles size={16} className="shrink-0" />
+        {asRow && <span>Ask Cobblr</span>}
       </button>
 
       {open &&

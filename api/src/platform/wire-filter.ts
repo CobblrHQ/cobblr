@@ -23,6 +23,12 @@ export const WireConditionSchema = z.object({
   path: z.string().min(1).max(200),
   op: z.enum(["eq", "neq", "lt", "lte", "gt", "gte", "contains", "not_contains", "empty", "not_empty"]),
   value: z.union([z.string(), z.number(), z.boolean()]).optional(),
+  /** Compare `path` against ANOTHER path's live value instead of a static
+   *  `value`. Resolved against the same template data. This is how a wire
+   *  fires "only when X changed": {path:"event.after.location_id", op:"neq",
+   *  valuePath:"event.before.location_id"}. When present, `valuePath` wins
+   *  over `value`. */
+  valuePath: z.string().min(1).max(200).optional(),
 });
 export const WireFilterSchema = z.object({
   all: z.array(WireConditionSchema).min(1).max(10),
@@ -111,8 +117,13 @@ function checkOne(actual: unknown, op: WireFilter["all"][number]["op"], expected
 }
 
 /** Evaluate a (pre-parsed) filter against the wire's template data.
- *  No filter → fire. Any failed condition → skip. */
+ *  No filter → fire. Any failed condition → skip. A condition with
+ *  `valuePath` compares against that path's live value (e.g. "changed" =
+ *  after.x neq before.x); otherwise against the static `value`. */
 export function passesWireFilter(filter: WireFilter | null, data: Record<string, unknown>): boolean {
   if (!filter) return true;
-  return filter.all.every((c) => checkOne(resolvePath(data, c.path), c.op, c.value));
+  return filter.all.every((c) => {
+    const expected = c.valuePath !== undefined ? resolvePath(data, c.valuePath) : c.value;
+    return checkOne(resolvePath(data, c.path), c.op, expected);
+  });
 }

@@ -307,7 +307,7 @@ function RuleEditor({
             <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={5} placeholder={"**{{model}}**\nProgress · {{percent}}\nRemaining · {{remaining}}\nElapsed · {{elapsed}}"} className={field + " font-mono text-xs"} />
           </label>
           <div className="text-[11px] text-faint leading-relaxed">
-            Params: {"{{printer}} {{model}} {{percent}} {{remaining}} {{elapsed}} {{eta}} {{layer}} {{total_layers}} {{nozzle}} {{bed}} {{event}}"}. A line with a missing param is dropped. Blank = the default.
+            Params: {"{{printer}} {{model}} {{percent}} {{remaining}} {{elapsed}} {{eta}} {{layer}} {{total_layers}} {{nozzle}} {{bed}} {{event}}"}. A line is shown only if at least one of its {"{{fields}}"} has a value — so a line that would come out all-empty (e.g. “Remaining · ” when the printer doesn’t report it) is hidden instead of left blank. Leave the whole box blank for the default message.
           </div>
           <label className="flex items-center gap-1.5 text-xs">
             <input type="checkbox" checked={photo} onChange={(e) => setPhoto(e.target.checked)} /> Attach the live camera photo
@@ -344,7 +344,8 @@ function RuleEditor({
   );
 }
 
-// Pre/post hook step editor — a small list of "Chamber light on/off" + "Wait Ns".
+// Pre/post hook step editor — a small list of "Light on/off" (the chamber
+// light) + "Wait Ns".
 // Maps to the engine's RuleStep ({control:"light",params:{on}} | {wait_ms}).
 type StepKind = "light_on" | "light_off" | "wait";
 function stepKind(s: DigifabStep): StepKind {
@@ -368,8 +369,10 @@ function StepEditor({ steps, onChange }: { steps: DigifabStep[]; onChange: (s: D
               onChange={(e) => set(i, makeStep(e.target.value as StepKind, "wait_ms" in s ? s.wait_ms / 1000 : 6))}
               className={field + " !w-36"}
             >
-              <option value="light_on">Chamber light on</option>
-              <option value="light_off">Chamber light off</option>
+              {/* Short labels so the on/off state can't be truncated away by a
+                  narrow native <select> on mobile (the author: "cuts off on vs off"). */}
+              <option value="light_on">Light on</option>
+              <option value="light_off">Light off</option>
               <option value="wait">Wait</option>
             </select>
             {kind === "wait" && (

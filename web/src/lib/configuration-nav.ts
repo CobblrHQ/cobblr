@@ -52,8 +52,9 @@ export interface ConfigDestination {
   /** Route target. Entries OUTSIDE /configuration/* (e.g. /views) still list
    *  here — the sidebar links out to them. */
   to?: string;
-  /** Modal launcher id — rendered by the hub; the sidebar links to
-   *  /configuration?open=<modal> so modals are deep-linkable. */
+  /** LEGACY modal launcher id — no registry entry sets this since the
+   *  2026-07-03 settings-cohesion pass (every entry is a page now); kept so
+   *  old ?open= deep links can be redirected by the hub. */
   modal?: "new-thing" | "modules" | "members";
   group: ConfigGroup;
   /** Search synonyms the label/description don't already contain. */
@@ -97,7 +98,7 @@ export const CONFIG_DESTINATIONS: ConfigDestination[] = [
     label: "+ New thing in workspace",
     description:
       "Add a new top-level entity to your workspace. Pick whether it's a sub-category of something existing or its own separate thing.",
-    modal: "new-thing",
+    to: "/configuration/new-thing",
     keywords: ["add", "create", "instance", "category", "tracker"],
     primary: true,
   },
@@ -106,7 +107,7 @@ export const CONFIG_DESTINATIONS: ConfigDestination[] = [
     icon: Boxes,
     label: "Modules",
     description: "Enable / disable modules and their specialisations for this workspace.",
-    modal: "modules",
+    to: "/configuration/modules",
     keywords: ["enable", "disable", "install", "features"],
     primary: true,
   },
@@ -221,7 +222,7 @@ export const CONFIG_DESTINATIONS: ConfigDestination[] = [
     icon: Users,
     label: "Members + invites",
     description: "Invite collaborators to this workspace, change roles, revoke access.",
-    modal: "members",
+    to: "/configuration/members",
     keywords: ["team", "collaborators", "invite"],
     primary: true,
   },
@@ -420,4 +421,16 @@ export function destinationMatches(d: ConfigDestination, q: string): boolean {
     .split(/\s+/)
     .filter(Boolean)
     .every((t) => hay.includes(t));
+}
+
+/** Is this route part of the configuration family? True for /configuration/*
+ *  and every registry destination's own page (the 8 family routes like
+ *  /views, /fields, /bundles…). Drives the sidebar fold: in side-nav mode the
+ *  MAIN sidebar becomes the configuration panel on these routes, so two
+ *  sidebars never stack. */
+export function isConfigurationPath(pathname: string): boolean {
+  if (pathname === "/configuration" || pathname.startsWith("/configuration/")) return true;
+  return CONFIG_DESTINATIONS.some(
+    (d) => d.to && !d.to.startsWith("/configuration") && (pathname === d.to || pathname.startsWith(`${d.to}/`)),
+  );
 }

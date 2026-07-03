@@ -25,6 +25,14 @@ const WINDOW_DAYS = 30;
 const INSTANCE_CAP = 15;
 const ITEM_CAP = 200;
 
+interface AttentionEntry {
+  id: string;
+  title: string;
+  /** Kind-specific action payload: tasks carry {task}; bed-clear carries
+   *  {connection_id, device_id} — enough for the client's inline actions. */
+  action?: Record<string, string>;
+}
+
 interface AttentionRow {
   kind: "low_stock" | "overdue" | "upcoming" | "pending_scans";
   label: string;
@@ -32,6 +40,8 @@ interface AttentionRow {
   /** Up to 3 item names, for the row's detail line. */
   sample: string[];
   route: string;
+  /** Up to 8 individual items for the row's inline expansion (act-in-place). */
+  entries?: AttentionEntry[];
 }
 
 async function j<T>(path: string, token: string): Promise<T | null> {
@@ -105,6 +115,10 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
             count: low.length,
             sample: low.slice(0, 3).map((r) => String(r.name ?? "item")),
             route,
+            entries: low.slice(0, 8).map((r) => ({
+              id: String(r.id ?? r.name ?? "item"),
+              title: `${String(r.name ?? "item")} — ${Number(r.qty)} left (min ${Number(r.min_qty)})`,
+            })),
           });
         }
 
@@ -133,6 +147,81 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
           rows.push({ kind: "upcoming", label: `coming up in ${inst.display_name}`, count: upcoming.length, sample: upcoming.slice(0, 3), route });
       }),
     );
+
+    // NATIVE-column deadlines the field-semantics sweep can't see: projects
+    // tasks keep due_date as a real column (not instance-item metadata), so
+    // the classic "overdue to-do" never surfaced here (found seeding a demo
+    // workspace — two overdue tasks, zero attention rows). 404s harmlessly
+    // when the projects module is off (j() → null).
+    const tasks = await j<{ items: Array<{ id: string; title: string; status: string; due_date: string | null }> }>(
+      `/orgs/${slug}/modules/projects/tasks?limit=${ITEM_CAP}`,
+      token,
+    );
+    if (tasks) {
+      const openTasks = tasks.items.filter(
+        (t) => t.due_date && !["done", "cancelled"].includes(t.status),
+      );
+      const overdueTasks = openTasks.filter((t) => Date.parse(t.due_date!) < now);
+      const upcomingTasks = openTasks.filter((t) => {
+        const ts = Date.parse(t.due_date!);
+        return ts >= now && ts <= horizon;
+      });
+      const taskEntry = (t: { id?: string; title: string }) => ({ id: String(t.id ?? t.title), title: t.title, action: { task: String(t.id ?? "") } });
+      if (overdueTasks.length > 0)
+        rows.push({
+          kind: "overdue",
+          label: `overdue ${overdueTasks.length === 1 ? "task" : "tasks"}`,
+          count: overdueTasks.length,
+          sample: overdueTasks.slice(0, 3).map((t) => t.title),
+          route: "/projects",
+          entries: overdueTasks.slice(0, 8).map(taskEntry),
+        });
+      if (upcomingTasks.length > 0)
+        rows.push({
+          kind: "upcoming",
+          label: `${upcomingTasks.length === 1 ? "task" : "tasks"} due soon`,
+          count: upcomingTasks.length,
+          sample: upcomingTasks.slice(0, 3).map((t) => t.title),
+          route: "/projects",
+          entries: upcomingTasks.slice(0, 8).map(taskEntry),
+        });
+    }
+
+    // Digifab (prototype, the author sign-off pending): printers holding a finished
+    // plate for the bed-clear verdict + recent failed prints. Both read
+    // digifab's own endpoints (fleet serves its SWR snapshot — instant); 404
+    // harmlessly when the module is off.
+    const fleet = await j<{ connections: Array<{ connection_id: string; devices: Array<{ id: string; name: string; needs_attention: { reason: string } | null }> }> }>(
+      `/orgs/${slug}/modules/digifab/fleet`,
+      token,
+    );
+    if (fleet) {
+      const waiting = fleet.connections.flatMap((c) => c.devices.map((d) => ({ ...d, conn: c.connection_id }))).filter((d) => d.needs_attention);
+      if (waiting.length > 0)
+        rows.push({
+          kind: "overdue",
+          label: `printer${waiting.length === 1 ? "" : "s"} waiting for a bed-clear verdict`,
+          count: waiting.length,
+          sample: waiting.slice(0, 3).map((d) => d.name),
+          route: "/digifab",
+          entries: waiting.slice(0, 8).map((d) => ({ id: `${d.conn}:${d.id}`, title: d.name, action: { connection_id: d.conn, device_id: d.id } })),
+        });
+    }
+    const failed = await j<{ items: Array<{ file_ref: string; updated_at: string }> }>(
+      `/orgs/${slug}/modules/digifab/jobs?status=failed&limit=25`,
+      token,
+    );
+    if (failed) {
+      const recent = failed.items.filter((f) => Date.parse(f.updated_at) > now - 7 * 86_400_000);
+      if (recent.length > 0)
+        rows.push({
+          kind: "overdue",
+          label: `failed print${recent.length === 1 ? "" : "s"} this week`,
+          count: recent.length,
+          sample: recent.slice(0, 3).map((f) => f.file_ref),
+          route: "/digifab",
+        });
+    }
 
     // Severity order: overdue → low stock → pending scans → upcoming.
     const rank = { overdue: 0, low_stock: 1, pending_scans: 2, upcoming: 3 } as const;

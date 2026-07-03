@@ -4,6 +4,7 @@
 // require migrating any stored values in entity metadata.
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { Trash2 } from "lucide-react";
 import { ApiError, api, type PlatformFieldDef } from "../lib/api";
 import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
@@ -99,9 +100,13 @@ export function FieldDefDetailModal({ open, onClose, slug, fieldDef }: Props) {
 
         <div className="flex items-center justify-between pt-3 border-t border-line dark:border-slate-700">
           {fieldDef.bundle_id ? (
-            <span className="text-[10px] font-mono uppercase tracking-widest text-faint">
-              uninstall the parent bundle to remove
-            </span>
+            <Link
+              to={fieldDef.bundle_external_id ? `/bundles?open=${encodeURIComponent(fieldDef.bundle_external_id)}` : "/bundles"}
+              onClick={onClose}
+              className="text-[10px] font-mono uppercase tracking-widest text-accent hover:underline"
+            >
+              part of {fieldDef.bundle_name ?? "a bundle"} — manage the bundle →
+            </Link>
           ) : (
             <button
               onClick={handleDelete}

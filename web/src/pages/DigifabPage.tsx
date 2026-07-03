@@ -4,11 +4,12 @@
 // queue. Sending a file to be made is a deliberate action — the Send
 // button is behind an explicit confirm. We send files, never drive hardware.
 
-import { useState, useMemo, useEffect, useRef, type ReactNode } from "react";
+import { useState, useMemo, useEffect, useRef, Fragment, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 import { createPortal } from "react-dom";
 import { useMutation, useQuery, useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, Wifi, Printer, RefreshCw, Send, ListChecks, Boxes, AlertTriangle, Layers, X, ListPlus, Ban, Camera, Pause, Play, Thermometer, ChevronRight, Share2, Sliders } from "lucide-react";
-import { ApiError, api, fetchAuthBlobUrl, type DigifabConnection, type DigifabJob, type DigifabFleetDevice, type DigifabDeviceClass, type BambuMode, type DigifabLibraryItem, type DigifabHistory, type DigifabDeviceDetail, type DigifabFileInfo } from "../lib/api";
+import { ApiError, api, fetchAuthBlobUrl, type DigifabConnection, type DigifabJob, type DigifabFleet, type DigifabFleetDevice, type DigifabDeviceClass, type BambuMode, type DigifabLibraryItem, type DigifabHistory, type DigifabDeviceDetail, type DigifabFileInfo, type DigifabRun, type DigifabFailureConfig } from "../lib/api";
 import { BambuConnectWizard } from "../components/BambuConnectWizard";
 import { BridgePicker } from "../components/BridgePicker";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -16,7 +17,7 @@ import { PrintUpdatesPanel } from "./PrintUpdatesPanel";
 import { Modal, useToast, useConfirm, usePageTitle, useImageSrc } from "@cobblr/platform-web";
 import { Combobox } from "../components/Combobox";
 
-export function DigifabPage() {
+export function DigifabPage({ setupOnly = false }: { setupOnly?: boolean } = {}) {
   usePageTitle("Digital Fabrication");
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
@@ -31,7 +32,11 @@ export function DigifabPage() {
   // IA (the author: "a bit much to have it all there"): the page distinguishes OPERATE
   // (floor + queue + library + history — daily) from SETUP (connections, pools,
   // print-update rules — set-once). Floor is the page; Setup is one click away.
-  const [tab, setTab] = useState<"floor" | "setup">(() => (localStorage.getItem("cobblr.digifab.tab") === "setup" ? "setup" : "floor"));
+  // setupOnly (settings route /configuration/digifab): the FLOOR is an
+  // operate surface and doesn't belong in Configuration — settings shows the
+  // set-once plumbing only; the floor lives at /digifab (the author, 2026-07-03).
+  const [tab, setTab] = useState<"floor" | "setup">(() =>
+    setupOnly ? "setup" : localStorage.getItem("cobblr.digifab.tab") === "setup" ? "setup" : "floor");
   const pickTab = (t: "floor" | "setup") => {
     localStorage.setItem("cobblr.digifab.tab", t);
     setTab(t);
@@ -132,6 +137,11 @@ export function DigifabPage() {
         <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">Digital Fabrication</h1>
         <span className="text-sm text-muted dark:text-slate-400">{items.length} connection{items.length === 1 ? "" : "s"}</span>
         <div className="flex-1" />
+        {setupOnly ? (
+          <Link to="/digifab" className="text-sm text-accent hover:underline">
+            Open the shop floor →
+          </Link>
+        ) : (
         <div className="inline-flex rounded-lg border border-line dark:border-slate-600 overflow-hidden">
           {([["floor", "Floor"], ["setup", "Setup"]] as const).map(([t, label]) => (
             <button
@@ -144,10 +154,11 @@ export function DigifabPage() {
             </button>
           ))}
         </div>
+        )}
       </div>
 
       {/* ── FLOOR — the operate surface: what runs, what's queued, what to print. ── */}
-      {tab === "floor" && (
+      {!setupOnly && tab === "floor" && (
         <>
           {items.length === 0 && !list.isLoading && (
             <div className="max-w-lg rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-6 text-center">
@@ -162,6 +173,7 @@ export function DigifabPage() {
             </div>
           )}
           {(list.isLoading || items.length > 0) && <FleetView slug={activeSlug} />}
+          {items.length > 0 && <ProductionRunsSection slug={activeSlug} />}
           {items.length > 0 && <PrintQueueSection connections={items} />}
           {items.length > 0 && <LibrarySection slug={activeSlug} />}
           {items.length > 0 && <PrintHistorySection slug={activeSlug} />}
@@ -307,6 +319,7 @@ export function DigifabPage() {
 
       {items.length > 0 && <PoolsSection slug={activeSlug} />}
       {items.length > 0 && <PrintUpdatesPanel slug={activeSlug} />}
+      {items.length > 0 && <FailureDetectionPanel slug={activeSlug} />}
         </>
       )}
 
@@ -700,6 +713,138 @@ function ReassignControl({ job, slug, onDone }: { job: DigifabJob; slug: string;
   );
 }
 
+// Prints-per-day trend — a compact stacked bar (completed on the baseline,
+// failed stacked above). Status colors used for their meaning (moss=good,
+// ember=fail); identity is never color-alone — the legend labels both, the
+// stack order is fixed, and the caption reads the hovered day. One axis (count);
+// filament lives in the stat tiles, so no dual-scale.
+function PrintTrendChart({ series }: { series: NonNullable<DigifabHistory["series"]> }) {
+  const [hover, setHover] = useState<number | null>(null);
+  const max = Math.max(1, ...series.map((d) => d.completed + d.failed));
+  const total = series.reduce((s, d) => s + d.completed + d.failed, 0);
+  const H = 64; // plot height in px
+  const fmtDay = (iso: string) => new Date(iso + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const h = hover != null ? series[hover] : null;
+  if (total === 0) return <div className="text-xs text-muted italic">No prints in this window.</div>;
+  return (
+    <div>
+      <div className="flex items-baseline justify-between mb-1">
+        <div className="text-[10px] font-mono uppercase tracking-widest text-faint">Prints per day</div>
+        <div className="text-[10px] text-faint tabular-nums">
+          {h ? (
+            <span className="text-content dark:text-mortar-100">
+              {fmtDay(h.date)} · <span className="text-moss-600">{h.completed} ok</span>
+              {h.failed ? <> · <span className="text-ember-600">{h.failed} failed</span></> : null}
+              {h.filament_g ? ` · ${h.filament_g}g` : ""}
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-2">
+              <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-[2px] bg-moss-500" /> Completed</span>
+              <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-[2px] bg-ember-500" /> Failed</span>
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="flex items-end gap-[2px]" style={{ height: H }} onMouseLeave={() => setHover(null)}>
+        {series.map((d, i) => {
+          const n = d.completed + d.failed;
+          const okH = Math.round((d.completed / max) * H);
+          const failH = Math.round((d.failed / max) * H);
+          return (
+            <div
+              key={d.date}
+              className="flex-1 min-w-[2px] h-full flex flex-col justify-end cursor-default"
+              onMouseEnter={() => setHover(i)}
+              title={`${fmtDay(d.date)} — ${d.completed} completed${d.failed ? `, ${d.failed} failed` : ""}${d.filament_g ? `, ${d.filament_g}g` : ""}`}
+            >
+              {failH > 0 && <div className="rounded-t-[3px] bg-ember-500" style={{ height: failH, opacity: hover == null || hover === i ? 1 : 0.4 }} />}
+              {okH > 0 && (
+                <div
+                  className={"bg-moss-500 " + (failH > 0 ? "mt-[2px]" : "rounded-t-[3px]")}
+                  style={{ height: okH, opacity: hover == null || hover === i ? 1 : 0.4 }}
+                />
+              )}
+              {n === 0 && <div className="h-[2px] rounded-full bg-line dark:bg-slate-700" />}
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex justify-between mt-1 text-[9px] text-faint tabular-nums">
+        <span>{fmtDay(series[0]!.date)}</span>
+        <span>{fmtDay(series[series.length - 1]!.date)}</span>
+      </div>
+    </div>
+  );
+}
+
+// AI print-failure detection config — enable the camera watch that folds a
+// rolling failure score and auto-pauses a print that's turning into spaghetti.
+function FailureDetectionPanel({ slug }: { slug: string }) {
+  const [open, setOpen] = useState(false);
+  const qc = useQueryClient();
+  const toast = useToast();
+  const cfg = useQuery({ queryKey: ["digifab-failure-config", slug], queryFn: () => api.getDigifabFailureConfig(slug), enabled: open });
+  const save = useMutation({
+    mutationFn: (patch: Partial<DigifabFailureConfig>) => api.setDigifabFailureConfig(slug, patch),
+    onSuccess: (d) => { qc.setQueryData(["digifab-failure-config", slug], d); },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't save"),
+  });
+  const c = cfg.data;
+  const lbl = "text-[10px] font-mono uppercase tracking-widest text-faint";
+  return (
+    <div className="pt-2">
+      <button type="button" onClick={() => setOpen((o) => !o)} className="flex items-center gap-1.5 text-sm font-semibold text-content dark:text-mortar-100">
+        <ChevronRight size={15} className={"transition-transform " + (open ? "rotate-90" : "")} /> AI failure detection
+      </button>
+      {open && (
+        <div className="mt-2 space-y-3 text-xs">
+          {cfg.isLoading || !c ? (
+            <div className="text-muted">Loading…</div>
+          ) : (
+            <>
+              <p className="text-faint leading-relaxed">
+                Watches each printing machine's camera and folds a rolling <b>failure score</b>; when it crosses your threshold it can auto-pause the print and alert you.
+                Uses the <b>local model on your bridge</b> when available (the frame never leaves your network, no AI cost) and falls back to your workspace's vision AI.
+              </p>
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={c.enabled} onChange={(e) => save.mutate({ enabled: e.target.checked })} />
+                <span className="text-content dark:text-mortar-100 font-medium">Watch prints for failures</span>
+              </label>
+              {c.enabled && (
+                <div className="space-y-3 pl-6">
+                  <div>
+                    <div className={lbl + " mb-1"}>Sensitivity — trip at score {c.threshold.toFixed(2)}</div>
+                    <input type="range" min={0.3} max={0.9} step={0.05} value={c.threshold} onChange={(e) => save.mutate({ threshold: Number(e.target.value) })} className="w-full max-w-xs accent-cobble-600" />
+                    <div className="flex justify-between max-w-xs text-[9px] text-faint"><span>catches more (0.30)</span><span>fewer false alarms (0.90)</span></div>
+                  </div>
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" checked={c.auto_pause} onChange={(e) => save.mutate({ auto_pause: e.target.checked })} />
+                    <span>Auto-pause the print when it trips <span className="text-faint">(off = alert only)</span></span>
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <span className={lbl}>Detector</span>
+                    <select value={c.backend} onChange={(e) => save.mutate({ backend: e.target.value as DigifabFailureConfig["backend"] })} className="input !py-0.5 !text-xs !w-auto">
+                      <option value="auto">Auto — local model, else vision AI</option>
+                      <option value="edge">Local model only (no AI cost)</option>
+                      <option value="llm">Vision AI only</option>
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={lbl}>Check every</span>
+                    <select value={c.sample_interval_sec} onChange={(e) => save.mutate({ sample_interval_sec: Number(e.target.value) })} className="input !py-0.5 !text-xs !w-auto">
+                      <option value={15}>15s</option><option value={30}>30s</option><option value={60}>60s</option><option value={120}>2 min</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Print history + at-a-glance stats — a read model over the jobs Cobblr sent +
 // tracked to completion. Collapsed by default; loads on open.
 function PrintHistorySection({ slug }: { slug: string }) {
@@ -760,16 +905,25 @@ function PrintHistorySection({ slug }: { slug: string }) {
                 {stat("Filament", s.filament_g ? `${Math.round(s.filament_g)} g` : "—")}
                 {stat("Print time", s.hours ? `${s.hours} h` : "—")}
               </div>
+              {hist.data?.series && hist.data.series.length > 0 && <PrintTrendChart series={hist.data.series} />}
               {(hist.data?.by_device.length ?? 0) > 0 && (
                 <div>
                   <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">By printer</div>
                   <ul className="text-xs space-y-0.5">
-                    {hist.data!.by_device.map((d, i) => (
-                      <li key={i} className="flex gap-2">
-                        <span className="flex-1 min-w-0 truncate text-content dark:text-mortar-100">{d.name}</span>
-                        <span className="text-faint shrink-0">{d.completed}/{d.total} ok{d.failed ? ` · ${d.failed} failed` : ""}{d.filament_g ? ` · ${Math.round(d.filament_g)}g` : ""}</span>
-                      </li>
-                    ))}
+                    {[...hist.data!.by_device]
+                      .sort((a, b) => b.total - a.total)
+                      .map((d, i) => {
+                        const dr = d.total ? Math.round((d.completed / d.total) * 100) : null;
+                        return (
+                          <li key={i} className="flex gap-2">
+                            <span className="flex-1 min-w-0 truncate text-content dark:text-mortar-100">{d.name}</span>
+                            {dr != null && (
+                              <span className={"shrink-0 tabular-nums " + (dr >= 90 ? "text-moss-600" : dr >= 70 ? "text-amber-600" : "text-ember-600")}>{dr}%</span>
+                            )}
+                            <span className="text-faint shrink-0">{d.completed}/{d.total}{d.failed ? ` · ${d.failed} failed` : ""}{d.filament_g ? ` · ${Math.round(d.filament_g)}g` : ""}</span>
+                          </li>
+                        );
+                      })}
                   </ul>
                 </div>
               )}
@@ -2360,6 +2514,11 @@ function LibraryCard({ item, slug }: { item: DigifabLibraryItem; slug: string })
           <span className="uppercase font-mono">{item.kind}</span>
           {item.plate_count > 1 && <span>· {item.plate_count} plates</span>}
           <span>· {size}</span>
+          {item.metadata?.material && <span>· {item.metadata.material}</span>}
+          {item.metadata?.estimated_sec && (
+            <span>· ~{Math.floor(item.metadata.estimated_sec / 3600)}h{Math.round((item.metadata.estimated_sec % 3600) / 60)}m</span>
+          )}
+          {item.metadata?.parts_per_plate && <span>· {item.metadata.parts_per_plate}×/plate</span>}
         </div>
         <div className="flex items-center gap-1.5 pt-1 mt-auto">
           <button onClick={() => setSendOpen(true)} className="flex-1 inline-flex items-center justify-center gap-1 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2 py-1 text-[11px]"><Send size={11} /> Send</button>
@@ -2511,93 +2670,229 @@ function FleetBatchBar({
 
 
 const DEVICE_DRAG_MIME = "application/x-cobblr-fleet-device";
-const FLOOR_COLS = 6;
 
-/** ⑦ The spatial floor — a fixed-column grid mirroring the physical shop.
- *  Active whenever any machine has a pinned position (or while arranging).
- *  Arrange mode: cells are drop targets, cards are draggable; drop on the
- *  "unplaced" shelf to unpin. Placed cards keep their cell outside arrange
- *  mode; unplaced ones flow on a shelf below the floor. */
-function FloorGrid({
-  slug,
-  devices,
-  arranging,
-  renderCard,
-}: {
+type FleetDev = DigifabFleetDevice & { connLabel: string; connId: string; connType: string };
+const devKey = (d: { connId: string; id: string }) => `${d.connId}:${d.id}`;
+
+/** Free-form fleet layout — the tiles ARE the floor (no cell grid, no arrange
+ *  mode). Drag any tile: it hides in place and a dashed PLACEHOLDER slot shows
+ *  exactly where it will land — tiles around the slot shift once and stay put
+ *  (targets are computed against the tiles' fixed geometry, never against the
+ *  placeholder, so the preview can't feed back into itself and bounce). The
+ *  strips between rows accept a drop to START A NEW ROW in place; the hovered
+ *  strip swells into a full-height slot and stays stable under the cursor.
+ *  Machines with no saved slot flow in a trailing row. Order + row starts
+ *  persist per-workspace (PUT fleet/layout). */
+function ReorderableRows({ slug, devices, gridCls, canDrag, dataVersion, renderTile }: {
   slug: string;
-  devices: Array<DigifabFleetDevice & { connId: string }>;
-  arranging: boolean;
-  renderCard: (d: DigifabFleetDevice & { connId: string }, draggable: boolean) => ReactNode;
+  devices: FleetDev[];
+  gridCls: string;
+  /** False while a bucket filter hides tiles or batch-select is on. */
+  canDrag: boolean;
+  /** Bumps when fresh fleet data lands — drops the optimistic post-drop layout. */
+  dataVersion: number;
+  renderTile: (d: FleetDev) => ReactNode;
 }) {
   const qc = useQueryClient();
   const toast = useToast();
-  const move = useMutation({
-    mutationFn: ({ d, pos }: { d: DigifabFleetDevice & { connId: string }; pos: { x: number; y: number } | null }) =>
-      api.setDigifabDevicePosition(slug, d.connId, d.id, pos),
+  const boxRef = useRef<HTMLDivElement>(null);
+  const byKey = new Map(devices.map((d) => [devKey(d), d]));
+
+  // Baseline rows from the saved layout: placed devices ordered by sort_order,
+  // split where row_break starts a new row; unplaced trail in their own row.
+  const baseRows = useMemo(() => {
+    const placed = devices.filter((d) => d.sort_order != null).sort((a, b) => a.sort_order! - b.sort_order!);
+    const rest = devices.filter((d) => d.sort_order == null);
+    const rows: string[][] = [];
+    let cur: string[] = [];
+    for (const d of placed) {
+      if (d.row_break && cur.length) { rows.push(cur); cur = []; }
+      cur.push(devKey(d));
+    }
+    if (cur.length) rows.push(cur);
+    if (rest.length) rows.push(rest.map(devKey));
+    return rows;
+  }, [devices]);
+
+  const [drag, setDrag] = useState<string | null>(null); // tile in hand (hidden in place)
+  // Landing slot, in RENDERED coordinates (row index / index among visible
+  // tiles, or a gap between rows). Never derived from the placeholder itself.
+  const [target, setTarget] = useState<{ kind: "cell"; row: number; index: number } | { kind: "gap"; gap: number } | null>(null);
+  const [committed, setCommitted] = useState<string[][] | null>(null); // optimistic after drop
+  useEffect(() => { setCommitted(null); }, [dataVersion]);
+  const rows = committed ?? baseRows;
+
+  const save = useMutation({
+    mutationFn: (layout: string[][]) =>
+      api.saveDigifabFleetLayout(
+        slug,
+        layout.flatMap((row, ri) =>
+          row
+            .map((k, i) => {
+              const d = byKey.get(k);
+              return d ? { connection_id: d.connId, device_id: d.id, row_break: ri > 0 && i === 0 } : null;
+            })
+            .filter((x): x is { connection_id: string; device_id: string; row_break: boolean } => !!x),
+        ),
+      ),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["digifab-fleet", slug] }),
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't move the machine"),
+    onError: (e) => {
+      setCommitted(null);
+      toast.error(e instanceof ApiError ? e.message : "Couldn't save the layout");
+    },
   });
-  const placed = devices.filter((d) => d.position);
-  const unplaced = devices.filter((d) => !d.position);
-  const rows = Math.max(2, ...placed.map((d) => (d.position!.y ?? 0) + 1)) + (arranging ? 1 : 0);
-  const byCell = new Map(placed.map((d) => [`${d.position!.x},${d.position!.y}`, d]));
-  const readKey = (e: React.DragEvent) => {
-    const raw = e.dataTransfer.getData(DEVICE_DRAG_MIME);
-    if (!raw) return null;
-    try { return JSON.parse(raw) as { connId: string; id: string }; } catch { return null; }
+
+  const setTargetIf = (t: typeof target) =>
+    setTarget((prev) => (JSON.stringify(prev) === JSON.stringify(t) ? prev : t));
+
+  /** The layout a drop right now would produce. Indices are in rendered terms:
+   *  rows keep their slots (a row whose only tile is the hidden dragged one
+   *  still occupies its index) until the final empty-row sweep. */
+  const droppedRows = (): string[][] => {
+    if (!drag) return rows;
+    const out = rows.map((r) => r.filter((x) => x !== drag));
+    if (!target) {
+      out.push([drag]);
+    } else if (target.kind === "gap") {
+      out.splice(Math.max(0, Math.min(target.gap, out.length)), 0, [drag]);
+    } else {
+      const r = out[target.row];
+      if (r) r.splice(Math.max(0, Math.min(target.index, r.length)), 0, drag);
+      else out.push([drag]);
+    }
+    return out.filter((r) => r.length > 0);
   };
-  const findDev = (k: { connId: string; id: string } | null) => (k ? devices.find((d) => d.connId === k.connId && d.id === k.id) ?? null : null);
+
+  // ONE hit-test on the container. Geometry comes from the real tiles (the
+  // hidden dragged tile and the placeholder are excluded), so hovering the
+  // placeholder or the space it opened recomputes to the SAME target — stable.
+  const onDragOverBox = (e: React.DragEvent) => {
+    if (!drag || !e.dataTransfer.types.includes(DEVICE_DRAG_MIME)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+    if (el?.closest("[data-drop-placeholder]")) return; // over the landing slot → keep it
+    const strip = el?.closest<HTMLElement>("[data-drop-gap]");
+    if (strip) {
+      setTargetIf({ kind: "gap", gap: Number(strip.dataset.dropGap) });
+      return;
+    }
+    const box = boxRef.current;
+    if (!box) return;
+    const rowEls = Array.from(box.querySelectorAll<HTMLElement>("[data-drop-row]"));
+    for (const rowEl of rowEls) {
+      const rect = rowEl.getBoundingClientRect();
+      if (rect.height === 0 || e.clientY < rect.top || e.clientY > rect.bottom) continue;
+      const ri = Number(rowEl.dataset.dropRow);
+      const tiles = Array.from(rowEl.querySelectorAll<HTMLElement>("[data-drop-key]")).filter(
+        (t) => t.dataset.dropKey !== drag,
+      );
+      let idx = tiles.length;
+      for (let i = 0; i < tiles.length; i++) {
+        const tr = tiles[i]!.getBoundingClientRect();
+        if (e.clientX < tr.left + tr.width / 2) { idx = i; break; }
+      }
+      setTargetIf({ kind: "cell", row: ri, index: idx });
+      return;
+    }
+    // Outside every row band: snap to the nearest end gap.
+    if (rowEls.length) {
+      const first = rowEls[0]!.getBoundingClientRect();
+      if (e.clientY < first.top) setTargetIf({ kind: "gap", gap: 0 });
+      else setTargetIf({ kind: "gap", gap: rows.length });
+    }
+  };
+
+  const finishDrag = () => { setDrag(null); setTarget(null); };
+  const commitDrop = (e: React.DragEvent) => {
+    if (!drag || !e.dataTransfer.types.includes(DEVICE_DRAG_MIME)) return;
+    e.preventDefault();
+    const final = droppedRows();
+    setCommitted(final);
+    save.mutate(final);
+    finishDrag();
+  };
+
+  // The landing slot — dashed, tile-shaped. pointer-events stay ON so the
+  // placeholder guard above can hold the target steady while hovered.
+  const slotCls = "rounded-lg border-2 border-dashed border-accent/60 bg-accent/5 min-h-16";
+
   return (
-    <div className="space-y-2">
-      <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${FLOOR_COLS}, minmax(0, 1fr))` }}>
-        {Array.from({ length: rows * FLOOR_COLS }, (_, i) => {
-          const x = i % FLOOR_COLS;
-          const y = Math.floor(i / FLOOR_COLS);
-          const d = byCell.get(`${x},${y}`);
-          return (
-            <div
-              key={`${x},${y}`}
-              className={
-                "min-h-[7rem] rounded-lg " +
-                (arranging ? "border border-dashed border-line dark:border-slate-700 " : "") +
-                (d ? "" : arranging ? "bg-subtle/40 dark:bg-slate-800/20" : "")
-              }
-              onDragOver={(e) => { if (arranging && e.dataTransfer.types.includes(DEVICE_DRAG_MIME)) e.preventDefault(); }}
-              onDrop={(e) => {
-                if (!arranging) return;
-                e.preventDefault();
-                const dev = findDev(readKey(e));
-                if (dev) move.mutate({ d: dev, pos: { x, y } });
-              }}
-            >
-              {d && renderCard(d, arranging)}
+    <div
+      ref={boxRef}
+      className="space-y-2"
+      onDragOver={onDragOverBox}
+      onDrop={commitDrop}
+    >
+      {rows.map((row, ri) => {
+        const gapHot = target?.kind === "gap" && target.gap === ri;
+        return (
+          <Fragment key={ri}>
+            {drag != null &&
+              (gapHot ? (
+                <div data-drop-placeholder className={slotCls + " h-20 flex items-center justify-center text-[10px] font-mono uppercase tracking-wider text-accent/80"}>
+                  new row
+                </div>
+              ) : (
+                <div data-drop-gap={ri} className="h-6 rounded border border-dashed border-accent/30 bg-accent/5 flex items-center justify-center text-[9px] font-mono uppercase tracking-wider text-accent/50">
+                  new row
+                </div>
+              ))}
+            <div data-drop-row={ri} className={gridCls}>
+              {(() => {
+                // Placeholder indices are in VISIBLE-tile terms (the hidden
+                // dragged tile doesn't count), while `row` still contains it —
+                // map each key to its visible index so the slot lands true.
+                const visIdx = new Map<string, number>();
+                let c = 0;
+                for (const k of row) if (k !== drag) visIdx.set(k, c++);
+                return row.map((k, i) => {
+                const d = byKey.get(k);
+                if (!d) return null; // device vanished between refreshes
+                const showSlot = drag != null && k !== drag && target?.kind === "cell" && target.row === ri && target.index === visIdx.get(k);
+                return (
+                  <Fragment key={k}>
+                    {showSlot && <div data-drop-placeholder className={slotCls} />}
+                    <div
+                      data-drop-key={k}
+                      draggable={canDrag && !drag}
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData(DEVICE_DRAG_MIME, JSON.stringify({ connId: d.connId, id: d.id }));
+                        e.dataTransfer.effectAllowed = "move";
+                        // Let the browser capture the drag image BEFORE the tile
+                        // hides — hiding synchronously kills the drag in Firefox.
+                        const kk = k;
+                        setTimeout(() => {
+                          setDrag(kk);
+                          setTarget({ kind: "cell", row: ri, index: i }); // anchor at origin
+                        }, 0);
+                      }}
+                      onDragEnd={finishDrag}
+                      className={(canDrag ? "cursor-grab active:cursor-grabbing " : "") + (drag === k ? "hidden" : "")}
+                    >
+                      {renderTile(d)}
+                    </div>
+                  </Fragment>
+                );
+                });
+              })()}
+              {drag != null && target?.kind === "cell" && target.row === ri && target.index >= row.filter((x) => x !== drag).length && (
+                <div data-drop-placeholder className={slotCls} />
+              )}
             </div>
-          );
-        })}
-      </div>
-      {(unplaced.length > 0 || arranging) && (
-        <div
-          className={"rounded-lg p-2 " + (arranging ? "border border-dashed border-amber-400/60 dark:border-amber-700/60" : "")}
-          onDragOver={(e) => { if (arranging && e.dataTransfer.types.includes(DEVICE_DRAG_MIME)) e.preventDefault(); }}
-          onDrop={(e) => {
-            if (!arranging) return;
-            e.preventDefault();
-            const dev = findDev(readKey(e));
-            if (dev) move.mutate({ d: dev, pos: null });
-          }}
-        >
-          <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1.5">
-            {arranging ? "Unplaced — drag onto the floor (drop here to unpin)" : "Unplaced"}
+          </Fragment>
+        );
+      })}
+      {drag != null &&
+        (target?.kind === "gap" && target.gap === rows.length ? (
+          <div data-drop-placeholder className={slotCls + " h-20 flex items-center justify-center text-[10px] font-mono uppercase tracking-wider text-accent/80"}>
+            new row
           </div>
-          {unplaced.length === 0 ? (
-            <div className="text-[11px] text-faint italic">everything is placed</div>
-          ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
-              {unplaced.map((d) => renderCard(d, arranging))}
-            </div>
-          )}
-        </div>
-      )}
+        ) : (
+          <div data-drop-gap={rows.length} className="h-6 rounded border border-dashed border-accent/30 bg-accent/5 flex items-center justify-center text-[9px] font-mono uppercase tracking-wider text-accent/50">
+            new row
+          </div>
+        ))}
     </div>
   );
 }
@@ -2613,18 +2908,55 @@ function deviceBucket(d: DigifabFleetDevice): "working" | "needs" | "idle" | "of
   return "idle";
 }
 
+/** Last fleet response, persisted per workspace — the floor paints from it the
+ *  INSTANT the page loads (the live aggregate asks every manager and can take
+ *  seconds); the immediate refetch + 12s poll then correct it. A few-seconds-
+ *  stale card beats a skeleton every time (the author). */
+const fleetSnapKey = (slug: string) => `cobblr.fleet.last.${slug}`;
+function readFleetSnap(slug: string): DigifabFleet | undefined {
+  try {
+    const raw = localStorage.getItem(fleetSnapKey(slug));
+    return raw ? (JSON.parse(raw) as DigifabFleet) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function FleetView({ slug }: { slug: string }) {
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
   const fleet = useQuery({
     queryKey: ["digifab-fleet", slug],
-    queryFn: () => api.getDigifabFleet(slug),
+    queryFn: async () => {
+      const d = await api.getDigifabFleet(slug);
+      try {
+        localStorage.setItem(fleetSnapKey(slug), JSON.stringify(d));
+      } catch {
+        /* quota/private-mode — instant paint just degrades to the skeleton */
+      }
+      return d;
+    },
     enabled: !!slug,
     refetchInterval: 12_000,
     // Refetches keep showing the previous floor instead of blanking it.
     placeholderData: (prev) => prev,
+    // Cold load: hydrate from the persisted snapshot so machines render on the
+    // first frame; updatedAt 0 marks it stale so the real fetch fires at once.
+    initialData: () => readFleetSnap(slug),
+    initialDataUpdatedAt: 0,
   });
+  // Server said it answered from a stale cache (its live refresh is already
+  // running) — refetch quickly a couple of times so fresh state lands in
+  // seconds instead of at the next 12s poll. Bounded so a manager that's
+  // genuinely down can't turn this into a fast-poll loop.
+  const staleRetries = useRef(0);
+  useEffect(() => {
+    if (!fleet.data?.stale) { staleRetries.current = 0; return; }
+    if (staleRetries.current >= 3) return;
+    const t = setTimeout(() => { staleRetries.current += 1; void qc.invalidateQueries({ queryKey: ["digifab-fleet", slug] }); }, 2500);
+    return () => clearTimeout(t);
+  }, [fleet.data, qc, slug]);
   // Operator bucket filter (All / Working / Needs you / Idle / Off) — the
   // summary counts double as clickable filters.
   const [bucket, setBucket] = useState<"all" | "working" | "needs" | "idle" | "off">("all");
@@ -2636,8 +2968,6 @@ export function FleetView({ slug }: { slug: string }) {
   });
   const pickMode = (m: "cards" | "dense" | "cams") => { localStorage.setItem("cobblr.fleet.mode", m); setMode(m); };
   const dense = mode === "dense";
-  // ⑦ Arrange mode: drag machines onto floor-grid cells (FDMM relocate mode).
-  const [arranging, setArranging] = useState(false);
   // Batch mode: select tiles → one action bar (FDMM-style).
   const [selecting, setSelecting] = useState(false);
   const [sel, setSel] = useState<Set<string>>(new Set()); // `${connId}:${deviceId}`
@@ -2703,16 +3033,6 @@ export function FleetView({ slug }: { slug: string }) {
           ))}
         </div>
         <div className="flex-1" />
-        {mode === "cards" && (
-          <button
-            type="button"
-            onClick={() => setArranging((v) => !v)}
-            className={"text-[11px] px-2 py-0.5 rounded border transition " + (arranging ? "border-cobble-500 text-accent" : "border-line dark:border-slate-600 text-muted hover:border-accent hover:text-accent")}
-            title="Arrange machines on the floor (drag to a cell)"
-          >
-            {arranging ? "Done arranging" : "Arrange"}
-          </button>
-        )}
         <button
           type="button"
           onClick={() => { setSelecting((v) => !v); setSel(new Set()); }}
@@ -2740,62 +3060,15 @@ export function FleetView({ slug }: { slug: string }) {
         // Group machines by POOL (a pool reads as one farm even across
         // connections); unpooled machines fall back to their connection. A
         // dead manager keeps its own error row.
-        type FDev = DigifabFleetDevice & { connLabel: string; connId: string; connType: string };
+        type FDev = FleetDev;
         const errored = data.connections.filter((c) => c.error);
         const allUnfiltered: FDev[] = data.connections
           .filter((c) => !c.error)
           .flatMap((c) => c.devices.map((d) => ({ ...d, connLabel: c.label, connId: c.connection_id, connType: c.type })));
         const all: FDev[] = allUnfiltered.filter((d) => bucket === "all" || deviceBucket(d) === bucket);
-        // titleFor needs the counts regardless of layout path.
         const connDeviceCountEarly = new Map<string, number>();
         for (const d of allUnfiltered) connDeviceCountEarly.set(d.connId, (connDeviceCountEarly.get(d.connId) ?? 0) + 1);
         const manyConnsEarly = new Set(allUnfiltered.filter((d) => !d.pool_id).map((d) => d.connId)).size > 1;
-        const titleForDev = (d: FDev): { title: string; sub: string | null } => {
-          if (d.pool_id) return { title: d.name, sub: d.pool_name };
-          if ((connDeviceCountEarly.get(d.connId) ?? 0) === 1 && d.connLabel && d.connLabel !== d.name) return { title: d.connLabel, sub: d.name };
-          return { title: d.name, sub: manyConnsEarly ? d.connLabel : null };
-        };
-        // ⑦ SPATIAL FLOOR: active in Cards mode while arranging, or whenever any
-        // machine has a pinned position. Replaces the pool/connection sections —
-        // the floor mirrors the shop, badges carry the grouping.
-        const spatial = mode === "cards" && (arranging || allUnfiltered.some((d) => d.position));
-        if (spatial) {
-          const floorDevs = arranging ? allUnfiltered : all;
-          return (
-            <>
-              <FloorGrid
-                slug={slug}
-                devices={floorDevs}
-                arranging={arranging}
-                renderCard={(d, draggable) => {
-                  const fd = d as FDev;
-                  const t = titleForDev(fd);
-                  const k = `${fd.connId}:${fd.id}`;
-                  return (
-                    <div
-                      draggable={draggable}
-                      onDragStart={(e) => {
-                        e.dataTransfer.setData(DEVICE_DRAG_MIME, JSON.stringify({ connId: fd.connId, id: fd.id }));
-                        e.dataTransfer.effectAllowed = "move";
-                      }}
-                      className={draggable ? "cursor-grab active:cursor-grabbing" : ""}
-                    >
-                      <DeviceCard d={fd} connId={fd.connId} slug={slug} title={t.title} subtitle={t.sub} selecting={selecting} selected={sel.has(k)} onToggleSelect={() => toggleSel(k)} />
-                    </div>
-                  );
-                }}
-              />
-              {errored.map((c) => (
-                <div key={c.connection_id} className="flex items-center gap-1.5 text-xs text-ember-600 dark:text-ember-500">
-                  <AlertTriangle size={13} className="shrink-0" /> {c.label} unreachable — {c.error}
-                </div>
-              ))}
-              {selecting && sel.size > 0 && (
-                <FleetBatchBar slug={slug} devices={all.filter((d) => sel.has(`${d.connId}:${d.id}`))} onDone={() => { setSel(new Set()); invalidateFleet(); }} confirm={confirm} toast={toast} />
-              )}
-            </>
-          );
-        }
         const pools = new Map<string, { name: string; devices: FDev[] }>();
         const unpooled = new Map<string, FDev[]>();
         for (const d of all) {
@@ -2822,52 +3095,71 @@ export function FleetView({ slug }: { slug: string }) {
         // human name ("RailCore 300ZL — Justin"), so the card leads with it and
         // demotes the device name ("Klipper (192.168.1.128)") to a subtitle;
         // multi-machine connections keep the device name and note the connection.
-        const connDeviceCount = new Map<string, number>();
-        for (const d of all) connDeviceCount.set(d.connId, (connDeviceCount.get(d.connId) ?? 0) + 1);
+        //
+        // Counts come from the UNFILTERED floor (connDeviceCountEarly /
+        // manyConnsEarly): a bucket filter narrowing a multi-printer connection
+        // down to one visible card must NOT flip it into "single-machine
+        // connection" naming — a card's identity can't change with the filter
+        // (the author: Thumper read as "Bambu (account…)" under Needs-you).
         const flat: FDev[] = [...unpooled.values()].flat().sort(byActivity);
         if (flat.length > 0) sections.push({ key: "unpooled", label: pools.size > 0 ? "Machines" : null, isPool: false, devices: flat });
-        const manyConns = new Set(flat.map((d) => d.connId)).size > 1;
         const titleFor = (d: FDev): { title: string; sub: string | null } => {
           if (d.pool_id) return { title: d.name, sub: null };
-          if ((connDeviceCount.get(d.connId) ?? 0) === 1 && d.connLabel && d.connLabel !== d.name) {
+          if ((connDeviceCountEarly.get(d.connId) ?? 0) === 1 && d.connLabel && d.connLabel !== d.name) {
             return { title: d.connLabel, sub: d.name };
           }
-          return { title: d.name, sub: manyConns ? d.connLabel : null };
+          return { title: d.name, sub: manyConnsEarly ? d.connLabel : null };
         };
         return (
           <>
-            {sections.map((sec) => (
-              <div key={sec.key} className="space-y-1.5">
-                {sec.label && (
-                  <div className="text-[11px] font-mono uppercase tracking-wider text-faint flex items-center gap-1.5">
-                    {sec.isPool && <Layers size={11} className="text-accent" />}
-                    {sec.label}
-                    {sec.isPool && <span className="text-faint/70">· {sec.devices.length} machine{sec.devices.length === 1 ? "" : "s"}</span>}
-                  </div>
-                )}
-                <div className={dense ? "grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-1.5" : mode === "cams" ? "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2" : "grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2"}>
-                  {sec.devices.map((d) => {
-                    const t = titleFor(d);
-                    const k = `${d.connId}:${d.id}`;
-                    return (
-                      <DeviceCard
-                        key={`${sec.key}:${k}`}
-                        d={d}
-                        connId={d.connId}
-                        slug={slug}
-                        title={t.title}
-                        subtitle={t.sub}
-                        dense={dense}
-                        cams={mode === "cams"}
-                        selecting={selecting}
-                        selected={sel.has(k)}
-                        onToggleSelect={() => toggleSel(k)}
-                      />
-                    );
-                  })}
+            {sections.map((sec) => {
+              const gridCls = dense ? "grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-1.5" : mode === "cams" ? "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2" : "grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2";
+              const tile = (d: FDev) => {
+                const t = titleFor(d);
+                const k = `${d.connId}:${d.id}`;
+                return (
+                  <DeviceCard
+                    key={`${sec.key}:${k}`}
+                    d={d}
+                    connId={d.connId}
+                    slug={slug}
+                    title={t.title}
+                    subtitle={t.sub}
+                    dense={dense}
+                    cams={mode === "cams"}
+                    selecting={selecting}
+                    selected={sel.has(k)}
+                    onToggleSelect={() => toggleSel(k)}
+                  />
+                );
+              };
+              return (
+                <div key={sec.key} className="space-y-1.5">
+                  {sec.label && (
+                    <div className="text-[11px] font-mono uppercase tracking-wider text-faint flex items-center gap-1.5">
+                      {sec.isPool && <Layers size={11} className="text-accent" />}
+                      {sec.label}
+                      {sec.isPool && <span className="text-faint/70">· {sec.devices.length} machine{sec.devices.length === 1 ? "" : "s"}</span>}
+                    </div>
+                  )}
+                  {sec.isPool ? (
+                    <div className={gridCls}>{sec.devices.map(tile)}</div>
+                  ) : (
+                    // The open floor: always-on drag-reorder with row breaks.
+                    // Drag disabled while a bucket filter hides tiles (a partial
+                    // view can't safely rewrite the full layout) or selecting.
+                    <ReorderableRows
+                      slug={slug}
+                      devices={sec.devices}
+                      gridCls={gridCls}
+                      canDrag={bucket === "all" && !selecting}
+                      dataVersion={fleet.dataUpdatedAt}
+                      renderTile={tile}
+                    />
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
             {errored.map((c) => (
               <div key={c.connection_id} className="flex items-center gap-1.5 text-xs text-ember-600 dark:text-ember-500">
                 <AlertTriangle size={13} className="shrink-0" /> {c.label} unreachable — {c.error}
@@ -2945,7 +3237,72 @@ function RelaySnapshotFill({ slug, connId, deviceId, name, live }: { slug: strin
     return () => { alive = false; if (id) clearInterval(id); if (current) URL.revokeObjectURL(current); };
   }, [slug, connId, deviceId, live]);
   if (!url) return <span className="flex flex-col items-center gap-1 text-faint text-[11px]"><Camera size={18} /> waiting for a frame…</span>;
-  return <img src={url} alt={`${name} camera`} className="w-full h-full object-cover" />;
+  return <img src={url} alt={`${name} camera`} draggable={false} className="w-full h-full object-cover" />;
+}
+
+/** Camera-wall fill for a printer whose camera rides the LAN bridge (Bambu
+ *  hybrid): the same /camera frame-grab the cockpit uses, polled gently. The
+ *  server-cached snapshot paints first so the tile is never blank. */
+function LanCameraFill({ slug, connId, deviceId, name, live, klass }: { slug: string; connId: string; deviceId: string; name: string; live: boolean; klass: DigifabDeviceClass }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  // Only consulted once a frame-grab has FAILED: the bridge's live status turns
+  // "camera unreachable" into a diagnosis instead of a shrug. A connected
+  // bridge (fresh poll) can't be the problem; then the device's own reported
+  // state says whether the PRINTER is dark or just its camera.
+  const edge = useQuery({
+    queryKey: ["edge-status", slug],
+    queryFn: () => api.getEdgeStatus(slug),
+    enabled: !!slug && failed,
+    refetchInterval: failed ? 30_000 : false,
+    staleTime: 15_000,
+  });
+  useEffect(() => {
+    let alive = true;
+    let current: string | null = null;
+    const swap = (next: string | null, isFrame: boolean) => {
+      if (!alive) { if (next) URL.revokeObjectURL(next); return; }
+      if (!next) { if (!current && isFrame) setFailed(true); return; }
+      setUrl(next); setFailed(false);
+      if (current) URL.revokeObjectURL(current);
+      current = next;
+    };
+    // Instant: last server-cached snapshot, then live frames replace it.
+    void fetchAuthBlobUrl(api.digifabSnapshotPath(slug, connId, deviceId)).then((c) => { if (!current) swap(c, false); else if (c) URL.revokeObjectURL(c); });
+    const tick = async () => swap(await fetchAuthBlobUrl(api.digifabCameraPath(slug, connId, deviceId)), true);
+    void tick();
+    const id = setInterval(tick, live ? 5000 : 20000);
+    return () => { alive = false; clearInterval(id); if (current) URL.revokeObjectURL(current); };
+  }, [slug, connId, deviceId, live]);
+  if (!url) {
+    let msg = "connecting…";
+    let hint: string | null = null;
+    if (failed) {
+      const staleMs = edge.data?.stale_after_ms ?? 60_000;
+      const agents = edge.data?.agents ?? [];
+      const bridgeUp = agents.some((a) => a.last_seen_ms < staleMs);
+      if (edge.isLoading) {
+        msg = "camera unreachable";
+        hint = "checking the bridge…";
+      } else if (!bridgeUp) {
+        msg = "bridge offline";
+        hint = "nothing on-site can be reached — start the bridge / check its box";
+      } else if (klass === "offline" || klass === "unknown") {
+        msg = "printer unreachable";
+        hint = "the bridge is connected, so it's probably the printer — powered off (maybe on purpose) or unplugged";
+      } else {
+        msg = "camera unreachable";
+        hint = "the printer itself is responding and the bridge is fine — check the camera / LAN-access settings";
+      }
+    }
+    return (
+      <span className="flex flex-col items-center gap-1 text-faint text-[11px] text-center px-3">
+        <Camera size={18} /> {msg}
+        {hint && <span className="text-[10px] text-faint/80">{hint}</span>}
+      </span>
+    );
+  }
+  return <img src={url} alt={`${name} camera`} draggable={false} className="w-full h-full object-cover" />;
 }
 
 function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, selected, onToggleSelect }: {
@@ -3065,8 +3422,10 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
           <div className="aspect-video bg-black/40 flex items-center justify-center overflow-hidden">
             {d.snapshot_relay ? (
               <RelaySnapshotFill slug={slug} connId={connId} deviceId={d.id} name={d.name} live={d.klass === "printing" || d.klass === "paused"} />
+            ) : d.lan_camera ? (
+              <LanCameraFill slug={slug} connId={connId} deviceId={d.id} name={d.name} live={d.klass === "printing" || d.klass === "paused"} klass={d.klass} />
             ) : d.camera_url ? (
-              <img src={d.camera_url} alt={`${d.name} camera`} className="w-full h-full object-cover" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+              <img src={d.camera_url} alt={`${d.name} camera`} draggable={false} className="w-full h-full object-cover" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
             ) : (
               <span className="flex flex-col items-center gap-1 text-faint text-[11px]"><Camera size={18} /> no camera</span>
             )}
@@ -3175,6 +3534,16 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
           </span>
         )}
       </div>
+      {/* AI failure watch: red when it auto-paused, else a subtle live score. */}
+      {d.failure?.paused ? (
+        <div className="mt-1 inline-flex items-center gap-1 text-[10px] text-ember-600 dark:text-ember-500 font-medium" title="AI flagged a likely print failure and paused it — check the print">
+          ⚠ AI: likely failure — paused
+        </div>
+      ) : d.failure?.watching && d.failure.score >= 0.2 ? (
+        <div className="mt-1 text-[10px] text-faint" title={`AI failure watch — rolling score ${d.failure.score.toFixed(2)}`}>
+          AI watch · {Math.round(d.failure.score * 100)}%
+        </div>
+      ) : null}
       {blocked && <div className="mt-1 text-[10px] text-ember-600 dark:text-ember-500">{blocked}</div>}
       {/* Next up — what this machine will do next (queued to it or its pool). */}
       {d.next_job && !att && (
@@ -3553,6 +3922,25 @@ function JobPanel({ job }: { job: { fractionPrinted?: number; currentLayer?: num
 // the row scrolls into view (IntersectionObserver) — and are hard-cached (30 min,
 // immutable per file) both here and server-side, so the bridge is hit at most once
 // per file the user actually looks at. NEVER eager-fetches the whole list.
+/** Where a row's knowledge comes from: SD = the file is on the printer's card
+ *  (printable right now); CLOUD = the cloud print-history knows it (name,
+ *  picture, outcome). A matched row carries both. */
+function SourceChip({ kind }: { kind: "sd" | "cloud" }) {
+  return (
+    <span
+      className={
+        "inline-flex items-center text-[9px] font-mono uppercase tracking-wider px-1 py-px rounded border " +
+        (kind === "sd"
+          ? "text-faint border-line dark:border-slate-700"
+          : "text-accent border-accent/40 bg-accent/5")
+      }
+      title={kind === "sd" ? "On the printer's SD card — printable now" : "Known to the cloud print history — name, picture & outcome come from there"}
+    >
+      {kind === "sd" ? "SD" : "Cloud"}
+    </span>
+  );
+}
+
 function FileRow({
   slug, connId, deviceId, file, printing, onPrint, onZoom, fmtSize, printed,
 }: {
@@ -3562,8 +3950,10 @@ function FileRow({
   onPrint: (name: string) => void;
   onZoom?: (src: string) => void;
   fmtSize: (b?: number) => string;
-  /** When this SD file matches a recent print, when + how it went. */
-  printed?: { at: string; status: string } | null;
+  /** The matched recent print — the row borrows its intelligence: the pleasant
+   *  model name becomes the title (raw filename drops to the subtitle) and the
+   *  cloud cover fills the thumbnail until the slicer preview is cached. */
+  printed?: { at: string; status: string; title?: string | null; cover?: string | null } | null;
 }) {
   const ref = useRef<HTMLLIElement>(null);
   const [visible, setVisible] = useState(false);
@@ -3588,23 +3978,40 @@ function FileRow({
     refetchOnWindowFocus: false,
   });
   const fi: DigifabFileInfo | null = fq.data?.info ?? null;
-  const thumb = fi?.thumbnail;
+  // Slicer preview (the actual plate) wins; the cloud cover (the model render)
+  // fills in instantly while it loads — or permanently when the file has none.
+  const thumb = fi?.thumbnail ?? printed?.cover ?? undefined;
+  // A matched print lends its pleasant model name; the raw filename stays
+  // visible underneath so "which file on the card is this" never gets lost.
+  const niceTitle = printed?.title && normPrintName(printed.title) !== normPrintName(file.name) ? printed.title : null;
   return (
     <li ref={ref} className="px-2 py-1 text-xs">
       <div className="flex items-center gap-2">
         <div className="w-10 h-10 shrink-0 rounded border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 overflow-hidden flex items-center justify-center">
           {thumb ? (
-            <img src={thumb} alt="" className="w-full h-full object-contain cursor-zoom-in" onClick={() => onZoom?.(thumb)} />
+            <img src={thumb} alt="" loading="lazy" className="w-full h-full object-contain cursor-zoom-in" onClick={() => onZoom?.(thumb)} />
           ) : (
             <span className="text-faint text-[9px]">{visible && fq.isFetching ? "…" : ""}</span>
           )}
         </div>
         <div className="flex-1 min-w-0">
           <button type="button" onClick={() => setExpanded((v) => !v)} className="block w-full truncate text-left text-content dark:text-mortar-100 hover:text-accent" title="Show print estimate">
-            {file.name}
+            {niceTitle ?? file.name}
           </button>
-          {file.modified && <div className="text-faint text-[10px]">{fmtFileDate(file.modified)}</div>}
+          {(niceTitle || file.modified) && (
+            <div className="text-faint text-[10px] truncate">
+              {niceTitle ? file.name : ""}
+              {niceTitle && file.modified ? " · " : ""}
+              {file.modified ? fmtFileDate(file.modified) : ""}
+            </div>
+          )}
         </div>
+        {/* Provenance: every row here is a card file (SD); a matched one is
+            ALSO known to the cloud history (CLOUD) — both chips show. */}
+        <span className="shrink-0 inline-flex items-center gap-1">
+          <SourceChip kind="sd" />
+          {printed && <SourceChip kind="cloud" />}
+        </span>
         {printed && (
           <span
             className={"shrink-0 inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded " + (printed.status === "completed" ? "text-moss-600 bg-moss-500/10" : "text-ember-600 bg-ember-500/10")}
@@ -3702,11 +4109,13 @@ function FilesPanel({ slug, connId, deviceId, onZoom, history, onOpenPrint, onRe
   const fmtSize = (b?: number) =>
     b == null ? "" : b >= 1e6 ? `${(b / 1e6).toFixed(1)} MB` : b >= 1e3 ? `${Math.round(b / 1e3)} KB` : `${b} B`;
   // Join history ↔ SD files by normalized name (containment either way, guarded
-  // by length so "a" can't match everything). Matched prints annotate their file
-  // row; unmatched ones become the "no longer on the card" tail below.
+  // by length so "a" can't match everything). A matched print LENDS the row its
+  // intelligence — the pleasant model name + the cloud cover image — while the
+  // raw filename stays as the subtitle; unmatched prints become the "no longer
+  // on the card" tail below.
   const hist = history ?? [];
   const { printedFor, unmatched } = useMemo(() => {
-    const printedFor = new Map<string, { at: string; status: string }>();
+    const printedFor = new Map<string, { at: string; status: string; title: string | null; cover: string | null }>();
     const used = new Set<string>();
     for (const f of files) {
       const nf = normPrintName(f.name);
@@ -3718,10 +4127,21 @@ function FilesPanel({ slug, connId, deviceId, onZoom, history, onOpenPrint, onRe
         const hit = (x: string) => x.length >= 4 && (nf.includes(x) || x.includes(nf));
         return hit(nh) || hit(nh2);
       });
-      if (m) { printedFor.set(f.name, { at: m.at, status: m.status }); used.add(m.id); }
+      if (m) {
+        printedFor.set(f.name, { at: m.at, status: m.status, title: m.file_ref || null, cover: m.cover ?? null });
+        used.add(m.id);
+      }
     }
     return { printedFor, unmatched: hist.filter((h) => !used.has(h.id)) };
   }, [files, hist]);
+  // Enriched entries (a matched print = a name + usually a picture) read as the
+  // real list; the anonymous cache files sit below them. Sort applies within
+  // each group.
+  const grouped = useMemo(() => {
+    const matched = sorted.filter((f) => printedFor.has(f.name));
+    const rest = sorted.filter((f) => !printedFor.has(f.name));
+    return [...matched, ...rest];
+  }, [sorted, printedFor]);
   const refresh = async () => {
     setRefreshing(true);
     try {
@@ -3760,7 +4180,7 @@ function FilesPanel({ slug, connId, deviceId, onZoom, history, onOpenPrint, onRe
         <div className="text-xs text-muted dark:text-slate-400 italic">No files reported (this printer may not list them).</div>
       ) : (
         <ul className="divide-y divide-line dark:divide-slate-800 border border-line dark:border-slate-700 rounded max-h-72 overflow-y-auto">
-          {sorted.map((f) => (
+          {grouped.map((f) => (
             <FileRow key={f.name} slug={slug} connId={connId} deviceId={deviceId} file={f} printing={printing} onPrint={doPrint} onZoom={onZoom} fmtSize={fmtSize} printed={printedFor.get(f.name)} />
           ))}
         </ul>
@@ -3784,6 +4204,7 @@ function FilesPanel({ slug, connId, deviceId, onZoom, history, onOpenPrint, onRe
                   <span className="block truncate text-content dark:text-mortar-100">{r.file_ref}</span>
                   <span className="block truncate text-faint text-[10px]">{r.sub_label && r.sub_label !== r.file_ref ? r.sub_label + " · " : ""}{new Date(r.at).toLocaleDateString()}</span>
                 </button>
+                <SourceChip kind="cloud" />
                 {onReprint && isReprintable(r) && (
                   <button type="button" onClick={() => onReprint(r)} className="shrink-0 text-accent hover:underline">
                     Print again
@@ -4018,8 +4439,12 @@ function PrinterDetailModal({ slug, connId, device, onClose }: { slug: string; c
   // to display name (Bambu cloud tasks only have names). Fixes the audit B2.6
   // hole where raw device ids / renames silently orphaned a printer's history.
   const mine = (history.data?.recent ?? [])
-    .filter((r) => (r.device_id ? r.connection_id === connId && r.device_id === device.id : r.device === device.name))
-    .slice(0, 24); // enough to annotate the file list + a meaningful history tail
+    .filter((r) =>
+      r.device_id
+        ? r.connection_id === connId && r.device_id === device.id
+        : r.device.trim().toLowerCase() === device.name.trim().toLowerCase(),
+    )
+    .slice(0, 60); // enough to annotate a full SD card + a meaningful history tail
   const lbl = "text-[10px] font-mono uppercase tracking-widest text-faint";
 
   return (
@@ -4652,3 +5077,239 @@ function BulkAddModal({ slug, onClose, onDone }: { slug: string; onClose: () => 
     </Modal>
   );
 }
+
+// ── Production runs — "make N of these, stop when done" on a pool. The run
+// mints ordinary pool jobs to the over-dispatch ceiling; the bed-clear verdict
+// is what counts a plate (good counts, scrapped auto-replaces). ──
+function ProductionRunsSection({ slug }: { slug: string }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const confirm = useConfirm();
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [poolId, setPoolId] = useState("");
+  const [fileId, setFileId] = useState("");
+  const [target, setTarget] = useState(10);
+  const [ppp, setPpp] = useState(1);
+
+  const runs = useQuery({
+    queryKey: ["digifab-runs", slug],
+    queryFn: () => api.listDigifabRuns(slug),
+    enabled: !!slug,
+    refetchInterval: 10_000,
+  });
+  const pools = useQuery({
+    queryKey: ["digifab-pools", slug],
+    queryFn: () => api.listDigifabPools(slug),
+    enabled: !!slug && open,
+  });
+  const library = useQuery({
+    queryKey: ["digifab-library", slug],
+    queryFn: () => api.listDigifabLibrary(slug),
+    enabled: !!slug && open,
+  });
+
+  const refresh = () => void qc.invalidateQueries({ queryKey: ["digifab-runs", slug] });
+  const create = useMutation({
+    mutationFn: () =>
+      api.createDigifabRun(slug, {
+        name: name.trim(),
+        pool_id: poolId,
+        file_id: fileId,
+        parts_per_plate: ppp,
+        target_qty: target,
+      }),
+    onSuccess: () => {
+      toast.success("Run started — plates are queueing onto the pool.");
+      setOpen(false);
+      setName("");
+      refresh();
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't create the run"),
+  });
+  const patch = useMutation({
+    mutationFn: (v: { id: string; body: { status?: "active" | "paused" | "cancelled" } }) => api.patchDigifabRun(slug, v.id, v.body),
+    onSuccess: refresh,
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't update the run"),
+  });
+
+  const items = runs.data?.items ?? [];
+  const active = items.filter((r) => r.status === "active" || r.status === "paused");
+  const done = items.filter((r) => r.status === "completed" || r.status === "cancelled").slice(0, 5);
+  if (!items.length && !open) {
+    return (
+      <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 flex items-center gap-3">
+        <Layers size={16} className="text-accent shrink-0" />
+        <div className="flex-1 text-sm text-muted dark:text-slate-400">
+          <span className="font-medium text-content dark:text-mortar-100">Production runs</span> — "make 250 of these,
+          stop when done." Pick a pool, a plate file, and a target; the farm does the rest.
+        </div>
+        <button onClick={() => setOpen(true)} className="shrink-0 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm transition">
+          New run
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <Layers size={16} className="text-accent" />
+        <h2 className="text-sm font-semibold text-content dark:text-mortar-100 flex-1">Production runs</h2>
+        <button onClick={() => setOpen(true)} className="rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-xs transition">
+          New run
+        </button>
+      </div>
+
+      {active.length === 0 && <p className="text-sm text-faint dark:text-slate-400">No active runs.</p>}
+      <ul className="space-y-2">
+        {active.map((r) => (
+          <RunRow key={r.id} run={r} onPatch={(body) => patch.mutate({ id: r.id, body })} confirm={confirm} />
+        ))}
+      </ul>
+      {done.length > 0 && (
+        <details className="text-xs text-muted dark:text-slate-400">
+          <summary className="cursor-pointer">Recently finished ({done.length})</summary>
+          <ul className="mt-2 space-y-1">
+            {done.map((r) => (
+              <li key={r.id} className="flex items-center gap-2">
+                <span className="font-medium text-content dark:text-mortar-200">{r.name}</span>
+                <span>{r.completed_qty}/{r.target_qty}</span>
+                <span className="uppercase text-[10px] font-mono">{r.status}</span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+
+      <Modal open={open} onClose={() => setOpen(false)} title="New production run">
+        <div className="space-y-3 text-sm">
+          <label className="block">
+            <span className="text-xs text-muted dark:text-slate-400">Name</span>
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Bracket run — July"
+              className="mt-1 w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5" />
+          </label>
+          <label className="block">
+            <span className="text-xs text-muted dark:text-slate-400">Pool</span>
+            <select value={poolId} onChange={(e) => setPoolId(e.target.value)}
+              className="mt-1 w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5">
+              <option value="">Pick a pool…</option>
+              {(pools.data?.items ?? []).map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="text-xs text-muted dark:text-slate-400">Plate file (library)</span>
+            <select
+              value={fileId}
+              onChange={(e) => {
+                setFileId(e.target.value);
+                // Prefill parts-per-plate from the file's slicer metadata (the
+                // `Nx …` filename convention) — editable, just a head start.
+                const item = (library.data?.items ?? []).find((f) => f.file_id === e.target.value);
+                if (item?.metadata?.parts_per_plate) setPpp(item.metadata.parts_per_plate);
+              }}
+              className="mt-1 w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5">
+              <option value="">Pick a file…</option>
+              {(library.data?.items ?? []).map((f) => (
+                <option key={f.id} value={f.file_id}>{f.name}</option>
+              ))}
+            </select>
+            {(() => {
+              const item = (library.data?.items ?? []).find((f) => f.file_id === fileId);
+              const md = item?.metadata;
+              if (!md || (!md.material && !md.estimated_sec)) return null;
+              const t = md.estimated_sec ? `${Math.floor(md.estimated_sec / 3600)}h ${Math.round((md.estimated_sec % 3600) / 60)}m` : null;
+              return (
+                <span className="mt-1 block text-[11px] text-faint dark:text-slate-500">
+                  {[md.material, t ? `~${t}/plate` : null, md.parts_per_plate ? `${md.parts_per_plate} parts/plate` : null].filter(Boolean).join(" · ")}
+                </span>
+              );
+            })()}
+          </label>
+          <div className="flex gap-3">
+            <label className="block flex-1">
+              <span className="text-xs text-muted dark:text-slate-400">Target quantity</span>
+              <input type="number" min={1} value={target} onChange={(e) => setTarget(Math.max(1, Number(e.target.value)))}
+                className="mt-1 w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5" />
+            </label>
+            <label className="block flex-1">
+              <span className="text-xs text-muted dark:text-slate-400">Parts per plate</span>
+              <input type="number" min={1} value={ppp} onChange={(e) => setPpp(Math.max(1, Number(e.target.value)))}
+                className="mt-1 w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5" />
+            </label>
+          </div>
+          <p className="text-xs text-faint dark:text-slate-500">
+            {Math.ceil(target / Math.max(1, ppp))} plate{Math.ceil(target / Math.max(1, ppp)) === 1 ? "" : "s"} will be
+            printed. A plate only counts when you clear the bed with a <em>good</em> verdict — scrapped plates are
+            reprinted automatically.
+          </p>
+          <div className="flex justify-end gap-2 pt-1">
+            <button onClick={() => setOpen(false)} className="rounded border border-line dark:border-slate-600 px-3 py-1.5 text-sm">Cancel</button>
+            <button
+              disabled={!name.trim() || !poolId || !fileId || create.isPending}
+              onClick={() => create.mutate()}
+              className="rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white px-3 py-1.5 text-sm transition"
+            >
+              {create.isPending ? "Starting…" : "Start run"}
+            </button>
+          </div>
+        </div>
+      </Modal>
+    </section>
+  );
+}
+
+function RunRow({
+  run,
+  onPatch,
+  confirm,
+}: {
+  run: DigifabRun;
+  onPatch: (body: { status?: "active" | "paused" | "cancelled" }) => void;
+  confirm: ReturnType<typeof useConfirm>;
+}) {
+  const pct = Math.min(100, Math.round((run.completed_qty / Math.max(1, run.target_qty)) * 100));
+  return (
+    <li className="rounded-lg border border-line dark:border-slate-800 px-3 py-2">
+      <div className="flex items-center gap-2 text-sm">
+        <span className="font-medium text-content dark:text-mortar-100">{run.name}</span>
+        {run.status === "paused" && (
+          <span className="text-[10px] font-mono uppercase rounded-full px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300">paused</span>
+        )}
+        <span className="text-xs text-muted dark:text-slate-400 flex-1 truncate">{run.file_ref}</span>
+        <span className="text-xs font-mono text-content dark:text-mortar-200">{run.completed_qty}/{run.target_qty}</span>
+      </div>
+      <div className="mt-1.5 h-1.5 rounded bg-subtle dark:bg-slate-800 overflow-hidden">
+        <div className="h-full bg-cobble-600 transition-all" style={{ width: `${pct}%` }} />
+      </div>
+      <div className="mt-1.5 flex items-center gap-3 text-[11px] text-faint dark:text-slate-500">
+        <span>{run.jobs_printing} printing</span>
+        <span>{run.jobs_queued} queued</span>
+        {run.jobs_awaiting_verdict > 0 && <span className="text-amber-600 dark:text-amber-400">{run.jobs_awaiting_verdict} awaiting verdict</span>}
+        {run.jobs_scrapped > 0 && <span>{run.jobs_scrapped} scrapped</span>}
+        <span className="flex-1" />
+        {run.status === "active" ? (
+          <button onClick={() => onPatch({ status: "paused" })} className="text-muted hover:text-accent">Pause</button>
+        ) : (
+          <button onClick={() => onPatch({ status: "active" })} className="text-muted hover:text-accent">Resume</button>
+        )}
+        <button
+          onClick={() => {
+            void confirm({
+              title: "Cancel this run?",
+              message: `"${run.name}" is at ${run.completed_qty}/${run.target_qty}. Queued plates are cancelled; anything printing finishes normally.`,
+              confirmLabel: "Cancel run",
+              destructive: true,
+            }).then((ok) => ok && onPatch({ status: "cancelled" }));
+          }}
+          className="text-muted hover:text-red-500"
+        >
+          Cancel
+        </button>
+      </div>
+    </li>
+  );
+}
+

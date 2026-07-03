@@ -14,6 +14,9 @@ import { searchFeatures } from "../lib/feature-index";
 
 /** Anything (the mobile bar, the palette) can ask for the quick-add sheet. */
 export const OPEN_ADD_SHEET_EVENT = "cobblr:open-add-sheet";
+/** Programmatic opener (the full-sidebar foot's search button uses it — a
+ *  centered palette beats a cramped popover anchored in a 208px column). */
+export const OPEN_PALETTE_EVENT = "cobblr:open-palette";
 
 interface ActionRow {
   id: string;
@@ -50,7 +53,12 @@ export function CommandPalette() {
       if (e.key === "Escape") setOpen(false);
     }
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    const onOpenEvt = () => setOpen(true);
+    window.addEventListener(OPEN_PALETTE_EVENT, onOpenEvt);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener(OPEN_PALETTE_EVENT, onOpenEvt);
+    };
   }, []);
   useEffect(() => {
     if (open) setTimeout(() => inputRef.current?.focus(), 0);

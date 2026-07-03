@@ -11,11 +11,7 @@
 // `module`: the Dashboard only mounts widgets whose owning module is enabled
 // in the active workspace, so a registered-but-disabled module shows nothing.
 
-import {
-  useSyncExternalStore,
-  type ComponentType,
-  type ReactNode,
-} from "react";
+import { createContext, type ComponentType, type ReactNode, useContext, useEffect, useSyncExternalStore } from "react";
 import { Link } from "react-router-dom";
 
 /** A workspace instance of a multi-instance module (e.g. inventory's "Yarn"),
@@ -124,6 +120,18 @@ export function useDashboardWidgets(): DashboardWidgetSpec[] {
  *  not a smorgasbord. A big primary number, an optional secondary line, an
  *  optional ember "attention" border, the whole card a deep link. The icon is
  *  passed in by the caller (platform-web stays lucide-free). */
+
+/** Zero-tile collapse (dashboard audit 2026-07-03): a workspace with several
+ *  enabled-but-empty modules burned a full tile row on zeros. The host grid
+ *  provides this context; DashboardTile reports its emptiness and renders
+ *  nothing when empty (outside Arrange mode) — the grid shows the empties as
+ *  one quiet "Also enabled" line instead. No provider → tiles render normally. */
+export interface TileCollapse {
+  editing: boolean;
+  reportEmpty: (label: string, to: string, empty: boolean) => void;
+}
+export const TileCollapseContext = createContext<TileCollapse | null>(null);
+
 export function DashboardTile({
   to,
   icon: Icon,
@@ -131,6 +139,7 @@ export function DashboardTile({
   primary,
   secondary,
   attention,
+  empty,
 }: {
   to: string;
   icon: ComponentType<{ size?: number; className?: string }>;
@@ -138,28 +147,39 @@ export function DashboardTile({
   primary: ReactNode;
   secondary?: ReactNode;
   attention?: boolean;
+  /** Explicitly "loaded and zero" — set by the widget (it knows its loading
+   *  state; auto-detecting primary===0 would flicker-collapse during load). */
+  empty?: boolean;
 }) {
+  const collapse = useContext(TileCollapseContext);
+  useEffect(() => {
+    collapse?.reportEmpty(label, to, !!empty);
+  }, [collapse, label, to, empty]);
+  if (empty && collapse && !collapse.editing) return null;
+  // STAT-CHIP layout (prototype, the author sign-off pending): half the height of the
+  // old tile — label + icon left, the number right on the same line, the
+  // secondary fact underneath. Same grid, twice the density.
   return (
     <Link
       to={to}
       className={
-        "rounded-xl border bg-surface dark:bg-slate-900 p-4 hover:border-cobble-300 dark:hover:border-cobble-700 transition flex flex-col gap-2 " +
+        "rounded-lg border bg-surface dark:bg-slate-900 px-3 py-2.5 hover:border-cobble-300 dark:hover:border-cobble-700 transition flex flex-col gap-1 " +
         (attention
           ? "border-ember-300 dark:border-ember-700"
           : "border-line dark:border-slate-700")
       }
     >
       <div className="flex items-center gap-2">
-        <Icon size={14} className={attention ? "text-ember-500" : "text-accent"} />
-        <span className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
+        <Icon size={13} className={attention ? "text-ember-500" : "text-accent"} />
+        <span className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 truncate">
           {label}
         </span>
-      </div>
-      <div className="text-3xl font-semibold text-content dark:text-mortar-100 leading-none">
-        {primary}
+        <span className="ml-auto text-xl font-semibold text-content dark:text-mortar-100 leading-none">
+          {primary}
+        </span>
       </div>
       {secondary && (
-        <div className="text-[11px] text-muted dark:text-slate-400">{secondary}</div>
+        <div className="text-[11px] text-muted dark:text-slate-400 truncate">{secondary}</div>
       )}
     </Link>
   );

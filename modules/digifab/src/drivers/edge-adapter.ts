@@ -177,6 +177,18 @@ export class EdgeAdapterDriver implements MachineDriver {
     }
   }
 
+  /** Local failure model on the bridge (grabs its own frame + runs ONNX). Null
+   *  when the bridge has no model loaded (501/unsupported) or can't grab a frame,
+   *  so the caller falls back to the vision-AI path. */
+  async detectFailure(): Promise<{ probability: number } | null> {
+    try {
+      const data = (await this.req("GET", "/detect")) as { probability?: number } | null;
+      return data && typeof data.probability === "number" ? { probability: data.probability } : null;
+    } catch {
+      return null;
+    }
+  }
+
   /** One transport for every contract call. Tunnel mode routes through the relay
    *  (the body is JSON; an upload rides as { filename, data_b64 }); direct mode
    *  dials the bridge (an upload is multipart). */

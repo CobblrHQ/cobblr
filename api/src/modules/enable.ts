@@ -15,6 +15,8 @@ import { runMigrations } from "../db/migrate.js";
 import { getTenantPool, evictTenantPool } from "../db/tenant.js";
 import { getEntry, listEntries } from "./registry.js";
 import * as activity from "../platform/activity.js";
+import { clearServerManagedCache } from "../platform/entities.js";
+import { clearRelationDefsCache } from "../platform/relation-fields.js";
 
 /** Maintainer-curated foundational set. A module manifest can declare
  *  `band: "foundational"`, but the kernel only TREATS it as foundational
@@ -202,9 +204,18 @@ export async function enableModuleForOrg(
           ? (sql`${JSON.stringify(fd.choices)}::jsonb` as unknown as string[])
           : null,
         renderer: (fd as { renderer?: string | null }).renderer ?? null,
+        server_managed: (fd as { server_managed?: boolean }).server_managed ?? false,
+        ref_kind: (fd as { ref_kind?: string | null }).ref_kind ?? null,
       })
       .onConflict((b) => b.columns(["org_id", "entity_kind", "name"]).doNothing())
       .execute();
+  }
+  // A contributed def may be server_managed or a relation — drop the per-kind
+  // caches so the first read/write after enable sees the new field immediately,
+  // not after the TTL.
+  if (contributes.fieldDefs.length > 0) {
+    clearServerManagedCache();
+    clearRelationDefsCache();
   }
   for (const w of contributes.wires) {
     // No idempotency key on bindings; skip if a binding from this

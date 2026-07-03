@@ -32,7 +32,7 @@ import {
   observeScanPhoto,
   refreshCatalogImageByName,
 } from "../services/enrich-photo.js";
-import { searchImages, rankImageOptions, imageQuery } from "../services/ddg-images.js";
+import { searchImages, rankImageOptions, imageQuery, mediaSearchExtras } from "../services/ddg-images.js";
 import { assembleScanMenu, assembleMergedMenu, runMatchmaker } from "../services/matchmaker.js";
 import { parseReceipt } from "../services/receipt.js";
 import { reportBarcodeCorrection } from "../services/barcode-corrections.js";
@@ -893,6 +893,9 @@ const ConfirmBody = z.object({
   quantity: z.number().nonnegative().optional(),
   /** Module-specific extras forwarded verbatim to the create endpoint. */
   extras: z.record(z.unknown()).optional(),
+  /** Tags to attach to the created entity (session-theme "tag them all", or a
+   *  manual pick). Union'd with any pending_tags stashed on the item. */
+  tags: z.array(z.string().min(1).max(60)).max(20).optional(),
   /** Route into a specific module INSTANCE (e.g. a food-skinned "pantry"
    *  instance of inventory) instead of the module's default instance. The
    *  workspace-level instance slug; the platform's instance router resolves
@@ -1114,6 +1117,30 @@ inboxRouter.post(
       return;
     }
     const created = (await createRes.json()) as { id: string };
+
+    // Session-theme / manual tags: attach each to the created entity via the
+    // core-tags attach endpoint (creates the tag by name on the fly, idempotent
+    // on tag+entity). pending_tags stashed by /inbox/apply-theme union with any
+    // tags the confirm body carries. Best-effort — a tag failure never fails a
+    // confirm.
+    const stashedTags = ((row.suggested_metadata as { pending_tags?: unknown } | null)?.pending_tags);
+    const tagNames = [
+      ...new Set([
+        ...(Array.isArray(stashedTags) ? stashedTags.map((t) => String(t)) : []),
+        ...(parsed.data.tags ?? []),
+      ]),
+    ].filter((t) => t.trim());
+    for (const tag_name of tagNames) {
+      try {
+        await fetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/core-tags/attachments`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ tag_name, source_module: target.module, source_type: target.kind, source_id: created.id }),
+        });
+      } catch (err) {
+        console.error(`[core-scan] confirm tag "${tag_name}" failed:`, (err as Error)?.message ?? err);
+      }
+    }
 
     // Attach the catalog image (if any) as the new entity's
     // gallery photo via core-files.
@@ -1444,12 +1471,42 @@ inboxRouter.post(
       }
       const imageFileId = row.image_file_id;
       const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+      const photoHint = rerun?.hint;
+      // Stamp the hint as user_hint NOW (before the detached work) so it rides
+      // into the matchmaker too — the barcode path stamps below, but the photo
+      // path returns before it, which silently dropped the hint entirely.
+      if (photoHint) {
+        const meta = ((row.suggested_metadata ?? {}) as Record<string, unknown>) ?? {};
+        await db
+          .updateTable("core_scan_inbox_items")
+          .set({ suggested_metadata: JSON.stringify({ ...meta, user_hint: photoHint }) as never, updated_at: new Date() })
+          .where("id", "=", id)
+          .execute();
+      }
+      // "This is wrong" on a photo: the user-picked catalog image was anchoring
+      // the identity (the re-read kept seeing the picked product). Drop its lock
+      // + refs so the re-identify — and the user's hint — aren't fighting a stale
+      // image. A plain hint/enrich keeps the picked image (it's still the item).
+      if (rerun?.wrong) {
+        const meta = ((row.suggested_metadata ?? {}) as Record<string, unknown>) ?? {};
+        delete (meta as { catalog_image_user_set?: unknown }).catalog_image_user_set;
+        await db
+          .updateTable("core_scan_inbox_items")
+          .set({
+            catalog_image_file_id: null,
+            catalog_image_url: null,
+            suggested_metadata: JSON.stringify({ ...meta, ...(photoHint ? { user_hint: photoHint } : {}) }) as never,
+            updated_at: new Date(),
+          })
+          .where("id", "=", id)
+          .execute();
+      }
       // Capture the caller now — the detached work runs after the request, so
       // route the AI through their personal connection (the 'own' path).
       const uid = sessionUser(req).id;
       void (async () => {
         const workDb = (await platform().tenants.getDb(ctx.org.id)) as unknown as typeof db;
-        await enrichPhotoItem({ db: workDb, orgId: ctx.org.id, itemId: id, imageFileId, userId: uid, force: true });
+        await enrichPhotoItem({ db: workDb, orgId: ctx.org.id, itemId: id, imageFileId, userId: uid, force: true, hint: photoHint });
         void platform().events.emit("core-scan.scan.enriched", { orgId: ctx.org.id, itemId: id });
         await matchItem({ orgId: ctx.org.id, orgSlug: ctx.org.slug, token, baseUrl, itemId: id, force: true });
       })().catch((err) => {
@@ -1544,14 +1601,20 @@ inboxRouter.get(
     const db = tenantDb(req);
     const row = await db
       .selectFrom("core_scan_inbox_items")
-      .select(["suggested_name", "suggested_manufacturer", "barcode_text"])
+      .select(["suggested_name", "suggested_manufacturer", "barcode_text", "suggested_candidates"])
       .where("id", "=", id ?? "")
       .executeTakeFirst();
+    // A user-supplied search term overrides the derived query entirely (the
+    // "change the DDG search" input) — search EXACTLY what they typed.
+    const override = typeof req.query.q === "string" ? req.query.q.trim() : "";
     // Only image-search a REAL identified name. An unidentified item ("Unknown
     // Item") or a bare barcode number returns junk (a "?" bag, an "UNKNOWN" sign),
     // so return nothing rather than searching for it.
     const name = row?.suggested_name?.trim() ?? "";
-    const q = isJunkName(name) ? null : imageQuery(name, row?.suggested_manufacturer ?? null);
+    // Author/media extras (Laura Ingalls Wilder + "book") sharpen a weak title.
+    const { author, mediaWord } = mediaSearchExtras(row?.suggested_candidates as Array<{ fields?: Record<string, unknown> }> | null);
+    const extra = [author, mediaWord].filter(Boolean).join(" ") || null;
+    const q = override ? override : isJunkName(name) ? null : imageQuery(name, row?.suggested_manufacturer ?? null, extra);
     if (!q) {
       res.json({ items: [] });
       return;
@@ -2423,6 +2486,128 @@ inboxRouter.post(
 );
 
 // ──────────────────────── POST /inbox/combine ───────────────────────
+// ─────────── Session theme: derive a tag + category ON THE FLY ───────────
+// After a capture session, the pending items often share a theme (the author scanned
+// aviation gear: some books, some accessories). One AI call over the pending
+// items proposes (a) ONE cross-cutting TAG that fits them ALL regardless of
+// where each lands, and (b) a CATEGORY value for the subset that are generic
+// products (not titled media like books, which route to a Bookshelf). Nothing
+// is hardcoded — the theme is derived; degrades to no-suggestion when AI is off.
+
+interface ThemeItemLite {
+  id: string;
+  name: string | null;
+  category: string | null;
+  is_titled_media: boolean;
+}
+
+async function pendingThemeItems(db: ReturnType<typeof tenantDb>): Promise<ThemeItemLite[]> {
+  const rows = await db
+    .selectFrom("core_scan_inbox_items")
+    .select(["id", "suggested_name", "suggested_metadata", "suggested_candidates"])
+    .where("status", "=", "pending")
+    .orderBy("created_at", "desc")
+    .limit(50)
+    .execute();
+  const mediaField = /^(author|isbn|director|artist|composer|writer|edition|publisher|issn)$/i;
+  return rows.map((r) => {
+    const meta = (r.suggested_metadata ?? {}) as { category?: unknown; hint_category?: { domain?: unknown } };
+    const cands = (r.suggested_candidates ?? []) as Array<{ fields?: Record<string, unknown> }>;
+    const isMedia = cands.some((c) => Object.keys(c.fields ?? {}).some((k) => mediaField.test(k)));
+    const cat = typeof meta.category === "string" ? meta.category : typeof meta.hint_category?.domain === "string" ? meta.hint_category.domain : null;
+    return { id: r.id, name: r.suggested_name, category: cat, is_titled_media: isMedia };
+  });
+}
+
+inboxRouter.get(
+  "/inbox/session-theme",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const db = tenantDb(req);
+    const ctx = tenantContext(req);
+    const items = await pendingThemeItems(db);
+    if (items.length < 2) {
+      res.json({ tag: null, tag_item_ids: [], category: null });
+      return;
+    }
+    const list = items.map((i, n) => `${n + 1}. ${i.name ?? "(unnamed)"}${i.category ? ` [${i.category}]` : ""}${i.is_titled_media ? " (titled media)" : ""}`).join("\n");
+    const system =
+      "You spot the common theme in a batch of just-scanned inventory items and propose a shared tag + an optional category. " +
+      "Output ONLY one JSON object, no prose: " +
+      '{"tag": "<a short 1-2 word tag that fits ALL items, Title Case, or null if they have no clear shared theme>", ' +
+      '"category": "<a category value (e.g. \"Aviation Accessories\") for the NON-titled-media items only, or null>", ' +
+      '"category_item_numbers": [<the 1-based numbers of the items the category applies to — the generic products, NEVER titled media>]}. ' +
+      "Rules: the tag must genuinely fit every item or be null (don't force it). The category groups the non-media products; titled media (books) get the tag but not the category. Derive both from what you see — invent nothing generic like \"Miscellaneous\".";
+    let parsed: { tag?: unknown; category?: unknown; category_item_numbers?: unknown } | null = null;
+    try {
+      const r = await platform().ai.invoke({
+        orgId: ctx.org.id,
+        capability: "chat",
+        input: { messages: [{ role: "system", content: system }, { role: "user", content: `The ${items.length} pending items:\n${list}` }] },
+        source: { kind: "core-scan:session-theme", id: ctx.org.id },
+        userId: sessionUser(req).id,
+      });
+      const raw = (r.result as { content?: string; text?: string }).content ?? (r.result as { text?: string }).text ?? "";
+      const m = raw.match(/\{[\s\S]*\}/);
+      if (m) parsed = JSON.parse(m[0]);
+    } catch {
+      /* AI off / errored → no suggestion */
+    }
+    const tag = parsed && typeof parsed.tag === "string" && parsed.tag.trim() ? parsed.tag.trim().slice(0, 60) : null;
+    const catValue = parsed && typeof parsed.category === "string" && parsed.category.trim() ? parsed.category.trim().slice(0, 80) : null;
+    const catNums = Array.isArray(parsed?.category_item_numbers) ? parsed!.category_item_numbers.map((n) => Number(n)) : [];
+    const catIds = catNums.map((n) => items[n - 1]?.id).filter((x): x is string => !!x);
+    res.json({
+      tag,
+      tag_item_ids: tag ? items.map((i) => i.id) : [],
+      category: catValue && catIds.length ? { value: catValue, item_ids: catIds } : null,
+    });
+  }),
+);
+
+// POST /inbox/apply-theme — stash the accepted theme onto the pending items:
+// pending_tags (attached to the entity at confirm) + a category hint the
+// confirm form pre-fills. No entity is created here.
+const ApplyThemeBody = z.object({
+  tag: z.string().min(1).max(60).optional(),
+  tag_item_ids: z.array(z.string().uuid()).max(200).default([]),
+  category: z.object({ value: z.string().min(1).max(80), item_ids: z.array(z.string().uuid()).max(200) }).optional(),
+});
+inboxRouter.post(
+  "/inbox/apply-theme",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const parsed = ApplyThemeBody.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const db = tenantDb(req);
+    const catIds = new Set(parsed.data.category?.item_ids ?? []);
+    const catValue = parsed.data.category?.value;
+    const touched = new Set([...(parsed.data.tag ? parsed.data.tag_item_ids : []), ...catIds]);
+    let tagged = 0;
+    let categorized = 0;
+    for (const id of touched) {
+      const row = await db.selectFrom("core_scan_inbox_items").select(["suggested_metadata"]).where("id", "=", id).where("status", "=", "pending").executeTakeFirst();
+      if (!row) continue;
+      const meta = ((row.suggested_metadata ?? {}) as Record<string, unknown>) ?? {};
+      const overlay: Record<string, unknown> = {};
+      if (parsed.data.tag && parsed.data.tag_item_ids.includes(id)) {
+        const cur = Array.isArray(meta.pending_tags) ? (meta.pending_tags as string[]) : [];
+        if (!cur.includes(parsed.data.tag)) { overlay.pending_tags = [...cur, parsed.data.tag]; tagged++; }
+      }
+      if (catValue && catIds.has(id)) { overlay.suggested_category = catValue; categorized++; }
+      if (Object.keys(overlay).length === 0) continue;
+      // jsonb-merge onto the LIVE row so a concurrent matchmaker write can't
+      // clobber the tag/category (and we don't clobber IT).
+      await db
+        .updateTable("core_scan_inbox_items")
+        .set({ suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify(overlay)}::jsonb` as never, updated_at: new Date() })
+        .where("id", "=", id)
+        .execute();
+    }
+    res.json({ tagged, categorized });
+  }),
+);
+
 // "These look like the same product — combine." Merge several pending items
 // (you scanned 4 of one thing, but one pack carried a different barcode) into a
 // SINGLE line with the summed quantity. The distinct barcodes are preserved in
@@ -2631,11 +2816,14 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
       .set({
         suggested_candidates: JSON.stringify(candidates) as never,
         ...(adoptName ? { suggested_name: candName } : {}),
-        suggested_metadata: JSON.stringify({
-          ...((row.suggested_metadata ?? {}) as Record<string, unknown>),
+        // jsonb-merge ONLY the keys this match sets onto the LIVE row value —
+        // never a stale in-memory snapshot. Otherwise a concurrent write (the
+        // detached matchmaker races apply-theme's pending_tags, or a user_hint /
+        // series stamp) is silently clobbered. `||` overlays keys DB-side.
+        suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({
           ...(photoObservations ? { photo_observations: photoObservations } : {}),
           matched_at: new Date().toISOString(),
-        }) as never,
+        })}::jsonb` as never,
         ...(top && typeof top === "object" && "notes" in top && (top as { notes?: string }).notes && !barcodeIdentified
           ? {
               ai_notes: (top as { notes: string }).notes,

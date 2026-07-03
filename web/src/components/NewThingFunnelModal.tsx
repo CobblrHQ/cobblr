@@ -30,9 +30,12 @@ const NEW_MENU = "__new__";
 export function NewThingFunnelModal({
   open,
   onClose,
+  inline,
 }: {
   open: boolean;
   onClose: () => void;
+  /** Render in-flow (settings page mode) instead of as an overlay. */
+  inline?: boolean;
 }) {
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
@@ -167,6 +170,7 @@ export function NewThingFunnelModal({
       }}
       title="New thing in workspace"
       size="md"
+      inline={inline}
     >
       {step === "choose-shape" && (
         <div className="space-y-3">

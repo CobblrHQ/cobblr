@@ -72,6 +72,7 @@ function ProjectsDashboardWidget({ slug, getToken }: DashboardWidgetProps) {
       icon={ListChecks}
       label="projects"
       primary={active}
+      empty={!projects.isLoading && total === 0}
       secondary={
         blockedCount > 0 ? (
           <span className="text-ember-600 dark:text-ember-500">{blockedCount} blocked</span>

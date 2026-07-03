@@ -14,6 +14,10 @@ export interface UsersTable {
   password_hash: string;
   display_name: string;
   active: Generated<boolean>;
+  /** Per-user theme preference: "light" | "dark" | null (follow device/OS).
+   *  Follows the user across devices + workspaces; never touches a workspace's
+   *  own skin or another member's view. */
+  theme_pref: "light" | "dark" | null;
   /** True when an admin minted this account with a temp password.
    *  Login succeeds; the response carries the flag and the web
    *  client redirects to /me/force-password-reset until the user
@@ -135,6 +139,9 @@ export interface OrgMembershipsTable {
   /** Per-user switcher order (0-based). Set by PATCH /me/workspaces/order;
    *  GET /me orders by it. Backfilled by joined_at in 20260620-060. */
   position: Generated<number>;
+  /** Per-user DEFAULT workspace — a fresh device opens into it. One true row
+   *  per user (partial unique index). Set via PATCH /me/default-workspace. */
+  is_default: Generated<boolean>;
 }
 
 export interface MigrationsTable {
@@ -661,7 +668,7 @@ export interface BundlesTable {
   enabled_features: Generated<string[]>;
 }
 
-export type FieldDefType = "text" | "number" | "boolean" | "date" | "url" | "computed";
+export type FieldDefType = "text" | "number" | "boolean" | "date" | "url" | "computed" | "relation";
 
 export interface ModuleFieldDefsTable {
   id: Generated<string>;
@@ -694,6 +701,15 @@ export interface ModuleFieldDefsTable {
   /** Form-builder section this field belongs to (field_sections.id), or null
    *  for ungrouped. Set together with position by the reorder call. */
   section_id: string | null;
+  /** Server-managed: the value is computed/stamped server-side (e.g.
+   *  core-mobility's `away_since`) and a client write is never accepted — the
+   *  write router preserves the stored value across an unrelated edit. */
+  server_managed: Generated<boolean>;
+  /** For type='relation': the entity-kind id this field references
+   *  (e.g. "core-locations:location"). Null for non-relation defs. The stored
+   *  VALUE (a target id) lives in the entity's metadata; the read layer resolves
+   *  it to the target's title and injects `<name>_label`. */
+  ref_kind: string | null;
   created_at: Generated<Date>;
 }
 

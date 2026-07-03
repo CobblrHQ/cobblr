@@ -70,15 +70,47 @@ export function catalogScore(r: DdgImageResult, brand?: string | null): number {
  *  ALREADY carries it — the full string, or all of the brand's significant
  *  (3+ char) words already appear — so we never emit "Kirkland Signature
  *  Kirkland Signature …". */
-export function imageQuery(name: string, brand?: string | null): string {
+export function imageQuery(name: string, brand?: string | null, extra?: string | null): string {
   const n = (name ?? "").trim();
   const b = (brand ?? "").trim();
-  if (!b) return n;
+  // Extra terms sharpen a weak title: an author + a media word ("book") turns
+  // "Farmer Boy" (which finds generic farm images) into "Farmer Boy Laura
+  // Ingalls Wilder book" (the actual cover). Appended, deduped against the name.
+  const ex = (extra ?? "").trim();
+  const withExtra = (q: string): string => {
+    if (!ex) return q;
+    const ql = q.toLowerCase();
+    const parts = ex.split(/\s+/).filter((w) => w.length >= 2 && !ql.includes(w.toLowerCase()));
+    return parts.length ? `${q} ${parts.join(" ")}`.trim() : q;
+  };
+  if (!b) return withExtra(n);
   const nl = n.toLowerCase();
-  if (nl.includes(b.toLowerCase())) return n;
+  if (nl.includes(b.toLowerCase())) return withExtra(n);
   const brandWords = b.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3);
-  if (brandWords.length > 0 && brandWords.every((w) => nl.includes(w))) return n;
-  return `${b} ${n}`.trim();
+  if (brandWords.length > 0 && brandWords.every((w) => nl.includes(w))) return withExtra(n);
+  return withExtra(`${b} ${n}`.trim());
+}
+
+/** Search-sharpening extras derived from an item's matchmaker candidates: an
+ *  author/creator (much stronger than a publisher for a book) + a media-type
+ *  word so a bare title finds the actual cover, not generic theme images.
+ *  Generic (any titled-media field), nothing book-specific hardcoded. */
+export function mediaSearchExtras(
+  candidates: Array<{ fields?: Record<string, unknown> }> | null | undefined,
+): { author: string | null; mediaWord: string | null } {
+  const creatorKeys = ["author", "artist", "director", "composer", "writer"];
+  const mediaByKey: Record<string, string> = { isbn: "book", author: "book", director: "movie", artist: "album", issn: "magazine" };
+  let author: string | null = null;
+  let mediaWord: string | null = null;
+  for (const c of candidates ?? []) {
+    const f = c.fields ?? {};
+    for (const k of Object.keys(f)) {
+      const lk = k.toLowerCase();
+      if (!author && creatorKeys.includes(lk) && typeof f[k] === "string" && (f[k] as string).trim()) author = (f[k] as string).trim();
+      if (!mediaWord && mediaByKey[lk]) mediaWord = mediaByKey[lk];
+    }
+  }
+  return { author, mediaWord };
 }
 
 /** Reorder image options best-catalog-first (stable on ties). */

@@ -87,6 +87,9 @@ export default defineModule({
         label: "Update an asset's fields",
         description:
           "Set metadata fields on an asset from a wire — the inbound-telemetry shape. Canonical use: an inbound webhook (OBD dongle, Home Assistant, telematics) fires core-integrations.inbound.received and a target:\"none\" wire invokes this with template-rendered args. `asset` (id or name) is the one control arg; every other arg is a metadata field to set ({ asset: \"{{event.body.vehicle}}\", mileage: \"{{event.body.odometer}}\" }). Metadata only — native columns aren't wire-writable.",
+        // DELIBERATELY universal: the target:"none" inbound-telemetry shape —
+        // the wire fires on webhook events with no entity source; the handler
+        // locates the asset from args. Scoping would break that pattern.
         appliesTo: { any: true },
         invokeHandler: "assets.update-fields",
         // Wire-driven (telemetry shape) — not a per-row button.

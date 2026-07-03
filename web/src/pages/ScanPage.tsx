@@ -39,6 +39,7 @@ import {
   X,
 } from "lucide-react";
 import { Modal, useImageSrc, useToast, usePageTitle } from "@cobblr/platform-web";
+import { ScanImportModal } from "../components/ScanImportModal";
 import { LocationPicker } from "../components/LocationPicker";
 import { ImageSearchPicker } from "../components/ImageSearchPicker";
 import { TrackedMatchBanner } from "../components/TrackedMatchBanner";
@@ -179,9 +180,23 @@ function productTokens(name: string | null | undefined, brand: string): Set<stri
   const brandToks = nameTokens(brand);
   return new Set([...nameTokens(name)].filter((w) => !brandToks.has(w)));
 }
+/** Titled works — books, movies, albums — are NOT combinable by name: their
+ *  "brand" is a publisher/studio shared across a whole catalog, and series
+ *  titles overlap heavily ("Little TOWN on the Prairie" vs "Little HOUSE on the
+ *  Prairie" share little+prairie → falsely "the same product"). The differing
+ *  word IS the identity, so any name-overlap combine is wrong here. Detected by
+ *  a creator/identifier field on any candidate (author/isbn/director/artist).
+ *  Barcode-match combine still applies — that's identity, not name overlap. */
+const TITLED_MEDIA_FIELD = /^(author|isbn|director|artist|composer|writer|edition|publisher|issn)$/i;
+function isTitledMedia(it: ScanInboxItem): boolean {
+  return (it.suggested_candidates ?? []).some((c) =>
+    Object.keys(c.fields ?? {}).some((k) => TITLED_MEDIA_FIELD.test(k)),
+  );
+}
 function findCombineClusters(items: ScanInboxItem[]): ScanInboxItem[][] {
   const clusters: { brand: string; seed: Set<string>; items: ScanInboxItem[] }[] = [];
   for (const it of items) {
+    if (isTitledMedia(it)) continue; // a different title = a different work
     const brand = (it.suggested_manufacturer ?? "").trim().toLowerCase();
     if (!brand || !it.suggested_name) continue;
     const product = productTokens(it.suggested_name, brand);
@@ -408,6 +423,20 @@ function ScanDrivePanel({ drive }: { drive: ScanDrive }) {
   );
 }
 
+/** The creator of a titled work (author/director/artist/…) from the item's
+ *  candidate fields — a better subtitle than the publisher for books/media.
+ *  Null for a normal product (no creator field), so the brand shows as before. */
+function creatorOf(it: { suggested_candidates?: Array<{ fields?: Record<string, unknown> }> }): string | null {
+  const keys = ["author", "director", "artist", "composer", "writer"];
+  for (const c of it.suggested_candidates ?? []) {
+    for (const k of keys) {
+      const v = (c.fields ?? {})[k];
+      if (typeof v === "string" && v.trim()) return v.trim();
+    }
+  }
+  return null;
+}
+
 /** Selection key for a menu entry. */
 function entryKey(module: string, instance: string | null): string {
   return `${module}::${instance ?? ""}`;
@@ -587,6 +616,7 @@ export function ScanPage() {
   // UPC entry is the only intake that needs a modal (it needs a keyboard
   // anyway); Upload triggers the hidden file input DIRECTLY — no modal hop.
   const [upcOpen, setUpcOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [urlsOpen, setUrlsOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const receiptRef = useRef<HTMLInputElement>(null);
@@ -851,7 +881,10 @@ export function ScanPage() {
           <span className="font-medium text-content dark:text-mortar-100">
             {cluster.items.length} items look like the same product
           </span>
-          <span className="text-muted"> — {keep.suggested_name}. Combine into one (×{totalQty})?</span>
+          <span className="text-muted">
+            {" — "}
+            {cluster.items.map((c) => c.suggested_name).filter(Boolean).join(" · ")}. Combine into one (×{totalQty})?
+          </span>
         </div>
         <button
           type="button"
@@ -933,6 +966,26 @@ export function ScanPage() {
       else next.add(key);
       return next;
     });
+  // Camera "Done" lands on /scan#s-<batchId> — the FULL grouped inbox (all
+  // sessions as sections, newest first), with the just-scanned session scrolled
+  // to. This replaced landing on ?batch, which scoped the inbox to one session
+  // and hid the earlier ones behind a chip (the author scanned 6 items across 3
+  // sessions and couldn't find the first two). Runs once the groups render.
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (!hash.startsWith("#s-") || !sessionGroups?.length) return;
+    const el = document.getElementById(hash.slice(1));
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+      el.classList.add("ring-2", "ring-cobble-400", "rounded-lg");
+      const t = window.setTimeout(() => el.classList.remove("ring-2", "ring-cobble-400", "rounded-lg"), 2200);
+      // Clear the hash so a later poll-rerender doesn't re-scroll.
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      return () => window.clearTimeout(t);
+    }
+    return undefined;
+  }, [sessionGroups]);
+
   // The active scanning session (localStorage), for the "Scanning into…" chip.
   const activeSession = readScanSession(activeSlug ?? "");
   const sessionActive = isSessionFresh(activeSession);
@@ -1487,6 +1540,14 @@ export function ScanPage() {
         </button>
         <button
           type="button"
+          onClick={() => setImportOpen(true)}
+          title="Import a batch from a file — companion app inbox exports (JSON/CSV) or any CSV"
+          className={headerBtn}
+        >
+          <Upload size={15} /> Import
+        </button>
+        <button
+          type="button"
           onClick={() => fileRef.current?.click()}
           disabled={uploading}
           title="Upload a photo from this device"
@@ -1759,6 +1820,8 @@ export function ScanPage() {
             </div>
           </div>
         ))}
+        <SeriesBanner slug={activeSlug} items={visibleItems.filter((i) => i.status === "pending")} />
+        <SessionThemeBanner slug={activeSlug} pendingCount={visibleItems.filter((i) => i.status === "pending").length} />
         {(() => {
           // Each card, with the combine offer injected just above the first item
           // of any cluster it belongs to (so the offer sits with its items).
@@ -1803,7 +1866,7 @@ export function ScanPage() {
               ? sessionGroups.slice(gi + 1).find((o) => o.isBatch && o.batchId)?.batchId ?? null
               : null;
             return (
-              <div key={g.key} className="space-y-2">
+              <div key={g.key} id={g.batchId ? `s-${g.batchId}` : undefined} className="space-y-2 scroll-mt-24">
                 <div className="flex w-full items-center gap-2 rounded-md bg-mortar-50 dark:bg-slate-800/40 px-2.5 py-1.5 text-left text-xs">
                   {/* Burst select-all (companion app G3): grab the whole session for the
                       bulk toolbar (location / confirm / discard). */}
@@ -1951,6 +2014,12 @@ export function ScanPage() {
         </div>
       )}
 
+      <ScanImportModal
+        slug={activeSlug}
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onImported={() => void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] })}
+      />
       {upcOpen && <UpcModal onClose={() => setUpcOpen(false)} />}
       {urlsOpen && <UrlsModal onClose={() => setUrlsOpen(false)} />}
     </div>
@@ -2464,20 +2533,24 @@ function InboxCard({
     <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden">
       {/* ── collapsed header row (click = expand) ───────────────────── */}
       <div
-        className="p-3 flex items-start gap-3 cursor-pointer"
+        className="flex items-stretch cursor-pointer"
         onClick={() => (expanded ? setExpanded(false) : openForm())}
       >
         {onToggleSelect && (
-          <input
-            type="checkbox"
-            checked={!!selected}
-            onClick={(e) => e.stopPropagation()}
-            onChange={onToggleSelect}
-            aria-label="Select for bulk action"
-            className="mt-5 shrink-0 h-4 w-4 accent-cobble-600 cursor-pointer"
-          />
+          <div className="shrink-0 flex items-center pl-3 pr-0.5" onClick={(e) => e.stopPropagation()}>
+            <input
+              type="checkbox"
+              checked={!!selected}
+              onChange={onToggleSelect}
+              aria-label="Select for bulk action"
+              className="h-4 w-4 accent-cobble-600 cursor-pointer"
+            />
+          </div>
         )}
-        <div className="w-14 h-14 shrink-0 rounded-md overflow-hidden border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 flex items-center justify-center">
+        {/* Photo column: a CONSISTENT WIDTH (so every card's text starts at the
+            same x), stretched to the row's full height — a book cover / product
+            shot reads far better big. min-h keeps a short card's image sensible. */}
+        <div className={"w-20 shrink-0 self-stretch min-h-[4.5rem] border-r border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 flex items-center justify-center overflow-hidden" + (onToggleSelect ? "" : " rounded-l-xl")}>
           {thumb ? (
             <img
               src={thumb}
@@ -2486,10 +2559,10 @@ function InboxCard({
               loading="lazy"
             />
           ) : (
-            <ScanLine size={22} className="text-faint dark:text-slate-600" />
+            <ScanLine size={26} className="text-faint dark:text-slate-600" />
           )}
         </div>
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0 p-3">
           {/* The scan usually KNOWS the name before the matchmaker finishes —
               never replace a known title with a status line. Status renders as
               a subtle chip beside it; the pulse only owns the title slot when
@@ -2560,7 +2633,16 @@ function InboxCard({
             {(item.suggested_metadata as { barcode_source?: string } | null)?.barcode_source === "ai-photo" && (
               <span className="text-amber-600 dark:text-amber-500"> (read from photo)</span>
             )}
-            {item.suggested_manufacturer && ` · ${item.suggested_manufacturer}`}
+            {(() => {
+              // Show the creator (author/director/…) AND the publisher/brand, in
+              // that order — for a book that's "Laura Ingalls Wilder · Scholastic".
+              const creator = creatorOf(item);
+              const brand = item.suggested_manufacturer?.trim() || null;
+              const parts = [creator, brand].filter(
+                (p, i, a): p is string => !!p && a.indexOf(p) === i,
+              );
+              return parts.length ? ` · ${parts.join(" · ")}` : null;
+            })()}
             {item.suggested_sku && ` · ${item.suggested_sku}`}
             {item.scan_area && ` · 📍${item.scan_area}`}
             {(() => {
@@ -2750,7 +2832,7 @@ function InboxCard({
             <TrackedMatchBanner item={item} locationId={item.target_location_id} />
           )}
           <div className="grid lg:grid-cols-2 gap-3 items-start">
-          <div className="space-y-2">
+          <div className="space-y-2 min-w-0">
           {/* Catalog vs YOUR photo, side by side (whichever exist). */}
           {(catalogImg || yoursImg) && (
             <div className="flex gap-2">
@@ -2932,7 +3014,7 @@ function InboxCard({
             )}
           <PhotoOptions item={item} />
           </div>
-          <div className="space-y-3">
+          <div className="space-y-3 min-w-0">
 
           {/* The AI's read — collapsed to its one-line header by default
               (companion app); tap to reveal the reconciliation paragraph + per-field
@@ -3224,9 +3306,13 @@ function PhotoOptions({ item, onPick }: { item: ScanInboxItem; onPick?: (url: st
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
+  // Editable search term: the derived query (name + author + "book") drives the
+  // default; the user can override it entirely to sharpen a weak result.
+  const [term, setTerm] = useState("");
+  const [applied, setApplied] = useState("");
   const options = useQuery({
-    queryKey: ["scan-photo-options", activeSlug, item.id],
-    queryFn: () => api.scanPhotoOptions(activeSlug, item.id),
+    queryKey: ["scan-photo-options", activeSlug, item.id, applied],
+    queryFn: () => api.scanPhotoOptions(activeSlug, item.id, applied || undefined),
     // Only when there's a REAL name to search by — an unidentified item ("Unknown
     // Item") or a bare barcode returns junk photos, so don't even ask.
     enabled: !isUnidentified(item.suggested_name),
@@ -3246,13 +3332,34 @@ function PhotoOptions({ item, onPick }: { item: ScanInboxItem; onPick?: (url: st
   // The grid + broken-thumb handling live in the shared ImageSearchPicker; here
   // we keep the scan-item query/ranking (scanPhotoOptions) and the catalog apply.
   return (
-    <ImageSearchPicker
-      items={options.data?.items ?? []}
-      loading={options.isLoading}
-      busy={pick.isPending}
-      onPick={(url) => pick.mutate(url)}
-      label="other photo options"
-    />
+    <div className="space-y-1.5">
+      <form
+        onSubmit={(e) => { e.preventDefault(); setApplied(term.trim()); }}
+        className="flex items-center gap-1.5"
+      >
+        <input
+          value={term}
+          onChange={(e) => setTerm(e.target.value)}
+          placeholder={`search images${item.suggested_name ? ` — e.g. "${item.suggested_name} …"` : ""}`}
+          className="flex-1 min-w-0 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1 text-xs"
+        />
+        <button type="submit" className="shrink-0 rounded border border-line dark:border-slate-600 px-2 py-1 text-xs text-muted hover:border-accent">
+          Search
+        </button>
+        {applied && (
+          <button type="button" onClick={() => { setTerm(""); setApplied(""); }} className="shrink-0 text-[11px] text-faint hover:text-content">
+            reset
+          </button>
+        )}
+      </form>
+      <ImageSearchPicker
+        items={options.data?.items ?? []}
+        loading={options.isLoading}
+        busy={pick.isPending}
+        onPick={(url) => pick.mutate(url)}
+        label={applied ? `results for "${applied}"` : "other photo options"}
+      />
+    </div>
   );
 }
 
@@ -3490,6 +3597,122 @@ function ParentTypeCard({
 }
 
 // ── the inline confirm form — driven by the workspace scan MENU ───────
+// Series banner: when several pending items were identified as belonging to the
+// SAME series/franchise (Harry Potter, Little House), offer to tag them all with
+// the series in one tap. The series comes from the vision identify
+// (suggested_metadata.series); tagging reuses the apply-theme loop, so the tag
+// rides to each entity at confirm — books to Bookshelf, all carrying the series.
+function seriesOf(it: ScanInboxItem): string | null {
+  const s = (it.suggested_metadata as { series?: unknown } | null)?.series;
+  return typeof s === "string" && s.trim() ? s.trim() : null;
+}
+function SeriesBanner({ slug, items }: { slug: string; items: ScanInboxItem[] }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+  const apply = useMutation({
+    mutationFn: ({ series, ids }: { series: string; ids: string[] }) =>
+      api.applyScanTheme(slug, { tag: series, tag_item_ids: ids }),
+    onSuccess: (r, v) => {
+      toast.success(`Tagged ${r.tagged} as "${v.series}" — applied when you confirm each.`);
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", slug] });
+      setDismissed((d) => new Set([...d, v.series.toLowerCase()]));
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't apply that."),
+  });
+  // Group pending items by series (case-insensitive), ≥2 to offer.
+  const groups = new Map<string, { series: string; items: ScanInboxItem[] }>();
+  for (const it of items) {
+    const s = seriesOf(it);
+    if (!s) continue;
+    const key = s.toLowerCase();
+    if (!groups.has(key)) groups.set(key, { series: s, items: [] });
+    groups.get(key)!.items.push(it);
+  }
+  const offers = [...groups.values()].filter((g) => g.items.length >= 2 && !dismissed.has(g.series.toLowerCase()));
+  if (offers.length === 0) return null;
+  return (
+    <>
+      {offers.map((g) => (
+        <div key={g.series} className="rounded-lg border border-cobble-300 dark:border-cobble-700/60 bg-cobble-50/70 dark:bg-cobble-950/20 px-3 py-2.5 flex items-center gap-3">
+          <Sparkles size={15} className="text-accent shrink-0" />
+          <div className="min-w-0 flex-1 text-sm text-content dark:text-mortar-100">
+            {g.items.length} items are the <strong>"{g.series}"</strong> series.
+            <span className="text-muted"> Tag them all "{g.series}"?</span>
+          </div>
+          <button
+            type="button"
+            disabled={apply.isPending}
+            onClick={() => apply.mutate({ series: g.series, ids: g.items.map((i) => i.id) })}
+            className="shrink-0 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm font-medium disabled:opacity-50"
+          >
+            {apply.isPending ? "Tagging…" : "Tag series"}
+          </button>
+          <button type="button" onClick={() => setDismissed((d) => new Set([...d, g.series.toLowerCase()]))} className="shrink-0 text-faint hover:text-content p-1" title="Dismiss">
+            <X size={14} />
+          </button>
+        </div>
+      ))}
+    </>
+  );
+}
+
+// Session-theme banner: after a batch, offer to TAG everything with a derived
+// theme + suggest a CATEGORY for the non-media subset — "these 6 aviation
+// things → tag 'Aviation', category 'Aviation Accessories' on the 2
+// accessories." Nothing hardcoded; derived server-side, degrades to nothing.
+function SessionThemeBanner({ slug, pendingCount }: { slug: string; pendingCount: number }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [dismissed, setDismissed] = useState(false);
+  const theme = useQuery({
+    queryKey: ["scan-session-theme", slug, pendingCount],
+    queryFn: () => api.scanSessionTheme(slug),
+    enabled: !!slug && pendingCount >= 2 && !dismissed,
+    staleTime: 60_000,
+  });
+  const apply = useMutation({
+    mutationFn: () =>
+      api.applyScanTheme(slug, {
+        ...(theme.data?.tag ? { tag: theme.data.tag, tag_item_ids: theme.data.tag_item_ids } : {}),
+        ...(theme.data?.category ? { category: theme.data.category } : {}),
+      }),
+    onSuccess: (r) => {
+      toast.success(
+        `Tagged ${r.tagged}${r.categorized ? ` · categorised ${r.categorized}` : ""} — applied when you confirm each.`,
+      );
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", slug] });
+      setDismissed(true);
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't apply that."),
+  });
+  const t = theme.data;
+  if (dismissed || !t || (!t.tag && !t.category)) return null;
+  return (
+    <div className="rounded-lg border border-cobble-300 dark:border-cobble-700/60 bg-cobble-50/70 dark:bg-cobble-950/20 px-3 py-2.5 flex items-center gap-3">
+      <Sparkles size={15} className="text-accent shrink-0" />
+      <div className="min-w-0 flex-1 text-sm text-content dark:text-mortar-100">
+        These {t.tag_item_ids.length || pendingCount} look related.
+        {t.tag ? <> Tag them all <strong>"{t.tag}"</strong>.</> : null}
+        {t.category ? (
+          <span className="text-muted"> {t.tag ? "Also add" : "Add"} category <strong>"{t.category.value}"</strong> to {t.category.item_ids.length} of them.</span>
+        ) : null}
+      </div>
+      <button
+        type="button"
+        disabled={apply.isPending}
+        onClick={() => apply.mutate()}
+        className="shrink-0 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm font-medium disabled:opacity-50"
+      >
+        {apply.isPending ? "Applying…" : "Apply"}
+      </button>
+      <button type="button" onClick={() => setDismissed(true)} className="shrink-0 text-faint hover:text-content p-1" title="Dismiss">
+        <X size={14} />
+      </button>
+    </div>
+  );
+}
+
 // The target picker lists the workspace's ACTUAL tables (instances like
 // "Yarn" + each enabled module's default), straight from the same menu
 // the matchmaker prompts with — the web hardcodes no module names (core
@@ -3533,11 +3756,22 @@ function ConfirmForm({
     if (initialKey && entries.some((m) => entryKey(m.module, m.instance) === initialKey)) {
       return initialKey;
     }
-    const hint =
-      (item.suggested_metadata as { entity_type?: string } | null)?.entity_type === "asset"
-        ? entries.find((m) => m.module === "assets" && !m.instance)
-        : null;
-    return entryKey((hint ?? entries[0]!).module, (hint ?? entries[0]!).instance);
+    // No clean routed match → fall back to a GENERIC default table, never an
+    // arbitrary named instance. A "Bookshelf" (or any specialised instance)
+    // must not be the catch-all — a radio bag landing on the book-fields form
+    // was the routed candidate (a not-yet-installed flagship) failing the
+    // match above and dropping to entries[0]. Prefer, in order: the AI's
+    // entity_type default, inventory's default, assets' default, ANY module
+    // default (no instance), and only then the first entry.
+    const entityType = (item.suggested_metadata as { entity_type?: string } | null)?.entity_type;
+    const isDefault = (m: ScanMenuEntry) => !m.instance;
+    const pick =
+      (entityType === "asset" && entries.find((m) => m.module === "assets" && isDefault(m))) ||
+      entries.find((m) => m.module === "inventory" && isDefault(m)) ||
+      entries.find((m) => m.module === "assets" && isDefault(m)) ||
+      entries.find(isDefault) ||
+      entries[0]!;
+    return entryKey(pick.module, pick.instance);
   })();
   const [selKey, setSelKey] = useState<string>(hintedKey);
   const entry =

@@ -26,6 +26,8 @@ export interface WebSearchProduct {
   category: string | null;
   /** Routing hint for the commit step: a discrete item vs a component. */
   entityType: "asset" | "part" | null;
+  /** A known series/franchise this titled work belongs to, or null. */
+  series: string | null;
   imageUrl: string | null;
   /** 0..1 — how strongly the results converge on this product. */
   confidence: number;
@@ -159,6 +161,7 @@ export interface LlmIdentity {
   sku: string | null;
   category: string | null;
   entityType: "asset" | "part" | null;
+  series: string | null;
   confidence: number;
 }
 
@@ -240,7 +243,10 @@ export async function llmIdentify(
     'the titles show (e.g. "Bulleit Bourbon Whiskey 1.75 L"), or null>, ' +
     '"brand": <string|null>, "sku": <model/SKU or null>, "category": <one or two ' +
     'words, e.g. "power tool", "fastener", "filament", or null>, "entity_type": ' +
-    '"asset"|"part"|null, "confidence": <0..1 — your genuine certainty>}.';
+    '"asset"|"part"|null, "series": <the series/franchise if this titled work ' +
+    'belongs to one (a book series like Harry Potter, a film franchise like John ' +
+    'Wick), else null — only when you genuinely recognise the series, never ' +
+    'guess>, "confidence": <0..1 — your genuine certainty>}.';
   const titleBlock = titles.length
     ? `Search result titles:\n` + titles.map((t, i) => `${i + 1}. ${t}`).join("\n")
     : "(no web-search titles were available — identify from the barcode only if you are confident)";
@@ -290,6 +296,7 @@ export async function llmIdentify(
     sku: typeof parsed.sku === "string" ? parsed.sku.trim() || null : null,
     category: typeof parsed.category === "string" ? parsed.category.trim() || null : null,
     entityType: et === "asset" || et === "part" ? et : null,
+    series: typeof parsed.series === "string" ? parsed.series.trim() || null : typeof parsed.franchise === "string" ? parsed.franchise.trim() || null : null,
     confidence: clamp01(typeof parsed.confidence === "number" ? parsed.confidence : 0.6),
   };
 }
@@ -363,6 +370,7 @@ export async function resolveBarcodeViaWebSearch(
     sku: llm?.sku ?? null,
     category: llm?.category ?? null,
     entityType: llm?.entityType ?? null,
+    series: llm?.series ?? null,
     imageUrl,
     confidence: llm ? llm.confidence : 0.4,
     method: llm ? "llm" : "heuristic",

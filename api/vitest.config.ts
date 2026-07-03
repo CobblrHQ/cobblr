@@ -1,4 +1,33 @@
+import { basename } from "node:path";
 import { defineConfig } from "vitest/config";
+import { BaseSequencer, type TestSpecification } from "vitest/node";
+import fileDurations from "./tests/file-durations.json";
+
+// Longest-first (LPT) file scheduling. With 8 forks the wall-clock is set by
+// whatever's still running at the end — and by default the ~2min
+// platform-pillars.test.ts and the 20-45s digifab files can START in the last
+// third of the run, dragging the wall to ~210s when the same files scheduled
+// longest-first finish in ~140s. Vitest's own duration-aware sort only works
+// off its results cache, which never survives between CI runs — so we pin the
+// order with a COMMITTED durations snapshot instead (tests/file-durations.json).
+//
+// The numbers don't need to be current — only the ORDER matters, and that's
+// stable (big integration files stay big). Files not in the snapshot (new or
+// renamed) get a pessimistic default so they schedule early; a quick file that
+// runs early costs nothing, a slow file that runs late sets the wall. Refresh
+// the snapshot occasionally:
+//   npx vitest run --reporter=json --outputFile=/tmp/v.json
+//   → durations = endTime-startTime per testResults[], keyed by basename.
+const DURATIONS: Record<string, number> = fileDurations;
+const UNKNOWN_FILE_WEIGHT = 45;
+
+class LongestFirstSequencer extends BaseSequencer {
+  async sort(files: TestSpecification[]): Promise<TestSpecification[]> {
+    const weight = (f: TestSpecification) =>
+      DURATIONS[basename(f.moduleId)] ?? UNKNOWN_FILE_WEIGHT;
+    return [...files].sort((a, b) => weight(b) - weight(a));
+  }
+}
 
 export default defineConfig({
   test: {
@@ -37,5 +66,6 @@ export default defineConfig({
     poolOptions: {
       forks: { singleFork: false, maxForks: 8, minForks: 2 },
     },
+    sequence: { sequencer: LongestFirstSequencer },
   },
 });

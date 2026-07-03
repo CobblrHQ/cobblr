@@ -134,22 +134,56 @@ export function ActionsPage() {
         </div>
       )}
 
-      <div className="space-y-3">
-        {(actions.data?.items ?? []).map((a) => (
+      {/* Tunable first (the author, 2026-07-03: the ONE editable action was buried
+          under twenty "nothing to edit" rows) — then the fixed-scope registry
+          under an explicit heading, each row saying WHERE its scope comes
+          from instead of a shrug. */}
+      {(() => {
+        const items = actions.data?.items ?? [];
+        const tunable = items.filter((a) => isTraitPredicate(a.effective_applies_to));
+        const fixed = items.filter((a) => !isTraitPredicate(a.effective_applies_to));
+        const card = (a: (typeof items)[number]) => (
           // Key includes the effective predicate so the card remounts
           // (and re-seeds its checkbox state) whenever a save/revert
-          // changes the predicate. A plain `key={a.id}` left local
-          // checkbox state stale after "revert to default" until a
-          // page refresh. Unrelated refetches keep the same key —
-          // in-progress edits on other cards survive.
+          // changes the predicate (stale-state bug otherwise).
           <ActionCard
             key={`${a.id}:${JSON.stringify(a.effective_applies_to)}`}
             action={a}
             slug={slug}
             kinds={kinds.data?.items ?? []}
           />
-        ))}
-      </div>
+        );
+        return (
+          <>
+            <div className="space-y-3">
+              <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
+                // tunable — trait-based, adjust per axis
+              </div>
+              {tunable.length === 0 ? (
+                <p className="text-sm text-faint dark:text-slate-500">
+                  No trait-based actions registered.
+                </p>
+              ) : (
+                tunable.map(card)
+              )}
+            </div>
+            <div className="space-y-3 pt-4">
+              <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
+                // fixed scope — declared by each module, shown for reference
+              </div>
+              <p className="text-xs text-faint dark:text-slate-500">
+                These actions' scope is part of their module's code: either a
+                precise kind list (module-internal verbs) or deliberately
+                universal (wire-driven shapes that locate their subject from
+                the event or args, plus "add to list" which genuinely applies
+                to anything). Nothing to tune — listed so the full action
+                vocabulary is visible in one place.
+              </p>
+              {fixed.map(card)}
+            </div>
+          </>
+        );
+      })()}
     </div>
   );
 }
@@ -248,8 +282,11 @@ function ActionCard({
               {predicateSummary(action.effective_applies_to)}
             </span>
             <div className="text-[10px] text-faint mt-1">
-              Not a trait-based predicate — not editable here. Matches{" "}
-              {action.matched_kinds.length} kind
+              Fixed in <span className="font-mono">{action.module_name}</span>'s manifest
+              {"any" in action.effective_applies_to
+                ? " — deliberately universal (a wire-driven shape that locates its subject from the event/args, or a verb that genuinely applies to anything)"
+                : " — a precise, module-internal kind list"}
+              . Matches {action.matched_kinds.length} kind
               {action.matched_kinds.length === 1 ? "" : "s"}.
             </div>
           </div>

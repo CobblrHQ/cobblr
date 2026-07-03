@@ -95,15 +95,38 @@ export function useToast(): ToastCtx {
   return ctx;
 }
 
+// Show at most this many toasts; older ones collapse into a "+N earlier" pill
+// (click to expand). A burst can otherwise stack past the top of the screen —
+// and in sidebar-anchored mode, bury the nav (the author).
+const MAX_VISIBLE = 4;
+
 function ToastStack({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: number) => void }) {
+  const [showAll, setShowAll] = useState(false);
+  // Reset the expansion once the backlog drains, so the NEXT burst starts
+  // collapsed again instead of inheriting a stale "expanded" state.
+  useEffect(() => {
+    if (toasts.length <= MAX_VISIBLE && showAll) setShowAll(false);
+  }, [toasts.length, showAll]);
   if (typeof document === "undefined") return null;
+  const hiddenCount = showAll ? 0 : Math.max(0, toasts.length - MAX_VISIBLE);
+  const visible = hiddenCount > 0 ? toasts.slice(hiddenCount) : toasts;
   // Portal to <body> + z above modals (Modal backdrop is z-50): a plain fixed
   // div gets TRAPPED behind a modal's backdrop-blur (same stacking issue the
   // overlay-portal rule fixes) — the "token minted/copied" toast came out
   // blurred. Body-portal + z-[100] lifts toasts above any modal.
   return createPortal(
-    <div className="fixed right-4 bottom-4 z-[100] flex flex-col gap-2 max-w-[calc(100vw-2rem)] w-80 pointer-events-none">
-      {toasts.map((t) => (
+    <div id="cobblr-toasts" className="fixed right-4 bottom-4 z-[100] flex flex-col gap-2 max-w-[calc(100vw-2rem)] w-80 pointer-events-none">
+      {hiddenCount > 0 && (
+        <button
+          type="button"
+          onClick={() => setShowAll(true)}
+          className="pointer-events-auto self-start rounded-full border border-line dark:border-slate-700 bg-surface/95 dark:bg-slate-900/95 px-2.5 py-1 text-[11px] text-muted dark:text-slate-400 hover:text-accent shadow-sm transition"
+          title="Show the earlier messages"
+        >
+          +{hiddenCount} earlier
+        </button>
+      )}
+      {visible.map((t) => (
         <ToastCard key={t.id} toast={t} dismiss={dismiss} />
       ))}
     </div>,

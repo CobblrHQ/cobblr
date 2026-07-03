@@ -9,6 +9,7 @@ import { linksRouter } from "./links.js";
 import { driversRouter } from "./drivers.js";
 import { fleetRouter } from "./fleet.js";
 import { poolsRouter } from "./pools.js";
+import { runsRouter } from "./runs.js";
 import { importRouter } from "./import.js";
 import { bulkRouter } from "./bulk.js";
 import { bambuRouter } from "./bambu.js";
@@ -17,6 +18,7 @@ import { edgeSharesRouter } from "./edge-shares.js";
 import { historyRouter } from "./history.js";
 import { libraryRouter } from "./library.js";
 import { printRulesRouter } from "./print-rules.js";
+import { failureRouter } from "./failure.js";
 import { registerFarmResolvers } from "./resolvers.js";
 import { registerDeviceSeam } from "./device-provider.js";
 
@@ -41,9 +43,11 @@ router.use("/links", linksRouter);
 router.use("/drivers", driversRouter);
 router.use("/fleet", fleetRouter);
 router.use("/pools", poolsRouter);
+router.use("/runs", runsRouter); // quantity-driven production runs (mint-to-ceiling on pools)
 router.use("/import", importRouter);
 router.use("/bulk", bulkRouter);
 router.use("/bambu", bambuRouter);
+  router.use("/failure", failureRouter);
 router.use("/edge", edgeRelayRouter); // cloud↔on-site bridge tunnel (register/poll/respond)
 router.use("/edge-shares", edgeSharesRouter); // owner-side: grant machines to another workspace
 router.use("/history", historyRouter); // print history + at-a-glance stats

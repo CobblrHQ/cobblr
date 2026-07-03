@@ -141,6 +141,11 @@ export function ScanCameraPage() {
   const [assignOpen, setAssignOpen] = useState(false);
   const [shutterBusy, setShutterBusy] = useState(false);
   const [flash, setFlash] = useState(false);
+  // A camera-LOCAL "photo saved" note (the author): the global toast landed at the
+  // bottom and covered the shutter / UPC field, blocking rapid back-to-back
+  // captures. This shows briefly at the TOP over the dark preview instead.
+  const [savedNote, setSavedNote] = useState(false);
+  const savedNoteTimer = useRef<number | null>(null);
   // Single-SKU bin (scanned its QR): direct qty-adjust modal for the one SKU
   // that lives there — the "bin of M3 screws" flow.
   const [binAdjust, setBinAdjust] = useState<{
@@ -323,6 +328,13 @@ export function ScanCameraPage() {
   // navigation, not a product — route it to the /qr resolver, which lands
   // on the labeled entity. Without this, scanning your own label staged a
   // junk "no catalog match" inbox item.
+  //
+  // Routed through a ref (onDetectRef) by the camera effect: onDetect's identity
+  // flips whenever a toast mounts/unmounts (toast is in its deps), and the
+  // camera effect stops+restarts the stream on any dep change — so a "Photo
+  // saved" toast used to RESTART the camera (the flicker/reset the author saw). The
+  // ref lets that effect depend only on `running`.
+  const onDetectRef = useRef<(raw: string) => void>(() => {});
   const onDetect = useCallback(
     (rawIn: string) => {
       if (phaseRef.current !== "scanning") return;
@@ -459,6 +471,9 @@ export function ScanCameraPage() {
     },
     [setPhase, navigate, activeSlug, toast],
   );
+  useEffect(() => {
+    onDetectRef.current = onDetect;
+  }, [onDetect]);
 
   // Start / stop the camera. Acquire ONE lens-locked stream and keep it alive
   // for the whole session; the phase guard pauses/resumes decoding so re-arm
@@ -503,7 +518,7 @@ export function ScanCameraPage() {
             stream,
             videoRef.current!,
             (result) => {
-              if (!cancelled && result) onDetect(result.getText());
+              if (!cancelled && result) onDetectRef.current(result.getText());
             },
           );
         }
@@ -525,7 +540,7 @@ export function ScanCameraPage() {
         .detect(video)
         .then((results) => {
           if (cancelled || results.length === 0) return;
-          onDetect(results[0]!.rawValue);
+          onDetectRef.current(results[0]!.rawValue);
         })
         .catch(() => {
           // detect() can throw transiently; just keep looping.
@@ -549,7 +564,10 @@ export function ScanCameraPage() {
     // Acquire once per session (running 0→1). Phase flips within a session
     // are handled by phaseRef, not by re-running this effect.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [running, onDetect, setPhase]);
+    // onDetect is called via onDetectRef so a toast-driven identity change
+    // never re-runs this effect (which would restart the camera stream).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running]);
 
   const toggleTorch = useCallback(async () => {
     const track = streamRef.current?.getVideoTracks()[0] ?? null;
@@ -626,7 +644,10 @@ export function ScanCameraPage() {
       });
       onSaved(item);
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-      toast.success("Photo saved — AI is identifying it in the inbox");
+      // Local, top-of-frame, auto-hiding — never covers the shutter/UPC row.
+      setSavedNote(true);
+      if (savedNoteTimer.current) window.clearTimeout(savedNoteTimer.current);
+      savedNoteTimer.current = window.setTimeout(() => setSavedNote(false), 1800);
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : String(e));
     } finally {
@@ -647,6 +668,20 @@ export function ScanCameraPage() {
 
       {/* Shutter flash — a quick white blink confirming the capture. */}
       {flash && <div className="absolute inset-0 bg-white/80 pointer-events-none" />}
+
+      {/* "Photo saved" — top of frame, over the dark preview, tap-through.
+          Doesn't touch the bottom controls (the author: the toast there blocked
+          rapid capture). */}
+      {savedNote && (
+        <div
+          className="absolute inset-x-0 z-30 flex justify-center pointer-events-none px-4"
+          style={{ top: "max(4.5rem, calc(env(safe-area-inset-top) + 3.5rem))" }}
+        >
+          <div className="inline-flex items-center gap-2 rounded-full bg-emerald-600/90 text-white text-xs font-medium px-3 py-1.5 shadow-lg backdrop-blur-sm">
+            <Check size={13} className="shrink-0" /> Photo saved — identifying in the inbox
+          </div>
+        </div>
+      )}
 
       {/* ── top chrome: torch · area chip · status · close ──────────── */}
       <div
@@ -745,7 +780,7 @@ export function ScanCameraPage() {
           <div className="mx-8 border-2 border-accent/80 rounded-xl h-40" />
           <div className="mt-4 text-center text-white/85 text-sm px-8 [text-shadow:0_1px_2px_rgba(0,0,0,0.7)]">
             {supported === false
-              ? "Hold the barcode steady in the frame — or type the UPC below."
+              ? "Hold a barcode steady, snap a photo, or type the UPC below."
               : "Point at a barcode or a Cobblr QR label — or hit the shutter to photograph it."}
           </div>
         </div>
@@ -803,7 +838,7 @@ export function ScanCameraPage() {
           <div className="flex items-center gap-2 bg-black/55 rounded-full px-3 py-2 text-white text-xs max-w-md mx-auto">
             <Check size={14} className="text-emerald-400 shrink-0" />
             <Link
-              to={batchIdRef.current ? `/scan?batch=${batchIdRef.current}` : backToScan}
+              to={batchIdRef.current ? `/scan#s-${batchIdRef.current}` : backToScan}
               className="min-w-0 flex-1 truncate"
             >
               {lastSaved.suggested_name ?? lastSaved.barcode_text}
@@ -888,10 +923,11 @@ export function ScanCameraPage() {
           <button
             type="button"
             onClick={() => {
-              // Done with saves → review exactly this walk-around (the inbox
-              // scoped to the session's batch). Nothing saved → just close.
+              // Done → the FULL grouped inbox (all sessions as sections),
+              // scrolled to the one just scanned — not scoped to it, which hid
+              // earlier sessions (the author). Nothing saved → just close.
               if (savedCount > 0 && batchIdRef.current) {
-                navigate(`/scan?batch=${batchIdRef.current}`);
+                navigate(`/scan#s-${batchIdRef.current}`);
               } else {
                 close();
               }

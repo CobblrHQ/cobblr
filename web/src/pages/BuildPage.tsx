@@ -11,6 +11,8 @@ import { useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { AiOffNotice, useAiStatus } from "../components/AiStatusNotice";
 import { generateYourApp } from "../lib/generate-your-app";
+import { suggestFeatured } from "../lib/suggest-featured";
+import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Wand2, Copy, Check, AlertTriangle, Sparkles } from "lucide-react";
 import { usePageTitle, useToast } from "@cobblr/platform-web";
@@ -96,6 +98,20 @@ export function BuildPage() {
   const isAppMode = mode === "app" || mode === "app-custom";
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [intent, setIntent] = useState("");
+  // Ready-made catch: if the intent reads like a curated featured bundle
+  // ("track Books" → Bookshelf), offer the refined install BEFORE burning AI
+  // on a worse hand-rolled version (the templates-first cheap path).
+  const liveInstances = useQuery({
+    queryKey: ["instances", activeSlug],
+    queryFn: () => api.listInstances(activeSlug),
+    enabled: !!activeSlug,
+    staleTime: 60_000,
+  });
+  const readyMade = useMemo(() => {
+    if (intent.trim().length < 8) return null;
+    const live = new Set((liveInstances.data?.items ?? []).map((i) => i.instance_name));
+    return suggestFeatured(intent, live);
+  }, [intent, liveInstances.data]);
   const [draftId, setDraftId] = useState<string | null>(null);
   const [prompt, setPrompt] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -319,7 +335,12 @@ export function BuildPage() {
   const preview = validation?.preview;
   const addsSomething =
     !!preview &&
-    preview.fields_added.length + preview.wires_added.length + preview.modules_to_enable.length > 0;
+    preview.fields_added.length +
+      preview.wires_added.length +
+      preview.modules_to_enable.length +
+      (preview.instances_created?.length ?? 0) +
+      (preview.nav_headings?.length ?? 0) >
+      0;
   // Valid but empty = the AI couldn't turn the description into changes. Don't
   // pretend "looks good" — apply would be a no-op.
   // App apply just needs a valid definition (no bundle "preview"/diff exists for
@@ -468,6 +489,21 @@ export function BuildPage() {
             }
             className="w-full px-3 py-2 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           />
+          {readyMade && !isAppMode && (
+            <div className="mt-2 flex items-center gap-3 rounded-lg border border-moss-500/40 bg-moss-50 dark:bg-moss-950/30 px-3 py-2 text-sm">
+              <span className="text-lg leading-none shrink-0">{readyMade.bundle.glyph}</span>
+              <span className="flex-1 text-moss-800 dark:text-moss-200">
+                There's a ready-made <strong>{readyMade.bundle.manifest.name}</strong> set-up for this ("{readyMade.matched}") —
+                a refined bundle beats a generated one.
+              </span>
+              <Link
+                to={`/bundles?open=${encodeURIComponent(readyMade.bundle.manifest.id)}`}
+                className="shrink-0 rounded-md bg-moss-600 hover:bg-moss-700 text-white text-xs font-medium px-2.5 py-1"
+              >
+                View &amp; install
+              </Link>
+            </div>
+          )}
         </label>
         <div className="flex flex-wrap items-center gap-2">
           {/* With no AI, the roles swap: the copy-paste prompt is the real
@@ -598,6 +634,43 @@ export function BuildPage() {
                       </li>
                     ))}
                   </ul>
+                </div>
+              )}
+              {(preview.instances_created ?? []).map((inst) => (
+                <div key={inst.instance_name}>
+                  <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
+                    New section · <span className="text-emerald-600 dark:text-emerald-400">{inst.display_name}</span>
+                    <span className="normal-case text-faint"> (a {inst.item_noun ?? "record"} tracker)</span>
+                  </div>
+                  <ul className="text-sm text-content dark:text-mortar-100 space-y-0.5">
+                    {inst.fields.length === 0 ? (
+                      <li className="text-faint text-xs">just the name to start</li>
+                    ) : (
+                      inst.fields.map((f, i) => (
+                        <li key={i}>
+                          <span className="font-medium">{f.display_label}</span>{" "}
+                          <span className="text-faint font-mono text-xs">({f.type})</span>
+                        </li>
+                      ))
+                    )}
+                    {inst.wires > 0 && <li className="text-faint text-xs">+ {inst.wires} automation{inst.wires === 1 ? "" : "s"}</li>}
+                  </ul>
+                </div>
+              ))}
+              {(preview.nav_headings ?? []).map((h) => (
+                <div key={h.name}>
+                  <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Nav grouping</div>
+                  <div className="text-sm text-content dark:text-mortar-100">
+                    Group <span className="font-medium">{h.members.map((m) => m.target_id).join(", ")}</span> under a{" "}
+                    <span className="font-medium">{h.name}</span> heading.
+                  </div>
+                </div>
+              ))}
+              {typeof (candidate as { install_featured?: unknown })?.install_featured === "string" && (
+                <div className="text-xs text-moss-700 dark:text-moss-300 rounded border border-moss-500/40 bg-moss-50 dark:bg-moss-950/30 p-2">
+                  Installs the ready-made{" "}
+                  <strong>{String((candidate as { install_featured: string }).install_featured).split(".").pop()}</strong>{" "}
+                  bundle, then adds only what's listed above on top of it.
                 </div>
               )}
               {preview.modules_to_enable.length > 0 && (

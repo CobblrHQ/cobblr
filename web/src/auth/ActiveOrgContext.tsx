@@ -58,7 +58,9 @@ export function pickDefaultOrg(orgs: OrgMembership[]): OrgMembership | null {
   } catch {
     /* ignore */
   }
-  return orgs.find((o) => o.role === "owner") ?? orgs[0]!;
+  // No last-active on this device → the user's explicit DEFAULT wins; else the
+  // first owned workspace (top of the switcher's owned group); else anything.
+  return orgs.find((o) => o.is_default) ?? orgs.find((o) => o.role === "owner") ?? orgs[0]!;
 }
 
 interface ActiveOrgCtx {

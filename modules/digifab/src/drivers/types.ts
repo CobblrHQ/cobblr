@@ -161,6 +161,12 @@ export interface MachineDriver {
   /** OPTIONAL — grab one JPEG camera frame (e.g. Bambu LAN chamber camera over
    *  the bridge). A refreshing still, not a stream. Undefined → no camera. */
   getCameraFrame?(): Promise<Buffer | null>;
+  /** OPTIONAL — run the LOCAL print-failure model against a fresh camera frame,
+   *  ON the bridge, so the frame never leaves the machine's LAN and there's no
+   *  per-inference token cost. Returns a failure probability in [0,1], or null
+   *  when no model is loaded / no frame. The vision-AI fallback is used when a
+   *  driver leaves this undefined. */
+  detectFailure?(deviceId: string): Promise<{ probability: number } | null>;
   /** OPTIONAL — list the gcode files already on the machine's storage (the
    *  printer's SD/USB), so the UI can show what's there without re-uploading.
    *  Read-only; Cobblr caches it (it changes rarely). Undefined → no file list. */

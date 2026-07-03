@@ -34,6 +34,11 @@ interface Props {
   size?: "sm" | "md" | "lg" | "xl";
   /** Tints the header to signal a destructive context. */
   destructive?: boolean;
+  /** Render IN-FLOW as a card (same chrome, no portal/overlay/esc/scroll-lock).
+   *  Lets a modal double as page content — the 2026-07-03 settings-cohesion
+   *  fix: Configuration links must all land on pages, never pop overlays.
+   *  onClose still powers the ✕ (usually navigate-back in page mode). */
+  inline?: boolean;
   /** Whether a backdrop click can close the modal. **Default true**, but a click
    *  is ignored while the modal is "dirty" (you've typed into / changed a field),
    *  so unsaved input is never lost to a stray click. Set **false** to forbid
@@ -48,7 +53,7 @@ const SIZE: Record<NonNullable<Props["size"]>, string> = {
   xl: "max-w-5xl",
 };
 
-export function Modal({ open, onClose, title, subtitle, children, size = "md", destructive, dismissOnBackdrop = true }: Props) {
+export function Modal({ open, onClose, title, subtitle, children, size = "md", destructive, dismissOnBackdrop = true, inline = false }: Props) {
   // "Dirty" = the user has entered/changed something inside this modal. Tracked
   // by listening (capture) for input/change events bubbling from any descendant
   // field — so we never have to know in advance whether a modal is a form. Only
@@ -68,7 +73,7 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
   };
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || inline) return;
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
         e.preventDefault();
@@ -83,17 +88,11 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = prev;
     };
-  }, [open, onClose]);
+  }, [open, onClose, inline]);
 
   if (!open) return null;
 
-  return createPortal(
-    <div
-      className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto"
-      onClick={handleBackdrop}
-      role="dialog"
-      aria-modal="true"
-    >
+  const panel = (
       <div
         className={
           // Height-constrained + column layout so a tall form scrolls WITHIN the
@@ -154,6 +153,24 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
         )}
         <div className="p-5 flex-1 min-h-0 overflow-y-auto">{children}</div>
       </div>
+  );
+
+  if (inline) {
+    // Same panel, in document flow: no overlay, no height cap (the page
+    // scrolls), full width of its container.
+    return (
+      <div className="w-full [&>div]:max-h-none [&>div]:my-0 [&>div]:w-full">{panel}</div>
+    );
+  }
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto"
+      onClick={handleBackdrop}
+      role="dialog"
+      aria-modal="true"
+    >
+      {panel}
     </div>,
     document.body,
   );

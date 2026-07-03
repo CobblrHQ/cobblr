@@ -87,6 +87,8 @@ export default defineModule({
         label: "Add to a list",
         description:
           "Append an item to a list. Wire it to an event (e.g. inventory.stock.low) to auto-build a shopping list. Dedupes by title within the list (won't pile up duplicates).",
+        // DELIBERATELY universal: anything — physical or digital — can be put
+        // on a list. The one honest any:true among the entity-bound actions.
         appliesTo: { any: true },
         invokeHandler: "lists.add-item",
         userInvokable: false,

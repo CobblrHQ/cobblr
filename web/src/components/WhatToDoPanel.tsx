@@ -180,7 +180,7 @@ function CaptureTile({ slug, it }: { slug: string; it: { catalog_image_file_id: 
       className="flex-1 min-w-14 max-w-36 aspect-square rounded-md border border-line dark:border-slate-700 overflow-hidden bg-surface dark:bg-slate-900 grid place-items-center"
     >
       {src ? (
-        <img src={src} alt={name} loading="lazy" className="w-full h-full object-cover" onError={() => { setSrc(null); setIdx((i) => i + 1); }} />
+        <img src={src} alt={name} loading="lazy" className="max-w-full max-h-full object-contain" onError={() => { setSrc(null); setIdx((i) => i + 1); }} />
       ) : (
         <span className="text-[11px] font-medium text-faint dark:text-slate-500 uppercase">{name.slice(0, 2)}</span>
       )}

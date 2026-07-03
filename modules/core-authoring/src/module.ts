@@ -22,7 +22,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-authoring",
-  version: "0.3.0",
+  version: "0.4.0",
   displayName: "App Builder",
   description:
     "Describe what you want; the builder compiles a prompt whose answer is a working bundle (custom fields + wires) you review and apply. The kernel validates every candidate before anything is applied.",

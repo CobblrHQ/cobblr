@@ -27,7 +27,9 @@ import type {
   ResolvedEntity,
 } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
+import { getEntry } from "../modules/registry.js";
 import { applyComputedFields } from "./computed-fields.js";
+import { applyRelationFields } from "./relation-fields.js";
 import { normalizeEntitySort } from "./sort.js";
 import { effectiveCapabilities } from "../auth/effective-capabilities.js";
 
@@ -424,7 +426,7 @@ export async function lookup(
       // whitelist above was already computed from the requested kind, so this is
       // consistent.
       const projected = { ...applyExposableProjection(resolved, whitelist, fieldReadScopes, undefined, publicRead), kind };
-      return applyComputedFields(orgId, projected);
+      return applyRelationFields(orgId, await applyComputedFields(orgId, projected));
     }
   } catch (err) {
     console.error(`[entities] resolver for ${kind} failed:`, err);
@@ -690,12 +692,15 @@ export async function list(
     // before the template runs, so a computed field can't leak them).
     items = await Promise.all(
       result.items.map(async (r) =>
-        applyComputedFields(
+        applyRelationFields(
           orgId,
-          // Present each row as the REQUESTED kind so computed defs keyed by an
-          // instance kind (`<name>:item`) resolve — same override + reasoning as
-          // lookup(). No-op for base kinds (resolver already returns them).
-          { ...applyExposableProjection(r, whitelist, fieldReadScopes, readScope, publicRead), kind },
+          await applyComputedFields(
+            orgId,
+            // Present each row as the REQUESTED kind so computed defs keyed by an
+            // instance kind (`<name>:item`) resolve — same override + reasoning as
+            // lookup(). No-op for base kinds (resolver already returns them).
+            { ...applyExposableProjection(r, whitelist, fieldReadScopes, readScope, publicRead), kind },
+          ),
         ),
       ),
     );
@@ -762,6 +767,41 @@ export async function getKind(kind: string): Promise<EntityKindRecord | null> {
   return row ? rowToKindRecord(row) : null;
 }
 
+// Server-managed field names per (org, kind). Values live in metadata, but a
+// server_managed field def marks a value the SERVER owns — a client write is
+// never accepted (the write route preserves the stored value). This mirrors
+// the computed-defs cache: short TTL keeps a list() of N rows from doing N
+// identical meta queries; a field-def write calls clearServerManagedCache for
+// immediate freshness.
+const SM_TTL_MS = 5_000;
+const smCache = new Map<string, { at: number; names: string[] }>();
+
+export function clearServerManagedCache(): void {
+  smCache.clear();
+}
+
+export async function serverManagedFields(orgId: string, kind: string): Promise<string[]> {
+  const key = `${orgId}:${kind}`;
+  const hit = smCache.get(key);
+  if (hit && Date.now() - hit.at < SM_TTL_MS) return hit.names;
+  let names: string[] = [];
+  try {
+    const rows = await meta
+      .selectFrom("module_field_defs")
+      .select("name")
+      .where("org_id", "=", orgId)
+      .where("entity_kind", "=", kind)
+      .where("server_managed", "=", true)
+      .execute();
+    names = rows.map((r) => r.name);
+  } catch (err) {
+    console.error(`[server-managed] defs query for ${key} failed:`, (err as Error).message);
+    names = [];
+  }
+  smCache.set(key, { at: Date.now(), names });
+  return names;
+}
+
 function rowToKindRecord(row: {
   id: string;
   module_name: string;
@@ -779,6 +819,7 @@ function rowToKindRecord(row: {
   return {
     id: row.id,
     module_name: row.module_name,
+    module_instanceability: getEntry(row.module_name)?.manifest.instanceability ?? "single",
     display_name: row.display_name,
     display_name_plural: row.display_name_plural,
     icon: row.icon,

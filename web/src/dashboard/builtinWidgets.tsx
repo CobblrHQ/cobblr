@@ -42,6 +42,7 @@ function MachinesWidget({ slug }: { slug: string }) {
       label="machines"
       primary={items.length}
       secondary={breakdown || "none yet"}
+      empty={!q.isLoading && items.length === 0}
     />
   );
 }
@@ -91,6 +92,7 @@ function AssetsWidget({ slug }: { slug: string }) {
       icon={Sprout}
       label="assets"
       primary={total}
+      empty={!q.isLoading && !insts.isLoading && !instData.isLoading && total === 0}
       secondary={rows.length > 0 ? rows.map((r) => r.label).join(" · ") : top || "none yet"}
     />
   );
@@ -115,6 +117,7 @@ function PurchasesWidget({ slug }: { slug: string }) {
       label="purchases"
       primary={open}
       secondary={open === items.length ? "all open" : `${items.length} total`}
+      empty={!q.isLoading && items.length === 0}
     />
   );
 }

@@ -7,6 +7,7 @@ import { platform } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import type { DigifabDB } from "./db.js";
 import { pollJob } from "./jobs-core.js";
+import { ensureFailureWatch } from "./failure-detect.js";
 
 export const POLL_QUEUE = "digifab.poll";
 // First-poll delay after a send — quick for every driver so the queue shows
@@ -31,6 +32,16 @@ export function registerPollWorker(): void {
     try {
       const db = (await platform().tenants.getDb(job.orgId)) as Kysely<DigifabDB>;
       res = await pollJob(db, job.orgId, jobId);
+      // A live print → make sure its AI failure watch is running (no-op when
+      // detection is off, or a watch loop is already alive for the device).
+      if (res?.status === "printing") {
+        try {
+          const row = await db.selectFrom("digifab_jobs").select(["connection_id", "target_device"]).where("id", "=", jobId).executeTakeFirst();
+          if (row?.connection_id && row.target_device) await ensureFailureWatch(db, job.orgId, row.connection_id, row.target_device);
+        } catch {
+          /* watch is best-effort; never break the poll chain */
+        }
+      }
     } catch (e) {
       console.error(`[digifab] poll ${jobId} errored (chain continues):`, (e as Error).message);
       res = { status: "unknown", terminal: false, intervalMs: 30_000 };

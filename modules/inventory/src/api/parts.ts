@@ -11,7 +11,7 @@ import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { instanceOf, instanceQtyUnit, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireCapability, requireRole } from "./util.js";
-import { routeUnknownToMetadata } from "./route-helpers.js";
+import { routeUnknownToMetadata, preserveServerManaged, coerceMetadata } from "./route-helpers.js";
 
 export const partsRouter = Router({ mergeParams: true });
 
@@ -667,6 +667,30 @@ partsRouter.patch(
     const ctx = tenantContext(req);
     const session = sessionUser(req);
 
+    // Read the current row FIRST — it's the before-image for the change event
+    // AND the source of truth for any server-managed field the client tried to
+    // overwrite (metadata is written wholesale, so a stale client value would
+    // otherwise clobber a server-stamped one).
+    const before = await db
+      .selectFrom("inventory_parts")
+      .selectAll()
+      .where("id", "=", id)
+      .where("instance", "=", instanceOf(req))
+      .executeTakeFirst();
+    if (!before) {
+      res.status(404).json({ error: { code: "not_found", message: "part not found" } });
+      return;
+    }
+
+    const smNames = await platform().entities.serverManagedFields(ctx.org.id, "inventory:part");
+    if (parsed.data.metadata !== undefined) {
+      parsed.data.metadata = preserveServerManaged(
+        parsed.data.metadata as Record<string, unknown>,
+        coerceMetadata((before as { metadata?: unknown }).metadata),
+        smNames,
+      );
+    }
+
     const patch: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(parsed.data)) {
       if (v === undefined) continue;
@@ -699,9 +723,22 @@ partsRouter.patch(
       ref: { module: "inventory", entityType: "part", entityId: updated.id },
       diff: parsed.data,
     });
+    // Flat before/after field bags (native columns + flattened metadata) so a
+    // transition-aware wire can compare {{event.before.x}} vs {{event.after.x}}
+    // and a server-side reactor (e.g. core-mobility) can recompute from the
+    // delta. `metadata` was preserved above, so `after` reflects the write.
+    const beforeMeta = coerceMetadata((before as { metadata?: unknown }).metadata);
+    const nativeChanges: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(patch)) {
+      if (k !== "metadata" && k !== "updated_at") nativeChanges[k] = v;
+    }
+    const afterMeta =
+      parsed.data.metadata !== undefined ? (patch.metadata as Record<string, unknown>) ?? {} : beforeMeta;
     platform().events.emit("inventory.part.updated", {
       orgId: ctx.org.id,
       partId: updated.id,
+      before: { ...before, ...beforeMeta },
+      after: { ...before, ...nativeChanges, ...afterMeta },
     });
 
     res.json(updated);

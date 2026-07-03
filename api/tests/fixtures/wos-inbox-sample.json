@@ -1,0 +1,262 @@
+{
+ "schema_version": 1,
+ "source": "companion app",
+ "source_instance": "https://workshop.example.com",
+ "exported_at": "2026-07-03T17:43:22.643Z",
+ "scope": {
+  "type": "filter",
+  "batch_id": null,
+  "status": "all"
+ },
+ "count": 8,
+ "items": [
+  {
+   "source_id": 208,
+   "status": "pending",
+   "barcode": "6938144115004",
+   "additional_barcodes": [],
+   "suggested_name": "BEST Precision Stainless Steel Tweezer (Single, Retail Clamshell)",
+   "suggested_sku": null,
+   "suggested_serial_number": null,
+   "suggested_entity_type": "asset",
+   "suggested_category": {
+    "domain": "Cable",
+    "sub": "Electrical"
+   },
+   "ai_confidence": 0.78,
+   "ai_notes": "Re-researched per hint: the user reports this is a SINGLE tweezer in a plastic clamshell, not a 6-piece set. photo: package - clear clamshell shown from the back; the BEST-brand label lists six tweezer tip styles (fine tip 120mm, externally fine/sharp 140mm, fine tip straight 115mm, super fine straight 125mm and 120mm, fine tip curved 125mm) - that is the brand's full style range printed for reference, NOT the pack contents. Reclassified as a single BEST precision tweezer; the specific tip style cannot be read from this back-of-clamshell photo, so the user should pick it at triage. Barcode 6938144115004. NOTE: the current display photo was auto-fetched by the earlier (incorrect 6-piece-set) run and no longer matches - the user should replace it via the Research panel.",
+   "quantity": 100,
+   "pack_size": null,
+   "pack_state": null,
+   "filament_state": null,
+   "scan_area": null,
+   "box_state": null,
+   "notes": null,
+   "research_hint": "wrong - it's a single tweezer in retail packaging - plastic clamshell",
+   "source_url": null,
+   "photo_urls": {
+    "identify": "https://workshop.example.com/api/v1/inbox/items/208/image",
+    "display": "https://workshop.example.com/api/v1/inbox/items/208/image?role=display"
+   },
+   "created_at": "2026-05-21T00:46:48.542Z",
+   "updated_at": "2026-05-21T01:30:29.805Z"
+  },
+  {
+   "source_id": 234,
+   "status": "pending",
+   "barcode": "045242615308",
+   "additional_barcodes": [],
+   "suggested_name": "Milwaukee M18 REDLITHIUM HIGH OUTPUT XC 6.0 Ah Battery 2-Pack Starter Kit \u2013 Includes M18/M12 Charger 50% More Power Cooler Performance 200+ Tool Compatibility (Model 48-59-1862S)",
+   "suggested_sku": null,
+   "suggested_serial_number": null,
+   "suggested_entity_type": "asset",
+   "suggested_category": {
+    "domain": "Cable",
+    "sub": "3D Printer Parts"
+   },
+   "ai_confidence": 0.85,
+   "ai_notes": "photo: package - Milwaukee red retail box; label legible: 'M18 RedLithium High Output, System Starter Kit, HIGH OUTPUT XC6.0, 48-59-1862S', barcode 045242615308. Kept barcode-matched name (upcitemdb match); photo (M18 battery 2-pack starter kit with charger) agrees with the name - no mismatch. A bundled battery+charger kit -> asset, Tools / Power Tools. Includes the same XC6.0 HO battery as inbox item #233 (single battery) - related, not a duplicate (kit vs single). Item already has a display photo, catalog-fetch skipped.",
+   "quantity": 2,
+   "pack_size": null,
+   "pack_state": null,
+   "filament_state": null,
+   "scan_area": null,
+   "box_state": null,
+   "notes": null,
+   "research_hint": null,
+   "source_url": null,
+   "photo_urls": {
+    "identify": "https://workshop.example.com/api/v1/inbox/items/234/image",
+    "display": "https://workshop.example.com/api/v1/inbox/items/234/image?role=display"
+   },
+   "created_at": "2026-05-21T00:59:29.508Z",
+   "updated_at": "2026-05-21T01:35:33.123Z"
+  },
+  {
+   "source_id": 281,
+   "status": "pending",
+   "barcode": "816914021365",
+   "additional_barcodes": [],
+   "suggested_name": "NEIKO 02440A 3/8-Inch-Drive Impact Socket Set SAE Sizes 5/16 to 3/4 and Metric Sizes 8 mm to 19 mm Includes Extension Bars and U-Joint 44 Pieces",
+   "suggested_sku": null,
+   "suggested_serial_number": null,
+   "suggested_entity_type": "asset",
+   "suggested_category": {
+    "domain": "Cable",
+    "sub": "Electrical"
+   },
+   "ai_confidence": 0.82,
+   "ai_notes": "photo: package - side of a black retail box, barcode 816914021365 and 'Made in Taiwan' visible; the socket set itself is not in frame (mostly adjacent La Sportiva shoe boxes and a Ryobi box). Kept the barcode-matched name (NEIKO 02440A 44-pc impact socket set) - authoritative. Classified as a Hand Tools asset: a 44-piece socket kit in a case. No exact NEIKO match in assets, but several other impact socket sets exist (Asset #48, #49, #54, #46, #47) - different SKUs, not duplicates. Item already has a display photo; left it.",
+   "quantity": 1,
+   "pack_size": null,
+   "pack_state": null,
+   "filament_state": null,
+   "scan_area": null,
+   "box_state": null,
+   "notes": null,
+   "research_hint": null,
+   "source_url": null,
+   "photo_urls": {
+    "identify": "https://workshop.example.com/api/v1/inbox/items/281/image",
+    "display": "https://workshop.example.com/api/v1/inbox/items/281/image?role=display"
+   },
+   "created_at": "2026-05-21T21:03:27.195Z",
+   "updated_at": "2026-05-21T21:08:45.769Z"
+  },
+  {
+   "source_id": 284,
+   "status": "pending",
+   "barcode": "801216010032",
+   "additional_barcodes": [],
+   "suggested_name": "La Sportiva - Miura (Yellow/Black) Men's Shoes",
+   "suggested_sku": null,
+   "suggested_serial_number": null,
+   "suggested_entity_type": "asset",
+   "suggested_category": {
+    "domain": "Material",
+    "sub": null
+   },
+   "ai_confidence": 0.82,
+   "ai_notes": "photo: package - two stacked La Sportiva shoe boxes; top label reads '20J706706 Miura Lime', size 43 (UK 9 / US Men 10). Kept the barcode-matched name. Classified as a Climbing Gear asset - La Sportiva Miura is a climbing shoe. Note: the box label says colour 'Lime' (style 20J706706) while the barcode-DB name says 'Yellow/Black' - user may want to correct the colourway at triage. Item already has a display photo; left it.",
+   "quantity": 2,
+   "pack_size": null,
+   "pack_state": null,
+   "filament_state": null,
+   "scan_area": null,
+   "box_state": null,
+   "notes": null,
+   "research_hint": null,
+   "source_url": null,
+   "photo_urls": {
+    "identify": "https://workshop.example.com/api/v1/inbox/items/284/image",
+    "display": "https://workshop.example.com/api/v1/inbox/items/284/image?role=display"
+   },
+   "created_at": "2026-05-21T21:04:43.919Z",
+   "updated_at": "2026-05-21T21:08:45.799Z"
+  },
+  {
+   "source_id": 285,
+   "status": "pending",
+   "barcode": "097855137265",
+   "additional_barcodes": [],
+   "suggested_name": "Logitech MK540 Advanced Wireless Keyboard and Mouse Combo",
+   "suggested_sku": null,
+   "suggested_serial_number": null,
+   "suggested_entity_type": "asset",
+   "suggested_category": {
+    "domain": "Small Parts",
+    "sub": "Breakers"
+   },
+   "ai_confidence": 0.93,
+   "ai_notes": "photo: package - sealed teal Logitech retail box (identify photo is blurry, shot on a cabin shelf, only the side barcode panel readable: UPC 0 97855 13726 5). The display photo of the box face directly confirms it: ADVANCED, MK540, unifying logo, with the keyboard pictured - Logitech MK540 Advanced wireless keyboard+mouse combo (Logitech p/n 920-008671). Barcode 097855137265 corroborates. Sealed box - new/stored stock. Filed as an Electronics asset (a discrete peripheral); no peripherals subcategory exists so used Computer Parts as the closest fit - worth confirming at triage. No matching asset found (searched logitech/mk540/keyboard) - no duplicate. Display photo already set - did not auto-fetch a catalog photo.",
+   "quantity": 1,
+   "pack_size": null,
+   "pack_state": null,
+   "filament_state": null,
+   "scan_area": null,
+   "box_state": null,
+   "notes": null,
+   "research_hint": null,
+   "source_url": null,
+   "photo_urls": {
+    "identify": "https://workshop.example.com/api/v1/inbox/items/285/image",
+    "display": "https://workshop.example.com/api/v1/inbox/items/285/image?role=display"
+   },
+   "created_at": "2026-05-21T21:05:20.517Z",
+   "updated_at": "2026-05-21T22:51:11.255Z"
+  },
+  {
+   "source_id": 286,
+   "status": "pending",
+   "barcode": "194252546376",
+   "additional_barcodes": [],
+   "suggested_name": "Apple MacBook Pro 16-inch (2021, M1 Pro) - 16GB RAM / 1TB SSD",
+   "suggested_sku": null,
+   "suggested_serial_number": "CM2CQ4WV4H",
+   "suggested_entity_type": "asset",
+   "suggested_category": {
+    "domain": "Small Parts",
+    "sub": "Fasteners"
+   },
+   "ai_confidence": 0.88,
+   "ai_notes": "photo: package - the spec/UPC label on a white Apple MacBook Pro retail box. Label reads Model A2485, Part No. MK193LL/A, 'MacBook Pro 16-inch', 10-core CPU / 16-core GPU / 16GB / 1TB. A2485 is the 2021 16-inch MacBook Pro (M1 Pro/Max); the MK193LL/A config is M1 Pro, 16GB/1TB. Classified as a Computers asset. Serial CM2CQ4WV4H read off the (S) line into suggested_serial_number - verify against the box, the last characters are slightly soft. Apple order SKU is MK193LL/A. Box already has a display photo; left it.",
+   "quantity": 1,
+   "pack_size": null,
+   "pack_state": null,
+   "filament_state": null,
+   "scan_area": null,
+   "box_state": null,
+   "notes": null,
+   "research_hint": null,
+   "source_url": null,
+   "photo_urls": {
+    "identify": "https://workshop.example.com/api/v1/inbox/items/286/image",
+    "display": "https://workshop.example.com/api/v1/inbox/items/286/image?role=display"
+   },
+   "created_at": "2026-05-21T21:05:51.944Z",
+   "updated_at": "2026-05-21T22:41:41.702Z"
+  },
+  {
+   "source_id": 287,
+   "status": "pending",
+   "barcode": "041072023245",
+   "additional_barcodes": [],
+   "suggested_name": "Blue Hawk Wood and Laminate Floor Pull Bar (Model 1334)",
+   "suggested_sku": null,
+   "suggested_serial_number": null,
+   "suggested_entity_type": "asset",
+   "suggested_category": {
+    "domain": "Cable",
+    "sub": "Electrical"
+   },
+   "ai_confidence": 0.85,
+   "ai_notes": "photo: package - long thin black retail box held in a gloved hand, very dark/underexposed. Legible label text: USE TO CLOSE GAPS DURING INSTALLATION / IDEAL FOR TIGHT SPACES; distributed by The Homax Group, Inc., Bellingham WA; MADE IN CHINA; MODEL #1334; ITEM #0168800; UPC 041072023245. The display photo (catalog shot) directly shows the product labelled BLUE HAWK Pull Bar / Barre d ajustement - a black steel wood/laminate flooring pull bar (closes gaps on the final plank row against a wall). Blue Hawk is Lowe s house brand; Homax (UPC prefix 041072) is the maker - consistent. Sealed box - stored stock. Classified as a Tools > Hand Tools asset. No matching asset found (searched pull bar/hawk/flooring) - no duplicate. Display photo already set - did not auto-fetch a catalog photo.",
+   "quantity": 1,
+   "pack_size": null,
+   "pack_state": null,
+   "filament_state": null,
+   "scan_area": null,
+   "box_state": null,
+   "notes": null,
+   "research_hint": null,
+   "source_url": null,
+   "photo_urls": {
+    "identify": "https://workshop.example.com/api/v1/inbox/items/287/image",
+    "display": "https://workshop.example.com/api/v1/inbox/items/287/image?role=display"
+   },
+   "created_at": "2026-05-21T21:06:10.853Z",
+   "updated_at": "2026-05-21T22:51:54.486Z"
+  },
+  {
+   "source_id": 288,
+   "status": "pending",
+   "barcode": "033287177592",
+   "additional_barcodes": [],
+   "suggested_name": "RYOBI ONE+ 18V PEX Pinch Clamp Tool (P660)",
+   "suggested_sku": null,
+   "suggested_serial_number": null,
+   "suggested_entity_type": "asset",
+   "suggested_category": {
+    "domain": "Cable",
+    "sub": "3D Printer Parts"
+   },
+   "ai_confidence": 0.93,
+   "ai_notes": "photo: package - the side panel of a RYOBI ONE+ retail box, clearly printed. Reads 'PEX Pinch Clamp Tool - P660', barcode 033287177592. Feature list: up to 400 clamps per charge, one-handed clamping, fits 3/8\"-1\" PEX clamp rings, dual LED, cycle-indicator light, meets ASTM F2098-15. Box 'Includes: 18V PEX Pinch Clamp Tool, Gap Check Tool, Belt Clip and Operator's Manual'. Classified as a Power Tools asset (cordless plumbing tool, RYOBI ONE+ 18V platform). No existing PEX/clamp tool in assets - not a duplicate. Auto-fetched catalog photo (vision-picked candidate 1 of 4 from homedepot.com).",
+   "quantity": 1,
+   "pack_size": null,
+   "pack_state": null,
+   "filament_state": null,
+   "scan_area": null,
+   "box_state": null,
+   "notes": null,
+   "research_hint": null,
+   "source_url": null,
+   "photo_urls": {
+    "identify": "https://workshop.example.com/api/v1/inbox/items/288/image",
+    "display": "https://workshop.example.com/api/v1/inbox/items/288/image?role=display"
+   },
+   "created_at": "2026-05-21T21:06:30.182Z",
+   "updated_at": "2026-05-21T21:14:04.742Z"
+  }
+ ]
+}

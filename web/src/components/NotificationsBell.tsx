@@ -22,11 +22,16 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 type Mode = "dropdown" | "sidebar";
 const MODE_KEY = "cobblr.notif.mode";
 
-export function NotificationsBell() {
+export function NotificationsBell({ panelOnly = false, asRow = false }: { panelOnly?: boolean; asRow?: boolean } = {}) {
   const [open, setOpen] = useState(false);
-  const [mode, setMode] = useState<Mode>(() =>
+  const [storedMode, setMode] = useState<Mode>(() =>
     (typeof localStorage !== "undefined" && localStorage.getItem(MODE_KEY)) === "sidebar" ? "sidebar" : "dropdown",
   );
+  // Full-sidebar foot: the anchored dropdown would clip against the nav
+  // column / open off the bottom of the screen — always use the full-height
+  // right panel there. The user's dropdown/sidebar preference still applies
+  // in the top bar.
+  const mode: Mode = panelOnly ? "sidebar" : storedMode;
   const wrapperRef = useRef<HTMLDivElement>(null);
   const sidebarRef = useRef<HTMLDivElement>(null);
   const qc = useQueryClient();
@@ -233,7 +238,7 @@ export function NotificationsBell() {
     <div className="relative" ref={wrapperRef}>
       <button
         onClick={() => setOpen((o) => !o)}
-        className="text-faint dark:text-slate-500 hover:text-content dark:hover:text-mortar-100 transition p-1.5 relative"
+        className={asRow ? "relative " + "w-full flex items-center gap-2.5 px-3 py-1.5 rounded text-[13px] text-muted dark:text-slate-400 hover:text-accent hover:bg-subtle/60 dark:hover:bg-slate-800/40 transition" : "text-faint dark:text-slate-500 hover:text-content dark:hover:text-mortar-100 transition p-1.5 relative"}
         title={
           count === 0
             ? "Notifications"
@@ -247,8 +252,9 @@ export function NotificationsBell() {
         {/* Always a normal bell — a struck-through (BellOff) icon reads as
             "notifications muted", which is wrong; zero unread is just an empty
             badge, not a disabled state. */}
-        <Bell size={14} />
-        {count > 0 && (
+        <Bell size={14} className="shrink-0" />
+        {asRow && <span>Notifications{count > 0 ? ` (${count})` : ""}</span>}
+        {count > 0 && !asRow && (
           <span
             className={`absolute -top-0.5 -right-0.5 text-[9px] font-bold rounded-full min-w-[14px] h-[14px] flex items-center justify-center px-1 leading-none ${
               otherOnly ? "bg-sky-600 text-white" : "bg-ember-500 text-mortar-50"

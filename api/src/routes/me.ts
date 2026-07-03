@@ -40,13 +40,13 @@ meRouter.get("/me", requireAuth, async (req, res) => {
   const [user, orgs] = await Promise.all([
     meta
       .selectFrom("users")
-      .select(["id", "email", "display_name", "must_reset_password", "email_verified_at"])
+      .select(["id", "email", "display_name", "must_reset_password", "email_verified_at", "theme_pref"])
       .where("id", "=", userId)
       .executeTakeFirstOrThrow(),
     meta
       .selectFrom("org_memberships as m")
       .innerJoin("orgs as o", "o.id", "m.org_id")
-      .select((eb) => ["o.id", "o.name", "o.slug", "o.app_mode", "o.focused", "m.role", "m.position", eb.selectFrom("org_memberships as om").innerJoin("users as ou", "ou.id", "om.user_id").select("ou.display_name").whereRef("om.org_id", "=", "o.id").where("om.role", "=", "owner").limit(1).as("owner_name")])
+      .select((eb) => ["o.id", "o.name", "o.slug", "o.app_mode", "o.focused", "m.role", "m.position", "m.is_default", eb.selectFrom("org_memberships as om").innerJoin("users as ou", "ou.id", "om.user_id").select("ou.display_name").whereRef("om.org_id", "=", "o.id").where("om.role", "=", "owner").limit(1).as("owner_name")])
       .where("m.user_id", "=", userId)
       .orderBy("m.position", "asc")
       .orderBy("m.joined_at", "asc")
@@ -114,6 +114,47 @@ meRouter.patch("/me/workspaces/order", requireAuth, async (req, res, next) => {
   }
 });
 
+// PATCH /me/default-workspace — pin the workspace a FRESH device opens into.
+// Body: { slug } to set, { slug: null } to clear. Per-user; one default at a
+// time (a partial unique index guards it, and this clears the others first in
+// the same transaction). A device that already has a last-active workspace
+// still resumes there — the default is the no-preference landing (the author).
+const DefaultBody = z.object({ slug: z.string().nullable() });
+meRouter.patch("/me/default-workspace", requireAuth, async (req, res, next) => {
+  try {
+    const parsed = DefaultBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues } });
+      return;
+    }
+    const userId = req.session!.id;
+    let targetOrgId: string | null = null;
+    if (parsed.data.slug) {
+      const m = await meta
+        .selectFrom("org_memberships as m")
+        .innerJoin("orgs as o", "o.id", "m.org_id")
+        .select(["m.org_id"])
+        .where("m.user_id", "=", userId)
+        .where("o.slug", "=", parsed.data.slug)
+        .executeTakeFirst();
+      if (!m) {
+        res.status(404).json({ error: { code: "not_a_member", message: "You're not a member of that workspace." } });
+        return;
+      }
+      targetOrgId = m.org_id;
+    }
+    await meta.transaction().execute(async (trx) => {
+      await trx.updateTable("org_memberships").set({ is_default: false }).where("user_id", "=", userId).where("is_default", "=", true).execute();
+      if (targetOrgId) {
+        await trx.updateTable("org_memberships").set({ is_default: true }).where("user_id", "=", userId).where("org_id", "=", targetOrgId).execute();
+      }
+    });
+    res.json({ ok: true, default_slug: parsed.data.slug });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /me/verify-email/resend — re-send the email-verification link to the
 // signed-in user's address. No-op-ish if already verified. Returns the dev
 // link in non-prod when no auth-email sender is configured.
@@ -146,6 +187,8 @@ meRouter.post("/me/verify-email/resend", requireAuth, async (req, res, next) => 
 // — not in v0.1.
 const MeUpdate = z.object({
   display_name: z.string().min(1).max(160).optional(),
+  // Per-user theme; null clears back to device/OS default.
+  theme_pref: z.enum(["light", "dark"]).nullable().optional(),
 });
 meRouter.patch("/me", requireAuth, async (req, res, next) => {
   try {
@@ -166,9 +209,10 @@ meRouter.patch("/me", requireAuth, async (req, res, next) => {
         ...(parsed.data.display_name !== undefined && {
           display_name: parsed.data.display_name.trim(),
         }),
+        ...(parsed.data.theme_pref !== undefined && { theme_pref: parsed.data.theme_pref }),
       })
       .where("id", "=", req.session!.id)
-      .returning(["id", "email", "display_name"])
+      .returning(["id", "email", "display_name", "theme_pref"])
       .executeTakeFirstOrThrow();
     res.json({ user: updated });
   } catch (err) {

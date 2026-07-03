@@ -7,6 +7,7 @@
 // core_files_attachments; this is the matching UI primitive.
 
 import { useEffect, useRef, useState } from "react";
+import { openAuthedFile } from "../lib/authed-file";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Eye, ImageIcon, Link, Plus, Tag as TagIcon, Trash2, Upload, X } from "lucide-react";
 import { ApiError, api, type PairingItem, type TagRecord } from "../lib/api";
@@ -564,11 +565,11 @@ function FilesSection({
               <div className="truncate w-full mt-0.5">{att.filename}</div>
             </button>
           ) : (
-            <a
+            <button
               key={att.id}
-              href={api.fileRawUrl(activeSlug, att.file_id, "original")}
-              target="_blank"
-              rel="noopener noreferrer"
+              type="button"
+              // Bearer-only auth: a plain href 401s (lint-authed-media).
+              onClick={() => void openAuthedFile(activeSlug, att.file_id)}
               className="aspect-square flex flex-col items-center justify-center text-xs text-muted border border-line dark:border-slate-700 rounded hover:border-cobble-500 transition p-2 text-center"
               title={att.filename}
             >
@@ -576,7 +577,7 @@ function FilesSection({
                 {att.mime_type.split("/")[1] ?? "file"}
               </div>
               <div className="truncate w-full mt-1">{att.filename}</div>
-            </a>
+            </button>
           ),
         )}
         <button

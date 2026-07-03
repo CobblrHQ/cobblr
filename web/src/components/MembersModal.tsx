@@ -14,6 +14,8 @@ import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
 import { displaySlug } from "../lib/workspaceSlug";
 
 interface Props {
+  /** Render in-flow (settings page mode) instead of as an overlay. */
+  inline?: boolean;
   open: boolean;
   onClose: () => void;
   slug: string;
@@ -22,7 +24,7 @@ interface Props {
 const ROLES: OrgMembership["role"][] = ["owner", "admin", "editor", "member", "guest"];
 const INVITE_ROLES: OrgMembership["role"][] = ["admin", "editor", "member", "guest"];
 
-export function MembersModal({ open, onClose, slug }: Props) {
+export function MembersModal({ open, onClose, slug, inline }: Props) {
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
@@ -167,7 +169,7 @@ export function MembersModal({ open, onClose, slug }: Props) {
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="Members" subtitle={displaySlug(slug)} size="lg">
+    <Modal open={open} onClose={onClose} title="Members" subtitle={displaySlug(slug)} size="lg" inline={inline}>
       <div className="space-y-5">
         {/* Members list */}
         <div>

@@ -16,7 +16,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-scan",
-  version: "0.7.0",
+  version: "0.13.0",
   displayName: "Scan",
   description:
     "Scan a barcode or take a photo of a thing; end up with a draft inventory row, pre-filled with the resolved name + brand + catalog photo. One tap to commit.",
@@ -63,6 +63,9 @@ export default defineModule({
         label: "Identify a scanned photo",
         description:
           "Vision-identify a photo-only inbox row (no barcode) into a draft. Wire-fired on scan.received; no-ops for barcode/url scans.",
+        // DELIBERATELY universal: fires on scan events, not entity sources —
+        // the inbox row in the payload is the subject. Kind/trait scoping
+        // would be false precision (see /actions provenance).
         appliesTo: { any: true },
         invokeHandler: "core-scan.identify-photo",
         // Wire-only — the autonomous-sort binding fires it, not a button.
@@ -73,6 +76,8 @@ export default defineModule({
         label: "Identify a thing",
         description:
           "PURE 'what is this?' — from a photo and/or captured measurements + observations. Returns the suggestion ({ name, brand, category, confidence }); writes nothing. A capture app calls it and decides whether to use the suggestion or keep its own name. User-invokable. Args: { image_file_id?, measurements?, observations? }.",
+        // DELIBERATELY universal: args-driven (a capture app supplies the
+        // photo/measurements) — there is no entity source to scope by.
         appliesTo: { any: true },
         invokeHandler: "core-scan.identify",
         userInvokable: true,

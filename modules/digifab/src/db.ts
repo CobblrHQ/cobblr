@@ -62,9 +62,34 @@ export interface DigifabJobsTable {
   file_id: string | null;
   linked_machine_id: string | null;
   linked_task_id: string | null;
+  /** Production run this job was minted from (0028). */
+  run_id: string | null;
+  /** Verdict-aware ceiling flag: null = pending/covering, 'counted' (good
+   *  verdict incremented the run), 'scrapped' (doesn't cover — replaced). */
+  run_outcome: string | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
   last_polled_at: Date | null;
+}
+
+export interface DigifabProductionRunsTable {
+  id: Generated<string>;
+  name: string;
+  pool_id: string;
+  file_id: string | null;
+  file_ref: string;
+  parts_per_plate: Generated<number>;
+  target_qty: number;
+  completed_qty: Generated<number>;
+  /** active | paused | completed | cancelled */
+  status: Generated<string>;
+  material_part_id: string | null;
+  material_grams: string | null;
+  linked_build_id: string | null;
+  build_qty: Generated<number>;
+  priority: Generated<number>;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
 }
 
 export interface DigifabDeviceLinksTable {
@@ -124,9 +149,14 @@ export interface DigifabDeviceSettingsTable {
   remote_device_id: string;
   camera_url: string | null;
   snapshot_relay: Generated<boolean>;
-  /** ⑦ Spatial floor position (grid cell); null = unplaced. */
+  /** ⑦ Spatial floor position (grid cell); null = unplaced. Superseded by the
+   *  free-form sort_order/row_break layout below; kept for back-compat. */
   grid_x: number | null;
   grid_y: number | null;
+  /** Free-form fleet layout: position in the ordered flow (null = unplaced,
+   *  trails in its own row) + whether this machine starts a new row. */
+  sort_order: number | null;
+  row_break: Generated<boolean>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }
@@ -188,6 +218,7 @@ export interface DigifabDB {
   digifab_device_links: DigifabDeviceLinksTable;
   digifab_drivers: DigifabDriversTable;
   digifab_pools: DigifabPoolsTable;
+  digifab_production_runs: DigifabProductionRunsTable;
   digifab_pool_members: DigifabPoolMembersTable;
   digifab_device_attention: DigifabDeviceAttentionTable;
   digifab_device_settings: DigifabDeviceSettingsTable;
@@ -199,6 +230,44 @@ export interface DigifabDB {
   digifab_library: DigifabLibraryTable;
   digifab_printer_files: DigifabPrinterFilesTable;
   digifab_printer_file_meta: DigifabPrinterFileMetaTable;
+  digifab_fleet_device_cache: DigifabFleetDeviceCacheTable;
+  digifab_failure_config: DigifabFailureConfigTable;
+  digifab_failure_watch: DigifabFailureWatchTable;
+}
+
+/** Singleton per-workspace AI failure-detection config. */
+export interface DigifabFailureConfigTable {
+  id: Generated<boolean>;
+  enabled: Generated<boolean>;
+  threshold: Generated<number>;
+  sample_interval_sec: Generated<number>;
+  auto_pause: Generated<boolean>;
+  backend: Generated<string>; // auto | edge | llm
+  updated_at: Generated<Date>;
+}
+
+/** Per-device rolling failure-score state (survives restarts / multi-instance). */
+export interface DigifabFailureWatchTable {
+  connection_id: string;
+  device_id: string;
+  job_key: string | null;
+  score: Generated<number>;
+  samples: Generated<number>;
+  last_probability: number | null;
+  last_source: string | null;
+  paused_at: Date | null;
+  watch_at: Date | null;
+  last_sample_at: Date | null;
+  updated_at: Generated<Date>;
+}
+
+/** Last successful listDevices() per connection — the fleet view serves this
+ *  stale-while-revalidate so the floor paints instantly (cold start included)
+ *  while a detached refresh pulls live state. */
+export interface DigifabFleetDeviceCacheTable {
+  connection_id: string;
+  devices: unknown; // RemoteDevice[] as jsonb
+  fetched_at: Generated<Date>;
 }
 
 /** Durable cache of one on-disk gcode file + its slicer thumbnail/estimate. The
@@ -241,6 +310,8 @@ export interface DigifabLibraryTable {
   size_bytes: Generated<number>;
   plate_count: Generated<number>;
   notes: string | null;
+  /** Slicer metadata parsed at upload (extract-metadata.ts) — est time, material, ppp… */
+  metadata: Generated<Record<string, unknown>>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }

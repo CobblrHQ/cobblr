@@ -342,20 +342,20 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
     glyph: "🌱",
     blurb:
-      "Garden tracker — plants as assets with species, sun exposure, planted date, and an RRULE for the watering schedule that the recurrence scanner picks up automatically.",
+      "Garden tracker — plants as assets with species, sun exposure, planted date, and a repeating watering schedule that the recurrence scanner picks up automatically.",
     manifest: {
       id: "cobblr.community.garden",
       version: "0.1.0",
       name: "Garden",
       description:
-        "Custom assets:asset fields for tracking plants — species, planted date, watering RRULE, sun exposure.",
+        "Custom assets:asset fields for tracking plants — species, planted date, watering schedule, sun exposure.",
       author: "Cobblr community",
       requires: [{ module: "assets" }],
       wires: [],
       field_defs: [
         { entity_kind: "assets:asset", name: "species", display_label: "Species", type: "text", position: 1 },
         { entity_kind: "assets:asset", name: "planted_at", display_label: "Planted", type: "date", position: 2 },
-        { entity_kind: "assets:asset", name: "water_rrule", display_label: "Watering schedule (RRULE)", type: "text", position: 3 },
+        { entity_kind: "assets:asset", name: "water_rrule", display_label: "Watering schedule", type: "text", position: 3 },
         { entity_kind: "assets:asset", name: "sun", display_label: "Sun exposure", type: "text", position: 4 },
       ],
     },

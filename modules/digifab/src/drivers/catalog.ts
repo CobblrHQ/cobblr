@@ -49,6 +49,10 @@ export const DRIVER_CATALOG: CatalogEntry[] = [
 // can't be a declarative manifest. It ships as an EDGE-ADAPTER bridge the
 // user runs (LAN or cloud mode = the bridge's config, not Cobblr's). See
 // the design doc's "Bambu" section.
+// Elegoo SDCP is also not-REST (UDP discovery + WebSocket commands + chunked
+// HTTP upload, all served by the printer) — it ships as BUILT-IN code
+// (`elegoo_sdcp` in registry.ts, so it lists with the other builtins), like
+// Bambu cloud.
 export const EDGE_ADAPTER_CATALOG: Array<Pick<CatalogEntry, "id" | "name" | "summary" | "credentialHint" | "kind">> = [
   {
     id: "bambu",

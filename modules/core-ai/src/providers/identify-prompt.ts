@@ -13,8 +13,13 @@ export const IDENTIFY_PROMPT =
   "component, consumable, material or supply).\n\n" +
   "If a UPC/EAN barcode is printed on the package and the digits are clearly " +
   "legible, read them.\n\n" +
+  "If the item is a titled work that belongs to a KNOWN SERIES or franchise — " +
+  "a book in a series (Harry Potter, Little House on the Prairie), a film in a " +
+  "franchise (John Wick), an album in a set — name that series. Only when you " +
+  "actually recognise the series; never guess one from a generic title.\n\n" +
   'Reply with ONLY a JSON object: {"name": <string>, "brand": <string|null>, ' +
   '"category": <string|null>, "entity_type": "asset"|"part"|null, ' +
+  '"series": <the series/franchise name if this is part of one, else null>, ' +
   '"barcode": <the UPC/EAN digits if clearly legible, else null>, ' +
   '"confidence": <0..1, how sure you are>}. If the photo is unclear, empty, or ' +
   "not a single identifiable object, reply name \"\" and confidence 0.";
@@ -35,11 +40,27 @@ export function measurementContext(input: Record<string, unknown>): string {
   if (o && typeof o === "object" && Object.keys(o).length) {
     parts.push("Visual observations: " + JSON.stringify(o));
   }
-  if (!parts.length) return "";
-  return (
-    "\n\nThese precise measurements + observations were captured at a measuring " +
-    "bench — treat them as ground truth and use them to identify the item " +
-    "specifically (they override anything ambiguous in the photo):\n" +
-    parts.join("\n")
-  );
+  // A user correction/hint OVERRIDES the visual read — the person telling you
+  // "it's an RA200 headset" when the photo shows a bag means the item they want
+  // is the headset (inside/attached), not the most prominent object. Trust the
+  // words over the pixels; the hint may name a DIFFERENT item than the obvious one.
+  const hint = typeof input.user_hint === "string" ? input.user_hint.trim() : "";
+  let out = "";
+  if (parts.length) {
+    out +=
+      "\n\nThese precise measurements + observations were captured at a measuring " +
+      "bench — treat them as ground truth and use them to identify the item " +
+      "specifically (they override anything ambiguous in the photo):\n" +
+      parts.join("\n");
+  }
+  if (hint) {
+    out +=
+      `\n\nThe user says this item IS: "${hint}". This is an AUTHORITATIVE ` +
+      "correction — identify THAT specific item and return it as the name, even " +
+      "if it isn't the most prominent object in the frame (it may be inside, " +
+      "attached to, or partly hidden by another object). The user's words " +
+      "override your own read of the photo; do NOT keep the previously-identified " +
+      "item if it conflicts with this.";
+  }
+  return out;
 }

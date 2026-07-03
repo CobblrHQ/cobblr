@@ -55,6 +55,21 @@ historyRouter.get(
       ])
       .executeTakeFirst();
 
+    // Daily buckets over the window — the analytics trend. digifab_jobs only here;
+    // Bambu cloud tasks are folded in below (they aren't jobs rows).
+    const seriesRows = await db
+      .selectFrom("digifab_jobs")
+      .where("status", "in", TERMINAL)
+      .where("updated_at", ">", since)
+      .select([
+        sql<string>`to_char(date_trunc('day', updated_at), 'YYYY-MM-DD')`.as("day"),
+        sql<number>`count(*) filter (where status = 'completed')`.as("completed"),
+        sql<number>`count(*) filter (where status = 'failed')`.as("failed"),
+        sql<number>`coalesce(sum((material_grams)::numeric) filter (where status = 'completed'), 0)`.as("filament_g"),
+      ])
+      .groupBy("day")
+      .execute();
+
     // Device names: prefer the user's linked machine label, else the remote name.
     const links = await db
       .selectFrom("digifab_device_links")
@@ -161,8 +176,30 @@ historyRouter.get(
     const taskCompleted = taskItems.filter((t) => t.status === "completed").length;
     const taskFailed = taskItems.filter((t) => t.status === "failed").length;
     const taskFilament = taskItems.reduce((g, t) => g + (t.filament_g ?? 0), 0);
+
+    // Dense daily series (every day in the window, zero-filled) — jobs + tasks.
+    const byDay = new Map<string, { completed: number; failed: number; filament_g: number }>();
+    for (const r of seriesRows) byDay.set(r.day, { completed: n(r.completed), failed: n(r.failed), filament_g: Math.round(n(r.filament_g)) });
+    for (const t of taskItems) {
+      const day = t.at.slice(0, 10);
+      const e = byDay.get(day) ?? { completed: 0, failed: 0, filament_g: 0 };
+      if (t.status === "completed") { e.completed += 1; e.filament_g += Math.round(t.filament_g ?? 0); }
+      else if (t.status === "failed") e.failed += 1;
+      byDay.set(day, e);
+    }
+    // `days` daily buckets ending TODAY (not `since`, which lands on yesterday —
+    // today's prints are counted by the summary via `updated_at > since`, so the
+    // trend must include today or the last bar visibly undercounts).
+    const series: Array<{ date: string; completed: number; failed: number; filament_g: number }> = [];
+    const startMs = Date.now() - (days - 1) * 86_400_000;
+    for (let i = 0; i < days; i++) {
+      const date = new Date(startMs + i * 86_400_000).toISOString().slice(0, 10);
+      series.push({ date, ...(byDay.get(date) ?? { completed: 0, failed: 0, filament_g: 0 }) });
+    }
+
     res.json({
       days,
+      series,
       summary: {
         total: n(summary?.total) + taskItems.length,
         completed: n(summary?.completed) + taskCompleted,

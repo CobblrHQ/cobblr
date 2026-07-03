@@ -485,6 +485,7 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
             method: web.method,
             category: web.category,
             entity_type: web.entityType,
+            ...(web.series ? { series: web.series } : {}),
             ...(parsePackSize(web.name) ? { pack_size: parsePackSize(web.name) } : {}),
           })}::jsonb` as never,
           ai_confidence: String(web.confidence),

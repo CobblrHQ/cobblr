@@ -21,6 +21,7 @@ export interface ContextKind {
   id: string;
   displayName: string;
   fields: ContextField[];
+  multiInstance?: boolean;
 }
 export interface ContextAction {
   id: string;
@@ -123,6 +124,10 @@ export async function assembleContext(
   const kinds: ContextKind[] = chosen.map((k) => ({
     id: k.id,
     displayName: k.display_name,
+    // "multi" = the owning module supports named instances — the prompt marks
+    // these so the model knows which modules can back a provides_instances
+    // entry ("track Books" → a bookshelf instance of such a module).
+    multiInstance: k.module_instanceability === "multi",
     fields: (k.fields ?? []).map((f) => ({ name: f.name, type: f.type, role: f.role, required: f.required })),
   }));
 
@@ -160,6 +165,16 @@ const OUTPUT_CONTRACT = `{
       { "source_kind": "<kind>", "action_id": "<action>",
         "trigger_type": "user-invoked|event|on-create|on-update|on-delete",
         "trigger_event": "<optional event name>", "template": "<optional Jinja2>" }
+    ],
+    "provides_instances": [
+      { "module": "<a MULTI-INSTANCE module>", "instance_name": "<kebab-slug>",
+        "display_name": "<Nav Label>", "item_noun": "<singular noun>", "glyph": "<emoji>",
+        "field_defs": [ <same shape as above; entity_kind = the module's BASE kind (e.g. inventory:part) — the platform scopes it to this instance> ],
+        "wires": [ <same shape as above> ] }
+    ],
+    "nav_headings": [
+      { "name": "<Parent Label>", "members": [
+        { "target_kind": "module|instance", "target_id": "<module name or instance_name>" } ] }
     ]
   }
 }`;
@@ -175,7 +190,7 @@ const TASK_TEMPLATES: Record<string, TaskBuilder> = {
     const kinds = ctx.kinds
       .map(
         (k) =>
-          `- ${k.id} (${k.displayName}) — existing fields: ${
+          `- ${k.id} (${k.displayName})${k.multiInstance ? " [multi-instance module]" : ""} — existing fields: ${
             k.fields.map((f) => `${f.name}:${f.type}`).join(", ") || "(none)"
           }`,
       )
@@ -203,6 +218,8 @@ RULES:
 - wires.source_kind must be one of the entity kind ids above; wires.action_id must be one of the action ids above. Never reference an id not listed.
 - trigger_type is one of {user-invoked,event,on-create,on-update,on-delete}; for "event" also set trigger_event.
 - requires must list every module owning a referenced kind/action (module = the id prefix before ":").
+- To track a NEW kind of thing (the user names a noun that deserves its own page — "Books, call it Bookshelf"), do NOT bolt fields onto an unrelated kind: add a "provides_instances" entry instead. Pick the best-fitting module marked [multi-instance module]; instance_name is a kebab slug; put that thing's field_defs INSIDE the instance entry, each with entity_kind set to the module's BASE kind (e.g. inventory:part) — the platform scopes them to the new instance. The instance gets its own nav entry + "New <item_noun>" flow.
+- To group nav entries under a parent ("put X and Y under a Machines heading"), use "nav_headings": members reference module names (target_kind "module") or instance names (target_kind "instance") — including instances that already exist in the workspace. Omit both keys entirely when unused.
 - id = "cobblr.user.<kebab-slug>"; version = "0.1.0".`;
   },
 
@@ -302,7 +319,7 @@ RULES:
     const kinds = ctx.kinds
       .map(
         (k) =>
-          `- ${k.id} (${k.displayName}) — fields: ${
+          `- ${k.id} (${k.displayName})${k.multiInstance ? " [multi-instance module]" : ""} — fields: ${
             k.fields.map((f) => `${f.name}:${f.type}`).join(", ") || "(none)"
           }`,
       )
@@ -339,6 +356,16 @@ EVERY field_def MUST include "display_label", and "requires" entries are OBJECTS
       { "source_kind": "<kind>", "action_id": "<action>",
         "trigger_type": "user-invoked|event|on-create|on-update|on-delete",
         "trigger_event": "<optional event name>", "template": "<optional Jinja2>" }
+    ],
+    "provides_instances": [
+      { "module": "<a [multi-instance module]>", "instance_name": "<kebab-slug>",
+        "display_name": "<Nav Label>", "item_noun": "<singular noun>", "glyph": "<emoji>",
+        "field_defs": [ <same shape; entity_kind = the module's BASE kind (e.g. inventory:part) — the platform scopes it to this instance> ],
+        "wires": [ <same shape> ] }
+    ],
+    "nav_headings": [
+      { "name": "<Parent Label>", "members": [
+        { "target_kind": "module|instance", "target_id": "<module name or instance_name>" } ] }
     ]
   },
   "seed": [
@@ -352,8 +379,10 @@ RULES:
 - field_defs add columns to an entity_kind. type ∈ {text,number,boolean,date,url}; name must match ^[a-z][a-z0-9_]*$ (snake_case). For a fixed set of options (categories, statuses, sizes), add a text field with a "choices" array — that is how you seed category vocabularies.
 - wires.source_kind / action_id must be ids listed above; never reference an unlisted id. trigger_type ∈ {user-invoked,event,on-create,on-update,on-delete}.
 - Be comprehensive: model every "thing they track" as a kind + its fields, and every automation they describe as a wire. This is a whole app, not one tweak.
+- A DISTINCT collection the user names ("Bookshelf", "Spice Rack", "Plant Corner") = a "provides_instances" entry on a [multi-instance module] — its own nav entry + page — NOT extra fields bolted onto a shared kind. Its field_defs live inside the instance entry, entity_kind = the module's base kind.
+- Requests to group/nest nav entries under a parent = "nav_headings" (members reference module names or instance names, including pre-existing ones). Nav structure is otherwise NOT expressible — never claim you reorganised the nav unless you emitted nav_headings.
 - seed: ONLY records the user EXPLICITLY enumerated as a fixed starter set — e.g. "hooks from 1mm to 10mm" → one record per size; "rooms: kitchen, garage" → one per room. Each record's "kind" must be one you listed in requires/field_defs; its keys are field names from that kind (native like "name", plus the custom field_defs you added — extra keys are stored as custom-field values). Always include a human "name". Do NOT invent data the user didn't describe (no fake yarn colours, no sample parts). If they enumerated nothing concrete, use "seed": [].
-- "interpretation" MUST (a) summarise the workspace + what you seeded, and (b) honestly name any remaining follow-ups you could NOT do — e.g. tuning scan/receipt capture rules, or creating extra named module instances/collections. Don't claim more than you built.
+- "interpretation" MUST (a) summarise the workspace + what you seeded, and (b) honestly name any remaining follow-ups you could NOT do — e.g. tuning scan/receipt capture rules, Don't claim more than you built.
 - id = "cobblr.user.<kebab-slug>"; version = "0.1.0".${roleNote(ctx)}`;
   },
 

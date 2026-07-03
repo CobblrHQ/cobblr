@@ -72,6 +72,7 @@ function InventoryDashboardWidget({ slug, getToken }: DashboardWidgetProps) {
       icon={Package}
       label="inventory"
       primary={total}
+      empty={!base.isLoading && total === 0}
       secondary={
         rows.length > 0 ? (
           rows.map((r) => r.label).join(" · ")

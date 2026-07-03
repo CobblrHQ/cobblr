@@ -55,6 +55,7 @@ import { dispatchInstanceItems } from "./modules/mount.js";
 import { qrScanRouter } from "./routes/qr-scan.js";
 import { integrationsInboundRouter } from "./routes/integrations-inbound.js";
 import { hooksRouter } from "./routes/hooks.js";
+import { desktopUpdatesRouter } from "./routes/desktop-updates.js";
 import { hostedPanelsRouter } from "./routes/hosted-panels.js";
 import { productEventsObserver } from "./platform/product-events.js";
 
@@ -167,6 +168,8 @@ export function createApp(): AppHandles {
   // Open core registers no handlers (404 until an overlay/module does). See
   // platform().http.registerWebhook + routes/hooks.ts.
   v1.use("/hooks", hooksRouter);
+  // Auto-update feed for the Cobblr Edge Helper desktop app (account-level).
+  v1.use("/desktop", desktopUpdatesRouter);
   // Inbound feedback email (reply-by-email). Unauthenticated at the router level;
   // the Cloudflare Email Worker authenticates with COBBLR_INBOUND_EMAIL_SECRET.
   v1.use(feedbackInboundRouter);

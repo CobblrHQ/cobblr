@@ -41,3 +41,40 @@ export function routeUnknownToMetadata<T extends Record<string, unknown>>(
   if (Object.keys(promoted).length > 0) out.metadata = promoted;
   return out as T;
 }
+
+/** Preserve SERVER-MANAGED metadata keys across a client write. Custom-field
+ *  values live in the `metadata` jsonb column, written wholesale (the client
+ *  does read-modify-write). A server_managed field (e.g. core-mobility's
+ *  `away_since`) is owned by the server — a client's value must never take.
+ *  So for each managed key: re-inject the STORED value if there is one, else
+ *  drop the client's attempt. Only acts when the client actually sent metadata
+ *  and the kind has managed fields (`names` from
+ *  platform().entities.serverManagedFields). */
+export function preserveServerManaged(
+  incoming: Record<string, unknown> | undefined,
+  current: Record<string, unknown> | undefined,
+  names: readonly string[],
+): Record<string, unknown> | undefined {
+  if (names.length === 0 || incoming === undefined) return incoming;
+  const out = { ...incoming };
+  for (const n of names) {
+    if (current && n in current) out[n] = current[n];
+    else delete out[n];
+  }
+  return out;
+}
+
+/** Normalise a jsonb `metadata` value (object, raw string, or null) to a plain
+ *  object so custom keys are reachable for the before/after event bag. */
+export function coerceMetadata(raw: unknown): Record<string, unknown> {
+  if (raw && typeof raw === "object") return { ...(raw as Record<string, unknown>) };
+  if (typeof raw === "string" && raw.trim()) {
+    try {
+      const p = JSON.parse(raw);
+      if (p && typeof p === "object") return p as Record<string, unknown>;
+    } catch {
+      /* not JSON */
+    }
+  }
+  return {};
+}
