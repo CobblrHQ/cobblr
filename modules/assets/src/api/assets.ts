@@ -4,7 +4,7 @@ import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { routeUnknownToMetadata } from "./route-helpers.js";
+import { routeUnknownToMetadata, preserveServerManaged, coerceMetadata } from "./route-helpers.js";
 
 export const assetsRouter = Router({ mergeParams: true });
 
@@ -125,6 +125,32 @@ assetsRouter.patch(
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
     const ctx = tenantContext(req);
+
+    // Read the current row FIRST — the before-image for the change event AND
+    // the source of truth for server-managed fields (metadata is written
+    // wholesale; a stale client value must not clobber a server-stamped one).
+    // Same pattern as inventory's part PATCH.
+    const before = await db
+      .selectFrom("assets_assets")
+      .selectAll()
+      .where("id", "=", id)
+      .where("instance", "=", instanceOf(req))
+      .executeTakeFirst();
+    if (!before) {
+      res.status(404).json({ error: { code: "not_found", message: "asset not found" } });
+      return;
+    }
+
+    const smNames = await platform().entities.serverManagedFields(ctx.org.id, "assets:asset");
+    const beforeMeta = coerceMetadata((before as { metadata?: unknown }).metadata);
+    if (parsed.data.metadata !== undefined) {
+      parsed.data.metadata = preserveServerManaged(
+        parsed.data.metadata as Record<string, unknown>,
+        beforeMeta,
+        smNames,
+      );
+    }
+
     const updated = await db
       .updateTable("assets_assets")
       .set({ ...parsed.data, updated_at: new Date() } as never)
@@ -142,6 +168,24 @@ assetsRouter.patch(
       action: "asset_updated",
       ref: { module: "assets", entityType: "asset", entityId: id },
       diff: parsed.data,
+    });
+    // Flat before/after bags (native columns + flattened metadata) so a
+    // transition wire can compare {{event.before.x}} vs {{event.after.x}}.
+    // AWAITED: a reactor (e.g. core-mobility) writes back to this asset and
+    // the client re-reads right after — the wire must finish first.
+    const nativeChanges: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(parsed.data)) {
+      if (v !== undefined && k !== "metadata") nativeChanges[k] = v;
+    }
+    const afterMeta =
+      parsed.data.metadata !== undefined
+        ? ((parsed.data.metadata as Record<string, unknown>) ?? {})
+        : beforeMeta;
+    await platform().events.emit("assets.asset.updated", {
+      orgId: ctx.org.id,
+      assetId: id,
+      before: { ...before, ...beforeMeta },
+      after: { ...before, ...nativeChanges, ...afterMeta },
     });
     res.json(updated);
   }),

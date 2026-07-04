@@ -298,6 +298,10 @@ meRouter.get("/me/activity", requireAuth, async (req, res, next) => {
     // Optional explicit ?org=<slug> narrows to one workspace; default
     // is "across all of mine."
     const orgFilter = typeof req.query.org === "string" ? req.query.org : null;
+    // Cursor pagination (see docs/design-decisions/list-pagination.md) — keyset
+    // on occurred_at desc; return next_cursor + a real total so the UI shows
+    // "N of total", not a capped items.length that lies once you pass the page.
+    const cursor = typeof req.query.cursor === "string" ? req.query.cursor : null;
     let q = meta
       .selectFrom("activity_log as a")
       .innerJoin("orgs as o", "o.id", "a.org_id")
@@ -316,10 +320,32 @@ meRouter.get("/me/activity", requireAuth, async (req, res, next) => {
       ])
       .where("m.user_id", "=", userId)
       .orderBy("a.occurred_at", "desc")
-      .limit(limit);
+      .limit(limit + 1); // +1 to detect "there's more" without a second query
     if (orgFilter) q = q.where("o.slug", "=", orgFilter);
-    const items = await q.execute();
-    res.json({ items });
+    if (cursor) q = q.where("a.occurred_at", "<", new Date(cursor));
+    const rows = await q.execute();
+    const hasMore = rows.length > limit;
+    const items = rows.slice(0, limit);
+    const next_cursor = hasMore ? new Date(items[items.length - 1]!.occurred_at).toISOString() : null;
+    // Real total (same membership + org filter, ignoring pagination). Built as a
+    // ternary rather than reassigning — a conditional innerJoin changes the
+    // query's type, which a `let cq = …; cq = cq.innerJoin()` can't hold.
+    const totalRow = orgFilter
+      ? await meta
+          .selectFrom("activity_log as a")
+          .innerJoin("org_memberships as m", "m.org_id", "a.org_id")
+          .innerJoin("orgs as o", "o.id", "a.org_id")
+          .select(({ fn }) => fn.countAll<number>().as("n"))
+          .where("m.user_id", "=", userId)
+          .where("o.slug", "=", orgFilter)
+          .executeTakeFirst()
+      : await meta
+          .selectFrom("activity_log as a")
+          .innerJoin("org_memberships as m", "m.org_id", "a.org_id")
+          .select(({ fn }) => fn.countAll<number>().as("n"))
+          .where("m.user_id", "=", userId)
+          .executeTakeFirst();
+    res.json({ items, next_cursor, total: Number(totalRow?.n ?? items.length) });
   } catch (err) {
     next(err);
   }

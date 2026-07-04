@@ -25,6 +25,76 @@ interface AdjustStockPayload {
   sourceId?: string;
 }
 
+/** The core stock-delta path, shared by adjust-stock (wire/HTTP) and the
+ *  one-tap consume actions (use-one/use-up). Applies the delta, writes the
+ *  consumption ledger, re-emits stock.changed, and fires stock.low on a
+ *  decrease at/below min_qty — so every consumption route trips the same
+ *  "running low → shopping list" wire. Honours the tracked_by external-tracker
+ *  opt-out. A non-zero `delta` is assumed (callers guard). */
+async function applyStockDelta(
+  orgId: string,
+  p: { partId: string; delta: number; reason: string; sourceKind?: string | null; sourceId?: string | null },
+): Promise<Record<string, unknown>> {
+  const { partId, delta, reason } = p;
+  const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
+
+  // Externally-tracked stock (e.g. a Spoolman spool, metadata.tracked_by): the
+  // external system counts usage and Cobblr mirrors it on sync — mutating here
+  // too would double-count. Generic — any external tracker opts a part out.
+  const ext = await db
+    .selectFrom("inventory_parts")
+    .select(sql<string | null>`metadata->>'tracked_by'`.as("tracked_by"))
+    .where("id", "=", partId)
+    .executeTakeFirst();
+  if (ext?.tracked_by) {
+    return { ok: true, skipped: true, reason: `externally tracked by ${ext.tracked_by}` };
+  }
+
+  const updated = await db
+    .updateTable("inventory_parts")
+    .set({ qty: sql<string>`qty + ${delta}::numeric`, updated_at: new Date() })
+    .where("id", "=", partId)
+    .returning(["id", "name", "qty", "min_qty"])
+    .executeTakeFirst();
+  if (!updated) return { ok: false, error: "part_not_found" };
+
+  // Consumption ledger (append-only): WHAT drew the part down and HOW MUCH —
+  // also the raw data the burn-rate predictor reads. Best-effort; a ledger
+  // hiccup must never fail the stock change.
+  try {
+    await db
+      .insertInto("inventory_consumption")
+      .values({
+        part_id: partId,
+        delta: String(delta),
+        reason: reason ?? null,
+        source_kind: p.sourceKind ?? null,
+        source_id: p.sourceId ?? null,
+      })
+      .execute();
+  } catch (e) {
+    console.error("[inventory.applyStockDelta] ledger write failed:", (e as Error).message);
+  }
+
+  await platform().events.emit("inventory.stock.changed", {
+    orgId,
+    partId: updated.id,
+    delta,
+    newQty: Number(updated.qty),
+    reason,
+  });
+
+  // Low-stock signal on a DECREASE landing at/below min_qty (only decreases, so
+  // a restock doesn't re-alert). This is what trips "running low → shopping
+  // list", so a one-tap "use one" that crosses the threshold reorders for free.
+  const newQty = Number(updated.qty);
+  const minQty = updated.min_qty == null ? null : Number(updated.min_qty);
+  if (delta < 0 && minQty != null && minQty > 0 && newQty <= minQty) {
+    await platform().events.emit("inventory.stock.low", { orgId, partId: updated.id, newQty, minQty });
+  }
+  return { ok: true, partId: updated.id, delta, newQty };
+}
+
 export function registerInventoryActionHandlers(): void {
   if (registered) return;
   registered = true;
@@ -54,86 +124,80 @@ export function registerInventoryActionHandlers(): void {
     if (!partId || typeof delta !== "number" || delta === 0) {
       return { ok: true, skipped: true, reason: "missing partId or delta" };
     }
-    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
+    return applyStockDelta(ctx.orgId, {
+      partId,
+      delta,
+      reason,
+      sourceKind: args.sourceKind ?? ev.sourceKind,
+      sourceId: args.sourceId ?? ev.sourceId,
+    });
+  });
 
-    // Externally-tracked stock: if this part's quantity is owned by another
-    // system (e.g. a Spoolman spool — metadata.tracked_by = "spoolman"), don't
-    // mutate it here. The external tracker counts the usage (Moonraker reports
-    // the print to Spoolman); Cobblr mirrors its number on sync. Adjusting here
-    // too would double-count. Generic — any external tracker opts a part out.
-    const ext = await db
+  // ───────────── one-tap consumption (P1 — consumption capture) ─────────────
+  // The binary "used" signal, at the moment you're already handling the item —
+  // NO number entry (that's the typed StockAdjust popup, kept for when you DO
+  // want exact). userInvokable, unlike adjust-stock: these are buttons a person
+  // taps. Both decrement through applyStockDelta, so the ledger, stock.changed,
+  // and the stock.low → shopping-list wire all fire for free.
+
+  // Use one: knock a single unit off. The everyday tap ("took one out").
+  platform().actions.registerHandler("inventory.use-one", async (ctx) => {
+    const partId = ctx.entity?.id ?? (ctx.args as { partId?: string } | null)?.partId;
+    if (!partId) return { ok: false, error: "missing_part" };
+    return applyStockDelta(ctx.orgId, { partId, delta: -1, reason: "used one" });
+  });
+
+  // Used up: it's gone (tossing the empty). Drive on-hand to 0 in one tap —
+  // no "how many left?" guess. Reads current qty and deltas it to zero so the
+  // ledger + low-stock path stay uniform; a no-op if already 0.
+  platform().actions.registerHandler("inventory.use-up", async (ctx) => {
+    const partId = ctx.entity?.id ?? (ctx.args as { partId?: string } | null)?.partId;
+    if (!partId) return { ok: false, error: "missing_part" };
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
+    const row = await db
       .selectFrom("inventory_parts")
-      .select(sql<string | null>`metadata->>'tracked_by'`.as("tracked_by"))
+      .select(["qty"])
       .where("id", "=", partId)
       .executeTakeFirst();
-    if (ext?.tracked_by) {
-      return { ok: true, skipped: true, reason: `externally tracked by ${ext.tracked_by}` };
-    }
+    if (!row) return { ok: false, error: "part_not_found" };
+    const cur = Number(row.qty);
+    if (!(cur > 0)) return { ok: true, partId, delta: 0, newQty: cur, note: "already empty" };
+    return applyStockDelta(ctx.orgId, { partId, delta: -cur, reason: "used up" });
+  });
 
-    const updated = await db
+  // ───────── Replaced (P2 — the replace-clock's one tap) ─────────
+  // The single tap you make at the moment of a scheduled swap (furnace filter,
+  // water filter, printer nozzle): (a) reset the clock — stamp last_replaced_at
+  // = now, so the recurrence scanner re-anchors and won't nag again until the
+  // next interval; (b) consume a spare — knock one off on-hand, which (via the
+  // shared decrement) trips stock.low → shopping list if you're now short. So
+  // "Replaced" = reset + consume-spare + maybe-reorder, in one tap.
+  platform().actions.registerHandler("inventory.replaced", async (ctx) => {
+    const partId = ctx.entity?.id ?? (ctx.args as { partId?: string } | null)?.partId;
+    if (!partId) return { ok: false, error: "missing_part" };
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
+    // Reset the clock: merge last_replaced_at into metadata (jsonb, wholesale-
+    // safe merge so other keys survive).
+    const nowIso = new Date().toISOString();
+    const reset = await db
       .updateTable("inventory_parts")
       .set({
-        qty: sql<string>`qty + ${delta}::numeric`,
+        metadata: sql`coalesce(metadata, '{}'::jsonb) || ${JSON.stringify({ last_replaced_at: nowIso })}::jsonb`,
         updated_at: new Date(),
       })
       .where("id", "=", partId)
-      .returning(["id", "name", "qty", "min_qty"])
+      .returning(["id", "qty"])
       .executeTakeFirst();
-    if (!updated) return { ok: false, error: "part_not_found" };
-
-    // Consumption ledger: record this change with its source, so a consumable
-    // (a spool) shows WHAT drew it down and HOW MUCH. Append-only; reading it
-    // back is the spool's print/usage history. Best-effort — a ledger hiccup
-    // must never fail the stock adjustment itself.
-    try {
-      await db
-        .insertInto("inventory_consumption")
-        .values({
-          part_id: partId,
-          delta: String(delta),
-          reason: reason ?? null,
-          source_kind: args.sourceKind ?? ev.sourceKind ?? null,
-          source_id: args.sourceId ?? ev.sourceId ?? null,
-        })
-        .execute();
-    } catch (e) {
-      console.error("[inventory.adjust-stock] ledger write failed:", (e as Error).message);
-    }
-
-    // Re-emit the stock-changed event so the existing
-    // wire-of-record (inventory.stock.changed → projects.set-dep-
-    // satisfied) keeps working — this action is additive, not a
-    // replacement for the direct HTTP stock-adjust.
-    await platform().events.emit("inventory.stock.changed", {
-      orgId: ctx.orgId,
-      partId: updated.id,
-      delta,
-      newQty: Number(updated.qty),
-      reason,
-    });
-
-    // Low-stock signal — mirror the HTTP stock-adjust route (parts.ts): on a
-    // DECREASE that lands at/below min_qty, fire inventory.stock.low. Without
-    // this, action-driven consumption (a Build consuming components, any wire
-    // that decrements) would never trip the "running low → shopping list"
-    // wires — only the direct HTTP adjust did. Only on a decrease, so an
-    // increase (e.g. checking an item off to restock) doesn't re-alert.
-    const newQty = Number(updated.qty);
-    const minQty = updated.min_qty == null ? null : Number(updated.min_qty);
-    if (delta < 0 && minQty != null && minQty > 0 && newQty <= minQty) {
-      await platform().events.emit("inventory.stock.low", {
-        orgId: ctx.orgId,
-        partId: updated.id,
-        newQty,
-        minQty,
-      });
-    }
-    return {
-      ok: true,
-      partId: updated.id,
-      delta,
-      newQty: Number(updated.qty),
-    };
+    if (!reset) return { ok: false, error: "part_not_found" };
+    // Consume the spare that went in — but only if there's one on hand; a
+    // replacement with no spares still resets the clock (the point) without
+    // driving qty negative. The decrement trips stock.low → reorder if short.
+    const cur = Number(reset.qty);
+    const consumed =
+      cur > 0
+        ? await applyStockDelta(ctx.orgId, { partId, delta: -1, reason: "replaced (consumed a spare)" })
+        : { ok: true, skipped: true, reason: "no spare on hand" };
+    return { ok: true, partId, last_replaced_at: nowIso, consumed };
   });
 
   // ─────────────────────── set-stock ───────────────────────────────

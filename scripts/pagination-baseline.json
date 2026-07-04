@@ -1,0 +1,13 @@
+[
+  "web/src/components/WireDetailModal.tsx::queryFn: () => api.listActivity(slug, { actions: [\"wire_fired\", \"wire_failed\"], limit: 50 }),",
+  "web/src/pages/ActivityPage.tsx::limit: 100,",
+  "web/src/pages/AdminConsole.tsx::queryFn: () => api.superAdminActivity({ limit: 100 }),",
+  "web/src/pages/AdminConsole.tsx::queryFn: () => api.superAdminAiActivity({ ...filters, limit: 300 }),",
+  "web/src/pages/AdminConsole.tsx::queryFn: () => api.superAdminBarcodeCache({ ...filters, layer: layer as \"shared\" | \"workspaces\", limit: 300 }),",
+  "web/src/pages/AppPlayerPage.tsx::queryFn: () => api.viewData(slug, viewId, { limit: 100 }),",
+  "web/src/pages/AppPlayerPage.tsx::queryFn: () => api.viewData(slug, viewId, { limit: 500 }),",
+  "web/src/pages/BindingsPage.tsx::queryFn: () => api.listActivity(slug, { actions, limit: 30 }),",
+  "web/src/pages/CatalogMatchPage.tsx::limit: 50,",
+  "web/src/pages/PortalViewPage.tsx::queryFn: () => api.viewData(activeSlug!, viewId!, { q: q || undefined, limit: 100 }),",
+  "web/src/pages/QueuePage.tsx::limit: 200,"
+]

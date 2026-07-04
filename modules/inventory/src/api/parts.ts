@@ -734,7 +734,10 @@ partsRouter.patch(
     }
     const afterMeta =
       parsed.data.metadata !== undefined ? (patch.metadata as Record<string, unknown>) ?? {} : beforeMeta;
-    platform().events.emit("inventory.part.updated", {
+    // AWAIT: a transition wire (e.g. core-mobility's recompute-away) runs on
+    // this event and writes back to the same part; the client re-reads right
+    // after, so the wire must finish before we respond or the read races it.
+    await platform().events.emit("inventory.part.updated", {
       orgId: ctx.org.id,
       partId: updated.id,
       before: { ...before, ...beforeMeta },

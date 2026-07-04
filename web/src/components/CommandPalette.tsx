@@ -6,9 +6,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Camera, CornerDownLeft, Plus, ScanLine, Search, Sliders, Wand2 } from "lucide-react";
+import { Camera, CornerDownLeft, Moon, Plus, ScanLine, Search, Sliders, Sun, Wand2 } from "lucide-react";
 import { api } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { useTheme } from "../theme/ThemeContext";
 import { fuzzyMatch } from "../lib/fuzzy";
 import { searchFeatures } from "../lib/feature-index";
 
@@ -22,6 +23,9 @@ interface ActionRow {
   id: string;
   label: string;
   hint?: string;
+  /** Extra match terms not shown in the row — e.g. the theme toggle answers to
+   *  "dark", "light", "night" whichever way it's currently set. */
+  keywords?: string;
   icon: typeof Camera;
   run: (navigate: ReturnType<typeof useNavigate>) => void;
 }
@@ -36,6 +40,7 @@ const ACTIONS: ActionRow[] = [
 
 export function CommandPalette() {
   const { activeSlug } = useActiveOrg();
+  const { theme, toggle: toggleTheme } = useTheme();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
@@ -76,11 +81,34 @@ export function CommandPalette() {
     staleTime: 15_000,
   });
 
-  const actions = useMemo(
-    () => (q.trim() ? ACTIONS.filter((a) => fuzzyMatch(`${a.label} ${a.hint ?? ""}`, q.trim().toLowerCase())) : ACTIONS),
-    [q],
+  // Preference actions live here (not in the static ACTIONS) because they flip
+  // app state instead of navigating — and they need the live theme. Shown in
+  // the default list too, so dark mode is DISCOVERABLE, not just findable: the author
+  // couldn't locate the toggle (it's in the account menu, and the sidebar icon
+  // is hidden on skinned workspaces). Keywords answer to "dark"/"light"/"night"
+  // regardless of the current setting.
+  const prefActions = useMemo<ActionRow[]>(
+    () => [
+      {
+        id: "theme",
+        label: theme === "dark" ? "Switch to light mode" : "Switch to dark mode",
+        hint: "theme",
+        keywords: "dark light night mode theme color scheme appearance display",
+        icon: theme === "dark" ? Sun : Moon,
+        run: () => toggleTheme(),
+      },
+    ],
+    [theme, toggleTheme],
   );
-  const featureHits = useMemo(() => searchFeatures(q, 4), [q]);
+  const allActions = useMemo(() => [...ACTIONS, ...prefActions], [prefActions]);
+  const actions = useMemo(
+    () =>
+      q.trim()
+        ? allActions.filter((a) => fuzzyMatch(`${a.label} ${a.hint ?? ""} ${a.keywords ?? ""}`, q.trim().toLowerCase()))
+        : allActions,
+    [q, allActions],
+  );
+  const featureHits = useMemo(() => searchFeatures(q, 6), [q]);
   const entityHits = (debounced.length >= 2 ? hits.data?.items ?? [] : []).slice(0, 8);
   const total = actions.length + featureHits.length + entityHits.length;
 
@@ -134,12 +162,12 @@ export function CommandPalette() {
             </li>
           ))}
           {featureHits.length > 0 && (
-            <li className="px-3 pt-2 pb-1 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">cobblr features</li>
+            <li className="px-3 pt-2 pb-1 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">features &amp; settings</li>
           )}
           {featureHits.map((f, j) => {
             const i = actions.length + j;
             return (
-              <li key={`feat-${f.route}`}>
+              <li key={`feat-${f.route}-${f.label}`}>
                 <button
                   type="button"
                   onMouseEnter={() => setSel(i)}

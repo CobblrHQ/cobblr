@@ -18,6 +18,7 @@ import { Wand2, Copy, Check, AlertTriangle, Sparkles } from "lucide-react";
 import { usePageTitle, useToast } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api, ApiError, type BundleValidation } from "../lib/api";
+import { Cobb } from "../components/Cobb";
 
 // Tolerant: pull the first {…} block out of a paste (handles "Here's your
 // bundle: { … }" prose around the JSON).
@@ -384,6 +385,19 @@ export function BuildPage() {
         </p>
       </div>
 
+      {/* Cobb greeting — the face of "just describe it". Only before you've
+          started (no prompt/preview/build yet) and only when AI can actually do
+          the work; he offers, he doesn't linger once you're going. */}
+      {!aiOff && !prompt && !validation && busy === null && (
+        <div className="flex items-center gap-3 rounded-xl border border-cobble-200 dark:border-slate-700 bg-mortar-50/60 dark:bg-slate-900/40 px-4 py-3">
+          <Cobb pose="idle" size={56} className="shrink-0 cobb-lift" title="Cobb" />
+          <p className="text-sm text-content dark:text-mortar-100">
+            Tell me what you need. I'll cobble it together, verify it works, and leave it on the bench for you to look
+            over.
+          </p>
+        </div>
+      )}
+
       {/* One shared AI-honesty pattern (redesign A1): the primary button needs
           AI — say so up front instead of failing silently. */}
       <AiOffNotice status={aiStatus}>
@@ -538,12 +552,14 @@ export function BuildPage() {
           </button>
         </div>
         {busy === "building" && (
-          <p className="text-xs text-faint dark:text-slate-500 flex items-center gap-2">
-            <span className="inline-block h-2 w-2 rounded-full bg-accent animate-pulse" />
-            {mode === "workspace"
-              ? "Turning on the modules you need and building your fields + automations, then validating it. This takes a minute or two…"
-              : "Running the AI, then checking the result against the validator (auto-retrying if needed). A few seconds…"}
-          </p>
+          <div className="flex items-center gap-3 mt-1">
+            <Cobb pose="working" size={54} className="shrink-0 cobb-lift" title="Cobb, at work" />
+            <p className="text-xs text-faint dark:text-slate-500">
+              {mode === "workspace"
+                ? "On the bench — turning on the modules you need, building your fields + automations, then verifying it. A minute or two…"
+                : "On the bench — running it, then checking the result against the validator (auto-retrying if needed). A few seconds…"}
+            </p>
+          </div>
         )}
       </section>
 
@@ -607,8 +623,16 @@ export function BuildPage() {
           )}
           {validation.valid && addsSomething && preview ? (
             <>
-              <div className="flex items-center gap-2 text-sm font-medium text-emerald-700 dark:text-emerald-300">
-                <Check size={16} /> Here's what it'll do:
+              <div className="flex items-center gap-3">
+                <Cobb pose="tada" size={52} className="shrink-0 cobb-lift" title="Cobb presents the build" />
+                <div>
+                  <div className="text-sm font-semibold text-emerald-700 dark:text-emerald-300">
+                    Built it. Verified it.
+                  </div>
+                  <div className="text-xs text-muted dark:text-slate-400">
+                    Take a look before it lands — here's what it'll do:
+                  </div>
+                </div>
               </div>
               {preview.fields_added.length > 0 && (
                 <div>
@@ -720,8 +744,14 @@ export function BuildPage() {
             </>
           ) : isAppMode && validation.valid ? (
             <>
-              <div className="flex items-center gap-2 text-sm font-medium text-emerald-700 dark:text-emerald-300">
-                <Check size={16} /> Your app is ready
+              <div className="flex items-center gap-3">
+                <Cobb pose="tada" size={52} className="shrink-0 cobb-lift" title="Cobb presents the app" />
+                <div>
+                  <div className="text-sm font-semibold text-emerald-700 dark:text-emerald-300">
+                    Built it. Verified it.
+                  </div>
+                  <div className="text-xs text-muted dark:text-slate-400">Your app is ready.</div>
+                </div>
               </div>
               <BundleDetails candidate={candidate} label="Show the app definition" />
               <button

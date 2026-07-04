@@ -848,8 +848,9 @@ export interface FeedbackTable {
   status: Generated<string>;
   admin_notes: string | null;
   // Where it came from + how to reply (20260609-051). 'in-app' → notification +
-  // email; 'discord' → the support bot posts into origin_ref.thread_id.
-  origin: Generated<"in-app" | "discord">;
+  // email; 'discord' → the support bot posts into origin_ref.thread_id;
+  // 'discord-dm' → a new item created straight from a bot DM (routes by intent).
+  origin: Generated<"in-app" | "discord" | "discord-dm">;
   origin_ref: {
     channel_id: string;
     thread_id: string;

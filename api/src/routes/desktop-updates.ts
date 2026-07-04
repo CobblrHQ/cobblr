@@ -116,3 +116,53 @@ desktopUpdatesRouter.get("/manifest", requireAuth, requirePlatformAdmin, async (
     next(e);
   }
 });
+
+// ── public download for the headless bridge binary ──────────────────────────
+// GET /desktop/bridge/:os/:arch → streams the prebuilt standalone edge-bridge
+// binary for that platform. The binaries live as assets on the (PRIVATE)
+// edge-bridge release; this route fetches the latest with a server-side token
+// and streams it, so `packaging/install.sh` can download WITHOUT any token
+// (public), on or off the tailnet. No-op (503) until the operator sets
+// EDGE_BRIDGE_REPO_API + EDGE_BRIDGE_REPO_TOKEN.
+const OS_OK = new Set(["linux", "darwin", "windows"]);
+const ARCH_OK = new Set(["x64", "arm64"]);
+let assetCache: { at: number; map: Record<string, string> } | null = null;
+
+async function latestAssetUrls(repoApi: string, token: string): Promise<Record<string, string>> {
+  if (assetCache && Date.now() - assetCache.at < 5 * 60_000) return assetCache.map;
+  const r = await fetch(`${repoApi}/releases/latest`, { headers: { authorization: `token ${token}` } });
+  if (!r.ok) throw new Error(`release lookup ${r.status}`);
+  const rel = (await r.json()) as { assets?: Array<{ name: string; browser_download_url: string }> };
+  const map: Record<string, string> = {};
+  for (const a of rel.assets ?? []) map[a.name] = a.browser_download_url;
+  assetCache = { at: Date.now(), map };
+  return map;
+}
+
+desktopUpdatesRouter.get("/bridge/:os/:arch", async (req, res, next) => {
+  try {
+    const os = String(req.params.os);
+    const arch = String(req.params.arch);
+    if (!OS_OK.has(os) || !ARCH_OK.has(arch)) return void res.status(404).json({ error: { code: "bad_platform", message: "os ∈ linux|darwin|windows, arch ∈ x64|arm64" } });
+    const repoApi = process.env.EDGE_BRIDGE_REPO_API;
+    const token = process.env.EDGE_BRIDGE_REPO_TOKEN;
+    if (!repoApi || !token) return void res.status(503).json({ error: { code: "not_configured", message: "bridge binary hosting not configured" } });
+
+    const assetName = `cobblr-bridge-${os}-${arch}${os === "windows" ? ".exe" : ""}`;
+    const map = await latestAssetUrls(repoApi, token);
+    const url = map[assetName];
+    if (!url) return void res.status(404).json({ error: { code: "no_asset", message: `no ${assetName} in the latest release` } });
+
+    const upstream = await fetch(url, { headers: { authorization: `token ${token}` } });
+    if (!upstream.ok || !upstream.body) return void res.status(502).json({ error: { code: "upstream", message: `asset fetch ${upstream.status}` } });
+    res.setHeader("content-type", "application/octet-stream");
+    res.setHeader("content-disposition", `attachment; filename="${assetName}"`);
+    const len = upstream.headers.get("content-length");
+    if (len) res.setHeader("content-length", len);
+    // Stream (don't buffer a ~100 MB binary in memory).
+    const { Readable } = await import("node:stream");
+    Readable.fromWeb(upstream.body as import("node:stream/web").ReadableStream).pipe(res);
+  } catch (e) {
+    next(e);
+  }
+});

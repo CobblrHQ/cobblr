@@ -23,10 +23,10 @@ import { HeaderActions } from "./HeaderActions";
 import { UserMenu } from "./UserMenu";
 import { MobileNav } from "./MobileNav";
 import { EmailVerifyBanner } from "./EmailVerifyBanner";
+import { SimpleModeNotice } from "./SimpleModeNotice";
 import { ChatWidget } from "./ChatWidget";
 import { GlobalScanWedge } from "./GlobalScanWedge";
 import { SearchBar } from "./SearchBar";
-import { MobileActionBar } from "./MobileActionBar";
 import { CommandPalette, OPEN_PALETTE_EVENT } from "./CommandPalette";
 import { NewVersionNudge } from "./NewVersionNudge";
 import { ErrorBoundary } from "./ErrorBoundary";
@@ -243,7 +243,9 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
   const sidebarFoot = fullSide ? (
     <div ref={footRef} className="shrink-0 border-t-2 border-line dark:border-slate-700 px-1.5 py-1.5 flex flex-col">
       {/* The verify-email nudge docks here (sidebar card) — not as a thin bar
-          over the content. */}
+          over the content. The simple-mode exit sits in the same slot (permanent
+          while simple mode is on — the always-visible way to turn it off). */}
+      <SimpleModeNotice variant="sidebar" />
       <EmailVerifyBanner variant="sidebar" />
       {/* Module quick-actions (Build/Scan) SHARE one row — half-width each,
           wrapping if a third ever appears. */}
@@ -340,13 +342,16 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           >
             {navMode === "top" ? <PanelLeft size={15} /> : <PanelTop size={15} />}
           </button>
-          {/* Brand — never compressed. Cobblr mark + wordmark always present. */}
+          {/* Brand. On mobile the distinctive mark alone carries it and the
+              "cobblr" wordmark is dropped, so the WORKSPACE NAME (the real context)
+              gets that ~100px instead of truncating. Desktop keeps the full mark +
+              wordmark. */}
           <Link
             to="/"
             className="relative flex items-center gap-2 shrink-0 hover:opacity-80 transition"
           >
             <CobblestoneMark size={26} />
-            <span className="font-display font-extrabold text-content dark:text-mortar-100 lowercase">
+            <span className="hidden sm:inline font-display font-extrabold text-content dark:text-mortar-100 lowercase">
               cobblr
             </span>
             {/* Managed app: the wordmark IS the "Cobblr", so append the suffix
@@ -443,6 +448,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
         </div>
       </header>
 
+        {!fullSide && <SimpleModeNotice />}
         {!fullSide && <EmailVerifyBanner />}
       </div>
 
@@ -496,8 +502,6 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           from any screen (off the Scan tab) and always toasts — no silent drop.
           Stands down on the Scan page, which owns the wedge there. */}
       {activeSlug ? <GlobalScanWedge activeSlug={activeSlug} /> : null}
-      {/* Mobile thumb bar: Scan · Add · Search (redesign A5). */}
-      <MobileActionBar />
       {/* ⌘K — do or find anything (redesign B4). */}
       <CommandPalette />
       {/* Stale-tab nudge: deploys are frequent; open tabs must find out. */}

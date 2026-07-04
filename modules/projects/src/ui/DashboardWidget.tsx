@@ -114,6 +114,10 @@ function ProjectsInstanceTile({ slug, getToken, instance }: DashboardWidgetProps
       icon={ListChecks}
       label={instance.display_name}
       primary={items.length}
+      // Collapse an empty instance tile into the host's "Also enabled" line, same
+      // as the aggregate + every other module — without this an empty instance
+      // showed a permanent "0 / none yet" card instead of quietly folding away.
+      empty={!q.isLoading && items.length === 0}
       secondary={items.length > 0 ? `${active} active` : "none yet"}
     />
   );

@@ -153,7 +153,13 @@ export function DashboardTile({
 }) {
   const collapse = useContext(TileCollapseContext);
   useEffect(() => {
-    collapse?.reportEmpty(label, to, !!empty);
+    if (!collapse) return;
+    collapse.reportEmpty(label, to, !!empty);
+    // Pull our entry on unmount. A multi-instance module mounts its AGGREGATE
+    // tile while instances load, then swaps it for per-instance tiles; without
+    // this cleanup the aggregate's "empty" report lingered in the host's "Also
+    // enabled" line even though its tile was gone (the stale duplicate label).
+    return () => collapse.reportEmpty(label, to, false);
   }, [collapse, label, to, empty]);
   if (empty && collapse && !collapse.editing) return null;
   // STAT-CHIP layout (prototype, the author sign-off pending): half the height of the

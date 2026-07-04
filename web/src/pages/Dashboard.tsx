@@ -1187,8 +1187,13 @@ function TileGrid({
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
             {visible.map((a) => {
               const Widget = a.spec.component;
+              // `empty:hidden` — a tile that collapses to null (DashboardTile
+              // returns null when empty) leaves its wrapper :empty; hide it so it
+              // stops holding a grid cell. Without this, empty tiles occupy cells
+              // and shove the one non-empty tile to a stray column (the "why is my
+              // lone Projects card floating on the right" bug).
               return (
-                <div key={widgetId(a.spec)} className={spanCls(a.span)}>
+                <div key={widgetId(a.spec)} className={(spanCls(a.span) + " empty:hidden").trim()}>
                   <Widget slug={slug} getToken={getToken} instance={a.spec._instance} />
                 </div>
               );
@@ -1200,7 +1205,7 @@ function TileGrid({
               {[...empties.entries()].map(([label, to], i) => (
                 <span key={label}>
                   {i > 0 && " · "}
-                  <Link to={to} className="hover:text-accent underline decoration-dotted underline-offset-2">
+                  <Link to={to} className="lowercase hover:text-accent underline decoration-dotted underline-offset-2">
                     {label}
                   </Link>
                 </span>

@@ -39,6 +39,7 @@ import { adminUsersRouter } from "./routes/admin-users.js";
 import { superAdminRouter } from "./routes/super-admin.js";
 import { feedbackRouter, feedbackInboundRouter } from "./routes/feedback.js";
 import { receiptInboundRouter, receiptAddressRouter } from "./routes/receipt-ingest.js";
+import { inboundEmailRouter } from "./routes/inbound-email.js";
 import { ravelryRouter } from "./routes/ravelry.js";
 import { ravelryImportRouter } from "./routes/ravelry-import.js";
 import { sandboxInstallRouter } from "./routes/sandbox-install.js";
@@ -170,12 +171,15 @@ export function createApp(): AppHandles {
   v1.use("/hooks", hooksRouter);
   // Auto-update feed for the Cobblr Edge Helper desktop app (account-level).
   v1.use("/desktop", desktopUpdatesRouter);
-  // Inbound feedback email (reply-by-email). Unauthenticated at the router level;
-  // the Cloudflare Email Worker authenticates with COBBLR_INBOUND_EMAIL_SECRET.
+  // The ONE inbound-email dispatcher (POST /inbound-email). Cloudflare allows a
+  // single catch-all, so the thin Worker sends every inbound message here and
+  // THIS routes by address prefix (reply+ → feedback, else → receipt). See
+  // routes/inbound-email.ts + docs/operations/email-inbound-capture.md.
+  v1.use(inboundEmailRouter);
+  // The two single-purpose inbound routes are kept for direct/legacy callers and
+  // as the handlers the dispatcher reuses; both authenticate with the same
+  // COBBLR_INBOUND_EMAIL_SECRET. See routes/feedback.ts + routes/receipt-ingest.ts.
   v1.use(feedbackInboundRouter);
-  // Inbound receipt email (forward a receipt → scan inbox). Unauthenticated at
-  // the router level; the Cloudflare Email Worker authenticates with
-  // COBBLR_INBOUND_EMAIL_SECRET. See routes/receipt-ingest.ts.
   v1.use(receiptInboundRouter);
   v1.use("/orgs", orgsRouter);
   // platformOrgRouter mounts /:slug/entity-kinds, /:slug/entities/:kind/:id,

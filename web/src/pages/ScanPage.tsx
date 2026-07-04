@@ -28,6 +28,7 @@ import {
   Flag,
   Image as ImageIcon,
   LayoutGrid,
+  Library,
   Loader2,
   MapPin,
   MonitorSmartphone,
@@ -192,6 +193,42 @@ function isTitledMedia(it: ScanInboxItem): boolean {
   return (it.suggested_candidates ?? []).some((c) =>
     Object.keys(c.fields ?? {}).some((k) => TITLED_MEDIA_FIELD.test(k)),
   );
+}
+
+// Is this row still being worked by the AI pipeline — i.e. NOT yet settled?
+// This is the single source of truth behind both the per-card "finishing…" chip
+// and the session-header "N finishing / all set" signal, so they never diverge.
+// Three not-done phases (see InboxCard for the display split):
+//   • serverMatching — identified but the matchmaker hasn't produced routing yet
+//   • finishing       — matched, but the tail (location + cover) is still landing
+//                       (finalized_at not yet stamped), bounded so old rows that
+//                       predate finalized_at don't read as forever-finishing
+//   • awaitingFresh   — brand-new, nothing has come back at all
+// Terminal states (couldn't-identify, rate-limit-gave-up) count as DONE here —
+// they need the user, not more AI. Barcode/photo alike route through matchItem,
+// which stamps matched_at/finalized_at, so this predicate covers every source.
+function itemEnriching(it: ScanInboxItem, now = Date.now()): boolean {
+  if (it.status !== "pending") return false;
+  const meta = (it.suggested_metadata ?? {}) as {
+    matched_at?: string;
+    finalized_at?: string;
+    rate_limited?: boolean;
+  };
+  const cands = (it.suggested_candidates ?? []).length;
+  const aiAgeMs = it.ai_suggested_at ? now - new Date(it.ai_suggested_at).getTime() : Infinity;
+  const matchedAgeMs = meta.matched_at ? now - new Date(meta.matched_at).getTime() : Infinity;
+  // Enrichment finished but produced no name/candidates → it needs the USER
+  // (manual naming), not more AI; that's DONE-for-the-pipeline, not "finishing".
+  const needsName = !it.suggested_name && !!it.ai_suggested_at && cands === 0;
+  const serverMatching =
+    !!(it.suggested_name || it.ai_suggested_at) &&
+    cands === 0 &&
+    !meta.matched_at &&
+    !needsName &&
+    aiAgeMs < 180_000;
+  const finishing = !!meta.matched_at && !meta.finalized_at && matchedAgeMs < 90_000;
+  const awaitingFresh = !it.suggested_name && !it.ai_suggested_at && cands === 0 && !meta.rate_limited;
+  return serverMatching || finishing || awaitingFresh;
 }
 function findCombineClusters(items: ScanInboxItem[]): ScanInboxItem[][] {
   const clusters: { brand: string; seed: Set<string>; items: ScanInboxItem[] }[] = [];
@@ -435,6 +472,23 @@ function creatorOf(it: { suggested_candidates?: Array<{ fields?: Record<string, 
     }
   }
   return null;
+}
+
+/** Collapse candidates that read as the SAME chip to a human — i.e. share a
+ *  display LABEL. This catches both the matchmaker proposing one table twice AND
+ *  the confusing case of two DIFFERENT tables that happen to be named the same
+ *  (e.g. an `assets::bookshelf` and an `inventory::…bookshelf`, both labelled
+ *  "Bookshelf") — the user can't tell "Bookshelf · 3 fields" from "Bookshelf · 1
+ *  field" apart, so we keep the richer-filled one and drop the duplicate label.
+ *  (Falls back to module::instance when a candidate has no label.) */
+function dedupeCandidates(cands: ScanCandidate[]): ScanCandidate[] {
+  const byKey = new Map<string, ScanCandidate>();
+  for (const c of cands) {
+    const key = (c.label ?? "").trim().toLowerCase() || `${c.module}::${c.instance ?? ""}`;
+    const prev = byKey.get(key);
+    if (!prev || Object.keys(c.fields ?? {}).length > Object.keys(prev.fields ?? {}).length) byKey.set(key, c);
+  }
+  return [...byKey.values()];
 }
 
 /** Selection key for a menu entry. */
@@ -685,7 +739,14 @@ export function ScanPage() {
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
     enabled: !!activeSlug,
-    refetchInterval: 8_000,
+    // Poll fast (2.5s) while ANY loaded row is still enriching so the
+    // "finishing… → ready" flip is visible in near-real-time; drop back to 8s
+    // once the whole inbox has settled, to stay quiet.
+    refetchInterval: (query) => {
+      const pages = query.state.data?.pages ?? [];
+      const busy = pages.some((p) => (p.items ?? []).some((it) => itemEnriching(it)));
+      return busy ? 2_500 : 8_000;
+    },
   });
 
   const aiStatus = useAiStatus();
@@ -1865,6 +1926,10 @@ export function ScanPage() {
             const mergeInto = g.isBatch
               ? sessionGroups.slice(gi + 1).find((o) => o.isBatch && o.batchId)?.batchId ?? null
               : null;
+            // How many items in this session are still being worked by the AI —
+            // the one clear "is the whole session done thinking?" signal. Drives
+            // the header pill: "N finishing…" while any churn, "All set" when 0.
+            const busy = g.items.filter((it) => itemEnriching(it)).length;
             return (
               <div key={g.key} id={g.batchId ? `s-${g.batchId}` : undefined} className="space-y-2 scroll-mt-24">
                 <div className="flex w-full items-center gap-2 rounded-md bg-mortar-50 dark:bg-slate-800/40 px-2.5 py-1.5 text-left text-xs">
@@ -1895,8 +1960,25 @@ export function ScanPage() {
                       Session · {formatSessionTime(g.latest)}
                     </span>
                     {g.area && <span className="text-muted truncate">· {g.area}</span>}
-                    <span className="ml-auto shrink-0 text-faint">
-                      {g.items.length} item{g.items.length === 1 ? "" : "s"}
+                    <span className="ml-auto shrink-0 flex items-center gap-2">
+                      {busy > 0 ? (
+                        <span
+                          className="inline-flex items-center gap-1 rounded-full border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 px-1.5 py-0.5 text-[10px] font-medium text-accent"
+                          title="The AI is still finalizing some items — names, covers and routing may still change"
+                        >
+                          <Loader2 size={9} className="animate-spin" /> {busy} finishing…
+                        </span>
+                      ) : (
+                        <span
+                          className="inline-flex items-center gap-1 text-emerald-600/70 dark:text-emerald-400/70"
+                          title="AI is done — every item in this session is finalized"
+                        >
+                          <CheckCircle size={11} /> All set
+                        </span>
+                      )}
+                      <span className="text-faint">
+                        {g.items.length} item{g.items.length === 1 ? "" : "s"}
+                      </span>
                     </span>
                   </button>
                   {g.isBatch && g.batchId && (
@@ -2238,7 +2320,15 @@ function InboxCard({
   // costs zero model runs. While the server hasn't stamped matched_at yet,
   // the card shows a passive "AI is reading…" pulse that the 8s list poll
   // resolves on its own.
-  const candidates = (item.suggested_candidates ?? []).slice(0, 3);
+  // Drop candidates that would file an EMPTY record — a table the matchmaker
+  // thought fit but extracted 0 fields for (e.g. a bare "Home Inventory" chip
+  // sitting next to "Bookshelf · 4 fields"). It reads like an equal option but
+  // fills nothing. Always keep the top match though (index 0), so a weak-but-
+  // best guess still offers somewhere to go; the full table picker in the
+  // confirm form still lists every table if the user wants one of the dropped.
+  const candidates = dedupeCandidates(item.suggested_candidates ?? [])
+    .filter((c, i) => i === 0 || Object.keys(c.fields ?? {}).length > 0)
+    .slice(0, 3);
   const topCand = candidates[0] ?? null;
   // Stuck-nameless: enrichment finished (ai_suggested_at) but produced no name
   // and no candidates — a bare photo that couldn't be auto-identified. Offer the
@@ -2262,6 +2352,17 @@ function InboxCard({
     !(item.suggested_metadata as { matched_at?: string } | null)?.matched_at &&
     !needsName &&
     matchAgeMs < 180_000;
+  // Post-match TAIL: the matchmaker ran (matched_at) but the row is still landing
+  // its finalize work — location, and a cover re-fetched for a renamed item —
+  // until the backend stamps finalized_at. This is the ~1-min "spinner stopped
+  // but the name/thumbnail kept changing" gap; surface it as a quiet "finishing…"
+  // so the card doesn't read as settled while it's still mutating. Bounded by the
+  // matched_at age so rows that predate finalized_at don't finish-pulse forever.
+  const finalMeta = item.suggested_metadata as { matched_at?: string; finalized_at?: string } | null;
+  const matchedAtStr = finalMeta?.matched_at ?? null;
+  const matchedAgeMs = matchedAtStr ? Date.now() - new Date(matchedAtStr).getTime() : Infinity;
+  const finishing =
+    item.status === "pending" && !!matchedAtStr && !finalMeta?.finalized_at && matchedAgeMs < 90_000;
   // Rate-limited: rapid scanning exhausted the go-upc gate / upcitemdb burst, so
   // the resolver was throttled. The row is tagged + left unfinished (no name, no
   // ai_suggested_at). Show a distinct "retrying" state — NOT a passive "awaiting
@@ -2570,12 +2671,21 @@ function InboxCard({
           <div className="font-medium text-content dark:text-mortar-100 flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
             {item.suggested_name ? (
               <>
-                <span className="truncate min-w-0 max-w-full">{item.suggested_name}</span>
-                {(rerunning || serverMatching) && (
+                <span className="break-words min-w-0 max-w-full">{item.suggested_name}</span>
+                {rerunning || serverMatching ? (
                   <span className="shrink-0 inline-flex items-center gap-1 rounded-full border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 px-2 py-0.5 text-[10px] font-mono uppercase tracking-widest text-accent animate-pulse">
                     {rerunning ? "re-running" : "AI reading…"}
                   </span>
-                )}
+                ) : finishing ? (
+                  // Quiet, muted (not the bold accent pulse) — the heavy lifting is
+                  // done; this just says "don't trust it as final yet."
+                  <span
+                    className="shrink-0 inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-widest text-muted"
+                    title="Finishing up — location and cover are still landing"
+                  >
+                    <Loader2 size={9} className="animate-spin" /> finishing…
+                  </span>
+                ) : null}
               </>
             ) : rerunning ? (
               <span className="text-accent animate-pulse">Re-running the lookup…</span>
@@ -2629,44 +2739,45 @@ function InboxCard({
             )}
           </div>
           <div className="text-[11px] font-mono text-faint dark:text-slate-500 truncate">
-            {item.barcode_text}
-            {(item.suggested_metadata as { barcode_source?: string } | null)?.barcode_source === "ai-photo" && (
-              <span className="text-amber-600 dark:text-amber-500"> (read from photo)</span>
-            )}
             {(() => {
-              // Show the creator (author/director/…) AND the publisher/brand, in
-              // that order — for a book that's "Laura Ingalls Wilder · Scholastic".
+              // Build the subtitle from the fields that are PRESENT and join them
+              // with " · ". An absent field (a photo-identified book has no
+              // barcode/ISBN) must not leave a dangling leading separator — that
+              // reads as "something's missing here". Never a leading/trailing dot.
+              const segs: ReactNode[] = [];
+              if (item.barcode_text) {
+                const aiRead =
+                  (item.suggested_metadata as { barcode_source?: string } | null)?.barcode_source === "ai-photo";
+                segs.push(
+                  <>
+                    {item.barcode_text}
+                    {aiRead && <span className="text-amber-600 dark:text-amber-500"> (read from photo)</span>}
+                  </>,
+                );
+              }
+              // Creator (author/director/…) then publisher/brand — a book reads
+              // "Laura Ingalls Wilder · Scholastic".
               const creator = creatorOf(item);
               const brand = item.suggested_manufacturer?.trim() || null;
-              const parts = [creator, brand].filter(
-                (p, i, a): p is string => !!p && a.indexOf(p) === i,
-              );
-              return parts.length ? ` · ${parts.join(" · ")}` : null;
-            })()}
-            {item.suggested_sku && ` · ${item.suggested_sku}`}
-            {item.scan_area && ` · 📍${item.scan_area}`}
-            {(() => {
+              const cb = [creator, brand].filter((p, i, a): p is string => !!p && a.indexOf(p) === i);
+              if (cb.length) segs.push(cb.join(" · "));
+              if (item.suggested_sku) segs.push(item.suggested_sku);
+              if (item.scan_area) segs.push(`📍${item.scan_area}`);
               const ps = (item.suggested_metadata as { pack_size?: number } | null)?.pack_size;
-              return ps ? <span className="text-accent"> · {ps}-pack</span> : null;
-            })()}
-            {(() => {
+              if (ps) segs.push(<span className="text-accent">{ps}-pack</span>);
               const bs = (item.suggested_metadata as { box_state?: string } | null)?.box_state;
-              return bs ? <span> · 📦 {bs === "empty-box" ? "empty box" : "in box"}</span> : null;
-            })()}
-            {(item.suggested_metadata as { split_from?: string } | null)?.split_from && (
-              <span className="text-accent"> · ✂ from split</span>
-            )}
-            {item.source_url &&
-              (() => {
+              if (bs) segs.push(<span>📦 {bs === "empty-box" ? "empty box" : "in box"}</span>);
+              if ((item.suggested_metadata as { split_from?: string } | null)?.split_from)
+                segs.push(<span className="text-accent">✂ from split</span>);
+              if (item.source_url) {
                 let host = "";
                 try {
                   host = new URL(item.source_url).hostname.replace(/^www\./, "");
                 } catch {
                   /* not a URL */
                 }
-                return host ? (
-                  <>
-                    {" · "}
+                if (host)
+                  segs.push(
                     <a
                       href={item.source_url}
                       target="_blank"
@@ -2675,10 +2786,16 @@ function InboxCard({
                       className="text-accent hover:underline"
                     >
                       {host} ↗
-                    </a>
-                  </>
-                ) : null;
-              })()}
+                    </a>,
+                  );
+              }
+              return segs.map((s, i) => (
+                <Fragment key={i}>
+                  {i > 0 && " · "}
+                  {s}
+                </Fragment>
+              ));
+            })()}
           </div>
           {!expanded && item.ai_notes && (
             <div
@@ -2735,6 +2852,22 @@ function InboxCard({
                 {lowTrust ? "Double-check — fix the name" : "Not right? Fix the name"}
               </button>
             ))}
+          {/* Series chip — the identified franchise (Little House, Harry Potter).
+              The single most useful at-a-glance label for media; shown on the card
+              itself, not just the "tag them all" banner. Distinct from the routing
+              chips (a fact about the item, not a table to file into). */}
+          {seriesOf(item) && (
+            <div className="mt-1.5">
+              <span
+                className="inline-flex items-center gap-1 rounded-full border border-accent/40 bg-accent/5 px-2.5 py-1 text-xs font-medium text-accent"
+                title={`Part of the "${seriesOf(item)}" series`}
+              >
+                <Library size={11} className="shrink-0" />
+                <span className="truncate">{seriesOf(item)}</span>
+                <span className="opacity-60 shrink-0">series</span>
+              </span>
+            </div>
+          )}
           {/* Matchmaker chips — the best-fitting tables, their fields pre-filled.
               On phones only the TOP match shows (it's what Confirm uses) + a "+N"
               that expands to choose another; desktop shows them all. Keeps the
@@ -2766,7 +2899,7 @@ function InboxCard({
                   <span className="truncate">{c.label}</span>
                   {Object.keys(c.fields).length > 0 && (
                     <span className="opacity-70 shrink-0 hidden sm:inline">
-                      · {Object.keys(c.fields).length} fields
+                      · fills {Object.keys(c.fields).length}
                     </span>
                   )}
                 </button>
@@ -2789,7 +2922,10 @@ function InboxCard({
             <div className="text-[11px] text-faint italic mt-1">finding the best table…</div>
           ) : null}
         </div>
-        <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+        {/* Stack the actions VERTICALLY (mobile + desktop) so the title gets the
+            full width and reads in full — a horizontal cluster squeezed the name
+            ("RAM EZ-Roll'r …"). */}
+        <div className="flex flex-col items-center justify-start gap-0.5 shrink-0 py-1.5 pr-0.5" onClick={(e) => e.stopPropagation()}>
           <button
             type="button"
             onClick={() => rerun.mutate(undefined)}
@@ -3629,6 +3765,29 @@ function SeriesBanner({ slug, items }: { slug: string; items: ScanInboxItem[] })
     if (!groups.has(key)) groups.set(key, { series: s, items: [] });
     groups.get(key)!.items.push(it);
   }
+  // The vision identify stamps `series` per-item and can MISS it on one book of an
+  // otherwise-obvious set (the count then reads "8" of 9). Pull in same-author
+  // pending items that carry NO series of their own — but only when that author
+  // has exactly ONE series here, so there's no ambiguity about which set they join
+  // (a prolific author with two series stays hands-off). This is what makes the
+  // banner count every book the user sees as part of the series.
+  const authorSeries = new Map<string, Set<string>>();
+  for (const g of groups.values()) {
+    for (const it of g.items) {
+      const a = creatorOf(it)?.toLowerCase();
+      if (!a) continue;
+      if (!authorSeries.has(a)) authorSeries.set(a, new Set());
+      authorSeries.get(a)!.add(g.series.toLowerCase());
+    }
+  }
+  for (const it of items) {
+    if (seriesOf(it)) continue; // already grouped by its own series
+    const a = creatorOf(it)?.toLowerCase();
+    const forAuthor = a ? authorSeries.get(a) : undefined;
+    if (!forAuthor || forAuthor.size !== 1) continue; // no / ambiguous series for this author
+    const g = groups.get([...forAuthor][0]!);
+    if (g && !g.items.some((x) => x.id === it.id)) g.items.push(it);
+  }
   const offers = [...groups.values()].filter((g) => g.items.length >= 2 && !dismissed.has(g.series.toLowerCase()));
   if (offers.length === 0) return null;
   return (
@@ -3637,7 +3796,8 @@ function SeriesBanner({ slug, items }: { slug: string; items: ScanInboxItem[] })
         <div key={g.series} className="rounded-lg border border-cobble-300 dark:border-cobble-700/60 bg-cobble-50/70 dark:bg-cobble-950/20 px-3 py-2.5 flex items-center gap-3">
           <Sparkles size={15} className="text-accent shrink-0" />
           <div className="min-w-0 flex-1 text-sm text-content dark:text-mortar-100">
-            {g.items.length} items are the <strong>"{g.series}"</strong> series.
+            {g.items.length} item{g.items.length === 1 ? " is" : "s are"} part of the{" "}
+            <strong>"{g.series}"</strong> series.
             <span className="text-muted"> Tag them all "{g.series}"?</span>
           </div>
           <button

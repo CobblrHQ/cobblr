@@ -14,7 +14,9 @@
 import type { FieldType, FieldRendererId } from "./types";
 
 export type FieldControl =
-  | "computed" // read-only, server-resolved
+  | "computed" // read-only, server-resolved every read (never stored)
+  | "server-managed" // read-only, server-STAMPED stored value (client writes rejected)
+  | "relation" // reference to another entity (picker over the def's ref_kind)
   | "color" // swatch picker
   | "choice" // dropdown (has a `choices` list)
   | "checkbox" // boolean
@@ -28,14 +30,19 @@ function assertNever(x: never): never {
 }
 
 /** Decide the editing control for a field-def. Precedence: computed (locked) →
- *  an explicit colour renderer → a `choices` dropdown → then the storage type.
+ *  server-managed (locked — the server owns the value; an input here would be a
+ *  lying control that silently reverts) → an explicit colour renderer → a
+ *  `choices` dropdown → then the storage type.
  *  Callers render the matching control; nobody re-derives this from `type`. */
 export function fieldControl(def: {
   type: FieldType;
   renderer?: FieldRendererId | null;
   choices?: string[] | null;
+  server_managed?: boolean | null;
 }): FieldControl {
   if (def.type === "computed") return "computed";
+  if (def.server_managed) return "server-managed";
+  if (def.type === "relation") return "relation";
   if (def.renderer === "color-hex") return "color";
   if (def.choices && def.choices.length > 0) return "choice";
   switch (def.type) {
@@ -49,9 +56,9 @@ export function fieldControl(def: {
       return "url";
     case "text":
       return "text";
-    // The `computed` member is handled by the early return above (TS narrows it
-    // out here). A NEW FieldType added to the union lands in `default` and fails
-    // to compile against `never` — the durable "unhandled field type" guard.
+    // `computed` / `relation` are handled by the early returns above (TS narrows
+    // them out here). A NEW FieldType added to the union lands in `default` and
+    // fails to compile against `never` — the durable "unhandled type" guard.
     default:
       return assertNever(def.type);
   }

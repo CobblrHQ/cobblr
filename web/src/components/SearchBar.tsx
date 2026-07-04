@@ -122,7 +122,7 @@ export function SearchBar() {
               app surface, not nothing (feature-index.ts). */}
           {featureHits.map((f) => (
             <button
-              key={`feat-${f.route}`}
+              key={`feat-${f.route}-${f.label}`}
               onClick={() => {
                 navigate(f.route);
                 setOpen(false);

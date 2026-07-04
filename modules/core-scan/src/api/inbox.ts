@@ -2871,6 +2871,36 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
     } catch (e) {
       console.error(`[core-scan] location suggestion for ${opts.itemId} failed:`, (e as Error).message);
     }
+    // When the matchmaker RENAMED the item (adoptName), the stage-1 cover was
+    // fetched for the OLD name and would pop in a poll or two later — reading as
+    // "still working" after the card looked settled. Re-fetch the cover for the
+    // final name HERE so it lands inside the finalized window, not after it.
+    if (adoptName) {
+      try {
+        await refreshCatalogImageByName(opts.orgId, opts.itemId, candName, row.suggested_manufacturer ?? null);
+      } catch (e) {
+        console.error(`[core-scan] finalize image refresh for ${opts.itemId} failed:`, (e as Error).message);
+      }
+    }
+    // Stamp finalized_at — the canonical "nothing more will change" marker.
+    // matched_at means the matchmaker RAN; finalized_at means the whole tail
+    // (location + cover) is done too. The inbox UI keys its "finishing… → ready"
+    // transition + the session "all set" signal off this, so a card stops
+    // reading as settled while its title/genre/thumbnail are still mutating.
+    try {
+      const dbFin = (await platform().tenants.getDb(opts.orgId)) as unknown as ReturnType<typeof tenantDb>;
+      await dbFin
+        .updateTable("core_scan_inbox_items")
+        .set({
+          suggested_metadata:
+            sql`coalesce(suggested_metadata, '{}'::jsonb) || jsonb_build_object('finalized_at', now()::text)` as never,
+          updated_at: new Date(),
+        })
+        .where("id", "=", opts.itemId)
+        .execute();
+    } catch (e) {
+      console.error(`[core-scan] finalize stamp for ${opts.itemId} failed:`, (e as Error).message);
+    }
     return candidates;
   } catch (err) {
     // The match FAILED before stamping matched_at — the menu fetch, the model
@@ -2886,8 +2916,10 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
       await dbErr
         .updateTable("core_scan_inbox_items")
         .set({
+          // finalized_at too: a failed match is still DONE churning — the UI must
+          // settle it (needs manual routing), not park it in "finishing…" forever.
           suggested_metadata:
-            sql`coalesce(suggested_metadata, '{}'::jsonb) || jsonb_build_object('matched_at', now()::text, 'match_failed', true)` as never,
+            sql`coalesce(suggested_metadata, '{}'::jsonb) || jsonb_build_object('matched_at', now()::text, 'match_failed', true, 'finalized_at', now()::text)` as never,
           ai_suggested_at: sql`coalesce(ai_suggested_at, now())` as never,
           updated_at: new Date(),
         })

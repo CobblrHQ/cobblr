@@ -10,8 +10,9 @@ import { inflateRawSync } from "node:zlib";
 const EOCD_SIG = 0x06054b50;
 const CDH_SIG = 0x02014b50;
 
-/** Find a file in a ZIP buffer by predicate and return its decompressed bytes. */
-function readZipEntry(buf: Buffer, match: (name: string) => boolean): Buffer | null {
+/** Find a file in a ZIP buffer by predicate and return its decompressed bytes.
+ *  Exported so slicer-meta.ts can pull Metadata/slice_info.config out of a 3MF. */
+export function readZipEntry(buf: Buffer, match: (name: string) => boolean): Buffer | null {
   // Locate the End-Of-Central-Directory record (scan back from the end; the
   // trailing comment is almost always empty, but allow up to 64 KB).
   let eocd = -1;

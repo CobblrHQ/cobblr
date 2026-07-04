@@ -18,10 +18,14 @@ import { spoolmanRouter } from "./spoolman.js";
 import { registerInventoryResolvers } from "./resolvers.js";
 import { registerInventoryActionHandlers } from "./action-handlers.js";
 import { registerInventoryComputedContext } from "./computed-context.js";
+import { registerInventoryWriter } from "./sync-writer.js";
+import { registerReplaceClock } from "./replace-clock.js";
 
 registerInventoryResolvers();
 registerInventoryActionHandlers();
 registerInventoryComputedContext();
+registerInventoryWriter(); // silent cross-module writer (core-mobility et al.)
+registerReplaceClock(); // time-based replace-clock (furnace filter → replace-due)
 // Declare inventory:part as a scan target so core-scan routes a scanned item
 // here without hardcoding the endpoint/qty/noun. (Audit 2026-06-26 follow-up.)
 platform().entities.registerScannable("inventory:part", {

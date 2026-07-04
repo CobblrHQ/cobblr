@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "inventory",
-  version: "0.5.0",
+  version: "0.7.0",
   displayName: "Inventory",
   description:
     "Parts, locations, categories, stock tracking, polymorphic allocations. The generalised toolkit you'd otherwise Frankenstein from a spreadsheet.",
@@ -114,6 +114,14 @@ export default defineModule({
       "inventory.part.deleted",
       "inventory.stock.changed",
       "inventory.stock.low",
+      // The replace-clock came due (metadata.replace_every_days elapsed) — a
+      // bundle wires this to the shopping list / a notification. Fired by the
+      // core-recurrence scanner (see api/replace-clock.ts).
+      "inventory.part.replace-due",
+      // Burn-rate predicts this part runs out within the lead window — fire
+      // AHEAD of empty so the shopping-list wire reorders in time. Fired by the
+      // hourly burn-rate sweeper (see burn-rate.ts).
+      "inventory.stock.predicted-low",
       "inventory.allocation.reserved",
       "inventory.allocation.consumed",
       "inventory.allocation.released",
@@ -121,6 +129,33 @@ export default defineModule({
     ],
     api: ["getPartById", "searchParts", "adjustStock", "allocate", "release"],
     actions: [
+      {
+        id: "inventory:use-one",
+        label: "Use one",
+        description:
+          "Knock a single unit off a part's on-hand qty — the zero-friction 'I took one out' tap. Binary, no number entry (that's Adjust stock). Decrements through the same path as adjust-stock, so it writes the usage ledger and trips 'running low → shopping list' when it crosses the reorder threshold. partId falls back to the targeted entity.",
+        appliesTo: { kinds: ["inventory:part"] },
+        invokeHandler: "inventory.use-one",
+        userInvokable: true,
+      },
+      {
+        id: "inventory:use-up",
+        label: "Used up",
+        description:
+          "Mark a part gone — drives on-hand to 0 in one tap (tossing the empty), no 'how many left?' guess. Same ledger + low-stock path as adjust-stock, so it reorders if a threshold is set. No-op if already empty. partId falls back to the targeted entity.",
+        appliesTo: { kinds: ["inventory:part"] },
+        invokeHandler: "inventory.use-up",
+        userInvokable: true,
+      },
+      {
+        id: "inventory:replaced",
+        label: "Replaced",
+        description:
+          "One tap at a scheduled swap (furnace filter, water filter, printer nozzle): resets the replace-clock (stamps metadata.last_replaced_at = now, so it won't nag again until the next interval) AND consumes one spare from on-hand — which reorders if that leaves you short. Set metadata.replace_every_days on the part to arm the clock. partId falls back to the targeted entity.",
+        appliesTo: { kinds: ["inventory:part"] },
+        invokeHandler: "inventory.replaced",
+        userInvokable: true,
+      },
       {
         id: "inventory:adjust-stock",
         label: "Adjust part stock",
@@ -261,5 +296,20 @@ export default defineModule({
         trigger_event: "digifab.print.reversed",
       },
     ],
+  },
+
+  // P3 — the hourly burn-rate sweeper: reads the consumption ledger, predicts
+  // each part's run-out date, and fires inventory.stock.predicted-low ahead of
+  // empty. Started at boot; only touches orgs with inventory enabled + parts
+  // with a consume history, so idle workspaces pay nothing.
+  lifecycle: {
+    onBoot: async () => {
+      const { startBurnRateSweeper } = await import("./burn-rate.js");
+      startBurnRateSweeper();
+    },
+    onShutdown: async () => {
+      const { stopBurnRateSweeper } = await import("./burn-rate.js");
+      stopBurnRateSweeper();
+    },
   },
 });

@@ -4,9 +4,9 @@
 //
 // Filter: optional ?org=<slug> narrows to one workspace.
 
-import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Link, useSearchParams } from "react-router-dom";
+import { useEffect, useMemo, useRef } from "react";
+import { useInfiniteQuery } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import { History } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { api, type CrossOrgActivityEntry } from "../lib/api";
@@ -19,23 +19,45 @@ export function MeActivityPage() {
   const [params, setParams] = useSearchParams();
   const orgFilter = params.get("org") ?? undefined;
 
-  const q = useQuery({
+  // Infinite scroll + cursor pagination (docs/design-decisions/list-pagination.md)
+  // — never a capped limit + items.length count (that was the "100 actions" bug).
+  const q = useInfiniteQuery({
     queryKey: ["me-activity", orgFilter ?? "_all"],
-    queryFn: () => api.meActivity({ limit: 100, org: orgFilter }),
+    queryFn: ({ pageParam }) => api.meActivity({ limit: 50, org: orgFilter, cursor: pageParam }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
   });
 
-  const items = q.data?.items ?? [];
+  const items = useMemo(() => q.data?.pages.flatMap((p) => p.items) ?? [], [q.data]);
+  const total = q.data?.pages[0]?.total ?? items.length;
 
-  // Group by day for readable scanning.
-  const byDay = useMemo(() => {
-    const groups = new Map<string, CrossOrgActivityEntry[]>();
+  // A sentinel below the list pulls the next page as it nears the viewport.
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting && q.hasNextPage && !q.isFetchingNextPage) void q.fetchNextPage();
+      },
+      { rootMargin: "400px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [q.hasNextPage, q.isFetchingNextPage, q.fetchNextPage]);
+
+  // Group by day + workspace as CONTIGUOUS runs (chronological order kept): the
+  // workspace moves up to the section header, next to the date, instead of a pill
+  // repeated on every row — frees the row width and de-clutters (the author).
+  const sections = useMemo(() => {
+    const out: { day: string; orgSlug: string; orgName: string; entries: CrossOrgActivityEntry[] }[] = [];
     for (const e of items) {
       const day = new Date(e.occurred_at).toLocaleDateString();
-      const arr = groups.get(day) ?? [];
-      arr.push(e);
-      groups.set(day, arr);
+      const last = out[out.length - 1];
+      if (last && last.day === day && last.orgSlug === e.org_slug) last.entries.push(e);
+      else out.push({ day, orgSlug: e.org_slug, orgName: e.org_name, entries: [e] });
     }
-    return Array.from(groups.entries());
+    return out;
   }, [items]);
 
   function setOrgFilter(slug: string | null) {
@@ -52,7 +74,7 @@ export function MeActivityPage() {
           Your activity
         </h1>
         <span className="text-sm text-muted dark:text-slate-400">
-          {items.length} actions
+          {items.length >= total ? `${total} actions` : `${items.length} of ${total} actions`}
         </span>
         <div className="flex-1" />
         <select
@@ -89,18 +111,37 @@ export function MeActivityPage() {
         </div>
       )}
 
-      {byDay.map(([day, entries]) => (
-        <section key={day}>
-          <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
-            {day} <span className="text-faint dark:text-slate-500">({entries.length})</span>
+      {sections.map((s, i) => (
+        <section key={`${s.day}|${s.orgSlug}|${i}`}>
+          <div className="mb-2 flex items-center gap-2 flex-wrap text-[10px] font-mono uppercase tracking-widest">
+            <span className="text-accent">{s.day}</span>
+            <span className="text-faint dark:text-slate-600">·</span>
+            <button
+              type="button"
+              onClick={() => setOrgFilter(s.orgSlug)}
+              className="tracking-wider text-accent bg-cobble-50 dark:text-cobble-300 dark:bg-cobble-900/30 px-1.5 py-0.5 rounded hover:bg-cobble-100"
+              title={`Filter to ${s.orgName}`}
+            >
+              {s.orgName}
+            </button>
+            <span className="normal-case text-faint dark:text-slate-500">({s.entries.length})</span>
           </div>
           <ul className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 divide-y divide-line dark:divide-slate-800">
-            {entries.map((e) => (
+            {s.entries.map((e) => (
               <ActivityRow key={e.id} entry={e} />
             ))}
           </ul>
         </section>
       ))}
+
+      {/* Infinite-scroll sentinel + tail states. */}
+      <div ref={sentinelRef} aria-hidden />
+      {q.isFetchingNextPage && <div className="text-sm text-muted py-2 text-center">Loading more…</div>}
+      {!q.hasNextPage && !q.isLoading && items.length > 0 && (
+        <div className="text-xs text-faint dark:text-slate-500 text-center py-3">
+          That's everything — {total} action{total === 1 ? "" : "s"}.
+        </div>
+      )}
     </div>
   );
 }
@@ -114,24 +155,20 @@ function ActivityRow({ entry: e }: { entry: CrossOrgActivityEntry }) {
         ? diff.title
         : null;
   const action = humanAction(e.action);
+  // No per-row workspace pill — the workspace now lives in the section header
+  // (grouped by day + workspace). Wrap, don't truncate: the entity name is the
+  // point of the row ("created White Board", not "created White Bo…").
   return (
-    <li className="px-4 py-2 flex items-baseline gap-3 text-sm">
-      <Link
-        to={`/me/activity?org=${e.org_slug}`}
-        className="text-[10px] font-mono uppercase tracking-wider text-accent bg-cobble-50 dark:text-cobble-300 dark:bg-cobble-900/30 px-1.5 py-0.5 rounded hover:bg-cobble-100"
-      >
-        {e.org_name}
-      </Link>
-      <span className="text-content dark:text-mortar-200">{action}</span>
-      <span className="text-content dark:text-mortar-100 truncate">
+    <li className="px-4 py-2 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm">
+      <span className="shrink-0 text-content dark:text-mortar-200">{action}</span>
+      <span className="text-content dark:text-mortar-100 break-words min-w-0">
         {title ?? (
           <span className="font-mono text-xs text-faint">
             {e.entity_type ?? e.action}
           </span>
         )}
       </span>
-      <span className="flex-1" />
-      <span className="font-mono text-[10px] text-faint shrink-0">
+      <span className="font-mono text-[10px] text-faint shrink-0 ml-auto">
         {new Date(e.occurred_at).toLocaleTimeString()}
       </span>
     </li>

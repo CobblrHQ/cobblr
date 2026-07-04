@@ -12,6 +12,7 @@ import { invokeRouter } from "./invoke.js";
 import { usageRouter } from "./usage.js";
 import { matchToCatalogRouter } from "./match-to-catalog.js";
 import { chatRouter } from "./chat.js";
+import { basicsRouter } from "./basics.js";
 import { activityRouter } from "./activity.js";
 import { register as registerOllama } from "../providers/ollama.js";
 import { register as registerOpenAI } from "../providers/openai.js";
@@ -53,6 +54,7 @@ router.use("/invoke", invokeRouter);
 router.use("/usage", usageRouter);
 router.use("/match-to-catalog", matchToCatalogRouter);
 router.use("/chat", chatRouter);
+router.use("/basics", basicsRouter);
 router.use("/activity", activityRouter);
 router.use("/edge-status", edgeStatusRouter);
 

@@ -11,6 +11,8 @@
 // Pure function, no I/O — mirrors extract-thumbnail.ts: scan only the head +
 // tail of the buffer so a 200 MB gcode never gets fully string-ified.
 
+import { readZipEntry } from "./extract-thumbnail.js";
+
 export interface PlateMetadata {
   /** Estimated print seconds (slicer's "normal mode" estimate). */
   estimated_sec?: number;
@@ -64,9 +66,13 @@ function fromComments(text: string): PlateMetadata {
   const nozzle = grab(/;\s*nozzle_diameter\s*=\s*([\d.]+)/i);
   if (nozzle && Number(nozzle) > 0) out.nozzle_mm = Number(nozzle);
 
-  // Grams: Prusa `; total filament used [g] = 12.34` / `; filament used [g] = 12.34`
-  const grams = grab(/;\s*(?:total\s+)?filament used \[g\]\s*=\s*([\d.]+)/i);
-  if (grams && Number(grams) > 0) out.filament_g = Number(grams);
+  // Grams: Prusa `; total filament used [g] = 12.34` / `; filament used [g] = 12.34`.
+  // Multi-tool prints list per-extruder (`= 12.3, 4.5`) — sum them.
+  const gramsRaw = grab(/;\s*(?:total\s+)?filament used \[g\]\s*=\s*([\d.,\s]+)/i);
+  if (gramsRaw) {
+    const g = gramsRaw.split(/[,;]/).map((x) => parseFloat(x.trim())).filter((n) => Number.isFinite(n)).reduce((a, b) => a + b, 0);
+    if (g > 0) out.filament_g = Math.round(g * 100) / 100;
+  }
 
   const slicer = grab(/;\s*generated (?:by|with)\s+([^\r\n]+)/i) ?? grab(/^;\s*(\S+Slicer[^\r\n]*)/im);
   if (slicer) out.slicer = slicer.split(" on ")[0]!.trim().slice(0, 80);
@@ -100,11 +106,37 @@ export function fromFilename(filename: string): PlateMetadata {
   return out;
 }
 
+/** Tier 1b — a 3MF (Bambu/Orca) keeps its slice summary in a zip entry,
+ *  Metadata/slice_info.config: one <filament .../> per extruder + a prediction. */
+function from3mf(bytes: Buffer): PlateMetadata {
+  const cfg = readZipEntry(bytes, (n) => /(?:^|\/)metadata\/slice_info\.config$/i.test(n));
+  if (!cfg) return {};
+  const xml = cfg.toString("utf8");
+  const out: PlateMetadata = {};
+  let g = 0;
+  const types: string[] = [];
+  const re = /<filament\b[^>]*\/?>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(xml))) {
+    const gm = /used_g\s*=\s*"([\d.]+)"/i.exec(m[0]); if (gm) g += parseFloat(gm[1]!);
+    const tm = /type\s*=\s*"([^"]+)"/i.exec(m[0]); if (tm) types.push(tm[1]!.trim().toUpperCase());
+  }
+  if (g > 0) out.filament_g = Math.round(g * 100) / 100;
+  if (types.length) out.material = types[0];
+  const pred = /<metadata\s+key="prediction"\s+value="([\d.]+)"/i.exec(xml);
+  if (pred && Number(pred[1]) > 0) out.estimated_sec = Math.round(Number(pred[1]));
+  return out;
+}
+
 /** Extract everything we can. Comment headers win over filename tokens. */
 export function extractPlateMetadata(filename: string, bytes: Buffer): PlateMetadata {
   const fromName = fromFilename(filename);
-  // .3mf is a zip and .bgcode is binary — comments are only readable in plain
-  // gcode. (The 3mf THUMBNAIL is handled separately by extract-thumbnail.ts.)
+  // .3mf is a zip (Bambu/Orca stash a slice_info.config); .bgcode is binary with
+  // no readable comments — fall back to the filename convention for it.
+  if (/\.3mf$/i.test(filename)) {
+    const from3 = from3mf(bytes);
+    return { ...fromName, ...from3, ...(fromName.parts_per_plate ? { parts_per_plate: fromName.parts_per_plate } : {}) };
+  }
   if (!/\.gcode$/i.test(filename)) return fromName;
   const head = bytes.subarray(0, SCAN_BYTES).toString("latin1");
   const tail = bytes.byteLength > SCAN_BYTES ? bytes.subarray(bytes.byteLength - SCAN_BYTES).toString("latin1") : "";

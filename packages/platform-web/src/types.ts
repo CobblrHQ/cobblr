@@ -49,7 +49,7 @@ export type FieldRendererId =
  *  input MUST handle each member — see `fieldControl()`, whose exhaustive switch
  *  makes a forgotten type a COMPILE error rather than a silent text-box (the bug
  *  where a `boolean` field rendered as a text input showing "false"). */
-export type FieldType = "text" | "number" | "boolean" | "date" | "url" | "computed";
+export type FieldType = "text" | "number" | "boolean" | "date" | "url" | "computed" | "relation";
 
 export interface PlatformFieldDef {
   id: string;
@@ -75,6 +75,13 @@ export interface PlatformFieldDef {
   /** Form-builder section this field belongs to (field_sections.id), or
    *  null/undefined for ungrouped. */
   section_id?: string | null;
+  /** Server-managed: the value is computed/stamped server-side and a client
+   *  write is never accepted — render read-only, never as an input. */
+  server_managed?: boolean | null;
+  /** type='relation' only: the entity-kind id this field references
+   *  (e.g. "core-locations:location"). The stored value is the target's id;
+   *  display resolves it to the target's title. */
+  ref_kind?: string | null;
 }
 
 /** A named form-builder section grouping a kind's fields under a heading. */
@@ -103,6 +110,14 @@ export interface PlatformWebApi {
     },
   ): Promise<{ ok: boolean; result: unknown }>;
   lookupEntity(slug: string, kind: string, id: string): Promise<PlatformResolvedEntity>;
+  /** Generic entity list (`GET /orgs/:slug/entities/:kind`) — the data source
+   *  for relation-field pickers. Optional: hosts that don't wire it render the
+   *  relation value read-only instead of a picker. */
+  listEntities?(
+    slug: string,
+    kind: string,
+    q?: string,
+  ): Promise<{ items: PlatformResolvedEntity[] }>;
   listFieldDefs(slug: string, kind: string): Promise<{ items: PlatformFieldDef[]; sections?: FieldSection[] }>;
   /** Append a new choice to a text field-def's `choices` array. The
    *  CustomFieldsPanel's "+ add new" affordance calls this. */

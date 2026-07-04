@@ -56,6 +56,7 @@ COPY modules/sales/package.json ./modules/sales/
 COPY modules/tracking/package.json ./modules/tracking/
 COPY modules/digifab/package.json ./modules/digifab/
 COPY modules/core-devices/package.json ./modules/core-devices/
+COPY modules/core-mobility/package.json ./modules/core-mobility/
 COPY modules/core-file-preview/package.json ./modules/core-file-preview/
 COPY modules/bricklink-connector/package.json ./modules/bricklink-connector/
 COPY modules/core-print/package.json ./modules/core-print/
@@ -138,6 +139,8 @@ COPY modules/core-print ./modules/core-print
 RUN pnpm --filter @cobblr/core-print run --if-present build
 COPY modules/core-devices ./modules/core-devices
 RUN pnpm --filter @cobblr/core-devices run --if-present build
+COPY modules/core-mobility ./modules/core-mobility
+RUN pnpm --filter @cobblr/core-mobility run --if-present build
 # ── actively-developed (hot) modules last — their edits rebuild fewest layers ──
 COPY modules/digifab ./modules/digifab
 RUN pnpm --filter @cobblr/digifab run --if-present build

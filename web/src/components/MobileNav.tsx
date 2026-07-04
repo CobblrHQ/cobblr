@@ -105,6 +105,14 @@ export function MobileNav() {
                 dashboard
               </NavLink>
 
+              {/* Search moved here when the bottom thumb-bar was removed — the
+                  header search bar is desktop-only, so this is its only mobile
+                  home. (Scan already has a header camera icon + a Scan Inbox nav
+                  item, so it isn't duplicated here.) */}
+              <NavLink to="/search" className={linkClass} onClick={() => setOpen(false)}>
+                search
+              </NavLink>
+
               <NavLink to="/calendar" className={linkClass} onClick={() => setOpen(false)}>
                 calendar
               </NavLink>

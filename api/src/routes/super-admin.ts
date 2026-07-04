@@ -28,6 +28,7 @@ import { announce, listAnnounceSettings, setAnnounceSetting, isComposable } from
 import { reporterCardFields } from "../platform/feedback-card.js";
 import { pokeDiscordResolved, pokeDiscordWaitlistCard } from "../platform/discord-bot-trigger.js";
 import { pokeTriage } from "../platform/triage-trigger.js";
+import { isDmReply } from "../platform/feedback-dm-routing.js";
 import { absoluteAppUrl } from "../platform/public-url.js";
 import { feedbackReplyAddress } from "../platform/feedback-reply.js";
 import {
@@ -1450,21 +1451,32 @@ superAdminRouter.post("/feedback/append", async (req, res, next) => {
   }
 });
 
-// POST /super-admin/feedback/append-dm — a user replied to the support bot in a
-// DIRECT MESSAGE (the Discord round-trip on an in-app feedback item). Unlike
-// /append (keyed by a #support thread), this resolves the reporter from their
-// VERIFIED Discord connection, then appends to their most-recently-touched
-// feedback item — which is the one we just messaged them about (sending a
-// clarifying question bumps updated_at). Same feedback:ingest scope as /append.
+// POST /super-admin/feedback/append-dm — a user DM'd the support bot. Resolves
+// the reporter from their VERIFIED Discord connection, then ROUTES BY INTENT:
+//
+//   • REPLY  → their most-recent item is a live thread the TEAM spoke on last
+//     (a clarifying question awaiting an answer) and is still recent → append.
+//   • NEW    → anything else → create a fresh feedback item AND post it to the
+//     feedback channel, like any new submission.
+//
+// The old behaviour ALWAYS appended to the latest item, so a brand-new issue
+// sent by DM got silently BURIED as a follow-up on an unrelated ticket and never
+// surfaced. Images ride along now too (they were dropped before). Same
+// feedback:ingest scope as /append.
+const DmImages = z
+  .array(z.object({ url: z.string().url().max(2000), name: z.string().max(255).optional() }))
+  .max(8)
+  .default([]);
 const AppendDm = z.object({
   discord_user_id: z.string().min(1).max(40),
   text: z.string().trim().max(5000).default(""),
   from: z.string().max(120).optional(),
+  images: DmImages,
 });
 superAdminRouter.post("/feedback/append-dm", async (req, res, next) => {
   try {
     const parsed = AppendDm.safeParse(req.body);
-    if (!parsed.success || !parsed.data.text) {
+    if (!parsed.success || (!parsed.data.text && parsed.data.images.length === 0)) {
       res.status(400).json({ error: { code: "empty", message: "Nothing to append." } });
       return;
     }
@@ -1478,30 +1490,101 @@ superAdminRouter.post("/feedback/append-dm", async (req, res, next) => {
       res.status(404).json({ error: { code: "no_connection", message: "No verified Discord connection for that user." } });
       return;
     }
-    const fb = await meta
+
+    const entry = {
+      at: new Date().toISOString(),
+      from: parsed.data.from ?? "reporter",
+      text: parsed.data.text,
+      role: "user" as const,
+      ...(parsed.data.images.length ? { images: parsed.data.images } : {}),
+    };
+
+    // Reply to a pending team question, or a new report?
+    const latest = await meta
       .selectFrom("feedback")
-      .select(["id", "status"])
+      .select(["id", "status", "followups", "updated_at"])
       .where("user_id", "=", conn.user_id)
       .orderBy("updated_at", "desc")
       .limit(1)
       .executeTakeFirst();
-    if (!fb) {
-      res.status(404).json({ error: { code: "no_item", message: "No feedback item to reply to." } });
+    if (latest && isDmReply(latest, Date.now())) {
+      const reopened = latest.status === "resolved" || latest.status === "wontfix";
+      await meta
+        .updateTable("feedback")
+        .set({
+          followups: sql`coalesce(followups, '[]'::jsonb) || ${JSON.stringify([entry])}::jsonb`,
+          ...(reopened ? { status: "in_progress" as never } : {}),
+          triaged_at: null,
+          updated_at: new Date(),
+        })
+        .where("id", "=", latest.id)
+        .execute();
+      pokeTriage(latest.id);
+      res.json({ ok: true, feedback_id: latest.id, appended: true, reopened });
       return;
     }
-    const entry = { at: new Date().toISOString(), from: parsed.data.from ?? "reporter", text: parsed.data.text, role: "user" as const };
-    const reopened = fb.status === "resolved" || fb.status === "wontfix";
-    await meta
-      .updateTable("feedback")
-      .set({
-        followups: sql`coalesce(followups, '[]'::jsonb) || ${JSON.stringify([entry])}::jsonb`,
-        ...(reopened ? { status: "in_progress" as never } : {}),
-        triaged_at: null,
+
+    // NEW item from the DM. Store any screenshots DURABLY in core-files (like an
+    // in-app submission) under the reporter's own workspace — Discord CDN urls
+    // can't be read by the feedback card or the triage viewer and expire in a
+    // day, so a url-only capture loses the actual report. Falls back to keeping
+    // the urls in the opening entry if there's no workspace or a fetch fails, so
+    // nothing is silently dropped.
+    let attachOrgId: string | null = null;
+    const stored: Array<{ file_id: string; name?: string; content_type?: string }> = [];
+    if (parsed.data.images.length) {
+      const mem = await meta
+        .selectFrom("org_memberships")
+        .select(["org_id"])
+        .where("user_id", "=", conn.user_id)
+        .limit(1)
+        .executeTakeFirst();
+      attachOrgId = mem?.org_id ?? null;
+      if (attachOrgId) {
+        for (const img of parsed.data.images) {
+          // SSRF guard: only ever fetch Discord's own CDN, never an arbitrary url.
+          if (!/^https:\/\/(cdn|media)\.discordapp\.(com|net)\//i.test(img.url)) continue;
+          try {
+            const r = await fetch(img.url);
+            if (!r.ok) continue;
+            const ct = r.headers.get("content-type") || "image/png";
+            if (!ct.startsWith("image/")) continue;
+            const bytes = new Uint8Array(await r.arrayBuffer());
+            const written = await platform().files.write(attachOrgId, bytes, { filename: img.name || "screenshot.png", mimeType: ct });
+            if (written) stored.push({ file_id: written.fileId, name: img.name, content_type: ct });
+          } catch {
+            // skip a bad image, keep the rest
+          }
+        }
+      }
+    }
+    const urlFallback = parsed.data.images.length > 0 && stored.length === 0;
+    const row = await meta
+      .insertInto("feedback")
+      .values({
+        user_id: conn.user_id,
+        // org the screenshots live under — must match, since the triage viewer
+        // reads attachments via the item's org_id (null when there's nothing stored).
+        org_id: stored.length ? attachOrgId : null,
+        type: "other",
+        message: parsed.data.text || "(see attached screenshot)",
+        origin: "discord-dm",
+        origin_ref: sql`${JSON.stringify({ user_id: parsed.data.discord_user_id, username: parsed.data.from ?? null })}::jsonb`,
+        ...(stored.length ? { attachments: sql`${JSON.stringify(stored)}::jsonb` } : {}),
+        ...(urlFallback ? { followups: sql`${JSON.stringify([entry])}::jsonb` } : {}),
       })
-      .where("id", "=", fb.id)
-      .execute();
-    pokeTriage(fb.id);
-    res.json({ ok: true, feedback_id: fb.id, reopened });
+      .returning(["id"])
+      .executeTakeFirstOrThrow();
+    pokeTriage(row.id);
+    const oid = attachOrgId;
+    void announce("feedback.new", {
+      title: "💬 New feedback (Discord DM)",
+      body: (parsed.data.text || "(screenshot attached)").slice(0, 1500),
+      color: 0x5865f2,
+      fields: parsed.data.from ? [{ name: "from", value: parsed.data.from, inline: true }] : undefined,
+      images: oid ? stored.map((s) => ({ orgId: oid, fileId: s.file_id, name: s.name })) : undefined,
+    });
+    res.status(201).json({ ok: true, feedback_id: row.id, created: true });
   } catch (err) {
     next(err);
   }

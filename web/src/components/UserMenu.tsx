@@ -214,12 +214,13 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
                   <UpdateBadge slug={activeSlug} variant="count" className="ml-auto" />
                 </Link>
               )}
-              {/* Simple mode's escape hatch + upsell — always reachable here so
-                  the owner can return to the full platform (the Trojan-horse
-                  funnel: simple → discover → expand, same workspace). */}
+              {/* Simple mode's escape hatch — always reachable here. Labelled for
+                  what it DOES ("Turn off simple mode"): an owner who turned simple
+                  mode on looks for a "simple mode off" switch, not aspirational
+                  "explore the platform" copy (which read as an upsell, not an exit). */}
               {focused && canFocus && (
                 <button type="button" onClick={exitFocused} className={itemCls} role="menuitem">
-                  <Rocket size={14} className="text-accent dark:text-cobble-300" /> Explore the full platform
+                  <SlidersHorizontal size={14} className="text-accent dark:text-cobble-300" /> Turn off simple mode
                   <ArrowRight size={13} className="ml-auto text-faint dark:text-slate-500" />
                 </button>
               )}
@@ -413,12 +414,13 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
                   <UpdateBadge slug={activeSlug} variant="count" className="ml-auto" />
                 </Link>
               )}
-              {/* Simple mode's escape hatch + upsell — always reachable here so
-                  the owner can return to the full platform (the Trojan-horse
-                  funnel: simple → discover → expand, same workspace). */}
+              {/* Simple mode's escape hatch — always reachable here. Labelled for
+                  what it DOES ("Turn off simple mode"): an owner who turned simple
+                  mode on looks for a "simple mode off" switch, not aspirational
+                  "explore the platform" copy (which read as an upsell, not an exit). */}
               {focused && canFocus && (
                 <button type="button" onClick={exitFocused} className={itemCls} role="menuitem">
-                  <Rocket size={14} className="text-accent dark:text-cobble-300" /> Explore the full platform
+                  <SlidersHorizontal size={14} className="text-accent dark:text-cobble-300" /> Turn off simple mode
                   <ArrowRight size={13} className="ml-auto text-faint dark:text-slate-500" />
                 </button>
               )}

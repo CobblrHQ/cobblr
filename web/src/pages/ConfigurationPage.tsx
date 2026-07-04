@@ -87,31 +87,43 @@ function FocusedModeToggle({ slug, focused }: { slug: string; focused: boolean }
       toast.error(e instanceof Error ? e.message : "Couldn't change simple mode");
     }
   };
+  // Mobile: icon+text take the full width and the (short-labelled) button drops
+  // below, right-aligned — instead of a wide button squeezing the copy into a
+  // narrow column. Desktop: inline as before with the full label.
   return (
-    <div className="rounded-lg border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/40 px-4 py-3 flex items-start gap-3">
-      <Eye size={18} className="mt-0.5 shrink-0 text-accent dark:text-cobble-300" />
-      <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium text-content dark:text-mortar-100">
-          Simple mode {focused ? "is on" : "is off"}
+    <div className="rounded-lg border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/40 px-4 py-3 flex flex-col sm:flex-row sm:items-start gap-2 sm:gap-3">
+      <div className="flex items-start gap-3 flex-1 min-w-0">
+        <Eye size={18} className="mt-0.5 shrink-0 text-accent dark:text-cobble-300" />
+        <div className="min-w-0">
+          <div className="text-sm font-medium text-content dark:text-mortar-100">
+            Simple mode {focused ? "is on" : "is off"}
+          </div>
+          <p className="mt-0.5 text-xs text-faint dark:text-slate-400">
+            {focused
+              ? "The platform's build-it chrome (marketplace, modules, this Configuration page, the AI builder) is hidden — a calm, everyday view of just your data. Turn it off whenever you want to tinker; it's all still here."
+              : "Hide the platform's build-it chrome (marketplace, modules, this Configuration page, the AI builder) for a calmer, everyday view of just your data. Nothing is removed — flip it back anytime from the account menu when you want to add or configure things."}
+          </p>
         </div>
-        <p className="mt-0.5 text-xs text-faint dark:text-slate-400">
-          {focused
-            ? "The platform's build-it chrome (marketplace, modules, this Configuration page, the AI builder) is hidden — a calm, everyday view of just your data. Turn it off whenever you want to tinker; it's all still here."
-            : "Hide the platform's build-it chrome (marketplace, modules, this Configuration page, the AI builder) for a calmer, everyday view of just your data. Nothing is removed — flip it back anytime from the account menu when you want to add or configure things."}
-        </p>
       </div>
       <button
         type="button"
         onClick={flip}
         disabled={busy}
         className={
-          "shrink-0 rounded-md px-3 py-1.5 text-sm font-medium transition disabled:opacity-50 " +
+          "shrink-0 self-end sm:self-auto rounded-md px-3 py-1.5 text-sm font-medium transition disabled:opacity-50 " +
           (focused
             ? "border border-line dark:border-slate-600 text-content dark:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800"
             : "bg-cobble-600 text-white hover:bg-cobble-700")
         }
       >
-        {busy ? "…" : focused ? "Turn off" : "Turn on simple mode"}
+        {busy ? (
+          "…"
+        ) : (
+          <>
+            <span className="sm:hidden">{focused ? "Turn off" : "Turn on"}</span>
+            <span className="hidden sm:inline">{focused ? "Turn off" : "Turn on simple mode"}</span>
+          </>
+        )}
       </button>
     </div>
   );

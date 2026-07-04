@@ -10,6 +10,9 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { FieldDefDetailModal } from "../components/FieldDefDetailModal";
 import { FieldRenderer, useToast, usePageTitle } from "@cobblr/platform-web";
 
+// `relation` is deliberately absent: user-authored relation fields (picking a
+// ref_kind in this UI) are a follow-on; today relation defs are contributed by
+// modules (e.g. core-mobility's home_location) and just display here.
 const TYPES: PlatformFieldDef["type"][] = ["text", "number", "boolean", "date", "url", "computed"];
 
 // Default renderer per field type — keeps the dropdown small and
@@ -23,6 +26,9 @@ const RENDERERS_BY_TYPE: Record<PlatformFieldDef["type"], CatalogFieldRenderer[]
   // computed renders its template string; `url-link` makes a {{ }}-built URL
   // (e.g. a git repo link) clickable instead of plain text.
   computed: ["text", "url-link"],
+  // relation values display as the referenced entity's title (resolved
+  // server-side as `<name>_label`); no renderer variants to pick.
+  relation: ["text"],
 };
 
 // Tiny inline sample so the user can see what a renderer looks like.

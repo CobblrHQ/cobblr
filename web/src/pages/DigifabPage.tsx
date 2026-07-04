@@ -1641,6 +1641,8 @@ function NewJobModal({
   const [fileId, setFileId] = useState("");
   const [materialPartId, setMaterialPartId] = useState("");
   const [materialGrams, setMaterialGrams] = useState("");
+  const [materialType, setMaterialType] = useState("");
+  const [slicerMeta, setSlicerMeta] = useState<{ material: string | null; filament_g: number | null } | null>(null);
   const [buildId, setBuildId] = useState("");
   const [buildQty, setBuildQty] = useState("1");
   const [priority, setPriority] = useState(0);
@@ -1683,6 +1685,29 @@ function NewJobModal({
     enabled: !!activeSlug,
   });
 
+  // Auto-fill filament from the picked file's slicer metadata — the material +
+  // grams the slicer already computed, so the operator doesn't retype them.
+  useEffect(() => {
+    if (!fileId || !activeSlug) { setSlicerMeta(null); return; }
+    let cancelled = false;
+    api.getDigifabSlicerMeta(activeSlug, fileId).then((m) => { if (!cancelled) setSlicerMeta(m); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [fileId, activeSlug]);
+  // Apply the parsed meta to the still-empty fields (never clobber manual input),
+  // and match a spool by material name (PLA → "PolyTerra PLA …").
+  useEffect(() => {
+    const m = slicerMeta;
+    if (!m) return;
+    if (m.material && !materialType) setMaterialType(m.material);
+    if (m.filament_g != null && !materialGrams) setMaterialGrams(String(m.filament_g));
+    if (m.material && !materialPartId) {
+      const mat = m.material.toUpperCase();
+      const hit = (parts.data?.items ?? []).find((p) => (p.name ?? "").toUpperCase().includes(mat));
+      if (hit) setMaterialPartId(hit.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slicerMeta, parts.data]);
+
   const save = useMutation({
     mutationFn: () =>
       api.createDigifabJob(activeSlug, {
@@ -1694,6 +1719,7 @@ function NewJobModal({
         target_pool: routeBy === "pool" ? poolId || null : null,
         material_part_id: materialPartId || null,
         material_grams: materialPartId && materialGrams ? Number(materialGrams) : null,
+        material_type: materialType || null,
         linked_build_id: buildId || null,
         build_qty: buildId ? Math.max(1, Math.floor(Number(buildQty)) || 1) : undefined,
         file_id: fileId || null,
@@ -1842,7 +1868,15 @@ function NewJobModal({
               className={field + " w-28 disabled:opacity-50"}
             />
           </div>
-          <span className="text-[11px] text-faint">When the print completes, this many grams is deducted from that spool's stock.</span>
+          {slicerMeta && (slicerMeta.material || slicerMeta.filament_g != null) ? (
+            <span className="text-[11px] text-moss-600 dark:text-moss-400">
+              ↳ from the file:{" "}
+              {[slicerMeta.material, slicerMeta.filament_g != null ? `${slicerMeta.filament_g} g` : null].filter(Boolean).join(" · ")}
+              {" "}— auto-filled from the slicer, edit if needed.
+            </span>
+          ) : (
+            <span className="text-[11px] text-faint">Pick a file above and Cobblr reads the filament + grams from its slicer metadata. When the print completes, the grams are deducted from that spool's stock.</span>
+          )}
         </label>
         {buildList.length === 0 && !builds.isLoading && builds.isSuccess && (
           <div className="text-[11px] text-faint italic">Tip: define a build (bill-of-materials) to have this job draw its parts from inventory automatically.</div>
@@ -4929,6 +4963,22 @@ function hostOf(url: string): string {
   }
 }
 
+// Best-effort per-row firmware from the URL/port + printer name. A sensible
+// starting guess when a printer can't be probed (offline, or a firmware with no
+// network API to detect) — so three differently-named printers don't all inherit
+// one wrong default. Always overridable via the per-row picker. `:7125` is
+// Moonraker's default; the rest are name hints (Voron→Klipper, Prusa→PrusaLink…).
+function guessFirmware(row: BulkRow): string | null {
+  try { if (new URL(row.url).port === "7125") return "klipper-moonraker"; } catch { /* not a URL */ }
+  const hay = `${row.name ?? ""} ${row.url}`.toLowerCase();
+  if (/moonraker|mainsail|fluidd|klipper|voron|ratrig|trident/.test(hay)) return "klipper-moonraker";
+  if (/prusalink|prusa|\bmk[234]s?\b|\bxl\b|\bmini\b/.test(hay)) return "prusalink";
+  if (/octoprint|ender|creality|marlin/.test(hay)) return "octoprint";
+  if (/duet|reprap|\brrf\b/.test(hay)) return "duet-rrf";
+  if (/fluidnc|grbl/.test(hay)) return "fluidnc";
+  return null;
+}
+
 // Stand up a NEW farm by pasting a list of printer URLs. One direct connection
 // per printer (driver auto-installed), optional pool, optional per-row firmware
 // auto-detect, optional reach test. Backed by POST …/digifab/bulk/connections.
@@ -4940,8 +4990,12 @@ function BulkAddModal({ slug, onClose, onDone }: { slug: string; onClose: () => 
   const [testEach, setTestEach] = useState(true);
   const [detected, setDetected] = useState<Record<string, string | null>>({});
   const [detecting, setDetecting] = useState(false);
+  // Explicit per-row firmware overrides, index-keyed (two rows can share a blank
+  // URL). Effective firmware = user override › probe result › URL/name guess › default.
+  const [rowTypes, setRowTypes] = useState<Record<number, string>>({});
 
   const rows = useMemo(() => parseBulk(text), [text]);
+  const effectiveType = (r: BulkRow, i: number) => rowTypes[i] ?? detected[r.url] ?? guessFirmware(r) ?? defaultType;
 
   const detect = async () => {
     setDetecting(true);
@@ -4966,7 +5020,7 @@ function BulkAddModal({ slug, onClose, onDone }: { slug: string; onClose: () => 
         default_type: defaultType,
         pool_name: poolName.trim() || undefined,
         test: testEach,
-        printers: rows.map((r) => ({ name: r.name, url: r.url, api_key: r.apiKey, type: detected[r.url] ?? undefined })),
+        printers: rows.map((r, i) => ({ name: r.name, url: r.url, api_key: r.apiKey, type: rowTypes[i] ?? detected[r.url] ?? guessFirmware(r) ?? undefined })),
       }),
     onSuccess: (r) => {
       const reach = r.results.filter((x) => x.reachable).length;
@@ -5046,13 +5100,17 @@ function BulkAddModal({ slug, onClose, onDone }: { slug: string; onClose: () => 
                     <Printer size={13} className="text-faint shrink-0" />
                     <span className="font-medium text-content dark:text-mortar-100 truncate">{(r.name || hostOf(r.url)).trim()}</span>
                     <span className="text-[11px] font-mono text-faint truncate flex-1">{r.url}</span>
-                    {det === undefined ? (
-                      <span className="text-[10px] font-mono text-faint shrink-0">{firmwareLabel(defaultType)}</span>
-                    ) : det ? (
-                      <span className="text-[10px] font-mono text-moss-600 dark:text-moss-400 shrink-0">✓ {firmwareLabel(det)}</span>
-                    ) : (
-                      <span className="text-[10px] font-mono text-amber-600 dark:text-amber-400 shrink-0" title="not detected — default applies">? {firmwareLabel(defaultType)}</span>
-                    )}
+                    {det ? <span className="text-[11px] text-moss-600 dark:text-moss-400 shrink-0" title="firmware detected by probe">✓</span> : null}
+                    <select
+                      value={effectiveType(r, i)}
+                      onChange={(e) => setRowTypes((m) => ({ ...m, [i]: e.target.value }))}
+                      className="text-[11px] py-0.5 pl-1.5 pr-5 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 shrink-0 max-w-[200px]"
+                      title={det ? "detected by probe — change to override" : rowTypes[i] ? "your choice" : "guessed from the name/URL — change if wrong"}
+                    >
+                      {FIRMWARE_TYPES.map((t) => (
+                        <option key={t.id} value={t.id}>{firmwareLabel(t.id)}</option>
+                      ))}
+                    </select>
                   </li>
                 );
               })}

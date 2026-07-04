@@ -113,6 +113,9 @@ function InventoryInstanceTile({ slug, getToken, instance }: DashboardWidgetProp
       icon={Package}
       label={instance.display_name}
       primary={items.length}
+      // Collapse an empty instance tile into "Also enabled" like the aggregate +
+      // every other module, instead of a permanent "0 / all stocked" card.
+      empty={!q.isLoading && items.length === 0}
       secondary={
         low > 0 ? (
           <span className="text-ember-600 dark:text-ember-500">{low} low-stock</span>

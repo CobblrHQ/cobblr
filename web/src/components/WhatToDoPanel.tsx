@@ -177,7 +177,7 @@ function CaptureTile({ slug, it }: { slug: string; it: { catalog_image_file_id: 
   return (
     <div
       title={name}
-      className="flex-1 min-w-14 max-w-36 aspect-square rounded-md border border-line dark:border-slate-700 overflow-hidden bg-surface dark:bg-slate-900 grid place-items-center"
+      className="flex-1 min-w-14 max-w-24 aspect-square rounded-md border border-line dark:border-slate-700 overflow-hidden bg-surface dark:bg-slate-900 grid place-items-center"
     >
       {src ? (
         <img src={src} alt={name} loading="lazy" className="max-w-full max-h-full object-contain" onError={() => { setSrc(null); setIdx((i) => i + 1); }} />
@@ -982,7 +982,7 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
                     <CaptureTile key={i.id} slug={slug} it={i} />
                   ))}
                   {g.items.length > 12 && (
-                    <Link to="/scan" className="flex-1 min-w-14 max-w-36 aspect-square rounded-md border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 grid place-items-center text-xs font-medium text-muted dark:text-slate-300 hover:border-accent hover:text-accent transition">
+                    <Link to="/scan" className="flex-1 min-w-14 max-w-24 aspect-square rounded-md border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 grid place-items-center text-xs font-medium text-muted dark:text-slate-300 hover:border-accent hover:text-accent transition">
                       +{g.items.length - 12}
                     </Link>
                   )}

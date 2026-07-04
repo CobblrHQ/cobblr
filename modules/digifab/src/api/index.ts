@@ -21,6 +21,9 @@ import { printRulesRouter } from "./print-rules.js";
 import { failureRouter } from "./failure.js";
 import { registerFarmResolvers } from "./resolvers.js";
 import { registerDeviceSeam } from "./device-provider.js";
+import { asyncHandler } from "./util.js";
+import { tenantContext } from "../db.js";
+import { extractPlateMetadata } from "../library/extract-metadata.js";
 
 registerFarmResolvers();
 registerDeviceSeam(); // back platform().devices.getDriver + the digifab:run-command alias
@@ -52,6 +55,25 @@ router.use("/edge", edgeRelayRouter); // cloud↔on-site bridge tunnel (register
 router.use("/edge-shares", edgeSharesRouter); // owner-side: grant machines to another workspace
 router.use("/history", historyRouter); // print history + at-a-glance stats
 router.use("/library", libraryRouter); // stored 3MF/gcode files + send-to-machine
+
+// GET /files/:fileId/slicer-meta — read a stored file's bytes and pull the
+// slicer's filament material + grams (+ time estimate) out of it, so the New-job
+// modal can PRE-FILL what the slicer already computed instead of asking the
+// operator to retype it. Read-only; a file with no slicer metadata returns nulls.
+router.get(
+  "/files/:fileId/slicer-meta",
+  asyncHandler(async (req, res) => {
+    const orgId = tenantContext(req).org.id;
+    const f = await platform().files.read(orgId, req.params.fileId!).catch(() => null);
+    if (!f) { res.json({ material: null, filament_g: null, estimated_sec: null }); return; }
+    const meta = extractPlateMetadata(f.filename, Buffer.from(f.bytes));
+    res.json({
+      material: meta.material ?? null,
+      filament_g: meta.filament_g ?? null,
+      estimated_sec: meta.estimated_sec ?? null,
+    });
+  }),
+);
 router.use("/print-rules", printRulesRouter); // configurable print-update notifications (channels + rules)
 
 export default router;

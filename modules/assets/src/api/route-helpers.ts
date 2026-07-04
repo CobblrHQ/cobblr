@@ -26,3 +26,36 @@ export function routeUnknownToMetadata<T extends Record<string, unknown>>(
   if (Object.keys(promoted).length > 0) out.metadata = promoted;
   return out as T;
 }
+
+/** Preserve SERVER-MANAGED metadata keys across a client write. Same helper as
+ *  inventory's (see that copy for the rationale): metadata is written wholesale,
+ *  so a server-stamped value (e.g. core-mobility's `away_since`) must be
+ *  re-injected from the STORED row — a client's value never takes. */
+export function preserveServerManaged(
+  incoming: Record<string, unknown> | undefined,
+  current: Record<string, unknown> | undefined,
+  names: readonly string[],
+): Record<string, unknown> | undefined {
+  if (names.length === 0 || incoming === undefined) return incoming;
+  const out = { ...incoming };
+  for (const n of names) {
+    if (current && n in current) out[n] = current[n];
+    else delete out[n];
+  }
+  return out;
+}
+
+/** Normalise a jsonb `metadata` value (object, raw string, or null) to a plain
+ *  object so custom keys are reachable for the before/after event bag. */
+export function coerceMetadata(raw: unknown): Record<string, unknown> {
+  if (raw && typeof raw === "object") return { ...(raw as Record<string, unknown>) };
+  if (typeof raw === "string" && raw.trim()) {
+    try {
+      const p = JSON.parse(raw);
+      if (p && typeof p === "object") return p as Record<string, unknown>;
+    } catch {
+      /* not JSON */
+    }
+  }
+  return {};
+}

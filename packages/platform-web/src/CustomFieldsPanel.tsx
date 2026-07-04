@@ -15,6 +15,7 @@ import { usePlatformWeb } from "./context";
 import type { PlatformFieldDef } from "./types";
 import { fieldControl } from "./fieldControl";
 import { FieldRenderer, boolLabel } from "./FieldRenderer";
+import { relativeTime } from "./relativeTime";
 
 interface Props {
   entityKind: string;
@@ -184,6 +185,13 @@ function FieldRow({
     control === "computed" ? (
       // Read-only, value derived server-side at resolve time.
       <ComputedRow def={def} value={value} fallbackValue={fallbackValue} />
+    ) : control === "server-managed" ? (
+      // Read-only, value STAMPED server-side (e.g. core-mobility's away_since).
+      // An input here would be a lying control — the server rejects the write.
+      <ServerManagedRow def={def} value={value} />
+    ) : control === "relation" ? (
+      // Reference to another entity — a picker over the def's ref_kind.
+      <RelationRow def={def} value={value} onCommit={onCommit} />
     ) : control === "color" ? (
       // Colour branch — a real swatch picker (type a hex/name OR pick).
       <ColorRow def={def} value={value} onCommit={onCommit} />
@@ -319,6 +327,128 @@ function ComputedRow({
           <span className="text-faint dark:text-slate-600">—</span>
         )}
       </div>
+    </label>
+  );
+}
+
+/** Read-only display for a SERVER-MANAGED field — a value the server owns and
+ *  stamps (e.g. a drift timestamp). Dates render as relative time ("3d ago",
+ *  hover for the absolute stamp) since "how long" is usually the point of a
+ *  server-stamped date. Never an input: the write router rejects client
+ *  values, so an editable box would silently revert. */
+function ServerManagedRow({ def, value }: { def: PlatformFieldDef; value: unknown }) {
+  const str = value == null ? "" : String(value);
+  const isDate = def.type === "date";
+  return (
+    <label className="block">
+      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+        {def.display_label}
+        <span className="ml-2 italic text-accent normal-case tracking-normal">auto</span>
+      </span>
+      <div
+        className="input flex-1 bg-mortar-50/60 dark:bg-slate-800/60 text-content dark:text-mortar-100 cursor-default select-text"
+        title={isDate && str ? new Date(str).toLocaleString() : undefined}
+      >
+        {str ? (
+          isDate ? (
+            relativeTime(str)
+          ) : (
+            <FieldRenderer fieldName={def.name} value={str} renderer={def.renderer ?? undefined} type={def.type} />
+          )
+        ) : (
+          <span className="text-faint dark:text-slate-600">—</span>
+        )}
+      </div>
+    </label>
+  );
+}
+
+/** A relation VALUE picker over a referenced kind — a select storing the chosen
+ *  entity's id and displaying titles, never uuids. Candidate list comes from
+ *  the host adapter's generic listEntities; a host that doesn't wire it gets a
+ *  read-only title (resolved via lookupEntity) instead of a picker. Fully
+ *  generic — nothing here knows about locations or any specific kind. Exported
+ *  so create forms (e.g. inventory's NewPartDialog) share the exact control the
+ *  detail panel uses. */
+export function RelationSelect({
+  refKind,
+  value,
+  onChange,
+  className,
+}: {
+  refKind: string;
+  value: unknown;
+  onChange: (v: string | null) => void;
+  className?: string;
+}) {
+  const { api, orgSlug } = usePlatformWeb();
+  const current = value == null ? "" : String(value);
+
+  const canList = !!api.listEntities && !!refKind;
+  const candidates = useQuery({
+    queryKey: ["platform-relation-candidates", orgSlug, refKind],
+    queryFn: () => api.listEntities!(orgSlug, refKind),
+    enabled: canList,
+    staleTime: 30_000,
+  });
+  const items = candidates.data?.items ?? [];
+  // Resolve the current value's title even when it's missing from the candidate
+  // list (dangling ref, >limit list, or no listEntities adapter).
+  const inList = items.some((e) => e.id === current);
+  const fallbackTitle = useQuery({
+    queryKey: ["platform-relation-title", orgSlug, refKind, current],
+    queryFn: () => api.lookupEntity(orgSlug, refKind, current),
+    enabled: !!current && !!refKind && !inList && (candidates.isSuccess || !canList),
+    staleTime: 60_000,
+    retry: false,
+  });
+
+  if (!canList) {
+    // No picker available — show the resolved title read-only, never a raw id.
+    const title = fallbackTitle.data?.title ?? (current ? "…" : "");
+    return (
+      <div className={"input flex-1 bg-mortar-50/60 dark:bg-slate-800/60 cursor-default " + (className ?? "")}>
+        {title || <span className="text-faint dark:text-slate-600">—</span>}
+      </div>
+    );
+  }
+
+  return (
+    <select
+      value={current}
+      onChange={(e) => onChange(e.target.value === "" ? null : e.target.value)}
+      className={"input " + (className ?? "")}
+    >
+      <option value="">—</option>
+      {items.map((e) => (
+        <option key={e.id} value={e.id}>
+          {e.title}
+        </option>
+      ))}
+      {current && !inList && (
+        <option value={current}>{fallbackTitle.data?.title ?? "(unavailable)"}</option>
+      )}
+    </select>
+  );
+}
+
+/** A relation field row — label + the shared RelationSelect. */
+function RelationRow({
+  def,
+  value,
+  onCommit,
+}: {
+  def: PlatformFieldDef;
+  value: unknown;
+  onCommit: (v: unknown) => void;
+}) {
+  return (
+    <label className="block">
+      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+        {def.display_label}
+        {def.required ? <span className="text-ember-500"> *</span> : null}
+      </span>
+      <RelationSelect refKind={def.ref_kind ?? ""} value={value} onChange={(v) => onCommit(v)} />
     </label>
   );
 }

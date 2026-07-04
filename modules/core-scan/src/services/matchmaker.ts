@@ -247,7 +247,20 @@ export async function assembleMergedMenu(
     const body = (await res.json()) as { items?: ScanMenuEntry[] };
     const bundle = Array.isArray(body.items) ? body.items : [];
     const liveKeys = new Set(live.map((e) => `${e.module}::${e.instance ?? ""}`));
-    return [...live, ...bundle.filter((e) => !liveKeys.has(`${e.module}::${e.instance ?? ""}`))];
+    // Drop a bundle entry that duplicates a live table by KEY *or* by display
+    // LABEL. If the workspace already has a "Bookshelf" (say `assets::bookshelf`),
+    // don't ALSO offer to install a community "Bookshelf" bundle
+    // (`inventory::cobblr-community-bookshelf`) — that surfaced as two chips the
+    // user can't tell apart, and confirming the phantom would spin up a duplicate
+    // same-named table. You already have one by that name; file into it.
+    const liveLabels = new Set(live.map((e) => e.label.trim().toLowerCase()).filter(Boolean));
+    return [
+      ...live,
+      ...bundle.filter(
+        (e) =>
+          !liveKeys.has(`${e.module}::${e.instance ?? ""}`) && !liveLabels.has(e.label.trim().toLowerCase()),
+      ),
+    ];
   } catch {
     return live;
   }
@@ -692,6 +705,11 @@ export async function runMatchmaker(
   // (never trust the model for the entity kind we'll write to).
   const byKey = new Map(menu.map((m) => [`${m.module}::${m.instance ?? ""}`, m] as const));
   const out: MatchCandidate[] = [];
+  // Dedupe by target table: the model sometimes emits the SAME menu entry twice
+  // (e.g. Bookshelf with 4 fields AND Bookshelf with 2), which surfaced as two
+  // identical chips. Keep the richer fill per module::instance so each table
+  // appears once and the top-3 slots go to genuinely different tables.
+  const emitted = new Map<string, number>();
   for (const c of rawList) {
     if (!c || typeof c !== "object") continue;
     const cand = c as Record<string, unknown>;
@@ -709,7 +727,7 @@ export async function runMatchmaker(
       }
     }
     const qty = Number(cand.quantity);
-    out.push({
+    const candidate: MatchCandidate = {
       module: entry.module,
       instance: entry.instance,
       kind: entry.kind,
@@ -724,7 +742,16 @@ export async function runMatchmaker(
       // Carry the bundle pointer through from the chosen menu entry so a
       // capture against a not-yet-installed bundle remembers what to install.
       ...(entry.bundle_external_id ? { bundle_external_id: entry.bundle_external_id } : {}),
-    });
+    };
+    const dedupeKey = `${entry.module}::${entry.instance ?? ""}`;
+    const prevIdx = emitted.get(dedupeKey);
+    if (prevIdx != null) {
+      // Same table already proposed — keep whichever filled more fields.
+      if (Object.keys(candidate.fields).length > Object.keys(out[prevIdx]!.fields).length) out[prevIdx] = candidate;
+      continue;
+    }
+    emitted.set(dedupeKey, out.length);
+    out.push(candidate);
     if (out.length >= 3) break;
   }
   // AI returned nothing usable for this menu → heuristic floor, never blank.

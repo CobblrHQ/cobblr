@@ -16,8 +16,9 @@ export { EntityTile } from "./EntityTile";
 export { ViewModeToggle, useViewMode, type ViewMode } from "./ViewModeToggle";
 export { useImageSrc } from "./useImageSrc";
 export { BulkActionBar } from "./BulkActionBar";
-export { CustomFieldsPanel } from "./CustomFieldsPanel";
+export { CustomFieldsPanel, RelationSelect } from "./CustomFieldsPanel";
 export { fieldControl, type FieldControl } from "./fieldControl";
+export { relativeTime } from "./relativeTime";
 export { FieldRenderer, boolLabel, NoImage } from "./FieldRenderer";
 export {
   FilePreview,

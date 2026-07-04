@@ -10,10 +10,11 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { Bell, History, KeyRound, Monitor, Plug, UserCog } from "lucide-react";
+import { Bell, History, KeyRound, Monitor, Moon, Plug, Sun, Unlock, UserCog } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api, ApiError } from "../lib/api";
+import { useTheme } from "../theme/ThemeContext";
 import { useToast, usePageTitle } from "@cobblr/platform-web";
 
 export function MeProfilePage() {
@@ -51,6 +52,8 @@ export function MeProfilePage() {
       <PasswordSection
         onChanged={() => toast.success("Password updated — you stay signed in.")}
       />
+
+      <AppearanceSection />
 
       <div className="flex flex-col gap-2">
         {/* Notifications stay — a consumer cares how they're reached. */}
@@ -152,6 +155,92 @@ function DisplayNameSection({
           {save.isPending ? "saving…" : "Save"}
         </button>
       </div>
+    </section>
+  );
+}
+
+function ThemeChoiceRow<T extends string | null>({
+  label,
+  sub,
+  options,
+  value,
+  onPick,
+}: {
+  label: string;
+  sub: string;
+  options: { value: T; label: string; icon: typeof Sun; hint: string }[];
+  value: T;
+  onPick: (v: T) => void;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <div className="text-xs leading-tight">
+        <span className="font-medium text-content dark:text-slate-300">{label}</span>{" "}
+        <span className="text-faint">— {sub}</span>
+      </div>
+      <div className={"grid gap-1.5 " + (options.length >= 4 ? "grid-cols-4" : "grid-cols-3")}>
+        {options.map((o) => {
+          const selected = value === o.value;
+          return (
+            <button
+              key={o.label}
+              type="button"
+              aria-pressed={selected}
+              title={o.hint}
+              onClick={() => onPick(o.value)}
+              className={
+                "flex items-center justify-center gap-1.5 rounded-lg border px-2 py-1 transition " +
+                (selected
+                  ? "border-cobble-500 bg-cobble-50 dark:bg-cobble-500/10 ring-1 ring-cobble-500"
+                  : "border-line dark:border-slate-700 hover:bg-subtle dark:hover:bg-slate-800/60")
+              }
+            >
+              <o.icon size={14} className={selected ? "text-cobble-600 dark:text-cobble-400" : "text-muted"} />
+              <span className="text-xs text-content dark:text-slate-200">{o.label}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function AppearanceSection() {
+  const { accountPref, deviceOverride, setAccountPref, setDeviceOverride } = useTheme();
+  return (
+    <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-2.5">
+      <h2 className="text-sm font-medium text-content dark:text-slate-300 flex items-center gap-2">
+        <Moon size={14} /> Appearance
+      </h2>
+
+      <ThemeChoiceRow
+        label="Account default"
+        sub="Follows you to every workspace and device."
+        value={accountPref}
+        onPick={setAccountPref}
+        options={[
+          { value: null, label: "Match device", icon: Monitor, hint: "follow each device's OS" },
+          { value: "light", label: "Light", icon: Sun, hint: "always light" },
+          { value: "dark", label: "Dark", icon: Moon, hint: "always dark" },
+        ]}
+      />
+
+      <ThemeChoiceRow
+        label="This device only"
+        sub="Overrides the account default on this browser — never synced."
+        value={deviceOverride}
+        onPick={setDeviceOverride}
+        options={[
+          { value: null, label: "Use default", icon: Unlock, hint: "follow the account default" },
+          { value: "os", label: "Match OS", icon: Monitor, hint: "follow this device's OS" },
+          { value: "light", label: "Light", icon: Sun, hint: "this device light" },
+          { value: "dark", label: "Dark", icon: Moon, hint: "this device dark" },
+        ]}
+      />
+
+      <p className="text-[11px] text-faint leading-tight">
+        Precedence: <span className="font-medium">this device</span> → <span className="font-medium">account default</span> → the device's OS. This device can follow its own OS (Match OS) even when your account default is a fixed Light/Dark. The header toggle sets this device only; only you see it.
+      </p>
     </section>
   );
 }

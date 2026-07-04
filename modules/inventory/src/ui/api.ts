@@ -21,6 +21,10 @@ export interface InvFieldDef {
   renderer?: string | null;
   /** Plain-language one-line hint shown under the input. */
   help?: string | null;
+  /** Server-managed: value stamped server-side; never render an input. */
+  server_managed?: boolean | null;
+  /** type='relation' only: the referenced entity-kind id. */
+  ref_kind?: string | null;
 }
 
 export interface Category {

@@ -9,7 +9,14 @@ import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import { Sparkles, X, Send, Check } from "lucide-react";
 import { api, ApiError, type AiChatProposal, type BundleValidationPreview } from "../lib/api";
+import { Cobb } from "./Cobb";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { useAiStatus, AiOffNotice } from "./AiStatusNotice";
+
+// Shown only if the basic-mode endpoint itself is unreachable (network error) —
+// the server otherwise always returns a reply (its own no-match nudge).
+const BASIC_FALLBACK =
+  "I couldn't reach the assistant just now. For anything about your workspace, connect AI using the link at the top.";
 
 interface Msg {
   role: "user" | "assistant";
@@ -28,6 +35,8 @@ const kindLabel = (id: string) => id.split(":")[1] ?? id;
  *  when the panel opens (the two breakpoint-gated instances share one state). */
 export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; setOpen: (v: boolean) => void; asRow?: boolean }) {
   const { activeSlug } = useActiveOrg();
+  const aiStatus = useAiStatus();
+  const aiOff = !!aiStatus && !aiStatus.available;
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -54,6 +63,24 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
     setError(null);
     const next: Msg[] = [...messages, { role: "user", content: text }];
     setMessages(next);
+
+    // No AI provider → ask the server's basic-mode matcher (no model, no cost)
+    // instead of hitting the AI chat only to render a failure. The endpoint
+    // always returns a reply (its own graceful no-match nudge); the fallback
+    // below only fires if the endpoint itself is unreachable.
+    if (aiOff) {
+      setBusy(true);
+      try {
+        const r = await api.answerBasic(activeSlug, text);
+        setMessages([...next, { role: "assistant", content: r.reply }]);
+      } catch {
+        setMessages([...next, { role: "assistant", content: BASIC_FALLBACK }]);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
     setBusy(true);
     try {
       const r = await api.aiChat(
@@ -171,19 +198,40 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
         <div className="fixed top-0 right-0 z-[60] h-screen w-[min(100vw,440px)] border-l border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-2xl flex flex-col">
           <header className="flex items-center justify-between px-4 py-3 border-b border-line dark:border-slate-700 shrink-0">
             <div className="flex items-center gap-2 text-sm font-semibold text-content dark:text-mortar-100">
-              <Sparkles size={16} className="text-accent" /> Ask Cobblr
+              <Cobb pose="idle" bust size={42} title="Cobb" className="cobb-lift" /> Ask Cobblr
             </div>
             <button type="button" onClick={() => setOpen(false)} className="text-faint hover:text-content dark:hover:text-mortar-200 transition" aria-label="Close">
               <X size={18} />
             </button>
           </header>
 
+          {/* Up-front, before-you-type: if AI is off, say so now (with a connect
+              path) instead of failing after the first message. Pinned below the
+              header so it's the first thing you see on open. */}
+          {aiOff && (
+            <div className="px-4 pt-3 shrink-0">
+              <AiOffNotice status={aiStatus} compact>
+                <strong>AI chat isn't connected — Cobb's in basic mode.</strong> I can
+                help you find your way around, but I can't search your workspace or make
+                changes yet.{" "}
+              </AiOffNotice>
+            </div>
+          )}
+
           <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
             {messages.length === 0 && (
-              <p className="text-xs text-faint dark:text-slate-500 text-center mt-8 px-4 leading-relaxed">
-                Ask about your workspace, or tell me to do something — "add a part called Widget", "what's low on stock?".
-                I'll always check with you before changing anything.
-              </p>
+              <div className="mt-6 px-4 flex flex-col items-center text-center">
+                <Cobb pose="idle" size={150} title="Cobb" className="cobb-lift" />
+                <p className="text-xs text-faint dark:text-slate-500 leading-relaxed mt-2">
+                  {aiOff ? (
+                    <>Ask me the basics — "what can you do", "how do I add a part", "where do I scan". For
+                    questions about your actual data or to have me make changes, connect AI up top.</>
+                  ) : (
+                    <>Ask about your workspace, or tell me to do something — "add a part called Widget", "what's low on
+                    stock?". I'll always check with you before changing anything.</>
+                  )}
+                </p>
+              </div>
             )}
             {messages.map((m, i) =>
               m.role === "user" ? (

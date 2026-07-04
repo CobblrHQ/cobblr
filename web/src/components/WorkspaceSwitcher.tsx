@@ -165,7 +165,10 @@ export function WorkspaceSwitcher({ inline = false }: { inline?: boolean } = {})
         className="flex items-center gap-1.5 px-2 py-1 rounded text-sm text-content dark:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 transition min-w-0 max-w-full"
         title={activeOrg ? `${activeOrg.name} · ${displaySlug(activeOrg.slug)}` : "Pick a workspace"}
       >
-        <span className="truncate max-w-[10rem]">{activeOrg?.name ?? "—"}</span>
+        {/* No hard max-width: show the full workspace name when the row has room.
+            The flex min-w-0 above still truncates it FIRST (protecting the icons)
+            only when the header genuinely runs out of space. */}
+        <span className="truncate">{activeOrg?.name ?? "—"}</span>
         <ChevronDown size={12} className="text-faint shrink-0" />
       </button>
       {open && inline && (

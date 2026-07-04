@@ -31,9 +31,12 @@ export interface DigifabJobsTable {
   /** A Cobblr pool to drip this job onto a free member (queue mode). */
   target_pool: string | null;
   /** Filament the print consumes — an inventory part + grams. On completion a
-   *  seeded wire deducts `material_grams` from `material_part_id`'s stock. */
+   *  seeded wire deducts `material_grams` from `material_part_id`'s stock.
+   *  `material_type` records the slicer's filament token (PLA/PETG/…) even when
+   *  no spool is matched — a record + display field, not part of the deduction. */
   material_part_id: string | null;
   material_grams: string | null;
+  material_type: string | null;
   /** A build (bill-of-materials) this job produces. On send, a seeded wire fires
    *  builds:build-one to consume the build's components from inventory (and bump
    *  its output part). build_consumed_at gates it to once per job (resend-safe). */
@@ -85,6 +88,7 @@ export interface DigifabProductionRunsTable {
   status: Generated<string>;
   material_part_id: string | null;
   material_grams: string | null;
+  material_type: string | null;
   linked_build_id: string | null;
   build_qty: Generated<number>;
   priority: Generated<number>;

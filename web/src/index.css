@@ -147,3 +147,26 @@ html[data-nav-fullside] #cobblr-toasts {
   bottom: calc(var(--cobblr-foot-h, 0px) + 0.75rem);
   width: 13rem;
 }
+
+/* Cobb the mascot — the "working overnight" hammer swing (subtle, looped).
+   Held still for anyone who prefers reduced motion. */
+@keyframes cobb-swing {
+  0%, 100% { transform: rotate(-7deg); }
+  50%      { transform: rotate(3deg); }
+}
+.cobb-hammer { animation: cobb-swing 1.1s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .cobb-hammer { animation: none; }
+}
+
+/* Dark-mode legibility: Cobb's arms are bare slate (#3D4451) strokes with no
+   fill, so on a dark slate panel they blend into the background (the head/apron
+   still read — they have light fills). The art is verbatim, so rather than
+   recolour it we lift the whole figure off dark surfaces with a faint
+   paper-coloured outline (stacked drop-shadows ≈ a thin sticker edge). Light
+   mode needs nothing — the art already sits on light surfaces. */
+.dark .cobb-lift {
+  filter: drop-shadow(0 0 1.3px rgba(246, 242, 234, 0.92))
+          drop-shadow(0 0 1.3px rgba(246, 242, 234, 0.92))
+          drop-shadow(0 0 1.3px rgba(246, 242, 234, 0.55));
+}

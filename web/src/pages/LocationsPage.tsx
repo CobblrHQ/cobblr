@@ -648,6 +648,11 @@ function LocationFormModal({
   const [name, setName] = useState(target?.name ?? "");
   const [shortName, setShortName] = useState(target?.short_name ?? "");
   const [kind, setKind] = useState<"area" | "container">(target?.kind ?? "area");
+  // On create, we auto-guess the kind from keywords in the name (e.g.
+  // "White Bookshelf" → container) until the user picks one by hand. Once
+  // they touch the select we stop overriding their choice.
+  const [kindTouched, setKindTouched] = useState(editing);
+  const kindGuess = !editing && !kindTouched ? inferKind(name) : null;
   const [parentId, setParentId] = useState<string | "">(
     target?.parent_id ?? parentIdInitial ?? "",
   );
@@ -731,7 +736,14 @@ function LocationFormModal({
           <input
             type="text"
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              const next = e.target.value;
+              setName(next);
+              if (!editing && !kindTouched) {
+                const guess = inferKind(next);
+                if (guess) setKind(guess);
+              }
+            }}
             placeholder="e.g. Garage / Shelf 3 / Bin 17 — or Drawer 1-3 to bulk-create"
             className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             autoFocus
@@ -763,23 +775,48 @@ function LocationFormModal({
             Shown on labels when the canonical name is too long.
           </div>
         </label>
-        <label className="block">
+        <div className="block">
           <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
             Kind
           </span>
-          <select
-            value={kind}
-            onChange={(e) => setKind(e.target.value as "area" | "container")}
-            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-          >
-            <option value="area">
-              area — a region (room, corner, workshop)
-            </option>
-            <option value="container">
-              container — a thing things go INTO (bin, drawer, shelf)
-            </option>
-          </select>
-        </label>
+          {/* Two buttons, not a dropdown (the author): the choice is binary and each
+              option needs a line of explanation that a <select> hides until you
+              open it. The name-based auto-guess just pre-selects one of them;
+              tapping either is a manual choice that sticks (kindTouched). */}
+          <div className="grid grid-cols-2 gap-2">
+            {([
+              { k: "area", title: "area", desc: "a region — room, corner, workshop" },
+              { k: "container", title: "container", desc: "things go INTO it — bin, drawer, shelf" },
+            ] as const).map((opt) => {
+              const selected = kind === opt.k;
+              return (
+                <button
+                  key={opt.k}
+                  type="button"
+                  aria-pressed={selected}
+                  onClick={() => {
+                    setKindTouched(true);
+                    setKind(opt.k);
+                  }}
+                  className={
+                    "text-left rounded border px-2.5 py-2 transition " +
+                    (selected
+                      ? "border-accent bg-accent/10 dark:bg-accent/15 ring-1 ring-accent/40"
+                      : "border-line dark:border-slate-600 bg-surface dark:bg-slate-900 hover:border-accent/60")
+                  }
+                >
+                  <div className="text-sm font-medium text-content dark:text-mortar-100">{opt.title}</div>
+                  <div className="text-[11px] text-muted dark:text-slate-400 mt-0.5 leading-snug">{opt.desc}</div>
+                </button>
+              );
+            })}
+          </div>
+          {kindGuess && (
+            <div className="text-[10px] text-faint dark:text-slate-500 mt-1.5">
+              Auto-selected <span className="font-mono">{kindGuess}</span> from the name — tap the other if that's wrong.
+            </div>
+          )}
+        </div>
         <label className="block">
           <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
             Parent (optional — leave blank for top-level)
@@ -817,6 +854,30 @@ function LocationFormModal({
       </form>
     </Modal>
   );
+}
+
+// Guess a location's kind from keywords in its name, so a fresh "New
+// location" form pre-selects the right kind (the user can still override).
+// Storage nouns win over region nouns when both appear ("Garage Shelf" is a
+// shelf → container), so containers are checked first. Substring match keeps
+// it simple and catches compounds like "Bookshelf" (via "shelf"). Returns
+// null when nothing matches — the form keeps its default.
+const CONTAINER_WORDS = [
+  "shelf", "bin", "drawer", "box", "tote", "crate", "tub", "tray", "basket",
+  "cabinet", "cubby", "case", "bag", "pouch", "rack", "jar", "bookcase",
+  "container", "cart", "caddy", "envelope", "folder", "pocket", "slot",
+];
+const AREA_WORDS = [
+  "room", "corner", "workshop", "area", "zone", "garage", "closet", "office",
+  "kitchen", "bedroom", "bathroom", "basement", "attic", "shed", "studio",
+  "lab", "hallway", "pantry", "loft", "wall", "floor", "desk", "table", "bench",
+];
+
+function inferKind(raw: string): "area" | "container" | null {
+  const s = raw.toLowerCase();
+  if (CONTAINER_WORDS.some((w) => s.includes(w))) return "container";
+  if (AREA_WORDS.some((w) => s.includes(w))) return "area";
+  return null;
 }
 
 // Parses a name like "Drawer 1-3" → { names: ["Drawer 1","Drawer 2",

@@ -18,6 +18,7 @@
   "scripts": {
     "typecheck": "pnpm -r run --if-present typecheck",
     "lint:isolation": "tsx scripts/lint-module-isolation.ts",
+    "lint:manifests": "tsx scripts/lint-manifests.ts",
     "lint:dockerfile-modules": "tsx scripts/lint-dockerfile-modules.ts",
     "lint:versions": "tsx scripts/lint-versions.ts",
     "lint:docs": "tsx scripts/lint-docs.ts",
@@ -27,8 +28,10 @@
     "lint:deprecated-fks": "tsx scripts/lint-deprecated-table-fks.ts",
     "lint:self-heal": "tsx scripts/lint-self-heal.ts",
     "lint:write-guards": "tsx scripts/lint-module-write-guards.ts",
+    "lint:config-routes": "tsx scripts/lint-config-routes.ts",
     "lint:authed-media": "tsx scripts/lint-authed-media.ts",
     "lint:action-predicates": "tsx scripts/lint-action-predicates.ts",
+    "lint:pagination": "tsx scripts/lint-pagination.ts",
     "build": "pnpm -r run --if-present build",
     "dev:api": "npm run dev -w api",
     "dev:web": "npm run dev -w web",

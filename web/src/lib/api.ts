@@ -826,11 +826,12 @@ export const api = {
     request<{ items: ActivityEntry[] }>("GET", `/orgs/${slug}/activity?limit=${limit}`),
   // Cross-workspace activity feed: every action attributed to any
   // workspace the caller belongs to. Optional ?org= narrows to one.
-  meActivity: (opts: { limit?: number; org?: string } = {}) => {
+  meActivity: (opts: { limit?: number; org?: string; cursor?: string } = {}) => {
     const qs = new URLSearchParams();
     if (opts.limit) qs.set("limit", String(opts.limit));
     if (opts.org) qs.set("org", opts.org);
-    return request<{ items: CrossOrgActivityEntry[] }>(
+    if (opts.cursor) qs.set("cursor", opts.cursor);
+    return request<{ items: CrossOrgActivityEntry[]; next_cursor: string | null; total: number }>(
       "GET",
       `/me/activity${qs.toString() ? `?${qs.toString()}` : ""}`,
     );
@@ -842,6 +843,13 @@ export const api = {
     request<{ items: PlatformEntityKind[] }>("GET", `/orgs/${slug}/entity-kinds`),
   lookupEntity: (slug: string, kind: string, id: string) =>
     request<PlatformResolvedEntity>("GET", `/orgs/${slug}/entities/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`),
+  /** Generic entity list — the data source for relation-field pickers and any
+   *  cross-module chooser. Projected through exposableFields like lookup. */
+  listEntities: (slug: string, kind: string, q?: string) =>
+    request<{ items: PlatformResolvedEntity[] }>(
+      "GET",
+      `/orgs/${slug}/entities/${encodeURIComponent(kind)}${q ? `?q=${encodeURIComponent(q)}` : ""}`,
+    ),
 
   // core-units vocabulary
   listUnits: (slug: string) =>
@@ -1786,6 +1794,7 @@ export const api = {
       target_pool?: string | null;
       material_part_id?: string | null;
       material_grams?: number | null;
+      material_type?: string | null;
       file_id?: string | null;
       linked_machine_id?: string | null;
       linked_task_id?: string | null;
@@ -1857,6 +1866,13 @@ export const api = {
     }>("POST", `/orgs/${slug}/modules/digifab/bulk/connections`, body),
   detectDigifabType: (slug: string, body: { url: string; api_key?: string }) =>
     request<{ type: string | null; detail: string }>("POST", `/orgs/${slug}/modules/digifab/bulk/detect`, body),
+  // Slicer metadata (filament material + grams) parsed from a stored file, to
+  // pre-fill the New-job form instead of asking the operator to retype it.
+  getDigifabSlicerMeta: (slug: string, fileId: string) =>
+    request<{ material: string | null; filament_g: number | null; estimated_sec: number | null }>(
+      "GET",
+      `/orgs/${slug}/modules/digifab/files/${fileId}/slicer-meta`,
+    ),
   sendDigifabJob: (slug: string, id: string) =>
     request<{ status: string; remote_job_id: string | null; placement: unknown; uploaded_bytes?: number }>(
       "POST",
@@ -2654,6 +2670,11 @@ export const api = {
   getAiStatus: (slug: string) =>
     request<AiStatus>("GET", `/orgs/${slug}/ai-status`),
 
+  // Ask Cobblr "basic mode" — the no-AI floor. When AI is off, the chat asks the
+  // server to match a message against the built-in catalog (no model, no cost).
+  answerBasic: (slug: string, message: string) =>
+    request<BasicAnswer>("POST", `/orgs/${slug}/modules/core-ai/basics/answer`, { message }),
+
   // core-ai — provider config + capability defaults + usage. See
   // docs/modules/core-ai.md.
   listAiProviderCatalogue: (slug: string) =>
@@ -3276,6 +3297,16 @@ export interface LocationImportResponse {
 export interface AiStatus {
   available: boolean;
   reason: "ok" | "operator_disabled" | "not_entitled" | "no_provider";
+}
+
+/** Result of the no-AI basic-mode matcher (POST …/core-ai/basics/answer). */
+export interface BasicAnswer {
+  matched: boolean;
+  reply: string;
+  intent: string | null;
+  key: string | null;
+  score: number;
+  candidates: Array<{ key: string; intent: string; score: number }>;
 }
 
 export interface AiProvider {
@@ -4938,7 +4969,7 @@ export interface PlatformFieldDef {
   entity_kind: string;
   name: string;
   display_label: string;
-  type: "text" | "number" | "boolean" | "date" | "url" | "computed";
+  type: "text" | "number" | "boolean" | "date" | "url" | "computed" | "relation";
   required: boolean;
   position: number;
   bundle_id: string | null;
@@ -4952,6 +4983,12 @@ export interface PlatformFieldDef {
   help: string | null;
   /** Form-builder section (field_sections.id) or null = ungrouped. */
   section_id?: string | null;
+  /** Server-managed: the value is computed/stamped server-side and a client
+   *  write is never accepted — render read-only, never as an input. */
+  server_managed?: boolean | null;
+  /** type='relation' only: the referenced entity-kind id (e.g.
+   *  "core-locations:location"). Stored value = the target entity's id. */
+  ref_kind?: string | null;
   created_at: string;
 }
 

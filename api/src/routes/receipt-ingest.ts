@@ -12,7 +12,6 @@
 // route (POST /scan/receipt) through an internal call with a minted session
 // token — so all the parse/tier/fan-out logic stays in core-scan, uncoupled.
 
-import crypto from "node:crypto";
 import { Router } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
@@ -21,6 +20,7 @@ import { meta } from "../db/meta.js";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import { signSession } from "../auth/jwt.js";
+import { inboundSecretOk } from "../platform/inbound-secret.js";
 import {
   extractReceiptToken,
   mintReceiptAddress,
@@ -56,17 +56,119 @@ const IngestEmail = z.object({
 
 // ── unauth inbound (Cloudflare Email Worker → here) ─────────────────────────
 
+export interface ReceiptEmailInput {
+  /** The receipts+<token> local-part, or the raw To header to parse it from. */
+  token?: string;
+  to?: string | string[];
+  /** Sender — used only for the single-workspace bare-address fallback. */
+  from_email?: string;
+  attachments: Array<{ filename?: string; content_type?: string; content_base64: string }>;
+}
+
+/** Core of receipt-by-email: resolve (user, workspace) from the token/sender,
+ *  write each receipt attachment via the files seam, and reuse core-scan's
+ *  /scan/receipt route per file. Pure of req/res so BOTH the standalone
+ *  /receipt-ingest/email route AND the /inbound-email dispatcher can call it.
+ *  Never throws for a routing miss — returns a 200 { ignored, reason } so a
+ *  stray email doesn't bounce. */
+export async function ingestReceiptEmail(
+  input: ReceiptEmailInput,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const { token, to, from_email, attachments } = input;
+
+  // Resolve the target (user, workspace).
+  let userId: string | null = null;
+  let orgId: string | null = null;
+  const tok = token ?? extractReceiptToken(to);
+  if (tok) {
+    const decoded = verifyReceiptToken(tok);
+    if (!decoded) return { status: 200, body: { ignored: true, reason: "bad_token" } };
+    userId = decoded.userId;
+    orgId = decoded.orgId;
+  } else if (from_email) {
+    // Bare receipts@ with no token — only safe when the sender has exactly one
+    // workspace (no ambiguity). Otherwise we can't know which workspace.
+    const user = await meta
+      .selectFrom("users")
+      .select(["id"])
+      .where(sql`lower(email)`, "=", from_email.toLowerCase())
+      .executeTakeFirst();
+    if (user) {
+      const memberships = await meta
+        .selectFrom("org_memberships")
+        .select(["org_id"])
+        .where("user_id", "=", user.id)
+        .execute();
+      if (memberships.length === 1) {
+        userId = user.id;
+        orgId = memberships[0]!.org_id;
+      } else if (memberships.length > 1) {
+        return { status: 200, body: { ignored: true, reason: "ambiguous_workspace" } };
+      }
+    }
+  }
+  if (!userId || !orgId) return { status: 200, body: { ignored: true, reason: "unresolved" } };
+
+  // Confirm the user is (still) a member of that workspace, and get its slug.
+  const membership = await meta
+    .selectFrom("org_memberships as m")
+    .innerJoin("orgs as o", "o.id", "m.org_id")
+    .select(["o.slug as slug"])
+    .where("m.user_id", "=", userId)
+    .where("m.org_id", "=", orgId)
+    .executeTakeFirst();
+  if (!membership) return { status: 200, body: { ignored: true, reason: "not_a_member" } };
+
+  const ingestable = attachments.filter(isIngestable);
+  if (ingestable.length === 0) return { status: 200, body: { ignored: true, reason: "no_receipt_attachment" } };
+
+  // Write each attachment to core-files (server-side seam) + reuse core-scan's
+  // receipt route via an internal call under a freshly minted session token.
+  const sessionToken = await signSession(userId);
+  const results: Array<Record<string, unknown>> = [];
+  for (const a of ingestable) {
+    try {
+      const bytes = Buffer.from(a.content_base64, "base64");
+      const written = await platform().files.write(orgId, new Uint8Array(bytes), {
+        filename: a.filename,
+        mimeType: a.content_type,
+      });
+      if (!written) {
+        results.push({ filename: a.filename ?? null, error: "store_failed" });
+        continue;
+      }
+      const r = await fetch(`${INTERNAL_API}/api/v1/orgs/${membership.slug}/modules/core-scan/scan/receipt`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${sessionToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ file_id: written.fileId }),
+      });
+      const body = (await r.json().catch(() => ({}))) as {
+        receipt?: { item_count?: number; method?: string; vendor?: string | null };
+        error?: { code?: string; message?: string };
+      };
+      results.push(
+        r.ok
+          ? {
+              filename: a.filename ?? null,
+              ok: true,
+              item_count: body.receipt?.item_count ?? 0,
+              method: body.receipt?.method ?? null,
+              vendor: body.receipt?.vendor ?? null,
+            }
+          : { filename: a.filename ?? null, error: body.error?.code ?? `http_${r.status}`, message: body.error?.message },
+      );
+    } catch (err) {
+      results.push({ filename: a.filename ?? null, error: "exception", message: (err as Error).message });
+    }
+  }
+  return { status: 200, body: { workspace: membership.slug, results } };
+}
+
 export const receiptInboundRouter = Router();
 
 receiptInboundRouter.post("/receipt-ingest/email", async (req, res, next) => {
   try {
-    const secret = process.env.COBBLR_INBOUND_EMAIL_SECRET || "";
-    const provided = String(req.headers["x-inbound-secret"] ?? "");
-    if (
-      !secret ||
-      provided.length !== secret.length ||
-      !crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(secret))
-    ) {
+    if (!inboundSecretOk(req.headers["x-inbound-secret"])) {
       res.status(401).json({ error: { code: "unauthorized", message: "Bad inbound secret." } });
       return;
     }
@@ -75,107 +177,8 @@ receiptInboundRouter.post("/receipt-ingest/email", async (req, res, next) => {
       res.status(400).json({ error: { code: "invalid_body", message: "Bad payload", details: parsed.error.issues } });
       return;
     }
-    const { token, to, from_email, attachments } = parsed.data;
-
-    // Resolve the target (user, workspace).
-    let userId: string | null = null;
-    let orgId: string | null = null;
-    const tok = token ?? extractReceiptToken(to);
-    if (tok) {
-      const decoded = verifyReceiptToken(tok);
-      if (!decoded) {
-        res.status(200).json({ ignored: true, reason: "bad_token" });
-        return;
-      }
-      userId = decoded.userId;
-      orgId = decoded.orgId;
-    } else if (from_email) {
-      // Bare receipts@ with no token — only safe when the sender has exactly one
-      // workspace (no ambiguity). Otherwise we can't know which workspace.
-      const user = await meta
-        .selectFrom("users")
-        .select(["id"])
-        .where(sql`lower(email)`, "=", from_email.toLowerCase())
-        .executeTakeFirst();
-      if (user) {
-        const memberships = await meta
-          .selectFrom("org_memberships")
-          .select(["org_id"])
-          .where("user_id", "=", user.id)
-          .execute();
-        if (memberships.length === 1) {
-          userId = user.id;
-          orgId = memberships[0]!.org_id;
-        } else if (memberships.length > 1) {
-          res.status(200).json({ ignored: true, reason: "ambiguous_workspace" });
-          return;
-        }
-      }
-    }
-    if (!userId || !orgId) {
-      res.status(200).json({ ignored: true, reason: "unresolved" });
-      return;
-    }
-
-    // Confirm the user is (still) a member of that workspace, and get its slug.
-    const membership = await meta
-      .selectFrom("org_memberships as m")
-      .innerJoin("orgs as o", "o.id", "m.org_id")
-      .select(["o.slug as slug"])
-      .where("m.user_id", "=", userId)
-      .where("m.org_id", "=", orgId)
-      .executeTakeFirst();
-    if (!membership) {
-      res.status(200).json({ ignored: true, reason: "not_a_member" });
-      return;
-    }
-
-    const ingestable = attachments.filter(isIngestable);
-    if (ingestable.length === 0) {
-      res.status(200).json({ ignored: true, reason: "no_receipt_attachment" });
-      return;
-    }
-
-    // Write each attachment to core-files (server-side seam) + reuse core-scan's
-    // receipt route via an internal call under a freshly minted session token.
-    const sessionToken = await signSession(userId);
-    const results: Array<Record<string, unknown>> = [];
-    for (const a of ingestable) {
-      try {
-        const bytes = Buffer.from(a.content_base64, "base64");
-        const written = await platform().files.write(orgId, new Uint8Array(bytes), {
-          filename: a.filename,
-          mimeType: a.content_type,
-        });
-        if (!written) {
-          results.push({ filename: a.filename ?? null, error: "store_failed" });
-          continue;
-        }
-        const r = await fetch(`${INTERNAL_API}/api/v1/orgs/${membership.slug}/modules/core-scan/scan/receipt`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${sessionToken}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ file_id: written.fileId }),
-        });
-        const body = (await r.json().catch(() => ({}))) as {
-          receipt?: { item_count?: number; method?: string; vendor?: string | null };
-          error?: { code?: string; message?: string };
-        };
-        results.push(
-          r.ok
-            ? {
-                filename: a.filename ?? null,
-                ok: true,
-                item_count: body.receipt?.item_count ?? 0,
-                method: body.receipt?.method ?? null,
-                vendor: body.receipt?.vendor ?? null,
-              }
-            : { filename: a.filename ?? null, error: body.error?.code ?? `http_${r.status}`, message: body.error?.message },
-        );
-      } catch (err) {
-        results.push({ filename: a.filename ?? null, error: "exception", message: (err as Error).message });
-      }
-    }
-    res.status(200).json({ workspace: membership.slug, results });
+    const out = await ingestReceiptEmail(parsed.data);
+    res.status(out.status).json(out.body);
   } catch (err) {
     next(err);
   }

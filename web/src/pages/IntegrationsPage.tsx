@@ -17,6 +17,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
   Copy,
+  Mail,
   Pencil,
   Play,
   Plug,
@@ -90,6 +91,8 @@ export function IntegrationsPage() {
           <h1 className="text-2xl font-bold tracking-tight">Integrations</h1>
         </div>
       </header>
+
+      <EmailInSection />
 
       <SyncConnectionsSection />
 
@@ -209,6 +212,78 @@ export function IntegrationsPage() {
         />
       )}
     </div>
+  );
+}
+
+// Inbound EMAIL — the friendliest inbound path, and the one people go looking
+// for ("how do I email things in?"). Two things live here: a personal
+// forward-a-receipt address, and reply-by-email (which needs no setup). Both are
+// operator-gated (the inbound Email Worker); when it's off we say so plainly
+// instead of showing a dead address. Anchored #email-in for the search hit.
+function EmailInSection() {
+  const { activeSlug } = useActiveOrg();
+  const toast = useToast();
+  const addrQ = useQuery({
+    queryKey: ["receipt-address", activeSlug],
+    queryFn: () => api.getReceiptAddress(activeSlug),
+    enabled: !!activeSlug,
+  });
+  const address = addrQ.data?.configured && addrQ.data.address ? addrQ.data.address : null;
+
+  return (
+    <section id="email-in" className="scroll-mt-20">
+      <h2 className="text-lg font-semibold flex items-center gap-2 mb-2">
+        <Mail className="h-4 w-4" /> Email in
+      </h2>
+      <div className="border rounded p-4 dark:border-slate-700 space-y-4">
+        <div>
+          <div className="text-sm font-medium mb-1">Forward a receipt by email</div>
+          {address ? (
+            <>
+              <p className="text-sm text-muted mb-2">
+                Forward a receipt — PDF, photo, or CSV — to your personal address and its
+                line items land in your{" "}
+                <Link to="/scan" className="text-accent hover:underline">
+                  Scan inbox
+                </Link>
+                , ready to confirm. Each workspace you're in has its own address.
+              </p>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 min-w-0 truncate text-sm font-mono bg-subtle dark:bg-slate-900 border dark:border-slate-700 rounded px-2 py-1.5">
+                  {address}
+                </code>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await navigator.clipboard.writeText(address);
+                    toast.success("Address copied.");
+                  }}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 text-white shrink-0"
+                >
+                  <Copy className="h-4 w-4" /> Copy
+                </button>
+              </div>
+            </>
+          ) : (
+            <p className="text-sm text-muted">
+              Email-in isn't enabled on this server yet. It needs the operator to set up
+              the inbound Email Worker (a one-time step). Until then, upload receipts on the{" "}
+              <Link to="/scan" className="text-accent hover:underline">
+                Scan
+              </Link>{" "}
+              page.
+            </p>
+          )}
+        </div>
+        <div className="border-t dark:border-slate-800 pt-3">
+          <div className="text-sm font-medium mb-1">Reply by email</div>
+          <p className="text-sm text-muted">
+            When Cobblr emails you (a feedback update, a notification), just hit reply —
+            your message threads back onto the item automatically. Nothing to set up.
+          </p>
+        </div>
+      </div>
+    </section>
   );
 }
 

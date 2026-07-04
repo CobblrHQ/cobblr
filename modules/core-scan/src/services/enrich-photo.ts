@@ -423,6 +423,21 @@ export async function enrichPhotoItem(ctx: PhotoEnrichContext): Promise<void> {
     if (!cur?.barcode_text) captureBarcode = identity.barcode;
   }
 
+  // Preserve a user's deliberate image pick across a re-identify. This write
+  // REPLACES suggested_metadata wholesale, which would drop catalog_image_user_set
+  // → the refreshCatalogImageByName below (and matchItem's) would then clobber the
+  // image the user chose. Carry the lock (and its revert backup) forward. A "this
+  // is wrong" re-run clears the lock BEFORE reaching here (so it still re-images);
+  // a plain re-run keeps the pick — the sweet spot: re-run respects a user-chosen
+  // image when the item is correct, and re-images only when it was flagged wrong.
+  const priorMeta = ((await ctx.db
+    .selectFrom("core_scan_inbox_items")
+    .select("suggested_metadata")
+    .where("id", "=", ctx.itemId)
+    .executeTakeFirst())?.suggested_metadata ?? {}) as {
+    catalog_image_user_set?: boolean;
+    orig_catalog?: unknown;
+  };
   await ctx.db
     .updateTable("core_scan_inbox_items")
     .set({
@@ -439,6 +454,9 @@ export async function enrichPhotoItem(ctx: PhotoEnrichContext): Promise<void> {
         // Preserve the correction so the matchmaker (which runs after this
         // wholesale metadata rewrite) still sees it as an authoritative hint.
         ...(ctx.hint ? { user_hint: ctx.hint } : {}),
+        // Keep a user's image pick + its revert backup alive across re-identify.
+        ...(priorMeta.catalog_image_user_set ? { catalog_image_user_set: true } : {}),
+        ...(priorMeta.orig_catalog ? { orig_catalog: priorMeta.orig_catalog } : {}),
       })}::jsonb` as never,
       ai_confidence: String(identity.confidence),
       ai_notes:

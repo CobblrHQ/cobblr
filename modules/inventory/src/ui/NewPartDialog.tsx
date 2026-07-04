@@ -13,6 +13,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CatalogTypeahead,
   Modal,
+  RelationSelect,
   fieldControl,
   useUnits,
   type CatalogTypeaheadHit,
@@ -75,7 +76,9 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
     staleTime: 60_000,
   });
   const customFields = (fieldDefs.data?.items ?? [])
-    .filter((d) => d.type !== "computed")
+    // computed = derived every read; server_managed = stamped server-side.
+    // Neither has anything to set at creation — no input.
+    .filter((d) => d.type !== "computed" && !d.server_managed)
     .sort((a, b) => a.position - b.position);
 
   const [matched, setMatched] = useState<CatalogTypeaheadHit | null>(null);
@@ -422,7 +425,25 @@ function CustomFieldInput({
     type: def.type as FieldType,
     renderer: def.renderer as FieldRendererId | null,
     choices: def.choices,
+    server_managed: def.server_managed,
   });
+
+  // Server-managed: nothing to set at creation (also filtered upstream —
+  // belt-and-braces so a future caller can't render a lying input).
+  if (control === "server-managed") return null;
+  // Relation: the same shared picker the detail panel uses.
+  if (control === "relation") {
+    return (
+      <Field label={def.display_label}>
+        <RelationSelect
+          refKind={def.ref_kind ?? ""}
+          value={value}
+          onChange={(v) => onChange(v)}
+        />
+        {help}
+      </Field>
+    );
+  }
 
   // Colour: a real swatch picker (type a hex/name OR pick from the OS picker).
   if (control === "color") {

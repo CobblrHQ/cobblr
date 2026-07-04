@@ -403,6 +403,7 @@ function ActiveOrgScopedRoutes() {
         listActions: (slug, kind) => api.listActions(slug, kind),
         invokeAction: (slug, body) => api.invokeAction(slug, body),
         lookupEntity: (slug, kind, id) => api.lookupEntity(slug, kind, id),
+        listEntities: (slug, kind, q) => api.listEntities(slug, kind, q),
         listFieldDefs: (slug, kind) => api.listFieldDefs(slug, kind),
         appendFieldDefChoice: (slug, id, value) =>
           api.appendFieldDefChoice(slug, id, value),

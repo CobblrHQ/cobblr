@@ -2,7 +2,6 @@
 // authenticated user can submit from any workspace; super-admins triage it via
 // /super-admin/feedback. Platform-level (cobblr_meta), cross-tenant.
 
-import crypto from "node:crypto";
 import { Router } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
@@ -12,6 +11,7 @@ import { announce } from "../platform/announce.js";
 import { reporterCardFields } from "../platform/feedback-card.js";
 import { pokeTriage } from "../platform/triage-trigger.js";
 import { verifyReplyToken } from "../platform/feedback-reply.js";
+import { inboundSecretOk } from "../platform/inbound-secret.js";
 
 export const feedbackRouter = Router();
 feedbackRouter.use(requireAuth);
@@ -29,60 +29,67 @@ const AppendEmail = z.object({
   text: z.string().trim().max(10000).default(""),
 });
 
+/** Core of feedback-reply-by-email: verify the signed reply token + the From
+ *  matches the reporter, then append the reply to their thread (reopen +
+ *  re-triage) — the same conversation model as the in-app + Discord paths. Pure
+ *  of req/res so BOTH the standalone /feedback/append-email route AND the
+ *  /inbound-email dispatcher can call it. */
+export async function appendFeedbackReply(input: {
+  token: string;
+  from_email: string;
+  text: string;
+}): Promise<{ status: number; body: Record<string, unknown> }> {
+  const parsed = AppendEmail.safeParse(input);
+  if (!parsed.success || !parsed.data.text) {
+    return { status: 400, body: { error: { code: "empty", message: "Nothing to append." } } };
+  }
+  const feedbackId = verifyReplyToken(parsed.data.token);
+  if (!feedbackId) {
+    return { status: 400, body: { error: { code: "bad_token", message: "Invalid reply token." } } };
+  }
+  const fb = await meta
+    .selectFrom("feedback")
+    .select(["id", "status", "user_id"])
+    .where("id", "=", feedbackId)
+    .executeTakeFirst();
+  if (!fb || !fb.user_id) {
+    return { status: 404, body: { error: { code: "not_found", message: "Feedback not found." } } };
+  }
+  const u = await meta.selectFrom("users").select(["email", "display_name"]).where("id", "=", fb.user_id).executeTakeFirst();
+  if (!u?.email || u.email.toLowerCase() !== parsed.data.from_email.toLowerCase()) {
+    return { status: 403, body: { error: { code: "from_mismatch", message: "Reply From doesn't match the reporter." } } };
+  }
+  const entry = { at: new Date().toISOString(), from: u.display_name ?? "reporter", text: parsed.data.text, role: "user" as const };
+  const reopened = fb.status === "resolved" || fb.status === "wontfix";
+  await meta
+    .updateTable("feedback")
+    .set({
+      followups: sql`coalesce(followups, '[]'::jsonb) || ${JSON.stringify([entry])}::jsonb`,
+      ...(reopened ? { status: "in_progress" as never } : {}),
+      triaged_at: null,
+    })
+    .where("id", "=", fb.id)
+    .execute();
+  pokeTriage(fb.id);
+  return { status: 200, body: { ok: true, feedback_id: fb.id, reopened } };
+}
+
 // POST /feedback/append-email — a recipient replied to a feedback EMAIL. The
 // Email Worker parses the reply+<token> address + the stripped body and posts
-// here. We verify the shared secret, the signed token, and that the From matches
-// the reporter, then append to their thread (reopen + re-triage) — the same
-// conversation model as the in-app + Discord paths.
+// here. We verify the shared secret, then hand off to appendFeedbackReply.
 feedbackInboundRouter.post("/feedback/append-email", async (req, res, next) => {
   try {
-    const secret = process.env.COBBLR_INBOUND_EMAIL_SECRET || "";
-    const provided = String(req.headers["x-inbound-secret"] ?? "");
-    if (
-      !secret ||
-      provided.length !== secret.length ||
-      !crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(secret))
-    ) {
+    if (!inboundSecretOk(req.headers["x-inbound-secret"])) {
       res.status(401).json({ error: { code: "unauthorized", message: "Bad inbound secret." } });
       return;
     }
     const parsed = AppendEmail.safeParse(req.body);
-    if (!parsed.success || !parsed.data.text) {
+    if (!parsed.success) {
       res.status(400).json({ error: { code: "empty", message: "Nothing to append." } });
       return;
     }
-    const feedbackId = verifyReplyToken(parsed.data.token);
-    if (!feedbackId) {
-      res.status(400).json({ error: { code: "bad_token", message: "Invalid reply token." } });
-      return;
-    }
-    const fb = await meta
-      .selectFrom("feedback")
-      .select(["id", "status", "user_id"])
-      .where("id", "=", feedbackId)
-      .executeTakeFirst();
-    if (!fb || !fb.user_id) {
-      res.status(404).json({ error: { code: "not_found", message: "Feedback not found." } });
-      return;
-    }
-    const u = await meta.selectFrom("users").select(["email", "display_name"]).where("id", "=", fb.user_id).executeTakeFirst();
-    if (!u?.email || u.email.toLowerCase() !== parsed.data.from_email.toLowerCase()) {
-      res.status(403).json({ error: { code: "from_mismatch", message: "Reply From doesn't match the reporter." } });
-      return;
-    }
-    const entry = { at: new Date().toISOString(), from: u.display_name ?? "reporter", text: parsed.data.text, role: "user" as const };
-    const reopened = fb.status === "resolved" || fb.status === "wontfix";
-    await meta
-      .updateTable("feedback")
-      .set({
-        followups: sql`coalesce(followups, '[]'::jsonb) || ${JSON.stringify([entry])}::jsonb`,
-        ...(reopened ? { status: "in_progress" as never } : {}),
-        triaged_at: null,
-      })
-      .where("id", "=", fb.id)
-      .execute();
-    pokeTriage(fb.id);
-    res.json({ ok: true, feedback_id: fb.id, reopened });
+    const out = await appendFeedbackReply(parsed.data);
+    res.status(out.status).json(out.body);
   } catch (err) {
     next(err);
   }

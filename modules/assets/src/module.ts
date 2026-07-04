@@ -7,7 +7,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "assets",
-  version: "0.1.0",
+  version: "0.2.0",
   displayName: "Assets",
   description:
     "Physical things you own that aren't fungible stock and aren't machines. Appliances, tools, collections — anything you'd want to track individually.",
@@ -43,6 +43,9 @@ export default defineModule({
           { name: "last_service_at", type: "date" },
           { name: "image_path", type: "image-path", role: "image" },
           { name: "notes", type: "text" },
+          // Where the asset lives (core-locations ref) — declared so it can be
+          // exposed below, mirroring inventory:part.
+          { name: "location_id", type: "text" },
           // Free-form custom-field blob (bundle / user fields). Declared so
           // it can be exposed below — mirrors inventory:part.
           { name: "metadata", type: "object" },
@@ -63,6 +66,9 @@ export default defineModule({
           "state",
           "image_path",
           "metadata",
+          // Where the asset lives — same exposure inventory:part grants; feeds
+          // location-aware consumers (views, core-mobility's drift rule).
+          "location_id",
         ],
         detailRoute: "/assets/{id}",
       },
@@ -76,6 +82,10 @@ export default defineModule({
   exposes: {
     events: [
       "assets.asset.created",
+      // Emitted on every PATCH with flat before/after field bags, so a
+      // transition wire can compare {{event.before.x}} vs {{event.after.x}}
+      // (e.g. core-mobility's drift detection).
+      "assets.asset.updated",
       // (removed assets.asset.state_changed / .deleted — declared but never
       //  emitted, so they showed as dead triggers in the wires UI. Re-add
       //  alongside the emit when wired. Audit 2026-06-26 follow-up.)
