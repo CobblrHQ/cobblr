@@ -17,6 +17,7 @@
 
 import { platform } from "@cobblr/platform-contract";
 import { searchImages, searchText, rankImageOptions, imageQuery, type DdgImageResult } from "./ddg-images.js";
+import { webSearchEnabled } from "./barcode-lookup.js";
 
 export interface WebSearchProduct {
   name: string;
@@ -311,6 +312,9 @@ export async function resolveBarcodeViaWebSearch(
   upc: string,
   hint?: string | null,
 ): Promise<WebSearchProduct | null> {
+  // Self-host privacy: the DuckDuckGo + LLM web-search fallback is a third-party
+  // call, gated by the master switch and its own toggle (COBBLR_SCAN_WEBSEARCH).
+  if (!webSearchEnabled()) return null;
   const code = upc.trim();
   if (!code) return null;
 

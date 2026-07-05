@@ -35,9 +35,12 @@ export function useBundleCatalog(sources?: string[]): {
             manifest: e.manifest,
             glyph: e.glyph ?? embedded?.glyph ?? "📦",
             blurb: e.blurb ?? e.description ?? embedded?.blurb ?? "",
-            // next_steps is web-only metadata the registry drops; restore it
-            // from the embedded flagship catalog so landings survive.
+            // next_steps + item_example are web-only metadata the registry
+            // drops; restore them from the embedded flagship catalog so the
+            // post-install landing AND the "add your first <thing>" prompt
+            // (WhatToDoPanel) survive for registry-loaded bundles.
             next_steps: embedded?.next_steps,
+            item_example: embedded?.item_example,
             source: e.source,
           };
         })

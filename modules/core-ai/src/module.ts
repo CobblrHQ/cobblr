@@ -14,7 +14,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-ai",
-  version: "0.3.1",
+  version: "0.4.1",
   displayName: "AI",
   description:
     "Use AI on your workspace data — classify photos, extract text, summarise, match to catalogs. Configure OpenAI, Anthropic, Ollama, or any provider.",
@@ -45,6 +45,9 @@ export default defineModule({
       "core-ai.invocation.failed",
       "core-ai.budget.warning",
       "core-ai.budget.exceeded",
+      "core-ai.basic.created",
+      "core-ai.basic.updated",
+      "core-ai.basic.deleted",
     ],
     api: [],
     actions: [],

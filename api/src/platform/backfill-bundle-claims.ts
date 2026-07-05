@@ -15,6 +15,11 @@ import { meta } from "../db/meta.js";
 import { recordClaim, USER_SOURCE } from "./bundle-claims.js";
 
 export async function backfillBundleClaims(): Promise<number> {
+  // One-shot historical self-heal (installs predating the claims ledger). Honours
+  // the same skip flag as the other historical boot passes: CI's org pool is baked
+  // by current code (claims already present), so this only scans ~250 tenants to
+  // find nothing — it was ~14s of the pooled boot. Prod/staging never set the flag.
+  if (process.env.COBBLR_SKIP_HISTORICAL_MIGRATIONS === "1") return 0;
   // Every active org has org_modules rows; that's the set to consider.
   const orgRows = await meta.selectFrom("org_modules").select("org_id").distinct().execute();
   let backfilled = 0;

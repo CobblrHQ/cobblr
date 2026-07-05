@@ -33,7 +33,15 @@ import {
   refreshCatalogImageByName,
 } from "../services/enrich-photo.js";
 import { searchImages, rankImageOptions, imageQuery, mediaSearchExtras } from "../services/ddg-images.js";
-import { assembleScanMenu, assembleMergedMenu, runMatchmaker } from "../services/matchmaker.js";
+import {
+  assembleScanMenu,
+  assembleMergedMenu,
+  runMatchmaker,
+  reconcileSeriesSecondaries,
+  type MatchCandidate,
+  type ScanMenuEntry,
+} from "../services/matchmaker.js";
+import { lookupBookIsbn } from "../services/book-lookup.js";
 import { parseReceipt } from "../services/receipt.js";
 import { reportBarcodeCorrection } from "../services/barcode-corrections.js";
 import { findBinContents, findTracked } from "../services/entity-match.js";
@@ -2713,6 +2721,92 @@ interface MatchItemOpts {
   force: boolean;
 }
 
+/** For a book candidate whose table has an ISBN field the match left BLANK, look
+ *  the ISBN up from Open Library by title + author (+ publisher) and fill it. The
+ *  ISBN is almost never printed on a cover, so vision can't read it — a title
+ *  lookup backfills it authoritatively (preferring the edition whose publisher
+ *  matches the item's brand). Best-effort, never throws; only BACKFILLS (never
+ *  overrides an ISBN the match already produced); writes back only on a change. */
+async function backfillBookIsbn(
+  orgId: string,
+  itemId: string,
+  candidates: MatchCandidate[],
+  menu: ScanMenuEntry[],
+  title: string,
+  brand: string | null,
+): Promise<void> {
+  try {
+    const byKey = new Map(menu.map((m) => [`${m.module}::${m.instance ?? ""}`, m]));
+    let changed = false;
+    for (const c of candidates) {
+      const entry = byKey.get(`${c.module}::${c.instance ?? ""}`);
+      const isbnField = entry?.fields.find((f) => /^isbn$/i.test(f.name));
+      if (!isbnField) continue; // table has no ISBN field → not a book table
+      const cur = c.fields[isbnField.name];
+      if (cur != null && String(cur).replace(/[^0-9Xx]/g, "").length >= 10) continue; // already has one
+      const author = (Object.entries(c.fields).find(([k]) => /^author$/i.test(k))?.[1] as string | undefined) ?? null;
+      const isbn = await lookupBookIsbn(c.name || title, author, brand);
+      if (isbn) {
+        c.fields[isbnField.name] = isbn;
+        changed = true;
+      }
+    }
+    if (!changed) return;
+    const db = (await platform().tenants.getDb(orgId)) as unknown as ReturnType<typeof tenantDb>;
+    await db
+      .updateTable("core_scan_inbox_items")
+      .set({ suggested_candidates: JSON.stringify(candidates) as never, updated_at: new Date() })
+      .where("id", "=", itemId)
+      .where("status", "=", "pending")
+      .execute();
+    console.log(`[core-scan] backfilled ISBN for ${itemId} from Open Library`);
+  } catch (e) {
+    console.error(`[core-scan] ISBN backfill for ${itemId} failed:`, (e as Error).message);
+  }
+}
+
+/** After an item matches, normalise the SECONDARY routing across every pending
+ *  item of the SAME series in the SAME scan session, so a shelf of one series
+ *  routes uniformly (all offer a given secondary table, or none) instead of the
+ *  model's per-item coin-flip. Deterministic (no model call), idempotent, and
+ *  guarded to only touch items whose candidates actually change — so running it
+ *  after each item in the batch simply converges. Only fires for an item that
+ *  HAS a series + a batch; a lone or series-less item is a no-op. Best-effort. */
+async function reconcileSeriesRouting(orgId: string, batchId: string | null, series: string | null): Promise<void> {
+  if (!batchId || !series || !series.trim()) return;
+  try {
+    const db = (await platform().tenants.getDb(orgId)) as unknown as ReturnType<typeof tenantDb>;
+    const rows = await db
+      .selectFrom("core_scan_inbox_items")
+      .select(["id", "suggested_candidates", "suggested_metadata"])
+      .where("scan_batch_id", "=", batchId)
+      .where("status", "=", "pending")
+      .execute();
+    const want = series.trim().toLowerCase();
+    const group = rows
+      .filter((r) => {
+        const s = (r.suggested_metadata as { series?: unknown } | null)?.series;
+        return typeof s === "string" && s.trim().toLowerCase() === want;
+      })
+      .map((r) => ({ id: r.id, candidates: (r.suggested_candidates ?? []) as MatchCandidate[] }));
+    if (group.length < 2) return;
+    const changes = reconcileSeriesSecondaries(group);
+    for (const [id, cands] of changes) {
+      await db
+        .updateTable("core_scan_inbox_items")
+        .set({ suggested_candidates: JSON.stringify(cands) as never, updated_at: new Date() })
+        .where("id", "=", id)
+        .where("status", "=", "pending")
+        .execute();
+    }
+    if (changes.size > 0) {
+      console.log(`[core-scan] series-reconciled ${changes.size}/${group.length} "${series}" items in batch ${batchId}`);
+    }
+  } catch (e) {
+    console.error(`[core-scan] series reconcile (batch ${batchId}) failed:`, (e as Error).message);
+  }
+}
+
 /** Run vision corroboration + the matchmaker for one item and persist the
  *  result (+ a matched_at stamp so intake auto-match never repeats). Returns
  *  the candidates, or null when skipped (no row / nothing identified yet /
@@ -2882,6 +2976,17 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
         console.error(`[core-scan] finalize image refresh for ${opts.itemId} failed:`, (e as Error).message);
       }
     }
+    // Backfill a book's ISBN from Open Library when the match left it blank —
+    // the ISBN isn't on the cover, so vision can't read it, but title+author can
+    // look it up. Mutates `candidates` + rewrites, before finalize/reconcile.
+    await backfillBookIsbn(
+      opts.orgId,
+      opts.itemId,
+      candidates as MatchCandidate[],
+      menu,
+      (adoptName ? candName : row.suggested_name) ?? "",
+      row.suggested_manufacturer ?? null,
+    );
     // Stamp finalized_at — the canonical "nothing more will change" marker.
     // matched_at means the matchmaker RAN; finalized_at means the whole tail
     // (location + cover) is done too. The inbox UI keys its "finishing… → ready"
@@ -2901,6 +3006,14 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
     } catch (e) {
       console.error(`[core-scan] finalize stamp for ${opts.itemId} failed:`, (e as Error).message);
     }
+    // Normalise secondary routing across same-series siblings in this session so
+    // the shelf routes uniformly (deterministic; #3 of the routing-consistency
+    // work, on top of the tightened model prompt).
+    await reconcileSeriesRouting(
+      opts.orgId,
+      row.scan_batch_id,
+      (row.suggested_metadata as { series?: string } | null)?.series ?? null,
+    );
     return candidates;
   } catch (err) {
     // The match FAILED before stamping matched_at — the menu fetch, the model

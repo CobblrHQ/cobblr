@@ -13,16 +13,18 @@ import { FieldRenderer, useToast, usePageTitle } from "@cobblr/platform-web";
 // `relation` is deliberately absent: user-authored relation fields (picking a
 // ref_kind in this UI) are a follow-on; today relation defs are contributed by
 // modules (e.g. core-mobility's home_location) and just display here.
-const TYPES: PlatformFieldDef["type"][] = ["text", "number", "boolean", "date", "url", "computed"];
+const TYPES: PlatformFieldDef["type"][] = ["text", "number", "boolean", "date", "url", "richtext", "computed"];
 
 // Default renderer per field type — keeps the dropdown small and
 // surfaces what the user almost always wants.
 const RENDERERS_BY_TYPE: Record<PlatformFieldDef["type"], CatalogFieldRenderer[]> = {
-  text: ["text", "color-hex", "image-url", "url-link", "code"],
+  text: ["text", "color-hex", "image-url", "url-link", "code", "qr"],
   number: ["text", "year"],
   boolean: ["boolean"],
   date: ["text"],
   url: ["url-link", "image-url"],
+  // rich text is authored + stored as Markdown, always rendered as Markdown.
+  richtext: ["markdown"],
   // computed renders its template string; `url-link` makes a {{ }}-built URL
   // (e.g. a git repo link) clickable instead of plain text.
   computed: ["text", "url-link"],
@@ -40,6 +42,8 @@ const RENDERER_SAMPLE: Record<CatalogFieldRenderer, string> = {
   year: "1965",
   boolean: "true",
   code: "ABC-123",
+  markdown: "**Bold**, _italic_, `code`",
+  qr: "https://cobblr.me",
 };
 
 export function FieldsPage() {

@@ -29,6 +29,7 @@ import { GlobalScanWedge } from "./GlobalScanWedge";
 import { SearchBar } from "./SearchBar";
 import { CommandPalette, OPEN_PALETTE_EVENT } from "./CommandPalette";
 import { NewVersionNudge } from "./NewVersionNudge";
+import { QuickAccess } from "./QuickAccess";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { api, isFocused } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -502,6 +503,9 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           from any screen (off the Scan tab) and always toasts — no silent drop.
           Stands down on the Scan page, which owns the wedge there. */}
       {activeSlug ? <GlobalScanWedge activeSlug={activeSlug} /> : null}
+      {/* Quick Access — pinned Knowledge Base entries, one tap from any page
+          (renders only when the knowledge module is enabled). */}
+      {activeSlug ? <QuickAccess activeSlug={activeSlug} /> : null}
       {/* ⌘K — do or find anything (redesign B4). */}
       <CommandPalette />
       {/* Stale-tab nudge: deploys are frequent; open tabs must find out. */}

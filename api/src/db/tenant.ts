@@ -37,6 +37,33 @@ const cache = new Map<string, Promise<CachedTenant>>();
 const lastAccess = new Map<string, number>();
 const RELEASE_GRACE_MS = 15_000;
 
+// Upper bound on cached tenant pools. Each pool holds up to `max` connections
+// (5), so total tenant connections stay ≈ MAX_TENANT_POOLS × 5. WITHOUT this the
+// cache is unbounded: a workload that touches many orgs (the CI suite hits ~174
+// pooled orgs across 8 forks) accumulates one pool per org — hundreds of
+// connections — and exhausts Postgres ("remaining connection slots are reserved
+// for non-replication superuser connections"). That surfaces as intermittent 503s
+// and, because whichever test is mid-flight when the api starts refusing
+// connections fails, as "random" test flakes on a DIFFERENT test each run. When
+// the cache goes over the cap we release the least-recently-used IDLE pools (they
+// reopen lazily on next access). Default 50 (≈250 conns) is safe under the CI
+// box's max_connections=400 and never triggers on a small prod (few active orgs);
+// tune via COBBLR_MAX_TENANT_POOLS where max_connections differs.
+const MAX_TENANT_POOLS = Math.max(4, Number(process.env.COBBLR_MAX_TENANT_POOLS) || 50);
+
+/** When the pool cache is over the cap, release the least-recently-used pools.
+ *  Uses the same idle-guarded release as the background sweep, so a pool with a
+ *  checked-out client or one handed out within the grace window is skipped (and
+ *  reclaimed on a later call). Reopen is lazy on the next getTenantDb. */
+function enforceTenantPoolCap(): void {
+  const over = cache.size - MAX_TENANT_POOLS;
+  if (over <= 0) return;
+  const oldest = [...lastAccess.entries()]
+    .sort((a, b) => a[1] - b[1])
+    .slice(0, over);
+  for (const [orgId] of oldest) void releaseIdleTenantPool(orgId);
+}
+
 interface TenantCredentials {
   user: string;
   password: string;
@@ -103,6 +130,8 @@ export async function getTenantDb(orgId: string): Promise<Kysely<TenantDB>> {
     entry.catch(() => {
       if (cache.get(orgId) === entry) cache.delete(orgId);
     });
+    // Bound the cache so total connections can't exhaust Postgres.
+    enforceTenantPoolCap();
   }
   return (await entry).db;
 }

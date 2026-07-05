@@ -19,6 +19,14 @@ const Schema = z.object({
   // actually provisions a tenant DB.
   DATABASE_URL: z.string().min(1),
   SUPERUSER_DATABASE_URL: z.string().min(1),
+  // TEST-ONLY: enable the pre-provisioned org POOL — signupFreshOrg checks out a
+  // ready org instead of provisioning (~63% of CI runtime). Set ONLY in ci.yml /
+  // the test rig; NEVER in prod (it registers a token-minting route + a bake).
+  // See api/src/db/test-org-pool.ts.
+  COBBLR_TEST_ORG_POOL: z.string().optional(),
+  // Boot-time bake size (the PoC / in-job path). An offline image/tarball bake
+  // sets its own size; this is the fallback when the pool starts empty.
+  COBBLR_TEST_ORG_POOL_SIZE: z.coerce.number().int().positive().optional(),
 
   // Auth & secrets. Replace defaults for prod (validated by checking
   // they don't start with the dev sentinel).

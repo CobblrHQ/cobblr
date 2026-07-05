@@ -13,6 +13,7 @@
 import type { LucideIcon } from "lucide-react";
 import {
   Activity,
+  Bot,
   Boxes,
   Cable,
   CopyPlus,
@@ -308,6 +309,15 @@ export const CONFIG_DESTINATIONS: ConfigDestination[] = [
     to: "/configuration/ai",
     keywords: ["llm", "provider", "ollama", "anthropic", "openai", "claude"],
     primary: true,
+  },
+  {
+    group: "automation",
+    icon: Bot,
+    label: "Assistant",
+    description:
+      "Teach Ask Cobblr what to say when there's no AI connected — edit the built-in answers, turn them off, or add your own keyword-triggered replies. Includes a live \"try it\" tester.",
+    to: "/configuration/assistant",
+    keywords: ["cobb", "chat", "basic mode", "canned", "no ai", "answers", "faq"],
   },
   {
     group: "automation",

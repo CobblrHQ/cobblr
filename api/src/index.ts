@@ -22,6 +22,7 @@ import { env } from "./env.js";
 import { meta, metaPool, pingMeta } from "./db/meta.js";
 import { runMigrations } from "./db/migrate.js";
 import { getTenantDb, releaseIdleTenantPool } from "./db/tenant.js";
+import { bakeTestOrgPool, poolEnabled } from "./db/test-org-pool.js";
 import { signAppToken, signSession } from "./auth/jwt.js";
 import { loadAllModules } from "./modules/loader.js";
 import { loadAllSandboxedModules } from "./sandbox/loader.js";
@@ -83,6 +84,17 @@ process.on("unhandledRejection", (reason) => {
 });
 
 async function boot() {
+  // Boot-phase profiler: logs `[bootphase] <label>: <ms>` per pass so we can see
+  // exactly what the pre-`listen` sequence spends against a big (CI org-pool)
+  // meta. Cheap (one Date.now + log per phase); left in permanently — the numbers
+  // are only interesting when boot is slow, and it's the map for any future cut.
+  const bootT0 = Date.now();
+  const T = async <R>(label: string, p: Promise<R>): Promise<R> => {
+    const t = Date.now();
+    const r = await p;
+    console.log(`[bootphase] ${label}: ${Date.now() - t}ms`);
+    return r;
+  };
   await pingMeta();
   const platformDir = resolve(__dirname, "..", "migrations", "platform");
   const result = await runMigrations({
@@ -547,18 +559,18 @@ async function boot() {
   // sender, registered in its onBoot, wins via last-registration when present.
   registerConfiguredAuthEmailSender();
 
-  await loadAllModules();
+  await T("loadAllModules", loadAllModules());
   // Marketplace v0.3 PoC: register sandboxed wasm modules alongside
   // the in-process modules. They get the same Express mount + the
   // same workspace-enable toggle; the difference is invisible to
   // everything except the route handler (which goes through the
   // wasm sandbox). See docs/architecture/module-isolation.md.
-  await loadAllSandboxedModules();
+  await T("loadAllSandboxedModules", loadAllSandboxedModules());
   // Mirror manifests into the cobblr_meta registries after load so
   // <EntityActionsBar> / platform.entities.lookup() etc. have
   // accurate metadata. Done AFTER load so module-side resolver /
   // handler registrations land first.
-  await syncManifestRegistries();
+  await T("syncManifestRegistries", syncManifestRegistries());
   // Register the single generic vendor scan-URL resolver (built-in manifests like
   // Polar + operator-added rows). Replaces the old per-vendor maker-scan module.
   // The DB rows are loaded by refreshScanUrlManifests() after migrations below.
@@ -567,7 +579,7 @@ async function boot() {
   // installed_modules so super-admin / workspace-admin can see what
   // code is present + version + signature. See
   // docs/modules/marketplace.md §4.
-  const installedCount = await syncInstalledModules();
+  const installedCount = await T("syncInstalledModules", syncInstalledModules());
   console.log(`[cobblr-api] installed_modules synced: ${installedCount}`);
   // One-shot: convert the four legacy Pillar-E lens modules
   // (3d-printers, laser-cutters, cnc-machines, workshop-mods) to
@@ -577,7 +589,7 @@ async function boot() {
   // enabled) skip silently. Runs BEFORE syncTenantMigrations so
   // any cleaned-up org_modules rows don't get a stale migration
   // sync.
-  const lensResult = await migrateLensModules();
+  const lensResult = await T("migrateLensModules", migrateLensModules());
   if (lensResult.orgsTouched > 0) {
     console.log(
       `[cobblr-api] lens-module → bundle migration: ${lensResult.orgsTouched} org(s), ${lensResult.bundlesInstalled} bundle(s) installed, ${lensResult.fieldsMoved} field def(s) moved`,
@@ -588,7 +600,7 @@ async function boot() {
   // field defs to <name>:item, move existing machines into the instance, enable
   // digifab. Self-heals the "Machines everywhere" state with no user reinstall.
   // Runs AFTER migrate-lens-modules so it catches bundles it just created.
-  const lensInstResult = await migrateLensBundlesToInstances();
+  const lensInstResult = await T("migrateLensBundlesToInstances", migrateLensBundlesToInstances());
   if (lensInstResult.orgsTouched > 0) {
     console.log(
       `[cobblr-api] lens-bundle → instance migration: ${lensInstResult.orgsTouched} org(s), ${lensInstResult.bundlesMigrated} bundle(s) converted, ${lensInstResult.machinesMoved} machine(s) moved`,
@@ -597,7 +609,7 @@ async function boot() {
   // Enable digifab (Print Manager) for machine-bundle orgs that predate the
   // default-on "Connect to your machines" feature — so a printer can actually be
   // connected without the user hunting in Configuration. Additive + idempotent.
-  const digifabResult = await enableDigifabForMachineBundles();
+  const digifabResult = await T("enableDigifabForMachineBundles", enableDigifabForMachineBundles());
   if (digifabResult.orgsEnabled > 0) {
     console.log(`[cobblr-api] enabled digifab for ${digifabResult.orgsEnabled} machine-bundle org(s)`);
   }
@@ -607,7 +619,7 @@ async function boot() {
   // table to inventory. Idempotent — orgs already migrated no-op.
   // Runs BEFORE syncTenantMigrations so the org_modules row we may
   // insert for core-locations doesn't get a stale migration sync.
-  const invLocResult = await migrateInventoryLocations();
+  const invLocResult = await T("migrateInventoryLocations", migrateInventoryLocations());
   if (invLocResult.orgsTouched > 0) {
     console.log(
       `[cobblr-api] inventory_locations → core-locations: ${invLocResult.orgsTouched} org(s), ${invLocResult.rowsCopied} row(s) copied, ${invLocResult.fksDropped} FK(s) dropped`,
@@ -619,7 +631,7 @@ async function boot() {
   // `core_devices_connections`) and 500s on any op that touches them. Runs
   // BEFORE syncTenantMigrations so a freshly-enabled module's row is caught up.
   // Idempotent: complete orgs cost one in-memory check and open no tenant pool.
-  const reconciled = await reconcileDefaultModules();
+  const reconciled = await T("reconcileDefaultModules", reconcileDefaultModules());
   if (reconciled.orgsHealed > 0) {
     console.log(`[cobblr-api] default-module reconcile: ${reconciled.orgsHealed} workspace(s) healed, ${reconciled.modulesAdded} module(s) enabled`);
   }
@@ -628,35 +640,40 @@ async function boot() {
   // pick it up otherwise — enableModuleForOrg short-circuits on the
   // existing org_modules row. Idempotent: tenants already current
   // run zero queries.
+  const syncStart = Date.now();
   const touched = await syncTenantMigrations();
-  if (touched > 0) {
-    console.log(`[cobblr-api] tenant migrations: ${touched} tenant(s) caught up`);
-  }
+  // Always log the duration (not just when work happened): this pass sweeps
+  // every tenant, so with the CI org-pool (~250 orgs) it's the boot hot spot —
+  // the number is what we watch after parallelising it.
+  console.log(
+    `[cobblr-api] tenant migration sync: ${touched} tenant(s) caught up in ${Date.now() - syncStart}ms`,
+  );
   // Load operator-added vendor scan-URL resolvers now the table exists (migration
   // 069 ran above). Built-ins work without this; this folds in DB rows/overrides.
-  await refreshScanUrlManifests();
+  await T("refreshScanUrlManifests", refreshScanUrlManifests());
   // Top up default bindings for orgs created before Phase 4 introduced
   // the seed-on-signup path. Idempotent per (org, source_kind, action_id,
   // trigger_event), so repeated boots are safe.
-  const seeded = await backfillDefaultBindings();
+  const seeded = await T("backfillDefaultBindings", backfillDefaultBindings());
   console.log(`[cobblr-api] default bindings backfilled: ${seeded} added`);
 
   // Self-heal the bundle-resource-claims ledger for installs that predate it,
   // so a bundle uninstall can refcount correctly. Once per org, idempotent.
-  const claimsOrgs = await backfillBundleClaims();
+  const claimsOrgs = await T("backfillBundleClaims", backfillBundleClaims());
   if (claimsOrgs > 0) {
     console.log(`[cobblr-api] bundle-resource claims backfilled for ${claimsOrgs} org(s)`);
   }
 
+  console.log(`[bootphase] === pre-createApp total: ${Date.now() - bootT0}ms ===`);
   const { app } = createApp();
-  await mountModules(app);
+  await T("mountModules", mountModules(app));
   completeApp(app);
 
   // Module-owned background work — core-recurrence starts its
   // scheduler here, future modules (core-queue, etc.) get their
   // chance too. Errors per-module are logged + skipped so a stuck
   // hook can't block boot.
-  await runOnBoot();
+  await T("runOnBoot", runOnBoot());
 
   // Abuse rate-limiting. Registered AFTER onBoot so a hosted overlay that
   // registers its own (distributed) guard takes precedence; this in-core
@@ -685,9 +702,22 @@ async function boot() {
     console.error("[backup-cron] seed schedules failed:", (err as Error).message),
   );
 
+  console.log(`[bootphase] === boot total (to listen): ${Date.now() - bootT0}ms ===`);
   const server = app.listen(env.API_PORT, () => {
     console.log(`[cobblr-api] listening on :${env.API_PORT} (${env.NODE_ENV})`);
   });
+
+  // TEST-ONLY: fill the pre-provisioned org pool AFTER listen (so /healthz is
+  // fast) and in the background — CI polls /test-support/pool-status before
+  // starting the suite. No-op unless COBBLR_TEST_ORG_POOL is set (prod never
+  // sets it). The offline image/tarball bake makes this a fast no-op (pool
+  // already full); the boot bake is the in-job / PoC path.
+  if (poolEnabled() && env.COBBLR_TEST_ORG_POOL_SIZE) {
+    const target = env.COBBLR_TEST_ORG_POOL_SIZE;
+    void bakeTestOrgPool(target)
+      .then((r) => console.log(`[test-org-pool] boot bake done: ${r.total} orgs ready`))
+      .catch((err) => console.error("[test-org-pool] boot bake failed:", (err as Error).message));
+  }
 
   function shutdown(signal: string) {
     console.log(`[cobblr-api] ${signal} received, draining`);

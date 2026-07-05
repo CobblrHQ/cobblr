@@ -548,7 +548,7 @@ const ModuleManifest = z.object({
             entity_kind: z.string(),
             name: z.string().regex(/^[a-z][a-z0-9_]*$/),
             display_label: z.string().min(1),
-            type: z.enum(["text", "number", "boolean", "date", "url", "relation"]),
+            type: z.enum(["text", "number", "boolean", "date", "url", "relation", "richtext"]),
             /** For type='relation': the entity-kind id this field references
              *  (e.g. "core-locations:location"). The stored value is the target
              *  entity's id (in metadata); the read layer resolves it to the
@@ -557,11 +557,11 @@ const ModuleManifest = z.object({
             required: z.boolean().optional(),
             position: z.number().int().optional(),
             choices: z.array(z.string()).optional(),
-            /** Built-in renderer id — color-hex / image-url /
-             *  url-link / year / boolean / code / text. The web UI
-             *  switches on this when drawing the value. */
+            /** Built-in renderer id — color-hex / image-url / url-link / year /
+             *  boolean / code / markdown / qr / text. The web UI switches on
+             *  this when drawing the value. */
             renderer: z
-              .enum(["text", "color-hex", "image-url", "url-link", "year", "boolean", "code"])
+              .enum(["text", "color-hex", "image-url", "url-link", "year", "boolean", "code", "markdown", "qr"])
               .optional(),
             /** Server-managed: the value is computed/stamped server-side
              *  (e.g. core-mobility's `away_since`) and a client write is

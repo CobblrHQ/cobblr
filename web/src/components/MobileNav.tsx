@@ -2,7 +2,10 @@
 // horizontal link strip is unusable (links scroll out of view with
 // no affordance). This renders a hamburger button + a full-width
 // dropdown panel carrying every nav destination: dashboard, module
-// links + their specialisations, configuration, theme, sign-out.
+// links + their specialisations, profile, configuration, theme,
+// sign-out. The panel is full-height (a sticky header + a scrolling
+// body) — the desktop UserMenu that owns Profile is desktop-only, so
+// this is the only place a mobile user reaches their account.
 //
 // The panel is portaled to document.body with fixed positioning —
 // the header uses backdrop-blur, which traps position:fixed
@@ -12,7 +15,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { NavLink, useNavigate } from "react-router-dom";
-import { Menu, X, Moon, Sun, LogOut, Sliders } from "lucide-react";
+import { Menu, X, Moon, Sun, LogOut, Sliders, UserCog } from "lucide-react";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { UpdateBadge } from "./UpdateBadge";
 import { useAuth } from "../auth/AuthContext";
@@ -82,12 +85,13 @@ export function MobileNav() {
               className="absolute inset-0 bg-slate-900/40"
               onClick={() => setOpen(false)}
             />
-            {/* panel */}
+            {/* panel — full height so page content never peeks below it; the
+                header pins while the destinations scroll under it. */}
             <nav
-              className="absolute top-0 left-0 right-0 bg-surface dark:bg-slate-900 border-b border-line dark:border-slate-700 shadow-lg max-h-[88vh] overflow-y-auto"
+              className="absolute inset-0 bg-surface dark:bg-slate-900 shadow-lg flex flex-col"
               aria-label="Main navigation"
             >
-              <div className="flex items-center justify-between px-4 py-3 border-b border-line dark:border-slate-800">
+              <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-line dark:border-slate-800">
                 <span className="font-display font-extrabold text-content dark:text-mortar-100 lowercase">
                   cobblr
                 </span>
@@ -101,6 +105,7 @@ export function MobileNav() {
                 </button>
               </div>
 
+              <div className="flex-1 overflow-y-auto">
               <NavLink to="/" end className={linkClass} onClick={() => setOpen(false)}>
                 dashboard
               </NavLink>
@@ -197,6 +202,15 @@ export function MobileNav() {
               })}
 
               <NavLink
+                to="/me"
+                className={linkClass + " flex items-center gap-2"}
+                onClick={() => setOpen(false)}
+              >
+                <UserCog size={14} />
+                profile
+              </NavLink>
+
+              <NavLink
                 to="/configuration"
                 className={linkClass + " flex items-center gap-2"}
                 onClick={() => setOpen(false)}
@@ -233,6 +247,7 @@ export function MobileNav() {
                 <LogOut size={14} />
                 sign out
               </button>
+              </div>
             </nav>
           </div>,
           document.body,

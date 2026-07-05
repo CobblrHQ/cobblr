@@ -43,13 +43,23 @@ export type FieldRendererId =
   | "url-link"
   | "year"
   | "boolean"
-  | "code";
+  | "code"
+  | "markdown"
+  | "qr";
 
 /** The storage type of a field-def. Every renderer that turns a field into an
  *  input MUST handle each member — see `fieldControl()`, whose exhaustive switch
  *  makes a forgotten type a COMPILE error rather than a silent text-box (the bug
  *  where a `boolean` field rendered as a text input showing "false"). */
-export type FieldType = "text" | "number" | "boolean" | "date" | "url" | "computed" | "relation";
+export type FieldType =
+  | "text"
+  | "number"
+  | "boolean"
+  | "date"
+  | "url"
+  | "computed"
+  | "relation"
+  | "richtext";
 
 export interface PlatformFieldDef {
   id: string;

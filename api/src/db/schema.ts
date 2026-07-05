@@ -668,7 +668,7 @@ export interface BundlesTable {
   enabled_features: Generated<string[]>;
 }
 
-export type FieldDefType = "text" | "number" | "boolean" | "date" | "url" | "computed" | "relation";
+export type FieldDefType = "text" | "number" | "boolean" | "date" | "url" | "computed" | "relation" | "richtext";
 
 export interface ModuleFieldDefsTable {
   id: Generated<string>;
@@ -881,6 +881,16 @@ export interface FeedbackTable {
   updated_at: Generated<Date>;
 }
 
+/** TEST-ONLY: pool of pre-provisioned orgs the integration suite checks out
+ *  instead of provisioning. Always empty in prod. See db/test-org-pool.ts. */
+export interface TestOrgPoolTable {
+  org_id: string;
+  slug: string;
+  owner_user_id: string;
+  status: Generated<string>;
+  baked_at: Generated<Date>;
+}
+
 export interface MetaDB {
   feedback: FeedbackTable;
   users: UsersTable;
@@ -899,6 +909,7 @@ export interface MetaDB {
   platform_announce_settings: PlatformAnnounceSettingsTable;
   impersonation_sessions: ImpersonationSessionsTable;
   backup_destinations: BackupDestinationsTable;
+  test_org_pool: TestOrgPoolTable;
   entity_pairings: EntityPairingsTable;
   tags: TagsTable;
   tag_assignments: TagAssignmentsTable;

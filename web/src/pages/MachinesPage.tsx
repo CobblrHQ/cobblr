@@ -15,7 +15,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Plus, Printer, Search, Tag as TagIcon, Trash2 } from "lucide-react";
 import { queueLabelsBulk } from "../lib/queue-label";
 import { usePersistedState } from "../lib/use-persisted-state";
-import { ApiError, api, type Machine, type OrgModuleListItem, type PlatformFieldDef, type BambuDiscoveredDevice, type DigifabConnection, type DigifabDevice, type DigifabFleetDevice } from "../lib/api";
+import { ApiError, api, type Machine, type OrgModuleListItem, type PlatformFieldDef, type SavedView, type BambuDiscoveredDevice, type DigifabConnection, type DigifabDevice, type DigifabFleetDevice } from "../lib/api";
 import { DirectManagerConnect } from "../components/DirectManagerConnect";
 import { EntityImageEdit } from "../components/EntityImageEdit";
 import { ImageSearchPicker } from "../components/ImageSearchPicker";
@@ -74,7 +74,7 @@ export function MachinesPage({
   const { activeSlug } = useActiveOrg();
   const navigate = useNavigate();
   const { id } = useParams<{ id?: string }>();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const lensName = instance ? null : searchParams.get("lens");
   const noun = itemNoun?.trim() || "machine";
 
@@ -172,7 +172,47 @@ export function MachinesPage({
     () => [...new Set(rows.map((m) => m.state).filter((s): s is string => !!s))].sort((a, b) => a.localeCompare(b)),
     [rows],
   );
-  const stateVisible = hiddenStates.size ? rows.filter((m) => !hiddenStates.has(m.state ?? "")) : rows;
+
+  // Saved views (core-views). The 3D Printers bundle ships a pinned "Printer
+  // fleet by state" view; users can pin their own filter+grouping as a chip.
+  // Saved views are keyed on the INSTANCE kind (`<instance>:item`), NOT the base
+  // `machines:machine`. That's the kind bundle install re-keys a provides_instances
+  // saved_view to (bundles.ts), so it's how the shipped "Printer fleet by state"
+  // view is stored — querying the base kind misses it — AND it scopes views per
+  // instance (3D Printers views stay separate from Laser Cutters). A view's
+  // config = { filter:{state:[...]}, group_by }.
+  const viewKind = instance ? `${instance}:item` : ENTITY_KIND;
+  const viewId = searchParams.get("view");
+  const savedViews = useQuery({
+    queryKey: ["saved-views", activeSlug, viewKind],
+    queryFn: () => api.listSavedViews(activeSlug, viewKind),
+    enabled: !!activeSlug,
+    staleTime: 60_000,
+  });
+  const views = savedViews.data?.items ?? [];
+  const activeView = viewId ? (views.find((v) => v.id === viewId) ?? null) : null;
+  const viewGroupBy = (activeView?.config as { group_by?: string } | undefined)?.group_by || null;
+  const viewStateFilter = (activeView?.config as { filter?: { state?: string[] } } | undefined)?.filter?.state;
+  function selectView(id: string | null) {
+    setSearchParams(
+      (p) => {
+        const n = new URLSearchParams(p);
+        if (id) n.set("view", id);
+        else n.delete("view");
+        return n;
+      },
+      { replace: true },
+    );
+  }
+
+  // An active view's state filter wins over the ad-hoc "states" dropdown (the
+  // dropdown is hidden while such a view is active); otherwise the dropdown's
+  // hidden set applies.
+  const stateVisible = viewStateFilter
+    ? rows.filter((m) => viewStateFilter.includes(m.state ?? ""))
+    : hiddenStates.size
+      ? rows.filter((m) => !hiddenStates.has(m.state ?? ""))
+      : rows;
   const filtered = query
     ? stateVisible.filter((m) =>
         [m.name, m.manufacturer, m.family, m.type, m.short_name]
@@ -217,6 +257,7 @@ export function MachinesPage({
   const digifabEnabled = !!orgModules.data?.items.find((m) => m.name === "digifab")?.enabled;
 
   const [newOpen, setNewOpen] = useState(false);
+  const [saveViewOpen, setSaveViewOpen] = useState(false);
   // 3D Printers (and any machines instance) with the Print Manager on get a live
   // "Fleet" tab right here — the cockpit (temps/progress/jobs) that otherwise only
   // lived under Configuration → Print Manager.
@@ -291,7 +332,7 @@ export function MachinesPage({
         <span className="text-[10px] font-mono text-faint dark:text-slate-500">
           {filtered.length} of {allRows.length}
         </span>
-        {allStates.length > 1 && (
+        {allStates.length > 1 && !viewStateFilter && (
           <div className="relative">
             <button
               type="button"
@@ -390,6 +431,30 @@ export function MachinesPage({
         </button>
       </div>
 
+      {/* Saved-view chips — one-click perspectives (the bundle's "Printer fleet
+          by state", plus any you save). Only on the flat instance/lens list,
+          where a view's group_by + state filter apply. */}
+      {(instance || lensName) && pageTab !== "fleet" && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <MachineViewChip active={!activeView} onClick={() => selectView(null)}>
+            All {noun}s
+          </MachineViewChip>
+          {views.map((v) => (
+            <MachineViewChip key={v.id} active={activeView?.id === v.id} onClick={() => selectView(v.id)}>
+              {v.name}
+            </MachineViewChip>
+          ))}
+          <button
+            type="button"
+            onClick={() => setSaveViewOpen(true)}
+            className="text-xs font-medium px-2.5 py-1 rounded-full border border-dashed border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:border-cobble-400 hover:text-accent transition inline-flex items-center gap-1"
+            title="Save the current filter + grouping as a reusable view"
+          >
+            <Plus size={12} /> Save view
+          </button>
+        </div>
+      )}
+
       {pageTab === "fleet" ? (
         <FleetView slug={activeSlug} />
       ) : filtered.length === 0 ? (
@@ -400,7 +465,20 @@ export function MachinesPage({
         </div>
       ) : viewMode === "tiles" ? (
         instance || lensName ? (
-          <MachineTileGrid rows={filtered} onRowClick={rowClick} />
+          viewGroupBy ? (
+            <div className="space-y-5">
+              {groupMachines(filtered, viewGroupBy).map((g) => (
+                <section key={g.key}>
+                  <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2 capitalize">
+                    // {g.key} <span className="text-faint dark:text-slate-500">({g.rows.length})</span>
+                  </div>
+                  <MachineTileGrid rows={g.rows} onRowClick={rowClick} />
+                </section>
+              ))}
+            </div>
+          ) : (
+            <MachineTileGrid rows={filtered} onRowClick={rowClick} />
+          )
         ) : (
           <div className="space-y-5">
             {sections.map((s) => (
@@ -415,16 +493,43 @@ export function MachinesPage({
           </div>
         )
       ) : instance || lensName ? (
-        <MachineTable
-          rows={filtered}
-          lensFieldDefs={lensFieldDefs}
-          onRowClick={rowClick}
-          selected={selected}
-          onToggle={toggleRow}
-          onSelectAll={(c) =>
-            setSelected(c ? new Set(filtered.map((r) => r.id)) : new Set())
-          }
-        />
+        viewGroupBy ? (
+          <div className="space-y-5">
+            {groupMachines(filtered, viewGroupBy).map((g) => (
+              <section key={g.key}>
+                <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2 capitalize">
+                  // {g.key} <span className="text-faint dark:text-slate-500">({g.rows.length})</span>
+                </div>
+                <MachineTable
+                  rows={g.rows}
+                  lensFieldDefs={lensFieldDefs}
+                  onRowClick={rowClick}
+                  selected={selected}
+                  onToggle={toggleRow}
+                  onSelectAll={(c) =>
+                    setSelected((prev) => {
+                      const n = new Set(prev);
+                      if (c) for (const r of g.rows) n.add(r.id);
+                      else for (const r of g.rows) n.delete(r.id);
+                      return n;
+                    })
+                  }
+                />
+              </section>
+            ))}
+          </div>
+        ) : (
+          <MachineTable
+            rows={filtered}
+            lensFieldDefs={lensFieldDefs}
+            onRowClick={rowClick}
+            selected={selected}
+            onToggle={toggleRow}
+            onSelectAll={(c) =>
+              setSelected(c ? new Set(filtered.map((r) => r.id)) : new Set())
+            }
+          />
+        )
       ) : (
         <div className="space-y-5">
           {sections.map((s) => (
@@ -467,6 +572,21 @@ export function MachinesPage({
         digifabEnabled={digifabEnabled}
         onClose={() => setNewOpen(false)}
         onCreated={instance ? (mid) => setLocalSel(mid) : undefined}
+      />
+      <SaveViewModal
+        open={saveViewOpen}
+        slug={activeSlug}
+        viewKind={viewKind}
+        noun={noun}
+        allStates={allStates}
+        shownStates={viewStateFilter ?? allStates.filter((s) => !hiddenStates.has(s))}
+        currentGroupBy={viewGroupBy}
+        onClose={() => setSaveViewOpen(false)}
+        onSaved={(v) => {
+          setSaveViewOpen(false);
+          void savedViews.refetch();
+          selectView(v.id);
+        }}
       />
       <BulkActionBar
         count={selected.size}
@@ -532,6 +652,186 @@ export function MachinesPage({
         />
       )}
     </div>
+  );
+}
+
+function MachineViewChip({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={
+        "text-xs font-medium px-3 py-1 rounded-full border transition " +
+        (active
+          ? "border-cobble-400 dark:border-cobble-600 bg-cobble-50 dark:bg-cobble-950/30 text-accent"
+          : "border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:border-cobble-300 dark:hover:border-cobble-700")
+      }
+    >
+      {children}
+    </button>
+  );
+}
+
+/** Partition machines for a view's group_by. `state` is a native column;
+ *  any other key reads from metadata. Blanks ("—") sort last. */
+function groupMachines(items: Machine[], key: string): { key: string; rows: Machine[] }[] {
+  const map = new Map<string, Machine[]>();
+  for (const m of items) {
+    const raw = key === "state" ? m.state : (m.metadata as Record<string, unknown> | null)?.[key];
+    const v = raw == null || String(raw).trim() === "" ? "—" : String(raw).trim();
+    if (!map.has(v)) map.set(v, []);
+    map.get(v)!.push(m);
+  }
+  return [...map.entries()]
+    .sort((a, b) => (a[0] === "—" ? 1 : b[0] === "—" ? -1 : a[0].localeCompare(b[0])))
+    .map(([k, rows]) => ({ key: k, rows }));
+}
+
+/** "Save as view" — persist the current state filter + optional grouping as a
+ *  reusable core-views chip (kind `machines:machine`, shared across instances). */
+function SaveViewModal({
+  open,
+  slug,
+  viewKind,
+  noun,
+  allStates,
+  shownStates,
+  currentGroupBy,
+  onClose,
+  onSaved,
+}: {
+  open: boolean;
+  slug: string;
+  viewKind: string;
+  noun: string;
+  allStates: string[];
+  shownStates: string[];
+  currentGroupBy: string | null;
+  onClose: () => void;
+  onSaved: (v: SavedView) => void;
+}) {
+  const toast = useToast();
+  const [name, setName] = useState("");
+  const [groupByState, setGroupByState] = useState(currentGroupBy === "state");
+  const [included, setIncluded] = useState<Set<string>>(() => new Set(shownStates));
+  // Re-seed from the live selection each time the modal opens.
+  useEffect(() => {
+    if (open) {
+      setIncluded(new Set(shownStates));
+      setGroupByState(currentGroupBy === "state");
+      setName("");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  const create = useMutation({
+    mutationFn: () => {
+      const config: Record<string, unknown> = {};
+      // Only persist a filter when it's a strict subset — "all states" = no filter.
+      if (included.size && included.size < allStates.length) config.filter = { state: [...included] };
+      if (groupByState) config.group_by = "state";
+      return api.createSavedView(slug, {
+        entity_kind: viewKind,
+        name: name.trim(),
+        view_type: "list",
+        config,
+      });
+    },
+    onSuccess: (v) => {
+      toast.success(`Saved view “${v.name}”`);
+      onSaved(v);
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+
+  if (!open) return null;
+  return (
+    <Modal open onClose={onClose} title="Save as view">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (name.trim() && included.size) create.mutate();
+        }}
+        className="space-y-4"
+      >
+        <label className="block">
+          <div className="text-xs text-muted mb-1">View name</div>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder={`e.g. Active ${noun}s, By state`}
+            autoFocus
+            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+          />
+        </label>
+        {allStates.length > 1 && (
+          <div>
+            <div className="text-xs text-muted mb-1">Include states</div>
+            <div className="flex flex-wrap gap-1.5">
+              {allStates.map((s) => {
+                const on = included.has(s);
+                return (
+                  <button
+                    type="button"
+                    key={s}
+                    onClick={() =>
+                      setIncluded((prev) => {
+                        const n = new Set(prev);
+                        if (on) n.delete(s);
+                        else n.add(s);
+                        return n;
+                      })
+                    }
+                    className={
+                      "text-xs px-2 py-0.5 rounded-full border capitalize transition " +
+                      (on
+                        ? "border-cobble-400 bg-cobble-50 dark:bg-cobble-950/30 text-accent"
+                        : "border-line dark:border-slate-700 text-faint")
+                    }
+                  >
+                    {s}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="text-[10px] text-faint mt-1">
+              {included.size === allStates.length
+                ? "All states — no filter, shows everything"
+                : `${included.size} of ${allStates.length} states`}
+            </div>
+          </div>
+        )}
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={groupByState} onChange={(e) => setGroupByState(e.target.checked)} />
+          <span className="text-content dark:text-mortar-100">Group by state</span>
+        </label>
+        <div className="flex justify-end gap-2 pt-1">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={create.isPending || !name.trim() || included.size === 0}
+            className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white"
+          >
+            {create.isPending ? "saving…" : "Save view"}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 

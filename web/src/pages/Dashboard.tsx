@@ -1201,7 +1201,11 @@ function TileGrid({
           </div>
           {empties.size > 0 && (
             <p className="mt-2 text-xs text-faint dark:text-slate-500">
-              Also enabled:{" "}
+              {/* "Also enabled" only reads right when there ARE populated tiles
+                  above for it to be "also" to. When every module is empty the
+                  grid renders nothing, so "also" is orphaned (the author, 2026-07-05) —
+                  drop it to a plain "Enabled". */}
+              {empties.size >= visible.length ? "Enabled:" : "Also enabled:"}{" "}
               {[...empties.entries()].map(([label, to], i) => (
                 <span key={label}>
                   {i > 0 && " · "}

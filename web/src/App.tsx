@@ -14,6 +14,7 @@ import { InventoryUI } from "@cobblr/inventory/ui";
 import { LabelsBasket, LabelsUI } from "@cobblr/labels/ui";
 import { ProjectsUI } from "@cobblr/projects/ui";
 import { ListsUI } from "@cobblr/lists/ui";
+import { KnowledgeUI } from "@cobblr/knowledge/ui";
 import { BuildsUI } from "@cobblr/builds/ui";
 import { SalesUI } from "@cobblr/sales/ui";
 import { TrackingUI } from "@cobblr/tracking/ui";
@@ -86,6 +87,7 @@ const LinksPage = lazy(() => import("./pages/LinksPage").then((m) => ({ default:
 const LocationsPage = lazy(() => import("./pages/LocationsPage").then((m) => ({ default: m.LocationsPage })));
 const LocationDetailPage = lazy(() => import("./pages/LocationDetailPage").then((m) => ({ default: m.LocationDetailPage })));
 const TemplatesPage = lazy(() => import("./pages/TemplatesPage").then((m) => ({ default: m.TemplatesPage })));
+const AssistantSettingsPage = lazy(() => import("./pages/AssistantSettingsPage").then((m) => ({ default: m.AssistantSettingsPage })));
 const ScanPage = lazy(() => import("./pages/ScanPage").then((m) => ({ default: m.ScanPage })));
 const ScanCameraPage = lazy(() => import("./pages/ScanCameraPage").then((m) => ({ default: m.ScanCameraPage })));
 const BundleComposerPage = lazy(() => import("./pages/BundleComposerPage").then((m) => ({ default: m.BundleComposerPage })));
@@ -115,6 +117,7 @@ import { AppLayout } from "./components/AppLayout";
 import { ImpersonationBanner } from "./components/ImpersonationBanner";
 import { AdminLayout } from "./components/AdminLayout";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { ConnectivityBanner } from "./components/ConnectivityBanner";
 import { PortalLayout } from "./components/PortalLayout";
 import { ToastProvider, ConfirmProvider } from "@cobblr/platform-web";
 import { api, getToken } from "./lib/api";
@@ -145,6 +148,7 @@ function ThemeSync() {
 export function App() {
   return (
     <ErrorBoundary scope="app">
+      <ConnectivityBanner />
       <AuthProvider>
         <ThemeSync />
         <ToastProvider>
@@ -449,6 +453,15 @@ function ActiveOrgScopedRoutes() {
             }
           />
           <Route
+            path="/knowledge/*"
+            element={
+              <>
+                <KnowledgeUI orgSlug={activeSlug} getToken={getToken} />
+                <div className="max-w-4xl"><PairsWellWith module="knowledge" orgSlug={activeSlug} /></div>
+              </>
+            }
+          />
+          <Route
             path="/builds/*"
             element={
               <>
@@ -525,6 +538,7 @@ function ActiveOrgScopedRoutes() {
             <Route path="/configuration/presentation" element={<PresentationPage />} />
             <Route path="/configuration/integrations" element={<IntegrationsPage />} />
             <Route path="/configuration/ai" element={<AiPage />} />
+            <Route path="/configuration/assistant" element={<AssistantSettingsPage />} />
             <Route path="/configuration/x/:panelId" element={<HostedPanelPage />} />
             <Route path="/configuration/catalogs" element={<CatalogsPage />} />
             <Route path="/configuration/catalogs/match" element={<CatalogMatchPage />} />

@@ -14,6 +14,7 @@ import {
   CatalogTypeahead,
   Modal,
   RelationSelect,
+  MarkdownEditor,
   fieldControl,
   useUnits,
   type CatalogTypeaheadHit,
@@ -474,6 +475,15 @@ function CustomFieldInput({
 
   if (control === "choice") {
     return <ChoiceInput def={def} value={s} onChange={onChange} entityKind={entityKind} help={help} />;
+  }
+  // Rich text — the same Markdown editor the detail panel uses.
+  if (control === "markdown") {
+    return (
+      <Field label={def.display_label}>
+        <MarkdownEditor value={s} ariaLabel={def.display_label} onChange={(v) => onChange(v === "" ? null : v)} />
+        {help}
+      </Field>
+    );
   }
   if (control === "checkbox") {
     return (

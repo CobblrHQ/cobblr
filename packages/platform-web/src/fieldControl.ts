@@ -23,6 +23,7 @@ export type FieldControl =
   | "number"
   | "date"
   | "url"
+  | "markdown" // rich text — the Markdown editor (Write/Preview split)
   | "text";
 
 function assertNever(x: never): never {
@@ -54,6 +55,8 @@ export function fieldControl(def: {
       return "date";
     case "url":
       return "url";
+    case "richtext":
+      return "markdown";
     case "text":
       return "text";
     // `computed` / `relation` are handled by the early returns above (TS narrows

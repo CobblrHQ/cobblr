@@ -531,7 +531,15 @@ export async function runMatchmaker(
     "descriptions, pack info) and the user's TABLES (each: a module, an " +
     "optional instance slug, a noun, optional scan_keywords, and fields with " +
     "labels/help/allowed choices). Do three things:\n" +
-    "1. Pick the best-fitting tables for this item, RANKED, at most 3. A table " +
+    "1. Pick the tables for this item, RANKED best-first: the ONE best-fitting " +
+    "table (the primary) and AT MOST ONE secondary. Include a secondary ONLY " +
+    "when the item genuinely belongs in two DIFFERENT tables (e.g. a graded " +
+    "collectible that is both a 'Bookshelf' reading copy AND a 'Collections' " +
+    "graded item) — most items have just ONE home, so usually return a single " +
+    "table. NEVER list the same table (same module+instance) twice, and never " +
+    "pad the list with a marginal or duplicate table to fill a slot: one " +
+    "confident table beats two noisy ones, and identical items must route the " +
+    "same way. A table " +
     "fits when the item is the kind of thing that table holds (a skein of yarn " +
     "-> a 'yarn' table; a drill -> 'tools'/'assets'). Judge fit PRIMARILY from " +
     "the table's noun and its FIELDS — a field's label, help, and allowed " +
@@ -752,8 +760,67 @@ export async function runMatchmaker(
     }
     emitted.set(dedupeKey, out.length);
     out.push(candidate);
-    if (out.length >= 3) break;
+    // Primary + at most ONE secondary (matches the tightened prompt + the
+    // heuristic's cap): a third table was almost always noise/padding.
+    if (out.length >= 2) break;
   }
   // AI returned nothing usable for this menu → heuristic floor, never blank.
   return out.length > 0 ? out : heuristicMatch(item, menu);
+}
+
+// ── session/series routing reconciliation (deterministic, no model) ──────────
+/** Align the SECONDARY routing across a group of same-series items so they route
+ *  IDENTICALLY — "the whole shelf offers a given secondary table, or none of it
+ *  does" — instead of the model's per-item coin-flip (some Little House books
+ *  getting a stray 'Collections', others not).
+ *
+ *  Rule: keep a secondary table only if it appears (with ≥1 filled field) on
+ *  EVERY item in the group — the INTERSECTION. This guarantees uniformity and
+ *  never FABRICATES an empty chip (we only ever drop, never invent a secondary an
+ *  item has no data for). Each item's PRIMARY (candidates[0]) is never touched —
+ *  routing identity stays the model's call; only the noisy tail is normalised.
+ *
+ *  Pure + deterministic (unit-tested). Returns, per item id, the reconciled
+ *  candidate list — ONLY for items that actually change (so the caller writes
+ *  the minimum). Candidates are first deduped by table (keep the richer fill),
+ *  mirroring the render, so a legacy row with a duplicate table reconciles too. */
+export function reconcileSeriesSecondaries(
+  group: Array<{ id: string; candidates: MatchCandidate[] }>,
+): Map<string, MatchCandidate[]> {
+  const out = new Map<string, MatchCandidate[]>();
+  if (group.length < 2) return out;
+  const tableKey = (c: MatchCandidate) => `${c.module}::${c.instance ?? ""}`;
+  const nFields = (c: MatchCandidate) => Object.keys(c.fields ?? {}).length;
+
+  // Dedupe each item's candidates by table (keep richer), preserving order.
+  const dedupe = (cands: MatchCandidate[]): MatchCandidate[] => {
+    const byKey = new Map<string, MatchCandidate>();
+    for (const c of cands) {
+      const k = tableKey(c);
+      const prev = byKey.get(k);
+      if (!prev || nFields(c) > nFields(prev)) byKey.set(k, c);
+    }
+    return [...byKey.values()];
+  };
+  const cleaned = group.map((g) => ({ id: g.id, cands: dedupe(g.candidates) }));
+
+  // Secondary tables present WITH fields on each item, then their intersection.
+  const secSets: Array<Set<string>> = cleaned.map(
+    (g) => new Set(g.cands.slice(1).filter((c) => nFields(c) > 0).map(tableKey)),
+  );
+  const keepSec = secSets.reduce<Set<string>>(
+    (acc, s) => new Set([...acc].filter((k) => s.has(k))),
+    new Set<string>(secSets[0] ?? []),
+  );
+
+  for (const g of cleaned) {
+    const primary = g.cands[0];
+    if (!primary) continue;
+    const next = [primary, ...g.cands.slice(1).filter((c) => keepSec.has(tableKey(c)))];
+    const orig = group.find((x) => x.id === g.id)!.candidates;
+    const unchanged =
+      next.length === orig.length && next.every((c, i) => tableKey(c) === tableKey(orig[i]!));
+    if (!unchanged) out.set(g.id, next);
+  }
+  return out;
 }

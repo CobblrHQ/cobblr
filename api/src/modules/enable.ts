@@ -9,6 +9,7 @@
 // tenant DB's own `migrations` table.
 
 import { resolve } from "node:path";
+import { readdirSync } from "node:fs";
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { runMigrations } from "../db/migrate.js";
@@ -343,23 +344,60 @@ export async function disableModuleForOrg(orgId: string, moduleName: string): Pr
 export async function syncTenantMigrations(): Promise<number> {
   const rows = await meta
     .selectFrom("org_modules")
-    .select(["org_id", "module_name"])
+    .select(["org_id", "module_name", "last_migration"])
     .execute();
   let touched = 0;
-  // Group by org so each tenant pool is opened ONCE and closed once. This
-  // pass runs pre-`listen` (index.ts), serially; without the evict, every
-  // org's max:5 pool stays cached open for the whole boot sequence, so a
-  // box with many tenants exhausts Postgres `max_connections` ("remaining
-  // connection slots are reserved for SUPERUSER") — especially when a brand
-  // new module's migration runs real DDL across every tenant at once.
-  // Capping to one live tenant pool at a time keeps the peak at O(1).
+
+  // PRE-CHECK (meta-side, no tenant open): the newest migration filename on disk
+  // per module — the sorted-last `.sql` that runMigrations would apply — computed
+  // once + cached. An (org, module) whose `org_modules.last_migration` already
+  // equals it is fully current, so we can skip OPENING that tenant DB entirely.
+  // Migrations are append-only + sorted, so a new one always sorts later and
+  // changes this value → a behind tenant can NEVER falsely match (the pre-check
+  // never skips real work). This turns the pooled-boot common case (nothing pending
+  // across ~250 orgs) from ~10s of open→check→evict into a few string compares.
+  const latestByModule = new Map<string, string | null>();
+  const latestFileFor = (moduleName: string): string | null => {
+    const cached = latestByModule.get(moduleName);
+    if (cached !== undefined) return cached;
+    const entry = getEntry(moduleName);
+    let latest: string | null = null;
+    if (entry?.manifest.schema) {
+      try {
+        const dir = resolve(entry.rootPath, entry.manifest.schema.migrationsDir);
+        const files = readdirSync(dir).filter((f) => f.endsWith(".sql")).sort();
+        latest = files.length ? files[files.length - 1]! : null;
+      } catch {
+        latest = null; // unreadable/empty dir → nothing to apply (same net effect)
+      }
+    }
+    latestByModule.set(moduleName, latest);
+    return latest;
+  };
+
+  // Group by org, keeping a module only if it might be BEHIND (has migrations AND
+  // the org's pointer != the newest file) — OR when SANDBOX_MODULE_ROLES is on, in
+  // which case every org still needs ensureAllSandboxRolesForOrg, so nothing is
+  // skipped there. Orgs whose every module is current (and roles off) are dropped
+  // before any tenant pool is opened. The kept orgs then run through a BOUNDED
+  // worker pool: peak = CAP live tenant pools (CAP × max:5 conns). At CAP=10 that's
+  // 50 connections — under Postgres `max_connections` (CI 400; prod default 100)
+  // and clear of the SUPERUSER-reserved ceiling. DDL contention isn't a concern:
+  // the rare real-migration case runs DDL on SEPARATE tenant DBs (no shared
+  // catalog). Each org evicts its pool the moment it's done, so the peak stays
+  // bounded by CAP, never by org count.
+  const rolesOn = moduleRolesEnabled();
   const byOrg = new Map<string, string[]>();
   for (const row of rows) {
-    const list = byOrg.get(row.org_id);
-    if (list) list.push(row.module_name);
-    else byOrg.set(row.org_id, [row.module_name]);
+    const latest = latestFileFor(row.module_name);
+    const behind = latest !== null && row.last_migration !== latest;
+    if (behind || rolesOn) {
+      const list = byOrg.get(row.org_id);
+      if (list) list.push(row.module_name);
+      else byOrg.set(row.org_id, [row.module_name]);
+    }
   }
-  for (const [orgId, moduleNames] of byOrg) {
+  const processOrg = async (orgId: string, moduleNames: string[]): Promise<void> => {
     try {
       for (const moduleName of moduleNames) {
         const entry = getEntry(moduleName);
@@ -376,7 +414,7 @@ export async function syncTenantMigrations(): Promise<number> {
             scope: `tenant ${orgId} / module ${moduleName}`,
           });
           if (result.applied.length > 0) {
-            touched++;
+            touched++; // single-threaded event loop — ++ between awaits is safe
             // Update the meta-side last_migration pointer so
             // /modules/:slug/health stays accurate.
             await meta
@@ -406,7 +444,17 @@ export async function syncTenantMigrations(): Promise<number> {
       // reopens on this org's first real request.
       await evictTenantPool(orgId);
     }
-  }
+  };
+  const entries = [...byOrg.entries()];
+  const CAP = 10;
+  let cursor = 0;
+  const worker = async (): Promise<void> => {
+    while (cursor < entries.length) {
+      const [orgId, moduleNames] = entries[cursor++]!;
+      await processOrg(orgId, moduleNames);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(CAP, entries.length) }, worker));
   return touched;
 }
 

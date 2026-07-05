@@ -41,7 +41,8 @@ import {
 } from "lucide-react";
 import { Modal, useImageSrc, useToast, usePageTitle } from "@cobblr/platform-web";
 import { ScanImportModal } from "../components/ScanImportModal";
-import { LocationPicker } from "../components/LocationPicker";
+import { CameraCaptureSheet } from "../components/CameraCaptureSheet";
+import { LocationTreePicker } from "../components/LocationTreePicker";
 import { ImageSearchPicker } from "../components/ImageSearchPicker";
 import { TrackedMatchBanner } from "../components/TrackedMatchBanner";
 import { BinAdjustModal } from "../components/BinAdjustModal";
@@ -53,7 +54,6 @@ import {
   type AiStatus,
   ApiError,
   api,
-  type Location,
   type ScanInboxItem,
   type ScanCandidate,
   type ScanMenuEntry,
@@ -1461,7 +1461,7 @@ export function ScanPage() {
   };
 
   return (
-    <div className="space-y-4 max-w-4xl mx-auto">
+    <div className="space-y-3 max-w-4xl mx-auto">
       {/* ── the ONE header row: identity + intake. Short word labels;
             compact paddings keep it one row on phones. ──────────────── */}
       {/* flex-wrap at every size: the identity chips are all shrink-0, so
@@ -1659,54 +1659,64 @@ export function ScanPage() {
         </div>
       </div>
 
-      {/* Active filing bin: every scan (wedge gun, UPC, camera) files into this
-          core-locations node until cleared — pick it, or scan a location's QR.
-          Stamped as target_location_id so each item lands pre-filed. */}
-      {locsEnabled && (
-        <div className="flex items-center gap-2 text-sm -mt-1.5">
-          <span className="inline-flex items-center gap-1 text-muted dark:text-slate-400 shrink-0">
-            <MapPin size={14} /> Filing into
-          </span>
-          <div className="min-w-0 flex-1 max-w-[18rem]">
-            <LocationPicker
-              value={fileBin || null}
-              onChange={(v) => setFileBin(v ?? "")}
-              label=""
-            />
-          </div>
-          {fileBin && (
-            <button
-              type="button"
-              onClick={() => setFileBin("")}
-              className="text-xs text-faint hover:text-content dark:hover:text-mortar-100 shrink-0"
-            >
-              clear
-            </button>
+      {/* Secondary intake metadata — the active filing bin (every scan files
+          into this core-locations node until cleared) + the receipt drop-box
+          address — packed onto ONE wrapping row so the header stays short. */}
+      {(locsEnabled || receiptAddress) && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-sm -mt-1">
+          {locsEnabled && (
+            <div className="flex items-center gap-2 min-w-0">
+              <span
+                className="inline-flex items-center gap-1 text-muted dark:text-slate-400 shrink-0"
+                title="New scans auto-file into this location as you scan. To set a location on items you've ALREADY scanned, select them and use ‘Set location’ in the toolbar."
+              >
+                <MapPin size={14} /> New scans →
+              </span>
+              <div className="min-w-0 max-w-[14rem]">
+                <LocationTreePicker
+                  value={fileBin || null}
+                  onChange={(v) => setFileBin(v ?? "")}
+                  placeholder="pick a bin"
+                  size="sm"
+                />
+              </div>
+              {fileBin && (
+                <button
+                  type="button"
+                  onClick={() => setFileBin("")}
+                  className="text-xs text-faint hover:text-content dark:hover:text-mortar-100 shrink-0"
+                >
+                  clear
+                </button>
+              )}
+            </div>
+          )}
+          {receiptAddress && (
+            <div className="flex items-center gap-1.5 min-w-0 text-xs text-muted dark:text-slate-400">
+              <FileText size={13} className="text-faint shrink-0" />
+              <span className="shrink-0">Email receipts to</span>
+              {/* Capped, horizontally-scrollable chip: the long +tag address is
+                  cut off so it never eats a full row, but stays fully selectable
+                  and scrollable (and Copy grabs the whole thing regardless). */}
+              <code className="block max-w-[8.5rem] sm:max-w-[13rem] overflow-x-auto whitespace-nowrap rounded bg-mortar-100 dark:bg-slate-800 px-1.5 py-0.5 text-content dark:text-mortar-100 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                {receiptAddress}
+              </code>
+              <button
+                type="button"
+                className="shrink-0 text-accent hover:underline"
+                onClick={() => {
+                  void navigator.clipboard?.writeText(receiptAddress);
+                  toast.success("Address copied");
+                }}
+              >
+                Copy
+              </button>
+            </div>
           )}
         </div>
       )}
 
       <AiOffNotice status={aiStatus} />
-
-      {receiptAddress && (
-        <div className="flex items-center gap-2 text-xs text-muted dark:text-slate-400">
-          <FileText size={13} className="text-faint shrink-0" />
-          <span className="shrink-0">Or email receipts to</span>
-          <code className="truncate rounded bg-mortar-100 dark:bg-slate-800 px-1.5 py-0.5 text-content dark:text-mortar-100">
-            {receiptAddress}
-          </code>
-          <button
-            type="button"
-            className="shrink-0 text-accent hover:underline"
-            onClick={() => {
-              void navigator.clipboard?.writeText(receiptAddress);
-              toast.success("Address copied");
-            }}
-          >
-            Copy
-          </button>
-        </div>
-      )}
 
       <ScanDrivePanel drive={scanDrive} />
 
@@ -1825,7 +1835,7 @@ export function ScanPage() {
           )}
           {bulkLocOpen && (
             <div className="w-full pt-1">
-              <LocationPicker
+              <LocationTreePicker
                 value={null}
                 onChange={(v) => v && void bulkApplyLocation(v)}
                 label="File the selection into"
@@ -2557,18 +2567,26 @@ function InboxCard({
     },
     onError: onErr,
   });
+  // In-app capture (shared CameraCaptureSheet). The inbox card has no live camera,
+  // so the sheet acquires its own rear camera — still no iOS native camera launch.
+  const [captureSheet, setCaptureSheet] = useState<"add" | "retake" | null>(null);
+  const toFile = (b: Blob, tag: string) =>
+    b instanceof File ? b : new File([b], `${tag}-${Date.now()}.jpg`, { type: "image/jpeg" });
   const addPhoto = useMutation({
-    mutationFn: (f: File) => api.uploadFile(activeSlug, f).then((up) => api.addScanPhoto(activeSlug, item.id, up.id)),
+    mutationFn: (b: Blob) =>
+      api.uploadFile(activeSlug, toFile(b, "photo")).then((up) => api.addScanPhoto(activeSlug, item.id, up.id)),
     onSuccess: () => {
+      setCaptureSheet(null);
       toast.success("Photo added");
       invalidateInbox();
     },
     onError: onErr,
   });
   const retakeCatalog = useMutation({
-    mutationFn: (f: File) =>
-      api.uploadFile(activeSlug, f).then((up) => api.setScanCatalogFile(activeSlug, item.id, up.id)),
+    mutationFn: (b: Blob) =>
+      api.uploadFile(activeSlug, toFile(b, "catalog")).then((up) => api.setScanCatalogFile(activeSlug, item.id, up.id)),
     onSuccess: () => {
+      setCaptureSheet(null);
       toast.success("Catalog photo replaced with your shot");
       invalidateInbox();
     },
@@ -2584,8 +2602,6 @@ function InboxCard({
     onSuccess: invalidateInbox,
     onError: onErr,
   });
-  const addPhotoRef = useRef<HTMLInputElement>(null);
-  const retakeRef = useRef<HTMLInputElement>(null);
   const extraPhotos = Array.isArray((item.suggested_metadata as { extra_photos?: unknown })?.extra_photos)
     ? ((item.suggested_metadata as { extra_photos: string[] }).extra_photos)
     : [];
@@ -2637,30 +2653,36 @@ function InboxCard({
         className="flex items-stretch cursor-pointer"
         onClick={() => (expanded ? setExpanded(false) : openForm())}
       >
-        {onToggleSelect && (
-          <div className="shrink-0 flex items-center pl-3 pr-0.5" onClick={(e) => e.stopPropagation()}>
-            <input
-              type="checkbox"
-              checked={!!selected}
-              onChange={onToggleSelect}
-              aria-label="Select for bulk action"
-              className="h-4 w-4 accent-cobble-600 cursor-pointer"
-            />
-          </div>
-        )}
         {/* Photo column: a CONSISTENT WIDTH (so every card's text starts at the
             same x), stretched to the row's full height — a book cover / product
-            shot reads far better big. min-h keeps a short card's image sensible. */}
-        <div className={"w-20 shrink-0 self-stretch min-h-[4.5rem] border-r border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 flex items-center justify-center overflow-hidden" + (onToggleSelect ? "" : " rounded-l-xl")}>
+            shot reads far better big. Wider now (the select checkbox moved ONTO
+            it as a top-left overlay, freeing its old column), and object-CONTAIN
+            so a tall bottle/tub shows in full instead of a cropped centre strip.
+            min-h keeps a short card's image sensible. */}
+        <div className="relative w-28 shrink-0 self-stretch min-h-[4.5rem] rounded-l-xl border-r border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 flex items-center justify-center overflow-hidden">
           {thumb ? (
             <img
               src={thumb}
               alt={item.suggested_name ?? item.barcode_text ?? ""}
-              className="w-full h-full object-cover"
+              className="w-full h-full object-contain"
               loading="lazy"
             />
           ) : (
             <ScanLine size={26} className="text-faint dark:text-slate-600" />
+          )}
+          {onToggleSelect && (
+            <div
+              className="absolute top-1 left-1 rounded bg-white/85 dark:bg-slate-900/75 p-0.5 shadow-sm"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <input
+                type="checkbox"
+                checked={!!selected}
+                onChange={onToggleSelect}
+                aria-label="Select for bulk action"
+                className="h-4 w-4 accent-cobble-600 cursor-pointer block"
+              />
+            </div>
           )}
         </div>
         <div className="flex-1 min-w-0 p-3">
@@ -2755,6 +2777,13 @@ function InboxCard({
                   </>,
                 );
               }
+              // A book's ISBN is its identifier — surface it up FRONT (like a
+              // barcode) from the top match's `isbn` field, when there's no
+              // scanned barcode. Dropped from the fill-chips below so it isn't
+              // shown twice. (Hit-or-miss: only when the identify captured one.)
+              const isbnKey = topCand ? Object.keys(topCand.fields).find((k) => /^isbn$/i.test(k)) : undefined;
+              const isbn = isbnKey ? String(topCand!.fields[isbnKey] ?? "").trim() : "";
+              if (isbn && !item.barcode_text) segs.push(<span>ISBN {isbn}</span>);
               // Creator (author/director/…) then publisher/brand — a book reads
               // "Laura Ingalls Wilder · Scholastic".
               const creator = creatorOf(item);
@@ -2856,24 +2885,22 @@ function InboxCard({
               The single most useful at-a-glance label for media; shown on the card
               itself, not just the "tag them all" banner. Distinct from the routing
               chips (a fact about the item, not a table to file into). */}
-          {seriesOf(item) && (
-            <div className="mt-1.5">
-              <span
-                className="inline-flex items-center gap-1 rounded-full border border-accent/40 bg-accent/5 px-2.5 py-1 text-xs font-medium text-accent"
-                title={`Part of the "${seriesOf(item)}" series`}
-              >
-                <Library size={11} className="shrink-0" />
-                <span className="truncate">{seriesOf(item)}</span>
-                <span className="opacity-60 shrink-0">series</span>
-              </span>
-            </div>
-          )}
-          {/* Matchmaker chips — the best-fitting tables, their fields pre-filled.
-              On phones only the TOP match shows (it's what Confirm uses) + a "+N"
-              that expands to choose another; desktop shows them all. Keeps the
-              collapsed card from being a wall of stacked pills on mobile. */}
-          {candidates.length > 0 ? (
+          {/* Row 1 — the SERIES tag + the routing chip(s) share ONE line to keep
+              the card compact (these were three stacked rows; the field strip
+              below tipped it past the image). On phones only the TOP match shows
+              + a "+N" to expand; desktop shows them all. */}
+          {(seriesOf(item) || candidates.length > 0) && (
             <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+              {seriesOf(item) && (
+                <span
+                  className="inline-flex items-center gap-1 rounded-full border border-accent/40 bg-accent/5 px-2 py-0.5 text-[11px] font-medium text-accent min-w-0"
+                  title={`Part of the "${seriesOf(item)}" series`}
+                >
+                  <Library size={11} className="shrink-0" />
+                  <span className="truncate">{seriesOf(item)}</span>
+                  <span className="opacity-60 shrink-0">series</span>
+                </span>
+              )}
               {candidates.map((c, i) => (
                 <button
                   key={`${c.module}:${c.instance ?? ""}:${i}`}
@@ -2897,11 +2924,6 @@ function InboxCard({
                 >
                   <Sparkles size={11} className="shrink-0" />
                   <span className="truncate">{c.label}</span>
-                  {Object.keys(c.fields).length > 0 && (
-                    <span className="opacity-70 shrink-0 hidden sm:inline">
-                      · fills {Object.keys(c.fields).length}
-                    </span>
-                  )}
                 </button>
               ))}
               {candidates.length > 1 && (
@@ -2918,14 +2940,58 @@ function InboxCard({
                 </button>
               )}
             </div>
-          ) : serverMatching ? (
+          )}
+          {/* Row 2 — what the top match FILLS: the field VALUES as mini chips.
+              SKIP fields already shown in the subtitle (author, publisher/brand)
+              — no echo — and cap to ONE line (+N for the rest) so the strip never
+              grows the card past its image. */}
+          {candidates.length > 0 &&
+            topCand &&
+            (() => {
+              const brand = (item.suggested_manufacturer ?? "").trim().toLowerCase();
+              const creator = (creatorOf(item) ?? "").trim().toLowerCase();
+              const entries = Object.entries(topCand.fields).filter(([k, v]) => {
+                if (/^isbn$/i.test(k)) return false; // shown in the subtitle now
+                const val = String(v).trim().toLowerCase();
+                return val && val !== brand && val !== creator;
+              });
+              if (entries.length === 0) return null;
+              const MAX = 3;
+              const shown = entries.slice(0, MAX);
+              const extra = entries.length - shown.length;
+              return (
+                <div className="flex flex-nowrap items-center gap-1 mt-1 overflow-hidden">
+                  {shown.map(([k, v]) => (
+                    <span
+                      key={k}
+                      className="inline-flex items-center gap-1 rounded-md bg-subtle/60 dark:bg-slate-800/60 border border-line/70 dark:border-slate-700/70 px-1.5 py-0.5 text-[11px] text-content dark:text-mortar-200 min-w-0 shrink"
+                      title={`${menuFieldLabel(menu, topCand, k)}: ${String(v)}`}
+                    >
+                      <span className="text-faint shrink-0">{menuFieldLabel(menu, topCand, k)}</span>
+                      <span className="truncate">{String(v)}</span>
+                    </span>
+                  ))}
+                  {extra > 0 && (
+                    <span
+                      className="text-[11px] text-faint shrink-0 px-1"
+                      title={entries.slice(MAX).map(([k, v]) => `${menuFieldLabel(menu, topCand, k)}: ${v}`).join(", ")}
+                    >
+                      +{extra}
+                    </span>
+                  )}
+                </div>
+              );
+            })()}
+          {candidates.length === 0 && serverMatching && (
             <div className="text-[11px] text-faint italic mt-1">finding the best table…</div>
-          ) : null}
+          )}
         </div>
         {/* Stack the actions VERTICALLY (mobile + desktop) so the title gets the
             full width and reads in full — a horizontal cluster squeezed the name
-            ("RAM EZ-Roll'r …"). */}
-        <div className="flex flex-col items-center justify-start gap-0.5 shrink-0 py-1.5 pr-0.5" onClick={(e) => e.stopPropagation()}>
+            ("RAM EZ-Roll'r …"). self-stretch + justify-between spreads them over
+            the card's full height: rerun at the top, discard centered, the
+            expand chevron pinned near the bottom (rather than a tight top cluster). */}
+        <div className="flex flex-col items-center justify-between shrink-0 self-stretch py-2 pr-0.5" onClick={(e) => e.stopPropagation()}>
           <button
             type="button"
             onClick={() => rerun.mutate(undefined)}
@@ -3066,7 +3132,7 @@ function InboxCard({
             <button
               type="button"
               disabled={retakeCatalog.isPending}
-              onClick={() => retakeRef.current?.click()}
+              onClick={() => setCaptureSheet("retake")}
               title="Take a nice picture — it becomes the catalog/display photo"
               className="text-[11px] rounded border border-line dark:border-slate-700 px-2 py-0.5 text-muted hover:text-content hover:border-accent transition disabled:opacity-50"
             >
@@ -3075,7 +3141,7 @@ function InboxCard({
             <button
               type="button"
               disabled={addPhoto.isPending}
-              onClick={() => addPhotoRef.current?.click()}
+              onClick={() => setCaptureSheet("add")}
               title="Add another photo to this item"
               className="text-[11px] rounded border border-line dark:border-slate-700 px-2 py-0.5 text-muted hover:text-content hover:border-accent transition disabled:opacity-50"
             >
@@ -3107,28 +3173,12 @@ function InboxCard({
                 ✓ Looks fine
               </button>
             )}
-            <input
-              ref={retakeRef}
-              type="file"
-              accept="image/*"
-              capture="environment"
-              hidden
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                e.currentTarget.value = "";
-                if (f) retakeCatalog.mutate(f);
-              }}
-            />
-            <input
-              ref={addPhotoRef}
-              type="file"
-              accept="image/*"
-              hidden
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                e.currentTarget.value = "";
-                if (f) addPhoto.mutate(f);
-              }}
+            <CameraCaptureSheet
+              open={captureSheet !== null}
+              title={captureSheet === "retake" ? "Retake catalog photo" : "Add a photo"}
+              busy={retakeCatalog.isPending || addPhoto.isPending}
+              onCapture={(blob) => (captureSheet === "retake" ? retakeCatalog.mutate(blob) : addPhoto.mutate(blob))}
+              onClose={() => setCaptureSheet(null)}
             />
           </div>
           {zoom &&
@@ -3742,6 +3792,14 @@ function seriesOf(it: ScanInboxItem): string | null {
   const s = (it.suggested_metadata as { series?: unknown } | null)?.series;
   return typeof s === "string" && s.trim() ? s.trim() : null;
 }
+/** Does this item already carry `tag` in its queued pending_tags? (Stashed by a
+ *  prior "Tag series"; applied to the entity at confirm.) The banner keys its
+ *  offer off this so it stops re-offering a tag the items already have. */
+function hasPendingTag(it: ScanInboxItem, tag: string): boolean {
+  const pt = (it.suggested_metadata as { pending_tags?: unknown } | null)?.pending_tags;
+  const want = tag.trim().toLowerCase();
+  return Array.isArray(pt) && pt.some((t) => typeof t === "string" && t.trim().toLowerCase() === want);
+}
 function SeriesBanner({ slug, items }: { slug: string; items: ScanInboxItem[] }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -3788,7 +3846,13 @@ function SeriesBanner({ slug, items }: { slug: string; items: ScanInboxItem[] })
     const g = groups.get([...forAuthor][0]!);
     if (g && !g.items.some((x) => x.id === it.id)) g.items.push(it);
   }
-  const offers = [...groups.values()].filter((g) => g.items.length >= 2 && !dismissed.has(g.series.toLowerCase()));
+  // Only offer for items NOT already tagged with the series. Once every item in
+  // a group carries the series pending_tag, there's nothing to do — hide the
+  // banner (before, it re-offered a done tag, "tagging" no-op'd, and it came
+  // back on refresh). `untagged` also drives the count + the tag action.
+  const offers = [...groups.values()]
+    .map((g) => ({ ...g, untagged: g.items.filter((it) => !hasPendingTag(it, g.series)) }))
+    .filter((g) => g.items.length >= 2 && g.untagged.length >= 1 && !dismissed.has(g.series.toLowerCase()));
   if (offers.length === 0) return null;
   return (
     <>
@@ -3796,14 +3860,24 @@ function SeriesBanner({ slug, items }: { slug: string; items: ScanInboxItem[] })
         <div key={g.series} className="rounded-lg border border-cobble-300 dark:border-cobble-700/60 bg-cobble-50/70 dark:bg-cobble-950/20 px-3 py-2.5 flex items-center gap-3">
           <Sparkles size={15} className="text-accent shrink-0" />
           <div className="min-w-0 flex-1 text-sm text-content dark:text-mortar-100">
-            {g.items.length} item{g.items.length === 1 ? " is" : "s are"} part of the{" "}
-            <strong>"{g.series}"</strong> series.
-            <span className="text-muted"> Tag them all "{g.series}"?</span>
+            {g.untagged.length === g.items.length ? (
+              <>
+                {g.items.length} item{g.items.length === 1 ? " is" : "s are"} part of the{" "}
+                <strong>"{g.series}"</strong> series.
+                <span className="text-muted"> Tag them all "{g.series}"?</span>
+              </>
+            ) : (
+              <>
+                {g.untagged.length} of {g.items.length} <strong>"{g.series}"</strong>{" "}
+                {g.untagged.length === 1 ? "item isn't" : "items aren't"} tagged yet.
+                <span className="text-muted"> Tag {g.untagged.length === 1 ? "it" : "them"}?</span>
+              </>
+            )}
           </div>
           <button
             type="button"
             disabled={apply.isPending}
-            onClick={() => apply.mutate({ series: g.series, ids: g.items.map((i) => i.id) })}
+            onClick={() => apply.mutate({ series: g.series, ids: g.untagged.map((i) => i.id) })}
             className="shrink-0 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm font-medium disabled:opacity-50"
           >
             {apply.isPending ? "Tagging…" : "Tag series"}
@@ -4215,22 +4289,13 @@ function ConfirmForm({
         {hasLocations && (
           <label className="block">
             <div className={labelCls}>Location (optional)</div>
-            <select
-              value={locationId}
-              onChange={(e) => {
+            <LocationTreePicker
+              value={locationId || null}
+              onChange={(v) => {
                 setLocTouched(true);
-                setLocationId(e.target.value);
+                setLocationId(v ?? "");
               }}
-              className={inputCls}
-            >
-              <option value="">— none —</option>
-              {(locs.data?.items ?? []).map((l: Location) => (
-                <option key={l.id} value={l.id}>
-                  {"  ".repeat(l.depth)}
-                  {l.name}
-                </option>
-              ))}
-            </select>
+            />
           </label>
         )}
       </div>

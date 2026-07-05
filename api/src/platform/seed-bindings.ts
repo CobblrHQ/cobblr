@@ -58,6 +58,10 @@ async function topUpForModule(orgId: string, moduleName: string): Promise<number
  *  the module's manifest declares but the workspace doesn't have yet.
  *  Cheap — one query + N idempotent inserts per (org, module). */
 export async function backfillDefaultBindings(): Promise<number> {
+  // Historical top-up for orgs created before Phase 4 seeded bindings on signup.
+  // Same skip flag as the other historical boot passes — CI's pool is baked by
+  // current code (bindings already seeded), so this is redundant there.
+  if (process.env.COBBLR_SKIP_HISTORICAL_MIGRATIONS === "1") return 0;
   const rows = await meta
     .selectFrom("org_modules")
     .select(["org_id", "module_name"])

@@ -15,6 +15,7 @@ import { usePlatformWeb } from "./context";
 import type { PlatformFieldDef } from "./types";
 import { fieldControl } from "./fieldControl";
 import { FieldRenderer, boolLabel } from "./FieldRenderer";
+import { MarkdownEditor } from "./MarkdownEditor";
 import { relativeTime } from "./relativeTime";
 
 interface Props {
@@ -201,6 +202,9 @@ function FieldRow({
     ) : control === "checkbox" ? (
       // Boolean — a real checkbox, not a text box.
       <BoolRow def={def} value={value} onCommit={onCommit} />
+    ) : control === "markdown" ? (
+      // Rich text — the Markdown editor (Write/Preview split).
+      <MarkdownRow def={def} value={value} onCommit={onCommit} />
     ) : (
       // number / date / url / text
       <PlainRow
@@ -484,6 +488,38 @@ function BoolRow({
       <span className={"text-[11px] " + (checked ? "text-moss-600" : "text-faint dark:text-slate-500")}>
         {boolLabel(checked, def.choices)}
       </span>
+    </label>
+  );
+}
+
+/** A rich-text field — the Markdown editor. Keeps a local draft and commits the
+ *  Markdown string on blur (like PlainRow), so the panel doesn't refetch on
+ *  every keystroke. */
+function MarkdownRow({
+  def,
+  value,
+  onCommit,
+}: {
+  def: PlatformFieldDef;
+  value: unknown;
+  onCommit: (v: unknown) => void;
+}) {
+  const initial = value == null ? "" : String(value);
+  const [draft, setDraft] = useState(initial);
+  return (
+    <label className="block">
+      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+        {def.display_label}
+        {def.required ? <span className="text-ember-500"> *</span> : null}
+      </span>
+      <MarkdownEditor
+        value={draft}
+        ariaLabel={def.display_label}
+        onChange={setDraft}
+        onBlur={() => {
+          if (draft !== initial) onCommit(draft === "" ? null : draft);
+        }}
+      />
     </label>
   );
 }

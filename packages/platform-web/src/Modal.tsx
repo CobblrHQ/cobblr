@@ -143,11 +143,19 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
               )}
             </div>
             <button
+              type="button"
               onClick={onClose}
-              className="text-faint dark:text-slate-500 hover:text-content dark:hover:text-mortar-100 transition shrink-0"
+              aria-label="Close"
+              // Full 44×44 tap target: a bare 16px icon flush to the screen edge
+              // was unhittable on mobile (it sits in the browser's edge-swipe
+              // gutter, well under the ~44px touch minimum), trapping users in the
+              // modal with no way out. min-h/w-11 = 44px guarantees the WCAG 2.5.5
+              // target size regardless of icon size (p-2.5 alone left it at 38px);
+              // -m-1.5 pulls the box back so the centered icon stays aligned.
+              className="-m-1.5 inline-flex items-center justify-center min-h-11 min-w-11 rounded-lg text-faint dark:text-slate-500 hover:text-content dark:hover:text-mortar-100 hover:bg-mortar-100/60 dark:hover:bg-slate-800 transition shrink-0 touch-manipulation"
               title="Close"
             >
-              <X size={16} />
+              <X size={18} />
             </button>
           </div>
         )}

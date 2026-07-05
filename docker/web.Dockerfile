@@ -34,6 +34,7 @@ COPY modules/builds/package.json ./modules/builds/
 COPY modules/sales/package.json ./modules/sales/
 COPY modules/tracking/package.json ./modules/tracking/
 COPY modules/core-file-preview/package.json ./modules/core-file-preview/
+COPY modules/knowledge/package.json ./modules/knowledge/
 
 RUN corepack enable
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
@@ -54,6 +55,7 @@ COPY modules/builds ./modules/builds
 COPY modules/sales ./modules/sales
 COPY modules/tracking ./modules/tracking
 COPY modules/core-file-preview ./modules/core-file-preview
+COPY modules/knowledge ./modules/knowledge
 COPY web ./web
 
 # Build web from the workspace ROOT via --filter (NOT `pnpm run build` from inside

@@ -1242,10 +1242,20 @@ superAdminRouter.get("/barcode-cache", async (req, res, next) => {
 // The queue users submit into (POST /feedback). Reviewed + worked here.
 
 const UpdateFeedback = z.object({
-  // `backlog` = parked for a human to handle interactively later: OPEN (not
-  // dismissed like wontfix), but the autopilot + triage skip it (only
-  // new/triaged/in_progress are actionable). The "keep for human" lane.
-  status: z.enum(["new", "triaged", "in_progress", "backlog", "resolved", "wontfix"]).optional(),
+  // Status lanes:
+  //  - `awaiting_decision` = the autopilot posted a spec/question card and is
+  //    waiting on the author to choose (Build/Pursue/Pass/Backlog). OPEN + ACTIONABLE —
+  //    it stays in the working queue so it can't silently vanish; the autopilot
+  //    skips it (won't re-analyze / re-card). This is where "Analyze" items land
+  //    instead of `backlog`.
+  //  - `backlog` = parked for a human to handle interactively later: OPEN (not
+  //    dismissed like wontfix), but the autopilot + triage skip it. The
+  //    "keep for human, don't resurface" lane — ONLY the explicit 📥 Backlog
+  //    button (or a human) puts an item here, never the autopilot by default.
+  // Actionable set = new / triaged / in_progress / awaiting_decision.
+  status: z
+    .enum(["new", "triaged", "in_progress", "awaiting_decision", "backlog", "resolved", "wontfix"])
+    .optional(),
   admin_notes: z.string().max(5000).nullable().optional(),
   // When true, send the reporter an in-app notification (a "we looked at
   // this" / "it's fixed" reply). `reply_message` is the human note; falls
@@ -1559,6 +1569,16 @@ superAdminRouter.post("/feedback/append-dm", async (req, res, next) => {
       }
     }
     const urlFallback = parsed.data.images.length > 0 && stored.length === 0;
+    // Is this the user's FIRST-EVER DM? Drives a ONE-TIME scope note from the bot;
+    // every repeat DM just gets a 👀 (the full "logged + heads-up" reply every
+    // time was too much — the author). Counted BEFORE the insert so it excludes this one.
+    const priorDm = await meta
+      .selectFrom("feedback")
+      .select(({ fn }) => fn.countAll<number>().as("n"))
+      .where("user_id", "=", conn.user_id)
+      .where("origin", "=", "discord-dm")
+      .executeTakeFirst();
+    const firstDm = Number(priorDm?.n ?? 0) === 0;
     const row = await meta
       .insertInto("feedback")
       .values({
@@ -1584,7 +1604,7 @@ superAdminRouter.post("/feedback/append-dm", async (req, res, next) => {
       fields: parsed.data.from ? [{ name: "from", value: parsed.data.from, inline: true }] : undefined,
       images: oid ? stored.map((s) => ({ orgId: oid, fileId: s.file_id, name: s.name })) : undefined,
     });
-    res.status(201).json({ ok: true, feedback_id: row.id, created: true });
+    res.status(201).json({ ok: true, feedback_id: row.id, created: true, first_dm: firstDm });
   } catch (err) {
     next(err);
   }

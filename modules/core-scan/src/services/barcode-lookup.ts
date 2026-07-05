@@ -65,9 +65,15 @@ async function fetchJson(
 }
 
 async function tryUpcitemdb(upc: string): Promise<ProviderResult> {
+  // Paid key ⇒ the /prod endpoint (own quota); else the shared free /trial
+  // bucket (see the header comment). Same response shape either way.
+  const key = process.env.COBBLR_SCAN_UPCITEMDB_KEY?.trim();
   const { status, body } = await fetchJson(
-    `https://api.upcitemdb.com/prod/trial/lookup?upc=${encodeURIComponent(upc)}`,
+    key
+      ? `https://api.upcitemdb.com/prod/v1/lookup?upc=${encodeURIComponent(upc)}`
+      : `https://api.upcitemdb.com/prod/trial/lookup?upc=${encodeURIComponent(upc)}`,
     UPCITEMDB_TIMEOUT_MS,
+    key ? { user_key: key, key_type: "3scale" } : {},
   );
   // HTTP 429 = daily quota spent.
   if (status === 429) return { kind: "rate_limited", scope: "daily" };
@@ -271,6 +277,53 @@ export async function tryGoUpc(upc: string): Promise<ProviderResult> {
   }
 }
 
+// ── external-lookup gating (self-host privacy) ────────────────────────
+// A master switch + per-provider toggles/keys let an operator control exactly
+// which third-party barcode services this instance contacts, and supply API
+// keys where a provider offers one. See docs/SELF_HOSTING.md → Privacy.
+//   COBBLR_SCAN_EXTERNAL_LOOKUPS   master (default on); off = no third-party barcode calls
+//   COBBLR_SCAN_GOUPC_API_KEY      go-upc: set ⇒ official API (clean transport)
+//   COBBLR_SCAN_GOUPC              go-upc HTML scraper — default OFF (opt-in only)
+//   COBBLR_SCAN_UPCITEMDB / _KEY   upcitemdb (default on); key ⇒ paid endpoint
+//   COBBLR_SCAN_OPENFACTS          Open Facts trio (default on; free open data)
+//   COBBLR_SCAN_WEBSEARCH          DuckDuckGo web-search fallback (default on)
+export function envBool(name: string, dflt: boolean): boolean {
+  const v = process.env[name];
+  if (v === undefined || v.trim() === "") return dflt;
+  return !/^(false|0|off|no)$/i.test(v.trim());
+}
+export const externalLookupsEnabled = (): boolean => envBool("COBBLR_SCAN_EXTERNAL_LOOKUPS", true);
+export const webSearchEnabled = (): boolean => externalLookupsEnabled() && envBool("COBBLR_SCAN_WEBSEARCH", true);
+
+// go-upc OFFICIAL API — the clean transport (no scraping) when the operator
+// supplies a key. Same product target as the /search scrape, official endpoint.
+async function tryGoUpcApi(upc: string, key: string): Promise<ProviderResult> {
+  const { status, body } = await fetchJson(
+    `https://go-upc.com/api/v1/code/${encodeURIComponent(upc)}`,
+    12_000,
+    { authorization: `Bearer ${key}` },
+  );
+  if (status === 404) return { kind: "miss" };
+  if (status === 429) return { kind: "rate_limited", scope: "daily" };
+  const p = (body as { product?: Record<string, unknown> } | null)?.product;
+  if (!p) return { kind: "miss" };
+  const title = typeof p.name === "string" ? p.name.trim() : "";
+  if (!title) return { kind: "miss" };
+  return {
+    kind: "hit",
+    hit: {
+      source: "go-upc",
+      title,
+      brand: typeof p.brand === "string" ? p.brand : null,
+      model: null,
+      description: typeof p.description === "string" ? p.description : null,
+      category: typeof p.category === "string" ? p.category : null,
+      image_url: typeof p.imageUrl === "string" ? p.imageUrl : null,
+      raw: p,
+    },
+  };
+}
+
 // ── box-level resolver tier ───────────────────────────────────────────
 // When COBBLR_BARCODE_RESOLVER_URL is set, the shared resolver on the
 // host owns the whole provider chain — one go-upc politeness gate, one
@@ -374,17 +427,36 @@ export async function lookupBarcode(upc: string): Promise<BarcodeOutcome> {
     }
   }
 
-  // The authoritative tier. A busy crawl-delay slot or transport error
-  // throws → degrades to "no answer from go-upc" and the APIs decide.
-  const goRes = await tryGoUpc(norm).catch((): ProviderResult => ({ kind: "miss" }));
+  // Third-party direct lookups — master switch (self-host privacy). Off ⇒ no
+  // external barcode calls at all; only the cache + box resolver (above) answer.
+  if (!externalLookupsEnabled()) return { outcome: "miss" };
+
+  // go-upc tier. A supplied API key uses the OFFICIAL API (clean transport);
+  // otherwise the HTML scraper runs ONLY when explicitly opted in
+  // (COBBLR_SCAN_GOUPC) — OFF by default, so we never ship a scraper that runs
+  // unasked. A busy crawl-delay slot / transport error degrades to "no answer"
+  // and the API providers decide.
+  const goUpcKey = process.env.COBBLR_SCAN_GOUPC_API_KEY?.trim();
+  let goRes: ProviderResult = { kind: "miss" };
+  if (goUpcKey) {
+    goRes = await tryGoUpcApi(norm, goUpcKey).catch((): ProviderResult => ({ kind: "miss" }));
+  } else if (envBool("COBBLR_SCAN_GOUPC", false)) {
+    goRes = await tryGoUpc(norm).catch((): ProviderResult => ({ kind: "miss" }));
+  }
   if (goRes.kind === "hit") return { outcome: "hit", hit: goRes.hit };
 
-  const [upcRes, ...factsRes] = await Promise.all([
-    tryUpcitemdb(norm).catch((): ProviderResult => ({ kind: "miss" })),
-    ...OPEN_FACTS_DBS.map((db) =>
-      tryOpenFacts(norm, db.host, db.source).catch((): ProviderResult => ({ kind: "miss" })),
-    ),
-  ]);
+  // Fallback: upcitemdb ‖ Open Facts trio, each independently toggleable.
+  const upcP: Promise<ProviderResult> = envBool("COBBLR_SCAN_UPCITEMDB", true)
+    ? tryUpcitemdb(norm).catch((): ProviderResult => ({ kind: "miss" }))
+    : Promise.resolve({ kind: "miss" });
+  const factsP: Promise<ProviderResult[]> = envBool("COBBLR_SCAN_OPENFACTS", true)
+    ? Promise.all(
+        OPEN_FACTS_DBS.map((db) =>
+          tryOpenFacts(norm, db.host, db.source).catch((): ProviderResult => ({ kind: "miss" })),
+        ),
+      )
+    : Promise.resolve([]);
+  const [upcRes, factsRes] = await Promise.all([upcP, factsP]);
 
   if (upcRes.kind === "hit") return { outcome: "hit", hit: upcRes.hit };
   const factsHit = factsRes.find((r) => r.kind === "hit");

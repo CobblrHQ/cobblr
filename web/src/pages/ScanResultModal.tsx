@@ -12,6 +12,7 @@ import { Camera, Check, CheckCircle, MapPin, Minus, Plus, ScanLine, Sparkles, Tr
 import { Modal, useToast } from "@cobblr/platform-web";
 import { ApiError, api, type ScanCandidate, type ScanInboxItem, type TrackedMatch } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { CameraCaptureSheet } from "../components/CameraCaptureSheet";
 import { TrackedMatchBanner } from "../components/TrackedMatchBanner";
 import { AiOffMissHint, useAiStatus } from "./ScanPage";
 
@@ -32,6 +33,7 @@ export function ScanResultModal({
   scanAreaId,
   ensureBatchId,
   getFrameBlob,
+  getStream,
   scanTarget,
   onSaved,
   onClose,
@@ -52,6 +54,10 @@ export function ScanResultModal({
    *  item's own photo (shown beside the catalog image at triage). A promise
    *  because canvas.toBlob is async (reading a plain value lost the race). */
   getFrameBlob?: () => Promise<Blob | null> | null;
+  /** The live camera MediaStream (from the scanner page). When present, the
+   *  "Nice photo" button captures IN-APP off this stream via a drawer instead of
+   *  launching the iOS native camera. Absent (desktop / no camera) → native input. */
+  getStream?: () => MediaStream | null;
   scanTarget: CameraScanTarget;
   onSaved: (item: ScanInboxItem) => void;
   onClose: () => void;
@@ -250,17 +256,18 @@ export function ScanResultModal({
   // captures the product; we attach it and force the VISION identify (detached),
   // which overrides a junk/non-product barcode no source can fix. The poll above
   // (driven by `reading`) surfaces the corrected name a few seconds later.
-  const photoRef = useRef<HTMLInputElement>(null);
   const photoIdentify = useMutation({
-    mutationFn: async (file: File) => {
+    mutationFn: async (file: Blob) => {
       readingAnchor.current = item?.ai_suggested_at ?? null;
-      const f = await api.uploadFile(activeSlug, file);
+      const named = new File([file], `identify-${Date.now()}.jpg`, { type: "image/jpeg" });
+      const f = await api.uploadFile(activeSlug, named);
       return api.rerunScanAi(activeSlug, item!.id, undefined, undefined, undefined, f.id);
     },
     onMutate: () => setReading(true),
     onSuccess: (fresh) => {
       setItem(fresh);
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      setCaptureFor(null); // close the capture drawer
       toast.success("Reading the photo with AI…");
     },
     onError: (e) => {
@@ -269,18 +276,26 @@ export function ScanResultModal({
     },
   });
 
+  // In-app photo capture (shared CameraCaptureSheet). Both the catalog re-shoot
+  // ("Nice photo") and the re-identify ("Not it — photograph it") capture through
+  // the SAME drawer off the live scanner stream — never the iOS native camera on
+  // top of the running scanner. `captureFor` says which action the shot feeds.
+  const [captureFor, setCaptureFor] = useState<"nice" | "identify" | null>(null);
+  const [niceDone, setNiceDone] = useState(false);
   // "Take a nice picture" — a fresh capture becomes the DISPLAY/catalog image
   // (the identify photo is untouched). companion app's photo-roles, phone-first.
-  const niceRef = useRef<HTMLInputElement>(null);
   const nicePhoto = useMutation({
-    mutationFn: async (file: File) => {
-      const f = await api.uploadFile(activeSlug, file);
+    mutationFn: async (file: Blob) => {
+      const named = new File([file], `nice-${Date.now()}.jpg`, { type: "image/jpeg" });
+      const f = await api.uploadFile(activeSlug, named);
       return api.setScanCatalogFile(activeSlug, item!.id, f.id);
     },
     onSuccess: (fresh) => {
-      setItem(fresh);
+      setItem(fresh); // swaps the modal's catalog image inline
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-      toast.success("Catalog photo replaced with your shot");
+      setCaptureFor(null); // close the drawer
+      setNiceDone(true); // brief inline "updated" confirm (replaces the toast)
+      window.setTimeout(() => setNiceDone(false), 2200);
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
@@ -307,8 +322,14 @@ export function ScanResultModal({
     commit.isPending || save.isPending || discard.isPending || rerunWrong.isPending || photoIdentify.isPending;
 
   return (
+    <>
     <Modal open onClose={onClose} title="Scanned" size="sm">
       <div className="space-y-4">
+        {niceDone && (
+          <div className="flex items-center gap-1.5 rounded-md bg-emerald-50 dark:bg-emerald-900/30 border border-emerald-300 dark:border-emerald-700 px-2.5 py-1.5 text-xs text-emerald-700 dark:text-emerald-300">
+            <CheckCircle size={13} /> Catalog photo updated with your shot.
+          </div>
+        )}
         <div className="flex items-center gap-3">
           <div className="w-24 h-24 shrink-0 rounded-md overflow-hidden border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 flex items-center justify-center">
             {catalogImg ? (
@@ -475,7 +496,7 @@ export function ScanResultModal({
               <button
                 type="button"
                 disabled={busy}
-                onClick={() => photoRef.current?.click()}
+                onClick={() => setCaptureFor("identify")}
                 className="inline-flex items-center gap-1 text-xs text-red-600 dark:text-red-400 hover:underline disabled:opacity-40"
               >
                 <Camera size={13} className={photoIdentify.isPending ? "animate-pulse" : ""} /> Not it —
@@ -485,37 +506,13 @@ export function ScanResultModal({
                 <button
                   type="button"
                   disabled={busy || nicePhoto.isPending}
-                  onClick={() => niceRef.current?.click()}
+                  onClick={() => setCaptureFor("nice")}
                   title="Take a nice picture — it becomes the catalog/display photo"
                   className="inline-flex items-center gap-1 text-xs text-muted hover:text-content disabled:opacity-40"
                 >
                   <Camera size={13} className={nicePhoto.isPending ? "animate-pulse" : ""} /> Nice photo
                 </button>
               )}
-              <input
-                ref={photoRef}
-                type="file"
-                accept="image/*"
-                capture="environment"
-                hidden
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  e.currentTarget.value = "";
-                  if (f) photoIdentify.mutate(f);
-                }}
-              />
-              <input
-                ref={niceRef}
-                type="file"
-                accept="image/*"
-                capture="environment"
-                hidden
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  e.currentTarget.value = "";
-                  if (f) nicePhoto.mutate(f);
-                }}
-              />
             </>
           )}
           <button
@@ -529,5 +526,14 @@ export function ScanResultModal({
         </div>
       </div>
     </Modal>
+    <CameraCaptureSheet
+      open={captureFor !== null}
+      title={captureFor === "nice" ? "Nice photo" : "Photograph the item"}
+      stream={getStream?.() ?? null}
+      busy={nicePhoto.isPending || photoIdentify.isPending}
+      onCapture={(blob) => (captureFor === "nice" ? nicePhoto.mutate(blob) : photoIdentify.mutate(blob))}
+      onClose={() => setCaptureFor(null)}
+    />
+    </>
   );
 }

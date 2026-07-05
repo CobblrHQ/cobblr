@@ -710,13 +710,15 @@ const FieldRenderer = z.enum([
   "year",
   "boolean",
   "code",
+  "markdown",
+  "qr",
 ]);
 
 const FieldDefCreate = z.object({
   entity_kind: z.string(),
   name: z.string().regex(/^[a-z][a-z0-9_]*$/),
   display_label: z.string().min(1),
-  type: z.enum(["text", "number", "boolean", "date", "url", "computed"]),
+  type: z.enum(["text", "number", "boolean", "date", "url", "richtext", "computed"]),
   required: z.boolean().optional(),
   position: z.number().int().optional(),
   /** When type='text', renders as a dropdown of these choices. */

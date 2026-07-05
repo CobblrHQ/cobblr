@@ -165,7 +165,7 @@ const ENDS_WITH_NUMBER = /\d\s*$/;
 // form (no nested modal; the author). Containers auto-append a globally-unique number
 // so "Bin" becomes "Bin 17". Mirrors the full form on /configuration/locations
 // but trimmed for in-flight use.
-function QuickCreateLocation({
+export function QuickCreateLocation({
   slug,
   all,
   defaultKind,

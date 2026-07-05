@@ -60,6 +60,7 @@ COPY modules/core-mobility/package.json ./modules/core-mobility/
 COPY modules/core-file-preview/package.json ./modules/core-file-preview/
 COPY modules/bricklink-connector/package.json ./modules/bricklink-connector/
 COPY modules/core-print/package.json ./modules/core-print/
+COPY modules/knowledge/package.json ./modules/knowledge/
 # v0.3 sandbox SDK + AS sample module. Workspace-resolved so the
 # AS author repo (sandboxed-modules/hello-as) sees the SDK at build
 # time. The api runtime doesn't import these — only the AS toolchain.
@@ -85,83 +86,11 @@ COPY packages/platform-web ./packages/platform-web
 # (they do). Ordered stable-first / actively-developed-last so a typical
 # commit re-runs just the last few layers. When adding a module, drop its
 # COPY+RUN pair in (hot ones near the bottom).
-COPY modules/labels ./modules/labels
-RUN pnpm --filter @cobblr/labels run --if-present build
-COPY modules/projects ./modules/projects
-RUN pnpm --filter @cobblr/projects run --if-present build
-COPY modules/purchases ./modules/purchases
-RUN pnpm --filter @cobblr/purchases run --if-present build
-COPY modules/machines ./modules/machines
-RUN pnpm --filter @cobblr/machines run --if-present build
-COPY modules/assets ./modules/assets
-RUN pnpm --filter @cobblr/assets run --if-present build
-COPY modules/core-recurrence ./modules/core-recurrence
-RUN pnpm --filter @cobblr/core-recurrence run --if-present build
-COPY modules/core-activity-log ./modules/core-activity-log
-RUN pnpm --filter @cobblr/core-activity-log run --if-present build
-COPY modules/core-notifications ./modules/core-notifications
-RUN pnpm --filter @cobblr/core-notifications run --if-present build
-COPY modules/core-healthcheck ./modules/core-healthcheck
-RUN pnpm --filter @cobblr/core-healthcheck run --if-present build
-COPY modules/core-tags ./modules/core-tags
-RUN pnpm --filter @cobblr/core-tags run --if-present build
-COPY modules/core-views ./modules/core-views
-RUN pnpm --filter @cobblr/core-views run --if-present build
-COPY modules/core-files ./modules/core-files
-RUN pnpm --filter @cobblr/core-files run --if-present build
-COPY modules/core-search ./modules/core-search
-RUN pnpm --filter @cobblr/core-search run --if-present build
-COPY modules/core-public-surfaces ./modules/core-public-surfaces
-RUN pnpm --filter @cobblr/core-public-surfaces run --if-present build
-COPY modules/core-openapi ./modules/core-openapi
-RUN pnpm --filter @cobblr/core-openapi run --if-present build
-COPY modules/core-queue ./modules/core-queue
-RUN pnpm --filter @cobblr/core-queue run --if-present build
-COPY modules/core-locations ./modules/core-locations
-RUN pnpm --filter @cobblr/core-locations run --if-present build
-COPY modules/core-catalogs ./modules/core-catalogs
-RUN pnpm --filter @cobblr/core-catalogs run --if-present build
-COPY modules/core-labels-qr ./modules/core-labels-qr
-RUN pnpm --filter @cobblr/core-labels-qr run --if-present build
-COPY modules/core-integrations ./modules/core-integrations
-RUN pnpm --filter @cobblr/core-integrations run --if-present build
-COPY modules/core-maintenance ./modules/core-maintenance
-RUN pnpm --filter @cobblr/core-maintenance run --if-present build
-COPY modules/core-units ./modules/core-units
-RUN pnpm --filter @cobblr/core-units run --if-present build
-COPY modules/core-templates ./modules/core-templates
-RUN pnpm --filter @cobblr/core-templates run --if-present build
-COPY modules/core-file-preview ./modules/core-file-preview
-RUN pnpm --filter @cobblr/core-file-preview run --if-present build
-COPY modules/bricklink-connector ./modules/bricklink-connector
-RUN pnpm --filter @cobblr/bricklink-connector run --if-present build
-COPY modules/core-print ./modules/core-print
-RUN pnpm --filter @cobblr/core-print run --if-present build
-COPY modules/core-devices ./modules/core-devices
-RUN pnpm --filter @cobblr/core-devices run --if-present build
-COPY modules/core-mobility ./modules/core-mobility
-RUN pnpm --filter @cobblr/core-mobility run --if-present build
-# ── actively-developed (hot) modules last — their edits rebuild fewest layers ──
-COPY modules/digifab ./modules/digifab
-RUN pnpm --filter @cobblr/digifab run --if-present build
-COPY modules/inventory ./modules/inventory
-RUN pnpm --filter @cobblr/inventory run --if-present build
-COPY modules/lists ./modules/lists
-RUN pnpm --filter @cobblr/lists run --if-present build
-COPY modules/builds ./modules/builds
-RUN pnpm --filter @cobblr/builds run --if-present build
-COPY modules/sales ./modules/sales
-RUN pnpm --filter @cobblr/sales run --if-present build
-COPY modules/tracking ./modules/tracking
-RUN pnpm --filter @cobblr/tracking run --if-present build
-COPY modules/core-scan ./modules/core-scan
-RUN pnpm --filter @cobblr/core-scan run --if-present build
-COPY modules/core-apps ./modules/core-apps
-RUN pnpm --filter @cobblr/core-apps run --if-present build
-COPY modules/core-ai ./modules/core-ai
-RUN pnpm --filter @cobblr/core-ai run --if-present build
-COPY modules/core-authoring ./modules/core-authoring
-RUN pnpm --filter @cobblr/core-authoring run --if-present build
+# All module source in one layer. The per-module tsc builds are gone — a single
+# esbuild pass (below) transpiles every module + the api in ~seconds, so the
+# fine-grained per-module cache layers no longer earn their keep. Registry
+# modules (install-registry-modules.mjs) land after this and are built too.
+COPY modules ./modules
 
 # Marketplace v2: fetch/verify registry-sourced modules + record the
 # manifest of every baked-in marketplace module. `source: "vendored"`
@@ -187,12 +116,16 @@ COPY api ./api
 # the frozen pre-cutover history.
 COPY CHANGELOG.md ./CHANGELOG.md
 COPY changelog.d ./changelog.d
-# Build api from the workspace ROOT via --filter. Running `pnpm run build` from
-# inside /app/api makes pnpm re-verify deps and RE-INSTALL — re-downloading the
-# whole store (this step has no store cache mount), which is slow and once hung
-# the build outright. --filter from the root just runs tsc against the
-# already-installed tree.
-RUN pnpm --filter @cobblr/api run build
+# Build the api + EVERY module in one esbuild transpile-only pass (~seconds vs
+# the ~40 sequential `tsc` builds this replaced — those were the dominant cost of
+# this image, ~90s). Same dist/*.js layout tsc produced; imports stay external and
+# resolve at runtime identically. Safe because: (1) the CI `typecheck` job runs
+# real `tsc --noEmit` across the workspace and gates every deploy, so type errors
+# never reach here; (2) the CI `test` job builds with this EXACT script (esbuild)
+# and runs all 966 integration tests green — so prod runs proven-equivalent code;
+# (3) tsconfig sets isolatedModules, so per-file transpile is sound. See
+# scripts/fast-build.mjs. (Runs from /app so it discovers modules/* + api.)
+RUN node scripts/fast-build.mjs
 
 # ─── runtime ─────────────────────────────────────────────────────────
 FROM node:22-alpine AS runtime

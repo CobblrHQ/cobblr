@@ -20,6 +20,9 @@ export { CustomFieldsPanel, RelationSelect } from "./CustomFieldsPanel";
 export { fieldControl, type FieldControl } from "./fieldControl";
 export { relativeTime } from "./relativeTime";
 export { FieldRenderer, boolLabel, NoImage } from "./FieldRenderer";
+export { Markdown, stripMarkdown } from "./Markdown";
+export { MarkdownEditor } from "./MarkdownEditor";
+export { QrCode } from "./QrCode";
 export {
   FilePreview,
   registerFilePreviewRenderer,

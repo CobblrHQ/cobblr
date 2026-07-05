@@ -14,6 +14,7 @@
     "@cobblr/builds": "workspace:*",
     "@cobblr/core-file-preview": "workspace:*",
     "@cobblr/inventory": "workspace:*",
+    "@cobblr/knowledge": "workspace:*",
     "@cobblr/labels": "workspace:*",
     "@cobblr/lists": "workspace:*",
     "@cobblr/platform-web": "workspace:*",

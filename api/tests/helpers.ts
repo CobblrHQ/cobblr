@@ -67,7 +67,31 @@ async function signupOnce(body: unknown): Promise<Response> {
   throw lastErr instanceof Error ? lastErr : new Error("signup failed after retries");
 }
 
+/** Pool fast path: check out a pre-provisioned org instead of provisioning one.
+ *  Returns null when the pool is off, empty, or the request fails — the caller
+ *  then falls back to a real signup, so the pool is a pure optimization. */
+async function tryCheckoutPoolOrg(): Promise<TestSession | null> {
+  if (!process.env.COBBLR_TEST_ORG_POOL) return null;
+  try {
+    const res = await fetch(`${BASE}/api/v1/test-support/checkout-org`, { method: "POST" });
+    if (!res.ok) return null; // 409 pool_exhausted → fall back to real signup
+    const j = (await res.json()) as { token: string; userId: string; orgId: string; slug: string };
+    return { token: j.token, userId: j.userId, orgId: j.orgId, slug: j.slug };
+  } catch {
+    return null;
+  }
+}
+
 export async function signupFreshOrg(label: string): Promise<TestSession> {
+  // Pool fast path — a checked-out org is already all-modules-provisioned.
+  const pooled = await tryCheckoutPoolOrg();
+  if (pooled) {
+    registerOrgForTeardown({ token: pooled.token, slug: pooled.slug });
+    // Cheap top-up: no-op when the pooled org already has every module (the
+    // common case); self-heals a pool baked before a new module was added.
+    await enableAllModulesForTests(pooled);
+    return pooled;
+  }
   // Random suffix per signup so tests can run in parallel.
   const suffix = Math.random().toString(36).slice(2, 8);
   const body = {
@@ -103,13 +127,21 @@ export async function signupFreshOrg(label: string): Promise<TestSession> {
   return session;
 }
 
-/** Best-effort: enable every registered module that isn't already on
- *  for the test org. Single pass in list order; failures (e.g. a
- *  specialisation whose dep hasn't been reached yet) are ignored —
- *  the base modules every test relies on have no deps. Exported so
- *  tests that create SECONDARY workspaces (POST /orgs) — which signup
- *  no longer auto-enables under blank-slate onboarding — can turn their
- *  modules on too. */
+/** Enable every registered module that isn't already on for the test org.
+ *  Exported so tests that create SECONDARY workspaces (POST /orgs) — which
+ *  signup no longer auto-enables under blank-slate onboarding — can turn
+ *  their modules on too.
+ *
+ *  This is the suite's dominant cost: it used to fire ~29 `/enable` calls
+ *  STRICTLY SEQUENTIALLY per org, and provisioning is ~63% of CI runtime
+ *  (profiled 2026-07-05: 174 orgs × 5.55s). Now it enables in capped-
+ *  concurrency WAVES: fire a batch, keep the ones that failed (usually an
+ *  unmet dependency — "enable X first" — or transient Postgres catalog
+ *  contention from concurrent DDL on one tenant DB), and retry them next
+ *  wave once their dep is on / the contention clears. Converges to the same
+ *  full enable-able set as the old single pass, just overlapped. The cap
+ *  (5, matching the api's per-tenant pool) keeps concurrent DDL bounded, and
+ *  the retry naturally absorbs the occasional contention failure. */
 export async function enableAllModulesForTests(session: {
   token: string;
   slug: string;
@@ -121,19 +153,38 @@ export async function enableAllModulesForTests(session: {
   const { items } = (await res.json()) as {
     items: { name: string; enabled: boolean }[];
   };
-  for (const m of items) {
-    if (m.enabled) continue;
-    await fetch(
-      `${BASE}/api/v1/orgs/${session.slug}/modules/${m.name}/enable`,
-      {
+  let remaining = items.filter((m) => !m.enabled).map((m) => m.name);
+  if (remaining.length === 0) return;
+
+  const enableOne = async (name: string): Promise<boolean> => {
+    try {
+      const r = await fetch(`${BASE}/api/v1/orgs/${session.slug}/modules/${name}/enable`, {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${session.token}`,
-          "Content-Type": "application/json",
-        },
+        headers: { Authorization: `Bearer ${session.token}`, "Content-Type": "application/json" },
         body: "{}",
-      },
-    ).catch(() => {});
+      });
+      return r.ok; // non-2xx (e.g. unmet dep) → retry in the next wave
+    } catch {
+      return false;
+    }
+  };
+
+  const CAP = 5;
+  const MAX_WAVES = 10; // dep chains are ≤2 deep; extra waves only absorb retries
+  for (let wave = 0; wave < MAX_WAVES && remaining.length > 0; wave++) {
+    const failed: string[] = [];
+    let idx = 0;
+    const batch = remaining;
+    await Promise.all(
+      Array.from({ length: Math.min(CAP, batch.length) }, async () => {
+        while (idx < batch.length) {
+          const name = batch[idx++]!;
+          if (!(await enableOne(name))) failed.push(name);
+        }
+      }),
+    );
+    if (failed.length === batch.length) break; // no progress → genuinely un-enable-able; stop (old code ignored these too)
+    remaining = failed;
   }
 }
 

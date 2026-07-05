@@ -63,6 +63,22 @@ export interface CoreAiDB {
   core_ai_capability_defaults: CoreAiCapabilityDefaultsTable;
   core_ai_calls: CoreAiCallsTable;
   core_ai_cache: CoreAiCacheTable;
+  core_ai_basics: CoreAiBasicsTable;
+}
+
+// Ask Cobblr "basic mode" per-workspace rows: overrides of built-in rules
+// (builtin_key set) + net-new custom rules (builtin_key null). Built-in
+// defaults live in code (basics-catalog.ts); this table only stores changes.
+export interface CoreAiBasicsTable {
+  id: Generated<string>;
+  builtin_key: string | null;
+  intent: string;
+  keywords: Generated<string[]>; // jsonb array of trigger phrases
+  reply: string;
+  enabled: Generated<boolean>;
+  position: Generated<number>;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
 }
 
 export type OrgRole = "owner" | "admin" | "member" | "guest";

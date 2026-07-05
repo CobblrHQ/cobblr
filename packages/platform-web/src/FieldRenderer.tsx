@@ -16,6 +16,8 @@
 import { useState } from "react";
 import { Check, ExternalLink, ImageOff, X } from "lucide-react";
 import type { FieldRendererId } from "./types";
+import { Markdown, stripMarkdown } from "./Markdown";
+import { QrCode } from "./QrCode";
 
 interface Props {
   fieldName: string;
@@ -60,8 +62,10 @@ export function FieldRenderer({
     return <span className="text-faint dark:text-slate-600">—</span>;
   }
   // A boolean field renders as a labelled yes/no even without an explicit
-  // renderer — the text default would show the raw "true"/"false".
-  const r = renderer ?? (type === "boolean" ? "boolean" : "text");
+  // renderer — the text default would show the raw "true"/"false". A richtext
+  // field always renders as Markdown, even if no renderer was stamped.
+  const r =
+    renderer ?? (type === "boolean" ? "boolean" : type === "richtext" ? "markdown" : "text");
 
   switch (r) {
     case "color-hex":
@@ -84,6 +88,17 @@ export function FieldRenderer({
           {String(value)}
         </code>
       );
+    case "markdown":
+      // Block context (detail hero) → full Markdown; inline (table/list cell) →
+      // a one-line plain-text digest, since a rendered block wrecks a row.
+      return size === "block" ? (
+        <Markdown>{String(value)}</Markdown>
+      ) : (
+        <span className="line-clamp-1">{stripMarkdown(String(value))}</span>
+      );
+    case "qr":
+      // A scannable QR of the value — larger in block context, thumbnail inline.
+      return <QrCode value={String(value)} size={size === "block" ? 128 : 44} />;
     case "text":
     default:
       return <span>{String(value)}</span>;

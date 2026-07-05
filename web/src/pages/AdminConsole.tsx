@@ -2000,8 +2000,12 @@ function AnnouncementsTab() {
   );
 }
 
-const FEEDBACK_STATUSES = ["new", "triaged", "in_progress", "backlog", "resolved", "wontfix"] as const;
+const FEEDBACK_STATUSES = ["new", "triaged", "in_progress", "awaiting_decision", "backlog", "resolved", "wontfix"] as const;
 const FEEDBACK_FILTERS = ["all", ...FEEDBACK_STATUSES] as const;
+// `awaiting_decision` = the autopilot posted a spec/question card; OPEN + in the
+// working queue (not hidden in backlog) until the author picks Build/Pursue/Pass/Backlog.
+const FEEDBACK_STATUS_LABEL: Record<string, string> = { awaiting_decision: "awaiting you" };
+const fbStatusLabel = (s: string) => FEEDBACK_STATUS_LABEL[s] ?? s.replace(/_/g, " ");
 const FEEDBACK_SORTS = ["priority", "recent"] as const;
 type FeedbackSort = (typeof FEEDBACK_SORTS)[number];
 const FEEDBACK_FILTER_KEY = "cobblr.admin.feedback.filter";
@@ -2077,7 +2081,7 @@ function FeedbackTab() {
                 : "text-faint hover:text-accent")
             }
           >
-            {s}
+            {fbStatusLabel(s)}
           </button>
         ))}
         <div className="flex-1" />
@@ -2227,7 +2231,7 @@ function FeedbackCard({
         >
           {FEEDBACK_STATUSES.map((s) => (
             <option key={s} value={s}>
-              {s}
+              {fbStatusLabel(s)}
             </option>
           ))}
         </select>

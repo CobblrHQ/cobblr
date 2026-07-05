@@ -851,6 +851,52 @@ importers:
         specifier: ^5.7.2
         version: 5.9.3
 
+  modules/knowledge:
+    dependencies:
+      '@cobblr/platform-contract':
+        specifier: workspace:*
+        version: link:../../packages/platform-contract
+      express:
+        specifier: ^4.21.2
+        version: 4.22.2
+      kysely:
+        specifier: ^0.27.5
+        version: 0.27.6
+      multer:
+        specifier: ^2.0.0
+        version: 2.1.1
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
+    devDependencies:
+      '@cobblr/platform-web':
+        specifier: workspace:*
+        version: link:../../packages/platform-web
+      '@tanstack/react-query':
+        specifier: ^5.62.7
+        version: 5.100.10(react@19.2.6)
+      '@types/express':
+        specifier: ^4.17.21
+        version: 4.17.25
+      '@types/multer':
+        specifier: ^1.4.12
+        version: 1.4.13
+      '@types/react':
+        specifier: ^19.0.2
+        version: 19.2.14
+      lucide-react:
+        specifier: ^0.469.0
+        version: 0.469.0(react@19.2.6)
+      react:
+        specifier: ^19.0.0
+        version: 19.2.6
+      react-router-dom:
+        specifier: ^7.1.1
+        version: 7.15.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
   modules/labels:
     dependencies:
       '@cobblr/platform-contract':
@@ -1210,6 +1256,9 @@ importers:
       '@cobblr/inventory':
         specifier: workspace:*
         version: link:../modules/inventory
+      '@cobblr/knowledge':
+        specifier: workspace:*
+        version: link:../modules/knowledge
       '@cobblr/labels':
         specifier: workspace:*
         version: link:../modules/labels

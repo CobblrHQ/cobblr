@@ -9,7 +9,15 @@
 
 services:
   db:
-    image: postgres:17-alpine
+    # Custom image = postgres:17-alpine + pgvector (docker/db.Dockerfile).
+    # Same base / major / libc as stock 17-alpine → drop-in for the existing
+    # bind-mounted data dir; adds the `vector` type for the knowledge base's
+    # semantic search (and pgvector-backed search generally). Dev builds it
+    # locally on first `compose up`; prod pins the CI-built registry image
+    # (deploy/docker-compose.prod.yml).
+    build:
+      context: .
+      dockerfile: docker/db.Dockerfile
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-cobblr}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cobblr}
@@ -71,6 +79,18 @@ services:
       # Empty = core-scan resolves directly as before.
       COBBLR_BARCODE_RESOLVER_URL: ${COBBLR_BARCODE_RESOLVER_URL:-}
       COBBLR_BARCODE_RESOLVER_TOKEN: ${COBBLR_BARCODE_RESOLVER_TOKEN:-}
+      # Third-party barcode lookups (core-scan): master switch + per-provider
+      # toggles + API keys — see docs/SELF_HOSTING.md → Privacy. All optional;
+      # unset = sensible defaults (go-upc scraper OFF, upcitemdb/OpenFacts/web
+      # search ON). Set COBBLR_SCAN_EXTERNAL_LOOKUPS=false for zero outbound
+      # barcode calls.
+      COBBLR_SCAN_EXTERNAL_LOOKUPS: ${COBBLR_SCAN_EXTERNAL_LOOKUPS:-}
+      COBBLR_SCAN_GOUPC: ${COBBLR_SCAN_GOUPC:-}
+      COBBLR_SCAN_GOUPC_API_KEY: ${COBBLR_SCAN_GOUPC_API_KEY:-}
+      COBBLR_SCAN_UPCITEMDB: ${COBBLR_SCAN_UPCITEMDB:-}
+      COBBLR_SCAN_UPCITEMDB_KEY: ${COBBLR_SCAN_UPCITEMDB_KEY:-}
+      COBBLR_SCAN_OPENFACTS: ${COBBLR_SCAN_OPENFACTS:-}
+      COBBLR_SCAN_WEBSEARCH: ${COBBLR_SCAN_WEBSEARCH:-}
       # Instance kill-switch for ALL built-in LLM features. Default
       # "true". Set "false" for a guaranteed no-outbound-LLM deploy —
       # platform().ai.invoke() then refuses every call and AI features

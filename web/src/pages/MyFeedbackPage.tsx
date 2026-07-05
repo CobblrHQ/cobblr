@@ -14,6 +14,8 @@ const STATUS_LABEL: Record<string, string> = {
   new: "Received",
   triaged: "Received",
   in_progress: "In progress",
+  awaiting_decision: "In progress",
+  backlog: "Planned",
   resolved: "Resolved",
   wontfix: "Closed",
 };

@@ -997,6 +997,7 @@ export function ScanCameraPage() {
           scanAreaId={areaId}
           ensureBatchId={ensureBatchId}
           getFrameBlob={() => frameBlobRef.current}
+          getStream={() => streamRef.current}
           scanTarget={{
             into: params.get("into"),
             module: params.get("module"),

@@ -1,15 +1,17 @@
 // Guard: every module under modules/ must be copied into docker/api.Dockerfile.
 //
-// The api image lists modules EXPLICITLY (one `COPY modules/<name> ...` per
-// module) rather than `COPY modules/`, for build-layer caching. The trap: a
-// new module builds fine, typechecks, passes CI, and runs locally (the loader
-// scans the modules/ dir on disk) — but is INVISIBLE in the built image, so it
-// silently never loads in prod. (maker-scan hit exactly this: 35 modules
-// loaded instead of 36, no error anywhere.)
+// The trap this catches: a new module builds fine, typechecks, passes CI, and
+// runs locally (the loader scans the modules/ dir on disk) — but is INVISIBLE in
+// the built image, so it silently never loads in prod. (maker-scan hit exactly
+// this: 35 modules loaded instead of 36, no error anywhere.)
 //
-// This lint compares the modules/ directory against the Dockerfile's COPY
-// lines and fails if any module is missing the SOURCE copy (the one that
-// actually puts the module in the image). Run: npx tsx scripts/lint-dockerfile-modules.ts
+// The image now copies the WHOLE modules dir in one layer (`COPY modules
+// ./modules`) and builds every module with one esbuild pass — so no module can be
+// forgotten, and this lint is satisfied by that single blanket copy. (It used to
+// require an explicit `COPY modules/<name> …` per module, for per-module tsc
+// cache layers; those are gone.) If the blanket copy is ever removed in favour of
+// explicit per-module copies again, this falls back to checking each one.
+// Run: npx tsx scripts/lint-dockerfile-modules.ts
 
 import { readdirSync, statSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -22,6 +24,15 @@ function escapeRegex(s: string): string {
 }
 
 const df = readFileSync(DOCKERFILE, "utf8");
+
+// Blanket copy of the whole dir → every module (present + future) is in the image.
+const blanketCopy = /^COPY\s+modules\s+\.\/modules\b/m;
+if (blanketCopy.test(df)) {
+  console.log(
+    `dockerfile-modules lint: whole modules/ dir copied via blanket \`COPY modules ./modules\` — all modules covered ✓`,
+  );
+  process.exit(0);
+}
 
 const modules = readdirSync(MODULES_DIR).filter((d) => {
   if (d.startsWith(".")) return false;

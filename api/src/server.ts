@@ -20,6 +20,7 @@ import { requestGuardMiddleware } from "./platform/hosted-seams.js";
 import { publicRouter } from "./routes/public.js";
 import { changelogRouter } from "./routes/changelog.js";
 import { meRouter } from "./routes/me.js";
+import { testSupportRouter } from "./routes/test-support.js";
 import { connectionsRouter, workspaceAiSharesRouter } from "./routes/connections.js";
 import { modulesRouter } from "./routes/modules.js";
 import { orgsRouter } from "./routes/orgs.js";
@@ -144,6 +145,9 @@ export function createApp(): AppHandles {
   v1.use(requestGuardMiddleware());
 
   v1.use("/auth", authRouter);
+  // TEST-ONLY: org-pool checkout endpoints, mounted ONLY under the flag (never
+  // in prod — the route mints tokens). See routes/test-support.ts.
+  if (env.COBBLR_TEST_ORG_POOL) v1.use(testSupportRouter);
   v1.use(meRouter);
   v1.use(connectionsRouter);
   v1.use(ravelryRouter);

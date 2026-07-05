@@ -39,6 +39,40 @@ export class ApiError extends Error {
   }
 }
 
+// ── Connectivity signal ──────────────────────────────────────────────────
+// One app-wide "can we reach the API?" flag. request() flips it: a fetch
+// rejection (offline / server unreachable) or a gateway 5xx (502/503/504 =
+// api/proxy down) marks us DOWN; any real HTTP response — even a 4xx — proves
+// connectivity and clears it. <ConnectivityBanner> subscribes so a service
+// outage shows one calm "reconnecting…" bar instead of raw per-request errors.
+type ConnListener = (down: boolean) => void;
+const connListeners = new Set<ConnListener>();
+let apiDown = false;
+function setApiDown(down: boolean): void {
+  if (down === apiDown) return;
+  apiDown = down;
+  connListeners.forEach((l) => l(down));
+}
+export function subscribeConnectivity(listener: ConnListener): () => void {
+  connListeners.add(listener);
+  listener(apiDown);
+  return () => {
+    connListeners.delete(listener);
+  };
+}
+/** Liveness ping the banner polls while down, so it auto-clears on recovery
+ *  even when the user is idle (no in-flight request to flip the flag). */
+export async function pingHealth(): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/v1/healthz`, { cache: "no-store" });
+    setApiDown(res.status >= 502 && res.status <= 504);
+    return res.ok;
+  } catch {
+    setApiDown(true);
+    return false;
+  }
+}
+
 async function request<T>(
   method: string,
   path: string,
@@ -53,11 +87,22 @@ async function request<T>(
   const impToken = getImpersonationToken();
   if (impToken) headers["X-Impersonation"] = impToken;
 
-  const res = await fetch(`/api/v1${path}`, {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`/api/v1${path}`, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch {
+    // fetch only rejects on a network-level failure (offline, server
+    // unreachable, DNS) — raise the app-wide "down" banner + a clear error.
+    setApiDown(true);
+    throw new ApiError(0, "network_error", "Can't reach Cobblr. Check your connection and try again.");
+  }
+  // A gateway 5xx = proxy up but api/web down; any other response (even a 4xx)
+  // proves connectivity and clears the banner.
+  setApiDown(res.status >= 502 && res.status <= 504);
 
   // Always try to parse JSON — our error responses are always JSON.
   // 204 is no-content; some 201s also send empty bodies (e.g.
@@ -2671,9 +2716,18 @@ export const api = {
     request<AiStatus>("GET", `/orgs/${slug}/ai-status`),
 
   // Ask Cobblr "basic mode" — the no-AI floor. When AI is off, the chat asks the
-  // server to match a message against the built-in catalog (no model, no cost).
+  // server to match a message against the effective ruleset (no model, no cost).
   answerBasic: (slug: string, message: string) =>
     request<BasicAnswer>("POST", `/orgs/${slug}/modules/core-ai/basics/answer`, { message }),
+  // The effective ruleset (built-ins overlaid with per-workspace overrides + customs).
+  listBasics: (slug: string) =>
+    request<{ rules: BasicRuleRow[] }>("GET", `/orgs/${slug}/modules/core-ai/basics`),
+  createBasic: (slug: string, body: BasicRuleInput & { builtin_key?: string }) =>
+    request<BasicRuleRaw>("POST", `/orgs/${slug}/modules/core-ai/basics`, body),
+  updateBasic: (slug: string, id: string, body: Partial<BasicRuleInput> & { position?: number }) =>
+    request<BasicRuleRaw>("PATCH", `/orgs/${slug}/modules/core-ai/basics/${id}`, body),
+  deleteBasic: (slug: string, id: string) =>
+    request<void>("DELETE", `/orgs/${slug}/modules/core-ai/basics/${id}`),
 
   // core-ai — provider config + capability defaults + usage. See
   // docs/modules/core-ai.md.
@@ -3309,6 +3363,41 @@ export interface BasicAnswer {
   candidates: Array<{ key: string; intent: string; score: number }>;
 }
 
+/** One rule in the effective ruleset (GET …/core-ai/basics). */
+export interface BasicRuleRow {
+  /** row id, or null for a pristine built-in with no override row yet */
+  id: string | null;
+  /** built-in key, or the custom row id — stable per rule */
+  key: string;
+  builtin: boolean;
+  intent: string;
+  keywords: string[];
+  reply: string;
+  enabled: boolean;
+  position: number;
+}
+
+/** Editable fields when creating/updating a rule. */
+export interface BasicRuleInput {
+  intent: string;
+  keywords: string[];
+  reply: string;
+  enabled?: boolean;
+}
+
+/** A raw core_ai_basics row (returned by create/update). */
+export interface BasicRuleRaw {
+  id: string;
+  builtin_key: string | null;
+  intent: string;
+  keywords: string[];
+  reply: string;
+  enabled: boolean;
+  position: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface AiProvider {
   id: string;
   provider_id: string;
@@ -3804,7 +3893,9 @@ export type CatalogFieldRenderer =
   | "url-link"    // URL → clickable link
   | "year"        // 1965 → "1965"
   | "boolean"     // "True"/"true"/1/0 → ✓ / ✕
-  | "code";       // monospace + bg, for SKUs / model numbers
+  | "code"        // monospace + bg, for SKUs / model numbers
+  | "markdown"    // rich text — rendered Markdown (block) / stripped (inline)
+  | "qr";         // a scannable QR of the value (owned codes: UPC, tag, URL)
 
 export interface CatalogSchema {
   id_column?: string;
@@ -4969,7 +5060,7 @@ export interface PlatformFieldDef {
   entity_kind: string;
   name: string;
   display_label: string;
-  type: "text" | "number" | "boolean" | "date" | "url" | "computed" | "relation";
+  type: "text" | "number" | "boolean" | "date" | "url" | "computed" | "relation" | "richtext";
   required: boolean;
   position: number;
   bundle_id: string | null;
@@ -5047,7 +5138,7 @@ export interface PlatformBundleManifest {
     entity_kind: string;
     name: string;
     display_label: string;
-    type: "text" | "number" | "boolean" | "date" | "url" | "computed";
+    type: "text" | "number" | "boolean" | "date" | "url" | "computed" | "richtext";
     required?: boolean;
     position?: number;
     /** When type='text', renders as a dropdown of these choices. */
