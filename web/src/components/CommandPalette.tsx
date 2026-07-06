@@ -10,6 +10,7 @@ import { Camera, CornerDownLeft, Moon, Plus, ScanLine, Search, Sliders, Sun, Wan
 import { api } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useTheme } from "../theme/ThemeContext";
+import { useThemeToggle } from "../theme/useThemeToggle";
 import { fuzzyMatch } from "../lib/fuzzy";
 import { searchFeatures } from "../lib/feature-index";
 
@@ -40,7 +41,8 @@ const ACTIONS: ActionRow[] = [
 
 export function CommandPalette() {
   const { activeSlug } = useActiveOrg();
-  const { theme, toggle: toggleTheme } = useTheme();
+  const { theme } = useTheme();
+  const toggleTheme = useThemeToggle();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");

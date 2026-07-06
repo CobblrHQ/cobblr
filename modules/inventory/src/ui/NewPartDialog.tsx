@@ -135,7 +135,7 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
         module_name: "inventory",
         entity_type: "part",
         entity_id: partId,
-        qr_payload: `${window.location.origin}/qr/${tok.token}`,
+        qr_payload: tok.scan_url,
         description: displayName,
         qty: 1,
       });
@@ -207,14 +207,14 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
         navigate(`${basePath}/parts/${part.id}`);
       }
     } catch (err) {
-      setError(err instanceof InventoryApiError ? err.message : "Couldn't create part");
+      setError(err instanceof InventoryApiError ? err.message : `Couldn't create ${itemNoun.toLowerCase()}`);
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <Modal open onClose={() => onClose(false)} title={`new ${itemNoun}`} size="sm" dismissOnBackdrop={false}>
+    <Modal open onClose={() => onClose(false)} title={`new ${itemNoun.toLowerCase()}`} size="sm" dismissOnBackdrop={false}>
       <form onSubmit={submit} className="space-y-3">
         {/* Catalog matching is for the base inventory (Lego/BrickLink etc.) —
             irrelevant noise on a skinned instance, so hide it when scoped. */}
@@ -234,7 +234,7 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
             required
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder={matched ? matched.title : `Name this ${itemNoun}`}
+            placeholder={matched ? matched.title : `Name this ${itemNoun.toLowerCase()}`}
             className="input"
           />
         </Field>

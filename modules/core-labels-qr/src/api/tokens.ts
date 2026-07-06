@@ -8,10 +8,24 @@ import { sql } from "kysely";
 import { randomBytes } from "node:crypto";
 import { platform } from "@cobblr/platform-contract";
 import QRCode from "qrcode";
-import { tenantContext, tenantDb, getQrTokenStyle, descriptiveToken } from "../db.js";
+import { tenantContext, tenantDb, getQrTokenStyle, getQrLabelBaseUrl, qrScanUrl, descriptiveToken } from "../db.js";
+import type { Request } from "express";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 
 export const tokensRouter = Router({ mergeParams: true });
+
+/** The origin a freshly-minted / rendered QR should encode, in priority order:
+ *  1. the workspace's custom label base URL (stable name it forwards to us),
+ *  2. the x-cobblr-base-url header (isolated-stack e2e only),
+ *  3. the incoming request's own protocol + Host.
+ *  The `/qr/<token>` path is appended by qrScanUrl(). */
+async function effectiveBase(req: Request): Promise<string> {
+  const stored = await getQrLabelBaseUrl(tenantDb(req));
+  if (stored) return stored;
+  const header = req.headers["x-cobblr-base-url"] as string | undefined;
+  if (header) return header.replace(/\/+$/, "");
+  return `${req.protocol}://${req.headers.host ?? "localhost"}`;
+}
 
 const TokenCreate = z.object({
   entity_kind: z.string().min(1),
@@ -82,6 +96,9 @@ tokensRouter.post(
       insertInto: (table: string) => unknown;
       selectFrom: (table: string) => unknown;
     };
+    // Resolve the base once so every response (reuse or fresh) carries a
+    // ready-to-print scan_url — clients never guess the origin.
+    const base = await effectiveBase(req);
     // A descriptive token is deterministic per entity — reuse an existing row
     // so re-printing the same label doesn't collide on the unique token.
     if (wantsDescriptive) {
@@ -98,7 +115,7 @@ tokensRouter.post(
         .where("token", "=", token)
         .executeTakeFirst()) as MetaQrToken | undefined;
       if (existing) {
-        res.status(200).json(existing);
+        res.status(200).json({ ...existing, scan_url: qrScanUrl(base, existing.token) });
         return;
       }
     }
@@ -129,7 +146,7 @@ tokensRouter.post(
       entityKind: row.entity_kind,
       entityId: row.entity_id,
     });
-    res.status(201).json(row);
+    res.status(201).json({ ...row, scan_url: qrScanUrl(base, row.token) });
   }),
 );
 
@@ -157,7 +174,8 @@ tokensRouter.get(
     })
       .orderBy("created_at", "desc")
       .execute();
-    res.json({ items });
+    const base = await effectiveBase(req);
+    res.json({ items: items.map((t) => ({ ...t, scan_url: qrScanUrl(base, t.token) })) });
   }),
 );
 
@@ -234,9 +252,7 @@ tokensRouter.get(
       res.status(404).json({ error: { code: "not_found", message: "token not found" } });
       return;
     }
-    const base = (req.headers["x-cobblr-base-url"] as string | undefined) ??
-      `${req.protocol}://${req.headers.host ?? "localhost"}`;
-    const url = `${base}/qr/${row.token}`;
+    const url = qrScanUrl(await effectiveBase(req), row.token);
     const png = await QRCode.toBuffer(url, {
       errorCorrectionLevel: "Q",
       margin: 2,

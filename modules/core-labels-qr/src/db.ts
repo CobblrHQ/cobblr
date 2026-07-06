@@ -18,6 +18,10 @@ export interface CoreLabelsQrScansTable {
 export interface CoreLabelsQrSettingsTable {
   id: Generated<number>;
   token_style: Generated<"descriptive" | "opaque">;
+  // A stable base URL the workspace controls + forwards to this instance, so
+  // printed codes survive a move. null/empty = encode against the serving
+  // origin. See migration 0003.
+  label_base_url: string | null;
   updated_at: Generated<Date>;
 }
 
@@ -36,6 +40,24 @@ export async function getQrTokenStyle(db: Kysely<CoreLabelsQrDB>): Promise<QrTok
     .where("id", "=", 1)
     .executeTakeFirst();
   return row?.token_style ?? "descriptive";
+}
+
+/** Read the workspace's custom QR label base URL (trimmed, no trailing slash),
+ *  or null if unset — in which case callers fall back to the serving origin. */
+export async function getQrLabelBaseUrl(db: Kysely<CoreLabelsQrDB>): Promise<string | null> {
+  const row = await db
+    .selectFrom("core_labels_qr_settings")
+    .select("label_base_url")
+    .where("id", "=", 1)
+    .executeTakeFirst();
+  const v = row?.label_base_url?.trim();
+  return v ? v.replace(/\/+$/, "") : null;
+}
+
+/** Build the full scan URL a printed/displayed QR encodes: `<base>/qr/<token>`.
+ *  The `/qr/<token>` path is the stable contract a custom base must forward to. */
+export function qrScanUrl(base: string, token: string): string {
+  return `${base.replace(/\/+$/, "")}/qr/${token}`;
 }
 
 /** A readable, deterministic token for the descriptive style:

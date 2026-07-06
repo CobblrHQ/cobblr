@@ -37,6 +37,8 @@ interface InventoryUIProps {
   displayName?: string;
   /** Singular noun for the add button + create modal ("yarn" → "New yarn"). */
   itemNoun?: string;
+  /** Plural noun for lists / search / counts ("Film" → "films"). */
+  itemNounPlural?: string;
   /** Default unit for new items (e.g. "skein"). */
   qtyUnit?: string;
   /** When items belong to a parent "type" in another instance (Spool → Filament
@@ -44,9 +46,9 @@ interface InventoryUIProps {
   parent?: ParentConfig;
 }
 
-export function InventoryUI({ orgSlug, getToken, instance, displayName, itemNoun, qtyUnit, parent }: InventoryUIProps) {
+export function InventoryUI({ orgSlug, getToken, instance, displayName, itemNoun, itemNounPlural, qtyUnit, parent }: InventoryUIProps) {
   return (
-    <InventoryProvider orgSlug={orgSlug} getToken={getToken} instance={instance} itemNoun={itemNoun} qtyUnit={qtyUnit} parent={parent}>
+    <InventoryProvider orgSlug={orgSlug} getToken={getToken} instance={instance} itemNoun={itemNoun} itemNounPlural={itemNounPlural} qtyUnit={qtyUnit} parent={parent}>
       <div className="space-y-4">
         <Header title={displayName ?? "inventory"} scoped={!!instance} />
         <Routes>

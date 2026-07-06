@@ -15,6 +15,112 @@ export function SettingsPage() {
     <div className="grid gap-5 sm:grid-cols-2">
       <FieldsCard />
       <CategoriesCard />
+      <NounCard />
+      <StockTrackingCard />
+    </div>
+  );
+}
+
+/** What this instance calls its items. Defaulted from the collection name at
+ *  creation ("Films" → "Film" / "films"), editable here for the odd case a
+ *  plural doesn't singularize cleanly ("Series", "Equipment"). Drives the whole
+ *  UI — "New Film", "search films", "No films yet". Only a named instance has
+ *  its own noun; the default Inventory keeps "part". See one-record-substrate.md. */
+function NounCard() {
+  const { api, orgSlug, instance } = useInventory();
+  const qc = useQueryClient();
+  const current = useQuery({
+    queryKey: ["inv-nouns", orgSlug, instance],
+    queryFn: () => api.getNouns(),
+    enabled: !!instance,
+  });
+  const [singular, setSingular] = useState<string | null>(null);
+  const [plural, setPlural] = useState<string | null>(null);
+  const save = useMutation({
+    mutationFn: () => api.setNouns(singular ?? current.data?.singular ?? "", plural ?? current.data?.plural ?? ""),
+    onSuccess: () => {
+      setSingular(null);
+      setPlural(null);
+      void qc.invalidateQueries({ queryKey: ["inv-nouns", orgSlug, instance] });
+      void qc.invalidateQueries({ queryKey: ["entity-kind-overrides"] });
+    },
+  });
+  if (!instance) return null;
+  const sVal = singular ?? current.data?.singular ?? "";
+  const pVal = plural ?? current.data?.plural ?? "";
+  const dirty = singular !== null || plural !== null;
+  return (
+    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
+      <h3 className="font-display text-sm font-bold text-content dark:text-mortar-100">What do you call these?</h3>
+      <p className="mt-1 text-xs text-muted dark:text-slate-400">
+        The word for one item and many. Drives the whole list — the add button, search, empty state.
+      </p>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <label className="block">
+          <div className="text-[11px] text-faint mb-1">One</div>
+          <input className="input !w-full" value={sVal} placeholder="film" onChange={(e) => setSingular(e.target.value)} />
+        </label>
+        <label className="block">
+          <div className="text-[11px] text-faint mb-1">Many</div>
+          <input className="input !w-full" value={pVal} placeholder="films" onChange={(e) => setPlural(e.target.value)} />
+        </label>
+      </div>
+      <button
+        className="mt-3 rounded-md bg-cobble-600 hover:bg-cobble-500 text-white text-xs font-medium px-3 py-1.5 transition disabled:opacity-50"
+        disabled={!dirty || save.isPending || !sVal.trim() || !pVal.trim()}
+        onClick={() => save.mutate()}
+      >
+        {save.isPending ? "Saving…" : "Save"}
+      </button>
+    </div>
+  );
+}
+
+/** The sticky stock-vs-catalog override for a named instance. The platform
+ *  derives this automatically from the data (a catalog with no quantities stays
+ *  lean; anything you count/reorder shows stock), so "Auto" is the right default
+ *  and almost always correct. This is the escape hatch for the rare miss. Only
+ *  shown on a named instance — the default Inventory is always stock.
+ *  See docs/design-decisions/one-record-substrate.md. */
+function StockTrackingCard() {
+  const { api, orgSlug, instance } = useInventory();
+  const qc = useQueryClient();
+  const current = useQuery({
+    queryKey: ["inv-stock-override", orgSlug, instance],
+    queryFn: () => api.getStockOverride(),
+    enabled: !!instance,
+  });
+  const save = useMutation({
+    mutationFn: (v: boolean | null) => api.setStockOverride(v),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["inv-stock-override", orgSlug, instance] });
+      void qc.invalidateQueries({ queryKey: ["inv-disclosure", orgSlug, instance ?? "inventory"] });
+    },
+  });
+  // Only a named instance can be a catalog; the default Inventory is always stock.
+  if (!instance) return null;
+  const value = current.data === undefined ? "auto" : current.data ? "stock" : "catalog";
+  return (
+    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
+      <h3 className="font-display text-sm font-bold text-content dark:text-mortar-100">Stock tracking</h3>
+      <p className="mt-1 text-xs text-muted dark:text-slate-400">
+        Whether this list shows quantities, reorder points, and allocations, or stays a lean
+        catalog. <span className="text-content dark:text-mortar-200">Auto</span> lets the platform
+        decide from your data — the right choice almost always.
+      </p>
+      <select
+        className="input mt-3 !w-auto"
+        value={value}
+        disabled={current.isLoading || save.isPending}
+        onChange={(e) => {
+          const v = e.target.value;
+          save.mutate(v === "auto" ? null : v === "stock");
+        }}
+      >
+        <option value="auto">Auto (recommended)</option>
+        <option value="stock">Always track stock</option>
+        <option value="catalog">Catalog only (no stock)</option>
+      </select>
     </div>
   );
 }

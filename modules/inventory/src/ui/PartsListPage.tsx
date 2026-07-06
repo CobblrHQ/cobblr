@@ -34,6 +34,7 @@ import {
 } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { useFieldPresentation } from "./useFieldPresentation";
+import { useDisclosure } from "./useDisclosure";
 import { NewPartDialog } from "./NewPartDialog";
 import { ImportDialog } from "./ImportDialog";
 import { PartDetailModal } from "./PartDetailPage";
@@ -52,7 +53,7 @@ type SavedViewLite = {
 
 export function PartsListPage() {
   usePageTitle("Inventory");
-  const { api, orgSlug, getToken, entityKind, itemNoun, basePath, instance } = useInventory();
+  const { api, orgSlug, getToken, entityKind, itemNoun, itemNounPlural, basePath, instance } = useInventory();
   const { appMode } = usePlatformWeb();
   const qc = useQueryClient();
   // /inventory/parts/:id keeps this list mounted and opens the detail
@@ -293,7 +294,7 @@ export function PartsListPage() {
             ? `#${String(assetId).padStart(3, "0")} ${p?.name ?? ""}`.trim()
             : (p?.name ?? "Part");
         try {
-          const { token } = await api.mintQrToken({
+          const { scan_url } = await api.mintQrToken({
             entity_kind: "inventory:part",
             entity_id: id,
             mode: "navigate",
@@ -303,7 +304,7 @@ export function PartsListPage() {
             module_name: "inventory",
             entity_type: "part",
             entity_id: id,
-            qr_payload: `${window.location.origin}/qr/${token}`,
+            qr_payload: scan_url,
             description: desc,
             qty: 1,
           });
@@ -370,7 +371,7 @@ export function PartsListPage() {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder={`search ${itemNoun === "part" ? "parts" : itemNoun}…`}
+            placeholder={`search ${itemNounPlural.toLowerCase()}…`}
             className="input pl-9"
           />
         </div>
@@ -520,7 +521,7 @@ export function PartsListPage() {
       {views.length > 0 && (
         <div className="flex items-center gap-1.5 flex-wrap">
           <ViewChip active={!activeView} onClick={() => selectView(null)}>
-            All {itemNoun === "part" ? "parts" : itemNoun}
+            All {itemNounPlural}
           </ViewChip>
           {views.map((v) => (
             <ViewChip key={v.id} active={activeView?.id === v.id} onClick={() => selectView(v.id)}>
@@ -543,7 +544,9 @@ export function PartsListPage() {
           search || categoryId || locationId || lowOnly || insuredOnly ||
           lifecycle || warrantyFilter !== "all" || archivedFilter !== "hide"
         );
-        const plural = itemNoun === "part" ? "parts" : itemNoun;
+        // Lowercase for mid-sentence use (buttons keep the stored casing).
+        const plural = itemNounPlural.toLowerCase();
+        const noun = itemNoun.toLowerCase();
         // A locked managed app's first screen — give a warm welcome + a clear
         // "what to do", not a bare table (Grace's "no call to action").
         const welcome = appMode && !hasFilters && !activeView;
@@ -551,7 +554,7 @@ export function PartsListPage() {
           <div className="border-2 border-dashed border-line dark:border-slate-700 rounded-xl p-10 text-center space-y-3">
             {welcome && (
               <h2 className="font-display text-xl font-bold text-content dark:text-mortar-100">
-                Welcome! Let’s add your first {itemNoun}.
+                Welcome! Let’s add your first {noun}.
               </h2>
             )}
             <p className="text-sm text-muted dark:text-slate-400">
@@ -560,8 +563,8 @@ export function PartsListPage() {
                 : hasFilters
                   ? "No matches — try widening the filter."
                   : welcome
-                    ? `Tap below to add a ${itemNoun} by hand, or use Scan in the top bar to add one from a label.`
-                    : `No ${plural} here yet. Add your first ${itemNoun} to get started.`}
+                    ? `Tap below to add a ${noun} by hand, or use Scan in the top bar to add one from a label.`
+                    : `No ${plural} here yet. Add your first ${noun} to get started.`}
             </p>
             {!hasFilters && (
               <button
@@ -803,10 +806,16 @@ function PartsTable({
   // instance kind ("yarn:item"), so read it from context like NewPartDialog.
   const { entityKind } = useInventory();
   const fp = useFieldPresentation(entityKind);
-  const anySupplier = items.some((p) => !!p.supplier_url) && !fp.hidden("supplier_url");
-  const showCategory = !fp.hidden("category");
-  const showLocation = !fp.hidden("location");
-  const showMin = !fp.hidden("min_qty");
+  // Compose the workspace override with the stock-vs-catalog disclosure: a lean
+  // catalog instance (films, books) hides the whole stock column set (qty,
+  // available, min, ...) so its list reads as its own fields, not inventory's.
+  const disclosure = useDisclosure();
+  const hide = (name: string): boolean => fp.hidden(name) || disclosure.hides(name);
+  const anySupplier = items.some((p) => !!p.supplier_url) && !hide("supplier_url");
+  const showCategory = !hide("category");
+  const showLocation = !hide("location");
+  const showMin = !hide("min_qty");
+  const showQty = !hide("qty");
   return (
     <>
       {/* Desktop: the full table. Mobile: a stacked-card list (D7) —
@@ -832,8 +841,8 @@ function PartsTable({
             {customCols.map((c) => (
               <Th key={c.id}>{c.display_label}</Th>
             ))}
-            <Th className="text-right">Qty</Th>
-            <Th className="text-right">Available</Th>
+            {showQty && <Th className="text-right">Qty</Th>}
+            {showQty && <Th className="text-right">Available</Th>}
             {showMin && <Th className="text-right">{fp.label("min_qty", "Min")}</Th>}
             {anySupplier && <Th>Supplier</Th>}
             <Th />
@@ -901,8 +910,8 @@ function PartsTable({
                   />
                 </td>
               ))}
-              <td className="px-3 py-2 text-right font-mono">{fmt(p.qty)} {p.unit}</td>
-              <td className="px-3 py-2 text-right font-mono">{fmt(p.available_qty)}</td>
+              {showQty && <td className="px-3 py-2 text-right font-mono">{fmt(p.qty)} {p.unit}</td>}
+              {showQty && <td className="px-3 py-2 text-right font-mono">{fmt(p.available_qty)}</td>}
               {showMin && (
                 <td className="px-3 py-2 text-right font-mono text-faint dark:text-slate-500">
                   {p.min_qty == null ? "—" : fmt(p.min_qty)}
@@ -982,16 +991,18 @@ function PartsTable({
                 >
                   {p.name}
                 </Link>
-                {p.manufacturer && (
+                {p.manufacturer && !hide("manufacturer") && (
                   <span className="ml-2 text-[11px] text-faint dark:text-slate-500">
                     {p.manufacturer}
                   </span>
                 )}
                 <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] font-mono text-muted dark:text-slate-400">
-                  <span>
-                    qty {fmt(p.qty)} {p.unit}
-                  </span>
-                  <span>avail {fmt(p.available_qty)}</span>
+                  {showQty && (
+                    <span>
+                      qty {fmt(p.qty)} {p.unit}
+                    </span>
+                  )}
+                  {showQty && <span>avail {fmt(p.available_qty)}</span>}
                   {showMin && p.min_qty != null && <span>min {fmt(p.min_qty)}</span>}
                   {showCategory && p.category_name && <span>{p.category_name}</span>}
                   {showLocation && p.location_name && <span>@ {p.location_name}</span>}
@@ -1068,6 +1079,8 @@ function groupItems(items: PartListItem[], key: string): { key: string; rows: Pa
 }
 
 function PartsTileGrid({ items, basePath }: { items: PartListItem[]; basePath: string }) {
+  // A lean catalog tile shows no qty badge — it's a record, not stock.
+  const disclosure = useDisclosure();
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
       {items.map((p) => (
@@ -1078,7 +1091,7 @@ function PartsTileGrid({ items, basePath }: { items: PartListItem[]; basePath: s
             title={p.name}
             subtitle={p.manufacturer || p.category_name || null}
             badge={
-              p.low_stock ? (
+              !disclosure.stock ? undefined : p.low_stock ? (
                 <span className="text-ember-600 dark:text-ember-500">
                   {fmt(p.qty)} / {p.min_qty == null ? "—" : fmt(p.min_qty)}
                 </span>
@@ -1086,7 +1099,7 @@ function PartsTileGrid({ items, basePath }: { items: PartListItem[]; basePath: s
                 `${fmt(p.qty)} ${p.unit}`
               )
             }
-            attention={p.low_stock}
+            attention={!disclosure.stock ? false : p.low_stock}
           />
         </Link>
       ))}

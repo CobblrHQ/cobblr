@@ -23,6 +23,7 @@ import {
   Camera,
   CheckCircle,
   ChevronDown,
+  Download,
   ExternalLink,
   FileText,
   Flag,
@@ -54,6 +55,7 @@ import {
   type AiStatus,
   ApiError,
   api,
+  getToken,
   type ScanInboxItem,
   type ScanCandidate,
   type ScanMenuEntry,
@@ -675,6 +677,34 @@ export function ScanPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const receiptRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [exporting, setExporting] = useState(false);
+
+  // Export the whole inbox as the interop envelope (JSON) — the mirror of
+  // Import. An authed fetch (the endpoint needs a bearer) → blob → download.
+  // Feeds straight back into another instance's "Import from file".
+  async function exportInbox() {
+    setExporting(true);
+    try {
+      const res = await fetch(`/api/v1/orgs/${activeSlug}/modules/core-scan/export?status=all`, {
+        headers: { Authorization: `Bearer ${getToken() ?? ""}` },
+      });
+      if (!res.ok) throw new Error(`export failed: ${res.status}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `cobblr-scan-all-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success("Inbox exported — import it into another workspace via ‘Import’");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't export");
+    } finally {
+      setExporting(false);
+    }
+  }
 
   async function uploadPhoto(file: File) {
     setUploading(true);
@@ -1606,6 +1636,15 @@ export function ScanPage() {
           className={headerBtn}
         >
           <Upload size={15} /> Import
+        </button>
+        <button
+          type="button"
+          onClick={() => void exportInbox()}
+          disabled={exporting}
+          title="Export this whole inbox as a file — import it into another workspace or instance (photos included)"
+          className={headerBtn + (exporting ? " opacity-50" : "")}
+        >
+          <Download size={15} /> {exporting ? "exporting…" : "Export"}
         </button>
         <button
           type="button"
@@ -2881,14 +2920,14 @@ function InboxCard({
                 {lowTrust ? "Double-check — fix the name" : "Not right? Fix the name"}
               </button>
             ))}
-          {/* Series chip — the identified franchise (Little House, Harry Potter).
-              The single most useful at-a-glance label for media; shown on the card
-              itself, not just the "tag them all" banner. Distinct from the routing
-              chips (a fact about the item, not a table to file into). */}
-          {/* Row 1 — the SERIES tag + the routing chip(s) share ONE line to keep
-              the card compact (these were three stacked rows; the field strip
-              below tipped it past the image). On phones only the TOP match shows
-              + a "+N" to expand; desktop shows them all. */}
+          {/* ONE row for everything the card says about routing + fields:
+              the SERIES tag, the routing chip(s) to file into, AND the field
+              VALUES the top match fills. Keeping these on a single wrapping row
+              (they were two stacked rows) stops the text strip growing taller
+              than the cover image beside it. On phones only the TOP routing
+              match shows + a "+N" to expand; desktop shows them all. Field chips
+              skip anything already in the subtitle (author, publisher/brand,
+              ISBN) so there's no echo. */}
           {(seriesOf(item) || candidates.length > 0) && (
             <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
               {seriesOf(item) && (
@@ -2939,49 +2978,46 @@ function InboxCard({
                   +{candidates.length - 1}
                 </button>
               )}
+              {/* …and the field VALUES the top match fills — inline on the SAME
+                  row now, wrapping only if the row genuinely runs out of width. */}
+              {topCand &&
+                (() => {
+                  const brand = (item.suggested_manufacturer ?? "").trim().toLowerCase();
+                  const creator = (creatorOf(item) ?? "").trim().toLowerCase();
+                  const entries = Object.entries(topCand.fields).filter(([k, v]) => {
+                    if (/^isbn$/i.test(k)) return false; // shown in the subtitle now
+                    const val = String(v).trim().toLowerCase();
+                    return val && val !== brand && val !== creator;
+                  });
+                  if (entries.length === 0) return null;
+                  const MAX = 3;
+                  const shown = entries.slice(0, MAX);
+                  const extra = entries.length - shown.length;
+                  return (
+                    <>
+                      {shown.map(([k, v]) => (
+                        <span
+                          key={k}
+                          className="inline-flex items-center gap-1 rounded-md bg-subtle/60 dark:bg-slate-800/60 border border-line/70 dark:border-slate-700/70 px-1.5 py-0.5 text-[11px] text-content dark:text-mortar-200 min-w-0"
+                          title={`${menuFieldLabel(menu, topCand, k)}: ${String(v)}`}
+                        >
+                          <span className="text-faint shrink-0">{menuFieldLabel(menu, topCand, k)}</span>
+                          <span className="truncate">{String(v)}</span>
+                        </span>
+                      ))}
+                      {extra > 0 && (
+                        <span
+                          className="text-[11px] text-faint shrink-0 px-1"
+                          title={entries.slice(MAX).map(([k, v]) => `${menuFieldLabel(menu, topCand, k)}: ${v}`).join(", ")}
+                        >
+                          +{extra}
+                        </span>
+                      )}
+                    </>
+                  );
+                })()}
             </div>
           )}
-          {/* Row 2 — what the top match FILLS: the field VALUES as mini chips.
-              SKIP fields already shown in the subtitle (author, publisher/brand)
-              — no echo — and cap to ONE line (+N for the rest) so the strip never
-              grows the card past its image. */}
-          {candidates.length > 0 &&
-            topCand &&
-            (() => {
-              const brand = (item.suggested_manufacturer ?? "").trim().toLowerCase();
-              const creator = (creatorOf(item) ?? "").trim().toLowerCase();
-              const entries = Object.entries(topCand.fields).filter(([k, v]) => {
-                if (/^isbn$/i.test(k)) return false; // shown in the subtitle now
-                const val = String(v).trim().toLowerCase();
-                return val && val !== brand && val !== creator;
-              });
-              if (entries.length === 0) return null;
-              const MAX = 3;
-              const shown = entries.slice(0, MAX);
-              const extra = entries.length - shown.length;
-              return (
-                <div className="flex flex-nowrap items-center gap-1 mt-1 overflow-hidden">
-                  {shown.map(([k, v]) => (
-                    <span
-                      key={k}
-                      className="inline-flex items-center gap-1 rounded-md bg-subtle/60 dark:bg-slate-800/60 border border-line/70 dark:border-slate-700/70 px-1.5 py-0.5 text-[11px] text-content dark:text-mortar-200 min-w-0 shrink"
-                      title={`${menuFieldLabel(menu, topCand, k)}: ${String(v)}`}
-                    >
-                      <span className="text-faint shrink-0">{menuFieldLabel(menu, topCand, k)}</span>
-                      <span className="truncate">{String(v)}</span>
-                    </span>
-                  ))}
-                  {extra > 0 && (
-                    <span
-                      className="text-[11px] text-faint shrink-0 px-1"
-                      title={entries.slice(MAX).map(([k, v]) => `${menuFieldLabel(menu, topCand, k)}: ${v}`).join(", ")}
-                    >
-                      +{extra}
-                    </span>
-                  )}
-                </div>
-              );
-            })()}
           {candidates.length === 0 && serverMatching && (
             <div className="text-[11px] text-faint italic mt-1">finding the best table…</div>
           )}

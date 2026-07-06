@@ -62,6 +62,7 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
   // override config ("yarn" → "New yarn", default unit "skein").
   const cfg = (override?.config ?? {}) as {
     item_noun?: string;
+    item_noun_plural?: string;
     qty_unit?: string;
     parent?: { instance: string; label?: string; relationship_kind?: string };
   };
@@ -80,6 +81,7 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
         instance={inst.instance_name}
         displayName={displayName}
         itemNoun={cfg.item_noun}
+        itemNounPlural={cfg.item_noun_plural}
         qtyUnit={cfg.qty_unit}
         parent={cfg.parent}
       />

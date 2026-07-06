@@ -45,7 +45,7 @@ export function ViewsPage() {
   // Deep-link: /views?view=<id> opens that view directly, so a "By category"
   // link elsewhere (e.g. the dashboard widget) lands ON the view instead of the
   // list where you'd have to click it a second time (reported double-hop).
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const viewParam = params.get("view");
   useEffect(() => {
     if (!viewParam || active) return;
@@ -149,7 +149,21 @@ export function ViewsPage() {
         <ViewDataModal
           view={active}
           slug={activeSlug}
-          onClose={() => setActive(null)}
+          onClose={() => {
+            // Clear the deep-link param too — otherwise the open-on-?view effect
+            // immediately re-opens the modal and the X appears not to work.
+            setActive(null);
+            if (viewParam) {
+              setParams(
+                (p) => {
+                  const n = new URLSearchParams(p);
+                  n.delete("view");
+                  return n;
+                },
+                { replace: true },
+              );
+            }
+          }}
         />
       )}
 
@@ -224,7 +238,13 @@ function ViewDataModal({
         {items.length > 0 && view.view_type === "gantt" && (
           <GanttRenderer items={items} cfg={cfg} />
         )}
-        {items.length > 0 && view.view_type !== "kanban" && view.view_type !== "table" && view.view_type !== "trend" && view.view_type !== "calendar" && view.view_type !== "gantt" && (
+        {items.length > 0 && view.view_type === "gallery" && (
+          <GalleryRenderer items={items} cfg={cfg} />
+        )}
+        {items.length > 0 && view.view_type === "heatmap" && (
+          <HeatmapRenderer items={items} cfg={cfg} />
+        )}
+        {items.length > 0 && view.view_type !== "kanban" && view.view_type !== "table" && view.view_type !== "trend" && view.view_type !== "calendar" && view.view_type !== "gantt" && view.view_type !== "gallery" && view.view_type !== "heatmap" && (
           <ListRenderer items={items} />
         )}
       </div>
@@ -679,6 +699,138 @@ function formatCell(col: string, row: ViewRow): string {
   return JSON.stringify(v);
 }
 
+// Gallery renderer — a card grid with a prominent image per row (the poster
+// wall). Reads cfg.image_field (default "image_path"; e.g. a "poster" url/path)
+// for the image and cfg.caption_field for an optional caption under the title.
+// Rows without an image show a title-initial tile. This is the signature view
+// for a catalog (films, books, recipes). See one-record-substrate.md.
+function GalleryRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) {
+  const imageField = (cfg.image_field as string) || "image_path";
+  const captionField = cfg.caption_field as string | undefined;
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+      {items.map((row) => {
+        const raw = fieldVal(row.fields, imageField);
+        const src = typeof raw === "string" && raw.trim() ? raw : null;
+        const caption = captionField ? formatCell(captionField, row) : row.subtitle ?? "";
+        return (
+          <div
+            key={`${row.kind}:${row.id}`}
+            className="rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden"
+          >
+            <div className="aspect-[2/3] bg-subtle dark:bg-slate-800 flex items-center justify-center overflow-hidden">
+              {src ? (
+                <img src={src} alt={row.title} className="w-full h-full object-cover" loading="lazy" />
+              ) : (
+                <span className="font-display text-2xl font-bold text-faint dark:text-slate-600">
+                  {row.title.slice(0, 1).toUpperCase()}
+                </span>
+              )}
+            </div>
+            <div className="p-2">
+              <div className="truncate text-sm font-medium text-content dark:text-mortar-100">{row.title}</div>
+              {caption && <div className="truncate text-xs text-muted dark:text-slate-400">{caption}</div>}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Heatmap renderer — a GitHub-style contribution grid: one square per day for
+// the last 26 weeks, shaded by how many rows fall on that day (cfg.date_field,
+// default "date"). The signature view for a habit tracker. Dependency-free —
+// plain divs. See one-record-substrate.md.
+export function HeatmapRenderer({ items, cfg }: { items: ViewRow[]; cfg: Record<string, unknown> }) {
+  const dateField = (cfg.date_field as string) || "date";
+  const WEEKS = 26;
+  const counts = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const it of items) {
+      const dv = fieldVal(it.fields, dateField);
+      if (dv == null || dv === "") continue;
+      const key = String(dv).slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) continue;
+      m[key] = (m[key] ?? 0) + 1;
+    }
+    return m;
+  }, [items, dateField]);
+  const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const { columns, monthLabels, max } = useMemo(() => {
+    const today = new Date();
+    const start = new Date(today);
+    start.setDate(start.getDate() - (WEEKS - 1) * 7 - today.getDay());
+    const cols: { key: string; count: number }[][] = [];
+    const labels: string[] = [];
+    let mx = 0;
+    let prevMonth = -1;
+    for (let w = 0; w < WEEKS; w++) {
+      const col: { key: string; count: number }[] = [];
+      for (let d = 0; d < 7; d++) {
+        const cur = new Date(start);
+        cur.setDate(start.getDate() + w * 7 + d);
+        const key = isoLocal(cur);
+        const c = counts[key] ?? 0;
+        if (c > mx) mx = c;
+        col.push({ key, count: c });
+      }
+      const first = new Date(start);
+      first.setDate(start.getDate() + w * 7);
+      const mo = first.getMonth();
+      labels.push(mo !== prevMonth ? MON[mo]! : "");
+      prevMonth = mo;
+      cols.push(col);
+    }
+    return { columns: cols, monthLabels: labels, max: mx };
+  }, [counts]);
+  const shades = [
+    "bg-subtle dark:bg-slate-800",
+    "bg-cobble-200 dark:bg-cobble-900/50",
+    "bg-cobble-300 dark:bg-cobble-800/70",
+    "bg-cobble-400 dark:bg-cobble-700",
+    "bg-cobble-500 dark:bg-cobble-500",
+  ];
+  const shade = (c: number): string => {
+    if (c <= 0) return shades[0]!;
+    const lvl = max <= 1 ? 4 : Math.min(4, Math.ceil((c / max) * 4));
+    return shades[lvl]!;
+  };
+  const total = Object.values(counts).reduce((a, b) => a + b, 0);
+  return (
+    <div className="space-y-1.5">
+      <div className="text-[10px] font-mono text-faint dark:text-slate-500">
+        {total} logged over {WEEKS} weeks · each square is a day
+      </div>
+      <div className="overflow-x-auto pb-1">
+        <div className="flex gap-1 mb-1">
+          {monthLabels.map((m, i) => (
+            <div key={i} className="w-3 text-[8px] font-mono uppercase tracking-wide text-faint dark:text-slate-500 whitespace-nowrap leading-none">
+              {m}
+            </div>
+          ))}
+        </div>
+        <div className="flex gap-1">
+          {columns.map((col, i) => (
+            <div key={i} className="flex flex-col gap-1">
+              {col.map((cell) => (
+                <div key={cell.key} title={`${cell.key}: ${cell.count}`} className={"w-3 h-3 rounded-sm " + shade(cell.count)} />
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="flex items-center gap-1 justify-end text-[9px] font-mono text-faint dark:text-slate-500">
+        <span>less</span>
+        {shades.map((s, i) => (
+          <div key={i} className={"w-3 h-3 rounded-sm " + s} />
+        ))}
+        <span>more</span>
+      </div>
+    </div>
+  );
+}
+
 function CreateViewModal({
   slug,
   onClose,
@@ -690,12 +842,13 @@ function CreateViewModal({
 }) {
   const [entityKind, setEntityKind] = useState("inventory:part");
   const [name, setName] = useState("");
-  const [viewType, setViewType] = useState<"list" | "table" | "kanban" | "trend" | "calendar" | "gantt">("list");
+  const [viewType, setViewType] = useState<"list" | "table" | "kanban" | "trend" | "calendar" | "gantt" | "gallery" | "heatmap">("list");
   const [groupBy, setGroupBy] = useState("subtitle");
   const [visibleFields, setVisibleFields] = useState("title, subtitle");
   const [dateField, setDateField] = useState("due_date");
   const [startField, setStartField] = useState("start_date");
   const [endField, setEndField] = useState("target_date");
+  const [imageField, setImageField] = useState("image_path");
   const [shared, setShared] = useState(true);
   const toast = useToast();
 
@@ -725,6 +878,12 @@ function CreateViewModal({
           }
           if (viewType === "calendar" && dateField.trim()) {
             config.date_field = dateField.trim();
+          }
+          if (viewType === "heatmap" && dateField.trim()) {
+            config.date_field = dateField.trim();
+          }
+          if (viewType === "gallery" && imageField.trim()) {
+            config.image_field = imageField.trim();
           }
           if (viewType === "gantt") {
             if (startField.trim()) config.start_field = startField.trim();
@@ -775,7 +934,7 @@ function CreateViewModal({
         <label className="block">
           <div className="text-xs text-muted mb-1">Layout</div>
           <div className="flex gap-1">
-            {(["list", "table", "kanban", "trend", "calendar", "gantt"] as const).map((t) => (
+            {(["list", "table", "kanban", "trend", "calendar", "gantt", "gallery", "heatmap"] as const).map((t) => (
               <button
                 key={t}
                 type="button"
@@ -791,20 +950,36 @@ function CreateViewModal({
             ))}
           </div>
         </label>
-        {viewType === "calendar" && (
+        {(viewType === "calendar" || viewType === "heatmap") && (
           <label className="block">
             <div className="text-xs text-muted mb-1">Date field</div>
             <input
               type="text"
               value={dateField}
               onChange={(e) => setDateField(e.target.value)}
-              placeholder="due_date, renewal_date, expires_date…"
+              placeholder="due_date, watched, logged_at…"
               className="w-full px-2 py-1 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             />
             <div className="text-[11px] text-faint mt-1">
               Which field each row lands on. A native field or a custom one
               (read from <code>row.fields[field]</code>); values are
               <code>YYYY-MM-DD</code>.
+            </div>
+          </label>
+        )}
+        {viewType === "gallery" && (
+          <label className="block">
+            <div className="text-xs text-muted mb-1">Image field</div>
+            <input
+              type="text"
+              value={imageField}
+              onChange={(e) => setImageField(e.target.value)}
+              placeholder="image_path, poster, cover…"
+              className="w-full px-2 py-1 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+            />
+            <div className="text-[11px] text-faint mt-1">
+              Which field holds each card's image (a URL or stored image path).
+              Rows without one show a title-initial tile.
             </div>
           </label>
         )}
@@ -916,8 +1091,8 @@ function EditViewModal({
   // changing it would invalidate the config's filter / where /
   // sort which are kind-specific.
   const [name, setName] = useState(view.name);
-  const [viewType, setViewType] = useState<"list" | "table" | "kanban" | "trend" | "calendar" | "gantt">(
-    (view.view_type as "list" | "table" | "kanban" | "trend" | "calendar" | "gantt") ?? "list",
+  const [viewType, setViewType] = useState<"list" | "table" | "kanban" | "trend" | "calendar" | "gantt" | "gallery" | "heatmap">(
+    (view.view_type as "list" | "table" | "kanban" | "trend" | "calendar" | "gantt" | "gallery" | "heatmap") ?? "list",
   );
   const cfg = (view.config ?? {}) as ViewConfig;
   const [groupBy, setGroupBy] = useState((cfg.group_by as string) ?? "subtitle");
@@ -927,6 +1102,7 @@ function EditViewModal({
   const [dateField, setDateField] = useState((cfg.date_field as string) ?? "due_date");
   const [startField, setStartField] = useState((cfg.start_field as string) ?? "start_date");
   const [endField, setEndField] = useState((cfg.end_field as string) ?? "target_date");
+  const [imageField, setImageField] = useState((cfg.image_field as string) ?? "image_path");
   const [filterRaw, setFilterRaw] = useState(
     [
       formatFilterPairs((cfg.filter as Record<string, unknown>) ?? {}),
@@ -960,10 +1136,15 @@ function EditViewModal({
           } else {
             delete config.visible_fields;
           }
-          if (viewType === "calendar" && dateField.trim()) {
+          if ((viewType === "calendar" || viewType === "heatmap") && dateField.trim()) {
             config.date_field = dateField.trim();
           } else {
             delete config.date_field;
+          }
+          if (viewType === "gallery" && imageField.trim()) {
+            config.image_field = imageField.trim();
+          } else {
+            delete config.image_field;
           }
           if (viewType === "gantt") {
             if (startField.trim()) config.start_field = startField.trim();
@@ -1038,7 +1219,7 @@ function EditViewModal({
         <label className="block">
           <div className="text-xs text-muted mb-1">Layout</div>
           <div className="flex gap-1">
-            {(["list", "table", "kanban", "trend", "calendar", "gantt"] as const).map((t) => (
+            {(["list", "table", "kanban", "trend", "calendar", "gantt", "gallery", "heatmap"] as const).map((t) => (
               <button
                 key={t}
                 type="button"
@@ -1054,20 +1235,36 @@ function EditViewModal({
             ))}
           </div>
         </label>
-        {viewType === "calendar" && (
+        {(viewType === "calendar" || viewType === "heatmap") && (
           <label className="block">
             <div className="text-xs text-muted mb-1">Date field</div>
             <input
               type="text"
               value={dateField}
               onChange={(e) => setDateField(e.target.value)}
-              placeholder="due_date, renewal_date, expires_date…"
+              placeholder="due_date, watched, logged_at…"
               className="w-full px-2 py-1 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             />
             <div className="text-[11px] text-faint mt-1">
               Which field each row lands on. A native field or a custom one
               (read from <code>row.fields[field]</code>); values are
               <code>YYYY-MM-DD</code>.
+            </div>
+          </label>
+        )}
+        {viewType === "gallery" && (
+          <label className="block">
+            <div className="text-xs text-muted mb-1">Image field</div>
+            <input
+              type="text"
+              value={imageField}
+              onChange={(e) => setImageField(e.target.value)}
+              placeholder="image_path, poster, cover…"
+              className="w-full px-2 py-1 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+            />
+            <div className="text-[11px] text-faint mt-1">
+              Which field holds each card's image (a URL or stored image path).
+              Rows without one show a title-initial tile.
             </div>
           </label>
         )}

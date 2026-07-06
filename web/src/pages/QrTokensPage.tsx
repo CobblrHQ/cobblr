@@ -4,8 +4,9 @@
 // point at, whether they're public, when they expire, and a way to
 // revoke a token whose printed label has walked off. This is it.
 
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Copy, ExternalLink, QrCode, Ban } from "lucide-react";
+import { Copy, ExternalLink, QrCode, Ban, Globe } from "lucide-react";
 import { ApiError, api, type QrToken } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
@@ -48,6 +49,26 @@ export function QrTokensPage({ embedded = false }: { embedded?: boolean } = {}) 
     onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't save"),
   });
   const style = settings.data?.token_style ?? "descriptive";
+
+  // Custom label base URL — a stable name the workspace forwards to this
+  // instance so printed codes survive a move. Local draft state; committed
+  // on Save/blur.
+  const savedBase = settings.data?.label_base_url ?? "";
+  const [baseDraft, setBaseDraft] = useState(savedBase);
+  useEffect(() => {
+    setBaseDraft(savedBase);
+  }, [savedBase]);
+  const saveBase = useMutation({
+    mutationFn: (url: string) => api.setQrLabelBaseUrl(activeSlug, url.trim()),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["qr-settings", activeSlug] });
+      void qc.invalidateQueries({ queryKey: ["qr-tokens", activeSlug] });
+      toast.success("Saved");
+    },
+    onError: (e: unknown) =>
+      toast.error(e instanceof ApiError ? e.message : "Enter a full URL like https://…"),
+  });
+  const baseDirty = baseDraft.trim().replace(/\/+$/, "") !== savedBase;
 
   const items = list.data?.items ?? [];
   const active = items.filter((t) => status(t) === "active").length;
@@ -103,6 +124,61 @@ export function QrTokensPage({ embedded = false }: { embedded?: boolean } = {}) 
         </p>
       </div>
 
+      {/* Custom label base URL — durable codes that survive leaving this instance. */}
+      <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3">
+        <div className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1.5">
+          <Globe size={12} /> Label base URL
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="url"
+            inputMode="url"
+            placeholder={window.location.origin}
+            value={baseDraft}
+            onChange={(e) => setBaseDraft(e.target.value)}
+            disabled={!isAdmin || saveBase.isPending}
+            className="flex-1 min-w-[220px] font-mono text-xs px-2.5 py-1.5 rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-950 text-content dark:text-mortar-100 disabled:opacity-60"
+          />
+          {isAdmin && (
+            <>
+              <button
+                type="button"
+                onClick={() => baseDirty && saveBase.mutate(baseDraft)}
+                disabled={!baseDirty || saveBase.isPending}
+                className="text-xs px-2.5 py-1.5 rounded bg-cobble-600 text-white disabled:opacity-40 hover:bg-cobble-700 transition"
+              >
+                {saveBase.isPending ? "Saving…" : "Save"}
+              </button>
+              {savedBase && (
+                <button
+                  type="button"
+                  onClick={() => saveBase.mutate("")}
+                  disabled={saveBase.isPending}
+                  className="text-xs px-2 py-1.5 rounded border border-line dark:border-slate-700 text-muted hover:text-content transition"
+                >
+                  Clear
+                </button>
+              )}
+            </>
+          )}
+        </div>
+        <p className="text-[11px] text-muted dark:text-slate-400 mt-1.5 leading-relaxed">
+          {savedBase ? (
+            <>New codes encode <code className="font-mono">{savedBase}/qr/&lt;token&gt;</code>. </>
+          ) : (
+            <>New codes encode this instance's own address. </>
+          )}
+          Point a stable name you own — a domain, a{" "}
+          <span className="font-mono">DuckDNS</span>, or a{" "}
+          <span className="font-mono">Tailscale</span> name — here, and set it to{" "}
+          <strong>forward the <code className="font-mono">/qr/…</code> path</strong>{" "}
+          to this instance (an HTTP redirect or reverse proxy, not a bare DNS
+          record). Then if you ever move — self-host, change domains, leave the
+          hosted app — you re-point the forward and every printed code keeps
+          working. Already-printed codes are unchanged.
+        </p>
+      </div>
+
       {list.isLoading && <div className="text-sm text-muted">Loading…</div>}
       {!list.isLoading && items.length === 0 && (
         <div className="text-sm text-muted dark:text-slate-400 italic">
@@ -114,7 +190,7 @@ export function QrTokensPage({ embedded = false }: { embedded?: boolean } = {}) 
       <div className="space-y-2">
         {items.map((t) => {
           const st = status(t);
-          const scanUrl = `${window.location.origin}/qr/${t.token}`;
+          const scanUrl = t.scan_url;
           return (
             <div
               key={t.id}

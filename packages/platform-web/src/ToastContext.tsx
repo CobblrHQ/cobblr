@@ -26,6 +26,10 @@ interface Toast {
   message: string;
   actionLabel?: string;
   onAction?: () => void | Promise<void>;
+  /** Optional second button on `action` toasts. Replaces the built-in "Dismiss"
+   *  label and runs this before closing (e.g. "Don't show again"). */
+  secondaryLabel?: string;
+  onSecondary?: () => void | Promise<void>;
   /** ms; 0 = sticky. Defaults: info 4000, success 5000, error 8000, action 0. */
   duration: number;
 }
@@ -39,6 +43,8 @@ interface ToastCtx {
     opts: {
       actionLabel: string;
       onAction: () => void | Promise<void>;
+      secondaryLabel?: string;
+      onSecondary?: () => void | Promise<void>;
       duration?: number;
     },
   ) => number;
@@ -73,6 +79,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         duration: opts.duration ?? 0,
         actionLabel: opts.actionLabel,
         onAction: opts.onAction,
+        secondaryLabel: opts.secondaryLabel,
+        onSecondary: opts.onSecondary,
       }),
     dismiss,
   };
@@ -115,6 +123,10 @@ function ToastStack({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: number
   // overlay-portal rule fixes) — the "token minted/copied" toast came out
   // blurred. Body-portal + z-[100] lifts toasts above any modal.
   return createPortal(
+    // Default bottom-right. The app raises `bottom` (to clear the Feedback pill)
+    // and, in full-sidebar mode, repositions the stack onto the rail — both via
+    // #cobblr-toasts rules in the app CSS, kept at ID specificity so the
+    // sidebar rule wins. Not an inline style here: inline would beat those.
     <div id="cobblr-toasts" className="fixed right-4 bottom-4 z-[100] flex flex-col gap-2 max-w-[calc(100vw-2rem)] w-80 pointer-events-none">
       {hiddenCount > 0 && (
         <button
@@ -159,6 +171,15 @@ function ToastCard({ toast, dismiss }: { toast: Toast; dismiss: (id: number) => 
     }
   }
 
+  async function handleSecondary() {
+    if (busy) return;
+    try {
+      await toast.onSecondary?.();
+    } finally {
+      dismiss(toast.id);
+    }
+  }
+
   const palette = paletteFor(toast.kind);
   const Icon = iconFor(toast.kind);
 
@@ -184,10 +205,10 @@ function ToastCard({ toast, dismiss }: { toast: Toast; dismiss: (id: number) => 
               {busy ? "Working…" : toast.actionLabel}
             </button>
             <button
-              onClick={() => dismiss(toast.id)}
+              onClick={handleSecondary}
               className="text-xs text-muted hover:text-slate-800 dark:hover:text-slate-200"
             >
-              Dismiss
+              {toast.secondaryLabel ?? "Dismiss"}
             </button>
           </div>
         )}
@@ -209,19 +230,21 @@ function paletteFor(kind: Kind) {
   switch (kind) {
     case "success":
       return {
-        container: "bg-moss-50 dark:bg-moss-500/10 border-moss-200 dark:border-moss-500/30",
+        // Solid dark fill (was moss-500/10 — a 10% tint the dark page bled
+        // through, washing the toast out). Opaque card + subtle lighter edge.
+        container: "bg-moss-50 dark:bg-moss-800 border-moss-200 dark:border-moss-700",
         icon: "text-moss-600 dark:text-moss-300",
         text: "text-moss-900 dark:text-moss-100",
       };
     case "error":
       return {
-        container: "bg-ember-50 dark:bg-ember-500/10 border-ember-200 dark:border-ember-500/30",
+        container: "bg-ember-50 dark:bg-ember-800 border-ember-200 dark:border-ember-700",
         icon: "text-ember-600 dark:text-ember-300",
         text: "text-ember-900 dark:text-ember-100",
       };
     case "action":
       return {
-        container: "bg-cobble-50 dark:bg-cobble-500/10 border-cobble-200 dark:border-cobble-500/30",
+        container: "bg-cobble-50 dark:bg-cobble-800 border-cobble-200 dark:border-cobble-700",
         icon: "text-accent dark:text-cobble-300",
         text: "text-cobble-900 dark:text-cobble-100",
       };

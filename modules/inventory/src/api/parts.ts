@@ -12,8 +12,15 @@ import { platform } from "@cobblr/platform-contract";
 import { instanceOf, instanceQtyUnit, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireCapability, requireRole } from "./util.js";
 import { routeUnknownToMetadata, preserveServerManaged, coerceMetadata } from "./route-helpers.js";
+import { disclosureHandler } from "./disclosure.js";
 
 export const partsRouter = Router({ mergeParams: true });
+
+// Stock-vs-catalog disclosure for this instance. Registered BEFORE the "/:id"
+// routes so it isn't swallowed as a part id. Instance-scoped, so req.instance +
+// req.instanceConfig (which carries the sticky override) are populated. See
+// disclosure.ts + docs/design-decisions/one-record-substrate.md.
+partsRouter.get("/disclosure", disclosureHandler);
 
 const PartCreate = z.object({
   name: z.string().min(1).max(160),

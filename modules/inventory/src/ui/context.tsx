@@ -21,6 +21,10 @@ interface InventoryCtx {
   /** Singular noun for the add button + create modal ("yarn" → "New yarn").
    *  Falls back to "part". */
   itemNoun: string;
+  /** Plural noun for lists / search / counts ("Film" → "films"). Defaulted
+   *  from the collection name at creation; falls back here for legacy instances.
+   *  A skinnable instance's UI reads this so it never hardcodes "parts". */
+  itemNounPlural: string;
   /** Default unit for new items in this instance (e.g. "skein"). */
   qtyUnit?: string;
   /** When this instance's items belong to a parent "type" in another instance
@@ -49,6 +53,7 @@ export function InventoryProvider({
   getToken,
   instance,
   itemNoun,
+  itemNounPlural,
   qtyUnit,
   parent,
   children,
@@ -57,6 +62,7 @@ export function InventoryProvider({
   getToken: () => string | null;
   instance?: string;
   itemNoun?: string;
+  itemNounPlural?: string;
   qtyUnit?: string;
   parent?: ParentConfig;
   children: ReactNode;
@@ -67,9 +73,14 @@ export function InventoryProvider({
   );
   const entityKind = instance ? `${instance}:item` : "inventory:part";
   const basePath = instance ? `/instances/${instance}` : "/inventory";
+  const noun = itemNoun ?? "part";
+  // Prefer the stored plural; else a light fallback for legacy instances that
+  // predate it ("part" → "parts", otherwise "<noun>s"). New instances carry a
+  // properly-inflected plural from creation.
+  const nounPlural = itemNounPlural ?? (noun === "part" ? "parts" : `${noun}s`);
   return (
     <Ctx.Provider
-      value={{ orgSlug, getToken, api, instance, entityKind, itemNoun: itemNoun ?? "part", qtyUnit, parent, basePath }}
+      value={{ orgSlug, getToken, api, instance, entityKind, itemNoun: noun, itemNounPlural: nounPlural, qtyUnit, parent, basePath }}
     >
       {children}
     </Ctx.Provider>

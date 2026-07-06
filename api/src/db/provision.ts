@@ -48,24 +48,55 @@ function randomPassword(): string {
   return randomBytes(32).toString("base64url");
 }
 
-export async function provisionTenantDb(dbName: string): Promise<ProvisionResult> {
-  if (!env.SUPERUSER_DATABASE_URL) {
-    throw new Error("SUPERUSER_DATABASE_URL must be set to provision tenants");
-  }
-  assertIdent(dbName);
-  const userName = `${dbName}_user`;
-  assertIdent(userName);
-  const password = randomPassword();
+// SQLSTATEs that mean "transient contention — safe to retry after a beat", NOT
+// "this org's provisioning is fundamentally broken". The one that made CI flake:
+//   55006 object_in_use  — `CREATE DATABASE` throws "source database 'template1'
+//                          is being accessed by other users" when a concurrent
+//                          `DROP DATABASE` (a parallel test fork's teardown) is
+//                          mid-flight on the shared catalog. Load-dependent,
+//                          intermittent, no app stack trace — the classic flake.
+// Plus the neighbours that show up under the same 8-fork load:
+//   53300 too_many_connections · 57P03 cannot_connect_now
+//   40P01 deadlock_detected    · 40001 serialization_failure
+//   08xxx/57P01 connection dropped mid-statement.
+const TRANSIENT_PROVISION_CODES = new Set([
+  "55006", "53300", "57P03", "40P01", "40001", "08006", "08003", "08000", "57P01",
+]);
 
-  // Step 1–4: superuser-only operations. Drop the connection as soon
-  // as we're done with privileged work.
+function isTransientProvisionError(err: unknown): boolean {
+  const code = (err as { code?: string } | undefined)?.code;
+  if (code && TRANSIENT_PROVISION_CODES.has(code)) return true;
+  // Some drivers surface these as bare connection errors with no SQLSTATE.
+  const msg = (err as Error | undefined)?.message ?? "";
+  return /being accessed by other users|too many clients|connection.*(reset|closed|terminat)/i.test(msg);
+}
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** One provisioning attempt: create the DB + tenant user, then run tenant-base
+ *  migrations as that user. `reset` (retries only) drops any partial state from a
+ *  prior failed attempt first, so a retry is a clean slate whether the previous
+ *  attempt died at CREATE DATABASE, CREATE USER, or mid-migration. */
+async function provisionOnce(
+  dbName: string,
+  userName: string,
+  password: string,
+  reset: boolean,
+): Promise<number> {
+  const escapedPassword = password.replace(/'/g, "''");
+  // Steps 1–4: superuser-only operations. Drop the connection as soon as the
+  // privileged work is done.
   const superClient = new Client({ connectionString: env.SUPERUSER_DATABASE_URL });
   await superClient.connect();
   try {
+    if (reset) {
+      // Wipe a half-provisioned leftover so CREATE below doesn't hit "already
+      // exists". No-op on a first attempt (this branch only runs on retry).
+      await superClient.query(`DROP DATABASE IF EXISTS "${dbName}"`);
+      await superClient.query(`DROP USER IF EXISTS "${userName}"`);
+    }
     // Escape single quotes in the password (base64url has none, but
-    // future-proof). The user identifier itself is splice-safe per
-    // assertIdent above.
-    const escapedPassword = password.replace(/'/g, "''");
+    // future-proof). The user identifier itself is splice-safe per assertIdent.
     await superClient.query(`CREATE DATABASE "${dbName}"`);
     await superClient.query(
       `CREATE USER "${userName}" WITH LOGIN PASSWORD '${escapedPassword}'`,
@@ -75,9 +106,9 @@ export async function provisionTenantDb(dbName: string): Promise<ProvisionResult
     await superClient.end();
   }
 
-  // Step 5: run tenant-base migrations against the new DB, connected
-  // as the new tenant user. A small Pool just for this one job —
-  // tenant.ts opens the long-lived Pool on first request.
+  // Step 5: run tenant-base migrations against the new DB, connected as the new
+  // tenant user. A small Pool just for this one job — tenant.ts opens the
+  // long-lived Pool on first request.
   const url = new URL(env.DATABASE_URL);
   const provisioningPool = new Pool({
     host: url.hostname,
@@ -87,16 +118,53 @@ export async function provisionTenantDb(dbName: string): Promise<ProvisionResult
     password,
     max: 2,
   });
-  let migrationsApplied = 0;
   try {
     const result = await runMigrations({
       pool: provisioningPool,
       directory: tenantBaseDir,
       scope: `tenant ${dbName}`,
     });
-    migrationsApplied = result.applied.length;
+    return result.applied.length;
   } finally {
     await provisioningPool.end();
+  }
+}
+
+export async function provisionTenantDb(dbName: string): Promise<ProvisionResult> {
+  if (!env.SUPERUSER_DATABASE_URL) {
+    throw new Error("SUPERUSER_DATABASE_URL must be set to provision tenants");
+  }
+  assertIdent(dbName);
+  const userName = `${dbName}_user`;
+  assertIdent(userName);
+  const password = randomPassword();
+
+  // Retry the WHOLE create+migrate on transient catalog/connection contention.
+  // Before this, a single `CREATE DATABASE` collision with a concurrent
+  // `DROP DATABASE` threw, the caller (provisionOrgForUser) SWALLOWED it, signup
+  // still returned 201 + a token, and the org was left db_credentials_encrypted
+  // NULL — so the next `GET /orgs/:slug/modules` 503'd (`tenant_unprovisioned`).
+  // That was the "random victim, clears on re-run" CI flake (issue #765). A
+  // bounded retry absorbs the momentary contention here — and hardens real prod
+  // signups against the same catalog race — instead of shipping a broken org.
+  const MAX_ATTEMPTS = 5;
+  let migrationsApplied = 0;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      migrationsApplied = await provisionOnce(dbName, userName, password, attempt > 1);
+      break;
+    } catch (err) {
+      if (attempt < MAX_ATTEMPTS && isTransientProvisionError(err)) {
+        const code = (err as { code?: string }).code ?? "conn";
+        const first = ((err as Error).message ?? "").split("\n")[0];
+        console.warn(
+          `[provision] ${dbName} attempt ${attempt}/${MAX_ATTEMPTS} transient ${code}: ${first} — retrying`,
+        );
+        await sleep(attempt * 200 + Math.floor(Math.random() * 150));
+        continue;
+      }
+      throw err;
+    }
   }
 
   const credentialsEncrypted = encryptCreds(JSON.stringify({ user: userName, password }));

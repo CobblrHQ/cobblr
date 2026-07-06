@@ -22,6 +22,7 @@ import {
   upsertOverride,
   type OverrideTarget,
 } from "../platform/entity-kind-overrides.js";
+import { singularize, pluralize } from "../lib/inflect.js";
 import { meta } from "../db/meta.js";
 
 export const instancesRouter = Router({ mergeParams: true });
@@ -128,13 +129,19 @@ instancesRouter.post(
           displayName: parsed.data.display_name,
           isDefault: false,
         });
-        // Seed a presentation override row so the new instance shows
-        // up in the nav with its display name.
+        // Seed a presentation override row so the new instance shows up in the
+        // nav with its display name AND carries its own item noun. The noun
+        // defaults from the collection name ("Films" → "Film"/"Films"), so a
+        // skinnable module's UI never has to fall back to its hardcoded word
+        // ("part"). It's a default the user can fix in the instance settings —
+        // see docs/design-decisions/one-record-substrate.md.
+        const itemNoun = singularize(parsed.data.display_name);
         await upsertOverride({
           orgId: req.tenant!.org.id,
           targetKind: "instance",
           targetId: `${parsed.data.module_name}:${parsed.data.instance_name}`,
           displayLabel: parsed.data.display_name,
+          config: { item_noun: itemNoun, item_noun_plural: pluralize(itemNoun) },
           insertOnly: true,
         });
         res.status(201).json(created);

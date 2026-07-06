@@ -15,16 +15,21 @@ import { StockAdjustButton } from "./StockAdjustButton";
 import { PartGallery } from "./PartGallery";
 import { MaintenancePanel } from "./MaintenancePanel";
 import { useFieldPresentation } from "./useFieldPresentation";
+import { useDisclosure } from "./useDisclosure";
 
 // The part-detail body. Rendered inside PartDetailModal (below) — the
 // detail view is a modal over the list now (consistent with machines),
 // not a separate full page. Takes the part id + an onClose from the
 // list route, instead of reading the route param itself.
 export function PartDetailPage({ id, onClose }: { id: string; onClose: () => void }) {
-  const { api, orgSlug, getToken, entityKind, parent } = useInventory();
+  const { api, orgSlug, getToken, entityKind, itemNoun, parent } = useInventory();
   const fp = useFieldPresentation(entityKind);
+  const disclosure = useDisclosure();
   const units = useUnits();
   const qc = useQueryClient();
+  // A native field is hidden if the workspace explicitly hid it OR it's part of
+  // the stock face and this instance is a lean catalog. See one-record-substrate.md.
+  const hide = (name: string): boolean => fp.hidden(name) || disclosure.hides(name);
 
   const part = useQuery({
     queryKey: ["inventory-part", id],
@@ -78,7 +83,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
   const remove = useMutation({
     mutationFn: () => api.deletePart(id!),
     onSuccess: () => {
-      toast.success("Part deleted.");
+      toast.success(`${itemNoun.charAt(0).toUpperCase() + itemNoun.slice(1)} deleted.`);
       void qc.invalidateQueries({ queryKey: ["inventory-parts"] });
       onClose();
     },
@@ -90,7 +95,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
   // transitions from isLoading=true to isLoading=false the hook
   // count would change between renders and React silently fails the
   // component (the page renders blank, no error in the console).
-  usePageTitle(part.data?.name ?? "Part");
+  usePageTitle(part.data?.name ?? itemNoun.charAt(0).toUpperCase() + itemNoun.slice(1));
   if (part.isLoading) return <div className="text-sm text-faint dark:text-slate-500">loading…</div>;
   if (part.error) {
     return <div className="text-sm text-ember-500">{(part.error as Error).message}</div>;
@@ -122,6 +127,20 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
     // "Split one off" only makes sense for a lot (qty > 1) — hide it on a
     // single item (splitting would have to leave 0).
     ...(Number(p.qty) > 1 ? [] : ["inventory:split-lot"]),
+    // A lean catalog instance (films, books) shows no stock actions — using
+    // one / using up / restocking a film is nonsensical. These match on the
+    // global kind traits (stock-material), so exclude them here per-instance
+    // until traits are derived per-instance. See one-record-substrate.md.
+    ...(disclosure.stock
+      ? []
+      : [
+          "inventory:use-one",
+          "inventory:use-up",
+          "inventory:replaced",
+          "inventory:adjust-stock",
+          "inventory:set-stock",
+          "inventory:split-lot",
+        ]),
   ];
 
   return (
@@ -186,6 +205,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
           excludeActionIds={excludeActionIds}
         />
         <div className="grid grid-cols-2 gap-3">
+          {!hide("qty") && (
           <Field label="Qty">
             <div className="flex items-center gap-2">
               <span className="font-mono text-lg text-content dark:text-mortar-100">
@@ -194,7 +214,8 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
               <StockAdjustButton partId={p.id} />
             </div>
           </Field>
-          {!fp.hidden("unit") && (
+          )}
+          {!hide("unit") && (
           <Field label={fp.label("unit", "Unit")}>
             {/* Changing the unit auto-converts the quantity when the two are
                 interconvertible (1000 g → kg = 1); otherwise just the unit
@@ -209,7 +230,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
             />
           </Field>
           )}
-          {!fp.hidden("min_qty") && (
+          {!hide("min_qty") && (
           <Field label={fp.label("min_qty", "Min qty")}>
             <InlineText
               value={p.min_qty ?? ""}
@@ -219,7 +240,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
             />
           </Field>
           )}
-          {!fp.hidden("cost") && (
+          {!hide("cost") && (
           <Field label={fp.label("cost", "Cost")}>
             <InlineText
               value={p.cost ?? ""}
@@ -229,7 +250,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
             />
           </Field>
           )}
-          {!fp.hidden("category") && (
+          {!hide("category") && (
           <Field label={fp.label("category", "Category")}>
             <select
               value={p.category_id ?? ""}
@@ -245,7 +266,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
             </select>
           </Field>
           )}
-          {!fp.hidden("location") && (
+          {!hide("location") && (
           <Field label={fp.label("location", "Location")}>
             <select
               value={p.location_id ?? ""}
@@ -262,7 +283,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
             </select>
           </Field>
           )}
-          {!fp.hidden("manufacturer") && (
+          {!hide("manufacturer") && (
           <Field label={fp.label("manufacturer", "Manufacturer")}>
             <InlineText
               value={p.manufacturer ?? ""}
@@ -271,7 +292,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
             />
           </Field>
           )}
-          {!fp.hidden("supplier_url") && (
+          {!hide("supplier_url") && (
           <Field label={fp.label("supplier_url", "Supplier URL")}>
             <InlineText
               value={p.supplier_url ?? ""}
@@ -280,7 +301,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
             />
           </Field>
           )}
-          {!fp.hidden("serial_number") && (
+          {!hide("serial_number") && (
           <Field label={fp.label("serial_number", "Serial number")}>
             <InlineText
               value={p.serial_number ?? ""}
@@ -289,7 +310,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
             />
           </Field>
           )}
-          {!fp.hidden("model_number") && (
+          {!hide("model_number") && (
           <Field label={fp.label("model_number", "Model number")}>
             <InlineText
               value={p.model_number ?? ""}
@@ -342,7 +363,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
         }
       />
 
-      {!fp.hidden("warranty") && (
+      {!hide("warranty") && (
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
         <h3 className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
           warranty & status
@@ -413,18 +434,22 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
         onSetCover={(imagePath) => update.mutate({ image_path: imagePath })}
       />
 
-      <MaintenancePanel entityModule="inventory" entityType="part" entityId={p.id} />
+      {!hide("maintenance") && (
+        <MaintenancePanel entityModule="inventory" entityType="part" entityId={p.id} />
+      )}
 
-      <ConsumptionPanel
-        partId={p.id}
-        qty={Number(p.qty)}
-        unit={p.unit}
-        capacity={pmeta.capacity != null ? Number(pmeta.capacity) : null}
-        trackedBy={typeof pmeta.tracked_by === "string" ? pmeta.tracked_by : null}
-        onSetCapacity={(c) => update.mutate({ metadata: { ...pmeta, capacity: c } })}
-      />
+      {!hide("consumable") && (
+        <ConsumptionPanel
+          partId={p.id}
+          qty={Number(p.qty)}
+          unit={p.unit}
+          capacity={pmeta.capacity != null ? Number(pmeta.capacity) : null}
+          trackedBy={typeof pmeta.tracked_by === "string" ? pmeta.tracked_by : null}
+          onSetCapacity={(c) => update.mutate({ metadata: { ...pmeta, capacity: c } })}
+        />
+      )}
 
-      <AllocationsPanel partId={p.id} />
+      {!hide("allocations") && <AllocationsPanel partId={p.id} />}
 
       <div className="flex items-center justify-center gap-4 pt-4">
         <button
@@ -445,7 +470,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
           }}
           className="text-xs text-faint dark:text-slate-500 hover:text-ember-500 inline-flex items-center gap-1.5"
         >
-          <Trash2 size={12} /> Delete this part
+          <Trash2 size={12} /> Delete this {itemNoun}
         </button>
       </div>
 
@@ -504,16 +529,19 @@ function PrintQrButton({
         `/api/v1/orgs/${orgSlug}/modules/core-labels-qr/tokens?entity_kind=inventory:part&entity_id=${encodeURIComponent(partId)}`,
         { headers: auth() },
       );
-      let tokenSlug: string | null = null;
+      // scan_url is the full URL to encode, built server-side from the
+      // workspace's effective base (custom label base URL, else the serving
+      // origin) — never guess window.location.origin here.
+      let scanUrl: string | null = null;
       let entityName = "";
       if (list.ok) {
         const data = (await list.json()) as {
-          items: Array<{ id: string; token: string; revoked_at: string | null }>;
+          items: Array<{ id: string; scan_url: string; revoked_at: string | null }>;
         };
         const active = data.items.find((t) => !t.revoked_at);
-        if (active) tokenSlug = active.token;
+        if (active) scanUrl = active.scan_url;
       }
-      if (!tokenSlug) {
+      if (!scanUrl) {
         const res = await fetch(
           `/api/v1/orgs/${orgSlug}/modules/core-labels-qr/tokens`,
           {
@@ -528,8 +556,8 @@ function PrintQrButton({
           },
         );
         if (!res.ok) throw new Error(`mint token: ${res.status}`);
-        const data = (await res.json()) as { token: string };
-        tokenSlug = data.token;
+        const data = (await res.json()) as { scan_url: string };
+        scanUrl = data.scan_url;
       }
       // Fetch the part name for the label description.
       const partRes = await fetch(
@@ -546,7 +574,7 @@ function PrintQrButton({
       // 2. Queue a label-print job. qr_payload is the unauthenticated
       //    resolver URL — any QR reader pointed at it lands on the
       //    workspace's part detail.
-      const qrUrl = `${window.location.origin}/qr/${tokenSlug}`;
+      const qrUrl = scanUrl;
       const q = await fetch(
         `/api/v1/orgs/${orgSlug}/modules/labels/queue`,
         {
@@ -710,14 +738,17 @@ export function PartDetailModal({
   id: string;
   onClose: () => void;
 }) {
-  const { api } = useInventory();
+  const { api, itemNoun } = useInventory();
   const part = useQuery({
     queryKey: ["inventory-part", id],
     queryFn: () => api.getPart(id),
     enabled: !!id,
   });
+  // While the record loads, title with the instance's own noun ("Film"), never a
+  // hardcoded "Part". See one-record-substrate.md (vocabulary is per-instance).
+  const loadingTitle = itemNoun.charAt(0).toUpperCase() + itemNoun.slice(1);
   return (
-    <Modal open onClose={onClose} title={part.data?.name ?? "Part"} size="xl">
+    <Modal open onClose={onClose} title={part.data?.name ?? loadingTitle} size="xl">
       <PartDetailPage id={id} onClose={onClose} />
     </Modal>
   );

@@ -25,6 +25,7 @@ import { MobileNav } from "./MobileNav";
 import { EmailVerifyBanner } from "./EmailVerifyBanner";
 import { SimpleModeNotice } from "./SimpleModeNotice";
 import { ChatWidget } from "./ChatWidget";
+import { FeedbackWidget } from "./FeedbackWidget";
 import { GlobalScanWedge } from "./GlobalScanWedge";
 import { SearchBar } from "./SearchBar";
 import { CommandPalette, OPEN_PALETTE_EVENT } from "./CommandPalette";
@@ -248,6 +249,12 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           while simple mode is on — the always-visible way to turn it off). */}
       <SimpleModeNotice variant="sidebar" />
       <EmailVerifyBanner variant="sidebar" />
+      {/* Feedback sits in the "notices" realm (with verify-email) — it's a meta
+          "reach the makers" nudge, not a workspace tool, so it heads the foot as
+          its own tiny section, divided from the tools below. The floating pill is
+          suppressed in full-sidebar (App.tsx). */}
+      <FeedbackWidget asRow />
+      <div className="my-1 border-t border-line dark:border-slate-700" />
       {/* Module quick-actions (Build/Scan) SHARE one row — half-width each,
           wrapping if a third ever appears. */}
       <div className="flex flex-wrap gap-0.5 [&_a]:flex-1 [&_a]:min-w-[45%] [&_a]:px-3 [&_a]:py-1.5 [&_a]:rounded [&_a]:text-[13px] [&_a]:gap-2.5">

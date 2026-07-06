@@ -238,6 +238,86 @@ export class InventoryApi {
     return parsed as T;
   }
 
+  /** Whether this instance presents its stock face or its lean catalog face,
+   *  derived server-side from the instance's data (one-record-substrate.md). */
+  getDisclosure = () =>
+    this.partsRequest<{ stock: boolean; source: string }>("GET", "/disclosure");
+
+  /** The sticky stock-tracking override for THIS instance, or undefined for
+   *  "auto" (let the platform derive it from the data). Stored on the
+   *  instance's entity-kind-override config; only meaningful for a named
+   *  instance (the default is always stock). */
+  getStockOverride = async (): Promise<boolean | undefined> => {
+    if (!this.opts.instance) return undefined;
+    const { items } = await this.requestAbs<{
+      items: Array<{ target_kind: string; target_id: string; config?: Record<string, unknown> }>;
+    }>("GET", `/api/v1/orgs/${this.slug}/entity-kind-overrides`);
+    const row = items.find(
+      (o) => o.target_kind === "instance" && o.target_id === `inventory:${this.opts.instance}`,
+    );
+    const v = row?.config?.stock;
+    return typeof v === "boolean" ? v : undefined;
+  };
+
+  /** Force this instance to stock (true) or catalog (false), or clear the
+   *  override (null = auto). Merges into the existing override config so
+   *  item_noun / qty_unit are preserved. */
+  setStockOverride = async (value: boolean | null): Promise<void> => {
+    if (!this.opts.instance) return;
+    const { items } = await this.requestAbs<{
+      items: Array<{ target_kind: string; target_id: string; config?: Record<string, unknown> }>;
+    }>("GET", `/api/v1/orgs/${this.slug}/entity-kind-overrides`);
+    const row = items.find(
+      (o) => o.target_kind === "instance" && o.target_id === `inventory:${this.opts.instance}`,
+    );
+    const config: Record<string, unknown> = { ...(row?.config ?? {}) };
+    if (value === null) delete config.stock;
+    else config.stock = value;
+    await this.requestAbs("PUT", `/api/v1/orgs/${this.slug}/entity-kind-overrides`, {
+      target_kind: "instance",
+      target_id: `inventory:${this.opts.instance}`,
+      config,
+    });
+  };
+
+  /** The instance's item noun (singular + plural). Empty for the default
+   *  instance. Defaulted from the collection name at creation, editable here. */
+  getNouns = async (): Promise<{ singular?: string; plural?: string }> => {
+    if (!this.opts.instance) return {};
+    const { items } = await this.requestAbs<{
+      items: Array<{ target_kind: string; target_id: string; config?: Record<string, unknown> }>;
+    }>("GET", `/api/v1/orgs/${this.slug}/entity-kind-overrides`);
+    const row = items.find(
+      (o) => o.target_kind === "instance" && o.target_id === `inventory:${this.opts.instance}`,
+    );
+    return {
+      singular: row?.config?.item_noun as string | undefined,
+      plural: row?.config?.item_noun_plural as string | undefined,
+    };
+  };
+
+  /** Rename what this instance calls its items. Merges into the override config
+   *  so stock / qty_unit are preserved. */
+  setNouns = async (singular: string, plural: string): Promise<void> => {
+    if (!this.opts.instance) return;
+    const { items } = await this.requestAbs<{
+      items: Array<{ target_kind: string; target_id: string; config?: Record<string, unknown> }>;
+    }>("GET", `/api/v1/orgs/${this.slug}/entity-kind-overrides`);
+    const row = items.find(
+      (o) => o.target_kind === "instance" && o.target_id === `inventory:${this.opts.instance}`,
+    );
+    const config: Record<string, unknown> = {
+      ...(row?.config ?? {}),
+      item_noun: singular.trim(),
+      item_noun_plural: plural.trim(),
+    };
+    await this.requestAbs("PUT", `/api/v1/orgs/${this.slug}/entity-kind-overrides`, {
+      target_kind: "instance",
+      target_id: `inventory:${this.opts.instance}`,
+      config,
+    });
+  };
+
   listCategories = () => this.request<{ items: Category[] }>("GET", "/categories");
   createCategory = (b: { name: string; color?: string; parent_id?: string | null }) =>
     this.request<Category>("POST", "/categories", b);
@@ -492,7 +572,10 @@ export class InventoryApi {
     mode: "navigate";
     auth: "session";
   }) =>
-    this.requestAbs<{ token: string }>(
+    // scan_url is the full URL to encode, built server-side from the
+    // workspace's effective base (custom label base URL, else the serving
+    // origin) — use it verbatim instead of guessing window.location.origin.
+    this.requestAbs<{ token: string; scan_url: string }>(
       "POST",
       `/api/v1/orgs/${this.slug}/modules/core-labels-qr/tokens`,
       b,

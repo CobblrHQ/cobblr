@@ -16,10 +16,33 @@
 
 import { Router } from "express";
 import type { Kysely } from "kysely";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { platform } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
+import { env } from "../env.js";
 
 export const publicRouter = Router();
+
+// Verify a scan-export photo token → orgId (or null). Byte-compatible mirror of
+// modules/core-scan/src/services/export-token.ts `verifyExportToken` — keep the
+// two in lockstep (same payload shape, same HMAC over JWT_SECRET). Grants
+// org-wide IMAGE read (the serving route below is images-only) until it expires.
+function verifyScanExportToken(token: string): string | null {
+  const dot = token.lastIndexOf(".");
+  if (dot < 1) return null;
+  const payload = token.slice(0, dot);
+  const expected = createHmac("sha256", env.JWT_SECRET).update(payload).digest("base64url");
+  const a = Buffer.from(token.slice(dot + 1));
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+  try {
+    const { o, e } = JSON.parse(Buffer.from(payload, "base64url").toString()) as { o?: unknown; e?: unknown };
+    if (typeof o !== "string" || typeof e !== "number" || Date.now() > e) return null;
+    return o;
+  } catch {
+    return null;
+  }
+}
 
 interface SurfaceRow {
   id: string;
@@ -387,6 +410,39 @@ publicRouter.get("/:token/files/:id/raw", (req, res, next) => {
     }
     res.type(file.mimeType);
     res.setHeader("Cache-Control", "public, max-age=3600");
+    res.send(Buffer.from(file.bytes));
+  })().catch(next);
+});
+
+// No-auth, signed-token image serve for scan-inbox EXPORT (cross-instance
+// import). A scan export mints a short-lived org-scoped token and bakes this URL
+// into each item's photo_urls; the importing instance's best-effort photo fetch
+// GETs it with no credentials — exactly like the companion app producer's unauthenticated
+// image endpoint the interop contract assumes. Same guardrails as the surface
+// file route: images only (no docs/gcode), org-scoped via the token, bytes
+// through the platform files seam. The token expires (default 14d) and grants
+// read only.
+publicRouter.get("/scan-export/:token/files/:id/raw", (req, res, next) => {
+  void (async () => {
+    const orgId = verifyScanExportToken(req.params.token ?? "");
+    if (!orgId) {
+      res.status(403).json({ error: { code: "bad_token", message: "invalid or expired export token" } });
+      return;
+    }
+    const id = req.params.id;
+    if (!id) {
+      res.status(404).json({ error: { code: "not_found", message: "no such file" } });
+      return;
+    }
+    const file =
+      (await platform().files.read(orgId, id, "medium")) ??
+      (await platform().files.read(orgId, id, "original"));
+    if (!file || !file.mimeType.startsWith("image/")) {
+      res.status(404).json({ error: { code: "not_found", message: "no such image" } });
+      return;
+    }
+    res.type(file.mimeType);
+    res.setHeader("Cache-Control", "private, max-age=3600");
     res.send(Buffer.from(file.bytes));
   })().catch(next);
 });

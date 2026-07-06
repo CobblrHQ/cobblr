@@ -37,20 +37,22 @@ function auth(): Record<string, string> {
 export async function queueLabel(input: QueueLabelInput): Promise<void> {
   const { slug, entityKind, entityId, description } = input;
   // 1. Try to reuse an active token to avoid littering the table on
-  //    repeated bulk prints.
-  let tokenSlug: string | null = null;
+  //    repeated bulk prints. The server hands back scan_url — the full URL
+  //    to encode, built from the workspace's effective base (custom label
+  //    base URL if set, else the serving origin). Never guess the origin here.
+  let scanUrl: string | null = null;
   const list = await fetch(
     `/api/v1/orgs/${slug}/modules/core-labels-qr/tokens?entity_kind=${encodeURIComponent(entityKind)}&entity_id=${encodeURIComponent(entityId)}`,
     { headers: auth() },
   );
   if (list.ok) {
     const data = (await list.json()) as {
-      items: Array<{ token: string; revoked_at: string | null }>;
+      items: Array<{ scan_url: string; revoked_at: string | null }>;
     };
     const active = data.items.find((t) => !t.revoked_at);
-    if (active) tokenSlug = active.token;
+    if (active) scanUrl = active.scan_url;
   }
-  if (!tokenSlug) {
+  if (!scanUrl) {
     const mint = await fetch(
       `/api/v1/orgs/${slug}/modules/core-labels-qr/tokens`,
       {
@@ -65,15 +67,15 @@ export async function queueLabel(input: QueueLabelInput): Promise<void> {
       },
     );
     if (!mint.ok) throw new Error(`mint token: ${mint.status}`);
-    const m = (await mint.json()) as { token: string };
-    tokenSlug = m.token;
+    const m = (await mint.json()) as { scan_url: string };
+    scanUrl = m.scan_url;
   }
   // 2. Push to the labels queue.
   // Infer module_name + entity_type from "<module>:<kind>" if not
   // overridden. For "core-locations:location" this yields module=
   // "core-locations", type="location".
   const [defaultModule, defaultType] = entityKind.split(":");
-  const qrUrl = `${window.location.origin}/qr/${tokenSlug}`;
+  const qrUrl = scanUrl;
   const q = await fetch(`/api/v1/orgs/${slug}/modules/labels/queue`, {
     method: "POST",
     headers: { ...auth(), "Content-Type": "application/json" },

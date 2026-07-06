@@ -2,6 +2,21 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-07-06
+
+### Features
+- Print-failure detection can now use a self-hosted detection service you run anywhere: point it at an Obico ML API or PrintGuard box (or any HTTP model on your LAN) and the spaghetti watch scores prints through it. Pick "External detector" as the backend, add the service's URL + token, and go. Nothing is hardcoded: each service is a small manifest, so new ones drop in without a code change.
+- Printed QR codes can now outlive this instance. Under QR codes (owner/admin), set a Label base URL: a stable name you control (a domain, a DuckDNS, or a Tailscale name) that forwards the `/qr/…` path to wherever your workspace lives. New codes encode that base instead of the instance's own address, so if you later self-host, change domains, or leave the hosted app, you just re-point the forward and every printed label keeps working. Leave it blank to use the current address; already-printed codes are unaffected.
+- Your lists now show the right face on their own. A collection you count and reorder (filament, screws, groceries) keeps its full stock view: quantities, reorder points, allocations. A collection you just catalog (films, books, recipes, anything with no quantities) reads as a lean list of your own fields, with none of the stock machinery cluttering it. The platform decides from your data, so there's nothing to choose; a one-tap Auto / Always track stock / Catalog only control in the list's Settings is there for the rare case you want to override it. Your list also speaks its own words now: name a collection "Films" and it says "New Film", "search films", "No films yet", never "part", with a "What do you call these?" setting to fix the odd plural. Two new saved-view layouts arrive too: a gallery (a poster wall) and a heatmap (a habit-tracker grid).
+- The scan inbox can now export itself to a file, not just import one. The new Export button downloads your whole inbox as an interop file (JSON or CSV): photos included, via short-lived no-auth links another instance can fetch. So moving a scan inbox between workspaces or between Cobblr instances is now Export here → Import there: no re-scanning, no database surgery. It round-trips both ways (and still interops with companion app); on re-import Cobblr re-runs its own matchmaker.
+
+### Improvements
+- Feedback moves into the sidebar in full-sidebar mode. When you hide the top bar, the Feedback button is no longer a pill floating over your content. It becomes a row at the top of the sidebar foot, in the same "notices" area as the verify-your-account nudge, set apart from the workspace tools below it. Top-bar mode keeps the floating pill (there's no sidebar foot to host it there). Same one-click Send-feedback dialog either way.
+- The quick theme toggle can now offer to set your account default too. Flipping a screen to dark (or light) with the header or ⌘K toggle still only changes that one device, the way it always has. But if you haven't set an account-wide default yet, a small prompt now offers to use it on all your devices. Take it and the choice syncs everywhere (and that device goes back to following your account default); ignore it and nothing changes. It stops asking once you've made an account-level choice, only ever appears a few times, and has a "Don't show again" if you'd rather it stay quiet.
+
+### Fixes
+- New workspaces provision more reliably. If a momentary database collision hit while your workspace was being created, signup could return a workspace that wasn't actually set up yet (its first page load failed). Provisioning now retries through that brief contention, so the workspace lands ready.
+
 ## 2026-07-05
 
 ### Features

@@ -121,6 +121,7 @@ import { ConnectivityBanner } from "./components/ConnectivityBanner";
 import { PortalLayout } from "./components/PortalLayout";
 import { ToastProvider, ConfirmProvider } from "@cobblr/platform-web";
 import { api, getToken } from "./lib/api";
+import { useNavMode, useNavTopBar } from "./lib/nav-mode";
 import { useQuery } from "@tanstack/react-query";
 import { InstancePage } from "./pages/InstancePage";
 
@@ -393,6 +394,12 @@ function ActiveOrgScopedRoutes() {
   // WHITELIST (not blacklist) so new platform pages are blocked by default.
   // See business-models/docs/18-managed-vertical-apps.md.
   const appMode = activeOrg?.app_mode ?? null;
+  // Full-sidebar mode hosts Feedback as a row in the sidebar foot (AppLayout),
+  // so the floating pill would double up — suppress it there. Same derivation
+  // AppLayout uses. Any other mode keeps the pill.
+  const navMode = useNavMode();
+  const navTopBar = useNavTopBar();
+  const fullSide = navMode === "side" && !navTopBar && !appMode;
   const APP_ALLOWED = ["/instances", "/scan", "/me"];
   const inAppSurface = APP_ALLOWED.some(
     (p) => location.pathname === p || location.pathname.startsWith(p + "/"),
@@ -425,7 +432,7 @@ function ActiveOrgScopedRoutes() {
       <InstalledRenderers />
       {/* Always-on feedback button for every signed-in user — except the
           operator console, where the operator IS the recipient. */}
-      {!onAdmin && <FeedbackWidget />}
+      {!onAdmin && !fullSide && <FeedbackWidget />}
       {shouldRedirectToPortal && <Navigate to={`/portal/${activeSlug}`} replace />}
       {shouldRedirectToAppHome && <Navigate to={appMode!.home_path} replace />}
       <Routes>

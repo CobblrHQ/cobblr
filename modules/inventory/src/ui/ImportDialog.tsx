@@ -12,7 +12,7 @@ import type { ImportResponse } from "./api";
 import { InventoryApiError } from "./api";
 
 export function ImportDialog({ onClose }: { onClose: (importedCount: number) => void }) {
-  const { api } = useInventory();
+  const { api, itemNounPlural } = useInventory();
   const qc = useQueryClient();
   const [csv, setCsv] = useState("");
   const [defaultCat, setDefaultCat] = useState("");
@@ -66,7 +66,7 @@ export function ImportDialog({ onClose }: { onClose: (importedCount: number) => 
     <Modal
       open
       onClose={() => onClose(0)}
-      title="Import parts from CSV"
+      title={`Import ${itemNounPlural.toLowerCase()} from CSV`}
       subtitle="paste a CSV — common headers auto-detected; at minimum a name column"
       size="lg"
     >

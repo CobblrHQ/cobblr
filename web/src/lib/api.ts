@@ -2001,15 +2001,22 @@ export const api = {
       `/orgs/${slug}/modules/core-labels-qr/tokens/${id}/revoke`,
     ),
   getQrSettings: (slug: string) =>
-    request<{ token_style: "descriptive" | "opaque" }>(
+    request<QrSettings>(
       "GET",
       `/orgs/${slug}/modules/core-labels-qr/settings`,
     ),
   setQrTokenStyle: (slug: string, token_style: "descriptive" | "opaque") =>
-    request<{ token_style: "descriptive" | "opaque" }>(
+    request<QrSettings>(
       "PUT",
       `/orgs/${slug}/modules/core-labels-qr/settings`,
       { token_style },
+    ),
+  /** Set (or clear, with "") the custom base URL printed QR codes encode. */
+  setQrLabelBaseUrl: (slug: string, label_base_url: string) =>
+    request<QrSettings>(
+      "PUT",
+      `/orgs/${slug}/modules/core-labels-qr/settings`,
+      { label_base_url },
     ),
 
   // ─── core-healthcheck ─────────────────────────────────────────────
@@ -4670,6 +4677,15 @@ export interface QrToken {
   created_at: string;
   revoked_at: string | null;
   expires_at: string | null;
+  /** Ready-to-print scan URL the server built from the workspace's effective
+   *  base (custom label base URL, else the serving origin) + /qr/<token>. */
+  scan_url: string;
+}
+
+export interface QrSettings {
+  token_style: "descriptive" | "opaque";
+  /** Custom base URL printed codes encode, or null to use the serving origin. */
+  label_base_url: string | null;
 }
 
 export interface SurfaceStats {

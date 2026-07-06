@@ -111,6 +111,14 @@ export async function withTenant(
     return;
   }
   if (!row.db_credentials_encrypted) {
+    // A signup returns 201 even when tenant provisioning failed (the org row is
+    // kept so an operator can re-provision) — so this 503 means "that org's
+    // CREATE DATABASE / migrations never landed", not "still warming up". Name
+    // the org here so a bare 503 in a log (e.g. the CI flake, issue #765) points
+    // straight at the unprovisioned workspace instead of being a mystery.
+    console.warn(
+      `[tenant] 503 tenant_unprovisioned: org ${row.org_id} (${slug}) has NULL db_credentials_encrypted — provisioning failed at signup`,
+    );
     res.status(503).json({
       error: {
         code: "tenant_unprovisioned",

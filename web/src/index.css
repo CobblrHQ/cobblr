@@ -137,6 +137,14 @@ html.dark .dark\:text-slate-600 { color: #6B7280; }
   }
 }
 
+/* Bottom-right mode: lift the stack above the Feedback pill when it's present.
+   The pill (FeedbackWidget) publishes --toast-safe-bottom on mount; unset (login,
+   portal, or once the pill relocates into the sidebar) → the stock 1rem. Kept at
+   ID specificity so the full-sidebar rule below (more specific) still wins. */
+#cobblr-toasts {
+  bottom: var(--toast-safe-bottom, 1rem);
+}
+
 /* Full-sidebar mode: ephemeral toasts land in the sidebar's empty middle —
    anchored over the rail, stacking upward from above the action cluster
    (Notion/Linear float bottom-left; this pins that to the rail exactly).

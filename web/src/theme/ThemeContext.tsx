@@ -47,8 +47,11 @@ interface ThemeCtx {
   setAccountPref: (p: ThemePref) => void;
   /** Set the local device override (Profile / used by the quick toggle). Never synced. */
   setDeviceOverride: (p: DeviceOverride) => void;
-  /** Quick flip of THIS device (icon buttons). */
-  toggle: () => void;
+  /** Quick flip of THIS device (icon buttons). Returns what it did: `locked`
+   *  true when it pinned this device to `value` (diverging from the account
+   *  default), false when it released the lock so this device follows the
+   *  default again. Lets the caller offer to promote a lock to the account. */
+  toggle: () => { locked: boolean; value: Theme };
   /** Apply the server account pref on login WITHOUT re-persisting it. */
   syncFromServer: (p: ThemePref) => void;
 }
@@ -136,12 +139,14 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     writeCache(K_DEVICE, p); // local only — never hits the server
   }, []);
 
-  const toggle = useCallback(() => {
+  const toggle = useCallback((): { locked: boolean; value: Theme } => {
     const next: Theme = theme === "dark" ? "light" : "dark";
     // If the flip matches what the account default would show here anyway,
     // clear the override so this device stays in sync; otherwise lock it.
     const accountResolved: Theme = accountPref ?? os;
-    setDeviceOverride(next === accountResolved ? null : next);
+    const locked = next !== accountResolved;
+    setDeviceOverride(locked ? next : null);
+    return { locked, value: next };
   }, [theme, accountPref, os, setDeviceOverride]);
 
   const syncFromServer = useCallback((p: ThemePref) => {

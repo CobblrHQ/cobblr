@@ -27,7 +27,10 @@ interface Pick {
   url: string; // object URL for the preview (revoked on remove/close)
 }
 
-export function FeedbackWidget() {
+// Default: a floating bottom-right pill (top-bar mode). `asRow`: a sidebar-foot
+// row (full-sidebar mode), matching NotificationsBell/ChatWidget — the pill has
+// no home there and everything else already lives in the foot.
+export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
   const [open, setOpen] = useState(false);
   const [type, setType] = useState<FType>("bug");
   const [message, setMessage] = useState("");
@@ -38,6 +41,20 @@ export function FeedbackWidget() {
   const fileInput = useRef<HTMLInputElement>(null);
   const toast = useToast();
   const { orgs, user } = useAuth();
+
+  // The floating pill owns the bottom-right corner. Reserve room above it so
+  // toasts (same corner, higher z) stack ABOVE the pill instead of overlapping
+  // it — the pill is a persistent CTA and shouldn't flicker away for a transient
+  // toast. Cleared on unmount so surfaces without the pill get the default. The
+  // sidebar-row variant isn't in that corner, so it reserves nothing.
+  useEffect(() => {
+    if (asRow) return;
+    const el = document.documentElement;
+    el.style.setProperty("--toast-safe-bottom", "4.75rem");
+    return () => {
+      el.style.removeProperty("--toast-safe-bottom");
+    };
+  }, [asRow]);
 
   // Screenshots upload to a workspace's core-files + the feedback row stores
   // that same workspace_slug (the super-admin viewer reads the bytes under it),
@@ -180,22 +197,36 @@ export function FeedbackWidget() {
 
   return (
     <>
-      {/* Portaled to <body> so an ancestor's backdrop-blur / transform can't trap
-          or blur this fixed button (the navbar uses backdrop-blur). z above the
-          modal backdrop (z-50) so feedback stays reachable while a form is open —
-          exactly what the user asked for. */}
-      {createPortal(
+      {asRow ? (
+        // Sidebar-foot row (full-sidebar mode) — same shape as the
+        // Notifications / Ask Cobblr rows it sits beside.
         <button
           type="button"
           onClick={() => setOpen(true)}
-          title="Send feedback"
           aria-label="Send feedback"
-          className="fixed bottom-4 right-4 z-[55] flex items-center gap-1.5 rounded-full bg-cobble-600 hover:bg-cobble-700 text-white shadow-lg px-3 py-2.5 text-xs font-medium transition"
+          className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded text-[13px] text-muted dark:text-slate-400 hover:text-accent hover:bg-subtle/60 dark:hover:bg-slate-800/40 transition"
         >
-          <MessageSquare size={15} />
-          <span className="hidden sm:inline">Feedback</span>
-        </button>,
-        document.body,
+          <MessageSquare size={16} className="shrink-0" />
+          Feedback
+        </button>
+      ) : (
+        /* Portaled to <body> so an ancestor's backdrop-blur / transform can't trap
+           or blur this fixed button (the navbar uses backdrop-blur). z above the
+           modal backdrop (z-50) so feedback stays reachable while a form is open —
+           exactly what the user asked for. */
+        createPortal(
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            title="Send feedback"
+            aria-label="Send feedback"
+            className="fixed bottom-4 right-4 z-[55] flex items-center gap-1.5 rounded-full bg-cobble-600 hover:bg-cobble-700 text-white shadow-lg px-3 py-2.5 text-xs font-medium transition"
+          >
+            <MessageSquare size={15} />
+            <span className="hidden sm:inline">Feedback</span>
+          </button>,
+          document.body,
+        )
       )}
 
       <Modal open={open} onClose={close} title="Send feedback" size="md">

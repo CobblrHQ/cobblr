@@ -24,9 +24,8 @@ import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpCircle, CheckCircle2,
 import { useBundleUpdates, type BundleUpdate } from "../lib/useBundleUpdates";
 import { useSetupCards, dismissSetup } from "../lib/setupCards";
 import { EntityThumb,
-  EntityTile,
   ViewModeToggle,
-  useViewMode, usePageTitle, useToast,
+  useViewMode, usePageTitle, useToast, useImageSrc,
   useDashboardWidgets, TileCollapseContext, type DashboardWidgetSpec } from "@cobblr/platform-web";
 // Side-effect: registers the host's built-in "at a glance" widgets (machines /
 // assets / purchases) through the public registerDashboardWidget seam. The
@@ -37,6 +36,7 @@ import { expandInstanceWidgets } from "../dashboard/expandInstanceWidgets";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useAuth } from "../auth/AuthContext";
 import { WhatToDoPanel } from "../components/WhatToDoPanel";
+import { HeatmapRenderer } from "./ViewsPage";
 import { liveNextStepLabel } from "../lib/featured-bundles";
 import {
   api,
@@ -1328,7 +1328,7 @@ function PinnedViews({ slug, editing = false }: { slug: string; editing?: boolea
     explicitPinned.length > 0
       ? explicitPinned.slice(0, 4)
       : allViews.filter((v) => v.owner_user_id === null).slice(0, 2);
-  const [mode, setMode] = useViewMode("dashboard-pinned-views", "list");
+  const [mode, setMode] = useViewMode("dashboard-pinned-views", "tiles");
   // When arranging, the section bar (ArrangeableBody) supplies the title, and
   // an empty section must still show SOMETHING so it stays reorderable.
   if (pinned.length === 0) {
@@ -1349,30 +1349,64 @@ function PinnedViews({ slug, editing = false }: { slug: string; editing?: boolea
         <ViewModeToggle mode={mode} onChange={setMode} />
       </div>
       )}
-      <div className="grid gap-3 md:grid-cols-2">
+      {/* The toggle lays the cards out: "list" stacks them full-width (each view
+          gets the whole row — more posters, more heatmap weeks visible); "tiles"
+          is the 2-up grid. Each card ALWAYS renders as its own type. */}
+      <div className={mode === "list" ? "grid gap-3 grid-cols-1" : "grid gap-3 md:grid-cols-2"}>
         {pinned.map((v) => (
-          <PinnedView key={v.id} slug={slug} view={v} mode={mode} />
+          <PinnedView key={v.id} slug={slug} view={v} />
         ))}
       </div>
     </section>
   );
 }
 
+// One poster in a gallery-view carousel. Routes the image through useImageSrc
+// so the auth-gated /raw file URL is bearer-fetched into a blob (a plain <img>
+// would 401). Falls back to a title initial.
+function PosterCell({ path, title }: { path: string | null; title: string }) {
+  const src = useImageSrc(path);
+  return (
+    <div className="shrink-0 w-28" title={title}>
+      <div className="aspect-[2/3] rounded-md overflow-hidden bg-subtle dark:bg-slate-800 flex items-center justify-center ring-1 ring-line dark:ring-slate-700">
+        {src ? (
+          <img src={src} alt="" className="w-full h-full object-cover" />
+        ) : (
+          <span className="text-sm font-bold text-faint dark:text-slate-600">{title.slice(0, 1).toUpperCase()}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function PinnedView({
   slug,
   view,
-  mode,
 }: {
   slug: string;
   view: SavedView;
-  mode: "list" | "tiles";
 }) {
   const data = useQuery({
     queryKey: ["dash-view-data", slug, view.id],
     queryFn: () => api.viewData(slug, view.id),
     staleTime: 30_000,
   });
-  const items = (data.data?.items ?? []).slice(0, 5);
+  const allItems = data.data?.items ?? [];
+  const items = allItems.slice(0, 5);
+  // A pinned view previews AS ITS TYPE: a gallery shows a horizontal poster
+  // strip, a heatmap shows its grid. Only the plain list/table/etc. fall back to
+  // the thumb+title list. Without this, every type looked identical here.
+  const isGallery = view.view_type === "gallery";
+  const isHeatmap = view.view_type === "heatmap";
+  const imgField = (view.config?.image_field as string) || "image_path";
+  const galleryImg = (r: (typeof allItems)[number]): string | null => {
+    // Mirror the modal's fieldVal: custom + native fields live under `fields`
+    // (and native image_path is also mirrored there), with a top-level fallback.
+    const meta = r.fields?.metadata as Record<string, unknown> | undefined;
+    const v = (r.fields?.[imgField] ?? meta?.[imgField]) as unknown;
+    if (typeof v === "string" && v) return v;
+    return r.image_path ?? null;
+  };
   return (
     <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
       <div className="flex items-baseline gap-2 mb-2">
@@ -1397,39 +1431,31 @@ function PinnedView({
       {!data.isLoading && items.length === 0 && (
         <div className="text-xs text-faint italic">no matching rows</div>
       )}
-      {mode === "list" && (
-        <ul className="space-y-1.5">
-          {items.map((r) => (
-            <li
-              key={`${r.kind}:${r.id}`}
-              className="flex items-center gap-3 text-sm"
-            >
-              <EntityThumb src={r.image_path} alt={r.title} size={40} />
-              <div className="min-w-0">
-                <div className="truncate text-content dark:text-mortar-100">
-                  {r.title}
+      {/* Each card ALWAYS renders as its own type — a heatmap is always a
+          heatmap, never a degraded row list. Non-visual types (list/table/…)
+          preview as a compact thumb+title list. */}
+      {!data.isLoading && items.length > 0 && (
+        isGallery ? (
+          <div className="flex gap-3 overflow-x-auto pb-1">
+            {allItems.slice(0, 20).map((r) => (
+              <PosterCell key={`${r.kind}:${r.id}`} path={galleryImg(r)} title={r.title} />
+            ))}
+          </div>
+        ) : isHeatmap ? (
+          <HeatmapRenderer items={allItems} cfg={view.config ?? {}} />
+        ) : (
+          <ul className="space-y-1.5">
+            {items.map((r) => (
+              <li key={`${r.kind}:${r.id}`} className="flex items-center gap-3 text-sm">
+                <EntityThumb src={r.image_path} alt={r.title} size={40} />
+                <div className="min-w-0">
+                  <div className="truncate text-content dark:text-mortar-100">{r.title}</div>
+                  {r.subtitle && <div className="text-xs text-muted truncate">{r.subtitle}</div>}
                 </div>
-                {r.subtitle && (
-                  <div className="text-xs text-muted truncate">
-                    {r.subtitle}
-                  </div>
-                )}
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
-      {mode === "tiles" && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-          {items.map((r) => (
-            <EntityTile
-              key={`${r.kind}:${r.id}`}
-              src={r.image_path}
-              title={r.title}
-              subtitle={r.subtitle ?? null}
-            />
-          ))}
-        </div>
+              </li>
+            ))}
+          </ul>
+        )
       )}
     </div>
   );

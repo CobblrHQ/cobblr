@@ -28,6 +28,7 @@ import {
 import { useAuth } from "../auth/AuthContext";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useTheme } from "../theme/ThemeContext";
+import { useThemeToggle } from "../theme/useThemeToggle";
 import { UpdateBadge } from "./UpdateBadge";
 import { GrowModal } from "./GrowModal";
 import { PairPhoneButton } from "./PairPhoneButton";
@@ -58,7 +59,8 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
       /* a failed toggle just leaves simple mode on; no destructive effect */
     }
   };
-  const { theme, toggle } = useTheme();
+  const { theme } = useTheme();
+  const toggle = useThemeToggle();
   const [open, setOpen] = useState(false);
   // Managed app: the "grow door" — the one deliberate exit to the rest of Cobblr.
   const [growOpen, setGrowOpen] = useState(false);
