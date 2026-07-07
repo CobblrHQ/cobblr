@@ -1,7 +1,7 @@
 // In-process entity writer for machines:machine.
 //
 // Lets cross-module writers (the core-integrations sync engine, mirroring an
-// external system like companion app) create/update/delete machines with NO HTTP
+// external system) create/update/delete machines with NO HTTP
 // loopback or user token — the SAME way core-locations exposes its kind. The
 // machines module opts into being a sync TARGET by registering this; the source
 // side stays pure declarative data. Fires the module's own events so views,

@@ -15,7 +15,7 @@ registerEmailInbound();
 
 const router = Router({ mergeParams: true });
 router.use("/", inboxRouter);
-router.use("/", importRouter); // bulk import (companion app interop + generic CSV)
+router.use("/", importRouter); // bulk import (inbox-export interop + generic CSV)
 router.use("/", exportRouter); // bulk export (interop v1 envelope: JSON + CSV)
 router.use("/", entityImageRouter);
 router.use("/", qrRulesRouter);

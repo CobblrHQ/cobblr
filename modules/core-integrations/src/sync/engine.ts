@@ -23,7 +23,7 @@ import { edgeRelayFetch } from "./edge-fetch.js";
 export interface SyncConnectionRef {
   orgId: string;
   connectorRowId: string; // core_integrations_connectors.id
-  connectorId: string; // the registered SyncConnector id, e.g. "companion app"
+  connectorId: string; // the registered SyncConnector id, e.g. "my-shop"
   baseUrl: string;
   credentials: Record<string, unknown>; // decrypted
   /** "direct" = the cloud fetches base_url itself (egress-guarded; reaches a
@@ -33,6 +33,12 @@ export interface SyncConnectionRef {
   transport: "direct" | "edge";
   /** Which edge bridge serves this connection (edge transport); null = default. */
   bridge: string | null;
+  /** Per-connection target-instance override: entity-type key → instance slug.
+   *  The USER's choice at connect time — lands rows in the instance they picked
+   *  (e.g. their own yarn table), winning over the manifest's default
+   *  `targetInstance`. Absent → the manifest default applies. Lets one built-in
+   *  source (Ravelry) serve any instance, decoupled from any specific bundle. */
+  targetInstances?: Record<string, string>;
 }
 
 export interface ReconcileResult {
@@ -232,8 +238,9 @@ async function upsertOne(
   if (!writer) throw new Error(`sync: no entity writer registered for ${type.targetKind}`);
 
   const parentCobblrId = await resolveParent(db, ref, type.key, record.parentExternalId);
-  // Per-record instance (instanceBy routing) wins over the section's static one.
-  const instance = record.instance ?? type.targetInstance ?? null;
+  // Instance precedence: per-record instanceBy routing → the user's per-connection
+  // target choice → the manifest's static default.
+  const instance = record.instance ?? ref.targetInstances?.[type.key] ?? type.targetInstance ?? null;
   const hash = hashRecord(type.targetKind, parentCobblrId, record.fields, record.references, instance, record.images);
 
   const existing = await db
@@ -460,7 +467,7 @@ export async function planReconcile(
   for (const r of ordered) {
     const name = String(r.fields.name ?? r.externalId);
     const parentCobblrId = await resolveParent(db, ref, type.key, r.parentExternalId);
-    const hash = hashRecord(type.targetKind, parentCobblrId, r.fields, r.references, r.instance ?? type.targetInstance, r.images);
+    const hash = hashRecord(type.targetKind, parentCobblrId, r.fields, r.references, r.instance ?? ref.targetInstances?.[type.key] ?? type.targetInstance, r.images);
     // Show the resolved cross-section references in the preview (e.g. location_id
     // → the mirrored Cobblr id, or null if that section isn't imported yet).
     const fields = { ...r.fields, ...(await resolveReferences(db, ref, r)) };

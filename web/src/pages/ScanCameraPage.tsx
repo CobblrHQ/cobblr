@@ -1,4 +1,4 @@
-// /scan/camera — full-screen immersive scanner, companion app-grade.
+// /scan/camera — full-screen immersive scanner, production-grade.
 //
 // The SHELL is a body-portaled `fixed inset-0` overlay: one tap on the
 // header camera icon lands here and the stream AUTO-STARTS on mount —
@@ -9,7 +9,7 @@
 // descendants; z-40 sits over the header (z-30) while ScanResultModal
 // and the assign sheet (both z-50 Modals) still stack above.
 //
-// ONE screen, BOTH intake paths (the companion app combination):
+// ONE screen, BOTH intake paths (the combination):
 //   · a barcode in view auto-detects → blocks into the result modal;
 //   · the big SHUTTER photographs a no-barcode item — the frame uploads
 //     through core-files, lands as a PHOTO inbox item, and the existing
@@ -153,7 +153,7 @@ export function ScanCameraPage() {
     locationName: string;
     item: import("../lib/api").TrackedMatch;
   } | null>(null);
-  // Move mode (companion app A10): scanning something already tracked (single exact
+  // Move mode: scanning something already tracked (single exact
   // barcode match) auto-moves it into the active bin instead of triaging.
   const [moveMode, setMoveMode] = useState(() => localStorage.getItem("cobblr-scan-move-mode") === "1");
   const toggleMoveMode = useCallback(() => {
@@ -162,7 +162,7 @@ export function ScanCameraPage() {
       return !v;
     });
   }, []);
-  // In-session MOVE HISTORY (companion app "↶ Undo last N"): every auto/manual move
+  // In-session MOVE HISTORY ("↶ Undo last N"): every auto/manual move
   // pushes here; each undo pops the most recent and re-files the entity where
   // it was — repeated taps walk back through the whole run. Only moves with a
   // known previous location are undoable (the endpoint needs a target).
@@ -354,7 +354,7 @@ export function ScanCameraPage() {
       if (last && last.value === raw && Date.now() - last.at < 2_000) return;
       lastSeenRef.current = { value: raw, at: Date.now() };
       if (typeof navigator.vibrate === "function") navigator.vibrate(70);
-      // companion app parity: capture the frame AT the scan moment — it rides the
+      // Capture the frame AT the scan moment — it rides the
       // inbox item as YOUR photo next to the catalog image. The video
       // pauses on result, so this exact frame is also what stays on screen.
       const video = videoRef.current;
@@ -845,7 +845,7 @@ export function ScanCameraPage() {
               {savedCount > 1 && ` · ${savedCount} this session`}
               <span className="text-white/70"> · Open inbox →</span>
             </Link>
-            {/* Undo the last save (companion app A11) — discards it (restorable). */}
+            {/* Undo the last save — discards it (restorable). */}
             <button
               type="button"
               onClick={() => {
@@ -894,7 +894,7 @@ export function ScanCameraPage() {
           </button>
         </form>
 
-        {/* Assign · SHUTTER · Done — the companion app bottom bar. The shutter is the
+        {/* Assign · SHUTTER · Done — the bottom bar. The shutter is the
             photo path for items with no barcode; barcodes never need it. */}
         <div className="flex items-center justify-between max-w-md mx-auto px-2">
           <button

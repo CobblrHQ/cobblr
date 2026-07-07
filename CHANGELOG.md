@@ -2,6 +2,14 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-07-07
+
+### Features
+- Adding a printer to a detection service (like PrintGuard) from Cobblr now works for any connection type the detector supports: including Bambu: driven by a small manifest mapping rather than hardcoded per type. Mirror an existing Cobblr machine and it reuses the credentials Cobblr already holds (they stay server-side, never sent to your browser); for a Bambu you pick which printer (serial). For a single-printer connection you can tick "stop polling it in Cobblr" so only the detector talks to that printer, no double-load.
+- When an external detector (like PrintGuard) owns a printer, Cobblr now fully stands down for that printer: per printer, so it works even inside a shared multi-printer connection (e.g. one printer of a Bambu farm moved to the detector). Cobblr stops its own AI watch and camera pull for it, won't send it jobs, and marks it *"watched by detector"* on the floor, so the printer's camera is only ever touched by the detector, with no double-load. Its telemetry (status/progress) keeps flowing, so you still see it.
+- New "PrintGuard (send frames)" detector option: Cobblr grabs a frame and posts it to PrintGuard for a verdict, instead of PrintGuard pulling the camera itself. This is the path for cloud Cobblr + a LAN camera (or any setup where PrintGuard can't reach the camera but Cobblr can). It uses PrintGuard's new `/classify` endpoint, which ships in PrintGuard 2.3.0, and Test now reads the running version and tells you clearly if the box is too old ("needs PrintGuard ≥ 2.3.0, found 2.2.2") instead of silently doing nothing.
+- Ravelry is now a proper sync connector you point at any table. It used to be a fixed card on your profile that only imported into the Yarn bundle. Now it lives with your other integrations (Configuration → Integrations → Add connection → Ravelry), and you choose which inventory table your stash lands in: the flagship Yarn table or one you built yourself. You no longer need the Yarn bundle installed. You get the standard sync tools too (a before/after import preview and ongoing reconcile), and length is stored as Ravelry provides it (metres), with yd/m display left to your unit preference.
+
 ## 2026-07-06
 
 ### Features

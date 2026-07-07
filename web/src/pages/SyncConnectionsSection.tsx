@@ -1,6 +1,6 @@
 // Sync connections — mirror an external system's records into this workspace.
 // Lives in the Integrations page. Each connection picks a registered connector
-// (companion app to start), holds an encrypted credential + a base URL, exposes a
+// (a self-hosted inventory app to start), holds an encrypted credential + a base URL, exposes a
 // live webhook URL, and lets you toggle + reconcile each entity type.
 
 import { useState } from "react";
@@ -535,7 +535,7 @@ function InstallSourceModal({
             if (m.valid) setManifest(v);
           }}
           rows={16}
-          placeholder={'{\n  "id": "companion app",\n  "name": "companion app",\n  "entityTypes": [ … ]\n}'}
+          placeholder={'{\n  "id": "my-shop",\n  "name": "My Shop",\n  "entityTypes": [ … ]\n}'}
           hint="The full SyncSourceManifest. Grammar: docs/modules/sync-sources.md."
         />
         <div className="flex justify-end gap-2">
@@ -557,7 +557,7 @@ function InstallSourceModal({
 }
 
 // Add ONE section (entity type) to an existing source — paste just that section's
-// JSON. This is the day-to-day "sync another thing from companion app" path.
+// JSON. This is the day-to-day "sync another thing from a source" path.
 function AddSectionModal({
   existingKeys,
   instances,
@@ -954,8 +954,24 @@ function AddSyncConnectionModal({
   const [credsValid, setCredsValid] = useState(true);
   const [transport, setTransport] = useState<"direct" | "edge">("direct");
   const [bridge, setBridge] = useState<string | null>(null);
+  // entity-type key → chosen instance slug (where that section's rows land).
+  const [targetInstances, setTargetInstances] = useState<Record<string, string>>({});
 
   const def = connectors.find((c) => c.id === connectorId);
+  const wantsBaseUrl = !!def && "base_url" in def.config;
+  // Workspace instances, to offer a "which table?" picker per entity type — the
+  // decoupling knob: point a built-in source (Ravelry) at whatever instance you
+  // built, not a bundle-specific one.
+  const instancesQ = useQuery({
+    queryKey: ["instances", activeSlug],
+    queryFn: () => api.listInstances(activeSlug),
+    enabled: !!activeSlug,
+  });
+  const instances = instancesQ.data?.items ?? [];
+  const instancesForKind = (targetKind: string) => {
+    const mod = targetKind.split(":")[0];
+    return instances.filter((i) => i.module_name === mod);
+  };
   // A JSON Schema for the connector's credentials, derived from its descriptor —
   // so the "paste JSON" mode validates shape (right keys, all strings) inline.
   const credsSchema = def
@@ -972,10 +988,11 @@ function AddSyncConnectionModal({
       api.createSyncConnection(activeSlug, {
         connector_id: connectorId,
         label: label.trim() || (def?.label ?? "Connection"),
-        base_url: baseUrl.trim(),
+        ...(baseUrl.trim() ? { base_url: baseUrl.trim() } : {}),
         credentials: creds,
         transport,
         bridge: transport === "edge" && bridge && bridge.trim() ? bridge.trim() : null,
+        ...(Object.keys(targetInstances).length ? { target_instances: targetInstances } : {}),
       }),
     onSuccess: onCreated,
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
@@ -1015,6 +1032,40 @@ function AddSyncConnectionModal({
             />
           </label>
         ))}
+        {/* Where each section's rows land — pick your own instance (table). Only
+            shown for entity types whose module has instances in this workspace;
+            unset falls back to the source's default. */}
+        {def?.entityTypes
+          .filter((et) => instancesForKind(et.targetKind).length > 0)
+          .map((et) => {
+            const opts = instancesForKind(et.targetKind);
+            return (
+              <label key={et.key} className="block">
+                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
+                  Import “{et.label}” into
+                </span>
+                <select
+                  value={targetInstances[et.key] ?? ""}
+                  onChange={(e) =>
+                    setTargetInstances((p) => {
+                      const next = { ...p };
+                      if (e.target.value) next[et.key] = e.target.value;
+                      else delete next[et.key];
+                      return next;
+                    })
+                  }
+                  className="input"
+                >
+                  <option value="">Default ({et.targetKind.split(":")[0]})</option>
+                  {opts.map((i) => (
+                    <option key={i.instance_name} value={i.instance_name}>
+                      {i.display_name || i.instance_name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            );
+          })}
         {/* Transport: direct (cloud fetches the URL) vs edge (a local bridge does). */}
         <div>
           <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">How does Cobblr reach it?</span>
@@ -1038,7 +1089,7 @@ function AddSyncConnectionModal({
           <p className="mt-1 text-[11px] text-muted dark:text-slate-400">
             {transport === "direct"
               ? "The cloud fetches the URL itself. On the hosted service this only works for public URLs — a LAN address won't be reachable."
-              : "A local edge bridge on your network fetches the URL and relays it up — the way to connect a LAN source (like companion app) to hosted Cobblr."}
+              : "A local edge bridge on your network fetches the URL and relays it up — the way to connect a LAN source (like a self-hosted inventory system) to hosted Cobblr."}
           </p>
           {transport === "edge" && (
             <div className="mt-2">
@@ -1092,7 +1143,7 @@ function AddSyncConnectionModal({
           <button onClick={onClose} className="text-xs text-muted dark:text-slate-400">Cancel</button>
           <button
             onClick={() => create.mutate()}
-            disabled={!connectorId || !baseUrl.trim() || (credsJsonMode && !credsValid) || create.isPending}
+            disabled={!connectorId || (wantsBaseUrl && !baseUrl.trim()) || (credsJsonMode && !credsValid) || create.isPending}
             className="text-xs px-3 py-1.5 rounded bg-cobble-600 text-white hover:bg-cobble-700 disabled:opacity-50 transition"
           >
             {create.isPending ? "Adding…" : "Add connection"}

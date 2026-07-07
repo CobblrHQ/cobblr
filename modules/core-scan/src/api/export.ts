@@ -1,6 +1,6 @@
 // Scan-inbox bulk EXPORT — the mirror of api/import.ts. Emits the workspace's
 // scan inbox in the INBOX_EXPORT_INTEROP v1 envelope (JSON or CSV), so it
-// round-trips straight back into another Cobblr (or companion app) via the
+// round-trips straight back into another Cobblr (or an external system) via the
 // importer — no DB surgery. Photo URLs point at the no-auth, token-gated
 // image route so the importer's best-effort photo fetch carries the images.
 //

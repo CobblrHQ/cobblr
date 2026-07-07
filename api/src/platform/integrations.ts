@@ -156,7 +156,7 @@ export interface SyncWebhookHit {
 }
 
 export interface SyncConnector {
-  id: string; // "companion app"
+  id: string; // "my-shop"
   label: string;
   describeCredentials: () => Record<string, { label: string; secret: boolean }>;
   /** Non-secret config fields (e.g. the base URL). */

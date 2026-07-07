@@ -237,6 +237,23 @@ export interface DigifabDB {
   digifab_fleet_device_cache: DigifabFleetDeviceCacheTable;
   digifab_failure_config: DigifabFailureConfigTable;
   digifab_failure_watch: DigifabFailureWatchTable;
+  digifab_detectors: DigifabDetectorsTable;
+}
+
+/** An external print-failure detection service (Obico ML API, PrintGuard, a
+ *  generic LAN model box) the failure watch can point at. `key` is the detector
+ *  package key; `config` holds per-detector settings (e.g. a camera-watcher's
+ *  device→camera map). Credentials are AES-GCM encrypted, never returned. */
+export interface DigifabDetectorsTable {
+  id: Generated<string>;
+  key: string;
+  label: string;
+  base_url: string;
+  credentials_enc: string | null;
+  config: Generated<Record<string, unknown>>;
+  enabled: Generated<boolean>;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
 }
 
 /** Singleton per-workspace AI failure-detection config. */
@@ -246,7 +263,9 @@ export interface DigifabFailureConfigTable {
   threshold: Generated<number>;
   sample_interval_sec: Generated<number>;
   auto_pause: Generated<boolean>;
-  backend: Generated<string>; // auto | edge | llm
+  backend: Generated<string>; // auto | edge | llm | detector
+  /** When backend='detector', the digifab_detectors row to use. */
+  detector_id: string | null;
   updated_at: Generated<Date>;
 }
 

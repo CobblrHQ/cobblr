@@ -399,7 +399,7 @@ export const BundleManifest = z.object({
       /** Human label rendered in the popover + chip. */
       display_name: z.string(),
       /** v1.6 (lens-promotion.md §1.1): formalises the "rows belonging
-       *  to me match this filter" predicate. Today companion app lens
+       *  to me match this filter" predicate. Today lens
        *  bundles use `metadata.category` informally; this makes it
        *  explicit. */
       discriminator: z

@@ -41,8 +41,6 @@ import { superAdminRouter } from "./routes/super-admin.js";
 import { feedbackRouter, feedbackInboundRouter } from "./routes/feedback.js";
 import { receiptInboundRouter, receiptAddressRouter } from "./routes/receipt-ingest.js";
 import { inboundEmailRouter } from "./routes/inbound-email.js";
-import { ravelryRouter } from "./routes/ravelry.js";
-import { ravelryImportRouter } from "./routes/ravelry-import.js";
 import { sandboxInstallRouter } from "./routes/sandbox-install.js";
 import { registryRouter } from "./routes/registry.js";
 import { customRolesRouter } from "./routes/custom-roles.js";
@@ -150,7 +148,6 @@ export function createApp(): AppHandles {
   if (env.COBBLR_TEST_ORG_POOL) v1.use(testSupportRouter);
   v1.use(meRouter);
   v1.use(connectionsRouter);
-  v1.use(ravelryRouter);
   // Public read endpoint for core-public-surfaces. No auth required;
   // token in the URL is the secret. Mounted on /api/v1/public/* —
   // outside /orgs because the URL carries no slug.
@@ -242,9 +239,6 @@ export function createApp(): AppHandles {
   v1.use(backupGoogleCallbackRouter);
   v1.use("/orgs/:slug/members", membersRouter);
   v1.use("/orgs/:slug/pairings", pairingsRouter);
-  // Ravelry import — pull the user's stash + projects into this workspace's
-  // Yarn bundle. Auth + tenant applied inside the router (per-route).
-  v1.use("/orgs/:slug", ravelryImportRouter);
   // Workspace owner: review + approve members' AI-share offers.
   v1.use("/orgs/:slug", workspaceAiSharesRouter);
   v1.use("/orgs/:slug/instances", instancesRouter);

@@ -1,12 +1,16 @@
 // AI print-failure detection — the "is this print turning into spaghetti?" watch.
 //
-// SHAPE (the author's call: own model, no per-inference token cost):
-//   • Detection runs behind a SEAM (pickDetector) with two backends:
-//       - EDGE  — the LOCAL model on the machine's bridge (driver.detectFailure);
-//                 the frame never leaves the LAN and there's no token cost. This
-//                 is the default whenever the bridge offers it.
-//       - LLM   — the workspace's configured vision AI (core-ai classify-image);
-//                 the zero-model fallback (bills tokens on a paid provider).
+// SHAPE (own model, no per-inference token cost by default):
+//   • Detection runs behind a REGISTRY of detector packages (./detectors/*),
+//     picked by the workspace's `backend` setting:
+//       - EDGE     — the LOCAL model on the machine's bridge (driver.detectFailure);
+//                    the frame never leaves the LAN and there's no token cost.
+//       - LLM      — the workspace's configured vision AI (core-ai classify-image);
+//                    the zero-model fallback (bills tokens on a paid provider).
+//       - DETECTOR — a self-hosted external service (Obico ML API, PrintGuard, a
+//                    generic LAN box) the operator points at a base URL; declared
+//                    by a per-folder manifest, nothing hardcoded here.
+//     `auto` = edge if the bridge offers it, else llm.
 //   • A self-perpetuating core-queue loop (mirrors the file-warmer) samples each
 //     PRINTING device every `sample_interval_sec`, folds the probability into an
 //     exponentially-weighted score, and when it crosses `threshold` (and
@@ -22,6 +26,12 @@ import type { DigifabDB } from "./db.js";
 import { buildDriverById, bambuLanDriverFor } from "./jobs-core.js";
 import { getSnapshot } from "./snapshot-store.js";
 import type { MachineDriver } from "./drivers/types.js";
+import { resolveDetector, runDetector } from "./detectors/registry.js";
+import { ownedDeviceRefs } from "./detectors/owned.js";
+import type { DetectorContext } from "./detectors/types.js";
+// The vision constants + classify-image parse moved to the `llm` detector
+// package; re-export for back-compat (older imports referenced them here).
+export { FAILURE_LABELS, FAILURE_PROMPT, parseFailureProbability } from "./detectors/vision.js";
 
 export const FAILURE_WATCH_QUEUE = "digifab.failure-watch";
 const WATCH_ALIVE_MS = 90_000; // a heartbeat fresher than this → a loop is alive
@@ -31,12 +41,6 @@ const WATCH_ALIVE_MS = 90_000; // a heartbeat fresher than this → a loop is al
 // climb from 0 past a 0.6 threshold.
 const EWM_ALPHA = 0.4;
 
-export const FAILURE_LABELS = ["printing normally", "print failure or spaghetti"] as const;
-const FAILURE_PROMPT =
-  "You are watching a 3D printer's live camera. Decide whether the print is " +
-  "failing — spaghetti/stringing, a detached or shifted part, a blob/clog, or a " +
-  "collapsed model. A clean in-progress print is 'printing normally'.";
-
 // ── pure helpers (unit-tested) ───────────────────────────────────────────────
 export function ewmUpdate(prev: number, p: number, alpha = EWM_ALPHA): number {
   const x = Math.max(0, Math.min(1, p));
@@ -45,27 +49,20 @@ export function ewmUpdate(prev: number, p: number, alpha = EWM_ALPHA): number {
 export function crossed(score: number, threshold: number): boolean {
   return score >= threshold;
 }
-/** Read the failure label's confidence out of a classify-image result. */
-export function parseFailureProbability(result: unknown): number | null {
-  const labels = (result as { labels?: Array<{ label?: string; confidence?: number }> })?.labels;
-  if (!Array.isArray(labels)) return null;
-  const fail = labels.find((l) => typeof l.label === "string" && /fail|spaghetti/i.test(l.label));
-  if (fail && typeof fail.confidence === "number") return Math.max(0, Math.min(1, fail.confidence));
-  // Model answered only "normal" with a confidence → failure is the complement.
-  const ok = labels.find((l) => typeof l.label === "string" && /normal/i.test(l.label));
-  if (ok && typeof ok.confidence === "number") return Math.max(0, Math.min(1, 1 - ok.confidence));
-  return null;
-}
 
 // ── config ───────────────────────────────────────────────────────────────────
+export type FailureBackend = "auto" | "edge" | "llm" | "detector";
 export interface FailureConfig {
   enabled: boolean;
   threshold: number;
   sample_interval_sec: number;
   auto_pause: boolean;
-  backend: "auto" | "edge" | "llm";
+  backend: FailureBackend;
+  /** When backend='detector', the digifab_detectors row to use. */
+  detector_id: string | null;
 }
-const DEFAULT_CONFIG: FailureConfig = { enabled: false, threshold: 0.6, sample_interval_sec: 30, auto_pause: true, backend: "auto" };
+const DEFAULT_CONFIG: FailureConfig = { enabled: false, threshold: 0.6, sample_interval_sec: 30, auto_pause: true, backend: "auto", detector_id: null };
+const BACKENDS: FailureBackend[] = ["auto", "edge", "llm", "detector"];
 
 export async function readFailureConfig(db: Kysely<DigifabDB>): Promise<FailureConfig> {
   const row = await db.selectFrom("digifab_failure_config").selectAll().where("id", "=", true).executeTakeFirst();
@@ -75,7 +72,8 @@ export async function readFailureConfig(db: Kysely<DigifabDB>): Promise<FailureC
     threshold: Number(row.threshold),
     sample_interval_sec: Number(row.sample_interval_sec),
     auto_pause: !!row.auto_pause,
-    backend: (["auto", "edge", "llm"].includes(row.backend) ? row.backend : "auto") as FailureConfig["backend"],
+    backend: (BACKENDS.includes(row.backend as FailureBackend) ? row.backend : "auto") as FailureBackend,
+    detector_id: row.detector_id ?? null,
   };
 }
 
@@ -100,10 +98,57 @@ async function grabFrame(db: Kysely<DigifabDB>, driver: MachineDriver | null, co
   return getSnapshot(db, connId, deviceId);
 }
 
-export interface DetectResult { probability: number; source: "edge" | "llm"; }
+/** The device's configured camera URL (for a url-mode external frame-scorer that
+ *  fetches the frame itself). */
+async function cameraUrlFor(db: Kysely<DigifabDB>, connId: string, deviceId: string): Promise<string | null> {
+  const row = await db
+    .selectFrom("digifab_device_settings")
+    .select("camera_url")
+    .where("connection_id", "=", connId)
+    .where("remote_device_id", "=", deviceId)
+    .executeTakeFirst();
+  return row?.camera_url ?? null;
+}
 
-/** Sample once. Edge model first (when the bridge offers it + the backend
- *  allows), else the vision AI. Null when neither could produce a reading. */
+/** Load a configured external detector (decrypts its token, resolves the mapped
+ *  camera id). Null when the row is missing/disabled or the package isn't wired. */
+async function loadDetectorCtx(
+  db: Kysely<DigifabDB>,
+  orgId: string,
+  connId: string,
+  deviceId: string,
+  detectorId: string,
+  base: Omit<DetectorContext, "connection" | "cameraId">,
+): Promise<{ pkg: ReturnType<typeof resolveDetector>; ctx: DetectorContext } | null> {
+  const row = await db
+    .selectFrom("digifab_detectors")
+    .select(["key", "base_url", "credentials_enc", "config"])
+    .where("id", "=", detectorId)
+    .where("enabled", "=", true)
+    .executeTakeFirst();
+  if (!row) return null;
+  const pkg = resolveDetector(row.key);
+  if (!pkg) return null;
+  let apiKey: string | null = null;
+  if (row.credentials_enc) {
+    try {
+      const creds = await platform().integrations.decryptCredentials(orgId, row.credentials_enc);
+      apiKey = (creds.apiKey as string | undefined) ?? null;
+    } catch {
+      /* undecryptable creds → treat as no auth */
+    }
+  }
+  const map = ((row.config as { camera_map?: Record<string, string> })?.camera_map) ?? {};
+  const cameraId = map[`${connId}:${deviceId}`] ?? null;
+  return { pkg, ctx: { ...base, connection: { baseUrl: row.base_url, apiKey }, cameraId } };
+}
+
+export interface DetectResult { probability: number; source: "edge" | "llm" | "detector"; }
+
+/** Sample once, via the backend the workspace configured. The two built-in
+ *  backends (edge/llm) and the external services are all detector PACKAGES
+ *  resolved from the registry — nothing about a specific service is hardcoded
+ *  here. Null when the chosen backend could produce no reading. */
 export async function detectOnce(
   db: Kysely<DigifabDB>,
   orgId: string,
@@ -112,33 +157,49 @@ export async function detectOnce(
   cfg: FailureConfig,
 ): Promise<DetectResult | null> {
   const driver = await edgeDriverFor(db, orgId, connId, deviceId);
+  const base: Omit<DetectorContext, "connection" | "cameraId"> = {
+    orgId,
+    connId,
+    deviceId,
+    driver,
+    grabFrame: () => grabFrame(db, driver, connId, deviceId),
+    cameraUrl: null, // filled lazily below only when a url-mode detector needs it
+  };
 
-  if ((cfg.backend === "auto" || cfg.backend === "edge") && driver?.detectFailure) {
+  // External detector — the whole reading comes from the configured service.
+  if (cfg.backend === "detector") {
+    if (!cfg.detector_id) return null;
+    base.cameraUrl = await cameraUrlFor(db, connId, deviceId);
+    const loaded = await loadDetectorCtx(db, orgId, connId, deviceId, cfg.detector_id, base);
+    if (!loaded?.pkg) return null;
     try {
-      const r = await driver.detectFailure(deviceId);
-      if (r && typeof r.probability === "number") return { probability: Math.max(0, Math.min(1, r.probability)), source: "edge" };
+      const r = await runDetector(loaded.pkg, loaded.ctx);
+      return r ? { probability: r.probability, source: "detector" } : null;
     } catch {
-      /* bridge unreachable / no model → fall through unless edge-only */
+      return null; // service unreachable / bad response → no reading
     }
-    if (cfg.backend === "edge") return null;
   }
-  if (cfg.backend === "edge") return null; // edge-only + no model on the bridge
 
-  const frame = await grabFrame(db, driver, connId, deviceId);
-  if (!frame) return null;
+  // EDGE first (when the backend allows + the bridge offers a model).
+  if (cfg.backend === "auto" || cfg.backend === "edge") {
+    const edge = resolveDetector("edge");
+    if (edge) {
+      try {
+        const r = await runDetector(edge, { ...base, connection: null, cameraId: null });
+        if (r) return { probability: r.probability, source: "edge" };
+      } catch {
+        /* bridge unreachable / no model → fall through unless edge-only */
+      }
+    }
+    if (cfg.backend === "edge") return null; // edge-only + no model on the bridge
+  }
+
+  // LLM fallback (auto + no edge reading, or backend=llm).
+  const llm = resolveDetector("llm");
+  if (!llm) return null;
   try {
-    const out = await platform().ai.invoke({
-      orgId,
-      capability: "classify-image",
-      input: {
-        prompt: FAILURE_PROMPT,
-        labels: [...FAILURE_LABELS],
-        image_b64: frame.toString("base64"),
-        image_media_type: "image/jpeg",
-      },
-    });
-    const p = parseFailureProbability(out.result);
-    return p == null ? null : { probability: p, source: "llm" };
+    const r = await runDetector(llm, { ...base, connection: null, cameraId: null });
+    return r ? { probability: r.probability, source: "llm" } : null;
   } catch {
     return null; // no AI provider / not entitled → detection just idles
   }
@@ -172,6 +233,9 @@ async function touchWatch(db: Kysely<DigifabDB>, connId: string, deviceId: strin
 export async function ensureFailureWatch(db: Kysely<DigifabDB>, orgId: string, connId: string, deviceId: string): Promise<void> {
   const cfg = await readFailureConfig(db);
   if (!cfg.enabled) return;
+  // Single-owner: if an external detector owns this printer, IT does detection —
+  // Cobblr must not also sample the same camera (the double-pull we're avoiding).
+  if ((await ownedDeviceRefs(db)).has(`${connId}:${deviceId}`)) return;
   const w = await db
     .selectFrom("digifab_failure_watch")
     .select("watch_at")

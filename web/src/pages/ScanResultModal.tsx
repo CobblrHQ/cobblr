@@ -1,6 +1,6 @@
 // The blocking result card the camera pops on every successful scan.
 //
-// companion app-grade in-the-moment flow: scan → BLOCK → show the instant catalog
+// A polished in-the-moment flow: scan → BLOCK → show the instant catalog
 // match (name + photo, resolved server-side within the 12s budget) + a
 // quantity stepper + one-tap routing into the best-fitting table. "Next"
 // re-arms the scanner. The item lands in the inbox either way, so desktop
@@ -61,7 +61,7 @@ export function ScanResultModal({
   scanTarget: CameraScanTarget;
   onSaved: (item: ScanInboxItem) => void;
   onClose: () => void;
-  /** Move mode (companion app A10): a single exact "already tracked" barcode match
+  /** Move mode: a single exact "already tracked" barcode match
    *  auto-moves that entity to the active bin — no triage stop. */
   moveMode?: boolean;
   /** Fired after an attach (manual or auto-move) so the camera can offer undo. */
@@ -123,8 +123,8 @@ export function ScanResultModal({
 
   // LIVE-LOAD the enrichment: a slow lookup detaches past the ingest budget
   // and finishes in the background — keep polling the row while the card is
-  // up so the name/photo pop in a second later instead of never (companion app does
-  // the same lazy fill). Stops once the row looks final or after ~24s.
+  // up so the name/photo pop in a second later instead of never (the same
+  // lazy fill). Stops once the row looks final or after ~24s.
   // After "Not it — photograph it" the vision identify runs DETACHED, but the item
   // already carries the (wrong) barcode name, so stillEnriching is false. Force the
   // poll while `reading` and clear it once vision stamps ai_suggested_at.
@@ -252,7 +252,7 @@ export function ScanResultModal({
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
 
-  // Phone "Not it — photograph it" — the companion app junk-barcode rescue. The OS camera
+  // Phone "Not it — photograph it" — the junk-barcode rescue. The OS camera
   // captures the product; we attach it and force the VISION identify (detached),
   // which overrides a junk/non-product barcode no source can fix. The poll above
   // (driven by `reading`) surfaces the corrected name a few seconds later.
@@ -283,7 +283,7 @@ export function ScanResultModal({
   const [captureFor, setCaptureFor] = useState<"nice" | "identify" | null>(null);
   const [niceDone, setNiceDone] = useState(false);
   // "Take a nice picture" — a fresh capture becomes the DISPLAY/catalog image
-  // (the identify photo is untouched). companion app's photo-roles, phone-first.
+  // (the identify photo is untouched). The photo-roles model, phone-first.
   const nicePhoto = useMutation({
     mutationFn: async (file: Blob) => {
       const named = new File([file], `nice-${Date.now()}.jpg`, { type: "image/jpeg" });
@@ -404,7 +404,7 @@ export function ScanResultModal({
           </div>
         </div>
 
-        {/* "Already tracked" (companion app A8/A9/A10) — act on the EXISTING entity
+        {/* "Already tracked" — act on the EXISTING entity
             instead of duplicating; in Move mode a single exact barcode match
             auto-moves to the active bin and re-arms the camera. */}
         {item && item.status === "pending" && (

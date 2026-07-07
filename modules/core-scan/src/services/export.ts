@@ -1,8 +1,8 @@
 // Scan-inbox bulk EXPORT — the pure BUILD half (no I/O, unit-testable). The
 // mirror of import.ts: turns Cobblr core_scan_inbox_items rows into the
 // INBOX_EXPORT_INTEROP v1 envelope (JSON or CSV) that import.ts consumes — so a
-// scan inbox round-trips Cobblr→Cobblr (and out to companion app, which reads the
-// same shape). Contract: companion app docs/INBOX_EXPORT_INTEROP.md (v1).
+// scan inbox round-trips Cobblr→Cobblr (and out to an external system, which reads the
+// same shape). Contract: the inbox-export interop spec (v1).
 //
 // Photo URLs are injected by the caller (photoUrl(fileId) → a fetchable URL),
 // because only the router knows the request origin + can mint the no-auth image
@@ -57,7 +57,7 @@ export interface ExportItem {
   created_at: string;
   updated_at: string;
   /** Cobblr-native richness the interop schema has no slot for — routing
-   *  candidates + full scan metadata. import.ts (and companion app) ignore unknown item
+   *  candidates + full scan metadata. import.ts (and other consumers) ignore unknown item
    *  fields (§7 forward-compat), so this is a lossless carrier for a future
    *  Cobblr→Cobblr importer that wants to restore candidates verbatim rather
    *  than re-run the matchmaker. */
@@ -94,7 +94,7 @@ function metaObj(row: ScanRowForExport): Record<string, unknown> {
  *  URL for a stored file id (or null if it can't be served). */
 export function rowToItem(row: ScanRowForExport, photoUrl: (fileId: string) => string | null): ExportItem {
   const meta = metaObj(row);
-  const wos = (meta.wos ?? {}) as Record<string, unknown>;
+  const sourceStates = (meta.source_states ?? {}) as Record<string, unknown>;
   const cat = (meta.hint_category ?? {}) as { domain?: unknown; sub?: unknown };
   const aliases = Array.isArray(meta.barcode_aliases)
     ? (meta.barcode_aliases as unknown[]).map((b) => String(b).trim()).filter(Boolean)
@@ -120,11 +120,11 @@ export function rowToItem(row: ScanRowForExport, photoUrl: (fileId: string) => s
     ai_confidence: confidence,
     ai_notes: str(row.ai_notes),
     quantity: Number.isInteger(row.quantity) && (row.quantity as number) >= 1 ? (row.quantity as number) : 1,
-    pack_size: str(wos.pack_size),
-    pack_state: str(wos.pack_state),
-    filament_state: str(wos.filament_state),
+    pack_size: str(sourceStates.pack_size),
+    pack_state: str(sourceStates.pack_state),
+    filament_state: str(sourceStates.filament_state),
     scan_area: str(row.scan_area),
-    box_state: str(wos.box_state),
+    box_state: str(sourceStates.box_state),
     notes: str(meta.notes),
     research_hint: str(meta.research_hint),
     source_url: str(row.source_url),
@@ -162,7 +162,7 @@ export function buildEnvelope(
 
 // ── CSV ──────────────────────────────────────────────────────────────────────
 
-/** Canonical header order — the flattened companion app shape import.ts's resolveHeader
+/** Canonical header order — the flattened source-state shape import.ts's resolveHeader
  *  understands (category domain/sub and identify/display photo URLs flattened
  *  to their own columns; x_cobblr is JSON-only). */
 export const CSV_HEADERS = [

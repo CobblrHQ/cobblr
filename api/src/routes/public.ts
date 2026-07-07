@@ -235,7 +235,7 @@ publicRouter.get("/:token", (req, res, next) => {
       // Multi-column TV board: config.sections = [{ title, view_id }].
       // Each column resolves a saved view (same path as scope_type
       // 'view'), capped small so a wall display stays glanceable. This
-      // is companion app's recently-done / in-progress / coming-up display.
+      // is the recently-done / in-progress / coming-up display.
       const cfg = (surface.config ?? {}) as Record<string, unknown>;
       const sections = Array.isArray(cfg.sections) ? cfg.sections : [];
       const perColumn = Math.min(Number(cfg.per_column) || 8, 30);
@@ -417,7 +417,7 @@ publicRouter.get("/:token/files/:id/raw", (req, res, next) => {
 // No-auth, signed-token image serve for scan-inbox EXPORT (cross-instance
 // import). A scan export mints a short-lived org-scoped token and bakes this URL
 // into each item's photo_urls; the importing instance's best-effort photo fetch
-// GETs it with no credentials — exactly like the companion app producer's unauthenticated
+// GETs it with no credentials — exactly like an external producer's unauthenticated
 // image endpoint the interop contract assumes. Same guardrails as the surface
 // file route: images only (no docs/gcode), org-scoped via the token, bytes
 // through the platform files seam. The token expires (default 14d) and grants

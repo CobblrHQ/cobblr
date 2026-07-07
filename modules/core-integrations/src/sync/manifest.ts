@@ -1,6 +1,6 @@
 // Declarative sync-source manifest — describes how to mirror an external HTTP
-// API's entities into Cobblr as DATA, so a user adds a sync source (companion app,
-// a Notion DB, a sheet, …) by INSTALLING a manifest — no platform deploy, nothing
+// API's entities into Cobblr as DATA, so a user adds a sync source (a self-hosted
+// inventory app, a Notion DB, a sheet, …) by INSTALLING a manifest — no platform deploy, nothing
 // source-specific compiled into the kernel. The declarative engine
 // (./declarative.ts) interprets one of these into a SyncConnector.
 //
@@ -22,11 +22,12 @@ import { z } from "zod";
 const Extract = z.string().min(1);
 const Method = z.enum(["GET", "POST"]).default("GET");
 
-/** A field mapping value — recursive (nested objects + value remaps). */
+/** A field mapping value — recursive (nested objects + value remaps + fallbacks). */
 export type FieldSpec =
   | string
   | { from: string; valueMap?: Record<string, string>; default?: unknown }
-  | { object: Record<string, FieldSpec> };
+  | { object: Record<string, FieldSpec> }
+  | { coalesce: FieldSpec[] };
 
 export const FieldSpec: z.ZodType<FieldSpec> = z.lazy(() =>
   z.union([
@@ -37,6 +38,9 @@ export const FieldSpec: z.ZodType<FieldSpec> = z.lazy(() =>
       default: z.unknown().optional(),
     }),
     z.object({ object: z.record(FieldSpec) }),
+    // First sub-spec that yields a non-null/non-empty value wins — a fallback
+    // chain (e.g. name = the item's name, else the yarn's name, else "Yarn").
+    z.object({ coalesce: z.array(FieldSpec).min(1) }),
   ]),
 );
 
@@ -50,7 +54,7 @@ export const SyncEntityTypeManifest = z.object({
    *  in, so they show under that nav entry — e.g. "3d-printers". Omit for the base. */
   targetInstance: z.string().max(60).optional(),
   /** Route EACH row to an instance by a field value, so ONE section fans a single
-   *  endpoint out to several instances (e.g. companion app /printers → 3d-printers +
+   *  endpoint out to several instances (e.g. an inventory API's /printers → 3d-printers +
    *  laser-cutters + cnc by category). A value not in `map` is skipped unless
    *  `default` is set. Subsumes filter+targetInstance for the fan-out case.
    *  e.g. { "from": "$.category", "map": { "printer": "3d-printers", "laser": "laser-cutters" } } */
@@ -62,11 +66,24 @@ export const SyncEntityTypeManifest = z.object({
     })
     .optional(),
   /** List endpoint (fetchAll). `arrayPath` points at the array inside the
-   *  response (e.g. "$.items"); omit if the body IS the array. */
+   *  response (e.g. "$.items"); omit if the body IS the array. `paginate` walks
+   *  page-numbered endpoints: the engine appends `?<param>=N&<sizeParam>=<size>`
+   *  (starting at `startPage`, default 1) and keeps fetching until a page returns
+   *  fewer than `size` rows (or `maxPages` is hit — a safety bound). Omit for a
+   *  single-shot list. e.g. { "param": "page", "sizeParam": "page_size", "size": 100 } */
   list: z.object({
     method: Method,
     path: z.string().min(1),
     arrayPath: z.string().optional(),
+    paginate: z
+      .object({
+        param: z.string().min(1).max(40),
+        size: z.number().int().min(1).max(500),
+        sizeParam: z.string().min(1).max(40).optional(),
+        startPage: z.number().int().min(0).max(1).default(1),
+        maxPages: z.number().int().min(1).max(1000).default(200),
+      })
+      .optional(),
   }),
   /** Optional single-item endpoint (fetchOne, for webhook-targeted refetch).
    *  `{externalId}` in the path is substituted. `itemPath` points at the object
@@ -75,7 +92,7 @@ export const SyncEntityTypeManifest = z.object({
     .object({ method: Method, path: z.string().min(1), itemPath: z.string().optional() })
     .optional(),
   /** Optional record filter: include a source row only when the extracted value
-   *  matches. Lets one endpoint feed several sections — e.g. companion app /printers returns
+   *  matches. Lets one endpoint feed several sections — e.g. an inventory API's /printers returns
    *  printers + lasers + CNC (a `category` field); filter each into its own
    *  section/instance. e.g. { "from": "$.category", "equals": "printer" }. */
   filter: z
@@ -111,20 +128,49 @@ export const SyncSourceManifest = z.object({
   id: z.string().min(1).max(64).regex(/^[a-z0-9_-]+$/),
   name: z.string().min(1).max(120),
   version: z.string().max(32).optional(),
-  /** Optional human hint shown next to the credential field. */
+  /** Optional human hint shown next to the credential field (single-token
+   *  sources; ignored when `credentials` describes named fields). */
   credentialLabel: z.string().max(80).optional(),
   baseUrlLabel: z.string().max(80).optional(),
   baseUrlPlaceholder: z.string().max(120).optional(),
-  /** Header auth: send `header: <prefix?><credential value `from`>`. e.g.
-   *  { header: "Authorization", from: "token", prefix: "Bearer " }. */
+  /** Fixed source base URL (e.g. "https://api.ravelry.com"). When set, the source
+   *  needs no user-entered base URL — the UI hides the field and the engine uses
+   *  this. Omit for sources the user points at their own host (a self-hosted app). */
+  baseUrl: z.string().url().max(200).optional(),
+  /** Named credential inputs the "Add connection" form renders: key → { label,
+   *  secret }. Basic auth needs two (e.g. access_key + personal_key). Omit for the
+   *  single-token default (one secret field named per `credentialLabel`). */
+  credentials: z
+    .record(z.object({ label: z.string().min(1).max(80), secret: z.boolean().default(true) }))
+    .optional(),
+  /** How stored credentials become a request. Two kinds:
+   *   - header: send `header: <prefix?><credential value `from`>` (e.g.
+   *     { kind:"header", header:"Authorization", from:"token", prefix:"Bearer " }).
+   *   - basic: HTTP Basic — base64(`<userFrom>`:`<passFrom>`) in Authorization
+   *     (e.g. { kind:"basic", userFrom:"access_key", passFrom:"personal_key" }). */
   auth: z
-    .object({
-      kind: z.literal("header"),
-      header: z.string().min(1),
-      from: z.string().min(1).default("token"),
-      prefix: z.string().optional(),
-    })
+    .union([
+      z.object({
+        kind: z.literal("header"),
+        header: z.string().min(1),
+        from: z.string().min(1).default("token"),
+        prefix: z.string().optional(),
+      }),
+      z.object({
+        kind: z.literal("basic"),
+        userFrom: z.string().min(1),
+        passFrom: z.string().min(1),
+      }),
+    ])
     .nullable()
+    .optional(),
+  /** Bootstrap variables resolved ONCE per fetch, then substituted as `{name}`
+   *  in list/item/test paths. Each is a small GET whose result is read at `at`.
+   *  Lets a source resolve "who am I" before listing the caller's own data —
+   *  e.g. Ravelry: { "username": { "path": "/current_user.json", "at": "$.user.username" } }
+   *  then list path "/people/{username}/stash/list.json". */
+  resolveVars: z
+    .record(z.object({ method: Method, path: z.string().min(1), at: Extract }))
     .optional(),
   /** Cheap connectivity probe (defaults to the first entity type's list path). */
   test: z.object({ method: Method, path: z.string().min(1) }).optional(),

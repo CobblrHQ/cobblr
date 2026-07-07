@@ -1,4 +1,4 @@
-// "✔ Already tracked" — the companion app A8/A9 heads-up. Shown on the phone result
+// "✔ Already tracked" — the heads-up. Shown on the phone result
 // card and the inbox triage card when a scan matches an entity the workspace
 // already has (exact barcode, or name overlap). Offers acting on the EXISTING
 // entity instead of creating a duplicate: +N (bump qty, adopt barcode/photo),
@@ -22,7 +22,7 @@ export function TrackedMatchBanner({
   /** The active bin / filing location, if any — enables "Move here". */
   locationId?: string | null;
   locationName?: string | null;
-  /** Move mode (companion app A10): when the scan finds exactly ONE exact barcode match
+  /** Move mode: when the scan finds exactly ONE exact barcode match
    *  and a bin is active, auto-fire the move — no triage stop. */
   autoMove?: boolean;
   /** Called after a successful attach (the inbox item is now resolved). */
@@ -44,7 +44,7 @@ export function TrackedMatchBanner({
     enabled: !!item.id && item.status === "pending" && (!!item.barcode_text || !!item.suggested_name),
     staleTime: 60_000,
   });
-  // Location names for "· 📍{where it lives}" (companion app shows each match's location).
+  // Location names for "· 📍{where it lives}" (each match shows its location).
   const locations = useQuery({
     queryKey: ["core-locations", activeSlug],
     queryFn: () => api.listLocations(activeSlug),
@@ -80,7 +80,7 @@ export function TrackedMatchBanner({
   // Move mode: exactly one EXACT barcode match + an active bin → move it,
   // hands-free. Fires at most once per card; ambiguity (0 or 2+) falls back
   // to the normal banner so the human decides. Already in the bin → nothing
-  // to move (companion app: only offers the move when the match is NOT in the bin).
+  // to move (only offers the move when the match is NOT in the bin).
   const autoFired = useRef(false);
   const barcodeMatches = matches.data?.barcode_matches ?? [];
   useEffect(() => {

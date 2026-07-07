@@ -23,6 +23,7 @@ export async function loadConnectionRef(
     base_url?: string;
     transport?: "direct" | "edge";
     bridge?: string | null;
+    target_instances?: Record<string, string>;
   };
   return {
     orgId,
@@ -32,5 +33,8 @@ export async function loadConnectionRef(
     credentials,
     transport: config.transport === "edge" ? "edge" : "direct",
     bridge: config.bridge ?? null,
+    ...(config.target_instances && typeof config.target_instances === "object"
+      ? { targetInstances: config.target_instances }
+      : {}),
   };
 }

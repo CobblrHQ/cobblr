@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "source": "companion app",
+ "source": "my-shop",
  "source_instance": "https://workshop.example.com",
  "exported_at": "2026-07-03T17:43:22.643Z",
  "scope": {

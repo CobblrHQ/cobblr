@@ -11,7 +11,7 @@
 //
 // The caller drops one scan-inbox row per line item (source_kind "receipt") so
 // each line rides the SAME matchmaker + confirm flow a barcode/photo scan does
-// — a receipt becomes N parts without retyping. Mirrors companion app's parseInvoice*.
+// — a receipt becomes N parts without retyping. Mirrors the invoice-parse path.
 
 import { platform } from "@cobblr/platform-contract";
 import {

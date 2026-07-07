@@ -14,7 +14,7 @@
 //   • preserves the version contract (lint-versions): when content changed but
 //     the web version didn't move past the existing file's, the patch version is
 //     bumped over the EXISTING file's so installed workspaces see the upgrade;
-//   • leaves non-featured files (companion app-compat, …) untouched.
+//   • leaves non-featured files untouched.
 //
 // Run:  npx tsx scripts/sync-bundles.ts        (rerun whenever featured-bundles changes)
 // Lint: scripts/lint-versions.ts enforces the bump; CI runs it.

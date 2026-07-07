@@ -1,0 +1,29 @@
+# DEFAULT self-host TLS: a real, publicly-trusted Let's Encrypt cert via the
+# DuckDNS DNS-01 challenge. This is the recommended path — your phone trusts
+# the cert automatically (nothing to install), so the camera works over the
+# LAN with zero per-device setup.
+#
+# Requires in .env:
+#   COBBLR_SITE_ADDRESS = your-name.duckdns.org   (the free subdomain you claimed)
+#   DUCKDNS_TOKEN       = <your DuckDNS token>
+#   COBBLR_ACME_EMAIL   = you@example.com          (optional; for expiry notices)
+#
+# Point the DuckDNS record at this box's LAN IP (e.g. 192.168.1.50). A public
+# DNS name is allowed to resolve to a private IP — the phone looks it up, then
+# connects over your LAN. The box only needs OUTBOUND internet (to answer the
+# ACME challenge); no ports are forwarded, nothing is exposed to the internet.
+#
+# Caddy stores issued certs under /data (bind-mounted to ./data/caddy), so a
+# container restart reuses them instead of re-requesting.
+
+{
+	email {$COBBLR_ACME_EMAIL}
+}
+
+{$COBBLR_SITE_ADDRESS} {
+	encode gzip
+	reverse_proxy web:8080
+	tls {
+		dns duckdns {$DUCKDNS_TOKEN}
+	}
+}

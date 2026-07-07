@@ -301,8 +301,8 @@ export function LocationsPage() {
   }
 
   // Top level splits into the area/room TREE and a bottom bucket of "unsorted"
-  // containers (loose bins not placed in any area) — mirrors how companion app kept
-  // unsorted storage in its own section. The big onDelete handler is shared by
+  // containers (loose bins not placed in any area) — keeps unsorted storage
+  // in its own section. The big onDelete handler is shared by
   // both sections via this helper rather than duplicated.
   const rootAreas = forest.areas;
   const looseContainers = forest.containers;

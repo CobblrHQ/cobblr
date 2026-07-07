@@ -1,4 +1,4 @@
-// "Import from file" — bulk scan-inbox import (companion app interop + generic CSV).
+// "Import from file" — bulk scan-inbox import (inbox-export interop + generic CSV).
 // Flow: pick file → preview (detected columns, first 5 rows, per-row parse
 // errors, a column mapper when a CSV has unmapped headers) → options
 // (duplicate policy, fetch photos, dry-run) → import → summary card.
@@ -79,7 +79,7 @@ export function ScanImportModal({ slug, open, onClose, onImported }: {
         {!file && (
           <>
             <p className="text-muted dark:text-slate-400">
-              Bring a batch of scans from another system — a <strong>companion app inbox export</strong> (JSON or CSV)
+              Bring a batch of scans from another system — an <strong>inbox export</strong> (JSON or CSV)
               works as-is; any other CSV works with a quick column mapping. Items land in this inbox as ordinary
               pending scans and go through Cobblr's own matching.
             </p>

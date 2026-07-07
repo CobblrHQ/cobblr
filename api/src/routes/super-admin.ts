@@ -4,7 +4,7 @@
 // CANNOT reach these routes; this is a separate tier above them.
 //
 // Use case: the author hosts cobblr on the workshop server. a beta tester's
-// LEGO club + the author's own workshop + others are tenants. the author needs to
+// LEGO club + the author's own workshop + others are tenants. The author needs to
 // see which workspaces exist, who's enabled what, disk usage, recent
 // errors. SSH-ing into postgres is the alternative.
 //

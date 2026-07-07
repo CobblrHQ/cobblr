@@ -1,6 +1,6 @@
 // External QR resolver — the per-workspace redirect table.
 //
-// A scanned FOREIGN QR payload (a companion app URL, a bare Homebox number, …) is
+// A scanned FOREIGN QR payload (an external-system URL, a bare Homebox number, …) is
 // run through the workspace's ordered rules. The first rule whose `match`
 // succeeds claims the scan: it extracts a key and resolves it to a Cobblr entity
 // via platform().entities.list (which already falls back to a metadata-JSON
@@ -41,7 +41,7 @@ export interface QrResolveSpec {
   /** extracted type → kind, e.g. { printers: "machines:machine" }. */
   type_map?: Record<string, string>;
   /** the entity field carrying the foreign key — a native column OR a
-   *  metadata key (e.g. "wos_id" → metadata->>'wos_id'). */
+   *  metadata key (e.g. "ext_id" → metadata->>'ext_id'). */
   key_field: string;
 }
 
@@ -102,7 +102,7 @@ export function matchRule(rule: QrRule, value: string): { key: string; type?: st
       return { key: applyTransforms(seg, ex.transform) };
     }
     if (m.type === "url_base") {
-      // "base URL once + /segment/ children" (the companion app shape): a label is
+      // "base URL once + /segment/ children" (the base + segment shape): a label is
       // <base>/<segment>/<key>. The segment names the entity TYPE (resolve.type_map
       // maps it → kind), the next segment is the foreign key. One rule covers a
       // whole host. Tolerant of a trailing slash on the base.

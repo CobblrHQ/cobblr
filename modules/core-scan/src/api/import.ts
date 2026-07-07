@@ -1,6 +1,5 @@
-// Scan-inbox bulk IMPORT — one-shot, user-triggered. Accepts the companion app
-// inbox export natively (JSON envelope or CSV; contract: companion app
-// docs/INBOX_EXPORT_INTEROP.md v1) and any other system's CSV via a column
+// Scan-inbox bulk IMPORT — one-shot, user-triggered. Accepts an
+// inbox export natively (JSON envelope or CSV; contract: the inbox-export interop spec v1) and any other system's CSV via a column
 // `mapping`. The parse/translate half lives in ../services/import.ts (pure);
 // this router owns idempotency, row insertion, and best-effort photo fetch.
 //

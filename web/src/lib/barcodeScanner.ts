@@ -1,6 +1,6 @@
 // Shared camera + decode tuning for the live barcode scanner.
 //
-// Ported from the companion app scanner, which earned the "fast on an
+// A scanner design that earned the "fast on an
 // iPhone without moving the phone" feel through two levers that have
 // nothing to do with the decode library and everything to do with the
 // CAMERA: (1) lock to a *plain* wide rear lens — never the ultra-wide

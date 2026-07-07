@@ -7,7 +7,7 @@
 -- Same security posture as the magic-link / reset / verify tables: the code is
 -- stored HASHED (sha256) — plaintext only ever transits the start response →
 -- QR → claim. Single-use via claimed_at; time-bounded via expires_at (~90s).
--- Multi-tenant addition over the companion app original: org_slug pins the
+-- Multi-tenant addition over the original: org_slug pins the
 -- workspace the phone lands in, and membership of it is verified at BOTH start
 -- (the minter) and claim (defends against a membership revoked in between).
 

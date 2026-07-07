@@ -2,7 +2,7 @@
 //   /api/v1/orgs/:slug/modules/core-integrations/sync/...
 //
 // A sync connection is a core_integrations_connectors row whose connector_id is
-// a registered SYNC connector (e.g. "companion app"). Creating one also mints an
+// a registered SYNC connector (e.g. "my-shop"). Creating one also mints an
 // inbound webhook token (the live push URL). Enabling an entity type writes a
 // sync_state row the poll worker scans; "run" reconciles immediately.
 
@@ -71,10 +71,26 @@ function metaLookup(): {
   return platform().db.meta as never;
 }
 
-/** Non-secret connection config for the UI (base_url + transport, never creds). */
-function exposeConfig(config: unknown): { base_url: string; transport: "direct" | "edge"; bridge: string | null } {
-  const c = (config ?? {}) as { base_url?: string; transport?: "direct" | "edge"; bridge?: string | null };
-  return { base_url: c.base_url ?? "", transport: c.transport === "edge" ? "edge" : "direct", bridge: c.bridge ?? null };
+/** Non-secret connection config for the UI (base_url + transport + target
+ *  instances, never creds). */
+function exposeConfig(config: unknown): {
+  base_url: string;
+  transport: "direct" | "edge";
+  bridge: string | null;
+  target_instances: Record<string, string>;
+} {
+  const c = (config ?? {}) as {
+    base_url?: string;
+    transport?: "direct" | "edge";
+    bridge?: string | null;
+    target_instances?: Record<string, string>;
+  };
+  return {
+    base_url: c.base_url ?? "",
+    transport: c.transport === "edge" ? "edge" : "direct",
+    bridge: c.bridge ?? null,
+    target_instances: c.target_instances && typeof c.target_instances === "object" ? c.target_instances : {},
+  };
 }
 
 // ── catalogue: the "add a connection" picker ──
@@ -117,13 +133,19 @@ syncRouter.get(
 const ConnectionCreate = z.object({
   connector_id: z.string().min(1),
   label: z.string().min(1),
-  base_url: z.string().url(),
+  // Optional: a fixed-baseUrl source (e.g. Ravelry) supplies its own base, so the
+  // UI hides the field and this is absent — validated below against the connector.
+  base_url: z.string().url().optional(),
   credentials: z.record(z.unknown()).default({}),
   // "edge" routes the source fetch over the workspace's dial-out bridge (the
   // only way a hosted instance reaches a LAN source); "direct" fetches base_url
   // from the cloud (egress-guarded — private targets only on a self-hosted box).
   transport: z.enum(["direct", "edge"]).default("direct"),
   bridge: z.string().max(60).nullable().optional(),
+  // Per-connection target-instance override: entity-type key → instance slug.
+  // Where the user wants each section's rows to land (their own inventory
+  // instance), decoupling a built-in source from any specific bundle.
+  target_instances: z.record(z.string().max(60)).optional(),
 });
 
 // ── create a connection (+ mint the webhook token) ──
@@ -135,8 +157,15 @@ syncRouter.post(
     if (!parsed.success) return badBody(res, parsed.error);
     const ctx = tenantContext(req);
     const db = tenantDb(req);
-    if (!(await syncConnectorIdSet(db)).has(parsed.data.connector_id)) {
+    const def = await resolveSyncConnector(db, parsed.data.connector_id);
+    if (!def) {
       return void res.status(400).json({ error: { code: "unknown_connector", message: "not a registered sync connector" } });
+    }
+    // A connector that exposes a base_url config field needs one entered; a
+    // fixed-baseUrl source (describeConfig omits base_url) uses its own.
+    const wantsBaseUrl = !!def.describeConfig?.().base_url;
+    if (wantsBaseUrl && !parsed.data.base_url) {
+      return void res.status(400).json({ error: { code: "missing_base_url", message: "This source needs a base URL." } });
     }
     const enc = await platform().integrations.encryptCredentials(ctx.org.id, parsed.data.credentials);
     const conn = await db
@@ -145,7 +174,7 @@ syncRouter.post(
         connector_id: parsed.data.connector_id,
         label: parsed.data.label,
         credentials_enc: enc,
-        config: sql`${JSON.stringify({ base_url: parsed.data.base_url, transport: parsed.data.transport, bridge: parsed.data.bridge ?? null })}::jsonb` as never,
+        config: sql`${JSON.stringify({ base_url: parsed.data.base_url ?? "", transport: parsed.data.transport, bridge: parsed.data.bridge ?? null, ...(parsed.data.target_instances ? { target_instances: parsed.data.target_instances } : {}) })}::jsonb` as never,
       })
       .returning(["id", "connector_id", "label", "config", "enabled", "created_at"])
       .executeTakeFirstOrThrow();

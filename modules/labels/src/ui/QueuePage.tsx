@@ -108,7 +108,7 @@ export function QueuePage() {
 
   // Direct-to-printer: render the queue to a PDF (labels) → dispatch via the
   // configured printer (core-print). No browser print dialog. core-print uses
-  // the proven companion app path (pdf-lib render + the `ipp` lib to CUPS).
+  // the proven print path (pdf-lib render + the `ipp` lib to CUPS).
   const sendToPrinter = useMutation({
     mutationFn: async () => {
       const { items: printers } = await api.listPrinters();

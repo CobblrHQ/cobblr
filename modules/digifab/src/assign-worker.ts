@@ -15,6 +15,7 @@ import { buildDriverById, sendJob } from "./jobs-core.js";
 import { mintRunJobs, runStatuses } from "./runs-core.js";
 import { enqueuePoll } from "./poll-worker.js";
 import { classify } from "./state.js";
+import { ownedDeviceRefs } from "./detectors/owned.js";
 import type { RemoteDevice } from "./drivers/types.js";
 
 export const ASSIGN_QUEUE = "digifab.assign";
@@ -83,6 +84,8 @@ export async function assignPoolJobs(db: Kysely<DigifabDB>, orgId: string): Prom
       (a) => `${a.connection_id}:${a.remote_device_id}`,
     ),
   );
+  // Single-owner: printers an external detector owns aren't Cobblr's to drive.
+  const owned = await ownedDeviceRefs(db);
 
   // F-3: surface an assignment send-failure instead of swallowing it.
   const failJob = (id: string, msg: string) =>
@@ -124,7 +127,7 @@ export async function assignPoolJobs(db: Kysely<DigifabDB>, orgId: string): Prom
     let resolved = false;
     for (const m of members) {
       const key = `${m.connection_id}:${m.remote_device_id}`;
-      if (busy.has(key) || attention.has(key)) continue; // F-1: skip occupied/uncleared
+      if (busy.has(key) || attention.has(key) || owned.has(key)) continue; // F-1: skip occupied/uncleared; single-owner: skip detector-owned
       const dev = (await devicesFor(m.connection_id)).find((d) => d.id === m.remote_device_id);
       if (!dev || !dev.enabled || classify(dev.state ?? "") !== "idle") continue;
 

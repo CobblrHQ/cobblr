@@ -8,7 +8,7 @@ import { registerMachinesWriter } from "./sync-writer.js";
 
 registerMachinesResolvers();
 registerMachinesActionHandlers();
-registerMachinesWriter(); // opt in as a sync target (e.g. mirror companion app printers)
+registerMachinesWriter(); // opt in as a sync target (e.g. mirror an external system's printers)
 // Declare machines:machine as a scan target. (Audit 2026-06-26 follow-up — was
 // a hardcoded entry in core-scan's SCANNABLE/endpoint/qty maps; its noun was
 // the wrong "part" fallback, now correctly "machine".)

@@ -1,7 +1,7 @@
 // Header-right account dropdown. Replaces the row of cryptic icon
 // buttons (super-admin, calendar, configuration, profile name, theme
 // toggle, sign-out) that crowded the navbar — folds them into one
-// labelled menu, mirroring companion app's UserMenu. The trigger shows
+// labelled menu. The trigger shows
 // the display name + a "super-admin" chip when the user is a platform
 // operator. Search, notifications + module quick-actions stay as their
 // own navbar affordances.
@@ -169,7 +169,7 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
           <Link to="/me/feedback" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
             <MessageSquare size={14} className="text-faint dark:text-slate-400" /> Your feedback
           </Link>
-          {/* Pair phone (companion app tradition, the author): the phone IS the scanner; this is
+          {/* Pair phone (an established pattern): the phone IS the scanner; this is
               the desktop's door to it. Self-hides on touch devices. */}
           <PairPhoneButton className={itemCls} />
           {/* Managed app: the one settings surface — tailor the locked app (hide
@@ -369,7 +369,7 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
           <Link to="/me/feedback" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
             <MessageSquare size={14} className="text-faint dark:text-slate-400" /> Your feedback
           </Link>
-          {/* Pair phone (companion app tradition, the author): the phone IS the scanner; this is
+          {/* Pair phone (an established pattern): the phone IS the scanner; this is
               the desktop's door to it. Self-hides on touch devices. */}
           <PairPhoneButton className={itemCls} />
           {/* Managed app: the one settings surface — tailor the locked app (hide

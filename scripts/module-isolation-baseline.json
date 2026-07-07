@@ -58,5 +58,11 @@
     "file": "modules/core-scan/src/services/matchmaker.ts",
     "token": "assets",
     "reason": "PROSE in the matchmaker LLM prompt (\"a drill -> 'tools'/'assets'\"), not code coupling — the scannable set is now registry-driven (registerScannable). (Audit 2026-06-26.)"
+  },
+  {
+    "rule": "D-module-names-module",
+    "file": "modules/core-integrations/src/sync/sources/ravelry.ts",
+    "token": "projects",
+    "reason": "INTENTIONAL, not coupling: the Ravelry built-in sync manifest declares a TARGET ENTITY KIND (\"projects:project\") — the platform-contract composition surface entity writers resolve, exactly like an INSTALLED manifest names one. No import, no table read; the section only lands if the user maps it to a projects instance. First-party manifests just ship as data-in-source rather than data-in-DB. (\"inventory:part\" for the stash section names a kind the same way but isn't flagged — core-integrations already references it.)"
   }
 ]

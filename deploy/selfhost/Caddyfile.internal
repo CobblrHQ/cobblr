@@ -1,0 +1,24 @@
+# OFFLINE fallback TLS: Caddy's own local certificate authority (`tls
+# internal`). Fully self-contained — no domain, no DNS provider, no internet
+# needed for issuance. The trade-off: the cert is signed by Caddy's private
+# CA, so each phone/laptop must install + trust that CA once, or the browser
+# refuses the camera (and shows a certificate warning).
+#
+# Select it by setting in .env:
+#   COBBLR_CADDYFILE    = ./deploy/selfhost/Caddyfile.internal
+#   COBBLR_SITE_ADDRESS = cobblr.local        (or the box's LAN IP, e.g. 192.168.1.50)
+#
+# To trust the CA on your devices, export Caddy's root once:
+#   docker compose ... exec caddy cat /data/caddy/pki/authorities/local/root.crt > cobblr-root.crt
+# then install cobblr-root.crt on each device (iOS: Settings → General → VPN &
+# Device Management → install profile, then General → About → Certificate Trust
+# Settings → enable it).
+#
+# Prefer the DuckDNS/Cloudflare Caddyfiles if at all possible — they skip this
+# per-device dance entirely.
+
+{$COBBLR_SITE_ADDRESS} {
+	encode gzip
+	reverse_proxy web:8080
+	tls internal
+}

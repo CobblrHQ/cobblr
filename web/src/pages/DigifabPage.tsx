@@ -9,7 +9,7 @@ import { Link } from "react-router-dom";
 import { createPortal } from "react-dom";
 import { useMutation, useQuery, useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, Wifi, Printer, RefreshCw, Send, ListChecks, Boxes, AlertTriangle, Layers, X, ListPlus, Ban, Camera, Pause, Play, Thermometer, ChevronRight, Share2, Sliders } from "lucide-react";
-import { ApiError, api, fetchAuthBlobUrl, type DigifabConnection, type DigifabJob, type DigifabFleet, type DigifabFleetDevice, type DigifabDeviceClass, type BambuMode, type DigifabLibraryItem, type DigifabHistory, type DigifabDeviceDetail, type DigifabFileInfo, type DigifabRun, type DigifabFailureConfig } from "../lib/api";
+import { ApiError, api, fetchAuthBlobUrl, type DigifabConnection, type DigifabJob, type DigifabFleet, type DigifabFleetDevice, type DigifabDeviceClass, type BambuMode, type DigifabLibraryItem, type DigifabHistory, type DigifabDeviceDetail, type DigifabFileInfo, type DigifabRun, type DigifabFailureConfig, type DigifabDetector, type DigifabDetectorCatalogEntry } from "../lib/api";
 import { BambuConnectWizard } from "../components/BambuConnectWizard";
 import { BridgePicker } from "../components/BridgePicker";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -414,7 +414,7 @@ function ShareMachinesModal({ slug, edgeConns, onClose }: { slug: string; edgeCo
         </p>
         <label className="block">
           <span className={lbl}>Name this share</span>
-          <input value={label} onChange={(e) => { setLabel(e.target.value); setLink(null); }} placeholder="e.g. a beta tester's club" className={field} autoFocus />
+          <input value={label} onChange={(e) => { setLabel(e.target.value); setLink(null); }} placeholder="e.g. your club" className={field} autoFocus />
         </label>
         <div>
           <span className={lbl}>Machines to share</span>
@@ -827,8 +827,17 @@ function FailureDetectionPanel({ slug }: { slug: string }) {
                       <option value="auto">Auto — local model, else vision AI</option>
                       <option value="edge">Local model only (no AI cost)</option>
                       <option value="llm">Vision AI only</option>
+                      <option value="detector">External detector (self-hosted)</option>
                     </select>
                   </div>
+                  {c.backend === "detector" && (
+                    <div className="pl-1">
+                      <p className="text-faint mb-1.5 leading-relaxed">
+                        Score prints with a detection service you run anywhere — <b>Obico ML API</b>, <b>PrintGuard</b>, or any HTTP model on your LAN. Cobblr talks to it over the network (or via your edge bridge from the cloud).
+                      </p>
+                      <ExternalDetectorConfig slug={slug} cfg={c} save={(patch) => save.mutate(patch)} />
+                    </div>
+                  )}
                   <div className="flex items-center gap-2">
                     <span className={lbl}>Check every</span>
                     <select value={c.sample_interval_sec} onChange={(e) => save.mutate({ sample_interval_sec: Number(e.target.value) })} className="input !py-0.5 !text-xs !w-auto">
@@ -837,6 +846,319 @@ function FailureDetectionPanel({ slug }: { slug: string }) {
                   </div>
                 </div>
               )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const detLbl = "text-[10px] font-mono uppercase tracking-widest text-faint";
+
+// Backend='detector' config: pick a configured external detector + open the
+// manager to add/edit/test them.
+function ExternalDetectorConfig({ slug, cfg, save }: { slug: string; cfg: DigifabFailureConfig; save: (patch: Partial<DigifabFailureConfig>) => void }) {
+  const [manage, setManage] = useState(false);
+  const list = useQuery({ queryKey: ["digifab-detectors", slug], queryFn: () => api.listDigifabDetectors(slug) });
+  const detectors = list.data?.detectors ?? [];
+  const missing = !!cfg.detector_id && !detectors.some((d) => d.id === cfg.detector_id);
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className={detLbl}>Service</span>
+        <select value={cfg.detector_id ?? ""} onChange={(e) => save({ detector_id: e.target.value || null })} className="input !py-0.5 !text-xs !w-auto">
+          <option value="">— pick a detector —</option>
+          {detectors.map((d) => (
+            <option key={d.id} value={d.id}>{d.label} · {d.key}{d.enabled ? "" : " (off)"}</option>
+          ))}
+        </select>
+        <button type="button" onClick={() => setManage(true)} className="text-xs text-cobble-600 dark:text-cobble-400 hover:underline">Manage…</button>
+      </div>
+      {missing && <p className="text-[10px] text-ember-600 dark:text-ember-500">The selected detector was removed — pick another.</p>}
+      {detectors.length === 0 && !list.isLoading && <p className="text-[10px] text-faint">No detectors yet — click Manage to add one.</p>}
+      {manage && <DetectorsModal slug={slug} onClose={() => setManage(false)} />}
+    </div>
+  );
+}
+
+// Add / edit / test / remove the workspace's external detectors.
+function DetectorsModal({ slug, onClose }: { slug: string; onClose: () => void }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const catalog = useQuery({ queryKey: ["digifab-detector-catalog", slug], queryFn: () => api.getDigifabDetectorCatalog(slug) });
+  const list = useQuery({ queryKey: ["digifab-detectors", slug], queryFn: () => api.listDigifabDetectors(slug) });
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["digifab-detectors", slug] });
+  const cat = catalog.data?.detectors ?? [];
+  const detectors = list.data?.detectors ?? [];
+
+  const [key, setKey] = useState("");
+  const [label, setLabel] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const selectedCat = cat.find((c) => c.key === key);
+  const create = useMutation({
+    mutationFn: () => api.createDigifabDetector(slug, { key, label, base_url: baseUrl, api_key: apiKey || undefined }),
+    onSuccess: () => { toast.success("Detector added"); setKey(""); setLabel(""); setBaseUrl(""); setApiKey(""); invalidate(); },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't add detector"),
+  });
+
+  const input = "input !py-1 !text-xs w-full";
+  return (
+    <Modal open onClose={onClose} title="External detectors" subtitle="Point Cobblr at a self-hosted detection service" size="lg">
+      <div className="space-y-4 text-xs">
+        {detectors.length > 0 && (
+          <div className="space-y-2">
+            {detectors.map((d) => <DetectorCard key={d.id} slug={slug} det={d} cat={cat} onChanged={invalidate} />)}
+          </div>
+        )}
+        <div className="rounded-lg border border-line/70 dark:border-mortar-700 p-3 space-y-2">
+          <div className={detLbl}>Add a detector</div>
+          <select value={key} onChange={(e) => { setKey(e.target.value); const c = cat.find((x) => x.key === e.target.value); if (c) setLabel((l) => l || c.name); }} className={input}>
+            <option value="">— choose a service —</option>
+            {cat.map((c) => <option key={c.key} value={c.key}>{c.name} · {c.shape}</option>)}
+          </select>
+          {selectedCat?.summary && <p className="text-[10px] text-faint">{selectedCat.summary}</p>}
+          {key && (
+            <>
+              <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label — e.g. Obico on the NAS" className={input} />
+              <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="Base URL — http://nas.lan:3333 (or cobblr-edge://<instance> from the cloud)" className={input} />
+              <input value={apiKey} onChange={(e) => setApiKey(e.target.value)} type="password" placeholder="API token (only if the service needs one)" className={input} />
+              {selectedCat?.shape === "camera-watcher" && (
+                <p className="text-[10px] text-faint">This service watches its own cameras — after adding, map each printer to its camera id on the detector's row below.</p>
+              )}
+              <p className="text-[10px] text-faint">Reached directly on your LAN; from the cloud use <code className="font-mono">cobblr-edge://…</code> via your bridge. Loopback (127.0.0.1) is blocked — use the host/service name or LAN IP.</p>
+              <button type="button" disabled={!label || !baseUrl || create.isPending} onClick={() => create.mutate()} className="rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white text-xs px-3 py-1.5">Add detector</button>
+            </>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// One configured detector — enable/test/delete, plus an expandable edit form
+// (label / URL / token, and a camera→id map for camera-watcher services).
+function DetectorCard({ slug, det, cat, onChanged }: { slug: string; det: DigifabDetector; cat: DigifabDetectorCatalogEntry[]; onChanged: () => void }) {
+  const toast = useToast();
+  const confirm = useConfirm();
+  const [editing, setEditing] = useState(false);
+  const [label, setLabel] = useState(det.label);
+  const [baseUrl, setBaseUrl] = useState(det.base_url);
+  const [apiKey, setApiKey] = useState("");
+  const [rows, setRows] = useState<Array<{ ref: string; cam: string }>>(
+    Object.entries((det.config?.camera_map ?? {}) as Record<string, string>).map(([ref, cam]) => ({ ref, cam })),
+  );
+  const shape = cat.find((c) => c.key === det.key)?.shape;
+  const isWatcher = shape === "camera-watcher";
+  // Import lists for the link picker (only while editing a camera-watcher).
+  const fleet = useQuery({ queryKey: ["digifab-fleet", slug], queryFn: () => api.getDigifabFleet(slug), enabled: editing && isWatcher });
+  const camsQuery = useQuery({ queryKey: ["digifab-detector-cameras", slug, det.id], queryFn: () => api.listDigifabDetectorCameras(slug, det.id), enabled: editing && isWatcher, retry: false });
+  const deviceOpts = (fleet.data?.connections ?? []).flatMap((c) => c.devices.map((d) => ({ value: `${c.connection_id}:${d.id}`, label: `${c.label} — ${d.name}` })));
+  const cams = camsQuery.data?.cameras ?? [];
+  // Owner flag (B1 follow-up): when the detector owns its printers, Cobblr shows
+  // their live state and shouldn't also poll them.
+  const [owns, setOwns] = useState(!!(det.config as { owns?: boolean })?.owns);
+  const printers = useQuery({ queryKey: ["digifab-detector-printers", slug, det.id], queryFn: () => api.listDigifabDetectorPrinters(slug, det.id), enabled: editing && isWatcher && owns, retry: false });
+
+  const save = useMutation({
+    mutationFn: () => {
+      const camera_map: Record<string, string> = {};
+      for (const r of rows) if (r.ref.trim() && r.cam.trim()) camera_map[r.ref.trim()] = r.cam.trim();
+      return api.updateDigifabDetector(slug, det.id, {
+        label, base_url: baseUrl,
+        ...(apiKey ? { api_key: apiKey } : {}),
+        ...(isWatcher ? { config: { camera_map, owns } } : {}),
+      });
+    },
+    onSuccess: () => { toast.success("Saved"); setApiKey(""); setEditing(false); onChanged(); },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't save"),
+  });
+  const toggle = useMutation({
+    mutationFn: (enabled: boolean) => api.updateDigifabDetector(slug, det.id, { enabled }),
+    onSuccess: onChanged,
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't update"),
+  });
+  const test = useMutation({
+    mutationFn: () => api.testDigifabDetector(slug, det.id),
+    onSuccess: (r) => r.ok ? toast.success("Reachable ✓") : toast.error(`Unreachable — ${r.detail ?? "no response"}`),
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Test failed"),
+  });
+  const del = useMutation({
+    mutationFn: () => api.deleteDigifabDetector(slug, det.id),
+    onSuccess: () => { toast.success("Removed"); onChanged(); },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't remove"),
+  });
+
+  const input = "input !py-1 !text-xs w-full";
+  return (
+    <div className="rounded-lg border border-line/70 dark:border-mortar-700 p-3">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="font-medium text-content dark:text-mortar-100">{det.label}</span>
+        <span className="text-[9px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded bg-mortar-100 dark:bg-mortar-800 text-faint">{det.key}</span>
+        {!det.enabled && <span className="text-[9px] text-faint">(disabled)</span>}
+        <div className="ml-auto flex items-center gap-2">
+          <button type="button" onClick={() => test.mutate()} disabled={test.isPending} className="text-cobble-600 dark:text-cobble-400 hover:underline">Test</button>
+          <button type="button" onClick={() => setEditing((v) => !v)} className="text-faint hover:underline">{editing ? "Close" : "Edit"}</button>
+          <button type="button" onClick={async () => { if (await confirm({ title: `Remove "${det.label}"?`, message: "The failure watch will stop using it.", confirmLabel: "Remove", destructive: true })) del.mutate(); }} className="text-ember-600 dark:text-ember-500 hover:underline">Remove</button>
+        </div>
+      </div>
+      <div className="mt-1 text-[10px] text-faint break-all">{det.base_url}{det.has_credentials ? " · token set" : ""}</div>
+      <label className="mt-1.5 flex items-center gap-1.5 text-[10px]">
+        <input type="checkbox" checked={det.enabled} onChange={(e) => toggle.mutate(e.target.checked)} /> Enabled
+      </label>
+      {editing && (
+        <div className="mt-2 space-y-2 border-t border-line/60 dark:border-mortar-700 pt-2">
+          <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label" className={input} />
+          <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="Base URL" className={input} />
+          <input value={apiKey} onChange={(e) => setApiKey(e.target.value)} type="password" placeholder={det.has_credentials ? "API token (leave blank to keep)" : "API token (optional)"} className={input} />
+          {isWatcher && (
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <div className={detLbl}>Linked cameras — a machine → its camera in the detector</div>
+                <button type="button" onClick={() => camsQuery.refetch()} className="text-[10px] text-cobble-600 dark:text-cobble-400 hover:underline" title="Refresh the camera list">
+                  {camsQuery.isFetching ? "…" : "↻"}
+                </button>
+              </div>
+              {camsQuery.isError && (
+                <div className="text-[10px] text-ember-600 dark:text-ember-500">Couldn't list cameras — check the URL/token (Test), or type the id.</div>
+              )}
+              {rows.map((r, i) => {
+                const refMissing = !!r.ref && !deviceOpts.some((o) => o.value === r.ref);
+                const camMissing = !!r.cam && !cams.some((c) => c.id === r.cam);
+                return (
+                  <div key={i} className="flex items-center gap-1.5">
+                    <select value={r.ref} onChange={(e) => setRows((rs) => rs.map((x, j) => (j === i ? { ...x, ref: e.target.value } : x)))} className="input !py-1 !text-xs flex-1">
+                      <option value="">— pick a machine —</option>
+                      {refMissing && <option value={r.ref}>{r.ref}</option>}
+                      {deviceOpts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                    <span className="text-faint">→</span>
+                    {cams.length > 0 || r.cam ? (
+                      <select value={r.cam} onChange={(e) => setRows((rs) => rs.map((x, j) => (j === i ? { ...x, cam: e.target.value } : x)))} className="input !py-1 !text-xs flex-1">
+                        <option value="">— pick a camera —</option>
+                        {camMissing && <option value={r.cam}>{r.cam}</option>}
+                        {cams.map((c) => <option key={c.id} value={c.id}>{(c.name ? `${c.name} (${c.id})` : c.id) + (c.online === false ? " · offline" : "")}</option>)}
+                      </select>
+                    ) : (
+                      <input value={r.cam} onChange={(e) => setRows((rs) => rs.map((x, j) => (j === i ? { ...x, cam: e.target.value } : x)))} placeholder="camera id" className="input !py-1 !text-xs flex-1" />
+                    )}
+                    <button type="button" onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} className="text-ember-600 dark:text-ember-500"><X size={13} /></button>
+                  </div>
+                );
+              })}
+              <button type="button" onClick={() => setRows((rs) => [...rs, { ref: "", cam: "" }])} className="text-[10px] text-cobble-600 dark:text-cobble-400 hover:underline">+ link a camera</button>
+            </div>
+          )}
+          {isWatcher && (
+            <label className="flex items-start gap-1.5 text-[10px]">
+              <input type="checkbox" checked={owns} onChange={(e) => setOwns(e.target.checked)} className="mt-0.5" />
+              <span>The detector <b>owns</b> these printers — show their live print state here, and don't also poll them in Cobblr <span className="text-faint">(avoids double-load on the printer)</span>.</span>
+            </label>
+          )}
+          {isWatcher && owns && (printers.data?.printers.length ?? 0) > 0 && (
+            <div className="rounded border border-line/60 dark:border-mortar-700 p-2 space-y-0.5">
+              <div className={detLbl}>PrintGuard print state</div>
+              {printers.data!.printers.map((p) => (
+                <div key={p.id} className="text-[10px] flex items-center gap-1.5">
+                  <span className="text-content dark:text-mortar-200">{p.name ?? p.id}</span>
+                  <span className="text-faint">{p.status ?? "—"}{p.progress != null && p.status === "printing" ? ` · ${Math.round(p.progress)}%` : ""}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <button type="button" onClick={() => save.mutate()} disabled={save.isPending} className="rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white text-xs px-3 py-1.5">Save</button>
+          {isWatcher && <PrinterRegister slug={slug} detId={det.id} fleet={fleet.data} onDone={() => { camsQuery.refetch(); printers.refetch(); }} />}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// B2 — "Add a printer to the detector": mirror an existing Cobblr machine
+// (credentials stay server-side) or fill the provider's config form by hand.
+// Registering auto-registers the printer's webcam and binds a monitor so it watches.
+function PrinterRegister({ slug, detId, fleet, onDone }: { slug: string; detId: string; fleet: DigifabFleet | undefined; onDone: () => void }) {
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const providers = useQuery({ queryKey: ["digifab-detector-providers", slug, detId], queryFn: () => api.getDigifabDetectorProviders(slug, detId), enabled: open, retry: false });
+  const provs = providers.data?.providers ?? [];
+  // Mirrorable connections come from the detector's manifest mappings — any
+  // digifab type the detector declares a mapping for (nothing hardcoded here).
+  const mappings = providers.data?.mappings ?? [];
+  const mappable = (fleet?.connections ?? []).filter((c) => mappings.some((m) => m.from === c.type));
+
+  const [connId, setConnId] = useState("");
+  const [deviceId, setDeviceId] = useState("");
+  const [disableSource, setDisableSource] = useState(true);
+  const selectedConn = mappable.find((c) => c.connection_id === connId);
+  const needsDevice = !!mappings.find((m) => m.from === selectedConn?.type)?.perDevice;
+  const mirror = useMutation({
+    mutationFn: () => api.mirrorDigifabDetectorPrinter(slug, detId, { connection_id: connId, device_id: needsDevice ? deviceId : undefined, watch: true, disable_source: needsDevice ? false : disableSource }),
+    onSuccess: (r) => { toast.success((r.monitor ? "Added + watching" : "Printer added") + (r.source_disabled ? " · Cobblr poll stopped ✓" : " ✓")); setConnId(""); setDeviceId(""); onDone(); },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't add"),
+  });
+
+  const [provider, setProvider] = useState("");
+  const [name, setName] = useState("");
+  const [config, setConfig] = useState<Record<string, string>>({});
+  const props = provs.find((p) => p.id === provider)?.schema?.properties ?? {};
+  const register = useMutation({
+    mutationFn: () => api.registerDigifabDetectorPrinter(slug, detId, { name, provider, config, watch: true }),
+    onSuccess: (r) => { toast.success(r.monitor ? "Registered + watching ✓" : "Registered ✓"); setName(""); setConfig({}); setProvider(""); onDone(); },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't register"),
+  });
+
+  const input = "input !py-1 !text-xs w-full";
+  return (
+    <div className="border-t border-line/60 dark:border-mortar-700 pt-2">
+      <button type="button" onClick={() => setOpen((v) => !v)} className="text-[10px] text-cobble-600 dark:text-cobble-400 hover:underline">
+        {open ? "− Add a printer to the detector" : "+ Add a printer to the detector"}
+      </button>
+      {open && (
+        <div className="mt-2 space-y-2">
+          {mappable.length > 0 && (
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-1.5">
+                <span className={detLbl}>From a machine</span>
+                <select value={connId} onChange={(e) => { setConnId(e.target.value); setDeviceId(""); }} className="input !py-1 !text-xs flex-1">
+                  <option value="">— a Cobblr machine to mirror —</option>
+                  {mappable.map((c) => <option key={c.connection_id} value={c.connection_id}>{c.label} ({c.type})</option>)}
+                </select>
+                {!needsDevice && <button type="button" disabled={!connId || mirror.isPending} onClick={() => mirror.mutate()} className="rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white text-xs px-2 py-1">Add</button>}
+              </div>
+              {connId && !needsDevice && (
+                <label className="flex items-center gap-1.5 text-[10px] text-faint pl-1">
+                  <input type="checkbox" checked={disableSource} onChange={(e) => setDisableSource(e.target.checked)} />
+                  Stop polling it in Cobblr after adding (the detector owns it)
+                </label>
+              )}
+              {needsDevice && (
+                <div className="flex items-center gap-1.5">
+                  <span className={detLbl}>Printer</span>
+                  <select value={deviceId} onChange={(e) => setDeviceId(e.target.value)} className="input !py-1 !text-xs flex-1">
+                    <option value="">— which printer (needs stored LAN creds) —</option>
+                    {(selectedConn?.devices ?? []).map((dv) => <option key={dv.id} value={dv.id}>{dv.name} ({dv.id})</option>)}
+                  </select>
+                  <button type="button" disabled={!deviceId || mirror.isPending} onClick={() => mirror.mutate()} className="rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white text-xs px-2 py-1">Add</button>
+                </div>
+              )}
+            </div>
+          )}
+          <div className="text-[10px] text-faint">or register one by hand:</div>
+          {providers.isError && <div className="text-[10px] text-ember-600 dark:text-ember-500">Couldn't load providers — needs a manage-scope token on this detector.</div>}
+          <select value={provider} onChange={(e) => { setProvider(e.target.value); setConfig({}); }} className={input}>
+            <option value="">— provider —</option>
+            {provs.map((p) => <option key={p.id} value={p.id}>{p.label ?? p.id}</option>)}
+          </select>
+          {provider && (
+            <>
+              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name in the detector" className={input} />
+              {Object.entries(props).map(([key, p]) => (
+                <input key={key} value={config[key] ?? ""} type={p.secret ? "password" : "text"} placeholder={p.title ?? p.placeholder ?? key}
+                  onChange={(e) => setConfig((c) => ({ ...c, [key]: e.target.value }))} className={input} />
+              ))}
+              <button type="button" disabled={!name || register.isPending} onClick={() => register.mutate()} className="rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white text-xs px-3 py-1.5">Register + watch</button>
             </>
           )}
         </div>
@@ -3568,12 +3890,18 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
           </span>
         )}
       </div>
+      {/* An external detector (e.g. PrintGuard) owns this printer's detection + camera. */}
+      {d.managed_by_detector && (
+        <div className="mt-1 inline-flex items-center gap-1 text-[10px] text-faint" title="An external detector owns this printer's detection and camera — Cobblr isn't watching it or pulling its camera">
+          👁 watched by detector
+        </div>
+      )}
       {/* AI failure watch: red when it auto-paused, else a subtle live score. */}
-      {d.failure?.paused ? (
+      {!d.managed_by_detector && d.failure?.paused ? (
         <div className="mt-1 inline-flex items-center gap-1 text-[10px] text-ember-600 dark:text-ember-500 font-medium" title="AI flagged a likely print failure and paused it — check the print">
           ⚠ AI: likely failure — paused
         </div>
-      ) : d.failure?.watching && d.failure.score >= 0.2 ? (
+      ) : !d.managed_by_detector && d.failure?.watching && d.failure.score >= 0.2 ? (
         <div className="mt-1 text-[10px] text-faint" title={`AI failure watch — rolling score ${d.failure.score.toFixed(2)}`}>
           AI watch · {Math.round(d.failure.score * 100)}%
         </div>

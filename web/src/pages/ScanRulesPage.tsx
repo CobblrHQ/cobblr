@@ -1,6 +1,6 @@
 // /configuration/scan-rules — the external QR resolver redirect table.
 //
-// Teach the scanner to read FOREIGN QR labels (a companion app URL, a bare Homebox
+// Teach the scanner to read FOREIGN QR labels (an external-system URL, a bare Homebox
 // number, …) and resolve them to the matching Cobblr item, so labels printed by
 // another system keep working without a reprint. A rule is match → extract →
 // resolve; on a hit the scan behaves exactly like a native one. Opt-in: with no
@@ -51,7 +51,7 @@ function emptyDraft(): RuleDraft {
     // Default to the "base URL + path children" model — one host, several kinds.
     match: { type: "url_base", value: "" },
     extract: {},
-    resolve: { key_field: "wos_id", type_map: {} },
+    resolve: { key_field: "ext_id", type_map: {} },
   };
 }
 
@@ -213,9 +213,9 @@ export function ScanRulesPage({ embedded = false }: { embedded?: boolean } = {})
 // side, and lets the server schema be the final word.
 const PASTE_EXAMPLE = JSON.stringify(
   {
-    name: "companion app storage stickers",
+    name: "Storage stickers",
     match: { type: "url_prefix", value: "https://workshop.example.com/storage/" },
-    resolve: { key_field: "wos_id", target_kind: "core-locations:location" },
+    resolve: { key_field: "ext_id", target_kind: "core-locations:location" },
   },
   null,
   2,
@@ -462,7 +462,7 @@ function RuleModal({
   const set = (patch: Partial<RuleDraft>) => setD((p) => ({ ...p, ...patch }));
   const isBase = d.match.type === "url_base";
   const isRegex = d.match.type === "regex";
-  const base = (d.match.value ?? "").replace(/\/+$/, "") || "https://wos.host";
+  const base = (d.match.value ?? "").replace(/\/+$/, "") || "https://example.com";
   const canSave =
     d.name.trim() &&
     d.resolve.key_field.trim() &&
@@ -515,7 +515,7 @@ function RuleModal({
         ) : (
         <>
         <Field label="Name">
-          <input value={d.name} onChange={(e) => set({ name: e.target.value })} placeholder="e.g. companion app labels" className="input" autoFocus />
+          <input value={d.name} onChange={(e) => set({ name: e.target.value })} placeholder="e.g. Storage labels" className="input" autoFocus />
         </Field>
 
         {/* MATCH */}
@@ -532,7 +532,7 @@ function RuleModal({
             <input
               value={d.match.value ?? ""}
               onChange={(e) => set({ match: { type: d.match.type, value: e.target.value } })}
-              placeholder={isBase ? "https://wos.example.com" : d.match.type === "url_prefix" ? "https://wos.host/inventory/" : isRegex ? "^https?://wos\\.host/(?<type>[^/]+)/(?<key>[^/]+)" : "^\\d+$"}
+              placeholder={isBase ? "https://example.com" : d.match.type === "url_prefix" ? "https://example.com/inventory/" : isRegex ? "^https?://example\\.com/(?<type>[^/]+)/(?<key>[^/]+)" : "^\\d+$"}
               className="input font-mono text-sm"
             />
           </Field>
@@ -584,7 +584,7 @@ function RuleModal({
           <Section title="Children — one /segment/ → kind row per entity type">
             <ChildrenEditor base={base} value={d.resolve.type_map ?? {}} onChange={(m) => set({ resolve: { ...d.resolve, type_map: m } })} />
             <Field label="Key field — the entity field holding the foreign id (a native column or metadata key)">
-              <input value={d.resolve.key_field} onChange={(e) => set({ resolve: { ...d.resolve, key_field: e.target.value } })} placeholder="wos_id" className="input font-mono text-sm" />
+              <input value={d.resolve.key_field} onChange={(e) => set({ resolve: { ...d.resolve, key_field: e.target.value } })} placeholder="ext_id" className="input font-mono text-sm" />
             </Field>
           </Section>
         ) : (
@@ -594,7 +594,7 @@ function RuleModal({
             </Field>
             <TypeMapEditor value={d.resolve.type_map ?? {}} onChange={(m) => set({ resolve: { ...d.resolve, type_map: Object.keys(m).length ? m : undefined } })} />
             <Field label="Key field — the entity field holding the foreign key (native column or metadata key)">
-              <input value={d.resolve.key_field} onChange={(e) => set({ resolve: { ...d.resolve, key_field: e.target.value } })} placeholder="wos_id" className="input font-mono text-sm" />
+              <input value={d.resolve.key_field} onChange={(e) => set({ resolve: { ...d.resolve, key_field: e.target.value } })} placeholder="ext_id" className="input font-mono text-sm" />
             </Field>
           </Section>
         )}
@@ -636,9 +636,9 @@ function TypeMapEditor({ value, onChange }: { value: Record<string, string>; onC
 const COMMON_KINDS = ["machines:machine", "inventory:part", "assets:asset", "core-locations:location"];
 
 // The base+children editor — one row per `/segment/ → kind` child under the base
-// host (the companion app model). Stored as the rule's resolve.type_map.
+// host (the base-host model). Stored as the rule's resolve.type_map.
 function ChildrenEditor({ base, value, onChange }: { base: string; value: Record<string, string>; onChange: (m: Record<string, string>) => void }) {
-  const host = base.replace(/^https?:\/\//, "").split("/")[0] || "wos.host";
+  const host = base.replace(/^https?:\/\//, "").split("/")[0] || "example.com";
   const rows = Object.entries(value);
   return (
     <div className="space-y-1.5">

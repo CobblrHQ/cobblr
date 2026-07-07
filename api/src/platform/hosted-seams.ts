@@ -1,6 +1,6 @@
 // Hosted-overlay extension seams. Open core registers NONE of these — the
 // defaults are allow-all / no-op, so a self-hosted instance runs free and
-// unrestricted. The proprietary cloud overlay (cobblr-cloud) registers
+// unrestricted. A proprietary hosted overlay may register
 // implementations at boot to add plan gating, usage metering, lifecycle
 // (verification / GDPR delete), and abuse rate-limiting. Mirrors the existing
 // `ai.registerEntitlementGuard` / `ai.registerProvider` pattern.

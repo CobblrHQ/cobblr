@@ -1,5 +1,5 @@
 // MachineDriver — the common interface every print-farm backend implements.
-// Pure TypeScript (no platform deps) so it unit-tests in isolation. companion app's
+// Pure TypeScript (no platform deps) so it unit-tests in isolation. A
 // MachineDriver shape, made routing-aware for FDM Monster's print-file
 // routing (fdm-monster/fdm-monster#5303): submitJob is "place this file"
 // (resolve → queue, or explicit printer) rather than "submit to printer N".
@@ -114,7 +114,7 @@ export interface ConnectionResult {
  *  omit both to let the server route by the file's own fdmm_target. */
 export interface SubmitArgs {
   fileId: string;
-  /** Explicit printer id → classic submit (the companion app path). */
+  /** Explicit printer id → classic submit (the direct path). */
   deviceId?: string | null;
   /** A tag name → routed to the tag's printer set (may await assignment). */
   tag?: string | null;

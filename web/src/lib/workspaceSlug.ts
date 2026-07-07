@@ -20,7 +20,7 @@ export function displaySlug(slug: string): string {
 export function slugifyHandle(name: string): string {
   return name
     .toLowerCase()
-    // Strip a possessive "'s" entirely so "the author's Workspace" → "ray-workspace"
+    // Strip a possessive "'s" entirely so "Alex's Workspace" → "alex-workspace"
     // (matches signup); then drop any remaining apostrophes.
     .replace(/['’]s\b/g, "")
     .replace(/['’`]/g, "")

@@ -1234,7 +1234,7 @@ function InvitesTab() {
           </label>
           <label className="block">
             <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Note (optional)</span>
-            <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="for a beta tester" className="input w-full" />
+            <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="for a teammate" className="input w-full" />
           </label>
           <label className="block">
             <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Expires in (days)</span>

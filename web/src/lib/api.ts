@@ -1291,24 +1291,6 @@ export const api = {
   meDiscordDisconnect: () =>
     request<void>("DELETE", "/me/discord"),
 
-  // ─── Ravelry connection + import (feedback a713b84c) ───────────────
-  meRavelryStatus: () =>
-    request<{ connected: boolean; username: string | null; verified_at: string | null }>(
-      "GET",
-      "/me/ravelry",
-    ),
-  meRavelryConnect: (body: { access_key: string; personal_key: string }) =>
-    request<{ connected: boolean; username: string }>("POST", "/me/ravelry/connect", body),
-  meRavelryDisconnect: () => request<{ connected: boolean }>("DELETE", "/me/ravelry"),
-  ravelryImport: (slug: string) =>
-    request<{
-      ok: boolean;
-      designs_imported: boolean;
-      stash: { created: number; updated: number };
-      designs: { created: number; updated: number };
-      errors: number;
-    }>("POST", `/orgs/${slug}/ravelry/import`),
-
   // ─── Communication Preferences matrix (Feature 1) ─────────────────
   meCommunicationPrefs: () =>
     request<CommunicationPrefs>("GET", "/me/communication-prefs"),
@@ -1729,6 +1711,29 @@ export const api = {
     request<DigifabFailureStatus>("GET", `/orgs/${slug}/modules/digifab/failure/${connId}/${encodeURIComponent(deviceId)}/status`),
   checkDigifabFailure: (slug: string, connId: string, deviceId: string) =>
     request<DigifabFailureCheck>("POST", `/orgs/${slug}/modules/digifab/failure/${connId}/${encodeURIComponent(deviceId)}/check`, {}),
+  // ── External detectors (Obico ML API, PrintGuard, generic LAN box) ─────────
+  getDigifabDetectorCatalog: (slug: string) =>
+    request<{ detectors: DigifabDetectorCatalogEntry[] }>("GET", `/orgs/${slug}/modules/digifab/failure/detectors/catalog`),
+  listDigifabDetectors: (slug: string) =>
+    request<{ detectors: DigifabDetector[] }>("GET", `/orgs/${slug}/modules/digifab/failure/detectors`),
+  createDigifabDetector: (slug: string, body: DigifabDetectorInput) =>
+    request<DigifabDetector>("POST", `/orgs/${slug}/modules/digifab/failure/detectors`, body),
+  updateDigifabDetector: (slug: string, id: string, body: Partial<DigifabDetectorInput>) =>
+    request<DigifabDetector>("PATCH", `/orgs/${slug}/modules/digifab/failure/detectors/${id}`, body),
+  deleteDigifabDetector: (slug: string, id: string) =>
+    request<{ ok: boolean }>("DELETE", `/orgs/${slug}/modules/digifab/failure/detectors/${id}`),
+  testDigifabDetector: (slug: string, id: string) =>
+    request<{ ok: boolean; detail?: string }>("POST", `/orgs/${slug}/modules/digifab/failure/detectors/${id}/test`, {}),
+  listDigifabDetectorCameras: (slug: string, id: string) =>
+    request<{ cameras: DigifabDetectorCamera[] }>("GET", `/orgs/${slug}/modules/digifab/failure/detectors/${id}/cameras`),
+  getDigifabDetectorProviders: (slug: string, id: string) =>
+    request<{ providers: DigifabDetectorProvider[]; mappings: DigifabDetectorMapping[] }>("GET", `/orgs/${slug}/modules/digifab/failure/detectors/${id}/providers`),
+  listDigifabDetectorPrinters: (slug: string, id: string) =>
+    request<{ printers: DigifabDetectorPrinter[] }>("GET", `/orgs/${slug}/modules/digifab/failure/detectors/${id}/printers`),
+  registerDigifabDetectorPrinter: (slug: string, id: string, body: { name: string; provider: string; config: Record<string, unknown>; watch?: boolean }) =>
+    request<{ ok: boolean; printer_id: string | null; camera_id: string | null; monitor: boolean }>("POST", `/orgs/${slug}/modules/digifab/failure/detectors/${id}/printers`, body),
+  mirrorDigifabDetectorPrinter: (slug: string, id: string, body: { connection_id: string; device_id?: string; name?: string; watch?: boolean; disable_source?: boolean }) =>
+    request<{ ok: boolean; printer_id: string | null; camera_id: string | null; monitor: boolean; source_disabled?: boolean }>("POST", `/orgs/${slug}/modules/digifab/failure/detectors/${id}/printers/from-connection`, body),
   // ── File library (stored 3MF/gcode + send-to-machine) ─────────────────────
   listDigifabLibrary: (slug: string) =>
     request<{ items: DigifabLibraryItem[] }>("GET", `/orgs/${slug}/modules/digifab/library`),
@@ -2286,7 +2291,7 @@ export const api = {
     ),
   createSyncConnection: (
     slug: string,
-    body: { connector_id: string; label: string; base_url: string; credentials: Record<string, unknown>; transport?: "direct" | "edge"; bridge?: string | null },
+    body: { connector_id: string; label: string; base_url?: string; credentials: Record<string, unknown>; transport?: "direct" | "edge"; bridge?: string | null; target_instances?: Record<string, string> },
   ) =>
     request<SyncConnection & { webhook_path: string }>(
       "POST",
@@ -2434,8 +2439,8 @@ export const api = {
   /** Fill catalog images for pending items that have a name but no catalog art. */
   backfillScanCatalogPhotos: (slug: string) =>
     request<{ queued: number }>("POST", `/orgs/${slug}/modules/core-scan/inbox/backfill-catalog-photos`),
-  /** Bulk import (companion app interop + generic CSV). `file` is the picked File;
-   *  mapping only matters for non-companion app CSVs. */
+  /** Bulk import (inbox-export interop + generic CSV). `file` is the picked File;
+   *  mapping only matters for plain CSVs. */
   scanImportPreview: async (slug: string, file: File, mapping?: Record<string, string>) => {
     const form = new FormData();
     form.set("file", file);
@@ -2647,7 +2652,7 @@ export const api = {
   ) =>
     request<{ tagged: number; categorized: number }>("POST", `/orgs/${slug}/modules/core-scan/inbox/apply-theme`, body),
   // Alternative catalog photos (DDG image search on the resolved name) +
-  // pick-one-as-catalog. The companion app "OTHER PHOTO OPTIONS" strip.
+  // pick-one-as-catalog. The "OTHER PHOTO OPTIONS" strip.
   scanPhotoOptions: (slug: string, id: string, q?: string) =>
     request<{ items: ImageOption[] }>(
       "GET",
@@ -4305,17 +4310,42 @@ export interface DigifabFailureConfig {
   threshold: number;
   sample_interval_sec: number;
   auto_pause: boolean;
-  backend: "auto" | "edge" | "llm";
+  backend: "auto" | "edge" | "llm" | "detector";
+  detector_id: string | null;
 }
 export interface DigifabFailureStatus {
   watching: boolean; score: number; samples: number;
-  last_probability: number | null; last_source: "edge" | "llm" | null;
+  last_probability: number | null; last_source: "edge" | "llm" | "detector" | null;
   paused: boolean; paused_at: string | null; last_sample_at: string | null;
 }
 export interface DigifabFailureCheck {
   available: boolean; reason?: string;
-  probability?: number; source?: "edge" | "llm"; would_trip?: boolean; projected_score?: number;
+  probability?: number; source?: "edge" | "llm" | "detector"; would_trip?: boolean; projected_score?: number;
 }
+
+/** An external detection service the operator can point at a base URL. */
+export interface DigifabDetectorCatalogEntry {
+  key: string; name: string; summary?: string; shape: "frame-scorer" | "camera-watcher";
+}
+/** A configured detector connection (credentials never returned). */
+export interface DigifabDetector {
+  id: string; key: string; label: string; base_url: string;
+  config: { camera_map?: Record<string, string> } & Record<string, unknown>;
+  enabled: boolean; has_credentials: boolean;
+  created_at?: string; updated_at?: string;
+}
+export interface DigifabDetectorInput {
+  key: string; label: string; base_url: string;
+  api_key?: string | null; config?: Record<string, unknown>; enabled?: boolean;
+}
+/** A camera the detector service reports (the import list, for the link picker). */
+export interface DigifabDetectorCamera { id: string; name?: string; online?: boolean; printerId?: string; }
+/** A provider a printer can be registered under, + its config form (JSON Schema). */
+export interface DigifabDetectorProvider { id: string; label?: string; schema?: { properties?: Record<string, { title?: string; secret?: boolean; placeholder?: string; format?: string }>; required?: string[] } | null; }
+/** A generic mirror mapping: a Cobblr connection type → a detector provider. */
+export interface DigifabDetectorMapping { from: string; provider: string; perDevice: boolean; }
+/** A printer the detector owns, with live print state (for consumption). */
+export interface DigifabDetectorPrinter { id: string; name?: string; status?: string; progress?: number | null; }
 
 export interface DigifabHistory {
   days: number;
@@ -4461,6 +4491,9 @@ export interface DigifabFleetDevice {
   lan_camera?: boolean;
   /** AI failure-watch: live rolling score while printing + whether it auto-paused. */
   failure?: { score: number; watching: boolean; paused: boolean } | null;
+  /** An external detector owns this printer's detection + camera — Cobblr stands
+   *  down its own watch/assignment/camera pull for it. */
+  managed_by_detector?: boolean;
   /** F-1: finished/failed a print — needs a human bed-clear before it's assignable. */
   needs_attention: { reason: string; since: string } | null;
   active_job: { id: string; file_ref: string; status: string; progress: number | null; priority: number; attempts: number; max_attempts: number; eta_sec: number | null } | null;

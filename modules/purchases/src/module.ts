@@ -1,5 +1,5 @@
 // Purchases — second-party Cobblr connector built specifically to
-// support the companion app migration. Orders + order_items, with polymorphic
+// support data migration. Orders + order_items, with polymorphic
 // "consumed by" pointers so finished items can be attributed to
 // printers/mods/projects in other modules.
 

@@ -4,7 +4,7 @@
 // triage session (a few queries) it never trips. A barcode that misses
 // the catalog DBs gets web-searched here: each result carries a title
 // (a candidate product name) and an image URL (a candidate photo), so
-// one call yields both. Ported from companion app's ddg-images.ts.
+// one call yields both.
 //
 // Single-tenant / low-volume only — don't fan this out from a public
 // multi-tenant path without a per-tenant rate budget (core-ai is the

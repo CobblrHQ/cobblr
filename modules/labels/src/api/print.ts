@@ -24,7 +24,7 @@ printRouter.use((req, res, next) => {
 });
 
 // ── direct-to-printer (CUPS via core-print) ──────────────────────────
-// Render the queue to a print-ready PDF with the companion app renderer
+// Render the queue to a print-ready PDF with the print-sheet renderer
 // (pdf-lib + qrcode, Rollo-tuned). The web hands the returned base64 to
 // core-print to dispatch — labels owns CONTENT, core-print owns the device.
 

@@ -21,6 +21,7 @@ import { buildDriverById, bambuLanDriverFor, parseBambuLan, bambuLanMode, revers
 import { enqueuePoll } from "../poll-worker.js";
 import { recordRunVerdict } from "../runs-core.js";
 import { availableDriverKeys } from "../drivers/registry.js";
+import { ownedDeviceRefs } from "../detectors/owned.js";
 import { classify } from "../state.js";
 import type { MachineDriver, RemoteDevice } from "../drivers/types.js";
 import type { Kysely } from "kysely";
@@ -230,6 +231,9 @@ fleetRouter.get(
       .selectFrom("digifab_failure_watch")
       .select(["connection_id", "device_id", "score", "paused_at", "watch_at"])
       .execute();
+    // Printers an external detector owns — Cobblr stands down its camera pull for
+    // them (the detector handles detection); one query for the whole floor.
+    const owned = await ownedDeviceRefs(db);
 
     const connections = await mapLimit(conns, MAX_CONCURRENT_LISTS, async (c) => {
         try {
@@ -267,6 +271,9 @@ fleetRouter.get(
             const fw = failureRows.find((f) => f.connection_id === c.id && f.device_id === d.id) ?? null;
             const live = bambuLive?.get(d.id) ?? null;
             const state = live?.state ?? d.state ?? "unknown";
+            // Owned by an external detector → the detector handles the camera +
+            // detection; Cobblr reports no camera source so nothing here pulls it.
+            const managedByDetector = owned.has(`${c.id}:${d.id}`);
             return {
               id: d.id,
               name: d.name,
@@ -288,16 +295,21 @@ fleetRouter.get(
               live: live
                 ? { progress: live.progress, remaining_min: live.remaining_min, layer_num: live.layer_num, total_layers: live.total_layers }
                 : null,
-              camera_url: setting?.camera_url ?? d.camera_url ?? null,
+              // An external detector owns this printer's detection + camera.
+              managed_by_detector: managedByDetector,
+              // Camera fields are suppressed for a detector-owned printer so
+              // neither the camera wall nor the relay pulls the same stream the
+              // detector already owns (the single-owner rule).
+              camera_url: managedByDetector ? null : (setting?.camera_url ?? d.camera_url ?? null),
               // The bridge can grab frames from this printer's own camera (the
               // cockpit /camera route) — lets the camera wall show it without a
               // manual URL or the snapshot relay.
-              lan_camera: !!bambuLan[d.id]?.host && !!bambuLan[d.id]?.access_code && bambuLanMode(bambuLan[d.id]) !== "cloud",
+              lan_camera: !managedByDetector && !!bambuLan[d.id]?.host && !!bambuLan[d.id]?.access_code && bambuLanMode(bambuLan[d.id]) !== "cloud",
               // Snapshot relay (opt-in, off by default). When on AND a fresh
               // agent-pushed frame exists, the web auth-fetches it from the
               // /snapshot route (remote-viewable) instead of the LAN camera_url.
-              snapshot_relay: setting?.snapshot_relay ?? false,
-              snapshot_fresh: !!setting?.snapshot_relay && freshSnaps.has(`${c.id}:${d.id}`),
+              snapshot_relay: !managedByDetector && (setting?.snapshot_relay ?? false),
+              snapshot_fresh: !managedByDetector && !!setting?.snapshot_relay && freshSnaps.has(`${c.id}:${d.id}`),
               // ⑦ Spatial floor position (null = unplaced, flows after placed).
               position: setting?.grid_x != null && setting?.grid_y != null ? { x: setting.grid_x, y: setting.grid_y } : null,
               // Free-form layout: order in the flow + explicit row start.

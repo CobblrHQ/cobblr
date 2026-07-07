@@ -1,6 +1,6 @@
-// Build a self-contained, print-ready HTML doc for ⌘P. Ported from
-// companion app: lays labels onto the chosen paper at real inch
-// dimensions, tiled by the LabelSize's col×row grid. Each cell picks
+// Build a self-contained, print-ready HTML doc for ⌘P. Lays labels
+// onto the chosen paper at real inch dimensions, tiled by the
+// LabelSize's col×row grid. Each cell picks
 // one of three inner layouts (row / portrait / square) from its
 // aspect ratio. `@page size` is set to the paper so the browser
 // prints 1:1 with no scaling.

@@ -2,7 +2,7 @@
 // Any enabled module that declares a `headerAction` in its manifest
 // gets an icon-only button here — prime, always-visible placement for
 // its single most-used action (e.g. core-scan's camera button, which a
-// companion app user hits constantly). Icon-only by design; the label is
+// user hits constantly). Icon-only by design; the label is
 // the tooltip + aria-label.
 
 import { useEffect, useState } from "react";

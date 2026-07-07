@@ -149,7 +149,7 @@ export function MachinesPage({
 
   const [query, setQuery] = useState("");
   // Generic, data-driven state filter: hide whatever machine states you don't
-  // want to see (e.g. companion app's "shelved", or "sold"). The states come from the data
+  // want to see (e.g. "shelved", or "sold"). The states come from the data
   // itself — not a hardcoded list — and your choice persists per view. (A bundle
   // can also ship a default via a saved view; this is the user-defined layer.)
   const stateKey = `cobblr.machines.hiddenStates.${instance ?? "all"}`;

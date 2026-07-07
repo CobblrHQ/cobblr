@@ -1100,7 +1100,7 @@ authRouter.post("/discord/verify-dm", async (req, res, next) => {
 
 // ═══════════════════════ QR pair-login (desktop → phone) ═══════════════════════
 //
-// Ported from companion app, adapted for Cobblr's multi-tenant model. Pattern
+// Built for Cobblr's multi-tenant model. Pattern
 // matches WhatsApp Web / Discord device-pairing:
 //
 //   1. A logged-in DESKTOP (no camera) calls POST /auth/pair/start { org_slug }.

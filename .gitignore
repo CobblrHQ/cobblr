@@ -14,6 +14,7 @@ _tmp/
 .VSCodeCounter/
 *.tsbuildinfo
 e2e/screenshots/
+e2e/docs-shots/out/
 
 # Bind-mount target for the local dev stack — postgres data, uploads,
 # sandboxed-module installs. Created on first `docker compose up`.

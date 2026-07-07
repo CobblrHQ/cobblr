@@ -1,7 +1,7 @@
 // Identify a product from its barcode by web search — the fallback for
 // when the catalog DBs (upcitemdb / Open Products Facts) have no entry.
 // It mirrors what a person does: search the UPC, read the product name
-// off the agreeing top results. Ported from companion app, with the LLM
+// off the agreeing top results, with the LLM
 // half routed through core-ai (metered, provider-agnostic) instead of a
 // direct provider call.
 //

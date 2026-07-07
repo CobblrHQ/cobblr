@@ -23,7 +23,7 @@ const SurfaceCreate = z.object({
   //                creating a saved view.
   // 'board'      — scope_id is a placeholder ("board"); config.sections
   //                is [{ title, view_id }] — a multi-column TV board
-  //                (e.g. companion app's recently-done / in-progress / coming-up),
+  //                (e.g. recently-done / in-progress / coming-up),
   //                each column resolved from a saved view.
   // 'app'        — scope_id is a core-apps app SLUG. Renders the whole
   //                composed app read-only + no-login (markdown / stat /

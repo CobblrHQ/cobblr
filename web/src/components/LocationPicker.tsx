@@ -147,7 +147,7 @@ export function LocationPicker({
 }
 
 /** The next globally-unique container number — max trailing integer across all
- *  container locations, + 1. companion app convention: every container (bin/drawer/shelf)
+ *  container locations, + 1. By convention every container (bin/drawer/shelf)
  *  carries a unique number you can label + scan, regardless of its word. */
 function nextContainerNumber(all: Location[]): number {
   let max = 0;

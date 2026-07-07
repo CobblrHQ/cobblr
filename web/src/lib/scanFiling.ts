@@ -1,7 +1,7 @@
 // Scan-to-set + nesting decision logic (pure, unit-tested).
 //
-// Scanning a location's QR sets the active filing "bin". The nesting rule mirrors
-// the companion app activeBin behaviour and is kind-aware so it never mis-nests:
+// Scanning a location's QR sets the active filing "bin". The nesting rule is
+// active-bin aware and kind-aware so it never mis-nests:
 //   • scan a CONTAINER while a bin is active → it files INTO the active bin
 //     (reparent it there) and becomes the new bin — "scan the room, then scan the
 //     tote: the tote is now in the room, and you're filing into the tote".

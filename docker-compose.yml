@@ -75,7 +75,7 @@ services:
       # OFF in prod by default (unset → NODE_ENV check). Set "true" to open it.
       COBBLR_SELF_SERVE_INVITES: ${COBBLR_SELF_SERVE_INVITES:-}
       # Box-level barcode resolver (one shared cache + provider chain for
-      # every product on the host; see companion app/scripts/barcode-resolver/).
+      # every product on the host; see the box.s barcode-resolver service).
       # Empty = core-scan resolves directly as before.
       COBBLR_BARCODE_RESOLVER_URL: ${COBBLR_BARCODE_RESOLVER_URL:-}
       COBBLR_BARCODE_RESOLVER_TOKEN: ${COBBLR_BARCODE_RESOLVER_TOKEN:-}

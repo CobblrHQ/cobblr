@@ -1,0 +1,25 @@
+# Alternative TLS: a real Let's Encrypt cert via the Cloudflare DNS-01
+# challenge — use this if you own a domain and keep its DNS on Cloudflare's
+# (free) plan instead of using a DuckDNS subdomain. Same end result: a
+# publicly-trusted cert your phone accepts with no per-device setup.
+#
+# Select it by setting in .env:
+#   COBBLR_CADDYFILE     = ./deploy/selfhost/Caddyfile.cloudflare
+#   COBBLR_SITE_ADDRESS  = cobblr.yourdomain.com
+#   CLOUDFLARE_API_TOKEN = <token with Zone:DNS:Edit on that zone>
+#   COBBLR_ACME_EMAIL    = you@example.com   (optional)
+#
+# Point cobblr.yourdomain.com at this box's LAN IP. As with DuckDNS the box
+# only needs outbound internet for the challenge; nothing is exposed publicly.
+
+{
+	email {$COBBLR_ACME_EMAIL}
+}
+
+{$COBBLR_SITE_ADDRESS} {
+	encode gzip
+	reverse_proxy web:8080
+	tls {
+		dns cloudflare {$CLOUDFLARE_API_TOKEN}
+	}
+}

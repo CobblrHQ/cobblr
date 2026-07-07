@@ -1,7 +1,7 @@
 // Scan-inbox bulk import — the PARSE/TRANSLATE half (pure, no I/O, unit-testable).
-// Accepts the companion app inbox export natively (JSON envelope or CSV) and any
+// Accepts an inbox export natively (JSON envelope or CSV) and any
 // other system's CSV via a caller-supplied column `mapping`. Contract:
-// companion app docs/INBOX_EXPORT_INTEROP.md (v1). Forward-compat by design:
+// the inbox-export interop spec (v1). Forward-compat by design:
 // unknown fields are ignored, never fatal.
 
 export interface ImportRowError {
@@ -29,7 +29,7 @@ export interface NormalizedImportItem {
   photo_identify_url: string | null;
   photo_display_url: string | null;
   /** Everything hint-shaped rides in suggested_metadata: hint_category,
-   *  user_hint (matchmaker prior), barcode_aliases, wos pack/box states,
+   *  user_hint (matchmaker prior), barcode_aliases, source pack/box states,
    *  notes/research_hint, originally_captured_at, import_provenance. */
   metadata: Record<string, unknown>;
 }
@@ -112,8 +112,8 @@ export function parseCsv(text: string): string[][] {
 
 // ── Header → canonical field resolution ──────────────────────────────────────
 
-/** The canonical (companion app export) CSV headers, per §1 of the interop doc. */
-const WOS_HEADERS: Record<string, string> = {
+/** The canonical inbox-export CSV headers, per §1 of the interop doc. */
+const CANONICAL_HEADERS: Record<string, string> = {
   source_id: "source_id",
   status: "status",
   barcode: "barcode",
@@ -142,15 +142,15 @@ const WOS_HEADERS: Record<string, string> = {
 };
 
 /** Resolve a CSV header to a canonical field: caller `mapping` first (exact
- *  header match, e.g. {"Product Name": "suggested_name"}), then the companion app
+ *  header match, e.g. {"Product Name": "suggested_name"}), then the canonical
  *  header set (case/space-insensitive). Null = unmapped (ignored, surfaced). */
 export function resolveHeader(header: string, mapping?: Record<string, string>): string | null {
   if (mapping && Object.prototype.hasOwnProperty.call(mapping, header)) {
     const target = mapping[header]!;
-    return WOS_HEADERS[target] ?? target; // allow mapping to a canonical name directly
+    return CANONICAL_HEADERS[target] ?? target; // allow mapping to a canonical name directly
   }
   const norm = header.trim().toLowerCase().replace(/\s+/g, "_");
-  return WOS_HEADERS[norm] ?? null;
+  return CANONICAL_HEADERS[norm] ?? null;
 }
 
 // ── Normalization (shared by CSV + JSON paths) ───────────────────────────────
@@ -186,7 +186,7 @@ function normalize(raw: Record<string, unknown>, row: number, sourceInstance: st
     else errors.push({ row, field: "ai_confidence", message: "expected 0..1" });
   }
 
-  // companion app statuses: discarded stays discarded; pending/staged/triaged all land
+  // Inbox statuses: discarded stays discarded; pending/staged/triaged all land
   // as pending — Cobblr's matchmaker re-runs on them (§3: hints, not bindings).
   const status = asStr(raw.status) === "discarded" ? ("discarded" as const) : ("pending" as const);
 
@@ -220,12 +220,12 @@ function normalize(raw: Record<string, unknown>, row: number, sourceInstance: st
   if (entityType) metadata.hint_entity_type = entityType;
   const serial = asStr(raw.suggested_serial_number);
   if (serial) metadata.suggested_serial_number = serial;
-  const wos: Record<string, unknown> = {};
+  const sourceStates: Record<string, unknown> = {};
   for (const k of ["pack_size", "pack_state", "filament_state", "box_state"] as const) {
     const v = asStr(raw[k]);
-    if (v) wos[k] = v;
+    if (v) sourceStates[k] = v;
   }
-  if (Object.keys(wos).length) metadata.wos = wos;
+  if (Object.keys(sourceStates).length) metadata.source_states = sourceStates;
   const notes = asStr(raw.notes);
   if (notes) metadata.notes = notes;
   const research = asStr(raw.research_hint);
@@ -295,7 +295,7 @@ export function parseJsonImport(body: unknown): ParsedImport {
   return { source, source_instance: sourceInstance, items: out, errors };
 }
 
-/** Parse CSV text (companion app headers or custom via `mapping`). */
+/** Parse CSV text (canonical headers or custom via `mapping`). */
 export function parseCsvImport(text: string, mapping?: Record<string, string>, source?: string | null, sourceInstance?: string | null): ParsedImport {
   const errors: ImportRowError[] = [];
   const rows = parseCsv(text);

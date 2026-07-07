@@ -1,4 +1,4 @@
-// Label size registry — ported from companion app.
+// Label size registry.
 //
 // Two concepts the user picks between:
 //   • PaperSize  — the physical media that goes through the printer
@@ -73,7 +73,7 @@ export function perSheet(size: LabelSize): number {
 }
 
 /** Which inner layout a label cell uses, from its aspect ratio.
- *  Mirrors companion app's pickLayout():
+ *  pickLayout():
  *   • portrait — tall cells: title on top, QR pinned below
  *   • square   — roughly 1:1: title on top, QR fills the rest
  *   • row      — wide cells: QR on the left, text on the right       */

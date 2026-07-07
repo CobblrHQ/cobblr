@@ -5,7 +5,7 @@
 // platform event a power-user wire can consume, and (2) resolve the device→entity
 // link and apply it (the link IS the config — the common case needs no wire). The
 // device never writes an entity; the entity-owning module's action does. See
-// CobblrHQ/edge-firmware/docs/esp32-firmware-spec.md §4.5.
+// the edge firmware ESP32 spec, §4.5.
 //
 // Auth (v1): the normal workspace Bearer (a Cobblr API token pasted into the
 // chip's `ingest.token`). A narrow per-connection ingest token is the documented

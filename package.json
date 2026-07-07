@@ -33,6 +33,7 @@
     "lint:action-predicates": "tsx scripts/lint-action-predicates.ts",
     "lint:pagination": "tsx scripts/lint-pagination.ts",
     "lint:inline-overrides": "tsx scripts/lint-inline-style-overrides.ts",
+    "lint:unit-conversion": "tsx scripts/lint-unit-conversion.ts",
     "build": "pnpm -r run --if-present build",
     "dev:api": "npm run dev -w api",
     "dev:web": "npm run dev -w web",

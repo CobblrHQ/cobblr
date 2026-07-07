@@ -437,7 +437,7 @@ const ModuleManifest = z.object({
   //   marketplace:  community-authored, downloadable, requires explicit
   //                  install. Future tense — band exists in the model so
   //                  we don't have to redesign when it ships.
-  //   user:         custom-built for one specific app — companion app's
+  //   user:         custom-built for one specific app — a workshop app's
   //                  workshop-mods, a homestead app's livestock module.
   // Default 'user' so any module without a declared band lands in the
   // most-conservative bucket (user-controlled, freely toggleable).
@@ -481,8 +481,8 @@ const ModuleManifest = z.object({
 
   // Optional icon-only quick-action pinned to the navbar's RIGHT
   // cluster — a module's single most-used action that earns prime,
-  // always-visible placement (e.g. core-scan's camera button, which a
-  // companion app user hits constantly). Rendered only while the module
+  // always-visible placement (e.g. core-scan's camera button, which
+  // power users hit constantly). Rendered only while the module
   // is enabled. Distinct from `ui.navItems` (the left-nav text links):
   // this is the one critical icon, not a page entry.
   headerAction: z
@@ -1882,7 +1882,7 @@ export interface EdgeRequest {
   /** Generic local-source proxy (sync connectors): instead of a driver, the
    *  bridge performs a plain HTTP request to `baseUrl + path` with `headers` and
    *  returns the result. Lets a hosted sync connector reach a LAN source (e.g.
-   *  companion app) over the dial-out relay — the cloud never touches the private
+   *  a private LAN system) over the dial-out relay — the cloud never touches the private
    *  address. Mutually exclusive with `instance`. */
   source?: { baseUrl: string; headers?: Record<string, string> };
 }

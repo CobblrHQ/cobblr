@@ -1,6 +1,6 @@
 // /browse — the "find things to label" surface. The Labels page can't
 // only be a queue you push INTO from other modules; you should be able
-// to come here, browse what's labelable, and add. companion app did this with
+// to come here, browse what's labelable, and add. A common approach is
 // tabs of categories; this is the platform-native, zero-hardcoding
 // version of the same idea.
 //

@@ -1,5 +1,5 @@
 // CUPS driver — IPP over HTTP via the `ipp` library (the same battle-tested
-// path companion app uses against a real Rollo). We POST a Print-Job to
+// path used against a real Rollo). We POST a Print-Job to
 // {baseUrl}/printers/{queue}; no system `lp` binary, just network access to the
 // CUPS listener (port 631). Works same-host, cross-host, on the LAN
 // (self-hosted), or through an edge-bridge that forwards to CUPS (cloud).

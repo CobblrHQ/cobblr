@@ -1,0 +1,79 @@
+# Cobblr self-host — the standalone, image-based stack. Two files: this and
+# the .env beside it. No repo clone, no build step; docs:
+# https://docs.cobblr.xyz/self-hosting
+#
+# NOTE: inert until the public GHCR images publish (multi-arch amd64+arm64).
+# Until then, self-hosting uses the clone-and-build path one directory up.
+#
+# HTTPS is a compose PROFILE: COMPOSE_PROFILES=caddy (default, set in .env)
+# runs the bundled TLS proxy; empty runs bare, for `tailscale serve/funnel`
+# on the host. All data lives in bind mounts under ./data/ — copying that
+# tree is a complete backup; there are deliberately NO named volumes.
+
+services:
+  db:
+    image: ghcr.io/cobblrhq/cobblr-db:${COBBLR_VERSION:-latest}
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-cobblr}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-cobblr_meta}
+    volumes:
+      - ./data/db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cobblr} -d ${POSTGRES_DB:-cobblr_meta}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  api:
+    image: ghcr.io/cobblrhq/cobblr-api:${COBBLR_VERSION:-latest}
+    env_file: .env # the whole config surface (secrets, email, privacy, …)
+    environment:
+      NODE_ENV: production
+      # Derived from POSTGRES_* so the password lives in exactly ONE line of
+      # .env. Using an external Postgres? Set DATABASE_URL /
+      # SUPERUSER_DATABASE_URL in .env and they win over the derived values.
+      DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-cobblr}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-cobblr_meta}}
+      SUPERUSER_DATABASE_URL: ${SUPERUSER_DATABASE_URL:-postgres://${POSTGRES_USER:-cobblr}:${POSTGRES_PASSWORD}@db:5432/postgres}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./data/files:/files
+      - ./data/modules:/app/installed-modules
+    restart: unless-stopped
+
+  web:
+    image: ghcr.io/cobblrhq/cobblr-web:${COBBLR_VERSION:-latest}
+    depends_on:
+      - api
+    # Loopback ALWAYS — never on the LAN. Caddy proxies over the compose
+    # network; tailscale serve/funnel forwards to 127.0.0.1 on the host; and
+    # localhost stays available for on-box debugging in every mode. WEB_BIND
+    # exists as an escape hatch; think twice before widening it.
+    ports:
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-8088}:8080"
+    restart: unless-stopped
+
+  caddy:
+    image: ghcr.io/cobblrhq/cobblr-caddy:${COBBLR_VERSION:-latest}
+    profiles: ["caddy"]
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      # The three TLS variants are baked into the image; pick one:
+      COBBLR_TLS_MODE: ${COBBLR_TLS_MODE:-duckdns} # duckdns | cloudflare | internal
+      COBBLR_SITE_ADDRESS: ${COBBLR_SITE_ADDRESS:?set COBBLR_SITE_ADDRESS in .env}
+      COBBLR_ACME_EMAIL: ${COBBLR_ACME_EMAIL:-}
+      DUCKDNS_TOKEN: ${DUCKDNS_TOKEN:-}
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
+    volumes:
+      # certs + CA state survive restarts (never re-request on boot)
+      - ./data/caddy:/data
+      - ./data/caddy-config:/config
+    depends_on:
+      - web
+    restart: unless-stopped

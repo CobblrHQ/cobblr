@@ -1,0 +1,64 @@
+# Self-hosted overlay — for an individual running Cobblr on their own LAN,
+# with nothing but Docker. Layers on top of the base compose:
+#   docker compose -f docker-compose.yml -f deploy/selfhost/docker-compose.selfhost.yml up -d
+#
+# What it adds vs the base compose:
+#   - caddy: a TLS-terminating reverse proxy in front of the web container.
+#     This is what makes the phone CAMERA work — browsers only allow camera
+#     access over HTTPS (or localhost), never over a plain http:// LAN IP.
+#     Caddy gets a real, auto-renewing cert via a DNS challenge (see the
+#     Caddyfile), so there's nothing to install on your phone.
+#   - db / api / web: host ports dropped. Only Caddy is published (80/443);
+#     everything else talks over the internal compose network.
+#
+# Copy deploy/selfhost/.env.example to .env and fill it in first.
+
+services:
+  db:
+    # Not reachable from the LAN — only the api container connects to it.
+    ports: !reset []
+
+  api:
+    # A real deployment, not dev. Enables production behaviours (stricter
+    # defaults, signup gating, etc.). COBBLR_ENV is just the label the web UI
+    # shows in its environment chip.
+    environment:
+      NODE_ENV: production
+      COBBLR_ENV: ${COBBLR_ENV:-self-hosted}
+    # The web container fronts the api; no host port.
+    ports: !reset []
+
+  web:
+    # Caddy fronts the web container over the compose network; drop the host
+    # port so the only thing listening on the LAN is Caddy (HTTPS).
+    ports: !reset []
+
+  # ─── Caddy: automatic HTTPS in front of the app ──────────────────────
+  caddy:
+    build:
+      # Relative paths in a multi-file `-f` stack resolve against the FIRST
+      # file's dir (the repo root, where docker-compose.yml lives) — not this
+      # file's dir. So the context is the repo root, same as the base compose.
+      context: .
+      dockerfile: docker/caddy.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - web
+    ports:
+      - "80:80"     # HTTP → HTTPS redirect (DNS-01 issuance needs no inbound port)
+      - "443:443"
+      - "443:443/udp"  # HTTP/3
+    environment:
+      # Consumed by the Caddyfile. All come from .env.
+      COBBLR_SITE_ADDRESS: ${COBBLR_SITE_ADDRESS:?set COBBLR_SITE_ADDRESS in .env}
+      COBBLR_ACME_EMAIL: ${COBBLR_ACME_EMAIL:-}
+      DUCKDNS_TOKEN: ${DUCKDNS_TOKEN:-}
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
+    volumes:
+      # The active Caddyfile — DuckDNS by default; point COBBLR_CADDYFILE at
+      # Caddyfile.cloudflare or Caddyfile.internal to switch.
+      - ${COBBLR_CADDYFILE:-./deploy/selfhost/Caddyfile}:/etc/caddy/Caddyfile:ro
+      # Issued certs + Caddy state. Bind-mounted (repo convention: no named
+      # volumes) so certs survive restarts and aren't re-requested.
+      - ./data/caddy:/data
+      - ./data/caddy-config:/config

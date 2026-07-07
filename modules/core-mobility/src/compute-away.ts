@@ -1,5 +1,5 @@
-// The drift-detection rule, ported from companion app `computeAwaySince`
-// (api/src/routes/assets.ts). Given a mobile item's before/after state, decide
+// The drift-detection rule (`computeAwaySince`). Given a mobile item's
+// before/after state, decide
 // the `away_since` stamp:
 //
 //   - not mobile                       → null (fixtures are never "away")

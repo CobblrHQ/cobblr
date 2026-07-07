@@ -12,7 +12,7 @@
 
 import { platform, extractJsonObject, repairJson, parseJsonReply } from "@cobblr/platform-contract";
 
-// A HANG GUARD, not a latency knob (the companion app scan lesson): the matchmaker
+// A HANG GUARD, not a latency knob: the matchmaker
 // runs detached server-side — nobody is blocked on it — and a queued
 // claude-bridge call routinely takes 25-60s. At 20s every bridge call lost
 // the race, returned [] and stamped matched_at with ZERO candidates (the
@@ -98,7 +98,7 @@ export interface MatchCandidate {
   fields: Record<string, string | number | boolean>;
   /** TOP candidate only: 2–4 terse sentences reconciling ALL the item data
    *  (title vs attributes vs barcode DB vs photo hints) — what matched, what
-   *  was inferred, pack-size reasoning. No filler (companion app prompt style). */
+   *  was inferred, pack-size reasoning. No filler. */
   notes?: string;
   /** When the item data implies a count ("1 Pack Of 9 Skein", "10 Pack"),
    *  the unit quantity to pre-fill. Omitted when nothing implies one. */

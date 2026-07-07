@@ -15,7 +15,7 @@ export default defineModule({
   version: "0.2.0",
   displayName: "Devices",
   description:
-    "The device substrate — link a physical device (a scale, an RFID reader, a relay) to the Cobblr thing it feeds, in one place. Plumbing under digifab, core-print, and the edge-firmware connector.",
+    "The device substrate — link a physical device (a scale, an RFID reader, a relay) to the Cobblr thing it feeds, in one place. Plumbing under digifab, core-print, and edge firmware connectors.",
   icon: "cpu",
   band: "stock",
   autoEnable: true, // ambient capability — on for every workspace, no nav noun

@@ -1,5 +1,5 @@
 // Install / list / uninstall declarative sync-source manifests at runtime. A
-// workspace adds a sync source (companion app, a Notion DB, …) by installing a
+// workspace adds a sync source (a self-hosted inventory app, a Notion DB, …) by installing a
 // SyncSourceManifest — no platform deploy, nothing source-specific in the tree.
 // Mirrors digifab's driver install (modules/digifab/src/api/drivers.ts).
 

@@ -1,5 +1,5 @@
 // Authed app chrome. Header + module-aware nav + outlet for the
-// current route. Borrows companion app's overflow-clip / min-w-0 / shrink-0
+// current route. Uses an overflow-clip / min-w-0 / shrink-0
 // layout so long nav lists can't push the page wider than the
 // viewport.
 //
@@ -143,7 +143,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
   // cluster to its foot. Desktop-only; the mobile header always stays. A
   // managed app keeps its top bar (its chrome is deliberately minimal already).
   const fullSide = navMode === "side" && !navTopBar && !appMode;
-  // DEV-chip toast tester (companion app tradition): each click on the env chip fires
+  // DEV-chip toast tester: each click on the env chip fires
   // the next toast kind, so toast styling/placement is one click to eyeball.
   // Inherently non-prod: the chip only renders when envBadge exists.
   const toast = useToast();

@@ -70,7 +70,7 @@ export function registerLocationsWriter(): void {
     },
 
     // Existing locations, for the import preview's name-merge — so importing a
-    // companion app room/bin that already exists by name links into it instead of
+    // room/bin that already exists by name links into it instead of
     // duplicating. Name-only match (parent precision is best-effort here).
     async listForMatch(orgId) {
       const db = (await platform().tenants.getDb(orgId)) as Kysely<CoreLocationsDB>;

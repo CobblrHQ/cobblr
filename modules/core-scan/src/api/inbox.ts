@@ -73,11 +73,11 @@ const ScanBody = z.object({
   scan_area: z.string().max(200).optional(),
   /** The active filing location ("bin") for this scan session — a
    *  core-locations node. Stamped on the item so confirm files the created
-   *  entity into that location without re-picking. The companion app activeBin pattern. */
+   *  entity into that location without re-picking. The active-bin pattern. */
   target_location_id: z.string().uuid().optional(),
   /** Per-scan budget for the inline enrichment race. After this
    *  the response returns the bare row and enrichment continues
-   *  detached. Default 12s mirrors companion app. */
+   *  detached. Default 12s. */
   enrich_ms: z.number().int().positive().max(30_000).optional(),
 });
 
@@ -121,7 +121,7 @@ inboxRouter.post(
       body.scan_area ??
       (typeof defaults.scan_area === "string" ? defaults.scan_area : null);
 
-    // Dedup repeated scans of the SAME barcode (the companion app behavior): rather than
+    // Dedup repeated scans of the SAME barcode: rather than
     // pile up a new row per scan, bump the quantity on the pending entry that's
     // already there. Dedup is GLOBAL across all pending items for that barcode —
     // NOT scoped to a batch/area (batch-scoping let the same UPC pile up a fresh
@@ -174,7 +174,7 @@ inboxRouter.post(
             ...(attachPhoto ? { image_file_id: body.image_file_id } : {}),
             // Move the item into the session it was just re-scanned in, and stamp
             // the area if this scan carried one — so it groups with the scans
-            // around it (companion app re-assigns batchId on a deduped re-scan too). Leave
+            // around it (batchId is re-assigned on a deduped re-scan too). Leave
             // them untouched when the scan didn't specify (no session / no area).
             ...(body.scan_batch_id ? { scan_batch_id: body.scan_batch_id } : {}),
             ...(scanArea ? { scan_area: scanArea } : {}),
@@ -778,7 +778,7 @@ const PatchBody = z.object({
   // Set/clear the filing location on an existing item (bulk "Set location" in
   // triage stamps the same value across a selection). null clears it.
   target_location_id: z.string().uuid().nullable().optional(),
-  // companion app A13/H4: is this the ITEM (possibly in its box) or an EMPTY box you keep?
+  // Is this the ITEM (possibly in its box) or an EMPTY box you keep?
   // Rides suggested_metadata.box_state and lands on the entity at confirm.
   box_state: z.enum(["item-in-box", "empty-box"]).nullable().optional(),
   // "Looks fine" — a human eyeballed a ⚠-flagged item; drop it from needs-review.
@@ -1046,7 +1046,7 @@ inboxRouter.post(
         pack_size: (meta as { pack_size?: number }).pack_size ?? undefined,
         box_state: (meta as { box_state?: string }).box_state ?? undefined,
         // Empty box: the scan location is the BOX's home, not the item's — say
-        // so instead of silently mislocating the entity (companion app semantics).
+        // so instead of silently mislocating the entity.
         ...((meta as { box_state?: string }).box_state === "empty-box" &&
         (row.scan_area || parsed.data.location_id)
           ? { box_note: `Empty box kept at: ${row.scan_area ?? "the scan location"}` }
@@ -1061,7 +1061,7 @@ inboxRouter.post(
       },
       ...(qtyField && qty ? { [qtyField]: qty } : {}),
       // Empty box → do NOT file the entity at the scan location: that's where
-      // the BOX lives; the item itself is deployed elsewhere (companion app box-state).
+      // the BOX lives; the item itself is deployed elsewhere.
       ...(parsed.data.location_id && (meta as { box_state?: string }).box_state !== "empty-box"
         ? { location_id: parsed.data.location_id }
         : {}),
@@ -1598,7 +1598,7 @@ inboxRouter.post(
 
 // ─────────────────── GET /inbox/:id/photo-options ───────────────────
 // Alternative catalog photos: a DDG image search on the item's resolved
-// name (the companion app "OTHER PHOTO OPTIONS" strip). Read-only; picking one
+// name (the "OTHER PHOTO OPTIONS" strip). Read-only; picking one
 // goes through POST /inbox/:id/catalog-image.
 
 inboxRouter.get(
@@ -1649,7 +1649,7 @@ const CatalogImageBody = z.union([
   z.object({ url: z.string().url().max(2000) }),
   z.object({ action: z.enum(["revert", "use_own_photo"]) }),
   // "Take a nice picture" — a freshly-captured upload becomes the DISPLAY
-  // (catalog) image; the identify photo is untouched (companion app's photo roles).
+  // (catalog) image; the identify photo is untouched (photo roles).
   z.object({ file_id: z.string().uuid() }),
 ]);
 
@@ -1789,7 +1789,7 @@ inboxRouter.post(
 // ─────────────────── GET /inbox/:id/tracked-matches ─────────────────
 // "Already tracked?" — entities the workspace ALREADY has that match this
 // scan, by exact barcode (metadata.barcode, stamped by every confirm) or by
-// name-token overlap. Powers the companion app A8/A9 heads-up banner + attach targets.
+// name-token overlap. Powers the heads-up banner + attach targets.
 inboxRouter.get(
   "/inbox/:id/tracked-matches",
   asyncHandler(async (req, res) => {
@@ -1918,7 +1918,7 @@ inboxRouter.post(
         return;
       }
       patch.metadata = { ...entityMeta, barcode: row.barcode_text };
-      // companion app semantics: linking a barcode while an active bin is set ALSO files
+      // Linking a barcode while an active bin is set ALSO files
       // the entity into that bin — the scan meant "this thing, into here".
       const linkLoc = parsed.data.location_id ?? row.target_location_id;
       if (linkLoc) patch.location_id = linkLoc;

@@ -1,7 +1,7 @@
 -- core_scan_qr_rules — the per-workspace "external QR resolver" redirect table.
 --
--- A scanned FOREIGN QR payload (a companion app URL like
--- https://wos.host/inventory/<slug>, a bare Homebox number, …) is matched against
+-- A scanned FOREIGN QR payload (a foreign QR URL like
+-- https://example.com/inventory/<slug>, a bare Homebox number, …) is matched against
 -- these rules top-down; the first match extracts a key and resolves it to a
 -- Cobblr entity, then the scan behaves exactly like a native one (open the
 -- entity's detail page). OPT-IN: zero rows ⇒ the resolver is inert and scans
@@ -20,8 +20,8 @@ create table core_scan_qr_rules (
   position     integer not null default 0,
 
   -- how to RECOGNISE the format:
-  --   { "type": "url_prefix", "value": "https://wos.host/inventory/" }
-  --   { "type": "regex",      "value": "^https?://wos\\.host/(?<type>[^/]+)/(?<key>[^/]+)" }
+  --   { "type": "url_prefix", "value": "https://example.com/inventory/" }
+  --   { "type": "regex",      "value": "^https?://example\\.com/(?<type>[^/]+)/(?<key>[^/]+)" }
   --   { "type": "bare",       "value": "^\\d+$" }   // payload is a plain number
   match_spec   jsonb not null,
 
@@ -34,7 +34,7 @@ create table core_scan_qr_rules (
   -- how to RESOLVE the key to a Cobblr entity:
   --   { "target_kind": "inventory:part",            // fixed kind, OR
   --     "type_map": { "inventory": "inventory:part", "printers": "machines:machine" },
-  --     "key_field": "wos_id" }   // native column OR metadata key the entity carries
+  --     "key_field": "ext_id" }   // native column OR metadata key the entity carries
   resolve_spec jsonb not null,
 
   created_at   timestamptz not null default now(),

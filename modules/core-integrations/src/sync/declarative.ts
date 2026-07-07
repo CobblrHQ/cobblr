@@ -4,6 +4,7 @@
 // "install another manifest", never a code change. Mirrors digifab's
 // declarative machine-driver engine (modules/digifab/src/drivers/declarative.ts).
 
+import { Buffer } from "node:buffer";
 import type {
   SyncConnector,
   SyncEntityType,
@@ -36,6 +37,14 @@ function evalField(spec: FieldSpec, data: unknown): unknown {
     const out: Record<string, unknown> = {};
     for (const [k, sub] of Object.entries(spec.object)) out[k] = evalField(sub, data);
     return out;
+  }
+  // coalesce: first sub-spec yielding a non-null/non-empty value wins.
+  if ("coalesce" in spec) {
+    for (const sub of spec.coalesce) {
+      const v = evalField(sub, data);
+      if (v !== null && v !== undefined && v !== "") return v;
+    }
+    return null;
   }
   // value-map spec: { from, valueMap?, default? }
   const raw = resolve(spec.from, data);
@@ -109,11 +118,52 @@ function mapRecord(et: SyncEntityTypeManifest, data: unknown): SyncRecord {
 
 function authHeaders(manifest: SyncSourceManifest, ctx: SyncFetchContext): Record<string, string> {
   const h: Record<string, string> = { Accept: "application/json" };
-  if (manifest.auth) {
-    const v = String(ctx.credentials[manifest.auth.from] ?? "");
-    h[manifest.auth.header] = `${manifest.auth.prefix ?? ""}${v}`;
+  const a = manifest.auth;
+  if (a) {
+    if (a.kind === "basic") {
+      const u = String(ctx.credentials[a.userFrom] ?? "");
+      const p = String(ctx.credentials[a.passFrom] ?? "");
+      h.Authorization = "Basic " + Buffer.from(`${u}:${p}`).toString("base64");
+    } else {
+      const v = String(ctx.credentials[a.from] ?? "");
+      h[a.header] = `${a.prefix ?? ""}${v}`;
+    }
   }
   return h;
+}
+
+/** The source base — a manifest's fixed `baseUrl` (e.g. api.ravelry.com) wins;
+ *  otherwise the per-connection base the user entered. */
+function baseFor(manifest: SyncSourceManifest, ctx: SyncFetchContext): string {
+  return (manifest.baseUrl ?? ctx.baseUrl).replace(/\/+$/, "");
+}
+
+/** Substitute `{name}` tokens in a path with resolved bootstrap vars (URL-encoded).
+ *  Unknown tokens (e.g. `{externalId}`, handled separately) are left intact. */
+function substitutePath(path: string, vars: Record<string, string>): string {
+  return path.replace(/\{(\w+)\}/g, (m, k: string) =>
+    k in vars ? encodeURIComponent(vars[k]!) : m,
+  );
+}
+
+/** Resolve the manifest's bootstrap vars ONCE (each a small GET read at `at`) —
+ *  e.g. "who am I" before listing the caller's own data. Throws if a var can't
+ *  be read (bad creds / unexpected shape), which surfaces as a failed sync. */
+async function resolveVars(
+  manifest: SyncSourceManifest,
+  ctx: SyncFetchContext,
+): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  if (!manifest.resolveVars) return out;
+  for (const [name, spec] of Object.entries(manifest.resolveVars)) {
+    const body = await get(manifest, ctx, spec.method, spec.path);
+    const v = resolve(spec.at, body);
+    if (v == null || String(v) === "") {
+      throw new Error(`${manifest.name}: could not resolve {${name}} from ${spec.path}`);
+    }
+    out[name] = String(v);
+  }
+  return out;
 }
 
 async function get(
@@ -122,11 +172,38 @@ async function get(
   method: string,
   path: string,
 ): Promise<unknown> {
-  const base = ctx.baseUrl.replace(/\/+$/, "");
+  const base = baseFor(manifest, ctx);
   const url = `${base}${path.startsWith("/") ? path : `/${path}`}`;
   const res = await ctx.fetch(url, { method, headers: authHeaders(manifest, ctx) });
   if (!res.ok) throw new Error(`${manifest.name} ${path} → ${res.status}`);
   return res.json();
+}
+
+/** Fetch a list section — paginated (page-numbered) or single-shot — returning
+ *  the raw source rows before filter/map. */
+async function fetchList(
+  manifest: SyncSourceManifest,
+  ctx: SyncFetchContext,
+  et: SyncEntityTypeManifest,
+  vars: Record<string, string>,
+): Promise<unknown[]> {
+  const basePath = substitutePath(et.list.path, vars);
+  const readArray = (body: unknown): unknown[] => {
+    const arr = et.list.arrayPath ? resolve(et.list.arrayPath, body) : body;
+    return Array.isArray(arr) ? arr : [];
+  };
+  const pg = et.list.paginate;
+  if (!pg) return readArray(await get(manifest, ctx, et.list.method, basePath));
+  const rows: unknown[] = [];
+  let page = pg.startPage;
+  for (let n = 0; n < pg.maxPages; n++, page++) {
+    const sep = basePath.includes("?") ? "&" : "?";
+    const q = `${pg.param}=${page}` + (pg.sizeParam ? `&${pg.sizeParam}=${pg.size}` : "");
+    const items = readArray(await get(manifest, ctx, et.list.method, `${basePath}${sep}${q}`));
+    rows.push(...items);
+    if (items.length < pg.size) break; // short page → last page
+  }
+  return rows;
 }
 
 function buildEntityType(manifest: SyncSourceManifest, et: SyncEntityTypeManifest): SyncEntityType {
@@ -137,7 +214,7 @@ function buildEntityType(manifest: SyncSourceManifest, et: SyncEntityTypeManifes
     targetInstance: et.targetInstance ?? null,
     async fetchBinary(ctx, urlOrPath) {
       try {
-        const base = ctx.baseUrl.replace(/\/+$/, "");
+        const base = baseFor(manifest, ctx);
         const url = /^https?:\/\//.test(urlOrPath)
           ? urlOrPath
           : `${base}${urlOrPath.startsWith("/") ? urlOrPath : `/${urlOrPath}`}`;
@@ -154,9 +231,8 @@ function buildEntityType(manifest: SyncSourceManifest, et: SyncEntityTypeManifes
       }
     },
     async fetchAll(ctx) {
-      const body = await get(manifest, ctx, et.list.method, et.list.path);
-      const arr = et.list.arrayPath ? resolve(et.list.arrayPath, body) : body;
-      const items = Array.isArray(arr) ? arr : [];
+      const vars = await resolveVars(manifest, ctx);
+      const items = await fetchList(manifest, ctx, et, vars);
       return items
         .filter((it) => passesFilter(et, it) && passesInstanceBy(et, it))
         .map((it) => mapRecord(et, it));
@@ -165,7 +241,11 @@ function buildEntityType(manifest: SyncSourceManifest, et: SyncEntityTypeManifes
       ? {
           async fetchOne(ctx: SyncFetchContext, externalId: string): Promise<SyncRecord | null> {
             try {
-              const path = et.item!.path.replace(/\{externalId\}/g, encodeURIComponent(externalId));
+              const vars = await resolveVars(manifest, ctx);
+              const path = substitutePath(et.item!.path, vars).replace(
+                /\{externalId\}/g,
+                encodeURIComponent(externalId),
+              );
               const body = await get(manifest, ctx, et.item!.method, path);
               // itemPath points at the object; fall back to the bare body when
               // the source returns the object unwrapped.
@@ -193,19 +273,27 @@ export function buildSyncConnector(manifest: SyncSourceManifest): SyncConnector 
   return {
     id: manifest.id,
     label: manifest.name,
-    describeCredentials: () => ({
-      token: { label: manifest.credentialLabel ?? "API token", secret: true },
-    }),
-    describeConfig: () => ({
-      base_url: {
-        label: manifest.baseUrlLabel ?? "Base URL",
-        ...(manifest.baseUrlPlaceholder ? { placeholder: manifest.baseUrlPlaceholder } : {}),
-      },
-    }),
+    describeCredentials: () =>
+      manifest.credentials
+        ? Object.fromEntries(
+            Object.entries(manifest.credentials).map(([k, v]) => [k, { label: v.label, secret: v.secret }]),
+          )
+        : { token: { label: manifest.credentialLabel ?? "API token", secret: true } },
+    // A fixed-baseUrl source needs no user-entered base URL — hide the field.
+    describeConfig: (): Record<string, { label: string; placeholder?: string }> =>
+      manifest.baseUrl
+        ? {}
+        : {
+            base_url: {
+              label: manifest.baseUrlLabel ?? "Base URL",
+              ...(manifest.baseUrlPlaceholder ? { placeholder: manifest.baseUrlPlaceholder } : {}),
+            },
+          },
     entityTypes: manifest.entityTypes.map((et) => buildEntityType(manifest, et)),
     async testConnection(ctx) {
       try {
-        await get(manifest, ctx, testMethod, testPath);
+        const vars = await resolveVars(manifest, ctx);
+        await get(manifest, ctx, testMethod, substitutePath(testPath, vars));
         return { ok: true };
       } catch (e) {
         return { ok: false, error: (e as Error).message };

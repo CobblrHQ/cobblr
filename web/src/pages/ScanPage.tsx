@@ -1,6 +1,6 @@
-// /scan — the inbox review queue, companion app-Photo-Inbox-grade.
+// /scan — the inbox review queue, photo-inbox-grade.
 //
-// Layout (the author's spec, from the companion app gold standard):
+// Layout (the author's spec):
 //   · ONE narrow header row — title + count + the intake buttons
 //     (UPC / Upload / Camera). No dead space, no explainer paragraph;
 //     typed-UPC and photo-upload intake live in a modal, the camera is
@@ -648,7 +648,7 @@ export function ScanPage() {
   const { activeSlug } = useActiveOrg();
   const [params] = useSearchParams();
   // Active filing "bin" — a core-locations node every scan files into until
-  // cleared (the companion app activeBin pattern). Stamped as target_location_id on each
+  // cleared (the active-bin pattern). Stamped as target_location_id on each
   // scan so the item lands pre-filed; persists per workspace in localStorage.
   const fileBinKey = `cobblr.scanFileBin.${activeSlug ?? ""}`;
   const [fileBin, setFileBinState] = useState<string>(() => localStorage.getItem(fileBinKey) ?? "");
@@ -831,7 +831,7 @@ export function ScanPage() {
     );
   };
   const [reviewOnly, setReviewOnly] = useState(false);
-  // Stale nudge (companion app G15): pending items sitting > 2 days (companion app's window —
+  // Stale nudge: pending items sitting > 2 days (the window —
   // clutter is the motivator to clear; two days is when it starts to rot).
   const STALE_MS = 2 * 24 * 60 * 60 * 1000;
   const isStale = (it: ScanInboxItem) =>
@@ -839,7 +839,7 @@ export function ScanPage() {
   const [staleOnly, setStaleOnly] = useState(false);
   const staleCount = items.filter(isStale).length;
   const reviewCount = items.filter(needsReview).length;
-  // Free-text search over the pending queue (companion app): tokenized — every word must
+  // Free-text search over the pending queue: tokenized — every word must
   // match somewhere across name / barcode / AI notes / brand / scan area.
   const [searchQ, setSearchQ] = useState("");
   const searchTokens = searchQ.toLowerCase().split(/\s+/).filter(Boolean);
@@ -1016,7 +1016,7 @@ export function ScanPage() {
     const groups: Group[] = [];
     const byBatch = new Map<string, Group>();
     // Batch-less items (older history; intakes that predate batching) cluster
-    // into PSEUDO-sessions by time gap — the companion app look: every scanning burst is
+    // into PSEUDO-sessions by time gap — the batch look: every scanning burst is
     // its own session group, whether or not a batch id was minted at the time.
     let pseudo: Group | null = null;
     let pseudoLastT = 0;
@@ -1157,7 +1157,7 @@ export function ScanPage() {
         barcode: code,
         source_kind: "barcode",
         // Reviewing a session (?batch) scans into IT; otherwise the time-gap
-        // session, so wedge bursts group like camera bursts (companion app batches).
+        // session, so wedge bursts group like camera bursts (camera-burst batches).
         scan_batch_id:
           batchId ??
           (await resolveSessionBatch(activeSlug, () =>
@@ -1203,7 +1203,7 @@ export function ScanPage() {
         return;
       }
       // A scanned LOCATION label sets the active filing bin (and nests a container
-      // under the current bin) instead of staging an item — the companion app scan-to-set
+      // under the current bin) instead of staging an item — the scan-to-set
       // flow. Any other QR stages as a normal scan.
       const token = qr[1] ?? "";
       void (async () => {
@@ -1273,7 +1273,7 @@ export function ScanPage() {
   const menu = menuQ.data?.items ?? null;
 
   // Location is core-locations' noun, and that capability auto-enables
-  // everywhere — so "module enabled" gates nothing. the author's rule: the field
+  // everywhere — so "module enabled" gates nothing. The author's rule: the field
   // exists only when the workspace actually HAS locations (rows).
   const modulesQ = useQuery({
     queryKey: ["org-modules", activeSlug],
@@ -1408,7 +1408,7 @@ export function ScanPage() {
   } | null>(null);
   // Gallery view's focus modal: which item is open as a full triage card.
   const [galleryFocusId, setGalleryFocusId] = useState<string | null>(null);
-  // Fold one scan session into the previous one (companion app merge-batches).
+  // Fold one scan session into the previous one (merge-batches).
   const mergeBatches = useMutation({
     mutationFn: (v: { from: string; into: string }) => api.mergeScanBatches(activeSlug, v.from, v.into),
     onSuccess: (r) => {
@@ -1632,7 +1632,7 @@ export function ScanPage() {
         <button
           type="button"
           onClick={() => setImportOpen(true)}
-          title="Import a batch from a file — companion app inbox exports (JSON/CSV) or any CSV"
+          title="Import a batch from a file — JSON/CSV inbox exports or any CSV"
           className={headerBtn}
         >
           <Upload size={15} /> Import
@@ -1982,7 +1982,7 @@ export function ScanPage() {
             return (
               <div key={g.key} id={g.batchId ? `s-${g.batchId}` : undefined} className="space-y-2 scroll-mt-24">
                 <div className="flex w-full items-center gap-2 rounded-md bg-mortar-50 dark:bg-slate-800/40 px-2.5 py-1.5 text-left text-xs">
-                  {/* Burst select-all (companion app G3): grab the whole session for the
+                  {/* Burst select-all: grab the whole session for the
                       bulk toolbar (location / confirm / discard). */}
                   <input
                     type="checkbox"
@@ -2082,7 +2082,7 @@ export function ScanPage() {
         (() => {
           const focus = items.find((i) => i.id === galleryFocusId);
           if (!focus) return null;
-          // Triage rip-through (companion app): once this item resolves, advance the
+          // Triage rip-through: once this item resolves, advance the
           // modal to the NEXT pending item instead of showing a stale card.
           if (focus.status !== "pending") {
             const pending = visibleItems.filter((i) => i.status === "pending" && i.id !== focus.id);
@@ -2644,7 +2644,7 @@ function InboxCard({
   const extraPhotos = Array.isArray((item.suggested_metadata as { extra_photos?: unknown })?.extra_photos)
     ? ((item.suggested_metadata as { extra_photos: string[] }).extra_photos)
     : [];
-  // Box-state (companion app A13): unset → empty-box → item-in-box → unset.
+  // Box-state: unset → empty-box → item-in-box → unset.
   const boxState =
     (item.suggested_metadata as { box_state?: "item-in-box" | "empty-box" } | null)?.box_state ?? null;
   const cycleBoxState = useMutation({
@@ -3064,7 +3064,7 @@ function InboxCard({
       {/* ── expanded triage surface — photos left, intel right (lg+) ── */}
       {expanded && (
         <div className="border-t border-line dark:border-slate-800 p-3 space-y-3 bg-subtle/40 dark:bg-slate-950/40">
-          {/* "Already tracked" (companion app A8/A9) — attach to the existing entity
+          {/* "Already tracked" — attach to the existing entity
               instead of creating a duplicate. Lazy: only queried on expand. */}
           {item.status === "pending" && (
             <TrackedMatchBanner item={item} locationId={item.target_location_id} />
@@ -3226,7 +3226,7 @@ function InboxCard({
                 aria-label="Image viewer"
               >
                 <img src={zoom} alt="" className="max-w-full min-h-0 flex-1 object-contain rounded shadow-2xl" />
-                {/* Swap the photo without leaving the viewer (companion app). stopPropagation
+                {/* Swap the photo without leaving the viewer. stopPropagation
                     so a thumbnail click doesn't also dismiss the lightbox. */}
                 <div className="w-full max-w-2xl shrink-0" onClick={(e) => e.stopPropagation()}>
                   <PhotoOptions item={item} onPick={(u) => setZoom(u)} />
@@ -3239,7 +3239,7 @@ function InboxCard({
           <div className="space-y-3 min-w-0">
 
           {/* The AI's read — collapsed to its one-line header by default
-              (companion app); tap to reveal the reconciliation paragraph + per-field
+              tap to reveal the reconciliation paragraph + per-field
               chips. The working pulse lives in the always-visible header. */}
           {(item.ai_notes || item.ai_confidence || topCand || aiWorking) && (
             <div className="rounded-md border border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20 px-3 py-2">
@@ -3521,7 +3521,7 @@ function ExtraPhotoThumb({
 }
 
 // ── photo options: DDG alternatives for the catalog image ────────────
-// The companion app "OTHER PHOTO OPTIONS" strip. Lazy — only fetches once a card
+// The "OTHER PHOTO OPTIONS" strip. Lazy — only fetches once a card
 // is expanded; picking one downloads it into core-files as the catalog
 // image (SSRF-guarded server-side).
 function PhotoOptions({ item, onPick }: { item: ScanInboxItem; onPick?: (url: string) => void }) {
@@ -3618,7 +3618,7 @@ function HintBox({
         <Sparkles size={10} className="text-accent" /> research hint
       </div>
       {/* Full-width textarea (single-line input cut the long placeholder off):
-          Enter submits, Shift+Enter inserts a newline — matches companion app. */}
+          Enter submits, Shift+Enter inserts a newline. */}
       <textarea
         value={hint}
         onChange={(e) => setHint(e.target.value)}

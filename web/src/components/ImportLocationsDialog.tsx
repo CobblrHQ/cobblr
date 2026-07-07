@@ -72,7 +72,7 @@ export function ImportLocationsDialog({ slug, onClose }: { slug: string; onClose
             </div>
             <label className="block">
               <span className="text-[10px] font-mono uppercase tracking-widest text-faint block mb-1">CSV</span>
-              <textarea value={csv} onChange={(e) => { setCsv(e.target.value); setPreview(null); }} rows={8} placeholder={"name,kind,parent,wos_id\nGarage,area,,12\nShelf 3,container,Garage,40"} className={field + " w-full font-mono text-xs"} />
+              <textarea value={csv} onChange={(e) => { setCsv(e.target.value); setPreview(null); }} rows={8} placeholder={"name,kind,parent,ext_id\nGarage,area,,12\nShelf 3,container,Garage,40"} className={field + " w-full font-mono text-xs"} />
             </label>
             <div className="flex items-center gap-3">
               <label className="flex items-center gap-1.5 text-xs cursor-pointer text-accent hover:underline">
@@ -92,7 +92,7 @@ export function ImportLocationsDialog({ slug, onClose }: { slug: string; onClose
               </label>
             </div>
             <div className="text-[11px] text-faint">
-              The <b>match column</b> identifies an existing location (a row whose value already exists → update, otherwise create). Default <code>name</code>; pick your own id column (e.g. <code>wos_id</code>) to round-trip an external system. <code>parent</code> references the parent by that same column.
+              The <b>match column</b> identifies an existing location (a row whose value already exists → update, otherwise create). Default <code>name</code>; pick your own id column (e.g. <code>ext_id</code>) to round-trip an external system. <code>parent</code> references the parent by that same column.
             </div>
           </>
         )}

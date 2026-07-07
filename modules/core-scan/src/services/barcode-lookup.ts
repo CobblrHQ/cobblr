@@ -2,7 +2,7 @@
 // a wrong-product answer; see tryGoUpc for the politeness contract),
 // then two free API providers fired concurrently as the fallback.
 //
-// The hard-won lesson (ported properly from companion app this time): the
+// The hard-won lesson: the
 // upcitemdb FREE TRIAL endpoint is a single global bucket shared by every
 // trial user on the internet, so it returns its rate-limit codes (`TOO_FAST`
 // burst, `EXCEED_LIMIT` daily) *constantly* — often on the very first call.
@@ -327,11 +327,10 @@ async function tryGoUpcApi(upc: string, key: string): Promise<ProviderResult> {
 // ── box-level resolver tier ───────────────────────────────────────────
 // When COBBLR_BARCODE_RESOLVER_URL is set, the shared resolver on the
 // host owns the whole provider chain — one go-upc politeness gate, one
-// upcitemdb daily budget, one cache for EVERY product on the box (companion app +
-// every Cobblr instance). A UPC scanned anywhere warms everyone. The
+// upcitemdb daily budget, one cache for EVERY product on the box (every Cobblr instance). A UPC scanned anywhere warms everyone. The
 // resolver is a READ-ONLY proxy: this client can't write into it, so a
-// compromised instance can't poison results others render. See
-// companion app/scripts/barcode-resolver/. Throws on transport failure so
+// compromised instance can't poison results others render. See the box.s own
+// barcode-resolver service. Throws on transport failure so
 // lookupBarcode falls back to resolving locally.
 async function tryResolver(upc: string): Promise<ProviderResult> {
   const base = (process.env.COBBLR_BARCODE_RESOLVER_URL ?? "").replace(/\/+$/, "");

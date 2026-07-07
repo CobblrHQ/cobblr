@@ -1,5 +1,5 @@
 // "Already tracked" — find entities the workspace ALREADY has that match a
-// scan, by exact barcode or by name-token overlap. The companion app A8/A9 heads-up +
+// scan, by exact barcode or by name-token overlap. The heads-up banner +
 // the lookup half of attach-to-existing (see scan-parity-final-mile.md).
 //
 // Barcode tier: every confirm stamps `metadata.barcode` on the entity it
@@ -31,7 +31,7 @@ export interface TrackedMatch {
   noun: string;
   qty: number | null;
   /** Where it lives now — shown on the banner ("· 📍Garage Shelf") and used
-   *  by move-mode to skip entities already in the active bin (companion app parity). */
+   *  by move-mode to skip entities already in the active bin. */
   location_id: string | null;
   matched_by: "barcode" | "name" | "bin";
 }
@@ -119,8 +119,8 @@ export async function findTracked(
             return res.items
               .filter((e) => !seen.has(`${e.kind}:${e.id}`))
               // An entity that already carries a DIFFERENT barcode is a
-              // different SKU — never offer it as a fuzzy match (companion app rule;
-              // stops link-barcode from clobbering the wrong entity's code).
+              // different SKU — never offer it as a fuzzy match
+              // (stops link-barcode from clobbering the wrong entity's code).
               .filter((e) => {
                 const b = metaBarcode(e.fields);
                 return !b || !barcode || b === barcode;
@@ -128,7 +128,7 @@ export async function findTracked(
               .map((e) => {
                 const have = new Set(tokens(e.title));
                 const shared = want.filter((t) => have.has(t)).length;
-                // companion app-grade guard: sharing 2 words isn't enough for long names —
+                // Strong guard: sharing 2 words isn't enough for long names —
                 // require the overlap to be MOST of the shorter name (≥0.6), so
                 // "Prusa PLA Filament Black" doesn't match "Prusa Nozzle Kit".
                 const ratio = shared / Math.max(1, Math.min(want.length, have.size));

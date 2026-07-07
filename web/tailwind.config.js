@@ -54,7 +54,7 @@ export default {
           500: "#3D4451",
           600: "#323843",
           700: "#262B33",
-          // Dark-mode surface tones (matched to companion app): 800 is
+          // Dark-mode surface tones: 800 is
           // the page background, 900 the *elevated* card surface —
           // lighter than the body, not darker, so cards read as
           // raised. See web/src/index.css for how they're applied.
