@@ -569,6 +569,16 @@ importers:
         specifier: ^5.7.2
         version: 5.9.3
 
+  modules/core-placement:
+    dependencies:
+      '@cobblr/platform-contract':
+        specifier: workspace:*
+        version: link:../../packages/platform-contract
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
   modules/core-print:
     dependencies:
       '@cobblr/platform-contract':

@@ -11,6 +11,7 @@ import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import {
   ArrowRight,
+  Cable,
   CalendarDays,
   ChevronDown,
   LogOut,
@@ -33,6 +34,26 @@ import { UpdateBadge } from "./UpdateBadge";
 import { GrowModal } from "./GrowModal";
 import { PairPhoneButton } from "./PairPhoneButton";
 import { api, isFocused, setFocused } from "../lib/api";
+import { useMyEdgeBridge } from "../lib/useMyEdgeBridge";
+
+/** Account-menu row showing the personal edge bridge's live status — only for
+ *  users who actually run one. Same emerald/slate "online/offline" dot as the
+ *  workspace device bridges, so the signal reads identically everywhere. */
+function EdgeBridgeMenuRow({ itemCls, onNavigate }: { itemCls: string; onNavigate: () => void }) {
+  const { hasBridge, connected } = useMyEdgeBridge();
+  if (!hasBridge) return null;
+  return (
+    <Link to="/me/connections" onClick={onNavigate} className={itemCls} role="menuitem">
+      <Cable size={14} className="text-faint dark:text-slate-400" /> Edge bridge
+      <span className="ml-auto flex items-center gap-1.5 text-[11px] text-faint">
+        <span
+          className={"w-1.5 h-1.5 rounded-full " + (connected ? "bg-emerald-500" : "bg-slate-400/60")}
+        />
+        {connected ? "online" : "offline"}
+      </span>
+    </Link>
+  );
+}
 
 // `themed` = a workspace admin_theme owns the palette, so the per-user
 // light/dark toggle is hidden (it would just fight the theme).
@@ -202,6 +223,8 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
               <Link to="/changelog" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
                 <Sparkles size={14} className="text-faint dark:text-slate-400" /> What's new
               </Link>
+              {/* Personal edge bridge liveness — only shows for users running one. */}
+              <EdgeBridgeMenuRow itemCls={itemCls} onNavigate={() => setOpen(false)} />
               {/* Configuration is the build-it hub (modules / bundles / wires /
                   fields) — hidden in simple mode for a calmer everyday view. */}
               {!focused && !inline && (
@@ -402,6 +425,8 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
               <Link to="/changelog" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
                 <Sparkles size={14} className="text-faint dark:text-slate-400" /> What's new
               </Link>
+              {/* Personal edge bridge liveness — only shows for users running one. */}
+              <EdgeBridgeMenuRow itemCls={itemCls} onNavigate={() => setOpen(false)} />
               {/* Configuration is the build-it hub (modules / bundles / wires /
                   fields) — hidden in simple mode for a calmer everyday view. */}
               {!focused && !inline && (

@@ -470,10 +470,17 @@ function WorkspaceAiSharing({ slug }: { slug: string }) {
     queryKey: ["ai-shares", slug],
     queryFn: () => api.listAiShares(slug),
     enabled: !!slug,
+    // Live so a new offer appears while the owner is on this page (no reload).
+    refetchInterval: 20_000,
   });
   const items = shares.data?.items ?? [];
-  const onItems = (r: { items: import("../lib/api").WorkspaceAiOffer[] }) =>
+  const onItems = (r: { items: import("../lib/api").WorkspaceAiOffer[] }) => {
     qc.setQueryData(["ai-shares", slug], r);
+    // Approving/declining/activating a shared AI changes whether AI is usable
+    // here — refresh the availability signal so the chat's "AI off" strip flips
+    // on immediately instead of waiting out useAiStatus's long cache.
+    void qc.invalidateQueries({ queryKey: ["ai-status"] });
+  };
 
   const approve = useMutation({
     mutationFn: (cid: string) => api.approveAiShare(slug, cid),
@@ -514,7 +521,11 @@ function WorkspaceAiSharing({ slug }: { slug: string }) {
             <div key={o.credential_id} className="flex items-center gap-2 text-sm">
               <div className="flex-1 min-w-0">
                 <span className="text-content dark:text-mortar-200">{o.offered_by_name}</span>
-                <span className="text-faint"> wants to share their AI ({o.label || o.provider_id})</span>
+                {/* The sharer's connection label is private to them — don't echo it. */}
+                <span className="text-faint">
+                  {" "}
+                  wants to share their AI{o.label ? ` (${o.label})` : ""}
+                </span>
               </div>
               <button
                 type="button"
@@ -551,7 +562,9 @@ function WorkspaceAiSharing({ slug }: { slug: string }) {
                 onChange={() => activate.mutate(o.credential_id)}
                 className="accent-cobble-600"
               />
-              <span className="text-content dark:text-mortar-200">{o.label || o.provider_id}</span>
+              <span className="text-content dark:text-mortar-200">
+                {o.is_own ? o.label || o.provider_id : `${o.offered_by_name}'s AI`}
+              </span>
               <span className="text-[10px] text-faint">
                 {o.is_own ? "yours" : `shared by ${o.offered_by_name}`}
               </span>

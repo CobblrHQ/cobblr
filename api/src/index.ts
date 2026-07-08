@@ -16,7 +16,7 @@
 
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { setPlatform } from "@cobblr/platform-contract";
+import { setPlatform, canContain, canBeContained } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import { env } from "./env.js";
 import { meta, metaPool, pingMeta } from "./db/meta.js";
@@ -62,6 +62,7 @@ import { migrateLensModules } from "./platform/migrate-lens-modules.js";
 import { migrateLensBundlesToInstances } from "./platform/migrate-lens-bundles-to-instances.js";
 import { enableDigifabForMachineBundles } from "./platform/enable-digifab-for-machines.js";
 import { migrateInventoryLocations } from "./platform/migrate-inventory-locations.js";
+import { backfillPlacements } from "./platform/migrate-location-to-placement.js";
 import { backfillDefaultBindings } from "./platform/seed-bindings.js";
 import { backfillBundleClaims } from "./platform/backfill-bundle-claims.js";
 import {
@@ -82,6 +83,21 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 process.on("unhandledRejection", (reason) => {
   console.error("[cobblr-api] unhandled rejection:", reason);
 });
+
+// The per-tenant DB slice platform().placement touches. The table is owned by
+// the core-placement foundational module (tenant-local — no org_id; the tenant
+// DB is the org). getTenantDb(orgId) is cast to this.
+type PlacementDB = {
+  core_placement_placements: {
+    containee_kind: string;
+    containee_id: string;
+    container_kind: string;
+    container_id: string;
+    slot: string | null;
+    placed_by: string | null;
+    placed_at: unknown;
+  };
+};
 
 async function boot() {
   // Boot-phase profiler: logs `[bootphase] <label>: <ms>` per pass so we can see
@@ -430,6 +446,99 @@ async function boot() {
         return rows;
       },
     },
+    // Placement — the containment primitive. "A containee lives inside a
+    // container." One relationship for the whole platform (a part in a machine,
+    // a component in a server, an item in a location); see
+    // docs/design-decisions/placement-and-containment.md.
+    placement: {
+      place: async ({ orgId, containee, container, slot, placedBy }) => {
+        if (containee.kind === container.kind && containee.id === container.id) {
+          throw new Error("placement: an entity cannot contain itself");
+        }
+        // Trait gate: only a physical thing can contain; only a containable
+        // thing can be contained. Unknown kinds (not in the registry) are left
+        // to the caller — we don't block a custom kind we can't classify.
+        const [cteeKind, ctnrKind] = await Promise.all([
+          entities.getKind(containee.kind),
+          entities.getKind(container.kind),
+        ]);
+        if (ctnrKind && !canContain(ctnrKind.traits as Record<string, unknown> | null)) {
+          throw new Error(`placement: ${container.kind} cannot contain (not a physical container)`);
+        }
+        if (cteeKind && !canBeContained(cteeKind.traits as Record<string, unknown> | null)) {
+          throw new Error(`placement: ${containee.kind} cannot be contained`);
+        }
+        const tdb = (await getTenantDb(orgId)) as unknown as Kysely<PlacementDB>;
+        // Cycle guard: walk up the container's placement chain (same tenant DB);
+        // reaching the containee means this placement would form a loop.
+        let cursor: { kind: string; id: string } | null = { kind: container.kind, id: container.id };
+        const seen = new Set<string>();
+        while (cursor) {
+          if (cursor.kind === containee.kind && cursor.id === containee.id) {
+            throw new Error("placement: would create a containment cycle");
+          }
+          const key = `${cursor.kind} ${cursor.id}`;
+          if (seen.has(key)) break; // defensive — pre-existing cycle, don't spin
+          seen.add(key);
+          const up = await tdb
+            .selectFrom("core_placement_placements")
+            .select(["container_kind", "container_id"])
+            .where("containee_kind", "=", cursor.kind)
+            .where("containee_id", "=", cursor.id)
+            .executeTakeFirst();
+          cursor = up ? { kind: up.container_kind, id: up.container_id } : null;
+        }
+        // Upsert — one container per containee (moving re-points the same row).
+        await tdb
+          .insertInto("core_placement_placements")
+          .values({
+            containee_kind: containee.kind,
+            containee_id: containee.id,
+            container_kind: container.kind,
+            container_id: container.id,
+            slot: slot ?? null,
+            placed_by: placedBy ?? null,
+          })
+          .onConflict((oc) =>
+            oc.columns(["containee_kind", "containee_id"]).doUpdateSet({
+              container_kind: container.kind,
+              container_id: container.id,
+              slot: slot ?? null,
+              placed_by: placedBy ?? null,
+              placed_at: sql`now()`,
+            }),
+          )
+          .execute();
+      },
+      remove: async ({ orgId, containee }) => {
+        const tdb = (await getTenantDb(orgId)) as unknown as Kysely<PlacementDB>;
+        await tdb
+          .deleteFrom("core_placement_placements")
+          .where("containee_kind", "=", containee.kind)
+          .where("containee_id", "=", containee.id)
+          .execute();
+      },
+      containerOf: async ({ orgId, containee }) => {
+        const tdb = (await getTenantDb(orgId)) as unknown as Kysely<PlacementDB>;
+        const row = await tdb
+          .selectFrom("core_placement_placements")
+          .select(["container_kind", "container_id"])
+          .where("containee_kind", "=", containee.kind)
+          .where("containee_id", "=", containee.id)
+          .executeTakeFirst();
+        return row ? { kind: row.container_kind, id: row.container_id } : null;
+      },
+      contents: async ({ orgId, container }) => {
+        const tdb = (await getTenantDb(orgId)) as unknown as Kysely<PlacementDB>;
+        const rows = await tdb
+          .selectFrom("core_placement_placements")
+          .select(["containee_kind", "containee_id"])
+          .where("container_kind", "=", container.kind)
+          .where("container_id", "=", container.id)
+          .execute();
+        return rows.map((r) => ({ kind: r.containee_kind, id: r.containee_id }));
+      },
+    },
     catalogs: {
       findBySemanticType: async (orgId, semanticType) => {
         type CatalogsXReadDB = {
@@ -623,6 +732,16 @@ async function boot() {
   if (invLocResult.orgsTouched > 0) {
     console.log(
       `[cobblr-api] inventory_locations → core-locations: ${invLocResult.orgsTouched} org(s), ${invLocResult.rowsCopied} row(s) copied, ${invLocResult.fksDropped} FK(s) dropped`,
+    );
+  }
+  // Seed the placement primitive from existing location_id values (a Location is
+  // one KIND of container). Runs after locations are canonical + before
+  // syncTenantMigrations, same as above. Idempotent; the dual-write keeps it
+  // fresh once it ships (step 2b).
+  const placeResult = await T("backfillPlacements", backfillPlacements());
+  if (placeResult.orgsTouched > 0) {
+    console.log(
+      `[cobblr-api] location_id → placement backfill: ${placeResult.orgsTouched} org(s), ${placeResult.rowsInserted} placement row(s) seeded`,
     );
   }
   // Self-heal: backfill foundational + autoEnable capabilities onto workspaces

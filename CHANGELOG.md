@@ -2,6 +2,18 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-07-08
+
+### Features
+- See what's inside your things. A machine's detail now has an "Installed components" panel: add the parts that live inside it (a printer's mods, a server's PSU/SSD), see them at a glance, and remove them. It's a generic containment panel that will show up on other containers next.
+- Scan components straight into a machine or server. Point the camera at a machine or asset's QR label to make it the active bin, then scan each component's barcode. It's identified and dropped *inside* that container automatically. The "scan into a location" flow you know, now for any container.
+- Saved views got a real builder, and sorting now works everywhere. Creating or editing a view is now a field-aware form instead of a raw text box: pick filter fields and operators from dropdowns (`is`, `is any of`, `is not`, and numeric comparisons), pick columns and a group-by field, and (new) add sort rows to order a view by any field, ascending or descending, with tie-breaks. "Is any of" lets one filter match several values at once (e.g. machines that are *building* or *rebuilding*). Sorting is now honored by every module's list (machines, assets, and orders join inventory and projects), so you can finally order your things by most-recently-updated, cost, priority, or whatever field matters.
+
+### Improvements
+- When a member offers to share their AI with a workspace, it no longer sits unseen. The workspace owner now gets an email as well as the in-app notification, a dashboard callout with Approve / Decline right there, and an amber dot on Configuration: instead of just an easily-missed bell item. And on phones, the header's notification bell finally has a home: the menu now carries a notifications row with an unread badge (and a red dot on the ☰ button when you have unread items), so mobile users can actually reach their inbox. The person doing the sharing also sees, on their AI connections page, whether each share is *awaiting owner approval*, *approved*, or *active*. No more wondering if it went through.
+- Your personal edge bridge (the local-AI tunnel) now shows whether it's actually connected: the same green "online" / grey "offline" dot the workspace's 3D-printer and device bridges already use. It appears on each edge-bridge connection in Connections, and, if you run one, as an Edge bridge ● row right in your account menu, so you can glance at it from anywhere instead of guessing why local AI isn't answering. Same liveness signal under the hood, just surfaced by *your* bridge instead of a workspace's.
+- Groundwork for tracking what's *inside* your things: a new containment relationship so a component can live inside a machine or server (and a part inside a printer). This step adds the plumbing; the panel to see components and scan them straight into a container arrives in the next update.
+
 ## 2026-07-07
 
 ### Features

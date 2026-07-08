@@ -34,6 +34,7 @@ const FOUNDATIONAL_ALLOWLIST = new Set([
   "core-queue",
   "core-healthcheck",
   "core-locations",
+  "core-placement",
 ]);
 
 const warnedNonCuratedFoundational = new Set<string>();

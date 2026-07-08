@@ -1,6 +1,20 @@
-import { platform, type EntityListQuery, type ResolvedEntity } from "@cobblr/platform-contract";
+import { platform, parseSort, type EntityListQuery, type ResolvedEntity } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { MachinesDB } from "../db.js";
+
+// Native columns the list resolver will order by. Anything outside this set
+// (custom metadata fields, unknown keys) is dropped by parseSort rather than
+// interpolated into SQL. Mirrors the NATIVE/COMPARABLE whitelists below.
+const SORTABLE = new Set([
+  "name",
+  "state",
+  "family",
+  "type",
+  "manufacturer",
+  "excitement",
+  "created_at",
+  "updated_at",
+]);
 
 let registered = false;
 
@@ -54,7 +68,15 @@ export function registerMachinesResolvers(): void {
           continue;
         }
         if (NATIVE.has(key)) {
-          if (typeof val === "string") q = q.where(key as never, "=", val as never);
+          // Array value → IN (the contract's "IN for arrays" convention), which
+          // is how a multi-state filter ("on the workbench" = building OR
+          // rebuilding OR …) reaches the resolver. Scalar → equality.
+          if (Array.isArray(val)) {
+            const vals = val.filter((v): v is string => typeof v === "string");
+            if (vals.length > 0) q = q.where(key as never, "in", vals as never);
+          } else if (typeof val === "string") {
+            q = q.where(key as never, "=", val as never);
+          }
           continue;
         }
         q = q.where(sql<boolean>`metadata ->> ${key} = ${String(val)}`);
@@ -77,7 +99,13 @@ export function registerMachinesResolvers(): void {
         }
       }
     }
-    const rows = await q.orderBy("name", "asc").limit(limit).offset(offset).execute();
+    // Honor the view config's sort spec (native cols only, via SORTABLE);
+    // fall back to name A→Z when no usable sort was given. A trailing `name`
+    // tiebreak keeps ordering stable when the primary key has ties.
+    const order = parseSort(query.sort, SORTABLE);
+    for (const { col, dir } of order) q = q.orderBy(col as never, dir);
+    if (!order.some((o) => o.col === "name")) q = q.orderBy("name", "asc");
+    const rows = await q.limit(limit).offset(offset).execute();
     return { items: rows.map((r) => toResolvedMachine(r)) };
   };
 

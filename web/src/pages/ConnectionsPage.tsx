@@ -19,6 +19,7 @@ import {
   type UserConnection,
   type UserConnectionInput,
 } from "../lib/api";
+import { isEdgeBridgeConnection } from "../lib/useMyEdgeBridge";
 
 const MODE_LABEL: Record<ConnRouteMode, string> = {
   "my-calls": "Only calls I personally make",
@@ -92,19 +93,43 @@ export function ConnectionsPage() {
                 <span className="ml-2 text-[11px] font-mono text-faint">{c.provider_id}</span>
               </div>
               <div className="text-[11px] text-muted mt-0.5">
-                {c.routes.length === 0
-                  ? c.route_scope === "explicit"
-                    ? "Not used in any workspace"
-                    : `${MODE_LABEL[c.route_mode]} · ${SCOPE_LABEL[c.route_scope]}`
-                  : c.routes
-                      .map((r) => `${orgName(r.org_id)} (${r.mode === "workspace-default" ? "shared" : "just me"})`)
-                      .join(" · ")}
+                {c.routes.length === 0 ? (
+                  c.route_scope === "explicit" ? (
+                    "Not used in any workspace"
+                  ) : (
+                    `${MODE_LABEL[c.route_mode]} · ${SCOPE_LABEL[c.route_scope]}`
+                  )
+                ) : (
+                  <span className="inline-flex flex-wrap gap-x-3 gap-y-1">
+                    {c.routes.map((r) => {
+                      const shared = r.mode === "workspace-default";
+                      // Only 'shared' routes carry an approval state; 'just me'
+                      // always works for the owner so it needs no badge.
+                      const status = shared ? c.share_status[r.org_id] : undefined;
+                      return (
+                        <span key={r.org_id} className="inline-flex items-center gap-1">
+                          {orgName(r.org_id)} ({shared ? "shared" : "just me"})
+                          {status === "pending" && (
+                            <span className="text-amber-600 dark:text-amber-500">
+                              · awaiting owner approval
+                            </span>
+                          )}
+                          {status === "approved" && <span className="text-faint">· approved</span>}
+                          {status === "active" && (
+                            <span className="text-emerald-600 dark:text-emerald-500">· active</span>
+                          )}
+                        </span>
+                      );
+                    })}
+                  </span>
+                )}
               </div>
               {c.credential_keys.length > 0 && (
                 <div className="text-[11px] text-faint mt-0.5">
                   set: {c.credential_keys.join(", ")}
                 </div>
               )}
+              {isEdgeBridgeConnection(c.provider_id) && <EdgeBridgeStatusRow />}
             </div>
             <div className="flex items-center shrink-0">
               <button
@@ -393,6 +418,23 @@ function PersonalAgentHint() {
       {on
         ? "Your personal edge agent is connected — calls to this endpoint will route through it to your LAN."
         : "No personal edge agent is connected yet. Calls will fail until one dials in — set it up like the Local-AI edge bridge agent (it serves every bridge-transit connection you add)."}
+    </div>
+  );
+}
+
+/** Compact live status for an edge-bridge connection in the list — same
+ *  emerald/slate "online/offline" convention as the workspace device bridges
+ *  (BridgePicker), so a personal bridge reads the same as a 3D-printer one. */
+function EdgeBridgeStatusRow() {
+  const agent = useQuery({ queryKey: ["me-edge-agent"], queryFn: api.getMyEdgeAgent, refetchInterval: 5000 });
+  const on = agent.data?.connected ?? false;
+  return (
+    <div className="flex items-center gap-1.5 text-[11px] mt-1">
+      <span className={"inline-block w-1.5 h-1.5 rounded-full " + (on ? "bg-emerald-500" : "bg-slate-400/60")} />
+      <span className={on ? "text-emerald-600 dark:text-emerald-500" : "text-muted"}>
+        Edge bridge {on ? "online" : "offline"}
+      </span>
+      {!on && <span className="text-faint">— start your bridge agent to use it</span>}
     </div>
   );
 }

@@ -684,6 +684,41 @@ export function resolveTraits(decl: {
   return undefined;
 }
 
+/** Read one trait-axis value off a resolved traits map, tolerating both the
+ *  plain string form and the `{ trait, uncertain }` inference form the
+ *  entity-kind registry can carry. */
+function traitAxisValue(
+  traits: Record<string, unknown> | null | undefined,
+  axis: string,
+): string | null {
+  const v = traits?.[axis];
+  if (v == null) return null;
+  if (typeof v === "string") return v;
+  if (typeof v === "object" && "trait" in (v as Record<string, unknown>)) {
+    const t = (v as { trait?: unknown }).trait;
+    return typeof t === "string" ? t : null;
+  }
+  return null;
+}
+
+/** Placement capability (see placement-and-containment.md): can a kind hold
+ *  other things inside it? Containment is a PHYSICAL relationship — any physical
+ *  thing can be a container (a server holds a PSU; a rack holds a server; a
+ *  drawer holds tools). Digital records / work-items cannot. This is the
+ *  `canContain` capability from the spec, derived from traits rather than a new
+ *  schema field, so it composes with the existing container/containable axis
+ *  (which stays for backward-compatible action matching). */
+export function canContain(traits: Record<string, unknown> | null | undefined): boolean {
+  return traitAxisValue(traits, "tangibility") === "physical";
+}
+
+/** Can a kind be placed inside a container? Anything carrying a containment
+ *  trait (containable OR container — both are physical); digital records (no
+ *  containment axis) cannot. */
+export function canBeContained(traits: Record<string, unknown> | null | undefined): boolean {
+  return traitAxisValue(traits, "containment") != null;
+}
+
 // ──────────────────────── Platform runtime ────────────────────────
 //
 // Modules don't import from the api workspace directly — that'd
@@ -844,6 +879,41 @@ export interface EntityListQuery {
   q?: string;
   /** Sort spec: array of `field` or `-field` (prefix `-` for desc). */
   sort?: string[];
+}
+
+/** Turn an `EntityListQuery.sort` spec (`["-excitement","name"]`) into an
+ *  ordered list of `{ col, dir }` a list resolver can hand straight to its
+ *  query builder. A leading `-` means descending; anything else ascending.
+ *
+ *  Only columns present in `sortable` survive — a resolver passes the set of
+ *  columns it can actually order by (native cols it trusts), and unknown or
+ *  unsafe fields are dropped rather than interpolated into SQL. Same
+ *  degrade-don't-throw contract the `where`/`filter` paths follow: a sort the
+ *  resolver can't honor becomes "no extra ordering", never an error. An empty
+ *  or all-dropped spec returns `[]`, and the resolver falls back to its own
+ *  default order.
+ *
+ *  Pure and dependency-free so both the api resolvers and the web client
+ *  (which sorts already-fetched rows in the same order) share one definition
+ *  of the grammar. */
+export function parseSort(
+  sort: string[] | undefined,
+  sortable: ReadonlySet<string>,
+): Array<{ col: string; dir: "asc" | "desc" }> {
+  if (!sort || sort.length === 0) return [];
+  const out: Array<{ col: string; dir: "asc" | "desc" }> = [];
+  const seen = new Set<string>();
+  for (const raw of sort) {
+    if (typeof raw !== "string") continue;
+    const token = raw.trim();
+    if (!token) continue;
+    const dir: "asc" | "desc" = token.startsWith("-") ? "desc" : "asc";
+    const col = token.replace(/^-/, "").trim();
+    if (!col || seen.has(col) || !sortable.has(col)) continue;
+    seen.add(col);
+    out.push({ col, dir });
+  }
+  return out;
 }
 
 export interface EntityListResult {
@@ -2082,6 +2152,43 @@ export interface PlatformAuth {
  *  relationship table. Modules use this instead of SELECTing the
  *  table directly so we have one chokepoint for org-scoping +
  *  validation. See B1 in 2026-05-25-audit.md. */
+/** A polymorphic entity reference — `(kind, id)`. Used by placement (and
+ *  handy anywhere a bare "which entity" pointer is needed without the full
+ *  ResolvedEntity). */
+export interface EntityRef {
+  kind: string;
+  id: string;
+}
+
+/** Placement — the platform containment primitive
+ *  (docs/design-decisions/placement-and-containment.md). "A containee lives
+ *  inside a container." One relationship for the whole platform: a part
+ *  installed in a machine, a component in a server (asset), an item filed into a
+ *  location — a Location is just one KIND of container. Org-scoped; the caller
+ *  passes orgId.
+ *
+ *  Invariants enforced here (not the schema): a containee is in AT MOST ONE
+ *  container (`place` upserts); `place` is trait-gated (container must be
+ *  physical / `canContain`, containee `canBeContained`) and rejects a placement
+ *  that would form a containment cycle. */
+export interface PlatformPlacement {
+  /** Put `containee` inside `container` (moving it if already placed). Throws on
+   *  a self-placement, an ineligible kind, or a cycle. */
+  place(args: {
+    orgId: string;
+    containee: EntityRef;
+    container: EntityRef;
+    slot?: string | null;
+    placedBy?: string | null;
+  }): Promise<void>;
+  /** Take `containee` out of whatever container it's in (no-op if unplaced). */
+  remove(args: { orgId: string; containee: EntityRef }): Promise<void>;
+  /** The container a containee currently lives in, or null. */
+  containerOf(args: { orgId: string; containee: EntityRef }): Promise<EntityRef | null>;
+  /** Everything directly inside a container (one level; not recursive). */
+  contents(args: { orgId: string; container: EntityRef }): Promise<EntityRef[]>;
+}
+
 export interface PlatformPairings {
   /** Insert a pairing. Returns the new row id. Org-scoped: the
    *  caller passes orgId; the function inserts with that org_id. */
@@ -2570,6 +2677,7 @@ export interface Platform {
   egress: PlatformEgress;
   auth: PlatformAuth;
   pairings: PlatformPairings;
+  placement: PlatformPlacement;
   catalogs: PlatformCatalogs;
   files: PlatformFiles;
   instances: PlatformInstances;

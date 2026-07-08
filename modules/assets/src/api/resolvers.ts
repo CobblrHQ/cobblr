@@ -1,8 +1,26 @@
-import { platform, type EntityListQuery, type ResolvedEntity } from "@cobblr/platform-contract";
+import { platform, parseSort, type EntityListQuery, type ResolvedEntity } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { AssetsDB } from "../db.js";
 
 let registered = false;
+
+// Native columns the list resolver will order by; anything else is dropped by
+// parseSort rather than reaching SQL. Union of the NATIVE/COMPARABLE filter
+// whitelists below plus name.
+const SORTABLE = new Set([
+  "name",
+  "state",
+  "type",
+  "manufacturer",
+  "location_id",
+  "excitement",
+  "quantity",
+  "purchased_at",
+  "warranty_until",
+  "last_service_at",
+  "created_at",
+  "updated_at",
+]);
 
 export function registerAssetsResolvers(): void {
   if (registered) return;
@@ -73,7 +91,13 @@ export function registerAssetsResolvers(): void {
           continue;
         }
         if (NATIVE.has(key)) {
-          if (typeof val === "string") q = q.where(key as never, "=", val as never);
+          // Array → IN (multi-value filter); scalar → equality.
+          if (Array.isArray(val)) {
+            const vals = val.filter((v): v is string => typeof v === "string");
+            if (vals.length > 0) q = q.where(key as never, "in", vals as never);
+          } else if (typeof val === "string") {
+            q = q.where(key as never, "=", val as never);
+          }
           continue;
         }
         q = q.where(sql<boolean>`metadata ->> ${key} = ${String(val)}`);
@@ -105,7 +129,10 @@ export function registerAssetsResolvers(): void {
         }
       }
     }
-    const rows = await q.orderBy("name", "asc").limit(limit).offset(offset).execute();
+    const order = parseSort(query.sort, SORTABLE);
+    for (const { col, dir } of order) q = q.orderBy(col as never, dir);
+    if (!order.some((o) => o.col === "name")) q = q.orderBy("name", "asc");
+    const rows = await q.limit(limit).offset(offset).execute();
     return { items: rows.map((r) => toResolvedAsset(r)) };
   };
   platform().entities.registerListResolver("assets:asset", (orgId, query) =>

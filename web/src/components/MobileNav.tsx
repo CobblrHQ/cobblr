@@ -15,20 +15,34 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { NavLink, useNavigate } from "react-router-dom";
-import { Menu, X, Moon, Sun, LogOut, Sliders, UserCog } from "lucide-react";
+import { Menu, X, Moon, Sun, LogOut, Sliders, UserCog, Bell } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { UpdateBadge } from "./UpdateBadge";
+import { usePendingAiShares } from "../lib/usePendingAiShares";
 import { useAuth } from "../auth/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
 import { useNavModules, NAVGROUP_PREFIX, INSTANCE_PREFIX } from "./useNavModules";
 
 export function MobileNav() {
-  const { activeSlug } = useActiveOrg();
+  const { activeOrg, activeSlug } = useActiveOrg();
   const { tops, childrenByParent, instanceGroups } = useNavModules(activeSlug);
+  const pendingShares = usePendingAiShares(activeSlug, activeOrg?.role === "owner");
   const { logout } = useAuth();
   const { theme, toggle } = useTheme();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
+
+  // Unread notifications, cross-workspace — shares the header bell's query key
+  // so the two stay in sync. The desktop bell polls this every 15s but is
+  // desktop-only; on mobile this hook is the sole owner, so it polls too.
+  const unread = useQuery({
+    queryKey: ["me-notifications-unread"],
+    queryFn: () => api.meNotificationsUnreadCount(),
+    refetchInterval: 30000,
+  });
+  const unreadCount = unread.data?.count ?? 0;
 
   // Close on Escape.
   useEffect(() => {
@@ -69,12 +83,17 @@ export function MobileNav() {
         className="md:hidden relative text-muted dark:text-slate-400 hover:text-accent transition p-1.5"
       >
         {open ? <X size={20} /> : <Menu size={20} />}
-        {/* Bundle-updates signal so it's visible without opening the menu. */}
-        {!open && (
-          <span className="absolute top-0.5 right-0.5">
-            <UpdateBadge slug={activeSlug} variant="dot" />
-          </span>
-        )}
+        {/* Attention signal, visible without opening the menu. Unread
+            notifications (red) take precedence over the bundle-updates dot —
+            they're more time-sensitive, and there's only room for one dot. */}
+        {!open &&
+          (unreadCount > 0 ? (
+            <span className="absolute top-0.5 right-0.5 h-2 w-2 rounded-full bg-ember-500 ring-2 ring-surface dark:ring-slate-900" />
+          ) : (
+            <span className="absolute top-0.5 right-0.5">
+              <UpdateBadge slug={activeSlug} variant="dot" />
+            </span>
+          ))}
       </button>
 
       {open &&
@@ -202,6 +221,20 @@ export function MobileNav() {
               })}
 
               <NavLink
+                to="/me/notifications"
+                className={linkClass + " flex items-center gap-2"}
+                onClick={() => setOpen(false)}
+              >
+                <Bell size={14} />
+                notifications
+                {unreadCount > 0 && (
+                  <span className="ml-auto inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-ember-500 text-white text-[11px] font-semibold">
+                    {unreadCount > 99 ? "99+" : unreadCount}
+                  </span>
+                )}
+              </NavLink>
+
+              <NavLink
                 to="/me"
                 className={linkClass + " flex items-center gap-2"}
                 onClick={() => setOpen(false)}
@@ -217,8 +250,17 @@ export function MobileNav() {
               >
                 <Sliders size={14} />
                 configuration
-                {/* Bundles (with their updates) live under Configuration. */}
-                <UpdateBadge slug={activeSlug} variant="count" className="ml-auto" />
+                {/* Right-aligned signals: a pending AI-share offer (amber dot,
+                    owner-only) + bundle updates. Both live under Configuration. */}
+                <span className="ml-auto flex items-center gap-1.5">
+                  {pendingShares.length > 0 && (
+                    <span
+                      className="h-2 w-2 rounded-full bg-amber-500"
+                      title="A shared AI is waiting for your approval"
+                    />
+                  )}
+                  <UpdateBadge slug={activeSlug} variant="count" />
+                </span>
               </NavLink>
 
               <button

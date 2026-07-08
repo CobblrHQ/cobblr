@@ -315,7 +315,7 @@ export const CONFIG_DESTINATIONS: ConfigDestination[] = [
     icon: Bot,
     label: "Assistant",
     description:
-      "Teach Ask Cobblr what to say when there's no AI connected — edit the built-in answers, turn them off, or add your own keyword-triggered replies. Includes a live \"try it\" tester.",
+      "Teach Ask Cobb what to say when there's no AI connected — edit the built-in answers, turn them off, or add your own keyword-triggered replies. Includes a live \"try it\" tester.",
     to: "/configuration/assistant",
     keywords: ["cobb", "chat", "basic mode", "canned", "no ai", "answers", "faq"],
   },

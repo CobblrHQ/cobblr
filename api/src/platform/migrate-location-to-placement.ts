@@ -1,0 +1,177 @@
+// HISTORICAL DATA MIGRATION — not kernel logic. Boot pass that (1) seeds the
+// placement primitive (core_placement_placements, owned by core-placement) from
+// every existing tenant-local `location_id`, and (2) installs the transitional
+// sync TRIGGERS that keep placement in step with location_id going forward.
+// Delete both once every production tenant has cut over AND location_id has been
+// dropped (step 5). Skip with `COBBLR_SKIP_HISTORICAL_MIGRATIONS=1`.
+//
+// Placement subsumes location_id (docs/design-decisions/placement-and-containment.md):
+// "what is this thing inside of?" — a Location is just one KIND of container.
+// The three tables that carry a location_id each get one placement row per
+// located entity: containee = the entity, container = the core-locations:location.
+//
+// Per org: ensure core-placement is enabled (creates the table); INSERT ...
+// SELECT current location_id values into placement (`on conflict do nothing`,
+// idempotent); then create-or-replace the sync function + triggers on each
+// present located table. GUARANTEED complete for those orgs — every writer path
+// fires the trigger, no app-code.
+//
+// Coverage note (transitional): this runs at boot for orgs that exist then. An
+// org created (or a located module first enabled) AFTER a boot is un-triggered
+// until the NEXT deploy's boot re-runs this (idempotent) — harmless while
+// nothing reads placement yet (the backfill catches up the missed rows). A
+// final pass precedes step 3's reader cutover so every org is covered.
+
+import { meta } from "../db/meta.js";
+import { getTenantPool, evictTenantPool } from "../db/tenant.js";
+import { enableModuleForOrg } from "../modules/enable.js";
+
+export interface PlacementBackfillResult {
+  orgsTouched: number;
+  rowsInserted: number;
+}
+
+// The location-bearing tenant tables and the entity-kind each maps to. Kinds are
+// the BASE kinds; instances (3d-printers:item …) are a partition of the same
+// row, so the base kind is the right containee_kind for the row's table.
+const LOCATED_TABLES: Array<{ table: string; kind: string }> = [
+  { table: "inventory_parts", kind: "inventory:part" },
+  { table: "machines_machines", kind: "machines:machine" },
+  { table: "assets_assets", kind: "assets:asset" },
+];
+
+// The transitional sync: one plpgsql function that mirrors a row's location_id
+// into core_placement_placements (a Location is one KIND of container). The
+// kind is passed per-table as a trigger arg. The ONLY triggers in the codebase
+// — deliberately scoped to this migration and removed at the location_id cutover
+// (step 5). This is what makes the dual-write GUARANTEED complete: every writer
+// path (handlers, actions, import, sync-writers) fires it, with zero app-code.
+const TRIGGER_FUNCTION_SQL = `
+create or replace function core_placement_sync_location() returns trigger
+language plpgsql as $$
+declare
+  k text := TG_ARGV[0];
+begin
+  if TG_OP = 'DELETE' then
+    delete from core_placement_placements
+     where containee_kind = k and containee_id = OLD.id::text
+       and container_kind = 'core-locations:location';
+    return OLD;
+  end if;
+  if NEW.location_id is null then
+    -- location cleared: drop the location-derived placement (leave any
+    -- non-location placement a later step might set alone).
+    delete from core_placement_placements
+     where containee_kind = k and containee_id = NEW.id::text
+       and container_kind = 'core-locations:location';
+  else
+    insert into core_placement_placements
+      (containee_kind, containee_id, container_kind, container_id)
+    values (k, NEW.id::text, 'core-locations:location', NEW.location_id::text)
+    on conflict (containee_kind, containee_id) do update
+      set container_kind = 'core-locations:location',
+          container_id   = excluded.container_id,
+          placed_at      = now();
+  end if;
+  return NEW;
+end;
+$$;
+`;
+
+// Per located table: ins/del fire always; update fires only when location_id
+// actually changes (so unrelated updates don't churn placed_at). Idempotent —
+// drop-if-exists + create. Table/kind are hardcoded constants, not user input.
+function triggerSql(table: string, kind: string): string {
+  return `
+drop trigger if exists ${table}_placement_sync on ${table};
+create trigger ${table}_placement_sync
+  after insert or delete on ${table}
+  for each row execute function core_placement_sync_location('${kind}');
+drop trigger if exists ${table}_placement_sync_upd on ${table};
+create trigger ${table}_placement_sync_upd
+  after update on ${table}
+  for each row when (old.location_id is distinct from new.location_id)
+  execute function core_placement_sync_location('${kind}');
+`;
+}
+
+async function backfillOne(orgId: string): Promise<{ rowsInserted: number }> {
+  const pool = await getTenantPool(orgId);
+
+  // Which of the located tables actually exist in this tenant DB? (An org that
+  // never enabled inventory/machines/assets won't have all three.)
+  const present: Array<{ table: string; kind: string }> = [];
+  for (const t of LOCATED_TABLES) {
+    const { rows } = await pool.query<{ exists: boolean }>(
+      `select to_regclass('public.${t.table}') is not null as exists`,
+    );
+    if (rows[0]?.exists) present.push(t);
+  }
+  if (present.length === 0) return { rowsInserted: 0 };
+
+  // Ensure the placement table exists (core-placement is foundational/autoEnable,
+  // but enableModuleForOrg is idempotent and runs the migration if it hasn't).
+  await enableModuleForOrg(orgId, "core-placement");
+
+  let rowsInserted = 0;
+  for (const t of present) {
+    // One INSERT ... SELECT per table: each located entity → a placement row
+    // whose container is its core-locations:location. Idempotent on the
+    // one-container-per-containee unique key.
+    const result = await pool.query(
+      `insert into core_placement_placements
+         (containee_kind, containee_id, container_kind, container_id)
+       select $1, id, 'core-locations:location', location_id
+         from ${t.table}
+        where location_id is not null
+       on conflict (containee_kind, containee_id) do nothing`,
+      [t.kind],
+    );
+    rowsInserted += result.rowCount ?? 0;
+  }
+
+  // Install the sync triggers so placement stays in step with location_id going
+  // forward (the backfill above only seeds the current state). One function +
+  // two triggers per present table; idempotent, so a re-run refreshes them.
+  await pool.query(TRIGGER_FUNCTION_SQL);
+  for (const t of present) {
+    await pool.query(triggerSql(t.table, t.kind));
+  }
+
+  return { rowsInserted };
+}
+
+/** Boot-time entry point. Backfills placement from location_id for every org
+ *  that has a location-bearing module enabled. */
+export async function backfillPlacements(): Promise<PlacementBackfillResult> {
+  if (process.env.COBBLR_SKIP_HISTORICAL_MIGRATIONS === "1") {
+    return { orgsTouched: 0, rowsInserted: 0 };
+  }
+  const orgs = await meta
+    .selectFrom("org_modules")
+    .select("org_id")
+    .where("module_name", "in", ["inventory", "machines", "assets"])
+    .distinct()
+    .execute();
+
+  let orgsTouched = 0;
+  let rowsInserted = 0;
+  for (const o of orgs) {
+    try {
+      const r = await backfillOne(o.org_id);
+      if (r.rowsInserted > 0) orgsTouched++;
+      rowsInserted += r.rowsInserted;
+    } catch (err) {
+      console.error(
+        `[backfill-placements] org ${o.org_id} failed:`,
+        (err as Error).message,
+      );
+    } finally {
+      // Release the tenant pool immediately — this boot pass is serial and
+      // pre-`listen`; leaving every org's pool cached open exhausts Postgres
+      // max_connections. Reopens lazily on first request.
+      await evictTenantPool(o.org_id);
+    }
+  }
+  return { orgsTouched, rowsInserted };
+}

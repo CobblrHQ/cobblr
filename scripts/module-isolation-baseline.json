@@ -54,6 +54,12 @@
     "reason": "INTENTIONAL (not drift): the maintainer-curated foundational allowlist — the kernel must know which modules are load-bearing so a module can't self-declare itself permanent. See manifest-contract.md + audit-2026-06-26.md P1 #2."
   },
   {
+    "rule": "C-kernel-names-module",
+    "file": "api/src/modules/enable.ts",
+    "token": "core-placement",
+    "reason": "INTENTIONAL (not drift): the maintainer-curated foundational allowlist — core-placement owns the tenant-local containment table (core_placement_placements) that platform().placement reads, so it's load-bearing infrastructure and can't be disableable. See placement-and-containment.md + manifest-contract.md."
+  },
+  {
     "rule": "D-module-names-module",
     "file": "modules/core-scan/src/services/matchmaker.ts",
     "token": "assets",

@@ -14,6 +14,19 @@ import { useMutation } from "@tanstack/react-query";
 import { ApiError, api, type SavedView } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import {
+  useKindFields,
+  FieldSelect,
+  SortBuilder,
+  FilterBuilder,
+  ColumnPicker,
+  configToFilterRows,
+  filterRowsToConfig,
+  sortToRows,
+  rowsToSort,
+  type FilterRow,
+  type SortRow,
+} from "../components/ViewBuilder";
 
 export function ViewsPage() {
   usePageTitle("Views");
@@ -844,13 +857,18 @@ function CreateViewModal({
   const [name, setName] = useState("");
   const [viewType, setViewType] = useState<"list" | "table" | "kanban" | "trend" | "calendar" | "gantt" | "gallery" | "heatmap">("list");
   const [groupBy, setGroupBy] = useState("subtitle");
-  const [visibleFields, setVisibleFields] = useState("title, subtitle");
+  const [columns, setColumns] = useState<string[]>(["title", "subtitle"]);
   const [dateField, setDateField] = useState("due_date");
   const [startField, setStartField] = useState("start_date");
   const [endField, setEndField] = useState("target_date");
   const [imageField, setImageField] = useState("image_path");
+  const [filterRows, setFilterRows] = useState<FilterRow[]>([]);
+  const [sortRows, setSortRows] = useState<SortRow[]>([]);
   const [shared, setShared] = useState(true);
   const toast = useToast();
+
+  // The kind's fields (native + custom) drive every picker below.
+  const fields = useKindFields(slug, entityKind);
 
   // Discover entity kinds from the registry so the user picks a real one.
   const kinds = useQuery({
@@ -869,12 +887,8 @@ function CreateViewModal({
           if (viewType === "kanban" && groupBy.trim()) {
             config.group_by = groupBy.trim();
           }
-          if (viewType === "table") {
-            const cols = visibleFields
-              .split(",")
-              .map((s) => s.trim())
-              .filter(Boolean);
-            if (cols.length > 0) config.visible_fields = cols;
+          if (viewType === "table" && columns.length > 0) {
+            config.visible_fields = columns;
           }
           if (viewType === "calendar" && dateField.trim()) {
             config.date_field = dateField.trim();
@@ -889,6 +903,10 @@ function CreateViewModal({
             if (startField.trim()) config.start_field = startField.trim();
             if (endField.trim()) config.end_field = endField.trim();
           }
+          // filter/sort apply to every layout.
+          Object.assign(config, filterRowsToConfig(filterRows));
+          const sort = rowsToSort(sortRows);
+          if (sort.length) config.sort = sort;
           try {
             await api.createSavedView(slug, {
               entity_kind: entityKind,
@@ -911,6 +929,7 @@ function CreateViewModal({
           <select
             value={entityKind}
             onChange={(e) => setEntityKind(e.target.value)}
+            data-testid="view-entity-kind"
             className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           >
             {(kinds.data?.items ?? []).map((k) => (
@@ -953,98 +972,48 @@ function CreateViewModal({
         {(viewType === "calendar" || viewType === "heatmap") && (
           <label className="block">
             <div className="text-xs text-muted mb-1">Date field</div>
-            <input
-              type="text"
-              value={dateField}
-              onChange={(e) => setDateField(e.target.value)}
-              placeholder="due_date, watched, logged_at…"
-              className="w-full px-2 py-1 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-            />
-            <div className="text-[11px] text-faint mt-1">
-              Which field each row lands on. A native field or a custom one
-              (read from <code>row.fields[field]</code>); values are
-              <code>YYYY-MM-DD</code>.
-            </div>
+            <FieldSelect fields={fields} value={dateField} onChange={setDateField} allowBlank blankLabel="Pick a date field…" />
+            <div className="text-[11px] text-faint mt-1">Which field each row lands on.</div>
           </label>
         )}
         {viewType === "gallery" && (
           <label className="block">
             <div className="text-xs text-muted mb-1">Image field</div>
-            <input
-              type="text"
-              value={imageField}
-              onChange={(e) => setImageField(e.target.value)}
-              placeholder="image_path, poster, cover…"
-              className="w-full px-2 py-1 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-            />
-            <div className="text-[11px] text-faint mt-1">
-              Which field holds each card's image (a URL or stored image path).
-              Rows without one show a title-initial tile.
-            </div>
+            <FieldSelect fields={fields} value={imageField} onChange={setImageField} allowBlank blankLabel="Pick an image field…" />
           </label>
         )}
         {viewType === "gantt" && (
           <div className="grid grid-cols-2 gap-2">
             <label className="block">
               <div className="text-xs text-muted mb-1">Start field</div>
-              <input
-                type="text"
-                value={startField}
-                onChange={(e) => setStartField(e.target.value)}
-                placeholder="start_date"
-                className="w-full px-2 py-1 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-              />
+              <FieldSelect fields={fields} value={startField} onChange={setStartField} allowBlank blankLabel="—" />
             </label>
             <label className="block">
               <div className="text-xs text-muted mb-1">End field</div>
-              <input
-                type="text"
-                value={endField}
-                onChange={(e) => setEndField(e.target.value)}
-                placeholder="target_date"
-                className="w-full px-2 py-1 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-              />
+              <FieldSelect fields={fields} value={endField} onChange={setEndField} allowBlank blankLabel="—" />
             </label>
-            <div className="text-[11px] text-faint col-span-2">
-              Each row is a bar from its start to its end day. Rows with no end
-              (or end ≤ start) render as a milestone marker. Native or custom
-              fields (<code>row.fields[field]</code>); values are <code>YYYY-MM-DD</code>.
-            </div>
           </div>
         )}
         {viewType === "kanban" && (
           <label className="block">
             <div className="text-xs text-muted mb-1">Group by</div>
-            <input
-              type="text"
-              value={groupBy}
-              onChange={(e) => setGroupBy(e.target.value)}
-              placeholder="status, state, subtitle…"
-              className="w-full px-2 py-1 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-            />
-            <div className="text-[11px] text-faint mt-1">
-              Field name to group columns by. Tried as top-level field first,
-              then row.fields[field]. Default <code>subtitle</code> uses the
-              entity's subtitle string (state for assets, status for orders…).
-            </div>
+            <FieldSelect fields={fields} value={groupBy} onChange={setGroupBy} allowBlank blankLabel="Subtitle (default)" />
           </label>
         )}
         {viewType === "table" && (
-          <label className="block">
-            <div className="text-xs text-muted mb-1">Columns (comma-separated)</div>
-            <input
-              type="text"
-              value={visibleFields}
-              onChange={(e) => setVisibleFields(e.target.value)}
-              placeholder="title, subtitle, qty, unit"
-              className="w-full px-2 py-1 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-            />
-            <div className="text-[11px] text-faint mt-1">
-              <code>title</code> and <code>subtitle</code> read from the resolved
-              entity; anything else reads <code>row.fields[col]</code>.
-            </div>
-          </label>
+          <div>
+            <div className="text-xs text-muted mb-1">Columns</div>
+            <ColumnPicker fields={fields} value={columns} onChange={setColumns} />
+          </div>
         )}
+        <div>
+          <div className="text-xs text-muted mb-1">Filter</div>
+          <FilterBuilder fields={fields} rows={filterRows} onChange={setFilterRows} />
+        </div>
+        <div>
+          <div className="text-xs text-muted mb-1">Sort</div>
+          <SortBuilder fields={fields} rows={sortRows} onChange={setSortRows} />
+        </div>
         <label className="flex items-center gap-2 text-sm">
           <input
             type="checkbox"
@@ -1095,24 +1064,15 @@ function EditViewModal({
     (view.view_type as "list" | "table" | "kanban" | "trend" | "calendar" | "gantt" | "gallery" | "heatmap") ?? "list",
   );
   const cfg = (view.config ?? {}) as ViewConfig;
+  const fields = useKindFields(slug, view.entity_kind);
   const [groupBy, setGroupBy] = useState((cfg.group_by as string) ?? "subtitle");
-  const [visibleFields, setVisibleFields] = useState(
-    (cfg.visible_fields ?? ["title", "subtitle"]).join(", "),
-  );
+  const [columns, setColumns] = useState<string[]>((cfg.visible_fields as string[]) ?? ["title", "subtitle"]);
   const [dateField, setDateField] = useState((cfg.date_field as string) ?? "due_date");
   const [startField, setStartField] = useState((cfg.start_field as string) ?? "start_date");
   const [endField, setEndField] = useState((cfg.end_field as string) ?? "target_date");
   const [imageField, setImageField] = useState((cfg.image_field as string) ?? "image_path");
-  const [filterRaw, setFilterRaw] = useState(
-    [
-      formatFilterPairs((cfg.filter as Record<string, unknown>) ?? {}),
-      ...((cfg.where as Array<{ col: string; op: string; value: unknown }> | undefined) ?? [])
-        .filter((w) => w && !("ref_col" in w && (w as { ref_col?: unknown }).ref_col))
-        .map((w) => `${w.col}${w.op}${w.value}`),
-    ]
-      .filter(Boolean)
-      .join(", "),
-  );
+  const [filterRows, setFilterRows] = useState<FilterRow[]>(() => configToFilterRows(cfg));
+  const [sortRows, setSortRows] = useState<SortRow[]>(() => sortToRows(cfg.sort));
   const [shared, setShared] = useState(view.owner_user_id === null);
   const [busy, setBusy] = useState(false);
   const toast = useToast();
@@ -1130,9 +1090,8 @@ function EditViewModal({
           } else {
             delete config.group_by;
           }
-          if (viewType === "table") {
-            const cols = visibleFields.split(",").map((s) => s.trim()).filter(Boolean);
-            config.visible_fields = cols.length > 0 ? cols : undefined;
+          if (viewType === "table" && columns.length > 0) {
+            config.visible_fields = columns;
           } else {
             delete config.visible_fields;
           }
@@ -1155,35 +1114,23 @@ function EditViewModal({
             delete config.start_field;
             delete config.end_field;
           }
-          // Re-build the filter from the comma-separated input. `key=value`
-          // stays a simple equality `filter`; a comparison (`key>=value`,
-          // `key<=value`, `key>value`, `key<value`, `key!=value`) becomes a
-          // `where` predicate (numeric value cast where the field is numeric).
-          // Empty input → neither.
-          const newFilter: Record<string, string> = {};
-          const newWhere: Array<{ col: string; op: string; value: string | number }> = [];
-          // 2-char ops first so `>=` isn't read as `>` / `=`.
-          const OPS = ["<=", ">=", "!=", "<", ">", "="];
-          for (const rawPiece of filterRaw.split(",")) {
-            const piece = rawPiece.trim();
-            if (!piece) continue;
-            const op = OPS.find((o) => piece.includes(o));
-            if (!op) continue;
-            const idx = piece.indexOf(op);
-            const k = piece.slice(0, idx).trim();
-            const vRaw = piece.slice(idx + op.length).trim();
-            if (!k || !vRaw) continue;
-            if (op === "=") {
-              newFilter[k] = vRaw;
-            } else {
-              const isNum = /^-?[0-9]+(\.[0-9]+)?$/.test(vRaw);
-              newWhere.push({ col: k, op, value: isNum ? Number(vRaw) : vRaw });
-            }
-          }
-          if (Object.keys(newFilter).length > 0) config.filter = newFilter;
+          // Rebuild filter/where from the structured builder. Column-to-column
+          // (`ref_col`) predicates — e.g. low-stock `qty < min_qty` — can't be
+          // expressed in the simple builder, so carry any existing ones through
+          // untouched rather than dropping them on save.
+          const rebuilt = filterRowsToConfig(filterRows);
+          const preservedWhere = (
+            (cfg.where as Array<{ col: string; op: string; value?: unknown; ref_col?: unknown }> | undefined) ?? []
+          ).filter((w) => w && w.ref_col);
+          if (rebuilt.filter) config.filter = rebuilt.filter;
           else delete config.filter;
-          if (newWhere.length > 0) config.where = newWhere;
+          const where = [...preservedWhere, ...(rebuilt.where ?? [])];
+          if (where.length) config.where = where;
           else delete config.where;
+          // Sort applies to every layout.
+          const sort = rowsToSort(sortRows);
+          if (sort.length) config.sort = sort;
+          else delete config.sort;
 
           try {
             await api.updateSavedView(slug, view.id, {
@@ -1238,106 +1185,48 @@ function EditViewModal({
         {(viewType === "calendar" || viewType === "heatmap") && (
           <label className="block">
             <div className="text-xs text-muted mb-1">Date field</div>
-            <input
-              type="text"
-              value={dateField}
-              onChange={(e) => setDateField(e.target.value)}
-              placeholder="due_date, watched, logged_at…"
-              className="w-full px-2 py-1 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-            />
-            <div className="text-[11px] text-faint mt-1">
-              Which field each row lands on. A native field or a custom one
-              (read from <code>row.fields[field]</code>); values are
-              <code>YYYY-MM-DD</code>.
-            </div>
+            <FieldSelect fields={fields} value={dateField} onChange={setDateField} allowBlank blankLabel="Pick a date field…" />
+            <div className="text-[11px] text-faint mt-1">Which field each row lands on.</div>
           </label>
         )}
         {viewType === "gallery" && (
           <label className="block">
             <div className="text-xs text-muted mb-1">Image field</div>
-            <input
-              type="text"
-              value={imageField}
-              onChange={(e) => setImageField(e.target.value)}
-              placeholder="image_path, poster, cover…"
-              className="w-full px-2 py-1 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-            />
-            <div className="text-[11px] text-faint mt-1">
-              Which field holds each card's image (a URL or stored image path).
-              Rows without one show a title-initial tile.
-            </div>
+            <FieldSelect fields={fields} value={imageField} onChange={setImageField} allowBlank blankLabel="Pick an image field…" />
           </label>
         )}
         {viewType === "gantt" && (
           <div className="grid grid-cols-2 gap-2">
             <label className="block">
               <div className="text-xs text-muted mb-1">Start field</div>
-              <input
-                type="text"
-                value={startField}
-                onChange={(e) => setStartField(e.target.value)}
-                placeholder="start_date"
-                className="w-full px-2 py-1 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-              />
+              <FieldSelect fields={fields} value={startField} onChange={setStartField} allowBlank blankLabel="—" />
             </label>
             <label className="block">
               <div className="text-xs text-muted mb-1">End field</div>
-              <input
-                type="text"
-                value={endField}
-                onChange={(e) => setEndField(e.target.value)}
-                placeholder="target_date"
-                className="w-full px-2 py-1 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-              />
+              <FieldSelect fields={fields} value={endField} onChange={setEndField} allowBlank blankLabel="—" />
             </label>
-            <div className="text-[11px] text-faint col-span-2">
-              Each row is a bar from its start to its end day. Rows with no end
-              (or end ≤ start) render as a milestone marker. Native or custom
-              fields (<code>row.fields[field]</code>); values are <code>YYYY-MM-DD</code>.
-            </div>
           </div>
         )}
         {viewType === "kanban" && (
           <label className="block">
             <div className="text-xs text-muted mb-1">Group by</div>
-            <input
-              type="text"
-              value={groupBy}
-              onChange={(e) => setGroupBy(e.target.value)}
-              className="w-full px-2 py-1 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-            />
+            <FieldSelect fields={fields} value={groupBy} onChange={setGroupBy} allowBlank blankLabel="Subtitle (default)" />
           </label>
         )}
         {viewType === "table" && (
-          <label className="block">
+          <div>
             <div className="text-xs text-muted mb-1">Columns</div>
-            <input
-              type="text"
-              value={visibleFields}
-              onChange={(e) => setVisibleFields(e.target.value)}
-              className="w-full px-2 py-1 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-            />
-          </label>
+            <ColumnPicker fields={fields} value={columns} onChange={setColumns} />
+          </div>
         )}
-        <label className="block">
-          <div className="text-xs text-muted mb-1">
-            Filter (comma-separated <code>key=value</code> or <code>key≥value</code>)
-          </div>
-          <input
-            type="text"
-            value={filterRaw}
-            onChange={(e) => setFilterRaw(e.target.value)}
-            placeholder="status=active, qty>=0.3"
-            className="w-full px-2 py-1 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-          />
-          <div className="text-[11px] text-faint mt-1">
-            <code>=</code> matches exactly (native cols, metadata fields,{" "}
-            <code>_tag</code>). For numbers, compare with{" "}
-            <code>&gt;=</code> <code>&lt;=</code> <code>&gt;</code>{" "}
-            <code>&lt;</code> <code>!=</code> — e.g.{" "}
-            <code>qty&gt;=0.3</code> for spools with ≥ 300&nbsp;g left.
-          </div>
-        </label>
+        <div>
+          <div className="text-xs text-muted mb-1">Filter</div>
+          <FilterBuilder fields={fields} rows={filterRows} onChange={setFilterRows} />
+        </div>
+        <div>
+          <div className="text-xs text-muted mb-1">Sort</div>
+          <SortBuilder fields={fields} rows={sortRows} onChange={setSortRows} />
+        </div>
         <label className="flex items-center gap-2 text-sm">
           <input
             type="checkbox"
@@ -1367,9 +1256,3 @@ function EditViewModal({
   );
 }
 
-function formatFilterPairs(filter: Record<string, unknown>): string {
-  return Object.entries(filter)
-    .filter(([, v]) => v !== null && v !== undefined && v !== "")
-    .map(([k, v]) => `${k}=${String(v)}`)
-    .join(", ");
-}

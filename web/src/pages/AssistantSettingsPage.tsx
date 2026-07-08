@@ -74,7 +74,7 @@ export function AssistantSettingsPage() {
       </div>
 
       <p className="text-sm text-muted dark:text-slate-400">
-        These are the answers <strong>Ask Cobblr</strong> gives when your workspace has <strong>no AI connected</strong> —
+        These are the answers <strong>Ask Cobb</strong> gives when your workspace has <strong>no AI connected</strong> —
         greetings, "what can you do", how-do-I pointers. Matching is by keyword, no AI involved. Edit a built-in answer,
         turn one off, or add your own for the questions people ask you. When AI <em>is</em> connected, the full assistant
         takes over and these step aside.

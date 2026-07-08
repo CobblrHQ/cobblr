@@ -36,6 +36,7 @@ import { expandInstanceWidgets } from "../dashboard/expandInstanceWidgets";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useAuth } from "../auth/AuthContext";
 import { WhatToDoPanel } from "../components/WhatToDoPanel";
+import { PendingAiShareCallout } from "../components/PendingAiShareCallout";
 import { HeatmapRenderer } from "./ViewsPage";
 import { liveNextStepLabel } from "../lib/featured-bundles";
 import {
@@ -84,6 +85,11 @@ export function Dashboard() {
         role={activeOrg.role}
         userName={user?.display_name ?? user?.email ?? ""}
       />
+
+      {/* Owner action: a member offered to share their AI and it's waiting on
+          approval (until then the workspace has no AI). Loud + inline-actionable
+          so it isn't a dead-end. Renders nothing unless there's a pending offer. */}
+      <PendingAiShareCallout slug={activeSlug} role={activeOrg.role} />
 
       {/* The cockpit (redesign B2): what needs me TODAY, derived from the
           trackers' own field semantics. Renders nothing when nothing needs you. */}

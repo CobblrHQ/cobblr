@@ -74,6 +74,23 @@ function routedOrgIds(body: { routes?: CredentialRoute[]; org_ids?: string[] }):
   return body.org_ids ?? [];
 }
 
+/** Clear an owner's OLD, now-stale AI-share offer notifications for a workspace
+ *  so only the current action item stands. A member who toggles Share off/on (or
+ *  the owner who approves/declines) leaves behind identical "X offered to share
+ *  their AI" bell rows that all look actionable — this marks the superseded ones
+ *  read. Best-effort; never blocks the caller. */
+async function supersedeShareOffers(ownerId: string, orgId: string): Promise<void> {
+  await meta
+    .updateTable("notifications")
+    .set({ read_at: new Date() })
+    .where("user_id", "=", ownerId)
+    .where("org_id", "=", orgId)
+    .where("event_type", "=", "platform.ai.share_offered")
+    .where("read_at", "is", null)
+    .execute()
+    .catch(() => {});
+}
+
 /** Ping a workspace's owners when a member OFFERS to share their AI there (a
  *  workspace-default route into a workspace they don't own). Best-effort. */
 async function notifyOwnersOfOffers(
@@ -84,14 +101,39 @@ async function notifyOwnersOfOffers(
   const shares = routes.filter((r) => r.mode === "workspace-default");
   for (const r of shares) {
     const owners = await workspaceOwnerIds(r.org_id);
-    for (const ownerId of owners) {
-      if (ownerId === offererId) continue; // self-share needs no offer
+    const nonSelf = owners.filter((o) => o !== offererId);
+    if (nonSelf.length === 0) continue; // self-share needs no offer
+    // Workspace name for a human subject line — falls back gracefully.
+    const org = await meta
+      .selectFrom("orgs")
+      .select(["name"])
+      .where("id", "=", r.org_id)
+      .executeTakeFirst();
+    const wsName = org?.name ?? "your workspace";
+    const configUrl = absoluteAppUrl("/configuration");
+    for (const ownerId of nonSelf) {
+      // Collapse any prior unread offer for this owner+workspace first, so a
+      // re-share doesn't stack up identical "wants to share their AI" rows — the
+      // newest one below is the single live action item.
+      await supersedeShareOffers(ownerId, r.org_id);
+      // A shared AI can't power the workspace until the owner approves it, and
+      // the in-app bell is easy to miss — so this rides email too (a tier-2
+      // platform notification; delivered only if the owner hasn't opted out and
+      // a mail sender is configured — notifyAccount gates both).
       await notifyAccount({
         userId: ownerId,
         representativeOrgId: r.org_id,
         notificationType: "platform.ai.share_offered",
         message: `${offererName} offered to share their AI with this workspace. Review it in Settings → AI sharing.`,
-        link_url: absoluteAppUrl("/configuration"),
+        link_url: configUrl,
+        email: {
+          subject: `${offererName} wants to share their AI with ${wsName}`,
+          text:
+            `${offererName} offered to share their AI connection with ${wsName} on Cobblr.\n\n` +
+            `Until you approve it, the workspace's Ask Cobblr chat and other AI features stay off. ` +
+            `Approve or decline the offer here:\n${configUrl}\n\n` +
+            `(You can always change this later in Settings → AI sharing.)`,
+        },
       }).catch(() => {});
     }
   }
@@ -230,6 +272,8 @@ workspaceAiSharesRouter.post("/ai-shares/:credentialId/approve", requireAuth, wi
       res.status(403).json({ error: { code: "not_owner", message: "Only the workspace owner can approve shared AI." } });
       return;
     }
+    // Resolved — clear the offer notification so it stops reading as a to-do.
+    await supersedeShareOffers(req.session!.id, orgId(req));
     res.json({ items: await listWorkspaceAiOffers(orgId(req)) });
   } catch (err) {
     next(err);
@@ -243,6 +287,8 @@ workspaceAiSharesRouter.post("/ai-shares/:credentialId/reject", requireAuth, wit
       res.status(403).json({ error: { code: "not_owner", message: "Only the workspace owner can decline shared AI." } });
       return;
     }
+    // Resolved — clear the offer notification so it stops reading as a to-do.
+    await supersedeShareOffers(req.session!.id, orgId(req));
     res.json({ items: await listWorkspaceAiOffers(orgId(req)) });
   } catch (err) {
     next(err);

@@ -3449,6 +3449,10 @@ export interface UserConnection {
   org_ids: string[];
   /** Per-workspace routing (workspace + mode). */
   routes: ConnRoute[];
+  /** For 'workspace-default' (Share) routes: owner-approval state per org_id —
+   *  'pending' | 'approved' | 'active'. Lets the sharer see whether an offer is
+   *  live yet. Absent org_id = a 'my-calls' route. */
+  share_status: Record<string, "pending" | "approved" | "active">;
   /** Which credential keys are set (names only — never the secret values). */
   credential_keys: string[];
   created_at: string;

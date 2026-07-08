@@ -205,10 +205,15 @@ export function buildMessages(
       return [{ role: "user", content }];
     }
     case "chat":
-    default:
-      return ((input.messages as Array<{ role: string; content: string }>) ?? []).map((m) => ({
+    default: {
+      const msgs = ((input.messages as Array<{ role: string; content: string }>) ?? []).map((m) => ({
         role: m.role,
         content: m.content,
       }));
+      // Honour a first-class `system` prompt (chat.ts passes it here, not as a
+      // role:"system" message) by prepending it as the system turn.
+      const system = typeof input.system === "string" ? input.system : undefined;
+      return system ? [{ role: "system", content: system }, ...msgs] : msgs;
+    }
   }
 }

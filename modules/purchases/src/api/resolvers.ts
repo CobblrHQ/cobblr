@@ -2,11 +2,27 @@
 // the platform's EntityActionsBar look up an order or order_item by
 // (kind, id) without touching the purchases tables directly.
 
-import { platform, type ResolvedEntity } from "@cobblr/platform-contract";
+import { platform, parseSort, type ResolvedEntity } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { PurchasesDB } from "../db.js";
 
 let registered = false;
+
+// Native columns each list resolver will order by. Unknown fields drop out via
+// parseSort rather than reaching SQL.
+const ORDER_SORTABLE = new Set([
+  "status",
+  "vendor",
+  "order_number",
+  "ordered_at",
+  "expected_arrival",
+  "arrived_at",
+  "total_cost",
+  "shipping_cost",
+  "created_at",
+  "updated_at",
+]);
+const VENDOR_SORTABLE = new Set(["name", "created_at", "updated_at"]);
 
 export function registerPurchasesResolvers(): void {
   if (registered) return;
@@ -84,7 +100,12 @@ export function registerPurchasesResolvers(): void {
           continue;
         }
         if (NATIVE.has(key)) {
-          if (typeof val === "string") q = q.where(key as never, "=", val as never);
+          if (Array.isArray(val)) {
+            const vals = val.filter((v): v is string => typeof v === "string");
+            if (vals.length > 0) q = q.where(key as never, "in", vals as never);
+          } else if (typeof val === "string") {
+            q = q.where(key as never, "=", val as never);
+          }
           continue;
         }
         q = q.where(sql<boolean>`metadata ->> ${key} = ${String(val)}`);
@@ -117,8 +138,10 @@ export function registerPurchasesResolvers(): void {
         }
       }
     }
+    const order = parseSort(query.sort, ORDER_SORTABLE);
+    for (const { col, dir } of order) q = q.orderBy(col as never, dir);
+    if (order.length === 0) q = q.orderBy("ordered_at", "desc");
     const rows = await q
-      .orderBy("ordered_at", "desc")
       .limit(limit)
       .offset(offset)
       .execute();
@@ -155,8 +178,10 @@ export function registerPurchasesResolvers(): void {
       const needle = `%${query.q.toLowerCase()}%`;
       q = q.where((eb) => eb(eb.fn("lower", ["name"]), "like", needle));
     }
+    const order = parseSort(query.sort, VENDOR_SORTABLE);
+    for (const { col, dir } of order) q = q.orderBy(col as never, dir);
+    if (order.length === 0) q = q.orderBy("name");
     const rows = await q
-      .orderBy("name")
       .limit(Math.min(query.limit ?? 50, 200))
       .offset(query.offset ?? 0)
       .execute();

@@ -52,6 +52,12 @@ export interface UserCredentialView {
   /** Per-workspace routing: the workspaces this credential reaches + each one's
    *  mode (Just me / Share). Empty when the scope is dynamic. */
   routes: CredentialRoute[];
+  /** For 'workspace-default' (Share) routes only: the owner-approval state per
+   *  org_id, so the sharer sees whether their offer is doing anything yet —
+   *  'pending' (owner hasn't approved), 'approved' (accepted, not the active
+   *  pick), or 'active' (the workspace's live AI). A share the sharer owns is
+   *  auto-approved. Absent org_id = a 'my-calls' route (always works for them). */
+  share_status: Record<string, "pending" | "approved" | "active">;
   /** Which credential keys are set (names only — never the secret values). */
   credential_keys: string[];
   created_at: Date;
@@ -201,10 +207,16 @@ export async function listUserCredentials(userId: string): Promise<UserCredentia
     )
     .execute();
   const routesByCred = new Map<string, CredentialRoute[]>();
+  const statusByCred = new Map<string, Record<string, "pending" | "approved" | "active">>();
   for (const o of orgRows) {
     const list = routesByCred.get(o.credential_id) ?? [];
     list.push({ org_id: o.org_id, mode: o.mode });
     routesByCred.set(o.credential_id, list);
+    if (o.mode === "workspace-default") {
+      const status = statusByCred.get(o.credential_id) ?? {};
+      status[o.org_id] = o.active ? "active" : o.approved_at ? "approved" : "pending";
+      statusByCred.set(o.credential_id, status);
+    }
   }
   return rows.map((r) => ({
     id: r.id,
@@ -215,6 +227,7 @@ export async function listUserCredentials(userId: string): Promise<UserCredentia
     auto_enable_new: r.auto_enable_new,
     org_ids: (routesByCred.get(r.id) ?? []).map((x) => x.org_id),
     routes: routesByCred.get(r.id) ?? [],
+    share_status: statusByCred.get(r.id) ?? {},
     credential_keys: keysOf(r.credentials_encrypted),
     created_at: r.created_at,
     updated_at: r.updated_at,
@@ -283,16 +296,24 @@ export async function listWorkspaceAiOffers(orgId: string): Promise<WorkspaceAiO
     .where("role", "=", "owner")
     .execute();
   const ownerIds = new Set(owners.map((o) => o.user_id));
-  return rows.map((r) => ({
-    credential_id: r.credential_id,
-    provider_id: r.provider_id,
-    label: r.label,
-    offered_by_user_id: r.offered_by_user_id,
-    offered_by_name: r.offered_by_name ?? "A member",
-    status: r.approved_at ? ("approved" as const) : ("pending" as const),
-    active: r.active,
-    is_own: ownerIds.has(r.offered_by_user_id),
-  }));
+  return rows.map((r) => {
+    const isOwn = ownerIds.has(r.offered_by_user_id);
+    // The connection's label ("Claude bridge (example-user)") and provider
+    // ("edge-bridge") are the SHARER's private naming — how they set up their own
+    // AI is not the recipient workspace's business. Only surface them when the
+    // viewer owns the credential (their own share); otherwise the owner sees just
+    // "<name>'s AI". The person (offered_by_name) still distinguishes offers.
+    return {
+      credential_id: r.credential_id,
+      provider_id: isOwn ? r.provider_id : "",
+      label: isOwn ? r.label : "",
+      offered_by_user_id: r.offered_by_user_id,
+      offered_by_name: r.offered_by_name ?? "A member",
+      status: r.approved_at ? ("approved" as const) : ("pending" as const),
+      active: r.active,
+      is_own: isOwn,
+    };
+  });
 }
 
 /** Owner sets which approved AI is THE active workspace default (or none). */

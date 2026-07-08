@@ -186,11 +186,11 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
         type="button"
         onClick={() => setOpen(true)}
         className={asRow ? "w-full flex items-center gap-2.5 px-3 py-1.5 rounded text-[13px] text-muted dark:text-slate-400 hover:text-accent hover:bg-subtle/60 dark:hover:bg-slate-800/40 transition" : "transition p-1.5 text-faint dark:text-slate-500 hover:text-accent"}
-        title="Ask Cobblr"
-        aria-label="Ask Cobblr"
+        title="Ask Cobb"
+        aria-label="Ask Cobb"
       >
         <Sparkles size={16} className="shrink-0" />
-        {asRow && <span>Ask Cobblr</span>}
+        {asRow && <span>Ask Cobb</span>}
       </button>
 
       {open &&
@@ -198,7 +198,7 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
         <div className="fixed top-0 right-0 z-[60] h-screen w-[min(100vw,440px)] border-l border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-2xl flex flex-col">
           <header className="flex items-center justify-between px-4 py-3 border-b border-line dark:border-slate-700 shrink-0">
             <div className="flex items-center gap-2 text-sm font-semibold text-content dark:text-mortar-100">
-              <Cobb pose="idle" bust size={42} title="Cobb" className="cobb-lift" /> Ask Cobblr
+              <Cobb pose="idle" bust size={42} title="Cobb" className="cobb-lift" /> Ask Cobb
             </div>
             <button type="button" onClick={() => setOpen(false)} className="text-faint hover:text-content dark:hover:text-mortar-200 transition" aria-label="Close">
               <X size={18} />

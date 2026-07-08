@@ -12,8 +12,13 @@ import { asyncHandler, badBody, requireRole } from "./util.js";
 
 export const chatRouter = Router({ mergeParams: true });
 
-// Kind → that module's create endpoint (mirrors core-scan's commit map). Only
-// these kinds can be created from chat for now; extend as modules expose more.
+// Kind → that module's create endpoint. These are the kinds whose create route
+// doesn't follow the derivable convention (they declare no manifest
+// `getEndpoint`), so they're pinned here. Any OTHER kind that declares a
+// `getEndpoint` in its manifest is createable too, derived at runtime by
+// `createPathFor` — so knowledge entries, tracking metrics, etc. work without a
+// new entry here. (Phase 1: modules should declare a create route in the
+// manifest so this whole map can go away.)
 const KIND_CREATE_PATHS: Record<string, string> = {
   "inventory:part": "inventory/parts",
   "machines:machine": "machines/machines",
@@ -23,6 +28,29 @@ const KIND_CREATE_PATHS: Record<string, string> = {
   "lists:list": "lists/lists",
   "lists:item": "lists/items",
 };
+
+interface KindRec {
+  id: string;
+  display_name?: string;
+  module_name?: string;
+  endpoints?: { get?: string } | null;
+}
+
+/** The `POST /modules/<path>` route that creates a record of `kind`, or null if
+ *  the kind isn't creatable from chat. Pinned overrides win; otherwise derive
+ *  `<module>/<collection>` from the kind's manifest `getEndpoint` (a
+ *  module-relative "/things/{id}" → collection "things"). */
+async function createPathFor(c: Ctx, kind: string, kinds?: KindRec[]): Promise<string | null> {
+  if (kind in KIND_CREATE_PATHS) return KIND_CREATE_PATHS[kind]!;
+  const list = kinds ?? (await callApi(c, "GET", "/entity-kinds")).body.items as KindRec[] | undefined;
+  const rec = (list ?? []).find((k) => k.id === kind);
+  const get = rec?.endpoints?.get;
+  if (rec?.module_name && get) {
+    const collection = get.replace(/\/\{id\}.*$/, "").replace(/^\//, "");
+    if (collection) return `${rec.module_name}/${collection}`;
+  }
+  return null;
+}
 
 interface Ctx {
   slug: string;
@@ -66,8 +94,8 @@ interface Move {
 
 async function buildSystemPrompt(c: Ctx): Promise<string> {
   const kindsRes = await callApi(c, "GET", "/entity-kinds");
-  const kinds = (kindsRes.body.items as Array<{ id: string; display_name: string }> | undefined) ?? [];
-  const kindLines = kinds.map((k) => `- ${k.id} (${k.display_name})`).join("\n") || "(none)";
+  const kinds = ((kindsRes.body.items as KindRec[] | undefined) ?? []);
+  const kindLines = kinds.map((k) => `- ${k.id} (${k.display_name ?? k.id})`).join("\n") || "(none)";
 
   // Actions per kind (a few in-process inspect calls).
   const actionLines: string[] = [];
@@ -76,9 +104,20 @@ async function buildSystemPrompt(c: Ctx): Promise<string> {
     const acts = (insp.body.actions as Array<{ id: string; label: string; description?: string }> | undefined) ?? [];
     for (const a of acts) actionLines.push(`- ${a.id} (on ${k.id}) — ${a.label}${a.description ? `: ${a.description}` : ""}`);
   }
-  const createable = kinds.map((k) => k.id).filter((id) => id in KIND_CREATE_PATHS);
+  // Createable = pinned in the override map OR declares a manifest getEndpoint.
+  const createable = kinds
+    .filter((k) => k.id in KIND_CREATE_PATHS || (k.module_name && k.endpoints?.get))
+    .map((k) => k.id);
 
-  return `You are the assistant inside the user's Cobblr workspace "${c.slug}". You can chat AND take actions for the user — but you only PROPOSE a write; the user confirms before anything runs.
+  return `You are Cobb, the helpful assistant inside the user's Cobblr workspace "${c.slug}". Be genuinely useful and warm — you are NOT limited to workspace chores.
+
+Your name is Cobb. When the user asks who or what you are, introduce yourself as "Cobb, your assistant" — never as a generic "Cobblr workspace assistant" or "AI assistant". Cobb is who you are; Cobblr is the app you live in.
+
+TWO THINGS YOU DO:
+1. Answer questions and help with whatever the user asks — including general knowledge, how-to, crafts, ideas, explanations. Answer directly and fully; do not deflect a real question by saying you "only manage records". If you happen to know what's in their workspace that's relevant, weave it in.
+2. Take actions in THIS workspace when the user wants to save, create, or change something — you PROPOSE the write and the user confirms before anything runs.
+
+After a helpful answer, if it's natural, OFFER to save it (e.g. "want me to add this to your list / save it as a knowledge entry?") — but never force it, and never refuse the answer itself.
 
 ENTITY KINDS in this workspace:
 ${kindLines}
@@ -89,17 +128,18 @@ ACTIONS you can run on existing records:
 ${actionLines.join("\n") || "(none)"}
 
 Reply with ONE JSON object and nothing else, in ONE of these shapes:
-- Chat/answer/ask:   {"type":"reply","text":"<your message>"}
+- Chat/answer/ask:   {"type":"reply","text":"<your full, helpful answer or question>"}
 - Create a record:   {"type":"create","entity_kind":"<id>","fields":{"name":"<...>", ...},"summary":"<one line, e.g. Create a part called Widget>"}
 - Run an action:     {"type":"action","action_id":"<id>","entity_kind":"<id>","entity_query":"<the record's name to find it>","summary":"<one line>"}
 - Build a whole app:  {"type":"build","intent":"<the user's FULL description of the workspace/app to set up>","summary":"<one line, e.g. Set up a yarn & crochet tracker>"}
 
 Rules:
-- Use entity_kind / action_id values EXACTLY from the lists above. Never invent ids.
+- Default to "reply" for questions, explanations, and anything conversational — put your ACTUAL answer in "text", not a deflection.
+- Only use create/action when the user clearly wants to save or change something in the workspace.
+- Use entity_kind / action_id values EXACTLY from the lists above. Never invent ids. If a needed kind/action isn't listed, use "reply" to answer and say what you can't save yet.
 - create: include at least a "name" (or "title") in fields; add other obvious fields the user gave.
 - action: entity_query is the name/text to find the existing record — the system looks it up.
-- Use "build" when the user wants to SET UP or DESIGN a new app/workspace, or add several kinds/modules at once (more than a single field/record). Put their full description verbatim-ish in "intent" — the builder turns on the modules and creates the fields. Do NOT use "build" for a single record or one field; use create/reply for those.
-- If you only have a kind/action that isn't listed, or you're missing info, use "reply" to chat or ask.`;
+- Use "build" only when the user wants to SET UP or DESIGN a whole new app/workspace (several kinds/modules at once). Put their full description in "intent". Never use "build" for a single record.`;
 }
 
 function parseMove(raw: string): Move | null {
@@ -131,7 +171,7 @@ chatRouter.post(
     try {
       system = await buildSystemPrompt(c);
     } catch {
-      system = `You are the assistant inside the Cobblr workspace "${c.slug}". Chat helpfully; reply with {"type":"reply","text":"..."}.`;
+      system = `You are Cobb, the helpful assistant inside the Cobblr workspace "${c.slug}". Introduce yourself as Cobb if asked. Chat helpfully; reply with {"type":"reply","text":"..."}.`;
     }
 
     let text: string;
@@ -139,7 +179,12 @@ chatRouter.post(
       const r = await platform().ai.invoke({
         orgId,
         capability: "chat",
-        input: { messages: [{ role: "system", content: system }, ...parsed.data.messages] },
+        // Pass the prompt as `system` (a first-class field every adapter reads),
+        // NOT as a role:"system" message — Anthropic's Messages API drops a
+        // "system"-role turn, so the workspace instructions were being lost on
+        // the managed provider but honoured on the edge-bridge. Same input, two
+        // behaviours; this makes providers consistent.
+        input: { system, messages: parsed.data.messages },
         source: { kind: "core-ai:chat", id: orgId },
         userId: sessionUserId(req),
       });
@@ -161,7 +206,7 @@ chatRouter.post(
     }
 
     if (move.type === "create") {
-      if (!move.entity_kind || !(move.entity_kind in KIND_CREATE_PATHS)) {
+      if (!move.entity_kind || !(await createPathFor(c, move.entity_kind))) {
         res.json({ type: "reply", text: `I can't create "${move.entity_kind ?? "that"}" from chat yet.` });
         return;
       }
@@ -268,7 +313,7 @@ chatRouter.post(
     const p = parsed.data.proposal;
 
     if (p.kind === "create") {
-      const path = KIND_CREATE_PATHS[p.entity_kind];
+      const path = await createPathFor(c, p.entity_kind);
       if (!path) {
         res.status(400).json({ ok: false, message: `Can't create ${p.entity_kind}.` });
         return;
