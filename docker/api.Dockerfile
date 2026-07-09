@@ -42,6 +42,7 @@ COPY modules/core-queue/package.json ./modules/core-queue/
 COPY modules/core-placement/package.json ./modules/core-placement/
 COPY modules/core-locations/package.json ./modules/core-locations/
 COPY modules/core-catalogs/package.json ./modules/core-catalogs/
+COPY modules/core-import/package.json ./modules/core-import/
 COPY modules/core-labels-qr/package.json ./modules/core-labels-qr/
 COPY modules/core-integrations/package.json ./modules/core-integrations/
 COPY modules/core-ai/package.json ./modules/core-ai/

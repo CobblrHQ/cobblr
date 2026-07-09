@@ -84,6 +84,13 @@ export const SyncEntityTypeManifest = z.object({
         maxPages: z.number().int().min(1).max(1000).default(200),
       })
       .optional(),
+    /** The list endpoint returns a NESTED tree (children under a `children`
+     *  field), not a flat array — the engine flattens it, stamping each node's
+     *  parent id (from the nesting) into `__parent_id` so `parentField:
+     *  "$.__parent_id"` resolves the hierarchy. For sources whose only listing
+     *  is a tree (e.g. Homebox `/entities/tree`). Combine with a `filter` to keep
+     *  only the location nodes. */
+    tree: z.object({ children: z.string().min(1).max(60).default("children") }).optional(),
   }),
   /** Optional single-item endpoint (fetchOne, for webhook-targeted refetch).
    *  `{externalId}` in the path is substituted. `itemPath` points at the object
@@ -107,6 +114,11 @@ export const SyncEntityTypeManifest = z.object({
   idField: Extract,
   /** Extract for the parent's external id (hierarchy), or omit for flat. */
   parentField: Extract.optional(),
+  /** The list endpoint returns SUMMARIES — re-fetch each row's full record via
+   *  the `item` endpoint before mapping. For sources whose list omits fields the
+   *  detail has (Homebox: serial/warranty/manufacturer/custom-fields live only in
+   *  GET /entities/{id}). N+1 fetches, concurrency-bounded; requires `item`. */
+  hydrate: z.boolean().optional(),
   /** Source-field → target-field mapping. */
   map: z.record(FieldSpec),
   /** Cross-section references: a target field whose value is ANOTHER section's
@@ -116,9 +128,12 @@ export const SyncEntityTypeManifest = z.object({
    *  references win. e.g. { "location_id": { "section": "locations", "from": "$.location_id" } } */
   references: z.record(z.object({ section: z.string().min(1), from: Extract })).optional(),
   /** Image fields to pull across: a target field → the extract for the source
-   *  image URL/path. The engine fetches each (through the bridge), stores the
-   *  bytes in core-files, and sets the field to the served file URL. Relative
-   *  paths resolve against the source base. e.g. { "image_path": "$.image_url" } */
+   *  image URL/path. The engine fetches each (authed, through the bridge), stores
+   *  the bytes in core-files, and sets the field to the served file URL. Relative
+   *  paths resolve against the source base. A value may TEMPLATE `{$.path}` tokens
+   *  from the record, to compose a URL from several fields — e.g. Homebox's
+   *  attachment URL: { "image_path": "/api/v1/entities/{$.id}/attachments/{$.imageId}" }.
+   *  Plain `$.image_url` still works. */
   images: z.record(Extract).optional(),
 });
 export type SyncEntityTypeManifest = z.infer<typeof SyncEntityTypeManifest>;

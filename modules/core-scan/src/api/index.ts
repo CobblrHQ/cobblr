@@ -3,6 +3,7 @@
 
 import { Router } from "express";
 import { inboxRouter } from "./inbox.js";
+import { organizeRouter } from "./organize.js";
 import { importRouter } from "./import.js";
 import { exportRouter } from "./export.js";
 import { entityImageRouter } from "./entity-image.js";
@@ -15,6 +16,7 @@ registerEmailInbound();
 
 const router = Router({ mergeParams: true });
 router.use("/", inboxRouter);
+router.use("/", organizeRouter); // Guided Organize: batch put-away plan + apply
 router.use("/", importRouter); // bulk import (inbox-export interop + generic CSV)
 router.use("/", exportRouter); // bulk export (interop v1 envelope: JSON + CSV)
 router.use("/", entityImageRouter);

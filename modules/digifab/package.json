@@ -12,6 +12,7 @@
   },
   "scripts": {
     "gen": "node scripts/gen-detectors.mjs",
+    "gen:check": "node scripts/gen-detectors.mjs --check",
     "prebuild": "npm run gen",
     "build": "tsc",
     "pretypecheck": "npm run gen",

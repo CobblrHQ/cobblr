@@ -32,8 +32,11 @@ export default defineModule({
     migrationsDir: "./migrations",
   },
 
+  // Thin HTTP surface over platform().placement (contents / of / place / remove).
+  api: () => import("./api/index.js"),
+
   intents: [],
   dependencies: [],
-  exposes: { events: [], api: [], actions: [] },
+  exposes: { events: [], api: ["contents", "of", "place", "remove"], actions: [] },
   subscribes: [],
 });

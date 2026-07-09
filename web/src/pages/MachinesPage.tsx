@@ -43,6 +43,7 @@ const MACHINE_STATES = [
 ];
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useFieldPresentation } from "../lib/useFieldPresentation";
+import { ContentsPanel } from "../components/ContentsPanel";
 import { CustomFieldsPanel,
   EntityActionsBar,
   Modal,
@@ -1282,6 +1283,10 @@ function MachineDetailModal({
             hideNames={printerHidden}
             onCommit={(name, value) => update.mutate({ metadata: { ...m.metadata, [name]: value } })}
           />
+
+          {/* What's installed inside this machine (a printer's mods/parts). The
+              generic placement panel — same one a server asset or a drawer uses. */}
+          <ContentsPanel slug={activeSlug} container={{ kind: "machines:machine", id: m.id }} title="Installed components" />
 
           {digifabEnabled && (
             <MachineDigifabPanel

@@ -27,6 +27,62 @@ function resolve(expr: string, data: unknown): unknown {
   return cur;
 }
 
+/** Resolve an image extract → a URL/path string, or null. If the extract carries
+ *  `{$.path}` tokens it TEMPLATES them from the record (composing a URL from
+ *  several fields, e.g. `/api/v1/entities/{$.id}/attachments/{$.imageId}`); a
+ *  token that resolves empty yields null (never fetch a half-built URL). A plain
+ *  `$.image_url` / `='literal'` resolves as normal. */
+function resolveImage(expr: string, data: unknown): string | null {
+  if (expr.includes("{$.")) {
+    let missing = false;
+    const out = expr.replace(/\{(\$\.[^}]+)\}/g, (_m, p: string) => {
+      const v = resolve(p, data);
+      if (v == null || String(v).trim() === "") { missing = true; return ""; }
+      return String(v);
+    });
+    return missing ? null : out;
+  }
+  const v = resolve(expr, data);
+  return v != null && String(v).trim() ? String(v) : null;
+}
+
+/** Flatten a nested tree (roots + `childrenKey` arrays) into a flat list,
+ *  stamping each node's parent id (read via `idField` from the ancestor) into
+ *  `__parent_id` and dropping the children array. Lets a tree-only listing feed
+ *  the flat-record engine + `parentField: "$.__parent_id"`. */
+function flattenTree(nodes: unknown[], childrenKey: string, idField: string, parentId: string | null): unknown[] {
+  const out: unknown[] = [];
+  for (const n of nodes) {
+    if (n == null || typeof n !== "object") continue;
+    const node = n as Record<string, unknown>;
+    const kids = Array.isArray(node[childrenKey]) ? (node[childrenKey] as unknown[]) : [];
+    const flat = { ...node, __parent_id: parentId };
+    delete (flat as Record<string, unknown>)[childrenKey];
+    out.push(flat);
+    if (kids.length) {
+      const myId = resolve(idField, node);
+      out.push(...flattenTree(kids, childrenKey, idField, myId != null ? String(myId) : null));
+    }
+  }
+  return out;
+}
+
+/** Bounded-concurrency map (hydrate fires N+1 detail fetches). */
+async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, async () => {
+      for (;;) {
+        const i = next++;
+        if (i >= items.length) return;
+        out[i] = await fn(items[i]!);
+      }
+    }),
+  );
+  return out;
+}
+
 /** Evaluate a FieldSpec against a source record → the mapped value. */
 function evalField(spec: FieldSpec, data: unknown): unknown {
   if (typeof spec === "string") {
@@ -102,8 +158,8 @@ function mapRecord(et: SyncEntityTypeManifest, data: unknown): SyncRecord {
   const images: Record<string, string> = {};
   if (et.images) {
     for (const [field, expr] of Object.entries(et.images)) {
-      const v = resolve(expr, data);
-      if (v != null && String(v).trim()) images[field] = String(v);
+      const v = resolveImage(expr, data);
+      if (v) images[field] = v;
     }
   }
   return {
@@ -190,7 +246,8 @@ async function fetchList(
   const basePath = substitutePath(et.list.path, vars);
   const readArray = (body: unknown): unknown[] => {
     const arr = et.list.arrayPath ? resolve(et.list.arrayPath, body) : body;
-    return Array.isArray(arr) ? arr : [];
+    const list = Array.isArray(arr) ? arr : [];
+    return et.list.tree ? flattenTree(list, et.list.tree.children, et.idField, null) : list;
   };
   const pg = et.list.paginate;
   if (!pg) return readArray(await get(manifest, ctx, et.list.method, basePath));
@@ -204,6 +261,22 @@ async function fetchList(
     if (items.length < pg.size) break; // short page → last page
   }
   return rows;
+}
+
+/** Fetch + unwrap one row's full record via the `item` endpoint (or null).
+ *  Shared by fetchOne (webhook refetch) and hydrated fetchAll. */
+async function fetchDetailObj(
+  manifest: SyncSourceManifest,
+  ctx: SyncFetchContext,
+  et: SyncEntityTypeManifest,
+  externalId: string,
+  vars: Record<string, string>,
+): Promise<unknown | null> {
+  if (!et.item) return null;
+  const path = substitutePath(et.item.path, vars).replace(/\{externalId\}/g, encodeURIComponent(externalId));
+  const body = await get(manifest, ctx, et.item.method, path);
+  const obj = et.item.itemPath ? (resolve(et.item.itemPath, body) ?? body) : body;
+  return obj != null && typeof obj === "object" ? obj : null;
 }
 
 function buildEntityType(manifest: SyncSourceManifest, et: SyncEntityTypeManifest): SyncEntityType {
@@ -232,25 +305,32 @@ function buildEntityType(manifest: SyncSourceManifest, et: SyncEntityTypeManifes
     },
     async fetchAll(ctx) {
       const vars = await resolveVars(manifest, ctx);
-      const items = await fetchList(manifest, ctx, et, vars);
-      return items
-        .filter((it) => passesFilter(et, it) && passesInstanceBy(et, it))
-        .map((it) => mapRecord(et, it));
+      const rows = (await fetchList(manifest, ctx, et, vars)).filter(
+        (it) => passesFilter(et, it) && passesInstanceBy(et, it),
+      );
+      // hydrate: the list gave summaries — re-fetch each row's full detail (N+1,
+      // concurrency-bounded) before mapping, so fields only the detail carries
+      // come across. Re-check the filter against the detail (it may differ).
+      if (et.hydrate && et.item) {
+        const detailed = await mapLimit(rows, 6, async (it) => {
+          const id = resolve(et.idField, it);
+          if (id == null) return null;
+          const obj = await fetchDetailObj(manifest, ctx, et, String(id), vars);
+          if (obj == null || !passesFilter(et, obj) || !passesInstanceBy(et, obj)) return null;
+          const rec = mapRecord(et, obj);
+          return rec.externalId && rec.externalId !== "undefined" ? rec : null;
+        });
+        return detailed.filter((r): r is SyncRecord => r != null);
+      }
+      return rows.map((it) => mapRecord(et, it));
     },
     ...(et.item
       ? {
           async fetchOne(ctx: SyncFetchContext, externalId: string): Promise<SyncRecord | null> {
             try {
               const vars = await resolveVars(manifest, ctx);
-              const path = substitutePath(et.item!.path, vars).replace(
-                /\{externalId\}/g,
-                encodeURIComponent(externalId),
-              );
-              const body = await get(manifest, ctx, et.item!.method, path);
-              // itemPath points at the object; fall back to the bare body when
-              // the source returns the object unwrapped.
-              const obj = et.item!.itemPath ? (resolve(et.item!.itemPath, body) ?? body) : body;
-              if (obj == null || typeof obj !== "object") return null;
+              const obj = await fetchDetailObj(manifest, ctx, et, externalId, vars);
+              if (obj == null) return null;
               // Honour the section filter + instanceBy routing here too: a webhook
               // for a row this section excludes (a laser hitting the printers
               // section, or a value instanceBy maps nowhere) is a no-match.

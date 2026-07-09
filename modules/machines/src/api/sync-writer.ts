@@ -31,6 +31,10 @@ export function registerMachinesWriter(): void {
           state: asStr(fields.state) ?? "functional",
           image_path: asStr(fields.image_path),
           notes: asStr(fields.notes),
+          // Was missing entirely — the writer silently dropped location on
+          // create/update (core-mobility return-home never worked for machines,
+          // and placement's location_id sync needs it).
+          location_id: asStr(fields.location_id),
           ...(asInt(fields.excitement) !== null ? { excitement: asInt(fields.excitement)! } : {}),
           ...(asInt(fields.quantity) !== null ? { quantity: asInt(fields.quantity)! } : {}),
           // Land in the requested instance (e.g. "3d-printers") so it shows under
@@ -55,6 +59,7 @@ export function registerMachinesWriter(): void {
       if (fields.state !== undefined) patch.state = asStr(fields.state) ?? "functional";
       if (fields.image_path !== undefined) patch.image_path = asStr(fields.image_path);
       if (fields.notes !== undefined) patch.notes = asStr(fields.notes);
+      if (fields.location_id !== undefined) patch.location_id = asStr(fields.location_id);
       if (fields.excitement !== undefined && asInt(fields.excitement) !== null) patch.excitement = asInt(fields.excitement);
       if (fields.quantity !== undefined && asInt(fields.quantity) !== null) patch.quantity = asInt(fields.quantity);
       if (fields.metadata !== undefined) {

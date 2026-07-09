@@ -31,6 +31,7 @@ export function ScanResultModal({
   barcode,
   scanArea,
   scanAreaId,
+  scanContainer,
   ensureBatchId,
   getFrameBlob,
   getStream,
@@ -47,6 +48,11 @@ export function ScanResultModal({
   /** The area's location id — passed to confirm as `location_id` so a
    *  one-tap commit files the entity where you were standing. */
   scanAreaId?: string | null;
+  /** Scan-into-container: the active bin is a container ENTITY (a server/asset,
+   *  a machine) instead of a location. Sent as target_container_* at ingest;
+   *  confirm places the created item inside it (the server reads it off the
+   *  inbox row, so no confirm-body change needed). */
+  scanContainer?: { kind: string; id: string } | null;
   /** Lazily mints the scanner session's shared scan_batch_id (single-flight
    *  in the caller). Omitted → un-batched. */
   ensureBatchId?: () => Promise<string | null>;
@@ -103,6 +109,8 @@ export function ScanResultModal({
         barcode,
         scan_area: scanArea ?? undefined,
         target_location_id: scanAreaId ?? undefined,
+        target_container_kind: scanContainer?.kind,
+        target_container_id: scanContainer?.id,
         scan_batch_id: batchId ?? undefined,
         image_file_id: frameFileId ?? undefined,
       });
@@ -228,6 +236,20 @@ export function ScanResultModal({
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
 
+  // Paired-scan: the scanned product IS the active bin. One tap writes the
+  // product identity onto the bin's own location record (metadata.container_*,
+  // catalog photo, description) — nothing new is created or filed.
+  const intoBin = useMutation({
+    mutationFn: () => api.confirmScanIntoLocation(activeSlug, item!.id, scanAreaId ?? undefined),
+    onSuccess: () => {
+      toast.success(`${scanArea ?? "Bin"} identified: ${item?.suggested_name ?? "container"}`);
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      void qc.invalidateQueries({ queryKey: ["locations", activeSlug] });
+      onClose();
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+
   const discard = useMutation({
     mutationFn: () => api.discardScanItem(activeSlug, item!.id),
     onSuccess: () => {
@@ -319,7 +341,12 @@ export function ScanResultModal({
     ].find((u): u is string => !!u && !brokenSrcs.has(u)) ?? null;
   const areaLabel = item?.scan_area ?? scanArea ?? null;
   const busy =
-    commit.isPending || save.isPending || discard.isPending || rerunWrong.isPending || photoIdentify.isPending;
+    commit.isPending ||
+    save.isPending ||
+    discard.isPending ||
+    rerunWrong.isPending ||
+    photoIdentify.isPending ||
+    intoBin.isPending;
 
   return (
     <>
@@ -477,6 +504,21 @@ export function ScanResultModal({
               {match.isFetching ? "finding the best table…" : "Saved to the inbox — triage it there."}
             </div>
           )
+        )}
+
+        {/* Paired-scan: the bin's QR said WHICH record; this UPC says WHAT it
+            is. Writes the product identity onto the active bin itself instead
+            of filing a new item into it. Only offered when a location bin is
+            active and the scan actually identified a product. */}
+        {item && scanAreaId && item.suggested_name && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => intoBin.mutate()}
+            className="w-full inline-flex items-center justify-center gap-2 rounded-md border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 hover:bg-line dark:hover:bg-slate-700 text-content text-xs font-medium px-3 py-1.5 disabled:opacity-50"
+          >
+            <MapPin size={13} /> This is {areaLabel ?? "the bin"} itself — set its identity
+          </button>
         )}
 
         <div className="flex items-center justify-between gap-2 pt-1">

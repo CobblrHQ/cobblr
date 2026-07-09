@@ -109,7 +109,7 @@ syncRouter.get(
     const syncIds = await syncConnectorIdSet(db);
     const rows = await db
       .selectFrom("core_integrations_connectors")
-      .select(["id", "connector_id", "label", "config", "enabled", "created_at"])
+      .select(["id", "connector_id", "label", "config", "enabled", "archived_at", "created_at"])
       .execute();
     const conns = rows.filter((r) => syncIds.has(r.connector_id));
     const ids = conns.map((c) => c.id);
@@ -210,7 +210,7 @@ syncRouter.get(
     const db = tenantDb(req);
     const conn = await db
       .selectFrom("core_integrations_connectors")
-      .select(["id", "connector_id", "label", "config", "enabled", "created_at"])
+      .select(["id", "connector_id", "label", "config", "enabled", "archived_at", "created_at"])
       .where("id", "=", req.params.id!)
       .executeTakeFirst();
     if (!conn || !(await syncConnectorIdSet(db)).has(conn.connector_id)) {
@@ -281,6 +281,34 @@ syncRouter.delete(
     await db.deleteFrom("core_integrations_inbound_tokens").where("connector_id", "=", "sync").where(sql`config ->> 'connector_row_id'`, "=", id).execute();
     // synced_records + sync_state cascade via FK on the connectors row.
     await db.deleteFrom("core_integrations_connectors").where("id", "=", id).execute();
+    res.json({ ok: true });
+  }),
+);
+
+// ── archive: move a connection to the history section (NOT delete). Turns off
+//    ongoing sync so the poll worker drops it; the id-map + config survive, so
+//    un-archive resumes it. run/preview/import 404 while archived. ──
+syncRouter.post(
+  "/connections/:id/archive",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const db = tenantDb(req);
+    const id = req.params.id!;
+    await db.updateTable("core_integrations_connectors").set({ archived_at: new Date(), updated_at: new Date() }).where("id", "=", id).execute();
+    // Stop the poll worker: disable every entity-type sync + clear its due-time.
+    await db.updateTable("core_integrations_sync_state").set({ enabled: false, next_run_at: null, updated_at: new Date() }).where("connector_row_id", "=", id).execute();
+    res.json({ ok: true });
+  }),
+);
+
+// ── un-archive: one click back to the normal list. Sync stays OFF (archiving is
+//    not the same as disabling ongoing sync) — you re-enable it if you want. ──
+syncRouter.post(
+  "/connections/:id/unarchive",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const db = tenantDb(req);
+    await db.updateTable("core_integrations_connectors").set({ archived_at: null, updated_at: new Date() }).where("id", "=", req.params.id!).execute();
     res.json({ ok: true });
   }),
 );

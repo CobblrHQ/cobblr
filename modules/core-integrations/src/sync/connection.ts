@@ -17,7 +17,10 @@ export async function loadConnectionRef(
     .selectAll()
     .where("id", "=", connectorRowId)
     .executeTakeFirst();
-  if (!row || !row.enabled) return null;
+  // Archived connections are inactive: run/preview/import/test resolve to 404
+  // until un-archived (the poll worker already skips them — archive clears
+  // sync_state). Un-archive/list/detail read the row directly, not through here.
+  if (!row || !row.enabled || row.archived_at) return null;
   const credentials = await platform().integrations.decryptCredentials(orgId, row.credentials_enc);
   const config = (row.config ?? {}) as {
     base_url?: string;

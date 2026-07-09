@@ -66,7 +66,7 @@ export interface CoreAiDB {
   core_ai_basics: CoreAiBasicsTable;
 }
 
-// Ask Cobblr "basic mode" per-workspace rows: overrides of built-in rules
+// Ask Cobb "basic mode" per-workspace rows: overrides of built-in rules
 // (builtin_key set) + net-new custom rules (builtin_key null). Built-in
 // defaults live in code (basics-catalog.ts); this table only stores changes.
 export interface CoreAiBasicsTable {

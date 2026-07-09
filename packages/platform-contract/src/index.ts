@@ -240,6 +240,12 @@ const EntityKind = z
     // The platform proxies to this when other modules ask for the
     // entity's data via platform.entities.lookup().
     getEndpoint: z.string().optional(),
+    // Module-relative POST collection endpoint that creates one record of this
+    // kind (e.g. "/entries"). Declaring it makes the kind creatable by generic
+    // callers — today the Ask Cobb chat's create proposals; the tool-calling
+    // layer next. Only declare it when the plain collection POST accepts a
+    // simple fields body; leave unset for kinds created via actions/wizards.
+    createEndpoint: z.string().optional(),
     version: z.string().optional(),
     // Cross-module trait declarations. Three mutually-exclusive
     // forms:
@@ -1258,7 +1264,7 @@ export interface EntityKindRecord {
   icon: string | null;
   fields: EntityFieldDecl[];
   detail_route: string | null;
-  endpoints: { get?: string } | null;
+  endpoints: { get?: string; create?: string } | null;
   version: string;
   /** Resolved 6-axis trait fingerprint (or null if the kind declared
    *  no traits). Used by action matching when an action's appliesTo

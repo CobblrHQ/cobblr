@@ -509,14 +509,54 @@ async function boot() {
             }),
           )
           .execute();
+        // ONE truth during the transition: keep the containee's legacy
+        // location_id coherent with the placement, via the module's own entity
+        // writer (the isolation-respecting cross-module write seam).
+        //   into a location        → location_id = that location
+        //   into an entity (server/machine) → location_id = null (it left the shelf;
+        //     without this, lists kept showing the old shelf while the item was
+        //     inside a container — two disagreeing answers)
+        // Best-effort: kinds without a writer (custom kinds) skip the sync.
+        try {
+          const writer = entities.getEntityWriter(containee.kind);
+          if (writer) {
+            const loc = container.kind === "core-locations:location" ? container.id : null;
+            await writer.update(orgId, containee.id, { location_id: loc });
+          }
+        } catch (err) {
+          console.warn(
+            `[placement] location_id sync for ${containee.kind} skipped:`,
+            (err as Error).message,
+          );
+        }
       },
       remove: async ({ orgId, containee }) => {
         const tdb = (await getTenantDb(orgId)) as unknown as Kysely<PlacementDB>;
+        // If the containee was in a LOCATION container, clear the legacy
+        // location_id too — otherwise the sync trigger resurrects the placement
+        // on the next incidental update of that row.
+        const prev = await tdb
+          .selectFrom("core_placement_placements")
+          .select(["container_kind"])
+          .where("containee_kind", "=", containee.kind)
+          .where("containee_id", "=", containee.id)
+          .executeTakeFirst();
         await tdb
           .deleteFrom("core_placement_placements")
           .where("containee_kind", "=", containee.kind)
           .where("containee_id", "=", containee.id)
           .execute();
+        if (prev?.container_kind === "core-locations:location") {
+          try {
+            const writer = entities.getEntityWriter(containee.kind);
+            if (writer) await writer.update(orgId, containee.id, { location_id: null });
+          } catch (err) {
+            console.warn(
+              `[placement] location_id clear for ${containee.kind} skipped:`,
+              (err as Error).message,
+            );
+          }
+        }
       },
       containerOf: async ({ orgId, containee }) => {
         const tdb = (await getTenantDb(orgId)) as unknown as Kysely<PlacementDB>;

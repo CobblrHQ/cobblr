@@ -14,7 +14,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "tracking",
-  version: "0.1.1",
+  version: "0.2.0",
   displayName: "Tracking",
   description:
     "Log a number over time toward a goal, and see the trend. Weight, runs, habits, budgets, mood — any measurement with a target. Ships a trend-chart view.",
@@ -46,6 +46,7 @@ export default defineModule({
         exposableFields: ["name", "unit", "goal_value", "goal_direction"],
         detailRoute: "/tracking/{id}",
         getEndpoint: "/metrics/{id}",
+        createEndpoint: "/metrics",
       },
       {
         id: "tracking:measurement",

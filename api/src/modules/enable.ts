@@ -92,6 +92,23 @@ export interface EnableResult {
   lastMigration: string | null;
 }
 
+async function ensurePlacementSyncIfLocated(orgId: string, moduleName: string): Promise<void> {
+  // Transitional (placement/containment): a location-bearing module gets its
+  // location_id→placement sync triggers at ENABLE time, not the next boot —
+  // and also on the alreadyEnabled path, because pooled/pre-provisioned orgs
+  // (CI, templates) only ever hit that path. Idempotent + cheap. Dynamic
+  // import avoids the enable.ts ⇄ migrate file cycle. Best-effort.
+  if (moduleName !== "inventory" && moduleName !== "machines" && moduleName !== "assets") return;
+  try {
+    const { ensurePlacementSyncForOrg } = await import(
+      "../platform/migrate-location-to-placement.js"
+    );
+    await ensurePlacementSyncForOrg(orgId);
+  } catch (err) {
+    console.warn(`[enable] placement sync install for ${moduleName} skipped:`, err);
+  }
+}
+
 export async function enableModuleForOrg(
   orgId: string,
   moduleName: string,
@@ -126,6 +143,7 @@ export async function enableModuleForOrg(
     .where("module_name", "=", moduleName)
     .executeTakeFirst();
   if (existing) {
+    await ensurePlacementSyncIfLocated(orgId, moduleName);
     return {
       alreadyEnabled: true,
       migrationsApplied: 0,
@@ -263,6 +281,8 @@ export async function enableModuleForOrg(
   } catch (err) {
     console.error(`[enable] activity logging failed for ${moduleName}:`, err);
   }
+
+  await ensurePlacementSyncIfLocated(orgId, moduleName);
 
   void sql; // re-export kept in case future cleanup needs it
   return { alreadyEnabled: false, migrationsApplied: migrationsApplied.length, lastMigration };

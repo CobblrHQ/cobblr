@@ -34,7 +34,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeftRight, Camera, Check, Flashlight, Loader2, MapPin, ScanLine, Undo2, X } from "lucide-react";
+import { ArrowLeftRight, Camera, Check, Flashlight, Loader2, MapPin, Package, ScanLine, Undo2, X } from "lucide-react";
 import { Modal, usePageTitle, useToast } from "@cobblr/platform-web";
 import { ApiError, api, type ScanInboxItem, type TrackedMatch } from "../lib/api";
 import { decideLocationScan, filingLabel } from "../lib/scanFiling";
@@ -138,6 +138,10 @@ export function ScanCameraPage() {
   const qc = useQueryClient();
   const toast = useToast();
   const [areaId, setAreaId] = useState<string | null>(null);
+  // Scan-into-container: the active bin can be a container ENTITY (a server
+  // asset, a machine) instead of a location. Mutually exclusive with areaId.
+  const [containerBin, setContainerBin] = useState<{ kind: string; id: string } | null>(null);
+  const containerBinRef = useRef<{ kind: string; id: string } | null>(null);
   const [assignOpen, setAssignOpen] = useState(false);
   const [shutterBusy, setShutterBusy] = useState(false);
   const [flash, setFlash] = useState(false);
@@ -191,6 +195,36 @@ export function ScanCameraPage() {
     staleTime: 60_000,
   });
 
+  // Which QR'd kinds act as a CONTAINER bin ("scan into this")? Derived from the
+  // entity-kind registry's declared traits — physical + unique (a server, a
+  // machine, a tool chest), never a hardcoded module list. Locations are handled
+  // by their own earlier branch; fungible kinds keep the normal scan behavior.
+  const kindsQ = useQuery({
+    queryKey: ["entity-kinds", activeSlug],
+    queryFn: () => api.listEntityKinds(activeSlug),
+    enabled: !!activeSlug,
+    staleTime: 300_000,
+  });
+  const containerKindsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const axis = (t: unknown): string | null => {
+      if (t == null) return null;
+      if (typeof t === "string") return t;
+      const v = (t as { trait?: unknown }).trait;
+      return typeof v === "string" ? v : null;
+    };
+    containerKindsRef.current = new Set(
+      (kindsQ.data?.items ?? [])
+        .filter(
+          (k) =>
+            k.id !== "core-locations:location" &&
+            axis(k.traits?.tangibility) === "physical" &&
+            axis(k.traits?.identity) === "unique",
+        )
+        .map((k) => k.id),
+    );
+  }, [kindsQ.data]);
+
   // External QR resolver opt-in: only consult the redirect table on a scan if
   // the workspace actually has enabled rules — a workspace without rules pays no
   // round-trip and sees zero change. See docs/design-decisions/external-qr-resolver.md.
@@ -221,6 +255,29 @@ export function ScanCameraPage() {
   areaIdRef.current = areaId;
   const locsRef = useRef(locations.data?.items);
   locsRef.current = locations.data?.items;
+  containerBinRef.current = containerBin; // keep the scan-callback ref live
+
+  // Tap-to-arm from the floor plan: /scan/camera?bin=<location-id> opens the
+  // camera with that location already the active filing bin — "I'm standing
+  // at the workbench." One-shot: only when no bin is set yet, once the
+  // locations list can name it.
+  const binParam = params.get("bin");
+  useEffect(() => {
+    if (!binParam || areaIdRef.current) return;
+    const b = locations.data?.items?.find((l) => l.id === binParam);
+    if (b) {
+      setAreaId(b.id);
+      toast.success(`Scanning into ${filingLabel(b)}`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [binParam, locations.data]);
+  // Name of the active container bin, for the chip.
+  const containerName = useQuery({
+    queryKey: ["container-bin-name", activeSlug, containerBin?.kind, containerBin?.id],
+    queryFn: () => api.lookupEntity(activeSlug, containerBin!.kind, containerBin!.id),
+    enabled: !!containerBin && !!activeSlug,
+    staleTime: 60_000,
+  }).data?.title;
 
   // ── Scan session: batch + resume ─────────────────────────────────────
   // Every save this session shares one scan_batch_id (minted lazily on the
@@ -419,12 +476,34 @@ export function ScanCameraPage() {
               }
             }
             setAreaId(decision.bin);
+            setContainerBin(null); // location + container bins are exclusive
+            containerBinRef.current = null;
             const b = byId.get(decision.bin);
             const nm = b ? filingLabel(b) : "location";
             const p = decision.reparent ? byId.get(decision.reparent.parent) : null;
             toast.success(
               p ? `Filed ${nm} in ${filingLabel(p)} — filing into ${nm}` : `Filing into ${nm}`,
             );
+            setPhase("scanning");
+            return;
+          }
+          // Scanning a container-capable entity's QR (a machine, a server asset,
+          // any physical+unique kind per its declared traits) sets it as the
+          // active CONTAINER bin — then every barcode you scan files INTO it (a
+          // placement), like a location bin. Mutually exclusive with the
+          // location bin. Kinds come from the registry, never a hardcoded list.
+          if (
+            resolved?.entity_kind &&
+            containerKindsRef.current.has(resolved.entity_kind) &&
+            resolved.entity_id &&
+            (!resolved.org_slug || resolved.org_slug === activeSlug)
+          ) {
+            const cb = { kind: resolved.entity_kind, id: resolved.entity_id };
+            setContainerBin(cb);
+            containerBinRef.current = cb;
+            setAreaId(null);
+            areaIdRef.current = null;
+            toast.success("Scanning into this — scan components to add them inside.");
             setPhase("scanning");
             return;
           }
@@ -640,6 +719,8 @@ export function ScanCameraPage() {
         image_file_id: rec.id,
         scan_area: areaName ?? undefined,
         target_location_id: areaId ?? undefined,
+        target_container_kind: containerBinRef.current?.kind,
+        target_container_id: containerBinRef.current?.id,
         scan_batch_id: batchId ?? undefined,
       });
       onSaved(item);
@@ -710,6 +791,23 @@ export function ScanCameraPage() {
           <MapPin size={13} className={areaName ? "text-emerald-400" : "text-white/60"} />
           <span className="truncate max-w-[40vw]">{areaName ?? "Set area"}</span>
         </button>
+        {/* Container chip — you scanned a machine/asset QR, so every scan files
+            INTO it (a placement). Tap to clear. */}
+        {containerBin && (
+          <button
+            type="button"
+            onClick={() => {
+              setContainerBin(null);
+              containerBinRef.current = null;
+            }}
+            title="Scanning into this container — tap to clear"
+            className="inline-flex items-center gap-1.5 bg-cobble-600/80 hover:bg-cobble-600 rounded-full px-3 py-1.5 text-white text-xs min-w-0"
+          >
+            <Package size={13} />
+            <span className="truncate max-w-[36vw]">Into {containerName ?? "container"}</span>
+            <X size={12} className="text-white/70" />
+          </button>
+        )}
         {/* Move mode — scan a tracked item → it MOVES to the active bin,
             no triage stop (needs an area set to have somewhere to move to). */}
         <button
@@ -995,6 +1093,7 @@ export function ScanCameraPage() {
           barcode={pendingBarcode}
           scanArea={areaName}
           scanAreaId={areaId}
+          scanContainer={containerBin}
           ensureBatchId={ensureBatchId}
           getFrameBlob={() => frameBlobRef.current}
           getStream={() => streamRef.current}

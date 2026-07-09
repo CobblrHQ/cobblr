@@ -75,6 +75,11 @@ const ScanBody = z.object({
    *  core-locations node. Stamped on the item so confirm files the created
    *  entity into that location without re-picking. The active-bin pattern. */
   target_location_id: z.string().uuid().optional(),
+  /** Scan-into-container: the active bin is a container ENTITY (a server asset,
+   *  a machine) rather than a location. Confirm places the created item inside
+   *  it (a placement) instead of stamping location_id. */
+  target_container_kind: z.string().max(120).optional(),
+  target_container_id: z.string().max(200).optional(),
   /** Per-scan budget for the inline enrichment race. After this
    *  the response returns the bare row and enrichment continues
    *  detached. Default 12s. */
@@ -236,6 +241,8 @@ inboxRouter.post(
         scan_batch_id: body.scan_batch_id ?? null,
         scan_area: scanArea,
         target_location_id: body.target_location_id ?? null,
+        target_container_kind: body.target_container_kind ?? null,
+        target_container_id: body.target_container_id ?? null,
         created_by_user_id: session.id,
       })
       .returningAll()
@@ -1126,6 +1133,28 @@ inboxRouter.post(
     }
     const created = (await createRes.json()) as { id: string };
 
+    // Scan-into-container: if the item was scanned into a CONTAINER bin (a
+    // server/asset or machine — not a location), place the created entity inside
+    // it. Parallel to the location_id stamping in the create body above; the
+    // container path writes a placement row after the create. Best-effort — a
+    // bad container (ineligible kind / cycle) never fails the whole confirm; the
+    // item is already created + filed.
+    if (row.target_container_kind && row.target_container_id) {
+      try {
+        await platform().placement.place({
+          orgId: ctx.org.id,
+          containee: { kind: kindKey, id: created.id },
+          container: { kind: row.target_container_kind, id: row.target_container_id },
+          placedBy: sessionUser(req)?.id ?? null,
+        });
+      } catch (err) {
+        console.warn(
+          `[scan] placement into ${row.target_container_kind} failed:`,
+          (err as Error).message,
+        );
+      }
+    }
+
     // Session-theme / manual tags: attach each to the created entity via the
     // core-tags attach endpoint (creates the tag by name on the fly, idempotent
     // on tag+entity). pending_tags stashed by /inbox/apply-theme union with any
@@ -1296,6 +1325,122 @@ inboxRouter.post(
     }
 
     res.json({ item: resolvedRow, created });
+  }),
+);
+
+// ──────────── POST /inbox/:id/confirm-into-location ───────────────
+// The paired-scan flow: the active bin's QR said WHICH record ("Bin 17");
+// this scanned UPC says WHAT it is ("Sterilite 6qt"). Instead of creating a
+// new entity filed INTO the bin, the product identity lands on the bin's own
+// core-locations record — structured container_* keys merged into its
+// metadata, the catalog photo as its image, the product name as its
+// description when none is set. The location's NAME is the user's own label
+// ("Bin 17") and is never overwritten. All writes ride core-locations' HTTP
+// surface with the caller's bearer, so role gating + isolation hold.
+
+inboxRouter.post(
+  "/inbox/:id/confirm-into-location",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const id = req.params.id;
+    if (!id) {
+      res.status(400).json({ error: { code: "missing_id", message: "id required" } });
+      return;
+    }
+    const db = tenantDb(req);
+    const ctx = tenantContext(req);
+    const row = await db
+      .selectFrom("core_scan_inbox_items")
+      .selectAll()
+      .where("id", "=", id)
+      .executeTakeFirst();
+    if (!row) {
+      res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
+      return;
+    }
+    if (row.status === "resolved") {
+      res.status(409).json({
+        error: { code: "already_resolved", message: "This item was already confirmed." },
+      });
+      return;
+    }
+    // The bin: an explicit body override, else the one the scan was filed into.
+    const locId =
+      z.string().uuid().safeParse((req.body as { location_id?: unknown } | undefined)?.location_id)
+        .data ?? row.target_location_id;
+    if (!locId) {
+      res.status(400).json({
+        error: {
+          code: "no_active_bin",
+          message: "This scan wasn't filed into a bin — scan the bin's QR first, then the product barcode.",
+        },
+      });
+      return;
+    }
+
+    // The bin is written through its owning module's registered entity WRITER
+    // (the same sanctioned seam the sync engine uses) — module validation +
+    // events fire; core-scan never touches another module's table or URL.
+    const locationKind = "core-locations:location";
+    const writer = platform().entities.getWriter(locationKind);
+    if (!writer?.read) {
+      res.status(501).json({
+        error: { code: "no_location_writer", message: "Locations module is not available." },
+      });
+      return;
+    }
+    const loc = await writer.read(ctx.org.id, locId);
+    if (!loc) {
+      res.status(404).json({ error: { code: "not_found", message: "bin not found" } });
+      return;
+    }
+
+    const meta = (row.suggested_metadata as Record<string, unknown> | null) ?? {};
+    // The writer replaces metadata wholesale — merge over the current blob so
+    // the identity never wipes what's already on the bin. container_* is the
+    // structured face; barcode/sku let a future catalog re-match find it.
+    const identity: Record<string, unknown> = {
+      container_product: row.suggested_name ?? undefined,
+      container_brand: row.suggested_manufacturer ?? undefined,
+      barcode: row.barcode_text ?? undefined,
+      sku: row.suggested_sku ?? undefined,
+      ...(typeof (meta as { category?: unknown }).category === "string"
+        ? { container_category: (meta as { category?: string }).category }
+        : {}),
+    };
+    for (const k of Object.keys(identity)) if (identity[k] === undefined) delete identity[k];
+    const currentMeta = (loc.metadata as Record<string, unknown> | null) ?? {};
+    const fields: Record<string, unknown> = { metadata: { ...currentMeta, ...identity } };
+    if (!loc.description && row.suggested_name) fields.description = row.suggested_name;
+    if (!loc.image_path && row.catalog_image_file_id) {
+      fields.image_path = `/api/v1/orgs/${ctx.org.slug}/modules/core-files/files/${row.catalog_image_file_id}/raw`;
+    }
+    await writer.update(ctx.org.id, locId, fields);
+
+    const [locModule, locKind] = locationKind.split(":") as [string, string];
+    const resolvedRow = await db
+      .updateTable("core_scan_inbox_items")
+      .set({
+        status: "resolved",
+        target_module: locModule,
+        target_kind: locKind,
+        target_entity_id: locId,
+        resolved_at: new Date(),
+        updated_at: new Date(),
+      })
+      .where("id", "=", id)
+      .returningAll()
+      .executeTakeFirstOrThrow();
+
+    void platform().events.emit("core-scan.scan.confirmed", {
+      orgId: ctx.org.id,
+      itemId: id,
+      targetModule: locModule,
+      targetKind: locKind,
+      entityId: locId,
+    });
+
+    res.json({ item: resolvedRow, location_id: locId });
   }),
 );
 

@@ -1,4 +1,4 @@
-// Ask Cobblr "basic mode" — the no-AI floor, now per-workspace + trainable.
+// Ask Cobb "basic mode" — the no-AI floor, now per-workspace + trainable.
 // When a workspace has no AI provider, the chat calls POST /basics/answer and
 // gets a lexical, deterministic answer from the EFFECTIVE ruleset: the built-in
 // catalog (basics-catalog.ts) overlaid with this workspace's overrides + custom

@@ -55,7 +55,13 @@ export async function syncManifestRegistries(): Promise<{
         icon: k.icon ?? null,
         fields: k.fields,
         detail_route: k.detailRoute ?? null,
-        endpoints: k.getEndpoint ? { get: k.getEndpoint } : null,
+        endpoints:
+          k.getEndpoint || k.createEndpoint
+            ? {
+                ...(k.getEndpoint ? { get: k.getEndpoint } : {}),
+                ...(k.createEndpoint ? { create: k.createEndpoint } : {}),
+              }
+            : null,
         version: k.version ?? m.version,
         traits: k.traits ?? null,
         profile: k.profile ?? null,

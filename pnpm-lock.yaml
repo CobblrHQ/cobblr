@@ -427,6 +427,25 @@ importers:
         specifier: ^5.7.2
         version: 5.9.3
 
+  modules/core-import:
+    dependencies:
+      '@cobblr/platform-contract':
+        specifier: workspace:*
+        version: link:../../packages/platform-contract
+      express:
+        specifier: ^4.21.2
+        version: 4.22.2
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
+    devDependencies:
+      '@types/express':
+        specifier: ^4.17.21
+        version: 4.17.25
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
   modules/core-integrations:
     dependencies:
       '@cobblr/platform-contract':
@@ -574,7 +593,16 @@ importers:
       '@cobblr/platform-contract':
         specifier: workspace:*
         version: link:../../packages/platform-contract
+      express:
+        specifier: ^4.21.2
+        version: 4.22.2
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
     devDependencies:
+      '@types/express':
+        specifier: ^4.17.21
+        version: 4.17.25
       typescript:
         specifier: ^5.7.2
         version: 5.9.3

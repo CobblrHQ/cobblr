@@ -21,6 +21,7 @@ import { registerSyncInboundHandler } from "../sync/inbound.js";
 import { registerSyncWorker } from "../sync/worker.js";
 import { buildSyncConnector } from "../sync/declarative.js";
 import { RAVELRY_MANIFEST } from "../sync/sources/ravelry.js";
+import { HOMEBOX_MANIFEST } from "../sync/sources/homebox.js";
 
 let registered = false;
 function registerBuiltins(): void {
@@ -37,6 +38,7 @@ function registerBuiltins(): void {
   // user authoring JSON — still pure data (a manifest), nothing source-specific
   // in the engine. Ravelry is the first.
   platform().integrations.registerSyncConnector(buildSyncConnector(RAVELRY_MANIFEST));
+  platform().integrations.registerSyncConnector(buildSyncConnector(HOMEBOX_MANIFEST));
   // The inbound handler (live push) + the reconcile worker are global.
   registerSyncInboundHandler();
   registerSyncWorker();

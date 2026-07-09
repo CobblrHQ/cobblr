@@ -44,6 +44,7 @@ import {
   type LocationNode as SharedLocationNode,
 } from "@cobblr/platform-web";
 import { ApiError, api, fetchAuthBlobUrl, type Location } from "../lib/api";
+import { emptyCounts, totalUsage, useLocationUsage, type UsageCounts } from "../lib/useLocationUsage";
 import { queueLabelsBulk } from "../lib/queue-label";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ImportLocationsDialog } from "../components/ImportLocationsDialog";
@@ -60,21 +61,6 @@ const LOCATION_ACCESSORS = {
   name: (l: Location) => l.name,
   isContainer: (l: Location) => l.kind === "container",
 };
-
-interface UsageCounts {
-  machines: number;
-  assets: number;
-  parts: number;
-}
-
-function emptyCounts(): UsageCounts {
-  return { machines: 0, assets: 0, parts: 0 };
-}
-
-function totalUsage(c: UsageCounts | undefined): number {
-  if (!c) return 0;
-  return c.machines + c.assets + c.parts;
-}
 
 export function LocationsPage() {
   usePageTitle("Locations");
@@ -173,43 +159,13 @@ export function LocationsPage() {
     enabled: !!activeSlug,
   });
 
-  // Per-location usage counts. The web shell asks each module's
-  // list endpoint for entities that point at any location and groups
-  // by `location_id` client-side. Three independent queries so each
-  // can fail / load independently.
-  const machinesQ = useQuery({
-    queryKey: ["machines-for-locations", activeSlug],
-    queryFn: () => api.listMachines(activeSlug),
-    enabled: !!activeSlug,
-  });
-  const assetsQ = useQuery({
-    queryKey: ["assets-for-locations", activeSlug],
-    queryFn: () => api.listAssets(activeSlug),
-    enabled: !!activeSlug,
-  });
-  const partsQ = useQuery({
-    queryKey: ["parts-for-locations", activeSlug],
-    queryFn: () => api.listInventoryParts(activeSlug),
-    enabled: !!activeSlug,
-  });
+  // Per-location usage counts — extracted to useLocationUsage (shared with
+  // the floor plan's heat view); query keys unchanged so caches dedupe.
+  const usageByLocation = useLocationUsage(activeSlug);
 
   const items = useMemo(() => list.data?.items ?? [], [list.data]);
   // Shared model → the areas tree + loose-container roots, sorted.
   const forest = useMemo(() => buildLocationForest(items, LOCATION_ACCESSORS), [items]);
-
-  const usageByLocation = useMemo(() => {
-    const m = new Map<string, UsageCounts>();
-    const bump = (locId: string | null, key: keyof UsageCounts) => {
-      if (!locId) return;
-      const c = m.get(locId) ?? emptyCounts();
-      c[key]++;
-      m.set(locId, c);
-    };
-    for (const x of machinesQ.data?.items ?? []) bump(x.location_id, "machines");
-    for (const x of assetsQ.data?.items ?? []) bump(x.location_id, "assets");
-    for (const x of partsQ.data?.items ?? []) bump(x.location_id, "parts");
-    return m;
-  }, [machinesQ.data, assetsQ.data, partsQ.data]);
 
   // For the delete confirm — count the subtree's total external refs.
   function subtreeUsage(node: LocationNode): UsageCounts {
@@ -609,8 +565,27 @@ function LocationCard({
       </div>
       {node.children.length > 0 && (
         <div className="p-3 pl-6 space-y-2 bg-subtle/50 dark:bg-slate-900/40">
-          <SortableContext items={node.children.map((c) => c.id)} strategy={verticalListSortingStrategy}>
-            {node.children.map((c) => (
+          {/* Child AREAS are zones — subdivisions of this space, not things
+              inside it — so they render as dashed annotations (ZoneCard), never
+              as nested boxes; containers keep the boxed card. Zones first, so
+              the space's structure reads before its loose contents. */}
+          <SortableContext
+            items={[...node.children.filter((c) => c.kind === "area"), ...node.children.filter((c) => c.kind !== "area")].map((c) => c.id)}
+            strategy={verticalListSortingStrategy}
+          >
+            {node.children.filter((c) => c.kind === "area").map((c) => (
+              <ZoneCard
+                key={c.id}
+                node={c}
+                usageByLocation={usageByLocation}
+                selected={selected}
+                onToggleSelect={onToggleSelect}
+                onAddChild={onAddChild}
+                onEdit={onEdit}
+                onDelete={onDelete}
+              />
+            ))}
+            {node.children.filter((c) => c.kind !== "area").map((c) => (
               <LocationCard
                 key={c.id}
                 node={c}
@@ -625,6 +600,144 @@ function LocationCard({
           </SortableContext>
         </div>
       )}
+    </div>
+  );
+}
+
+/** A nested AREA drawn as a zone ANNOTATION, not a surface. Bay 1/2/3 divide
+ *  the garage — they aren't rooms inside it — so instead of the nested box
+ *  (which claims containment) a zone is a thin DASHED outline with its name
+ *  pinned to the border line, and its contents render at full width in the
+ *  parent's own flow. The border style carries the kind: dashed = zone,
+ *  solid = container. Same data, same reorder/scan/breadcrumb semantics as
+ *  before — this is purely a different drawing of `kind === "area"` children. */
+function ZoneCard({
+  node,
+  usageByLocation,
+  selected,
+  onToggleSelect,
+  onAddChild,
+  onEdit,
+  onDelete,
+}: {
+  node: LocationNode;
+  usageByLocation: Map<string, UsageCounts>;
+  selected: Set<string>;
+  onToggleSelect: (id: string) => void;
+  onAddChild: (parentId: string) => void;
+  onEdit: (loc: Location) => void;
+  onDelete: (loc: LocationNode) => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: node.id });
+  const style = { transform: CSS.Transform.toString(transform), transition };
+  const usage = usageByLocation.get(node.id);
+  const usageTotal = totalUsage(usage);
+  return (
+    // The pt-2 spacer keeps the name chip (which sits ON the border line)
+    // from overlapping the previous sibling.
+    <div ref={setNodeRef} style={style} className={`pt-2 ${isDragging ? "opacity-60" : ""}`}>
+      <div
+        className={`relative rounded-xl border border-dashed border-slate-400/70 dark:border-slate-500/60 p-3 pt-4 space-y-2 ${isDragging ? "ring-1 ring-accent/40" : ""}`}
+      >
+        <div className="absolute -top-3 left-3 inline-flex items-center gap-1.5 rounded-full border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-0.5">
+          <button
+            type="button"
+            {...attributes}
+            {...listeners}
+            title="Drag to reorder (within its group)"
+            aria-label={`Drag ${node.name} to reorder`}
+            className="cursor-grab touch-none text-faint hover:text-muted active:cursor-grabbing"
+          >
+            <GripVertical size={12} />
+          </button>
+          <input
+            type="checkbox"
+            checked={selected.has(node.id)}
+            onChange={() => onToggleSelect(node.id)}
+            className="accent-cobble-600"
+            aria-label={`Select ${node.name}`}
+            title="Select for bulk actions"
+          />
+          <AreaIcon size={12} className="text-accent shrink-0" />
+          <Link
+            to={`/configuration/locations/${node.id}`}
+            className="font-mono text-[11px] uppercase tracking-wider font-medium text-content dark:text-mortar-100 hover:text-accent"
+          >
+            {node.name}
+          </Link>
+          {usageTotal > 0 && (
+            <span
+              className="text-[10px] font-mono text-faint"
+              title={`${usage?.machines ?? 0} machine(s) · ${usage?.assets ?? 0} asset(s) · ${usage?.parts ?? 0} part(s) point here`}
+            >
+              · {usageTotal}
+            </span>
+          )}
+        </div>
+        <div className="absolute -top-3 right-3 inline-flex items-center rounded-full border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-1 py-0.5">
+          <button
+            type="button"
+            onClick={() => onAddChild(node.id)}
+            title="Add child"
+            className="text-faint hover:text-accent transition px-1"
+          >
+            <Plus size={12} />
+          </button>
+          <button
+            type="button"
+            onClick={() => onEdit(node)}
+            title="Edit"
+            className="text-faint hover:text-accent transition px-1"
+          >
+            <Pencil size={12} />
+          </button>
+          <button
+            type="button"
+            onClick={() => onDelete(node)}
+            title="Delete"
+            className="text-faint hover:text-ember-500 transition px-1"
+          >
+            <Trash2 size={12} />
+          </button>
+        </div>
+        {node.children.length === 0 && (
+          <div className="text-xs text-faint dark:text-slate-500 italic px-1 py-1">
+            empty — scan or file into it
+          </div>
+        )}
+        {node.children.length > 0 && (
+          <SortableContext
+            items={[...node.children.filter((c) => c.kind === "area"), ...node.children.filter((c) => c.kind !== "area")].map((c) => c.id)}
+            strategy={verticalListSortingStrategy}
+          >
+            {node.children.filter((c) => c.kind === "area").map((c) => (
+              <ZoneCard
+                key={c.id}
+                node={c}
+                usageByLocation={usageByLocation}
+                selected={selected}
+                onToggleSelect={onToggleSelect}
+                onAddChild={onAddChild}
+                onEdit={onEdit}
+                onDelete={onDelete}
+              />
+            ))}
+            {node.children.filter((c) => c.kind !== "area").map((c) => (
+              <LocationCard
+                key={c.id}
+                node={c}
+                usageByLocation={usageByLocation}
+                selected={selected}
+                onToggleSelect={onToggleSelect}
+                onAddChild={onAddChild}
+                onEdit={onEdit}
+                onDelete={onDelete}
+              />
+            ))}
+          </SortableContext>
+        )}
+      </div>
     </div>
   );
 }

@@ -18,6 +18,7 @@ import { EntityActionsBar,
 import { ApiError, api, type Location } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { EntityAttachments } from "../components/EntityAttachments";
+import { FloorPlan } from "../components/FloorPlan";
 
 interface ContentItem {
   module: string;
@@ -216,6 +217,12 @@ export function LocationDetailPage() {
           </div>
         )}
       </header>
+
+      {/* The floor plan / layout — the location's children drawn where they
+          physically stand (spec: docs/design-decisions/location-floor-plan.md).
+          Rooms lay out top-down; containers (a toolbox) lay out as a front
+          elevation so drawers show at true scale. */}
+      <FloorPlan room={l} slug={activeSlug} />
 
       {children.length > 0 && (
         <section>

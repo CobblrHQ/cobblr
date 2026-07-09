@@ -78,10 +78,19 @@ export function register(): void {
         }
         case "chat": {
           const messages = (ctx.input.messages as Array<{ role: string; content: string }>) ?? [];
+          // Honour a first-class `system` prompt (chat.ts passes it here, not as
+          // a role:"system" message). Every adapter must read input.system; this
+          // one was missed when delivery moved there, silently dropping the
+          // workspace prompt for direct-Ollama chat.
+          const system = typeof ctx.input.system === "string" ? ctx.input.system : undefined;
           const res = await call("/api/chat", {
             method: "POST",
             headers: { "content-type": "application/json", ...authHeaders },
-            body: JSON.stringify({ model: ctx.model, messages, stream: false }),
+            body: JSON.stringify({
+              model: ctx.model,
+              messages: system ? [{ role: "system", content: system }, ...messages] : messages,
+              stream: false,
+            }),
           });
           // Don't echo the upstream body — for a read-SSRF that body is the
           // exfil channel; the status alone is enough to diagnose.

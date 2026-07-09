@@ -129,7 +129,7 @@ export function ConnectionsPage() {
                   set: {c.credential_keys.join(", ")}
                 </div>
               )}
-              {isEdgeBridgeConnection(c.provider_id) && <EdgeBridgeStatusRow />}
+              {isEdgeBridgeConnection(c) && <EdgeBridgeStatusRow />}
             </div>
             <div className="flex items-center shrink-0">
               <button

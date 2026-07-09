@@ -5,6 +5,7 @@
 import { Router } from "express";
 import { locationsRouter } from "./locations.js";
 import { locationsImportRouter } from "./import.js";
+import { floorplanRouter } from "./floorplan.js";
 import { registerLocationsResolvers } from "./resolvers.js";
 import { registerLocationsWriter } from "./sync-writer.js";
 
@@ -13,6 +14,8 @@ const router = Router({ mergeParams: true });
 // Import/export first so /locations/import + /locations/export aren't swallowed
 // by the main router's /locations/:id route.
 router.use("/locations", locationsImportRouter);
+// Floor plan (":id/floorplan/seed") before the generic /:id routes.
+router.use("/locations", floorplanRouter);
 router.use("/locations", locationsRouter);
 
 // Side-effect: register the entity-kind resolvers at module-load

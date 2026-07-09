@@ -6,7 +6,8 @@
 // renderers swap in here as they ship.
 
 import { useState, useMemo, useEffect } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
+import { useDetailRoute } from "../lib/useDetailRoute";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, LayoutList, Pencil, Pin, PinOff, Plus, Trash2 } from "lucide-react";
 import { WEEKDAYS, MONTHS, isoLocal, buildMonthGrid, shiftMonth } from "../lib/month-grid";
@@ -220,48 +221,64 @@ function ViewDataModal({
     queryFn: () => api.viewData(slug, view.id),
   });
   const items = data.data?.items ?? [];
-  const cfg = (view.config ?? {}) as ViewConfig;
 
   return (
     <Modal open onClose={onClose} title={view.name} size="lg">
-      <div className="space-y-2">
-        <div className="text-xs text-muted dark:text-slate-400 flex items-center gap-2">
-          <span>{view.entity_kind}</span>
-          <span className="px-1.5 py-0.5 rounded bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300 font-mono text-[10px] uppercase">
-            {view.view_type}
-          </span>
-          <span>{items.length} rows</span>
-        </div>
-        {data.isLoading && <div className="text-sm text-muted">Loading…</div>}
-        {items.length === 0 && !data.isLoading && (
-          <div className="text-sm text-muted italic">No matching rows.</div>
-        )}
-        {items.length > 0 && view.view_type === "kanban" && (
-          <KanbanRenderer items={items} groupBy={cfg.group_by ?? "subtitle"} />
-        )}
-        {items.length > 0 && view.view_type === "table" && (
-          <TableRenderer items={items} columns={cfg.visible_fields} groupBy={cfg.group_by} />
-        )}
-        {items.length > 0 && view.view_type === "trend" && (
-          <TrendRenderer items={items} cfg={cfg} />
-        )}
-        {items.length > 0 && view.view_type === "calendar" && (
-          <CalendarRenderer items={items} cfg={cfg} />
-        )}
-        {items.length > 0 && view.view_type === "gantt" && (
-          <GanttRenderer items={items} cfg={cfg} />
-        )}
-        {items.length > 0 && view.view_type === "gallery" && (
-          <GalleryRenderer items={items} cfg={cfg} />
-        )}
-        {items.length > 0 && view.view_type === "heatmap" && (
-          <HeatmapRenderer items={items} cfg={cfg} />
-        )}
-        {items.length > 0 && view.view_type !== "kanban" && view.view_type !== "table" && view.view_type !== "trend" && view.view_type !== "calendar" && view.view_type !== "gantt" && view.view_type !== "gallery" && view.view_type !== "heatmap" && (
-          <ListRenderer items={items} />
-        )}
-      </div>
+      <SavedViewBody view={view} items={items} isLoading={data.isLoading} />
     </Modal>
+  );
+}
+
+/** The type-switched render of one saved view's rows — shared by the config
+ *  page's preview modal and the full-page /views/:viewId surface. */
+export function SavedViewBody({
+  view,
+  items,
+  isLoading,
+}: {
+  view: SavedView;
+  items: ViewRow[];
+  isLoading: boolean;
+}) {
+  const cfg = (view.config ?? {}) as ViewConfig;
+  return (
+    <div className="space-y-2">
+      <div className="text-xs text-muted dark:text-slate-400 flex items-center gap-2">
+        <span>{view.entity_kind}</span>
+        <span className="px-1.5 py-0.5 rounded bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300 font-mono text-[10px] uppercase">
+          {view.view_type}
+        </span>
+        <span>{items.length} rows</span>
+      </div>
+      {isLoading && <div className="text-sm text-muted">Loading…</div>}
+      {items.length === 0 && !isLoading && (
+        <div className="text-sm text-muted italic">No matching rows.</div>
+      )}
+      {items.length > 0 && view.view_type === "kanban" && (
+        <KanbanRenderer items={items} groupBy={cfg.group_by ?? "subtitle"} />
+      )}
+      {items.length > 0 && view.view_type === "table" && (
+        <TableRenderer items={items} columns={cfg.visible_fields} groupBy={cfg.group_by} />
+      )}
+      {items.length > 0 && view.view_type === "trend" && (
+        <TrendRenderer items={items} cfg={cfg} />
+      )}
+      {items.length > 0 && view.view_type === "calendar" && (
+        <CalendarRenderer items={items} cfg={cfg} />
+      )}
+      {items.length > 0 && view.view_type === "gantt" && (
+        <GanttRenderer items={items} cfg={cfg} />
+      )}
+      {items.length > 0 && view.view_type === "gallery" && (
+        <GalleryRenderer items={items} cfg={cfg} />
+      )}
+      {items.length > 0 && view.view_type === "heatmap" && (
+        <HeatmapRenderer items={items} cfg={cfg} />
+      )}
+      {items.length > 0 && view.view_type !== "kanban" && view.view_type !== "table" && view.view_type !== "trend" && view.view_type !== "calendar" && view.view_type !== "gantt" && view.view_type !== "gallery" && view.view_type !== "heatmap" && (
+        <ListRenderer items={items} />
+      )}
+    </div>
   );
 }
 
@@ -536,13 +553,28 @@ function GanttRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) {
   );
 }
 
+/** A row/card title that links to the entity's detail page when its kind has
+ *  one (per the entity-kinds registry) — plain text otherwise. Every renderer
+ *  routes titles through this so view rows are clickable everywhere. */
+function EntityTitleLink({ row, className }: { row: ViewRow; className?: string }) {
+  const { activeSlug } = useActiveOrg();
+  const routeFor = useDetailRoute(activeSlug);
+  const href = routeFor(row.kind, row.id);
+  if (!href) return <span className={className}>{row.title}</span>;
+  return (
+    <Link to={href} className={`${className ?? ""} hover:text-accent hover:underline`}>
+      {row.title}
+    </Link>
+  );
+}
+
 function ListRenderer({ items }: { items: ViewRow[] }) {
   return (
     <ul className="divide-y divide-line dark:divide-slate-800 border border-line dark:border-slate-700 rounded">
       {items.map((row) => (
         <li key={`${row.kind}:${row.id}`} className="px-3 py-2 text-sm">
           <div className="flex items-baseline gap-3">
-            <span className="font-medium">{row.title}</span>
+            <EntityTitleLink row={row} className="font-medium" />
             {row.subtitle && (
               <span className="text-xs text-muted">{row.subtitle}</span>
             )}
@@ -594,7 +626,9 @@ function KanbanRenderer({
                 key={`${r.kind}:${r.id}`}
                 className="px-2 py-1.5 text-xs rounded bg-surface dark:bg-slate-800 border border-line dark:border-slate-700"
               >
-                <div className="font-medium truncate">{r.title}</div>
+                <div className="font-medium truncate">
+                  <EntityTitleLink row={r} />
+                </div>
                 {r.subtitle && col !== r.subtitle && (
                   <div className="text-[10px] text-muted truncate">
                     {r.subtitle}

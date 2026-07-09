@@ -12,13 +12,11 @@ import { asyncHandler, badBody, requireRole } from "./util.js";
 
 export const chatRouter = Router({ mergeParams: true });
 
-// Kind → that module's create endpoint. These are the kinds whose create route
-// doesn't follow the derivable convention (they declare no manifest
-// `getEndpoint`), so they're pinned here. Any OTHER kind that declares a
-// `getEndpoint` in its manifest is createable too, derived at runtime by
-// `createPathFor` — so knowledge entries, tracking metrics, etc. work without a
-// new entry here. (Phase 1: modules should declare a create route in the
-// manifest so this whole map can go away.)
+// Kind → that module's create endpoint, for kinds that predate the manifest
+// `createEndpoint` declaration. Pinned here until each module declares it; a
+// kind that DOES declare `createEndpoint` needs no entry — resolveCreatePath
+// reads the manifest. Do NOT add new rows: declare `createEndpoint` on the
+// kind instead.
 const KIND_CREATE_PATHS: Record<string, string> = {
   "inventory:part": "inventory/parts",
   "machines:machine": "machines/machines",
@@ -29,27 +27,32 @@ const KIND_CREATE_PATHS: Record<string, string> = {
   "lists:item": "lists/items",
 };
 
-interface KindRec {
+export interface KindRec {
   id: string;
   display_name?: string;
   module_name?: string;
-  endpoints?: { get?: string } | null;
+  endpoints?: { get?: string; create?: string } | null;
+  fields?: Array<{ name: string; type?: string; role?: string; required?: boolean }>;
 }
 
-/** The `POST /modules/<path>` route that creates a record of `kind`, or null if
- *  the kind isn't creatable from chat. Pinned overrides win; otherwise derive
- *  `<module>/<collection>` from the kind's manifest `getEndpoint` (a
- *  module-relative "/things/{id}" → collection "things"). */
-async function createPathFor(c: Ctx, kind: string, kinds?: KindRec[]): Promise<string | null> {
-  if (kind in KIND_CREATE_PATHS) return KIND_CREATE_PATHS[kind]!;
-  const list = kinds ?? (await callApi(c, "GET", "/entity-kinds")).body.items as KindRec[] | undefined;
-  const rec = (list ?? []).find((k) => k.id === kind);
-  const get = rec?.endpoints?.get;
-  if (rec?.module_name && get) {
-    const collection = get.replace(/\/\{id\}.*$/, "").replace(/^\//, "");
-    if (collection) return `${rec.module_name}/${collection}`;
+/** The `POST /modules/<path>` route that creates a record of `kind`, or null
+ *  when the kind isn't creatable from chat. A manifest-declared
+ *  `createEndpoint` wins (the module's own promise that the plain collection
+ *  POST works); the pinned map covers the pre-declaration kinds. No guessing —
+ *  a kind with neither is honestly not offered, instead of being advertised
+ *  and 404ing at confirm time. Exported (pure over `kinds`) for tests. */
+export function resolveCreatePath(kind: string, kinds: KindRec[]): string | null {
+  const rec = kinds.find((k) => k.id === kind);
+  const create = rec?.endpoints?.create;
+  if (rec?.module_name && create) {
+    return `${rec.module_name}/${create.replace(/^\//, "")}`;
   }
-  return null;
+  return kind in KIND_CREATE_PATHS ? KIND_CREATE_PATHS[kind]! : null;
+}
+
+async function createPathFor(c: Ctx, kind: string): Promise<string | null> {
+  const list = ((await callApi(c, "GET", "/entity-kinds")).body.items as KindRec[] | undefined) ?? [];
+  return resolveCreatePath(kind, list);
 }
 
 interface Ctx {
@@ -104,10 +107,22 @@ async function buildSystemPrompt(c: Ctx): Promise<string> {
     const acts = (insp.body.actions as Array<{ id: string; label: string; description?: string }> | undefined) ?? [];
     for (const a of acts) actionLines.push(`- ${a.id} (on ${k.id}) — ${a.label}${a.description ? `: ${a.description}` : ""}`);
   }
-  // Createable = pinned in the override map OR declares a manifest getEndpoint.
-  const createable = kinds
-    .filter((k) => k.id in KIND_CREATE_PATHS || (k.module_name && k.endpoints?.get))
-    .map((k) => k.id);
+  // Createable = exactly what resolveCreatePath will accept at execute time —
+  // the prompt never advertises a create that would 404 on confirm.
+  const createableKinds = kinds.filter((k) => resolveCreatePath(k.id, kinds) !== null);
+  const createable = createableKinds.map((k) => k.id);
+  // Field hints so the model uses the kind's REAL field names (knowledge wants
+  // "title", inventory wants "name", …) instead of guessing and 400ing at
+  // confirm. Native fields only, capped to keep the prompt lean.
+  const createFieldLines = createableKinds
+    .map((k) => {
+      const fs = (k.fields ?? []).slice(0, 8).map((f) => {
+        const req = f.required || f.role === "title" ? " (required)" : "";
+        return `${f.name}${f.type && f.type !== "text" ? `:${f.type}` : ""}${req}`;
+      });
+      return fs.length ? `- ${k.id}: ${fs.join(", ")}` : null;
+    })
+    .filter(Boolean) as string[];
 
   return `You are Cobb, the helpful assistant inside the user's Cobblr workspace "${c.slug}". Be genuinely useful and warm — you are NOT limited to workspace chores.
 
@@ -124,6 +139,9 @@ ${kindLines}
 
 You can CREATE new records of these kinds: ${createable.join(", ") || "(none)"}
 
+Each createable kind's fields (use these EXACT field names in "fields"):
+${createFieldLines.join("\n") || "(none)"}
+
 ACTIONS you can run on existing records:
 ${actionLines.join("\n") || "(none)"}
 
@@ -137,7 +155,7 @@ Rules:
 - Default to "reply" for questions, explanations, and anything conversational — put your ACTUAL answer in "text", not a deflection.
 - Only use create/action when the user clearly wants to save or change something in the workspace.
 - Use entity_kind / action_id values EXACTLY from the lists above. Never invent ids. If a needed kind/action isn't listed, use "reply" to answer and say what you can't save yet.
-- create: include at least a "name" (or "title") in fields; add other obvious fields the user gave.
+- create: use the kind's field names from the list above (its required/title field at minimum); add other obvious fields the user gave.
 - action: entity_query is the name/text to find the existing record — the system looks it up.
 - Use "build" only when the user wants to SET UP or DESIGN a whole new app/workspace (several kinds/modules at once). Put their full description in "intent". Never use "build" for a single record.`;
 }

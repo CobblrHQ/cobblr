@@ -48,6 +48,7 @@ import { SearchPage } from "./pages/SearchPage";
 import { TagsPage } from "./pages/TagsPage";
 import { FilesPage } from "./pages/FilesPage";
 import { ViewsPage } from "./pages/ViewsPage";
+import { SavedViewPage } from "./pages/SavedViewPage";
 import { ConfigurationPage } from "./pages/ConfigurationPage";
 import { ConfigurationLayout } from "./components/ConfigurationLayout";
 import { ConfigMembersPage, ConfigModulesPage, ConfigNewThingPage } from "./pages/ConfigLauncherPages";
@@ -106,6 +107,7 @@ const AppsConfigPage = lazy(() => import("./pages/AppsConfigPage").then((m) => (
 const PermissionsPage = lazy(() => import("./pages/PermissionsPage").then((m) => ({ default: m.PermissionsPage })));
 const PortalHomePage = lazy(() => import("./pages/PortalHomePage").then((m) => ({ default: m.PortalHomePage })));
 const PortalViewPage = lazy(() => import("./pages/PortalViewPage").then((m) => ({ default: m.PortalViewPage })));
+const PlanPrintPage = lazy(() => import("./pages/PlanPrintPage").then((m) => ({ default: m.PlanPrintPage })));
 const AppPlayerPage = lazy(() => import("./pages/AppPlayerPage").then((m) => ({ default: m.AppPlayerPage })));
 const AppRecordPage = lazy(() => import("./pages/AppPlayerPage").then((m) => ({ default: m.AppRecordPage })));
 const BrickLinkPage = lazy(() => import("./pages/BrickLinkPage").then((m) => ({ default: m.BrickLinkPage })));
@@ -573,6 +575,11 @@ function ActiveOrgScopedRoutes() {
             <Route path="/views" element={<ViewsPage />} />
             <Route path="/tags" element={<TagsPage />} />
           </Route>
+          {/* A saved view as a full PAGE — outside the configuration shell.
+              The dashboard's pinned-view cards land here so a view opens
+              with the whole screen, not as a modal floating over the
+              /views config list. */}
+          <Route path="/views/:viewId" element={<SavedViewPage />} />
           <Route path="/build" element={<BuildPage />} />
           {/* digifab is a domain (bare module name) → the navbar links to its
               top path `/digifab`. Route it there as well as the Configuration
@@ -646,6 +653,9 @@ function ActiveOrgScopedRoutes() {
           <Route path="app/:appSlug" element={<AppPlayerPage />} />
           <Route path="app/:appSlug/r/:kind/:id" element={<AppRecordPage />} />
         </Route>
+        {/* Print-friendly floor plan — chrome-less like the portal; the page
+            is deliberately paper-white regardless of theme. */}
+        <Route path="/print/:slug/locations/:id" element={<PlanPrintPage />} />
         {/* The operator console now lives at TOP-LEVEL /admin (instance-wide,
             no workspace prefix — see Shell). Old workspace-nested URLs
             (/w/:slug/admin/…, /w/:slug/super-admin) escape with a full

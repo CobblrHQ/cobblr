@@ -17,32 +17,60 @@ import { DashboardTile, registerDashboardWidget } from "@cobblr/platform-web";
 import { api } from "../lib/api";
 
 function MachinesWidget({ slug }: { slug: string }) {
+  // Base machines + every machines INSTANCE (3D Printers, Laser Cutters, CNC
+  // Machines…), whose items live under /instances/<name>/items. Machines is a
+  // "multi" module: the type-specific specialisations are instances, so a
+  // workspace with tons of printers but no base-list machines was flagged
+  // "nothing in them yet" — the same miss AssetsWidget already fixed.
   const q = useQuery({
     queryKey: ["dash-machines", slug],
     queryFn: () =>
-      api.request<{ items: Array<{ state: string }> }>(
-        "GET",
-        `/orgs/${slug}/modules/machines/machines?limit=200`,
+      api
+        .request<{ items: Array<{ state: string }> }>("GET", `/orgs/${slug}/modules/machines/machines?limit=200`)
+        .catch(() => ({ items: [] })),
+    staleTime: 30_000,
+  });
+  const insts = useQuery({
+    queryKey: ["dash-machines-insts", slug],
+    queryFn: () => api.listInstances(slug, "machines").catch(() => ({ items: [] })),
+    staleTime: 30_000,
+  });
+  const instList = insts.data?.items ?? [];
+  const instData = useQuery({
+    queryKey: ["dash-machines-instdata", slug, instList.map((i) => i.instance_name).sort().join(",")],
+    queryFn: () =>
+      Promise.all(
+        instList.map((i) =>
+          api
+            .request<{ items: unknown[] }>("GET", `/orgs/${slug}/instances/${encodeURIComponent(i.instance_name)}/items?limit=200`)
+            .then((r) => ({ name: i.instance_name, label: i.display_name, total: r.items.length }))
+            .catch(() => ({ name: i.instance_name, label: i.display_name, total: 0 })),
+        ),
       ),
+    enabled: instList.length > 0,
     staleTime: 30_000,
   });
   const items = q.data?.items ?? [];
+  const rows = instData.data ?? [];
+  const total = items.length + rows.reduce((a, b) => a + b.total, 0);
   const states = items.reduce<Record<string, number>>((acc, m) => {
     acc[m.state] = (acc[m.state] ?? 0) + 1;
     return acc;
   }, {});
-  const breakdown = Object.entries(states)
+  const top = Object.entries(states)
+    .slice(0, 2)
     .map(([s, n]) => `${n} ${s}`)
-    .slice(0, 3)
     .join(" · ");
+  const biggest = [...rows].sort((a, b) => b.total - a.total)[0];
+  const to = items.length > 0 || !biggest ? "/machines" : `/instances/${biggest.name}`;
   return (
     <DashboardTile
-      to="/machines"
+      to={to}
       icon={Wrench}
       label="machines"
-      primary={items.length}
-      secondary={breakdown || "none yet"}
-      empty={!q.isLoading && items.length === 0}
+      primary={total}
+      secondary={rows.length > 0 ? rows.map((r) => r.label).join(" · ") : top || "none yet"}
+      empty={!q.isLoading && !insts.isLoading && !instData.isLoading && total === 0}
     />
   );
 }

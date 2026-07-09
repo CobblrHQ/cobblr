@@ -28,6 +28,11 @@ export interface CoreScanInboxItemsTable {
   target_kind: string | null;
   target_entity_id: string | null;
   target_location_id: string | null;
+  /** Scan-into-container: the active bin can be any container (a server asset, a
+   *  machine), not only a location. When set, confirm places the created entity
+   *  INSIDE it (a placement row) instead of stamping location_id. */
+  target_container_kind: string | null;
+  target_container_id: string | null;
   /** Suggested home from where similar items live (services/suggest-location.ts).
    *  A hint for the review UI, never applied without the user accepting it. */
   suggested_location_id: string | null;
@@ -45,6 +50,21 @@ export interface CoreScanBatchesTable {
   id: Generated<string>;
   created_by_user_id: string | null;
   created_at: Generated<Date>;
+}
+
+/** A stored Guided Organize plan (services/organize-plan.ts). Apply validates
+ *  group ids + destinations against this payload, so what applies is exactly
+ *  what was shown, and a reload mid-session can resume. */
+export interface CoreScanOrganizePlansTable {
+  id: Generated<string>;
+  payload: Record<string, unknown>;
+  applied_group_ids: Generated<unknown[]>;
+  /** Put-away-walk progress: { placed_item_ids: string[] }. Bookkeeping only —
+   *  filing happened at apply; this is the resumable checklist. */
+  walk_state: Generated<Record<string, unknown>>;
+  created_by_user_id: string | null;
+  created_at: Generated<Date>;
+  expires_at: Date;
 }
 
 export interface CoreScanBarcodeCacheTable {
@@ -98,6 +118,7 @@ export interface CoreScanQrRulesTable {
 export interface CoreScanDB {
   core_scan_inbox_items: CoreScanInboxItemsTable;
   core_scan_batches: CoreScanBatchesTable;
+  core_scan_organize_plans: CoreScanOrganizePlansTable;
   core_scan_barcode_cache: CoreScanBarcodeCacheTable;
   core_scan_eval_cases: CoreScanEvalCasesTable;
   core_scan_qr_rules: CoreScanQrRulesTable;

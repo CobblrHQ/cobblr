@@ -9,16 +9,19 @@
 // query keys with ConnectionsPage so nothing double-fetches.
 
 import { useQuery } from "@tanstack/react-query";
-import { api } from "./api";
+import { api, type UserConnection } from "./api";
 
-/** True when a connection routes through the personal edge bridge. Today that's
- *  the dedicated "Local AI (via edge bridge)" provider. */
-export function isEdgeBridgeConnection(providerId: string): boolean {
-  return providerId === "edge-bridge";
+/** True when a connection depends on the personal edge agent: the dedicated
+ *  edge-bridge provider, OR any URL provider whose transit rides the bridge
+ *  (the server computes `uses_edge` from the encrypted bag — a boolean, never
+ *  the values). The provider_id check keeps this correct against a cached
+ *  response from an older API that lacks the flag. */
+export function isEdgeBridgeConnection(c: Pick<UserConnection, "provider_id" | "uses_edge">): boolean {
+  return c.uses_edge === true || c.provider_id === "edge-bridge";
 }
 
 export interface MyEdgeBridge {
-  /** The user has at least one edge-bridge connection (so the status matters). */
+  /** The user has at least one edge-dependent connection (so the status matters). */
   hasBridge: boolean;
   /** The personal edge agent is currently dialed in. */
   connected: boolean;
@@ -26,7 +29,7 @@ export interface MyEdgeBridge {
 
 export function useMyEdgeBridge(): MyEdgeBridge {
   const conns = useQuery({ queryKey: ["connections"], queryFn: api.listConnections });
-  const hasBridge = (conns.data?.items ?? []).some((c) => isEdgeBridgeConnection(c.provider_id));
+  const hasBridge = (conns.data?.items ?? []).some(isEdgeBridgeConnection);
   const agent = useQuery({
     queryKey: ["me-edge-agent"],
     queryFn: api.getMyEdgeAgent,

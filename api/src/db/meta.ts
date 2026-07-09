@@ -9,8 +9,12 @@ import type { MetaDB } from "./schema.js";
 export const metaPool = new Pool({
   connectionString: env.DATABASE_URL,
   // Modest size — cobblr_meta serves auth + tenant lookups, not
-  // hot per-tenant queries.
-  max: 10,
+  // hot per-tenant queries. COBBLR_META_POOL_MAX exists for processes
+  // that import `meta` but barely use it directly: each of CI's 8 vitest
+  // forks opens its OWN pool, so the default 10 costs up to 80 backends
+  // of the runner Postgres's headroom for a handful of helper queries —
+  // the ci.yml test step caps them at 3. The api itself keeps the default.
+  max: Number(process.env.COBBLR_META_POOL_MAX) || 10,
 });
 
 // Without an 'error' listener, a pg-pool idle-client error (e.g. the

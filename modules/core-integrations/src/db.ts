@@ -10,6 +10,9 @@ export interface CoreIntegrationsConnectorsTable {
   credentials_enc: string;
   config: Generated<Record<string, unknown>>;
   enabled: Generated<boolean>;
+  // Archive lifecycle: NULL = in the normal list; set = in the history section
+  // (sync off; run/preview 404 until un-archived). See migration 0005.
+  archived_at: Date | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }

@@ -55,6 +55,7 @@ export default defineModule({
       "core-scan.scan.enriched",
       "core-scan.scan.confirmed",
       "core-scan.scan.discarded",
+      "core-scan.organize.applied",
     ],
     api: [],
     actions: [

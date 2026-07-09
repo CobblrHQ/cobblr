@@ -38,12 +38,15 @@ import {
   Search,
   Sparkles,
   Upload,
+  Wand2,
   X,
 } from "lucide-react";
 import { Modal, useImageSrc, useToast, usePageTitle } from "@cobblr/platform-web";
 import { ScanImportModal } from "../components/ScanImportModal";
 import { CameraCaptureSheet } from "../components/CameraCaptureSheet";
 import { LocationTreePicker } from "../components/LocationTreePicker";
+import { OrganizePlanSheet } from "../components/OrganizePlanSheet";
+import { OrganizeWalkSheet } from "../components/OrganizeWalkSheet";
 import { ImageSearchPicker } from "../components/ImageSearchPicker";
 import { TrackedMatchBanner } from "../components/TrackedMatchBanner";
 import { BinAdjustModal } from "../components/BinAdjustModal";
@@ -56,6 +59,7 @@ import {
   ApiError,
   api,
   getToken,
+  type OrganizeStoredPlan,
   type ScanInboxItem,
   type ScanCandidate,
   type ScanMenuEntry,
@@ -1355,6 +1359,40 @@ export function ScanPage() {
   const clearSelected = () => setSelected(new Set());
   const allVisibleSelected = visibleItems.length > 0 && visibleItems.every((i) => selected.has(i.id));
   const [bulkLocOpen, setBulkLocOpen] = useState(false);
+  // Guided Organize — batch put-away plan over the selection (the sheet owns
+  // plan + apply; here we just open it and clean up after applied items).
+  const [organizeOpen, setOrganizeOpen] = useState(false);
+  // Phase 3: the same planner over committed entities with no location yet.
+  const [organizeUnplacedOpen, setOrganizeUnplacedOpen] = useState(false);
+  // Phase 2: the put-away walk. `walkPlan` set = walk sheet open. The latest
+  // stored plan also powers a "resume walk" chip after a reload mid-walk.
+  const [walkPlan, setWalkPlan] = useState<OrganizeStoredPlan | null>(null);
+  const latestPlanQ = useQuery({
+    queryKey: ["organize-plan-latest", activeSlug],
+    queryFn: () => api.getLatestOrganizePlan(activeSlug),
+    staleTime: 30_000,
+  });
+  const resumablePlan = (() => {
+    const p = latestPlanQ.data?.plan;
+    if (!p || p.applied_group_ids.length === 0) return null;
+    const placed = new Set(p.walk_state.placed_item_ids ?? []);
+    const appliedSet = new Set(p.applied_group_ids);
+    const remaining = p.groups
+      .filter((g) => appliedSet.has(g.id) && g.destination.kind === "existing")
+      .flatMap((g) => g.item_ids)
+      .filter((id) => !placed.has(id));
+    return remaining.length > 0 ? { plan: p, remaining: remaining.length } : null;
+  })();
+  const startWalk = async () => {
+    setOrganizeOpen(false);
+    try {
+      const r = await api.getLatestOrganizePlan(activeSlug);
+      if (r.plan && r.plan.applied_group_ids.length > 0) setWalkPlan(r.plan);
+      else toast.error("Nothing applied to walk yet — accept a group first.");
+    } catch {
+      toast.error("Couldn't load the plan for the walk.");
+    }
+  };
   const bulkApplyLocation = async (locId: string) => {
     setBulkBusy(true);
     setBulkLocOpen(false);
@@ -1648,6 +1686,14 @@ export function ScanPage() {
         </button>
         <button
           type="button"
+          onClick={() => setOrganizeUnplacedOpen(true)}
+          title="Plan homes for tracked things that have no location yet — grouped, with destination bins proposed"
+          className={headerBtn}
+        >
+          <Wand2 size={15} /> Organize
+        </button>
+        <button
+          type="button"
           onClick={() => fileRef.current?.click()}
           disabled={uploading}
           title="Upload a photo from this device"
@@ -1804,6 +1850,18 @@ export function ScanPage() {
           </div>
         ))}
 
+      {/* A put-away walk left unfinished (reload / tab switch) — offer to resume. */}
+      {resumablePlan && !walkPlan && (
+        <button
+          type="button"
+          onClick={() => setWalkPlan(resumablePlan.plan)}
+          className="flex items-center gap-2 rounded-lg border border-accent/40 bg-cobble-50 dark:bg-cobble-900/30 px-3 py-2 text-sm text-accent hover:bg-cobble-100 dark:hover:bg-cobble-900/50 transition"
+        >
+          ▶ Resume put-away walk — {resumablePlan.remaining} item
+          {resumablePlan.remaining === 1 ? "" : "s"} left to place
+        </button>
+      )}
+
       {/* Bulk-triage toolbar — appears once anything is selected. Confirm routes
           each item to its own matchmaker top candidate; discard clears them out. */}
       {(selected.size > 0 || (visibleItems.length > 1 && allVisibleSelected)) && (
@@ -1817,6 +1875,17 @@ export function ScanPage() {
             select all {visibleItems.length}
           </button>
           <span className="flex-1" />
+          {selected.size >= 2 && (
+            <button
+              type="button"
+              disabled={bulkBusy}
+              onClick={() => setOrganizeOpen(true)}
+              title="Get a put-away plan for the selection: how these group, and which bins they belong in"
+              className="rounded border border-accent/50 text-sm px-3 py-1 text-accent hover:bg-cobble-50 dark:hover:bg-cobble-900/30 transition disabled:opacity-50"
+            >
+              Organize…
+            </button>
+          )}
           {hasLocations && (
             <button
               type="button"
@@ -1882,6 +1951,57 @@ export function ScanPage() {
             </div>
           )}
         </div>
+      )}
+
+      {organizeOpen && (
+        <OrganizePlanSheet
+          slug={activeSlug}
+          itemIds={[...selected]}
+          itemsById={new Map(items.map((i) => [i.id, i]))}
+          open={organizeOpen}
+          onClose={() => setOrganizeOpen(false)}
+          onApplied={(filedIds) => {
+            setSelected((s) => {
+              const n = new Set(s);
+              for (const id of filedIds) n.delete(id);
+              return n;
+            });
+            void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+            void qc.invalidateQueries({ queryKey: ["organize-plan-latest", activeSlug] });
+          }}
+          onStartWalk={() => void startWalk()}
+        />
+      )}
+
+      {organizeUnplacedOpen && (
+        <OrganizePlanSheet
+          slug={activeSlug}
+          scope="unplaced"
+          itemIds={[]}
+          itemsById={new Map(items.map((i) => [i.id, i]))}
+          open={organizeUnplacedOpen}
+          onClose={() => setOrganizeUnplacedOpen(false)}
+          onApplied={() => {
+            void qc.invalidateQueries({ queryKey: ["organize-plan-latest", activeSlug] });
+          }}
+          onStartWalk={() => {
+            setOrganizeUnplacedOpen(false);
+            void startWalk();
+          }}
+        />
+      )}
+
+      {walkPlan && (
+        <OrganizeWalkSheet
+          slug={activeSlug}
+          plan={walkPlan}
+          itemsById={new Map(items.map((i) => [i.id, i]))}
+          setFileBin={setFileBin}
+          onClose={() => {
+            setWalkPlan(null);
+            void qc.invalidateQueries({ queryKey: ["organize-plan-latest", activeSlug] });
+          }}
+        />
       )}
 
       {sessionActive && !batchId && (

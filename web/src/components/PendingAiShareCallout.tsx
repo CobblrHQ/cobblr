@@ -1,5 +1,5 @@
 // Dashboard callout: a member offered to share their AI with this workspace and
-// the OWNER hasn't approved it yet. Until they do, Ask Cobblr + other AI stay
+// the OWNER hasn't approved it yet. Until they do, Ask Cobb + other AI stay
 // off — a real dead-end we hit in the field (offer sat pending for weeks; the
 // only signal was an unread in-app notification). This surfaces it loudly, on
 // the dashboard, with the approve action inline so the owner never has to hunt

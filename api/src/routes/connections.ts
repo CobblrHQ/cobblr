@@ -91,6 +91,14 @@ async function supersedeShareOffers(ownerId: string, orgId: string): Promise<voi
     .catch(() => {});
 }
 
+/** Approve/decline resolves the offer for EVERY owner, not just the one who
+ *  clicked — clear the stale action item for all of them (a co-owner shouldn't
+ *  keep an unread "wants to share their AI" for an offer that's settled). */
+async function supersedeShareOffersForAllOwners(orgId: string): Promise<void> {
+  const owners = await workspaceOwnerIds(orgId).catch(() => [] as string[]);
+  for (const o of owners) await supersedeShareOffers(o, orgId);
+}
+
 /** Ping a workspace's owners when a member OFFERS to share their AI there (a
  *  workspace-default route into a workspace they don't own). Best-effort. */
 async function notifyOwnersOfOffers(
@@ -130,7 +138,7 @@ async function notifyOwnersOfOffers(
           subject: `${offererName} wants to share their AI with ${wsName}`,
           text:
             `${offererName} offered to share their AI connection with ${wsName} on Cobblr.\n\n` +
-            `Until you approve it, the workspace's Ask Cobblr chat and other AI features stay off. ` +
+            `Until you approve it, the workspace's Ask Cobb chat and other AI features stay off. ` +
             `Approve or decline the offer here:\n${configUrl}\n\n` +
             `(You can always change this later in Settings → AI sharing.)`,
         },
@@ -273,7 +281,7 @@ workspaceAiSharesRouter.post("/ai-shares/:credentialId/approve", requireAuth, wi
       return;
     }
     // Resolved — clear the offer notification so it stops reading as a to-do.
-    await supersedeShareOffers(req.session!.id, orgId(req));
+    await supersedeShareOffersForAllOwners(orgId(req));
     res.json({ items: await listWorkspaceAiOffers(orgId(req)) });
   } catch (err) {
     next(err);
@@ -288,7 +296,7 @@ workspaceAiSharesRouter.post("/ai-shares/:credentialId/reject", requireAuth, wit
       return;
     }
     // Resolved — clear the offer notification so it stops reading as a to-do.
-    await supersedeShareOffers(req.session!.id, orgId(req));
+    await supersedeShareOffersForAllOwners(orgId(req));
     res.json({ items: await listWorkspaceAiOffers(orgId(req)) });
   } catch (err) {
     next(err);

@@ -6,12 +6,16 @@
 // posture (validated + connection-pinned fetch), since base_url is
 // workspace-supplied and usually points into the user's own LAN.
 //
-// Model names are the user's own (whatever the server loaded/serves) — set
-// them per capability in the AI config; the static list here is only a
-// placeholder so resolution has a fallback. LM Studio answers with its loaded
-// model whatever you send; vLLM & gateways need the exact name.
+// Model names are the user's own. Three tiers, most-specific wins:
+//   1. an explicit capability-default model set in the AI config (ctx.model),
+//   2. the connection's own `model` credential (one knob on the connection —
+//      what a gateway like OpenRouter needs, since it has no "default"),
+//   3. the "default" placeholder (LM Studio answers with its loaded model
+//      whatever you send).
+// The whole provider body is exported as buildCompatProvider() so shaped
+// presets (OpenRouter) register the same machinery with a fixed base URL.
 
-import { platform, type AiCapability } from "@cobblr/platform-contract";
+import { platform, type AiCapability, type AiProviderDef } from "@cobblr/platform-contract";
 import { assertSafeAiEndpoint, pinnedFetch, type PinnedResponse } from "../ssrf.js";
 import { TRANSIT_FIELD, viaBridge, edgeKeyFor, edgeFetch } from "./edge-transit.js";
 import { buildMessages } from "./openai.js";
@@ -40,30 +44,48 @@ export function authHeadersFor(credentials: Record<string, unknown>): Record<str
   return k ? { authorization: `Bearer ${k}` } : {};
 }
 
-export function register(): void {
-  platform().ai.registerProvider({
-    id: "openai-compat",
-    label: "OpenAI-compatible (LM Studio, vLLM, …)",
-    describeCredentials: () => ({
-      base_url: {
-        label: "Base URL (e.g. http://192.168.1.50:1234/v1 — LM Studio's local server)",
-        secret: false,
-      },
-      api_key: {
-        label: "API key (optional — LM Studio needs none; gateways like OpenRouter do)",
-        secret: true,
-      },
-      ...TRANSIT_FIELD,
-    }),
+/** The model actually sent on the wire. An explicit capability-default from
+ *  the AI config wins; else the connection's own `model` credential; else the
+ *  "default" placeholder. Exported for tests. */
+export function effectiveModel(ctxModel: string | undefined, credentials: Record<string, unknown>): string {
+  const connModel = typeof credentials.model === "string" ? credentials.model.trim() : "";
+  if (ctxModel && ctxModel !== "default") return ctxModel;
+  return connModel || ctxModel || "default";
+}
+
+export interface CompatPresetOpts {
+  id: string;
+  label: string;
+  describeCredentials: AiProviderDef["describeCredentials"];
+  /** Resolve the base URL from credentials (a preset returns its fixed URL). */
+  resolveBase: (credentials: Record<string, unknown>) => string;
+  /** Gateways with no default model refuse early with a helpful message
+   *  instead of relaying an opaque 4xx. */
+  requireModel?: boolean;
+  /** Extra request headers (e.g. OpenRouter's attribution headers). */
+  extraHeaders?: Record<string, string>;
+}
+
+/** One OpenAI-v1 provider body, parameterised for shaped presets. */
+export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
+  const { id, resolveBase, extraHeaders = {} } = opts;
+  return {
+    id,
+    label: opts.label,
+    describeCredentials: opts.describeCredentials,
     capabilities: SUPPORTED,
     invoke: async (ctx) => {
-      const base = baseOf(ctx.credentials);
+      const base = resolveBase(ctx.credentials);
+      const model = effectiveModel(ctx.model, ctx.credentials);
+      if (opts.requireModel && (!model || model === "default")) {
+        throw new Error(`${id}: set a model on the connection (e.g. anthropic/claude-sonnet-5)`);
+      }
       // Transit: direct = SSRF-guarded pinned fetch; bridge = the request rides
       // the user's dial-out edge relay and the bridge does the LAN call (e.g.
       // LM Studio on their desk). See ./edge-transit.ts.
       const bridged = viaBridge(ctx.credentials);
       const pin = bridged ? null : await assertSafeAiEndpoint(base, platform().ai.getEndpointPolicy());
-      const headers = { "content-type": "application/json", ...authHeadersFor(ctx.credentials) };
+      const headers = { "content-type": "application/json", ...extraHeaders, ...authHeadersFor(ctx.credentials) };
       const call = (path: string, init: { method?: "GET" | "POST"; headers?: Record<string, string>; body?: string }): Promise<PinnedResponse> =>
         bridged
           ? edgeFetch(edgeKeyFor(ctx.credentials, ctx.orgId), base, path, init)
@@ -73,9 +95,9 @@ export function register(): void {
           const res = await call("/embeddings", {
             method: "POST",
             headers,
-            body: JSON.stringify({ model: ctx.model, input: String(ctx.input.text ?? "") }),
+            body: JSON.stringify({ model, input: String(ctx.input.text ?? "") }),
           });
-          if (!res.ok) throw new Error(`openai-compat: ${res.status} ${await res.text()}`);
+          if (!res.ok) throw new Error(`${id}: ${res.status} ${await res.text()}`);
           const body = (await res.json()) as {
             data: Array<{ embedding: number[] }>;
             usage?: { prompt_tokens?: number };
@@ -94,7 +116,7 @@ export function register(): void {
         case "extract-text":
         case "match-to-catalog": {
           const body: Record<string, unknown> = {
-            model: ctx.model,
+            model,
             messages: buildMessages(ctx.capability, ctx.input),
           };
           // response_format json_object is OpenAI-specific; local servers vary.
@@ -106,7 +128,7 @@ export function register(): void {
             headers,
             body: JSON.stringify(body),
           });
-          if (!res.ok) throw new Error(`openai-compat: ${res.status} ${await res.text()}`);
+          if (!res.ok) throw new Error(`${id}: ${res.status} ${await res.text()}`);
           const out = (await res.json()) as {
             choices: Array<{ message: { role: string; content: string } }>;
             usage?: { prompt_tokens?: number; completion_tokens?: number };
@@ -119,18 +141,19 @@ export function register(): void {
           };
         }
         default:
-          throw new Error(`openai-compat: capability ${ctx.capability} not implemented`);
+          throw new Error(`${id}: capability ${ctx.capability} not implemented`);
       }
     },
     testConnection: async (credentials) => {
       try {
-        const base = baseOf(credentials);
+        const base = resolveBase(credentials);
+        const headers = { ...extraHeaders, ...authHeadersFor(credentials) };
         let res: PinnedResponse;
         if (viaBridge(credentials)) {
-          res = await edgeFetch(edgeKeyFor(credentials), base, "/models", { headers: authHeadersFor(credentials) });
+          res = await edgeFetch(edgeKeyFor(credentials), base, "/models", { headers });
         } else {
           const pin = await assertSafeAiEndpoint(base, platform().ai.getEndpointPolicy());
-          res = await pinnedFetch(`${base}/models`, pin, { headers: authHeadersFor(credentials) });
+          res = await pinnedFetch(`${base}/models`, pin, { headers });
         }
         if (!res.ok) return { ok: false, error: `status ${res.status}` };
         const body = (await res.json()) as { data?: Array<{ id: string }> };
@@ -140,5 +163,30 @@ export function register(): void {
         return { ok: false, error: (err as Error).message };
       }
     },
-  });
+  };
+}
+
+export function register(): void {
+  platform().ai.registerProvider(
+    buildCompatProvider({
+      id: "openai-compat",
+      label: "OpenAI-compatible (LM Studio, vLLM, …)",
+      describeCredentials: () => ({
+        base_url: {
+          label: "Base URL (e.g. http://192.168.1.50:1234/v1 — LM Studio's local server)",
+          secret: false,
+        },
+        api_key: {
+          label: "API key (optional — LM Studio needs none; gateways need one)",
+          secret: true,
+        },
+        model: {
+          label: "Model (optional — leave blank for LM Studio; gateways/vLLM need the exact name)",
+          secret: false,
+        },
+        ...TRANSIT_FIELD,
+      }),
+      resolveBase: baseOf,
+    }),
+  );
 }

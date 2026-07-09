@@ -216,8 +216,12 @@ export function SyncConnectionsSection() {
   };
 
   const connectors = connectorsQ.data?.items ?? [];
-  const connections = connectionsQ.data?.items ?? [];
+  const allConnections = connectionsQ.data?.items ?? [];
   const sources = sourcesQ.data?.installed ?? [];
+  // Archived connections drop out of the normal list into the history section
+  // below (archived_at set). The existing list IS the "active" list — no header.
+  const connections = allConnections.filter((c) => !c.archived_at);
+  const archivedConns = allConnections.filter((c) => c.archived_at);
 
   // A connection is built on a source (connector_id === source_id); group them so
   // each source renders ONCE with its connections nested — no duplicate section
@@ -288,6 +292,21 @@ export function SyncConnectionsSection() {
           </ul>
         )}
       </div>
+
+      {/* History — connections that ran before but aren't active now. Not
+          deleted: their id-map + config survive, so re-activating resumes them. */}
+      {archivedConns.length > 0 && (
+        <details className="rounded-lg border border-line/60 dark:border-slate-700/60 bg-subtle/40 dark:bg-slate-900/40 p-2.5">
+          <summary className="text-[10px] font-mono uppercase tracking-widest text-faint cursor-pointer select-none">
+            Archived · {archivedConns.length}
+          </summary>
+          <ul className="mt-2 space-y-1.5">
+            {archivedConns.map((c) => (
+              <ArchivedConnectionRow key={c.id} conn={c} onChange={invalidate} />
+            ))}
+          </ul>
+        </details>
+      )}
 
       {adding && (
         <AddSyncConnectionModal
@@ -707,6 +726,52 @@ function EditSectionModal({
   );
 }
 
+// A row in the Archived history: name + when it was archived, one-click
+// re-activate (back into the list above; sync stays off — "active ≠ enabled"),
+// and a permanent remove.
+function ArchivedConnectionRow({ conn, onChange }: { conn: SyncConnection; onChange: () => void }) {
+  const { activeSlug } = useActiveOrg();
+  const toast = useToast();
+  const confirm = useConfirm();
+  const unarchive = useMutation({
+    mutationFn: () => api.unarchiveSyncConnection(activeSlug, conn.id),
+    onSuccess: () => {
+      toast.success(`"${conn.label}" re-activated — back in the list. Re-enable a sync to resume mirroring.`);
+      onChange();
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+  const del = useMutation({
+    mutationFn: () => api.deleteSyncConnection(activeSlug, conn.id),
+    onSuccess: () => { toast.success("Connection removed"); onChange(); },
+  });
+  return (
+    <li className="flex items-center gap-2 rounded border border-line/50 dark:border-slate-700/50 bg-surface/50 dark:bg-slate-800/30 px-2.5 py-1.5">
+      <span className="text-[13px] text-content dark:text-mortar-200 truncate">{conn.label}</span>
+      <span className="text-[10px] font-mono text-faint truncate">{conn.config.base_url}</span>
+      {conn.archived_at && (
+        <span className="text-[10px] text-faint">archived {new Date(conn.archived_at).toLocaleDateString()}</span>
+      )}
+      <div className="flex-1" />
+      <button
+        onClick={() => unarchive.mutate()}
+        disabled={unarchive.isPending}
+        className="text-[11px] text-accent hover:underline"
+      >
+        {unarchive.isPending ? "…" : "Re-activate"}
+      </button>
+      <button
+        onClick={async () => {
+          if (await confirm({ title: "Remove connection?", message: "Deletes it for good (mirrored records stay). Un-archive instead to keep it." })) del.mutate();
+        }}
+        className="text-[11px] text-faint hover:text-ember-600 dark:hover:text-ember-400 transition"
+      >
+        Remove
+      </button>
+    </li>
+  );
+}
+
 function SyncConnectionCard({ conn, onChange, nested }: { conn: SyncConnection; onChange: () => void; nested?: boolean }) {
   const { activeSlug } = useActiveOrg();
   const toast = useToast();
@@ -751,6 +816,14 @@ function SyncConnectionCard({ conn, onChange, nested }: { conn: SyncConnection; 
       onChange();
     },
   });
+  const archive = useMutation({
+    mutationFn: () => api.archiveSyncConnection(activeSlug, conn.id),
+    onSuccess: () => {
+      toast.success("Archived — moved to history. Un-archive anytime to resume.");
+      onChange();
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
 
   // First-import preview/approve flow (per entity type).
   const [previewKey, setPreviewKey] = useState<string | null>(null);
@@ -794,6 +867,14 @@ function SyncConnectionCard({ conn, onChange, nested }: { conn: SyncConnection; 
         <div className="flex-1" />
         <button onClick={() => test.mutate()} disabled={test.isPending} className="text-[11px] text-accent hover:underline">
           {test.isPending ? "Testing…" : "Test"}
+        </button>
+        <button
+          onClick={() => archive.mutate()}
+          disabled={archive.isPending}
+          title="Move to history — stops syncing but keeps everything; un-archive to resume"
+          className="text-[11px] text-faint hover:text-content dark:hover:text-mortar-200 transition"
+        >
+          {archive.isPending ? "Archiving…" : "Archive"}
         </button>
         <button
           onClick={async () => {

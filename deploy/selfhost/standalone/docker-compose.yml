@@ -48,7 +48,7 @@ services:
     image: ghcr.io/cobblrhq/cobblr-web:${COBBLR_VERSION:-latest}
     depends_on:
       - api
-    # Loopback ALWAYS — never on the LAN. Caddy proxies over the compose
+    # Loopback ALWAYS, never on the LAN. Caddy proxies over the compose
     # network; tailscale serve/funnel forwards to 127.0.0.1 on the host; and
     # localhost stays available for on-box debugging in every mode. WEB_BIND
     # exists as an escape hatch; think twice before widening it.
@@ -64,8 +64,10 @@ services:
       - "443:443"
       - "443:443/udp"
     environment:
-      # The three TLS variants are baked into the image; pick one:
-      COBBLR_TLS_MODE: ${COBBLR_TLS_MODE:-duckdns} # duckdns | cloudflare | internal
+      # The four TLS variants are baked into the image; pick one:
+      COBBLR_TLS_MODE: ${COBBLR_TLS_MODE:-duckdns} # duckdns | cloudflare | internal | tsnet
+      # tsnet mode only: a reusable auth key; the proxy joins the tailnet itself.
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
       COBBLR_SITE_ADDRESS: ${COBBLR_SITE_ADDRESS:?set COBBLR_SITE_ADDRESS in .env}
       COBBLR_ACME_EMAIL: ${COBBLR_ACME_EMAIL:-}
       DUCKDNS_TOKEN: ${DUCKDNS_TOKEN:-}

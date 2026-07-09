@@ -896,6 +896,25 @@ export const api = {
       `/orgs/${slug}/entities/${encodeURIComponent(kind)}${q ? `?q=${encodeURIComponent(q)}` : ""}`,
     ),
 
+  // Placement — containment (core-placement). "What's inside this container?"
+  // and "what is this thing installed in?"
+  placementContents: (slug: string, containerKind: string, containerId: string) =>
+    request<{ items: PlatformResolvedEntity[] }>(
+      "GET",
+      `/orgs/${slug}/modules/core-placement/contents?container_kind=${encodeURIComponent(containerKind)}&container_id=${encodeURIComponent(containerId)}`,
+    ),
+  placementContainerOf: (slug: string, containeeKind: string, containeeId: string) =>
+    request<{ container: PlatformResolvedEntity | null }>(
+      "GET",
+      `/orgs/${slug}/modules/core-placement/of?containee_kind=${encodeURIComponent(containeeKind)}&containee_id=${encodeURIComponent(containeeId)}`,
+    ),
+  placementPlace: (
+    slug: string,
+    body: { containee: { kind: string; id: string }; container: { kind: string; id: string }; slot?: string | null },
+  ) => request<void>("POST", `/orgs/${slug}/modules/core-placement/place`, body),
+  placementRemove: (slug: string, containee: { kind: string; id: string }) =>
+    request<void>("POST", `/orgs/${slug}/modules/core-placement/remove`, { containee }),
+
   // core-units vocabulary
   listUnits: (slug: string) =>
     request<UnitVocabulary>("GET", `/orgs/${slug}/modules/core-units/units`),
@@ -2318,6 +2337,16 @@ export const api = {
       "DELETE",
       `/orgs/${slug}/modules/core-integrations/sync/connections/${id}`,
     ),
+  archiveSyncConnection: (slug: string, id: string) =>
+    request<{ ok: boolean }>(
+      "POST",
+      `/orgs/${slug}/modules/core-integrations/sync/connections/${id}/archive`,
+    ),
+  unarchiveSyncConnection: (slug: string, id: string) =>
+    request<{ ok: boolean }>(
+      "POST",
+      `/orgs/${slug}/modules/core-integrations/sync/connections/${id}/unarchive`,
+    ),
   testSyncConnection: (slug: string, id: string) =>
     request<{ ok: boolean; error?: string; note?: string }>(
       "POST",
@@ -2357,6 +2386,8 @@ export const api = {
       scan_batch_id?: string;
       scan_area?: string;
       target_location_id?: string;
+      target_container_kind?: string;
+      target_container_id?: string;
       enrich_ms?: number;
     },
   ) =>
@@ -2430,6 +2461,38 @@ export const api = {
       reviewed?: boolean;
     },
   ) => request<ScanInboxItem>("PATCH", `/orgs/${slug}/modules/core-scan/inbox/${id}`, body),
+  /** Guided Organize: propose a grouped put-away plan — for a selection of
+   *  inbox items, or (scope:"unplaced") for committed entities with no home. */
+  organizePlan: (
+    slug: string,
+    body: { item_ids?: string[]; scan_batch_id?: string; scope?: "unplaced" },
+  ) => request<OrganizePlanResponse>("POST", `/orgs/${slug}/modules/core-scan/organize/plan`, body),
+  /** Guided Organize: accept groups (optionally overriding destinations). */
+  organizeApply: (
+    slug: string,
+    body: {
+      plan_id: string;
+      group_ids: string[];
+      overrides?: Array<{
+        group_id: string;
+        location_id?: string;
+        new_location?: { name: string; parent_id?: string | null };
+      }>;
+    },
+  ) => request<OrganizeApplyResponse>("POST", `/orgs/${slug}/modules/core-scan/organize/apply`, body),
+  /** Guided Organize: the most recent unexpired plan (put-away-walk resume). */
+  getLatestOrganizePlan: (slug: string) =>
+    request<{ plan: OrganizeStoredPlan | null }>(
+      "GET",
+      `/orgs/${slug}/modules/core-scan/organize/plan/latest`,
+    ),
+  /** Guided Organize: persist put-away-walk progress. */
+  setOrganizeWalkState: (slug: string, body: { plan_id: string; placed_item_ids: string[] }) =>
+    request<{ placed_item_ids: string[] }>(
+      "POST",
+      `/orgs/${slug}/modules/core-scan/organize/walk-state`,
+      body,
+    ),
   /** Fold one scan session into another (batch merge). */
   mergeScanBatches: (slug: string, fromBatchId: string, intoBatchId: string) =>
     request<{ moved: number }>("POST", `/orgs/${slug}/modules/core-scan/inbox/merge-batches`, {
@@ -2516,6 +2579,15 @@ export const api = {
       "POST",
       `/orgs/${slug}/modules/core-scan/inbox/${id}/confirm`,
       body,
+    ),
+  /** Paired-scan: the scanned product IS the active bin itself — write the
+   *  product identity onto that core-locations record instead of creating a
+   *  new entity. location_id overrides the bin the scan was filed into. */
+  confirmScanIntoLocation: (slug: string, id: string, location_id?: string) =>
+    request<{ item: ScanInboxItem; location_id: string }>(
+      "POST",
+      `/orgs/${slug}/modules/core-scan/inbox/${id}/confirm-into-location`,
+      location_id ? { location_id } : {},
     ),
   // Super-admin: captured matchmaker eval cases (P2 of the eval harness).
   listScanEvalCases: () =>
@@ -2727,7 +2799,7 @@ export const api = {
   getAiStatus: (slug: string) =>
     request<AiStatus>("GET", `/orgs/${slug}/ai-status`),
 
-  // Ask Cobblr "basic mode" — the no-AI floor. When AI is off, the chat asks the
+  // Ask Cobb "basic mode" — the no-AI floor. When AI is off, the chat asks the
   // server to match a message against the effective ruleset (no model, no cost).
   answerBasic: (slug: string, message: string) =>
     request<BasicAnswer>("POST", `/orgs/${slug}/modules/core-ai/basics/answer`, { message }),
@@ -3337,6 +3409,30 @@ export const api = {
   // row's `position` set to its index. Siblings render by (position, name).
   reorderLocations: (slug: string, ids: string[]) =>
     request<{ ok: true }>("POST", `/orgs/${slug}/modules/core-locations/locations/reorder`, { ids }),
+  /** Describe-to-plan: an AI drafts room dims + walls (+ door openings) +
+   *  zone regions from prose. dry_run returns the validated draft without
+   *  writing (the preview + eval path). */
+  seedFloorplan: (slug: string, id: string, description: string, dry_run?: boolean) =>
+    request<{
+      draft: {
+        room: {
+          w_mm: number;
+          d_mm: number;
+          unit?: string;
+          view?: string;
+          walls?: Array<{
+            x1: number; y1: number; x2: number; y2: number;
+            openings?: Array<{ at_mm: number; w_mm: number }>;
+          }>;
+        };
+        zones: Array<{ name: string; rect: { x_mm: number; y_mm: number; w_mm: number; d_mm: number } }>;
+      };
+      applied: boolean;
+      zones?: Array<{ name: string; id: string; created: boolean }>;
+    }>("POST", `/orgs/${slug}/modules/core-locations/locations/${id}/floorplan/seed`, {
+      description,
+      ...(dry_run ? { dry_run } : {}),
+    }),
 };
 
 export interface LocationImportRow {
@@ -3455,6 +3551,9 @@ export interface UserConnection {
   share_status: Record<string, "pending" | "approved" | "active">;
   /** Which credential keys are set (names only — never the secret values). */
   credential_keys: string[];
+  /** Depends on the user's personal edge agent (the edge-bridge provider, or a
+   *  URL provider with bridge transit) — drives the live status indicators. */
+  uses_edge: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -3632,6 +3731,8 @@ export interface SyncConnection {
   label: string;
   config: { base_url: string; transport?: "direct" | "edge"; bridge?: string | null };
   enabled: boolean;
+  /** Set = in the Archived history section (not deleted); null = in the list. */
+  archived_at?: string | null;
   created_at: string;
   syncs?: SyncStateRow[];
 }
@@ -3847,6 +3948,61 @@ export interface ScanInboxItem {
   created_at: string;
   updated_at: string;
   resolved_at: string | null;
+}
+
+/** Guided Organize (docs/product/guided-organize.md): a batch put-away plan. */
+export type OrganizeDestination =
+  | { kind: "existing"; location_id: string; location_name: string; location_path: string }
+  | { kind: "new"; name: string; parent_id: string | null; parent_name: string | null }
+  | { kind: "unassigned" };
+
+export interface OrganizeGroup {
+  id: string;
+  label: string;
+  rationale: string;
+  item_ids: string[];
+  destination: OrganizeDestination;
+  evidence?: { sibling_count: number; sample_names: string[] };
+}
+
+export interface OrganizePlanResponse {
+  plan_id: string;
+  expires_at: string;
+  groups: OrganizeGroup[];
+  already_filed_item_ids: string[];
+  needs_review_item_ids: string[];
+  census_truncated: boolean;
+  source: "ai" | "heuristic";
+  /** "inbox" (pending scans) or "entities" (Phase 3: unplaced committed things). */
+  subject?: "inbox" | "entities";
+  /** Display names by item id — the render fallback when the inbox no longer
+   *  holds the item (entity plans, or a scan committed mid-walk). */
+  item_names?: Record<string, string>;
+  /** Barcodes by item id (entity plans) — powers scan-to-confirm in the walk. */
+  item_barcodes?: Record<string, string>;
+}
+
+/** The stored plan as GET /organize/plan/latest returns it (walk resume). */
+export interface OrganizeStoredPlan {
+  plan_id: string;
+  groups: OrganizeGroup[];
+  already_filed_item_ids: string[];
+  needs_review_item_ids: string[];
+  census_truncated: boolean;
+  source: "ai" | "heuristic";
+  subject?: "inbox" | "entities";
+  item_names?: Record<string, string>;
+  item_barcodes?: Record<string, string>;
+  applied_group_ids: string[];
+  walk_state: { placed_item_ids?: string[] };
+  expires_at: string;
+}
+
+export interface OrganizeApplyResponse {
+  applied_group_ids: string[];
+  filed_item_ids: string[];
+  created_locations: Array<{ id: string; name: string; group_id: string }>;
+  skipped: Array<{ group_id: string; reason: string }>;
 }
 
 /** "Already tracked" — an existing entity matching a scan (by barcode or name). */

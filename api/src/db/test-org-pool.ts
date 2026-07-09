@@ -132,6 +132,21 @@ export async function checkoutTestOrg(): Promise<CheckoutResult | null> {
   `.execute(meta);
   const row = claimed.rows[0];
   if (!row) return null;
+  // Pooled orgs were provisioned at BAKE time, so they miss anything installed
+  // by enable-time hooks added since the bake — concretely the transitional
+  // location_id→placement sync triggers (the boot sweep is skipped in CI via
+  // COBBLR_SKIP_HISTORICAL_MIGRATIONS, and enableAllModulesForTests never
+  // re-enables already-on modules). Ensure them at handout so a checked-out
+  // org behaves exactly like a fresh signup. Idempotent, a few cheap queries;
+  // test-support only (this route never exists in prod). Best-effort.
+  try {
+    const { ensurePlacementSyncForOrg } = await import(
+      "../platform/migrate-location-to-placement.js"
+    );
+    await ensurePlacementSyncForOrg(row.org_id);
+  } catch (err) {
+    console.warn(`[test-org-pool] placement sync for ${row.slug} skipped:`, err);
+  }
   const token = await signSession(row.owner_user_id);
   return { token, userId: row.owner_user_id, orgId: row.org_id, slug: row.slug };
 }

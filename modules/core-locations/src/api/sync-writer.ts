@@ -47,6 +47,7 @@ export function registerLocationsWriter(): void {
       if (fields.kind !== undefined) patch.kind = normalizeKind(fields.kind);
       if (fields.description !== undefined) patch.description = asStr(fields.description);
       if (fields.notes !== undefined) patch.notes = asStr(fields.notes);
+      if (fields.image_path !== undefined) patch.image_path = asStr(fields.image_path);
       if (fields.metadata !== undefined) {
         patch.metadata = sql`${JSON.stringify(fields.metadata ?? {})}::jsonb`;
       }
@@ -87,7 +88,7 @@ export function registerLocationsWriter(): void {
       const db = (await platform().tenants.getDb(orgId)) as Kysely<CoreLocationsDB>;
       const row = await db
         .selectFrom("core_locations_locations")
-        .select(["name", "short_name", "kind", "parent_id", "metadata", "description", "notes"])
+        .select(["name", "short_name", "kind", "parent_id", "metadata", "description", "notes", "image_path"])
         .where("id", "=", id)
         .executeTakeFirst();
       if (!row) return null;
@@ -99,6 +100,7 @@ export function registerLocationsWriter(): void {
         metadata: row.metadata,
         description: row.description,
         notes: row.notes,
+        image_path: row.image_path,
       };
     },
   });

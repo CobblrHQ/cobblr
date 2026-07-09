@@ -1,5 +1,5 @@
 // Cobb's no-AI brain, server side. When a workspace has no AI provider, the
-// Ask Cobblr chat still answers the essentials from this hand-authored catalog
+// Ask Cobb chat still answers the essentials from this hand-authored catalog
 // with ZERO model calls — greetings, "what can you do", how-do-I pointers.
 //
 // This is the built-in floor: same defaults for every workspace, edited here in

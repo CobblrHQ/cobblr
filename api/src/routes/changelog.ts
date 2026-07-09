@@ -87,7 +87,10 @@ function parseChangeset(raw: string): { date: string; entry: Entry } {
       if (i > 0) fm[line.slice(0, i).trim()] = line.slice(i + 1).trim();
     }
   }
-  const text = (m ? m[2]! : raw).trim().replace(/\s+/g, " ");
+  // The blurb is everything BEFORE the staged "## docs" section — that section
+  // is the feature's user manual, published by scripts/docs-flush.mjs at
+  // release; it must never leak into the changelog feed.
+  const text = (m ? m[2]! : raw).split(/^## docs\s*$/m)[0]!.trim().replace(/\s+/g, " ");
   return {
     date: fm.date?.trim() || "Unreleased",
     entry: { type: TYPE_MAP[(fm.type || "").toLowerCase()] ?? "change", scope: fm.scope?.trim() || null, text },

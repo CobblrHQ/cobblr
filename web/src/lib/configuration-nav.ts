@@ -324,9 +324,9 @@ export const CONFIG_DESTINATIONS: ConfigDestination[] = [
     icon: Plug,
     label: "Integrations",
     description:
-      "Connect to Slack, Discord, email, or any webhook — outbound and inbound. Wire entity events to messages, or accept external webhooks as platform events.",
+      "Connect to Slack, Discord, email, or any webhook — outbound and inbound. Sync in from Ravelry, or migrate in from another app like Homebox.",
     to: "/configuration/integrations",
-    keywords: ["slack", "discord", "webhook", "email", "notifications"],
+    keywords: ["slack", "discord", "webhook", "email", "notifications", "ravelry", "homebox", "migrate", "import", "csv", "move in", "switch"],
     primary: true,
   },
   {

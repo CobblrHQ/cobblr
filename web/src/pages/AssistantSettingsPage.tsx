@@ -1,4 +1,4 @@
-// /configuration/assistant — teach Ask Cobblr's no-AI "basic mode".
+// /configuration/assistant — teach Ask Cobb's no-AI "basic mode".
 //
 // When a workspace has no AI provider, the chat answers from the EFFECTIVE
 // ruleset: built-in rules (shipped in code) overlaid with this workspace's

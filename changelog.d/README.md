@@ -27,6 +27,39 @@ One user-facing line. Past tense, plain language, what changed for the user.
 - `date:` → groups the entry on the page. Use the day you ship it. Missing → the
   entry shows under "Unreleased" until corrected.
 
+## Staged docs (features only — write at merge, publish at release)
+
+A `type: feature` entry ALSO carries the feature's user documentation, written
+in the same PR while the feature is fresh
+(docs/design-decisions/staged-docs-pipeline.md):
+
+```
+---
+type: feature
+scope: locations
+date: 2026-07-09
+docs_target: docs/USER_GUIDE.md#Floor plan   # where the docs publish
+---
+One user-facing changelog line (as before).
+
+## docs
+
+The user-manual prose. Staged here; scripts/docs-flush.mjs publishes it into
+the target section once this entry's last commit is LIVE on the release
+surface, then stamps `docs_published:`.
+```
+
+- `docs_target: <path.md>#<heading>` — the path must exist; the flush appends
+  the prose at the end of that heading's section (creates it if missing).
+- Contributor-facing / internal features opt out explicitly:
+  `docs_target: none (<reason>)`.
+- **Updating an unshipped feature? Edit its staged entry's `## docs` in the
+  same PR** — that's the point: the docs stay fresh because they live in the
+  diff. (The lint prints a nudge when your PR shares a scope with staged
+  blurbs.)
+- `docs_published:` is stamped by the flush — never write it by hand. After
+  publish, doc corrections go straight to the target file.
+
 ## When (enforced by `lint:changelog`)
 
 A **feature** — a `feat:` commit, a new `modules/<name>/`, or a module

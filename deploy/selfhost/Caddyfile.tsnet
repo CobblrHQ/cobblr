@@ -1,0 +1,23 @@
+# Tailscale SERVICE-NODE TLS: the bundled proxy joins your tailnet as its own
+# virtual node (tsnet) named after your address's first label, and serves
+# Cobblr at https://<name>.<tailnet>.ts.net with a real, auto-renewed cert.
+# The BOX itself needs no Tailscale install; only the devices you browse from
+# are on the tailnet.
+#
+# Requires in .env:
+#   COBBLR_SITE_ADDRESS = cobblr.tail1234.ts.net   (your tailnet's name)
+#   TS_AUTHKEY          = tskey-auth-...           (reusable key, admin console)
+#
+# Tailnet prerequisites: MagicDNS + HTTPS certificates enabled (admin console,
+# DNS page). After the node first appears, disable its key expiry in the admin
+# console or it deauthenticates in ~6 months. Node identity persists under
+# /data (bind-mounted), so restarts keep the same node.
+#
+# COBBLR_TSNET_NAME is derived by the entrypoint from the address's first
+# label (cobblr.tail1234.ts.net -> "cobblr"); set it only to override.
+
+{$COBBLR_SITE_ADDRESS} {
+	bind tailscale/{$COBBLR_TSNET_NAME}
+	encode gzip
+	reverse_proxy web:8080
+}

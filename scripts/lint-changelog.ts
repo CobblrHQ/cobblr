@@ -20,7 +20,7 @@
 //
 // Diffs against main; no-ops with no base. Run: npx tsx scripts/lint-changelog.ts
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 
 function git(cmd: string): string {
   return execSync(`git ${cmd}`, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
@@ -106,6 +106,73 @@ if (malformed.length) {
       malformed.join("\n  "),
   );
   process.exit(1);
+}
+
+// ── staged docs: a feature's changeset carries its user docs ──
+// Write-at-merge, publish-at-release (docs/design-decisions/staged-docs-pipeline.md):
+// every type: feature entry must say where its docs land (docs_target:) and
+// carry the prose (## docs) NOW, while the feature is fresh. The flush
+// (scripts/docs-flush.mjs) publishes it once the feature is live. Explicitly
+// contributor-facing changes opt out with `docs_target: none (<reason>)`.
+const docsProblems: string[] = [];
+const touchedScopes = new Set<string>();
+for (const f of touchedEntries) {
+  const raw = readFileSync(f, "utf8");
+  const fm = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
+  if (!/^type:\s*feature\s*$/m.test(fm)) continue;
+  const scope = fm.match(/^scope:\s*(.+)$/m)?.[1]?.trim();
+  if (scope) touchedScopes.add(scope);
+  const target = fm.match(/^docs_target:\s*(.+)$/m)?.[1]?.trim();
+  if (!target) {
+    docsProblems.push(
+      `${f}: missing docs_target: — "<path.md>#<Heading>" (where the docs publish at release) or "none (<reason>)" for contributor-facing changes`,
+    );
+    continue;
+  }
+  if (/^none\s*\(.+\)$/.test(target)) continue;
+  const hash = target.indexOf("#");
+  const path = hash > 0 ? target.slice(0, hash) : target;
+  const heading = hash > 0 ? target.slice(hash + 1).trim() : "";
+  if (!path.endsWith(".md") || !heading || !existsSync(path)) {
+    docsProblems.push(
+      `${f}: docs_target must be "<existing .md path>#<heading text>" — got "${target}"`,
+    );
+  }
+  const docsBody = raw.split(/^## docs\s*$/m)[1]?.trim();
+  if (!docsBody) {
+    docsProblems.push(
+      `${f}: type: feature needs a non-empty "## docs" section — write the user docs while the feature is fresh; the flush publishes them when it ships`,
+    );
+  }
+}
+if (docsProblems.length) {
+  console.error("[lint:changelog] ✗ staged-docs check failed:\n  " + docsProblems.join("\n  "));
+  process.exit(1);
+}
+
+// Freshness rail (NON-fatal): this feature PR shares a scope with staged
+// (unpublished) blurbs it didn't touch — if it changes that feature's
+// behavior, the staged docs must change too. A nudge, not a gate: same-scope
+// features legitimately coexist.
+if (touchedScopes.size > 0) {
+  const staged: string[] = [];
+  for (const name of readdirSync("changelog.d")) {
+    const p = `changelog.d/${name}`;
+    if (!name.endsWith(".md") || name === "README.md" || touchedEntries.includes(p)) continue;
+    const raw = readFileSync(p, "utf8");
+    const fm = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
+    if (!/^type:\s*feature\s*$/m.test(fm)) continue;
+    if (/^docs_published:/m.test(fm)) continue;
+    if (!/^## docs\s*$/m.test(raw)) continue;
+    const scope = fm.match(/^scope:\s*(.+)$/m)?.[1]?.trim();
+    if (scope && touchedScopes.has(scope)) staged.push(`${p} (scope: ${scope})`);
+  }
+  if (staged.length) {
+    console.log(
+      "[lint:changelog] note: staged docs blurbs share this PR's scope — if this PR changes that feature's behavior, update their ## docs too:\n  " +
+        staged.join("\n  "),
+    );
+  }
 }
 
 // ── satisfied? a changeset file, OR a bundle version bump (manifest changelog covers it) ──

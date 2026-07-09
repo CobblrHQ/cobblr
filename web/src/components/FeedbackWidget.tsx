@@ -199,7 +199,7 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
     <>
       {asRow ? (
         // Sidebar-foot row (full-sidebar mode) — same shape as the
-        // Notifications / Ask Cobblr rows it sits beside.
+        // Notifications / Ask Cobb rows it sits beside.
         <button
           type="button"
           onClick={() => setOpen(true)}

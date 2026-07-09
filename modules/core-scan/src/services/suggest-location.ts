@@ -23,7 +23,8 @@ const STOP = new Set([
   "set", "kit", "new", "oem", "genuine", "original", "assorted", "item", "items",
 ]);
 
-function tokens(s: string | null | undefined): string[] {
+/** Significant name tokens (stop-worded, 3+ chars) — shared with organize-plan.ts. */
+export function significantTokens(s: string | null | undefined): string[] {
   return (
     (s ?? "")
       .toLowerCase()
@@ -47,8 +48,8 @@ export async function suggestLocationForItem(
   const category = opts.category?.trim() || null;
   if (!name && !category) return null;
 
-  const want = tokens(name);
-  const catTokens = tokens(category);
+  const want = significantTokens(name);
+  const catTokens = significantTokens(category);
   const kinds = platform().entities.listScannable();
 
   // Gather similar placed entities across kinds. Query by individual significant
@@ -85,7 +86,7 @@ export async function suggestLocationForItem(
       // Score by shared significant tokens against the name AND category, so a
       // same-category sibling with a different name still counts, and a
       // name-twin counts more.
-      const have = new Set(tokens(e.title));
+      const have = new Set(significantTokens(e.title));
       const nameShare = want.filter((t) => have.has(t)).length;
       const catShare = catTokens.filter((t) => have.has(t)).length;
       const overlap = nameShare + catShare;

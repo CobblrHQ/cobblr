@@ -346,36 +346,51 @@ function WorkspaceRow({
           </div>
         </div>
       </button>
-      {onSetDefault && (
+      {/* The DEFAULT star stays visible at rest — it's a meaningful indicator. */}
+      {onSetDefault && o.is_default && (
         <button
           onClick={(e) => { e.stopPropagation(); onSetDefault(); }}
-          className={"px-2 transition focus:opacity-100 " + (o.is_default
-            ? "text-accent dark:text-cobble-300 opacity-100"
-            : "text-faint dark:text-slate-500 hover:text-accent dark:hover:text-cobble-300 opacity-0 group-hover:opacity-100")}
-          title={o.is_default ? "Default workspace — opens on a fresh device. Click to unset." : `Make ${o.name} the default a fresh device opens into`}
-          aria-label={o.is_default ? "Unset default workspace" : "Set as default workspace"}
+          className="px-2 shrink-0 text-accent dark:text-cobble-300 transition"
+          title="Default workspace — opens on a fresh device. Click to unset."
+          aria-label="Unset default workspace"
         >
-          <Star size={13} className={o.is_default ? "fill-current" : ""} />
+          <Star size={13} className="fill-current" />
         </button>
       )}
-      {onRename && (
-        <button
-          onClick={(e) => { e.stopPropagation(); onRename(); }}
-          className="px-2 text-faint dark:text-slate-500 hover:text-accent dark:hover:text-cobble-300 opacity-0 group-hover:opacity-100 focus:opacity-100 transition"
-          title={`Rename ${o.name}`}
-        >
-          <Pencil size={13} />
-        </button>
-      )}
-      {onManage && (
-        <button
-          onClick={(e) => { e.stopPropagation(); onManage(); }}
-          className="px-3 text-faint dark:text-slate-500 hover:text-accent dark:hover:text-cobble-300 opacity-0 group-hover:opacity-100 focus:opacity-100 transition"
-          title={`Manage members + invites for ${o.name}`}
-        >
-          <Users size={13} />
-        </button>
-      )}
+      {/* Reveal-on-hover actions collapse to zero WIDTH at rest (not just
+          opacity-0) so they never steal room from the workspace name — in the
+          narrow full-sidebar (w-56) an always-laid-out button cluster crushed
+          names to a single letter (feedback: "names cut off in full sidebar"). */}
+      <div className="flex items-stretch shrink-0 w-0 overflow-hidden opacity-0 transition-[width,opacity] group-hover:w-auto group-hover:opacity-100 group-focus-within:w-auto group-focus-within:opacity-100">
+        {onSetDefault && !o.is_default && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onSetDefault(); }}
+            className="px-2 text-faint dark:text-slate-500 hover:text-accent dark:hover:text-cobble-300 transition"
+            title={`Make ${o.name} the default a fresh device opens into`}
+            aria-label="Set as default workspace"
+          >
+            <Star size={13} />
+          </button>
+        )}
+        {onRename && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onRename(); }}
+            className="px-2 text-faint dark:text-slate-500 hover:text-accent dark:hover:text-cobble-300 transition"
+            title={`Rename ${o.name}`}
+          >
+            <Pencil size={13} />
+          </button>
+        )}
+        {onManage && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onManage(); }}
+            className="px-3 text-faint dark:text-slate-500 hover:text-accent dark:hover:text-cobble-300 transition"
+            title={`Manage members + invites for ${o.name}`}
+          >
+            <Users size={13} />
+          </button>
+        )}
+      </div>
     </li>
   );
 }

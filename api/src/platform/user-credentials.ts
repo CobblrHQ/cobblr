@@ -60,6 +60,9 @@ export interface UserCredentialView {
   share_status: Record<string, "pending" | "approved" | "active">;
   /** Which credential keys are set (names only — never the secret values). */
   credential_keys: string[];
+  /** Depends on the user's personal edge agent (the edge-bridge provider, or a
+   *  URL provider with bridge transit) — drives the live status indicators. */
+  uses_edge: boolean;
   created_at: Date;
   updated_at: Date;
 }
@@ -229,6 +232,7 @@ export async function listUserCredentials(userId: string): Promise<UserCredentia
     routes: routesByCred.get(r.id) ?? [],
     share_status: statusByCred.get(r.id) ?? {},
     credential_keys: keysOf(r.credentials_encrypted),
+    uses_edge: usesEdge(r.provider_id, r.credentials_encrypted),
     created_at: r.created_at,
     updated_at: r.updated_at,
   }));
@@ -240,6 +244,21 @@ function keysOf(encrypted: string): string[] {
     return Object.keys(obj);
   } catch {
     return [];
+  }
+}
+
+/** Does this connection depend on the user's personal edge agent? True for the
+ *  dedicated edge-bridge provider AND for any URL provider whose transit rides
+ *  the bridge (credentials.transit = "bridge…"). Computed server-side so the
+ *  client gets a boolean, never the credential values — it drives the "Edge
+ *  bridge ● online/offline" indicators. */
+function usesEdge(providerId: string, encrypted: string): boolean {
+  if (providerId === "edge-bridge") return true;
+  try {
+    const obj = JSON.parse(decryptCreds(encrypted)) as Record<string, unknown>;
+    return typeof obj.transit === "string" && obj.transit.startsWith("bridge");
+  } catch {
+    return false;
   }
 }
 

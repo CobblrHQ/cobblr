@@ -22,6 +22,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/rea
 import { Link, useNavigate } from "react-router-dom";
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpCircle, CheckCircle2, ChevronDown, Compass, Eye, EyeOff, GripVertical, LayoutList, Maximize2, Minimize2, Pin, Plus, Sliders, Sparkles, X } from "lucide-react";
 import { useBundleUpdates, type BundleUpdate } from "../lib/useBundleUpdates";
+import { useDetailRoute } from "../lib/useDetailRoute";
 import { useSetupCards, dismissSetup } from "../lib/setupCards";
 import { EntityThumb,
   ViewModeToggle,
@@ -1397,6 +1398,7 @@ function PinnedView({
     queryFn: () => api.viewData(slug, view.id),
     staleTime: 30_000,
   });
+  const routeFor = useDetailRoute(slug);
   const allItems = data.data?.items ?? [];
   const items = allItems.slice(0, 5);
   // A pinned view previews AS ITS TYPE: a gallery shows a horizontal poster
@@ -1418,7 +1420,7 @@ function PinnedView({
       <div className="flex items-baseline gap-2 mb-2">
         <LayoutList size={13} className="text-accent" />
         <Link
-          to={`/views?view=${view.id}`}
+          to={`/views/${view.id}`}
           className="font-medium text-content dark:text-mortar-100 hover:text-accent"
         >
           {view.name}
@@ -1451,15 +1453,33 @@ function PinnedView({
           <HeatmapRenderer items={allItems} cfg={view.config ?? {}} />
         ) : (
           <ul className="space-y-1.5">
-            {items.map((r) => (
-              <li key={`${r.kind}:${r.id}`} className="flex items-center gap-3 text-sm">
-                <EntityThumb src={r.image_path} alt={r.title} size={40} />
-                <div className="min-w-0">
-                  <div className="truncate text-content dark:text-mortar-100">{r.title}</div>
-                  {r.subtitle && <div className="text-xs text-muted truncate">{r.subtitle}</div>}
-                </div>
-              </li>
-            ))}
+            {items.map((r) => {
+              // Row → the entity's detail page (registry-driven; instance
+              // kinds resolve too). No route registered → plain row.
+              const href = routeFor(r.kind, r.id);
+              const body = (
+                <>
+                  <EntityThumb src={r.image_path} alt={r.title} size={40} />
+                  <div className="min-w-0">
+                    <div className="truncate text-content dark:text-mortar-100 group-hover/row:text-accent">
+                      {r.title}
+                    </div>
+                    {r.subtitle && <div className="text-xs text-muted truncate">{r.subtitle}</div>}
+                  </div>
+                </>
+              );
+              return (
+                <li key={`${r.kind}:${r.id}`} className="text-sm">
+                  {href ? (
+                    <Link to={href} className="flex items-center gap-3 group/row">
+                      {body}
+                    </Link>
+                  ) : (
+                    <div className="flex items-center gap-3">{body}</div>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )
       )}
@@ -1569,18 +1589,24 @@ function ActivityGroupRow({ group }: { group: ActivityGroup }) {
   const action = humanAction(first.action);
   const actor = actorLabel(first);
   // The summary must not LIE: "created K1 Max ×2" for two different machines
-  // read as two copies of K1 Max. Distinct titles → summarize by entity kind
-  // ("2 machines"); identical titles keep the title (a true ×N of one thing).
-  const titles = group.items.map((e) => pickString((e.diff ?? {}) as Record<string, unknown>, ["title", "name", "label"]) ?? "");
-  const allSame = titles.every((t) => t === titles[0] && t !== "");
+  // read as two copies of K1 Max. Distinct identities → summarize by entity kind
+  // ("2 machines"); identical → keep the identity (a true ×N of one thing).
+  // Wires carry no title/name/label — their identity is the "<event> → <action>"
+  // path, so a burst of identical wire-fires collapses to that path instead of a
+  // bare "N bindings —" with nothing after the dash (feedback 6c87c6e2).
+  const ids = group.items.map(activityIdentity);
+  const allSame = ids.every((t) => t === ids[0] && t !== "");
   const noun = (first.entity_type ?? "item").split(":").pop()!.replace(/[_-]/g, " ");
+  const distinct = [...new Set(ids.filter(Boolean))];
   const summary = allSame ? (
     <>{activityTitle(first)}</>
   ) : (
     <>
       <strong>{group.items.length}</strong> {noun}
       {group.items.length === 1 ? "" : "s"}
-      <span className="text-faint dark:text-slate-400"> — {titles.filter(Boolean).slice(0, 2).join(", ")}{titles.filter(Boolean).length > 2 ? ", …" : ""}</span>
+      {distinct.length > 0 && (
+        <span className="text-faint dark:text-slate-400"> — {distinct.slice(0, 2).join(", ")}{distinct.length > 2 ? ", …" : ""}</span>
+      )}
     </>
   );
   const spanStart = relativeTime(last.occurred_at);
@@ -1690,6 +1716,20 @@ function activityTitle(e: ActivityEntry): React.ReactNode {
   // → bare entity_type (deleted / unresolvable).
   const title = pickString(diff, ["name", "title", "label"]) ?? e.entity_title;
   return title ?? <span className="font-mono text-xs text-faint">{e.entity_type}</span>;
+}
+
+/** A stable plain-text identity for burst summarization — the string form of
+ *  what activityTitle() renders. Wires have no title/name/label, so their
+ *  identity is the "<event> → <action>" path; everything else falls back to its
+ *  create-time title. Empty when neither exists (never counts as "same"). */
+function activityIdentity(e: ActivityEntry): string {
+  const diff = (e.diff ?? {}) as Record<string, unknown>;
+  if (AUTOMATION_ACTIONS.has(e.action)) {
+    const event = pickString(diff, ["event"]);
+    const act = pickString(diff, ["action"]);
+    if (event || act) return `${event ?? "event"} → ${act ? shortActionId(act) : "action"}`;
+  }
+  return pickString(diff, ["name", "title", "label"]) ?? "";
 }
 
 function humanAction(a: string): string {

@@ -53,14 +53,18 @@ declare
   k text := TG_ARGV[0];
 begin
   if TG_OP = 'DELETE' then
+    -- Entity deleted: remove its OWN placement (whatever container kind — a
+    -- lingering entity-container row would be a dangling ref), AND everything
+    -- placed INSIDE it (it can't contain anything anymore).
     delete from core_placement_placements
-     where containee_kind = k and containee_id = OLD.id::text
-       and container_kind = 'core-locations:location';
+     where containee_kind = k and containee_id = OLD.id::text;
+    delete from core_placement_placements
+     where container_kind = k and container_id = OLD.id::text;
     return OLD;
   end if;
   if NEW.location_id is null then
     -- location cleared: drop the location-derived placement (leave any
-    -- non-location placement a later step might set alone).
+    -- non-location placement alone).
     delete from core_placement_placements
      where containee_kind = k and containee_id = NEW.id::text
        and container_kind = 'core-locations:location';
@@ -71,7 +75,14 @@ begin
     on conflict (containee_kind, containee_id) do update
       set container_kind = 'core-locations:location',
           container_id   = excluded.container_id,
-          placed_at      = now();
+          placed_at      = now()
+      -- Guard: an ENTITY-container placement (a part deliberately placed inside
+      -- a machine/server via the Contents panel or scan-into-container) is NOT
+      -- clobbered by an incidental location edit. Locations only overwrite
+      -- location-derived placements; leaving a container is an explicit
+      -- remove/move, not a side effect. (Without this, editing a contained
+      -- part's location field silently yanked it out of its container.)
+      where core_placement_placements.container_kind = 'core-locations:location';
   end if;
   return NEW;
 end;
@@ -139,6 +150,19 @@ async function backfillOne(orgId: string): Promise<{ rowsInserted: number }> {
   }
 
   return { rowsInserted };
+}
+
+/** Ensure the placement backfill + sync triggers exist for ONE org. The boot
+ *  pass covers orgs that existed at boot; this covers orgs created AFTER it
+ *  (fresh signups) — called from enableModuleForOrg when a located module
+ *  (inventory/machines/assets) is enabled, so a new workspace is triggered
+ *  immediately instead of waiting for the next deploy's boot. Idempotent. */
+export async function ensurePlacementSyncForOrg(orgId: string): Promise<void> {
+  // Deliberately NOT gated on COBBLR_SKIP_HISTORICAL_MIGRATIONS — that flag
+  // skips the expensive all-orgs BOOT sweep; this per-org call is a few cheap
+  // queries and correctness-bearing (without it a new org's placement silently
+  // drifts from location_id — exactly what CI's skip-flag exposed).
+  await backfillOne(orgId);
 }
 
 /** Boot-time entry point. Backfills placement from location_id for every org

@@ -37,6 +37,7 @@ import {
 } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { SyncConnectionsSection } from "./SyncConnectionsSection";
+import { MigrateInSection } from "../components/MigrateInSection";
 
 export function IntegrationsPage() {
   usePageTitle("Integrations");
@@ -95,6 +96,8 @@ export function IntegrationsPage() {
       <EmailInSection />
 
       <SyncConnectionsSection />
+
+      <MigrateInSection />
 
       <section>
         <div className="flex items-center justify-between mb-2">

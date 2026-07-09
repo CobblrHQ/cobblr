@@ -17,6 +17,7 @@ import { activityRouter } from "./activity.js";
 import { register as registerOllama } from "../providers/ollama.js";
 import { register as registerOpenAI } from "../providers/openai.js";
 import { register as registerOpenAICompat } from "../providers/openai-compat.js";
+import { register as registerOpenRouter } from "../providers/openrouter.js";
 import { register as registerAnthropic } from "../providers/anthropic.js";
 import { register as registerEdgeBridge } from "../providers/edge-bridge.js";
 import { edgeStatusRouter } from "./edge-status.js";
@@ -28,6 +29,9 @@ function registerBuiltins(): void {
   registerOllama();
   registerOpenAI();
   registerOpenAICompat();
+  // Shaped preset over the compat machinery: fixed base URL, required
+  // key + model — "one key, any model" without knowing a base URL.
+  registerOpenRouter();
   registerAnthropic();
   // Reaches an Ollama-API endpoint on the workspace's own device via a live
   // edge channel (the proprietary relay registers channels into platform().edge).

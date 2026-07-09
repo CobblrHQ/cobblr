@@ -96,6 +96,16 @@ export function createApp(): AppHandles {
       ? relayRespondJson(req, res, next)
       : next(),
   );
+  // A Homebox export (core-import) is a whole inventory's worth of CSV in one
+  // `{ csv }` body — routinely bigger than the 1mb default. Parse the two
+  // core-import POST paths higher BEFORE the global parser (same req._body-skip
+  // trick as the relay above); every other path stays at 1mb.
+  const importJson = express.json({ limit: "24mb" });
+  app.use((req, res, next) =>
+    req.method === "POST" && req.path.includes("/modules/core-import/homebox")
+      ? importJson(req, res, next)
+      : next(),
+  );
   app.use(
     express.json({
       limit: "1mb",

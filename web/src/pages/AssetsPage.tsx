@@ -27,6 +27,7 @@ import {
 } from "@cobblr/platform-web";
 import { EntityAttachments } from "../components/EntityAttachments";
 import { LocationPicker } from "../components/LocationPicker";
+import { ContentsPanel } from "../components/ContentsPanel";
 
 const ENTITY_KIND = "assets:asset";
 
@@ -641,6 +642,9 @@ function AssetDetailModal({ assetId, onClose }: { assetId: string | null; onClos
               update.mutate({ metadata: { ...a.metadata, [name]: value } })
             }
           />
+          {/* What's inside this asset — e.g. the components in a server/computer.
+              Same generic placement panel a machine or a drawer uses. */}
+          <ContentsPanel slug={activeSlug} container={{ kind: ENTITY_KIND, id: a.id }} title="Contents" />
           <EntityAttachments kind={ENTITY_KIND} entityId={a.id} />
           <EditField label="Notes" value={a.notes ?? ""} multiline onCommit={(v) => update.mutate({ notes: v || null })} />
           <div className="pt-3 border-t border-line dark:border-slate-700 flex items-center justify-between">
