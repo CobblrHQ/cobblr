@@ -438,6 +438,16 @@ export interface Asset {
   updated_at: string;
 }
 
+
+/** A manifest-declared UI contribution (contributes.panels) — a tab on the
+ *  target module's list page, or a panel in the target kind's detail modal. */
+export interface ContributedPanel {
+  id: string;
+  surface: "module-page-tab" | "entity-detail-panel";
+  target: string;
+  title: string;
+}
+
 export interface OrgModuleListItem {
   name: string;
   version: string;
@@ -457,6 +467,10 @@ export interface OrgModuleListItem {
    *  modules' things and is not itself a trackable kind, so the funnel's
    *  "track a kind of thing" column excludes it. */
   operates_on?: string[];
+  /** UI panels this module contributes into ANOTHER module's pages —
+   *  rendered through web/src/panels/registry.tsx by the target module's
+   *  host page. Present only for modules that declare contributes.panels. */
+  panels?: ContributedPanel[];
   /** Icon-only quick-action pinned to the navbar's right cluster. */
   headerAction: { icon: string; label: string; route: string } | null;
   dependencies: string[];
@@ -1742,7 +1756,7 @@ export const api = {
   deleteDigifabDetector: (slug: string, id: string) =>
     request<{ ok: boolean }>("DELETE", `/orgs/${slug}/modules/digifab/failure/detectors/${id}`),
   testDigifabDetector: (slug: string, id: string) =>
-    request<{ ok: boolean; detail?: string }>("POST", `/orgs/${slug}/modules/digifab/failure/detectors/${id}/test`, {}),
+    request<{ ok: boolean; detail?: string; version?: string | null; compatible?: boolean }>("POST", `/orgs/${slug}/modules/digifab/failure/detectors/${id}/test`, {}),
   listDigifabDetectorCameras: (slug: string, id: string) =>
     request<{ cameras: DigifabDetectorCamera[] }>("GET", `/orgs/${slug}/modules/digifab/failure/detectors/${id}/cameras`),
   getDigifabDetectorProviders: (slug: string, id: string) =>
@@ -2465,8 +2479,28 @@ export const api = {
    *  inbox items, or (scope:"unplaced") for committed entities with no home. */
   organizePlan: (
     slug: string,
-    body: { item_ids?: string[]; scan_batch_id?: string; scope?: "unplaced" },
+    body: {
+      item_ids?: string[];
+      scan_batch_id?: string;
+      scope?: "unplaced" | "pending";
+      /** Ground truth typed by the human — folded into the AI plan call. */
+      hint?: string;
+      /** Pre-compute the scope:"pending" plan (fingerprint-deduped server-side)
+       *  so opening the sheet reveals a ready plan. */
+      warm?: boolean;
+      /** Bypass the draft cache (the explicit Re-plan button). */
+      fresh?: boolean;
+      /** Stop carrying the session hint forward. */
+      clear_hint?: boolean;
+    },
   ) => request<OrganizePlanResponse>("POST", `/orgs/${slug}/modules/core-scan/organize/plan`, body),
+  /** Cheap inbox counts for the put-away front door (dashboard card / scan
+   *  strip): pending captures, and how many still have no home. */
+  getScanStats: (slug: string) =>
+    request<{ pending: number; unfiled: number }>(
+      "GET",
+      `/orgs/${slug}/modules/core-scan/inbox/stats`,
+    ),
   /** Guided Organize: accept groups (optionally overriding destinations). */
   organizeApply: (
     slug: string,
@@ -2477,6 +2511,8 @@ export const api = {
         group_id: string;
         location_id?: string;
         new_location?: { name: string; parent_id?: string | null };
+        /** Items split out of the group ("not related") — not filed. */
+        exclude_item_ids?: string[];
       }>;
     },
   ) => request<OrganizeApplyResponse>("POST", `/orgs/${slug}/modules/core-scan/organize/apply`, body),
@@ -2486,13 +2522,90 @@ export const api = {
       "GET",
       `/orgs/${slug}/modules/core-scan/organize/plan/latest`,
     ),
-  /** Guided Organize: persist put-away-walk progress. */
-  setOrganizeWalkState: (slug: string, body: { plan_id: string; placed_item_ids: string[] }) =>
-    request<{ placed_item_ids: string[] }>(
+  /** Put-away sessions (the shared execution engine): start/resume one.
+   *  plan_id set = plan mode (the walk; idempotent per plan, returns the
+   *  authoritative placed list). plan_id absent = LIVE mode (Live Sort;
+   *  idempotent per user, returns the session's entries). */
+  startPutaway: (
+    slug: string,
+    body: { plan_id?: string; catch_all_location_id?: string | null },
+  ) =>
+    request<{
+      session_id: string;
+      mode: "plan" | "live";
+      plan_id?: string;
+      catch_all_location_id?: string | null;
+      placed_item_ids?: string[];
+      entries?: LiveSortEntry[];
+      resumed: boolean;
+    }>("POST", `/orgs/${slug}/modules/core-scan/putaway/start`, body),
+  /** Live Sort: route an intaken inbox item → a destination directive. */
+  putawayScan: (slug: string, sessionId: string, body: { inbox_item_id: string }) =>
+    request<{
+      entry?: LiveSortEntry;
+      already_confirmed?: boolean;
+      already_placed?: { location_id: string; location_name: string | null; name: string | null };
+    }>("POST", `/orgs/${slug}/modules/core-scan/putaway/${sessionId}/scan`, body),
+  /** Live Sort: the one confirm gesture (override location wins). */
+  putawayConfirm: (
+    slug: string,
+    sessionId: string,
+    body: { entry_id: string; location_id?: string },
+  ) =>
+    request<{ entry: LiveSortEntry }>(
       "POST",
-      `/orgs/${slug}/modules/core-scan/organize/walk-state`,
+      `/orgs/${slug}/modules/core-scan/putaway/${sessionId}/confirm`,
       body,
     ),
+  /** Live Sort: create numbered "Bin N" locations as the session's bind
+   *  pool (+ optionally an "Unsorted" catch-all). Zero-hardware on-ramp. */
+  setupPutawayBins: (
+    slug: string,
+    sessionId: string,
+    body: { count: number; include_catch_all?: boolean; parent_id?: string | null },
+  ) =>
+    request<{
+      created: Array<{ id: string; name: string }>;
+      catch_all_location_id: string | null;
+      bind_pool_size: number;
+    }>("POST", `/orgs/${slug}/modules/core-scan/putaway/${sessionId}/setup-bins`, body),
+  /** Live Sort: revert a confirm. */
+  putawayUndo: (slug: string, sessionId: string, body: { entry_id: string }) =>
+    request<{ entry: LiveSortEntry }>(
+      "POST",
+      `/orgs/${slug}/modules/core-scan/putaway/${sessionId}/undo`,
+      body,
+    ),
+  /** The caller's active put-away session (resume chips). */
+  getPutawayCurrent: (slug: string) =>
+    request<{
+      session: {
+        session_id: string;
+        mode: "plan" | "live";
+        plan_id: string | null;
+        catch_all_location_id: string | null;
+        entries?: LiveSortEntry[];
+        placed_item_ids?: string[];
+        created_at: string;
+      } | null;
+    }>("GET", `/orgs/${slug}/modules/core-scan/putaway/current`),
+  /** Put-away sessions: persist walk progress (idempotent replace). */
+  setPutawayState: (slug: string, sessionId: string, body: { placed_item_ids: string[] }) =>
+    request<{ placed_item_ids: string[] }>(
+      "POST",
+      `/orgs/${slug}/modules/core-scan/putaway/${sessionId}/state`,
+      body,
+    ),
+  /** Put-away sessions: close one (fires the summary event; live sessions
+   *  return the sorted/by-bin/straggler summary). */
+  endPutaway: (slug: string, sessionId: string) =>
+    request<{
+      ended: boolean;
+      placed_count?: number;
+      sorted?: number;
+      stragglers?: number;
+      by_bin?: Array<{ location_id: string; location_name: string; count: number }>;
+    }>("POST", `/orgs/${slug}/modules/core-scan/putaway/${sessionId}/end`),
   /** Fold one scan session into another (batch merge). */
   mergeScanBatches: (slug: string, fromBatchId: string, intoBatchId: string) =>
     request<{ moved: number }>("POST", `/orgs/${slug}/modules/core-scan/inbox/merge-batches`, {
@@ -2598,6 +2711,14 @@ export const api = {
     request<ScanInboxItem>(
       "POST",
       `/orgs/${slug}/modules/core-scan/inbox/${id}/discard`,
+    ),
+  /** Revert a commit: send a resolved scan back to the pending inbox
+   *  (deletes the CREATED entity through its module; never touches a
+   *  pre-existing entity the scan merely attached to). */
+  unconfirmScanItem: (slug: string, id: string) =>
+    request<{ item: ScanInboxItem; entity_deleted: boolean; note: string | null }>(
+      "POST",
+      `/orgs/${slug}/modules/core-scan/inbox/${id}/unconfirm`,
     ),
   restoreScanItem: (slug: string, id: string) =>
     request<ScanInboxItem>(
@@ -2895,24 +3016,68 @@ export const api = {
       cost_cents?: number;
       duration_ms: number;
     }>("POST", `/orgs/${slug}/modules/core-ai/invoke`, body),
-  /** Agentic chat: returns a plain reply OR a proposed write (create/action)
-   *  the user must confirm via aiChatExecute. */
+  /** Agentic chat: returns a plain reply OR one/many proposed writes the user
+   *  confirms via aiChatExecute (the tool loop can propose several in one turn —
+   *  "add it to the list AND save it as a note"). */
   aiChat: (slug: string, messages: { role: "user" | "assistant"; content: string }[]) =>
     request<{
-      type: "reply" | "proposal" | "build-proposal" | "error";
+      type: "reply" | "proposal" | "proposals" | "build-proposal" | "error";
       text?: string;
       summary?: string;
       proposal?: AiChatProposal;
+      /** type:"proposals" — several writes from one turn, each its own confirm. */
+      items?: Array<{ summary: string; proposal: AiChatProposal }>;
+      /** AUTO mode: writes already applied this turn (ledgered) — render as
+       *  "✓ done" cards with an Undo where undoable. */
+      applied?: Array<{ summary: string; ledger_id?: string; undoable?: boolean }>;
       /** build-proposal: the build runs async — poll authoringDraft(draft_id)
        *  until the draft leaves "building", then read its validation.preview. */
       building?: boolean;
       draft_id?: string;
     }>("POST", `/orgs/${slug}/modules/core-ai/chat`, { messages }),
   aiChatExecute: (slug: string, proposal: AiChatProposal) =>
-    request<{ ok: boolean; message: string; entity?: { kind: string; id?: string } }>(
+    request<{
+      ok: boolean;
+      message: string;
+      entity?: { kind: string; id?: string };
+      /** The AI change-ledger row for this write — undo handle. */
+      ledger_id?: string;
+      undoable?: boolean;
+    }>("POST", `/orgs/${slug}/modules/core-ai/chat/execute`, { proposal }),
+  /** Ask Cobb tool consent (per-user, per-workspace): may the chat read your
+   *  workspace data into prompts, and the write mode (off / ask / auto)?
+   *  Enforced server-side; auto still asks for ACTIONS (irreversible). */
+  aiChatPrefs: (slug: string) =>
+    request<{ read_tools: boolean; write_mode: "off" | "ask" | "auto" }>(
+      "GET",
+      `/orgs/${slug}/modules/core-ai/chat/prefs`,
+    ),
+  aiChatSetPrefs: (slug: string, prefs: { read_tools: boolean; write_mode: "off" | "ask" | "auto" }) =>
+    request<{ read_tools: boolean; write_mode: "off" | "ask" | "auto" }>(
+      "PUT",
+      `/orgs/${slug}/modules/core-ai/chat/prefs`,
+      prefs,
+    ),
+  /** The AI change ledger: what Cobb wrote (confirmed or auto), what's undoable. */
+  aiChatWrites: (slug: string) =>
+    request<{
+      items: Array<{
+        id: string;
+        tool: "create" | "update" | "delete" | "action";
+        entity_kind: string;
+        entity_id: string | null;
+        entity_label: string;
+        auto_applied: boolean;
+        undone_at: string | null;
+        undo_of: string | null;
+        created_at: string;
+        undoable: boolean;
+      }>;
+    }>("GET", `/orgs/${slug}/modules/core-ai/chat/writes`),
+  aiChatUndo: (slug: string, writeId: string) =>
+    request<{ ok: boolean; message: string }>(
       "POST",
-      `/orgs/${slug}/modules/core-ai/chat/execute`,
-      { proposal },
+      `/orgs/${slug}/modules/core-ai/chat/writes/${writeId}/undo`,
     ),
   listAiCalls: (slug: string, limit = 50) =>
     request<{ items: AiCall[] }>(
@@ -3833,6 +3998,10 @@ export interface ScanCandidate {
   notes?: string;
   /** Unit count when the item data implies one ("1 Pack Of 9 Skein"). */
   quantity?: number;
+  /** Field names in `fields` completed from the model's knowledge of a confident
+   *  known entity (a book's ISBN/publisher/year), not read off the photo — so the
+   *  UI can flag them for a double-check. */
+  inferred?: string[];
   /** Capture-first: set when this routes to a not-yet-installed flagship
    *  bundle — the bundle to materialize. */
   bundle_external_id?: string;
@@ -3963,11 +4132,27 @@ export interface OrganizeGroup {
   item_ids: string[];
   destination: OrganizeDestination;
   evidence?: { sibling_count: number; sample_names: string[] };
+  /** Size check (declared dims only): a member's longest declared dimension
+   *  exceeds the destination's max interior axis. A warning — never a
+   *  silent reroute. */
+  size_warning?: string;
+  /** AI picked this existing bin with NO computed evidence — render as the
+   *  model's suggestion (amber), never as a finding. */
+  ai_guess?: boolean;
+  /** Pre-filed items ("already set — just put them away"): born applied,
+   *  walkable immediately, no Accept needed. */
+  ready?: boolean;
 }
 
 export interface OrganizePlanResponse {
   plan_id: string;
   expires_at: string;
+  /** This plan was produced with a user hint (provenance for the plan line). */
+  draft_hinted?: boolean;
+  /** The carried session hint's text (visible + clearable on the plan line). */
+  hint_text?: string;
+  /** Groups pre-accepted at plan time (ready groups). */
+  applied_group_ids?: string[];
   groups: OrganizeGroup[];
   already_filed_item_ids: string[];
   needs_review_item_ids: string[];
@@ -3983,6 +4168,31 @@ export interface OrganizePlanResponse {
 }
 
 /** The stored plan as GET /organize/plan/latest returns it (walk resume). */
+export type LiveSortDirective =
+  | {
+      kind: "bin";
+      location_id: string;
+      location_name: string;
+      location_path: string;
+      sibling_count: number;
+      sample_names: string[];
+      via: "census" | "session" | "sticky";
+    }
+  | { kind: "catch-all"; location_id: string | null; location_name: string | null }
+  | { kind: "bind-offer"; location_id: string; location_name: string; proposed_name: string };
+
+export interface LiveSortEntry {
+  id: string;
+  inbox_item_id: string;
+  name: string | null;
+  quantity: number;
+  directive: LiveSortDirective;
+  status: "proposed" | "confirmed";
+  confirmed_location_id?: string;
+  confirmed_location_name?: string;
+  bind?: { prior_name: string };
+}
+
 export interface OrganizeStoredPlan {
   plan_id: string;
   groups: OrganizeGroup[];
@@ -3995,6 +4205,8 @@ export interface OrganizeStoredPlan {
   item_barcodes?: Record<string, string>;
   applied_group_ids: string[];
   walk_state: { placed_item_ids?: string[] };
+  /** The active put-away session backing walk_state (null = none started). */
+  putaway_session_id?: string | null;
   expires_at: string;
 }
 
@@ -4448,7 +4660,16 @@ export interface SuperAdminBarcodeCacheItem {
 /** A write the agentic chat proposes; the user confirms before it runs. */
 export type AiChatProposal =
   | { kind: "create"; entity_kind: string; fields: Record<string, unknown> }
-  | { kind: "action"; action_id: string; entity_kind: string; entity_id: string; entity_label?: string }
+  | { kind: "update"; entity_kind: string; entity_id: string; fields: Record<string, unknown>; entity_label?: string }
+  | { kind: "delete"; entity_kind: string; entity_id: string; entity_label?: string }
+  | {
+      kind: "action";
+      action_id: string;
+      entity_kind: string;
+      entity_id: string;
+      entity_label?: string;
+      args?: Record<string, unknown>;
+    }
   | { kind: "build"; draft_id: string };
 
 export interface SurfaceRecord {
@@ -4633,6 +4854,9 @@ export interface DigifabFleetDevice {
   enabled: boolean;
   tags: string[];
   linked_machine_id: string | null;
+  /** The linked machine's own identity (name/photo/lifecycle state) — when
+   *  present the tile wears it, so fleet and registry are one identity. */
+  linked_machine?: { id: string; name: string; image_path: string | null; state: string | null } | null;
   pool_id: string | null;
   pool_name: string | null;
   /** Cockpit: live temps the manager reports (°C), if any. */
@@ -5061,7 +5285,11 @@ export interface PlatformEntityKind {
   icon: string | null;
   fields: { name: string; type: string; role?: string }[];
   detail_route: string | null;
-  endpoints: { get?: string } | null;
+  endpoints: { get?: string; list?: string; create?: string; update?: string; delete?: string } | null;
+  /** Set on registry records synthesized for a workspace's named instances
+   *  (`<instance>:item`): endpoints are then relative to
+   *  /instances/<instance_name>, not /modules/<module_name>. */
+  instance_name?: string;
   version: string;
   /** Resolved 6-axis trait fingerprint (null if the kind declared none). */
   traits: Record<string, string | null | { trait: string; uncertain: true }> | null;
@@ -5281,6 +5509,10 @@ export interface PlatformFieldDef {
   template: string | null;
   /** Plain-language one-line hint shown under the input. */
   help: string | null;
+  /** The unit a type='number' value is measured in ("mm", "g") — free text,
+   *  resolved against the units vocabulary at render time. Declares physical
+   *  semantics; consumers never derive them from the field's name. */
+  unit?: string | null;
   /** Form-builder section (field_sections.id) or null = ungrouped. */
   section_id?: string | null;
   /** Server-managed: the value is computed/stamped server-side and a client
@@ -5359,6 +5591,9 @@ export interface PlatformBundleManifest {
     /** Plain-language one-line hint shown under the input ("the maker's named
      *  shade — e.g. 'Peacock Heather'") so jargon fields explain themselves. */
     help?: string;
+    /** The unit a type='number' value is measured in ("mm", "g") — free text,
+     *  resolved against the units vocabulary; declares physical semantics. */
+    unit?: string;
   }[];
   /** Presentation overrides for a kind's native fields (relabel / hide). */
   field_overrides?: {

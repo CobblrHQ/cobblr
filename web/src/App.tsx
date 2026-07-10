@@ -108,6 +108,7 @@ const PermissionsPage = lazy(() => import("./pages/PermissionsPage").then((m) =>
 const PortalHomePage = lazy(() => import("./pages/PortalHomePage").then((m) => ({ default: m.PortalHomePage })));
 const PortalViewPage = lazy(() => import("./pages/PortalViewPage").then((m) => ({ default: m.PortalViewPage })));
 const PlanPrintPage = lazy(() => import("./pages/PlanPrintPage").then((m) => ({ default: m.PlanPrintPage })));
+const PortalPlanPage = lazy(() => import("./pages/PortalPlanPage").then((m) => ({ default: m.PortalPlanPage })));
 const AppPlayerPage = lazy(() => import("./pages/AppPlayerPage").then((m) => ({ default: m.AppPlayerPage })));
 const AppRecordPage = lazy(() => import("./pages/AppPlayerPage").then((m) => ({ default: m.AppRecordPage })));
 const BrickLinkPage = lazy(() => import("./pages/BrickLinkPage").then((m) => ({ default: m.BrickLinkPage })));
@@ -652,6 +653,9 @@ function ActiveOrgScopedRoutes() {
           <Route path="views/:viewId" element={<PortalViewPage />} />
           <Route path="app/:appSlug" element={<AppPlayerPage />} />
           <Route path="app/:appSlug/r/:kind/:id" element={<AppRecordPage />} />
+          {/* Read-only floor plan for members — link it from the portal
+              welcome markdown. */}
+          <Route path="locations/:id/plan" element={<PortalPlanPage />} />
         </Route>
         {/* Print-friendly floor plan — chrome-less like the portal; the page
             is deliberately paper-white regardless of theme. */}

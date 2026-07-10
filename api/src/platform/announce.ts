@@ -60,20 +60,30 @@ async function settingsFor(category: string): Promise<{ enabled: boolean; webhoo
   return { enabled, webhook };
 }
 
-/** Post a categorized announcement to Discord. Never throws. Returns whether it
- *  actually DELIVERED (true) vs no-op'd / failed (false) — event callers
- *  `void announce(...)` and ignore it (non-blocking); the manual composer awaits
- *  it to report a real outcome. Returns false when the category is disabled, no
- *  webhook is configured, or Discord rejected the post. */
-export async function announce(category: string, payload: AnnouncePayload): Promise<boolean> {
+/** Result of a delivery attempt. `messageId`/`channelId` are populated only when
+ *  the caller asked to `wait` (a Discord webhook echoes the created message only
+ *  with `?wait=true`) — so an event whose post has a lifecycle can remember which
+ *  message to react to later. */
+export interface AnnounceResult {
+  delivered: boolean;
+  messageId: string | null;
+  channelId: string | null;
+}
+
+const MISS: AnnounceResult = { delivered: false, messageId: null, channelId: null };
+
+/** Shared delivery core. `opts.wait` appends `?wait=true` so Discord responds 200
+ *  with the created message body (id + channel_id) instead of a bodyless 204. */
+async function deliver(category: string, payload: AnnouncePayload, opts?: { wait?: boolean }): Promise<AnnounceResult> {
   let cfg: { enabled: boolean; webhook: string };
   try {
     cfg = await settingsFor(category);
   } catch (err) {
     console.error(`[announce] settings lookup failed for ${category}:`, err);
-    return false;
+    return MISS;
   }
-  if (!cfg.enabled || !cfg.webhook) return false;
+  if (!cfg.enabled || !cfg.webhook) return MISS;
+  const url = opts?.wait ? `${cfg.webhook}${cfg.webhook.includes("?") ? "&" : "?"}wait=true` : cfg.webhook;
   const embed = {
     title: payload.title.slice(0, 256),
     description: payload.body ? payload.body.slice(0, 4000) : undefined,
@@ -98,7 +108,7 @@ export async function announce(category: string, payload: AnnouncePayload): Prom
       }
       if (n > 0) {
         form.append("payload_json", JSON.stringify({ embeds: [embed] }));
-        return postToWebhook(cfg.webhook, { method: "POST", body: form }, category);
+        return postToWebhook(url, { method: "POST", body: form }, category);
       }
     } catch (err) {
       console.error(`[announce] image attach failed for ${category}:`, err);
@@ -107,31 +117,52 @@ export async function announce(category: string, payload: AnnouncePayload): Prom
   }
 
   return postToWebhook(
-    cfg.webhook,
+    url,
     { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ embeds: [embed] }) },
     category,
   );
 }
 
-/** POST to a Discord webhook and report whether it actually landed. `fetch` only
- *  rejects on a network error — a 4xx/5xx (bad/expired webhook, malformed embed,
- *  rate-limit) resolves with `ok:false`, so the old `void fetch().catch()` dropped
- *  every Discord rejection SILENTLY and the composer still reported success. Check
- *  the status, log the body on failure, and return the verdict so callers (the
- *  "Post an update" composer) can surface a real outcome. Still never throws —
- *  event callers `void announce(...)` and ignore the result. */
-async function postToWebhook(url: string, init: RequestInit, category: string): Promise<boolean> {
+/** Post a categorized announcement to Discord. Never throws. Returns whether it
+ *  actually DELIVERED (true) vs no-op'd / failed (false) — event callers
+ *  `void announce(...)` and ignore it (non-blocking); the manual composer awaits
+ *  it to report a real outcome. Returns false when the category is disabled, no
+ *  webhook is configured, or Discord rejected the post. */
+export async function announce(category: string, payload: AnnouncePayload): Promise<boolean> {
+  return (await deliver(category, payload)).delivered;
+}
+
+/** Like `announce`, but asks Discord to echo the created message so the caller
+ *  can remember its id/channel and react to it later. Use for events whose post
+ *  has a lifecycle — e.g. `feedback.new`, whose post accrues stage-reactions as
+ *  the item is worked (see feedback.ts + the support bot's /feedback-stage). */
+export async function announceReturningMessage(category: string, payload: AnnouncePayload): Promise<AnnounceResult> {
+  return deliver(category, payload, { wait: true });
+}
+
+/** POST to a Discord webhook and report whether it actually landed (+ the created
+ *  message ref when `?wait=true` was used). `fetch` only rejects on a network
+ *  error — a 4xx/5xx (bad/expired webhook, malformed embed, rate-limit) resolves
+ *  with `ok:false`, so the old `void fetch().catch()` dropped every Discord
+ *  rejection SILENTLY and the composer still reported success. Check the status,
+ *  log the body on failure, and return the verdict so callers (the "Post an
+ *  update" composer) can surface a real outcome. Still never throws — event
+ *  callers `void announce(...)` and ignore the result. */
+async function postToWebhook(url: string, init: RequestInit, category: string): Promise<AnnounceResult> {
   try {
     const r = await fetch(url, init);
     if (!r.ok) {
       const detail = await r.text().catch(() => "");
       console.error(`[announce] ${category} webhook POST failed: HTTP ${r.status} ${detail.slice(0, 300)}`);
-      return false;
+      return MISS;
     }
-    return true;
+    // With ?wait=true Discord returns the created message JSON; without it a 204
+    // with no body (json() would throw — tolerated as delivered-without-ref).
+    const msg = (await r.json().catch(() => null)) as { id?: string; channel_id?: string } | null;
+    return { delivered: true, messageId: msg?.id ?? null, channelId: msg?.channel_id ?? null };
   } catch (err) {
     console.error(`[announce] ${category} webhook POST threw (network):`, err);
-    return false;
+    return MISS;
   }
 }
 

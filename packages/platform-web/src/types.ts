@@ -82,6 +82,10 @@ export interface PlatformFieldDef {
   /** Plain-language one-line hint shown under the input, so jargon fields
    *  (colorway, dye lot…) explain themselves to a novice. */
   help?: string | null;
+  /** The unit a type='number' value is measured in ("mm", "g") — free text,
+   *  resolved against the units vocabulary at render time. Declares physical
+   *  semantics; consumers never derive them from the field's name. */
+  unit?: string | null;
   /** Form-builder section this field belongs to (field_sections.id), or
    *  null/undefined for ungrouped. */
   section_id?: string | null;

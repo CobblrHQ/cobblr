@@ -22,6 +22,7 @@
 
 import { platform, type AiCapability, type EdgeRequest, type EdgeResponse } from "@cobblr/platform-contract";
 import { IDENTIFY_PROMPT, measurementContext } from "./identify-prompt.js";
+import { toolsOf, turnsOf, openAiToolsOf, ollamaMessagesOf, parseOllamaToolCalls } from "./tool-wire.js";
 
 /** The personal-connections resolver injects the channel owner's user id here. */
 const CONNECTION_USER_KEY = "__connection_user_id";
@@ -149,16 +150,47 @@ export function register(): void {
           return { result: { vector: embedding }, cost_cents: 0 };
         }
         case "chat": {
-          const messages = (ctx.input.messages as Array<{ role: string; content: string }>) ?? [];
+          // Ollama dialect over the tunnel (see tool-wire.ts). Tool defs ride
+          // along when supplied; a bridge target that ignores/lacks tools just
+          // answers text — the chat loop treats that as a plain reply (graceful
+          // degrade until the bridge's OpenAI-v1 migration).
+          const messages = ollamaMessagesOf(turnsOf(ctx.input)) as Array<Record<string, unknown>>;
           const system = typeof ctx.input.system === "string" ? ctx.input.system : undefined;
-          const body = await edgePost(channelKey, "/api/chat", {
+          const toolDefs = toolsOf(ctx.input);
+          const req: Record<string, unknown> = {
             model: ctx.model,
             stream: false,
             messages: system ? [{ role: "system", content: system }, ...messages] : messages,
-          });
-          const m = (body as { message?: { role?: string; content?: string } }).message ?? {};
+          };
+          if (toolDefs) req.tools = openAiToolsOf(toolDefs);
+          let body: Record<string, unknown>;
+          try {
+            body = await edgePost(channelKey, "/api/chat", req);
+          } catch (err) {
+            // A 4xx that names tools = the local target rejects the field —
+            // retry once without them rather than failing the turn.
+            if (toolDefs && /tool/i.test((err as Error)?.message ?? "")) {
+              delete req.tools;
+              body = await edgePost(channelKey, "/api/chat", req);
+            } else {
+              throw err;
+            }
+          }
+          const m =
+            (body as {
+              message?: {
+                role?: string;
+                content?: string;
+                tool_calls?: Array<{ function?: { name?: string; arguments?: unknown } }>;
+              };
+            }).message ?? {};
+          const calls = parseOllamaToolCalls(m);
           return {
-            result: { role: m.role ?? "assistant", content: m.content ?? "" },
+            result: {
+              role: m.role ?? "assistant",
+              content: m.content ?? "",
+              ...(calls ? { tool_calls: calls } : {}),
+            },
             input_tokens: (body as { prompt_eval_count?: number }).prompt_eval_count,
             output_tokens: (body as { eval_count?: number }).eval_count,
             cost_cents: 0,

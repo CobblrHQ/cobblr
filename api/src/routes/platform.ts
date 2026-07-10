@@ -30,9 +30,42 @@ platformOrgRouter.get(
   "/:slug/entity-kinds",
   requireAuth,
   withTenant,
-  async (_req, res, next) => {
+  async (req, res, next) => {
     try {
-      const items = await platform().entities.listKinds();
+      // Org-scoped: manifest kinds + this workspace's synthesized instance
+      // kinds (see listKindsForOrg) — search, MCP, and generic surfaces all
+      // see instance items through the same registry.
+      const items = await platform().entities.listKindsForOrg(req.tenant!.org.id);
+      // ?include=custom_fields — merge THIS workspace's user field-defs onto
+      // each kind, so a schema-reading consumer (the AI tool registry, the MCP
+      // server, form builders) sees the WHOLE shape, not just the manifest's
+      // native fields. Custom-field values live in the record's metadata blob;
+      // the writers fold unknown body keys there (routeUnknownToMetadata), so
+      // knowing the names/types is exactly what makes them settable.
+      if (String(req.query.include ?? "").split(",").includes("custom_fields")) {
+        const defs = await meta
+          .selectFrom("module_field_defs")
+          .select(["entity_kind", "name", "display_label", "type", "required", "choices"])
+          .where("org_id", "=", req.tenant!.org.id)
+          .orderBy("position")
+          .execute();
+        const byKind = new Map<string, Array<Record<string, unknown>>>();
+        for (const d of defs) {
+          const list = byKind.get(d.entity_kind) ?? [];
+          list.push({
+            name: d.name,
+            label: d.display_label,
+            type: d.type,
+            required: d.required,
+            ...(d.choices?.length ? { choices: d.choices } : {}),
+          });
+          byKind.set(d.entity_kind, list);
+        }
+        res.json({
+          items: items.map((k) => ({ ...k, custom_fields: byKind.get(k.id) ?? [] })),
+        });
+        return;
+      }
       res.json({ items });
     } catch (err) {
       next(err);
@@ -729,12 +762,22 @@ const FieldDefCreate = z.object({
   /** When type='computed': the {{ }} template rendered read-only at
    *  resolve time. Required for computed; ignored otherwise. */
   template: z.string().max(2000).optional(),
+  /** The unit a type='number' value is measured in ("mm", "g", "in").
+   *  Free text by design — the units vocabulary (core-units) resolves it
+   *  at render/consume time and an unmatched string renders as-is. A unit
+   *  resolving to a catalog category gives the field declared physical
+   *  semantics (this is what size-aware features consume — never the
+   *  field's name). */
+  unit: z.string().trim().min(1).max(40).nullable().optional(),
 }).refine(
   (d) => !d.choices || d.type === "text",
   { message: "choices is only valid for type='text'", path: ["choices"] },
 ).refine(
   (d) => d.type !== "computed" || (d.template && d.template.trim().length > 0),
   { message: "template is required for type='computed'", path: ["template"] },
+).refine(
+  (d) => !d.unit || d.type === "number",
+  { message: "unit is only valid for type='number'", path: ["unit"] },
 );
 
 const FieldDefPatch = z.object({
@@ -744,6 +787,9 @@ const FieldDefPatch = z.object({
   choices: z.array(z.string().max(120)).nullable().optional(),
   renderer: FieldRenderer.nullable().optional(),
   template: z.string().max(2000).nullable().optional(),
+  /** Only meaningful on type='number' defs — validated against the row's
+   *  type in the handler (the patch body alone can't see it). */
+  unit: z.string().trim().min(1).max(40).nullable().optional(),
 });
 
 platformOrgRouter.get(
@@ -1145,6 +1191,7 @@ platformOrgRouter.post(
             : null,
           renderer: parsed.data.renderer ?? null,
           template: parsed.data.type === "computed" ? parsed.data.template ?? null : null,
+          unit: parsed.data.type === "number" ? parsed.data.unit ?? null : null,
         })
         .returningAll()
         .executeTakeFirstOrThrow();
@@ -1195,6 +1242,7 @@ platformOrgRouter.patch(
       }
       if (parsed.data.renderer !== undefined) updates.renderer = parsed.data.renderer;
       if (parsed.data.template !== undefined) updates.template = parsed.data.template;
+      if (parsed.data.unit !== undefined) updates.unit = parsed.data.unit;
 
       // Provenance check: a `choices` change on a BUNDLE-owned field def routes to
       // the USER override layer (bundle_id null), never the bundle row — so the
@@ -1209,6 +1257,14 @@ platformOrgRouter.patch(
         .executeTakeFirst();
       if (!def) {
         res.status(404).json({ error: { code: "not_found", message: "field def not found" } });
+        return;
+      }
+      // A unit only makes sense on a number field — checked here because the
+      // patch body alone can't see the row's type.
+      if (parsed.data.unit != null && def.type !== "number") {
+        res.status(400).json({
+          error: { code: "invalid_body", message: "unit is only valid for type='number'" },
+        });
         return;
       }
       let routedChoices = false;

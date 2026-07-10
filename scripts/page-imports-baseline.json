@@ -1,0 +1,34 @@
+[
+  {
+    "file": "web/src/pages/AppsConfigPage.tsx",
+    "spec": "./AppPlayerPage"
+  },
+  {
+    "file": "web/src/pages/Dashboard.tsx",
+    "spec": "./ViewsPage"
+  },
+  {
+    "file": "web/src/pages/InstancePage.tsx",
+    "spec": "./MachinesPage"
+  },
+  {
+    "file": "web/src/pages/PortalPlanPage.tsx",
+    "spec": "./PlanPrintPage"
+  },
+  {
+    "file": "web/src/pages/QrPage.tsx",
+    "spec": "./QrTokensPage"
+  },
+  {
+    "file": "web/src/pages/QrPage.tsx",
+    "spec": "./ScanRulesPage"
+  },
+  {
+    "file": "web/src/pages/SavedViewPage.tsx",
+    "spec": "./ViewsPage"
+  },
+  {
+    "file": "web/src/pages/ScanResultModal.tsx",
+    "spec": "./ScanPage"
+  }
+]

@@ -14,7 +14,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "tracking",
-  version: "0.2.0",
+  version: "0.3.0",
   displayName: "Tracking",
   description:
     "Log a number over time toward a goal, and see the trend. Weight, runs, habits, budgets, mood — any measurement with a target. Ships a trend-chart view.",
@@ -47,8 +47,12 @@ export default defineModule({
         detailRoute: "/tracking/{id}",
         getEndpoint: "/metrics/{id}",
         createEndpoint: "/metrics",
+        updateEndpoint: "/metrics/{id}",
+        deleteEndpoint: "/metrics/{id}",
       },
       {
+        // AI-CRUD: none — measurements are append-only readings written via
+        // the log-measurement action; generic edits would falsify history.
         id: "tracking:measurement",
         displayName: "Measurement",
         displayNamePlural: "Measurements",

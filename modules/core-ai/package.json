@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@cobblr/platform-contract": "workspace:*",
+    "@cobblr/workspace-tools": "workspace:*",
     "express": "^4.21.2",
     "kysely": "^0.27.5",
     "zod": "^3.24.1"

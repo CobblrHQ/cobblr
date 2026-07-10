@@ -60,6 +60,19 @@ surface, then stamps `docs_published:`.
 - `docs_published:` is stamped by the flush — never write it by hand. After
   publish, doc corrections go straight to the target file.
 
+## Voice (enforced by `lint:changelog`)
+
+Entries and their `## docs` bodies are user-facing writing: the one-liner feeds
+`/changelog` and the Discord digest, and the docs body is spliced verbatim into
+the public docs at release. Write like a person explaining their own product
+plainly. The mechanical rules live in ONE place, `scripts/prose-rules.mjs`
+(shared with the docs site's lint), and the gate applies them to every entry a
+push touches. The short version: no em dashes; no candor-performance
+("honestly", "the honest truth", "genuinely" as an intensifier); no signposting
+("worth noting", "the key thing is"); no "not just X" reframes; no
+AI-marketing words (seamless, leverage, empower). A genuine false positive can
+end its line with `<!-- prose-ok -->`.
+
 ## When (enforced by `lint:changelog`)
 
 A **feature** — a `feat:` commit, a new `modules/<name>/`, or a module

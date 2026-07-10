@@ -63,6 +63,40 @@ export function OrganizeWalkSheet({
     () => new Set(plan.walk_state.placed_item_ids ?? []),
   );
 
+  // Progress lives on a put-away SESSION (the shared execution engine —
+  // docs/product/put-away.md §2.2). Start/resume it on mount; idempotent per
+  // plan, and the response carries the authoritative placed list (a walk that
+  // predates sessions gets its legacy walk_state imported server-side).
+  const sessionIdRef = useRef<string | null>(plan.putaway_session_id ?? null);
+  useEffect(() => {
+    let cancelled = false;
+    void api
+      .startPutaway(slug, { plan_id: plan.plan_id })
+      .then((r) => {
+        if (cancelled) return;
+        sessionIdRef.current = r.session_id;
+        // UNION server progress with any ticks made while starting — neither
+        // a resume nor a fast first tap may lose a checkmark.
+        setPlaced((prev) => {
+          const server = r.placed_item_ids ?? [];
+          const merged = new Set([...prev, ...server]);
+          if (merged.size > server.length) {
+            void api
+              .setPutawayState(slug, r.session_id, { placed_item_ids: [...merged] })
+              .catch(() => {});
+          }
+          return merged;
+        });
+      })
+      .catch(() => {
+        /* best-effort — the walk keeps working; saves no-op until a session exists */
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan.plan_id]);
+
   // The current group = the first with anything left to place.
   const currentIdx = groups.findIndex((g) => g.item_ids.some((id) => !placed.has(id)));
   const done = currentIdx === -1;
@@ -81,11 +115,11 @@ export function OrganizeWalkSheet({
 
   // Persist progress on every change (small payload, no debounce needed).
   const save = (next: Set<string>) => {
-    void api
-      .setOrganizeWalkState(slug, { plan_id: plan.plan_id, placed_item_ids: [...next] })
-      .catch(() => {
-        /* best-effort — the walk keeps working; a reload just loses ticks */
-      });
+    const sid = sessionIdRef.current;
+    if (!sid) return; // session still starting — the next toggle catches up
+    void api.setPutawayState(slug, sid, { placed_item_ids: [...next] }).catch(() => {
+      /* best-effort — the walk keeps working; a reload just loses ticks */
+    });
   };
   const toggle = (id: string) => {
     setPlaced((prev) => {
@@ -171,7 +205,11 @@ export function OrganizeWalkSheet({
             </p>
             <button
               type="button"
-              onClick={onClose}
+              onClick={() => {
+                const sid = sessionIdRef.current;
+                if (sid) void api.endPutaway(slug, sid).catch(() => {});
+                onClose();
+              }}
               className="mt-2 rounded bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-4 py-2 transition"
             >
               Done

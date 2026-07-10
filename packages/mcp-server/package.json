@@ -1,7 +1,8 @@
 {
   "name": "@cobblr/mcp-server",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
+  "engines": { "node": ">=22.18" },
   "type": "module",
   "description": "MCP server exposing a Cobblr install (cloud or self-hosted) to a local Claude Code / Claude Desktop / claude.ai connector.",
   "bin": {
@@ -19,6 +20,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
+    "@cobblr/workspace-tools": "workspace:*",
     "zod": "^3.24.1"
   },
   "devDependencies": {

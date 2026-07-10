@@ -10,7 +10,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "sales",
-  version: "0.1.0",
+  version: "0.2.0",
   displayName: "Sales",
   description:
     "Outbound order management: customers, sales orders, and line items. Fulfilling an order decrements the sold inventory parts from stock — closing the sale → fulfil → decrement → reorder loop. For makers and small shops selling finished goods.",
@@ -31,6 +31,9 @@ export default defineModule({
     entityKinds: [
       {
         id: "sales:customer",
+        createEndpoint: "/customers",
+        updateEndpoint: "/customers/{id}",
+        deleteEndpoint: "/customers/{id}",
         displayName: "Customer",
         displayNamePlural: "Customers",
         icon: "user",
@@ -48,6 +51,10 @@ export default defineModule({
       },
       {
         id: "sales:order",
+        primary: true,
+        createEndpoint: "/orders",
+        updateEndpoint: "/orders/{id}",
+        deleteEndpoint: "/orders/{id}",
         displayName: "Sales order",
         displayNamePlural: "Sales orders",
         icon: "shopping-cart",
@@ -67,6 +74,8 @@ export default defineModule({
         detailRoute: "/sales/{id}",
       },
       {
+        // AI-CRUD: none — nested rows of their parent order (no standalone
+        // routes); a standalone write would orphan the line from its order.
         id: "sales:order_item",
         displayName: "Sales line item",
         displayNamePlural: "Sales line items",

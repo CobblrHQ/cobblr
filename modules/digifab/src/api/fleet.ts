@@ -203,6 +203,25 @@ fleetRouter.get(
       .selectFrom("digifab_device_links")
       .select(["connection_id", "remote_device_id", "machine_id"])
       .execute();
+    // One machine, two lenses (machines-digifab-unification.md §3): resolve
+    // each linked machine through the entity registry so the tile wears the
+    // machine's own name/photo/lifecycle state. Batched, exposable-fields-
+    // projected; a resolver failure degrades to connection-side identity.
+    const machineById = new Map<string, { name: string; image_path: string | null; state: string | null }>();
+    const machineRefs = [...new Set(links.map((l) => l.machine_id))].map((id) => ({ kind: "machines:machine", id }));
+    if (machineRefs.length) {
+      try {
+        for (const m of await platform().entities.lookupMany(orgId, machineRefs)) {
+          machineById.set(m.id, {
+            name: m.title,
+            image_path: (m.fields?.image_path as string | null) ?? null,
+            state: (m.fields?.state as string | null) ?? null,
+          });
+        }
+      } catch {
+        /* machines module absent/unreadable → tiles keep connection identity */
+      }
+    }
 
     // Pool membership per device, so the UI can present a pool as ONE farm
     // (cards grouped by pool, even across connections).
@@ -282,6 +301,13 @@ fleetRouter.get(
               enabled: d.enabled,
               tags: d.tags ?? [],
               linked_machine_id: link?.machine_id ?? null,
+              // The linked machine's own identity — lets the tile BE the
+              // machine (title/photo) instead of a parallel connection-side
+              // identity. Null when unlinked or the machine didn't resolve.
+              linked_machine:
+                link && machineById.has(link.machine_id)
+                  ? { id: link.machine_id, ...machineById.get(link.machine_id)! }
+                  : null,
               pool_id: pool?.pool_id ?? null,
               pool_name: pool?.pool_name ?? null,
               // Cockpit: live temps — the Bambu cloud-MQTT pump's reading wins

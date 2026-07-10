@@ -22,6 +22,7 @@ COPY api/package.json ./api/
 COPY web/package.json ./web/
 COPY packages/platform-contract/package.json ./packages/platform-contract/
 COPY packages/platform-web/package.json ./packages/platform-web/
+COPY packages/workspace-tools/package.json ./packages/workspace-tools/
 COPY modules/inventory/package.json ./modules/inventory/
 COPY modules/labels/package.json ./modules/labels/
 COPY modules/projects/package.json ./modules/projects/
@@ -75,6 +76,10 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
 
 # Source for every workspace the runtime needs.
 COPY packages/platform-contract ./packages/platform-contract
+# workspace-tools: the shared AI tool registry (chat + MCP). Multi-file, so it
+# ships dist (built by the fast-build pass below) — type-stripping cannot
+# follow its internal .js relative imports.
+COPY packages/workspace-tools ./packages/workspace-tools
 # platform-web is only referenced by module UI code (e.g. inventory's
 # PartDetailPage) — types resolve via tsc but never ship in the api
 # runtime image. Source copy is still required for the inventory tsc
@@ -150,6 +155,7 @@ COPY --from=builder /app/api/dist ./api/dist
 COPY --from=builder /app/api/migrations ./api/migrations
 COPY --from=builder /app/api/package.json ./api/
 COPY --from=builder /app/packages/platform-contract ./packages/platform-contract
+COPY --from=builder /app/packages/workspace-tools ./packages/workspace-tools
 # Each module ships its compiled dist/ + migrations/ alongside its
 # package.json. The loader resolves package.json#main to dist/module.js.
 COPY --from=builder /app/modules ./modules

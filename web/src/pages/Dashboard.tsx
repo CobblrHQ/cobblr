@@ -25,8 +25,7 @@ import { useBundleUpdates, type BundleUpdate } from "../lib/useBundleUpdates";
 import { useDetailRoute } from "../lib/useDetailRoute";
 import { useSetupCards, dismissSetup } from "../lib/setupCards";
 import { EntityThumb,
-  ViewModeToggle,
-  useViewMode, usePageTitle, useToast, useImageSrc,
+  usePageTitle, useToast, useImageSrc,
   useDashboardWidgets, TileCollapseContext, type DashboardWidgetSpec } from "@cobblr/platform-web";
 // Side-effect: registers the host's built-in "at a glance" widgets (machines /
 // assets / purchases) through the public registerDashboardWidget seam. The
@@ -96,6 +95,11 @@ export function Dashboard() {
           trackers' own field semantics. Renders nothing when nothing needs you. */}
       <AttentionFeed slug={activeSlug} />
 
+      {/* The put-away front door (put-away.md §5): scanned-but-homeless items
+          are THE founding mess — when any exist, say so and offer both tempos.
+          Renders nothing when everything has a home. */}
+      <PutAwayCard slug={activeSlug} />
+
       <SetupCardsPanel slug={activeSlug} />
 
       <GettingStartedPanel
@@ -104,20 +108,70 @@ export function Dashboard() {
         modules={modulesQ.data?.items ?? []}
       />
 
-      {/* The arrangeable body — at-a-glance tiles + pinned views + recent
-          activity, reorderable/hideable per workspace via one Arrange mode. */}
-      <ArrangeableBody slug={activeSlug} enabled={enabled} role={activeOrg.role} />
-
-      {/* The collapsed "add more" funnel bar — demoted below the data on an
-          established workspace (audit 2026-07-03). Renders nothing when the
-          workspace is empty (the hero above owns that state). */}
-      <GettingStartedPanel
+      {/* The arrangeable body — at-a-glance tiles + pinned views + the scanner
+          capture queue ("what to do" + waiting-to-file) + recent activity, all
+          reorderable/hideable per workspace via one Arrange mode. The capture
+          queue used to render BELOW here as a demoted "add more" bar; it's now
+          the `scan_inbox` section, above recent activity (the author, 2026-07-10). */}
+      <ArrangeableBody
         slug={activeSlug}
         enabled={enabled}
+        role={activeOrg.role}
         modules={modulesQ.data?.items ?? []}
-        collapsedOnly
       />
     </div>
+  );
+}
+
+/** The put-away front door: "N scanned items don't have a home yet →
+ *  Put them away." ONE verb, keyed to the situation (a captured backlog =
+ *  Guided Organize's native case): it opens the plan, which is a PREVIEW —
+ *  nothing files until groups are accepted, so there is no wrong click.
+ *  Live Sort deliberately does NOT appear here; it lives where scanning
+ *  starts (scan page header, camera Sort chip, the empty-workspace
+ *  mission). Hidden at zero. */
+function PutAwayCard({ slug }: { slug: string }) {
+  const q = useQuery({
+    queryKey: ["scan-stats", slug],
+    queryFn: () => api.getScanStats(slug),
+    enabled: !!slug,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
+  const unfiled = q.data?.unfiled ?? 0;
+  // Warm the plan the moment the card shows the count (debounced so a
+  // scanning burst settles first): the click should REVEAL a plan, not start
+  // one. The server dedupes by backlog fingerprint, so repeats are free.
+  useEffect(() => {
+    if (unfiled === 0) return;
+    const t = setTimeout(() => {
+      void api.organizePlan(slug, { scope: "pending", warm: true }).catch(() => {});
+    }, 5_000);
+    return () => clearTimeout(t);
+  }, [slug, unfiled]);
+  if (unfiled === 0) return null;
+  return (
+    <section
+      className="rounded-lg border border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20 px-4 py-3 flex flex-wrap items-center gap-3"
+      data-testid="putaway-card"
+    >
+      <span className="text-xl shrink-0">📦</span>
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-semibold text-content dark:text-mortar-100">
+          {unfiled} scanned item{unfiled === 1 ? "" : "s"} do{unfiled === 1 ? "es" : ""}n't have a
+          home yet.
+        </div>
+        <div className="text-xs text-muted dark:text-slate-400">
+          Preview where everything should go — nothing moves until you confirm.
+        </div>
+      </div>
+      <Link
+        to="/scan?organize=pending"
+        className="inline-flex items-center gap-1.5 rounded-lg bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm font-medium transition shrink-0"
+      >
+        Put them away <ArrowRight size={14} />
+      </Link>
+    </section>
   );
 }
 
@@ -896,12 +950,16 @@ function arrangeWidgets(
   return [...known, ...fresh];
 }
 
-// The dashboard's arrangeable sections, in default order.
-const SECTION_IDS = ["at_a_glance", "pinned_views", "recent_activity"] as const;
+// The dashboard's arrangeable sections, in default order. `scan_inbox` (the
+// "what do you want to do" + waiting-to-file capture queue) sits ABOVE recent
+// activity: a scan backlog is actionable workspace state, not a growth
+// afterthought, so it's demoted no lower than recent activity (the author, 2026-07-10).
+const SECTION_IDS = ["at_a_glance", "pinned_views", "scan_inbox", "recent_activity"] as const;
 type SectionId = (typeof SECTION_IDS)[number];
 const SECTION_TITLE: Record<SectionId, string> = {
   at_a_glance: "at a glance",
   pinned_views: "your views",
+  scan_inbox: "from your scanner",
   recent_activity: "recent activity",
 };
 
@@ -914,11 +972,22 @@ interface SectionDraft {
  *  ones appended visible. */
 function arrangeSections(layout: DashboardLayout | undefined): SectionDraft[] {
   const saved = new Map((layout?.sections ?? []).map((s, i) => [s.id, { i, hidden: s.hidden }]));
-  const known = SECTION_IDS.filter((id) => saved.has(id))
+  // The user's saved sections, in their saved order.
+  const result = SECTION_IDS.filter((id) => saved.has(id))
     .sort((a, b) => saved.get(a)!.i - saved.get(b)!.i)
     .map<SectionDraft>((id) => ({ id, hidden: saved.get(id)!.hidden }));
-  const fresh = SECTION_IDS.filter((id) => !saved.has(id)).map<SectionDraft>((id) => ({ id, hidden: false }));
-  return [...known, ...fresh];
+  // A section added AFTER the user last arranged (e.g. scan_inbox) slots in at
+  // its DEFAULT-order neighbour, not appended last — so an already-arranged
+  // dashboard still gets it where it belongs (scan_inbox above recent activity),
+  // visible. Insert before the first saved section that follows it by default.
+  for (const id of SECTION_IDS) {
+    if (saved.has(id)) continue;
+    const di = SECTION_IDS.indexOf(id);
+    let pos = result.findIndex((s) => SECTION_IDS.indexOf(s.id) > di);
+    if (pos < 0) pos = result.length;
+    result.splice(pos, 0, { id, hidden: false });
+  }
+  return result;
 }
 
 /** Move arr[from] to index `to`, returning a new array (no-op on bad indices). */
@@ -937,10 +1006,12 @@ function ArrangeableBody({
   slug,
   enabled,
   role,
+  modules,
 }: {
   slug: string;
   enabled: Set<string>;
   role: string;
+  modules: OrgModuleListItem[];
 }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -1028,6 +1099,10 @@ function ArrangeableBody({
         />
       );
     if (id === "pinned_views") return <PinnedViews slug={slug} editing={editing} />;
+    if (id === "scan_inbox")
+      // The "what do you want to do" + waiting-to-file capture queue, now a
+      // first-class section above recent activity (was demoted below everything).
+      return <GettingStartedPanel slug={slug} enabled={enabled} modules={modules} collapsedOnly />;
     return <RecentActivity slug={slug} editing={editing} />;
   };
 
@@ -1335,7 +1410,6 @@ function PinnedViews({ slug, editing = false }: { slug: string; editing?: boolea
     explicitPinned.length > 0
       ? explicitPinned.slice(0, 4)
       : allViews.filter((v) => v.owner_user_id === null).slice(0, 2);
-  const [mode, setMode] = useViewMode("dashboard-pinned-views", "tiles");
   // When arranging, the section bar (ArrangeableBody) supplies the title, and
   // an empty section must still show SOMETHING so it stays reorderable.
   if (pinned.length === 0) {
@@ -1350,16 +1424,14 @@ function PinnedViews({ slug, editing = false }: { slug: string; editing?: boolea
   return (
     <section>
       {!editing && (
-      <div className="flex items-center gap-2 mb-2">
-        <SectionTitle>your views</SectionTitle>
-        <div className="flex-1" />
-        <ViewModeToggle mode={mode} onChange={setMode} />
-      </div>
+        <div className="flex items-center gap-2 mb-2">
+          <SectionTitle>your views</SectionTitle>
+        </div>
       )}
-      {/* The toggle lays the cards out: "list" stacks them full-width (each view
-          gets the whole row — more posters, more heatmap weeks visible); "tiles"
-          is the 2-up grid. Each card ALWAYS renders as its own type. */}
-      <div className={mode === "list" ? "grid gap-3 grid-cols-1" : "grid gap-3 md:grid-cols-2"}>
+      {/* Always the 2-up grid. The old full/half toggle only changed the column
+          count — the cards render identically either way (each AS its own type),
+          so it added no real choice (the author, 2026-07-10). */}
+      <div className="grid gap-3 md:grid-cols-2">
         {pinned.map((v) => (
           <PinnedView key={v.id} slug={slug} view={v} />
         ))}
@@ -1393,20 +1465,40 @@ function PinnedView({
   slug: string;
   view: SavedView;
 }) {
+  // A pinned view previews AS ITS TYPE: a gallery shows a horizontal poster
+  // strip, a heatmap shows its grid, and a GROUPED view (kanban / any group_by)
+  // shows its group DISTRIBUTION — "functional 30 · rebuilding 12 · …", the point
+  // of the view — instead of a flat thumb+title list that looked identical to
+  // every other type (the author, 2026-07-10). Only plain list/table fall back to the
+  // list.
+  const isGallery = view.view_type === "gallery";
+  const isHeatmap = view.view_type === "heatmap";
+  const groupBy = typeof view.config?.group_by === "string" ? (view.config.group_by as string) : null;
+  const isGrouped = !!groupBy && !isGallery && !isHeatmap;
   const data = useQuery({
-    queryKey: ["dash-view-data", slug, view.id],
-    queryFn: () => api.viewData(slug, view.id),
+    // Grouped previews fetch enough rows to count the groups (workshop-scale;
+    // capped so a huge view stays cheap). Non-grouped keep the light default.
+    queryKey: ["dash-view-data", slug, view.id, isGrouped ? "grouped" : "preview"],
+    // paginate-ok: bounded dashboard preview, a 500-row group-count sample for the distribution bars, not a full list.
+    queryFn: () => api.viewData(slug, view.id, isGrouped ? { limit: 500 } : undefined),
     staleTime: 30_000,
   });
   const routeFor = useDetailRoute(slug);
   const allItems = data.data?.items ?? [];
   const items = allItems.slice(0, 5);
-  // A pinned view previews AS ITS TYPE: a gallery shows a horizontal poster
-  // strip, a heatmap shows its grid. Only the plain list/table/etc. fall back to
-  // the thumb+title list. Without this, every type looked identical here.
-  const isGallery = view.view_type === "gallery";
-  const isHeatmap = view.view_type === "heatmap";
   const imgField = (view.config?.image_field as string) || "image_path";
+  // Group counts, highest first. The group value lives under `fields[group_by]`
+  // (falls back to the row subtitle, which is what the list preview shows).
+  const groupCounts = useMemo<Array<[string, number]>>(() => {
+    if (!isGrouped || !groupBy) return [];
+    const m = new Map<string, number>();
+    for (const r of allItems) {
+      const raw = (r.fields?.[groupBy] ?? r.subtitle) as unknown;
+      const key = raw == null || raw === "" ? "—" : String(raw);
+      m.set(key, (m.get(key) ?? 0) + 1);
+    }
+    return [...m.entries()].sort((a, b) => b[1] - a[1]);
+  }, [isGrouped, groupBy, allItems]);
   const galleryImg = (r: (typeof allItems)[number]): string | null => {
     // Mirror the modal's fieldVal: custom + native fields live under `fields`
     // (and native image_path is also mirrored there), with a top-level fallback.
@@ -1443,7 +1535,26 @@ function PinnedView({
           heatmap, never a degraded row list. Non-visual types (list/table/…)
           preview as a compact thumb+title list. */}
       {!data.isLoading && items.length > 0 && (
-        isGallery ? (
+        isGrouped ? (
+          // The group distribution — the whole point of a "by state" / "by type"
+          // view. Highest-count group first; a subtle bar hints at proportion.
+          <div className="flex flex-wrap gap-x-4 gap-y-2">
+            {groupCounts.map(([label, n]) => (
+              <div key={label} className="min-w-0">
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-sm text-content dark:text-mortar-100 capitalize truncate">{label}</span>
+                  <span className="font-mono text-xs text-faint tabular-nums">{n}</span>
+                </div>
+                <div className="mt-1 h-1 rounded-full bg-subtle dark:bg-slate-800 overflow-hidden" style={{ width: "5rem" }}>
+                  <div
+                    className="h-full bg-accent/60"
+                    style={{ width: `${allItems.length ? Math.round((n / allItems.length) * 100) : 0}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : isGallery ? (
           <div className="flex gap-3 overflow-x-auto pb-1">
             {allItems.slice(0, 20).map((r) => (
               <PosterCell key={`${r.kind}:${r.id}`} path={galleryImg(r)} title={r.title} />
@@ -1555,7 +1666,7 @@ function groupActivity(items: ActivityEntry[]): ActivityGroup[] {
 
 function ActivityRow({ entry: e }: { entry: ActivityEntry }) {
   return (
-    <li className="px-4 py-2 flex items-baseline gap-3 text-sm">
+    <li className="px-4 py-2 flex items-baseline gap-1.5 text-sm">
       <span className="text-muted dark:text-slate-400 shrink-0">
         {actorLabel(e)}
       </span>
@@ -1612,7 +1723,7 @@ function ActivityGroupRow({ group }: { group: ActivityGroup }) {
   const spanStart = relativeTime(last.occurred_at);
   const spanEnd = relativeTime(first.occurred_at);
   const rowContent = (
-    <div className="flex items-baseline gap-3 text-sm w-full">
+    <div className="flex items-baseline gap-1.5 text-sm w-full">
       <span className="text-muted dark:text-slate-400 shrink-0">
         {actor}
       </span>

@@ -61,11 +61,13 @@ function MachinesWidget({ slug }: { slug: string }) {
     .slice(0, 2)
     .map(([s, n]) => `${n} ${s}`)
     .join(" · ");
-  const biggest = [...rows].sort((a, b) => b.total - a.total)[0];
-  const to = items.length > 0 || !biggest ? "/machines" : `/instances/${biggest.name}`;
+  // Always land on the machines base page — never dive into ONE instance (that
+  // silently dropped the others). When the base list is empty but instances
+  // exist, /machines shows an instance chooser (3D Printers · N, Laser Cutters ·
+  // M…), so the tile's "all machines" promise matches the destination.
   return (
     <DashboardTile
-      to={to}
+      to="/machines"
       icon={Wrench}
       label="machines"
       primary={total}
@@ -112,11 +114,12 @@ function AssetsWidget({ slug }: { slug: string }) {
     return acc;
   }, {});
   const top = Object.entries(states).slice(0, 2).map(([s, n]) => `${n} ${s}`).join(" · ");
-  const biggest = [...rows].sort((a, b) => b.total - a.total)[0];
-  const to = items.length > 0 || !biggest ? "/assets" : `/instances/${biggest.name}`;
+  // Always land on the assets base page — same reasoning as machines: the base
+  // page shows an instance chooser when its own list is empty but instances
+  // exist, so the tile never dives into one instance and drops the rest.
   return (
     <DashboardTile
-      to={to}
+      to="/assets"
       icon={Sprout}
       label="assets"
       primary={total}

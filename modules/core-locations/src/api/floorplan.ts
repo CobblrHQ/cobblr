@@ -56,6 +56,9 @@ export const RoomFloorplan = z.object({
    *  in this view, partial-width drawers at true scale). Same geometry, same
    *  editor; only the second axis's meaning and edit-mode labels change. */
   view: z.enum(["plan", "front"]).optional(),
+  /** Snap pitch for this layout, mm — 42 for exact Gridfinity, anything for
+   *  "smallest unit = 1 square". Placement quantizes to it. */
+  grid_mm: z.number().int().min(5).max(1000).optional(),
   walls: z.array(FloorplanWall).max(50).optional(),
 });
 
@@ -69,7 +72,10 @@ export const ChildPlacement = z.object({
 });
 
 /** What the seed model must return. Zones are REGIONS (invisible on the
- *  day-to-day view; faint toggleable labels; drop-targets for reparenting). */
+ *  day-to-day view; faint toggleable labels; drop-targets for reparenting).
+ *  Placements are the FURNITURE the description names (racks, toolboxes,
+ *  benches) — drafted with plausible true-scale rects; on apply they only
+ *  ever attach to EXISTING children matched by name, never create. */
 export const SeedDraft = z.object({
   room: RoomFloorplan,
   zones: z
@@ -80,6 +86,15 @@ export const SeedDraft = z.object({
       }),
     )
     .max(24)
+    .default([]),
+  placements: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(160),
+        rect: z.object({ x_mm: mm, y_mm: mm, w_mm: mm, d_mm: mm }),
+      }),
+    )
+    .max(60)
     .default([]),
 });
 export type SeedDraftT = z.infer<typeof SeedDraft>;
@@ -107,7 +122,8 @@ OUTPUT — exactly this JSON shape, nothing else, no markdown fences:
         "openings": [ { "at_mm": <int>, "w_mm": <int> } ] }
     ]
   },
-  "zones": [ { "name": "<string>", "rect": { "x_mm":, "y_mm":, "w_mm":, "d_mm": } } ]
+  "zones": [ { "name": "<string>", "rect": { "x_mm":, "y_mm":, "w_mm":, "d_mm": } } ],
+  "placements": [ { "name": "<string>", "rect": { "x_mm":, "y_mm":, "w_mm":, "d_mm": } } ]
 }
 
 RULES
@@ -123,8 +139,14 @@ RULES
 - ZONES are named regions of floor (bays, corners, halves). Emit one per zone
   the description names, tiling the space they describe. Zones may share edges
   with walls. Do NOT invent zones that aren't described. Do NOT emit zones for
-  furniture/containers (racks, toolboxes, benches are NOT zones — ignore them
-  entirely; this draft only covers the room, its walls, and its zones).
+  furniture/containers (racks, toolboxes, benches are NOT zones).
+- PLACEMENTS are the furniture/containers the description NAMES standing in
+  the space (racks, toolboxes, benches, wall hooks). One per named object,
+  short name copied from the description, a plausible true-scale rect
+  (a workbench ~1500×600 mm, a rolling toolbox ~700×500 mm, wall hooks a thin
+  ~1200×150 mm strip), positioned as described — against the named wall or
+  inside the named zone, never overlapping walls, never outside the room.
+  Do NOT invent objects that aren't named. No objects described → [].
 - If the description leaves something ambiguous, choose the simplest reading;
   never ask questions; never add commentary.
 
@@ -301,11 +323,50 @@ floorplanRouter.post(
         });
       }
     }
+    // Placements: attach drafted rects to EXISTING children matched by name
+    // (exact case-insensitive, else a ≥4-char substring either direction so
+    // "grey metal rack" finds a child named "Metal rack"). Never creates —
+    // an unmatched name is reported and skipped; existing placements are
+    // never overwritten (the user's own positioning wins over a draft).
+    const norm = (s: string) => s.trim().toLowerCase();
+    const matchChild = (name: string) => {
+      const n = norm(name);
+      const exact = children.find((c) => norm(c.name) === n);
+      if (exact) return exact;
+      if (n.length < 4) return undefined;
+      return children.find((c) => {
+        const cn = norm(c.name);
+        return cn.length >= 4 && (cn.includes(n) || n.includes(cn));
+      });
+    };
+    const placementResults: Array<{ name: string; id: string | null; applied: boolean }> = [];
+    for (const p of draft.placements) {
+      const child = matchChild(p.name);
+      if (!child) {
+        placementResults.push({ name: p.name, id: null, applied: false });
+        continue;
+      }
+      const meta = (child.metadata as Record<string, unknown>) ?? {};
+      if (meta.floorplan && typeof meta.floorplan === "object" && (meta.floorplan as { x_mm?: unknown }).x_mm !== undefined) {
+        placementResults.push({ name: p.name, id: child.id, applied: false });
+        continue;
+      }
+      await db
+        .updateTable("core_locations_locations")
+        .set({
+          metadata: sql`${JSON.stringify({ ...meta, floorplan: p.rect })}::jsonb` as never,
+          updated_at: now,
+        })
+        .where("id", "=", child.id)
+        .execute();
+      placementResults.push({ name: p.name, id: child.id, applied: true });
+    }
+
     void platform().events.emit("core-locations.location.updated", {
       orgId: ctx.org.id,
       locationId: id,
     });
 
-    res.json({ draft, applied: true, zones: zoneIds });
+    res.json({ draft, applied: true, zones: zoneIds, placements: placementResults });
   }),
 );

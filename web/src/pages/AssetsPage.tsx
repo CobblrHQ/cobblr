@@ -8,8 +8,9 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate, useParams, useSearchParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Plus, Printer, Search, Tag as TagIcon, Trash2 } from "lucide-react";
+import { ChevronRight, Plus, Printer, Search, Sprout, Tag as TagIcon, Trash2 } from "lucide-react";
 import { ApiError, api, type Asset, type OrgModuleListItem, type PlatformFieldDef } from "../lib/api";
+import { ModuleInstanceChooser } from "../components/ModuleInstanceChooser";
 import { queueLabelsBulk } from "../lib/queue-label";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useFieldPresentation } from "../lib/useFieldPresentation";
@@ -56,6 +57,15 @@ export function AssetsPage() {
     queryFn: () => api.orgModules(activeSlug),
     enabled: !!activeSlug,
     staleTime: 60_000,
+  });
+  // Assets instances (Plant Care / Documents / Warranties…). With no base-table
+  // assets, show these as a chooser instead of a bare "nothing here" — the
+  // aggregate dashboard tile lands here.
+  const assetInstances = useQuery({
+    queryKey: ["instances", activeSlug, "assets"],
+    queryFn: () => api.listInstances(activeSlug, "assets"),
+    enabled: !!activeSlug,
+    staleTime: 30_000,
   });
   // Saved views for assets — bundles (Plant Care, Pet Care, …) ship pinned
   // ones; the wizard lands here via ?view=. A chip bar switches between them
@@ -229,13 +239,17 @@ export function AssetsPage() {
       )}
 
       {filtered.length === 0 ? (
-        <div className="border-2 border-dashed border-line dark:border-slate-700 rounded-xl p-12 text-center text-xs text-faint dark:text-slate-500 italic">
-          {allRows.length === 0
-            ? "No assets yet. Click + New asset to add one."
-            : activeView
-              ? `Nothing in “${activeView.name}” yet — add your first with New asset.`
-              : "No matches with the current filters."}
-        </div>
+        allRows.length === 0 && (assetInstances.data?.items.length ?? 0) > 0 ? (
+          <ModuleInstanceChooser instances={assetInstances.data!.items} icon={Sprout} noun="asset" />
+        ) : (
+          <div className="border-2 border-dashed border-line dark:border-slate-700 rounded-xl p-12 text-center text-xs text-faint dark:text-slate-500 italic">
+            {allRows.length === 0
+              ? "No assets yet. Click + New asset to add one."
+              : activeView
+                ? `Nothing in “${activeView.name}” yet — add your first with New asset.`
+                : "No matches with the current filters."}
+          </div>
+        )
       ) : groupBy ? (
         groupItems(filtered, groupBy).map((g) => (
           <div key={g.key} className="space-y-2">

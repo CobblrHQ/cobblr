@@ -1,1 +1,6 @@
+---
+type: improvement
+date: 2026-06-25
+---
+
 - Synced images that don't come across on the first try (e.g. before an edge bridge has self-updated to binary support) now self-heal: the record is re-pulled on the next reconcile until the image lands, instead of sticking with no photo.

@@ -7,7 +7,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "machines",
-  version: "0.2.0",
+  version: "0.3.0",
   displayName: "Machines",
   description:
     "Physical machines you own. The base layer — install a specialisation (3D Printers / Laser Cutters / CNC Machines) for type-specific fields.",
@@ -26,6 +26,11 @@ export default defineModule({
     entityKinds: [
       {
         id: "machines:machine",
+        primary: true,
+        listEndpoint: "/machines",
+        createEndpoint: "/machines",
+        updateEndpoint: "/machines/{id}",
+        deleteEndpoint: "/machines/{id}",
         displayName: "Machine",
         displayNamePlural: "Machines",
         icon: "wrench",

@@ -7,7 +7,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
-import { Sparkles, X, Send, Check } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Sparkles, X, Send, Check, Eye, PencilLine } from "lucide-react";
 import { api, ApiError, type AiChatProposal, type BundleValidationPreview } from "../lib/api";
 import { Cobb } from "./Cobb";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -27,9 +28,95 @@ interface Msg {
   building?: boolean; // a whole-workspace build is running in the background (poll)
   buildDraftId?: string; // matches the polled draft (stable across new messages)
   resolved?: boolean; // proposal confirmed or cancelled
+  ledgerId?: string; // an EXECUTED write's change-ledger row — the Undo handle
+  undoable?: boolean;
+  undone?: boolean; // this write was undone from the chat
 }
 
 const kindLabel = (id: string) => id.split(":")[1] ?? id;
+
+/** The write-mode chip: Ask (quiet default) → Auto (bold — changes apply
+ *  immediately, all undoable) → Off (amber). Click cycles. */
+function WriteModeChip({ mode, onCycle }: { mode: "off" | "ask" | "auto"; onCycle: () => void }) {
+  const looks = {
+    ask: {
+      label: "Changes: ask",
+      cls: "border-line dark:border-slate-600 text-muted dark:text-slate-400 hover:border-cobble-400",
+      title:
+        "Cobb proposes creates/updates/deletes/actions and each needs your Confirm. Click for Auto (apply immediately, undoable).",
+    },
+    auto: {
+      label: "Changes: auto",
+      cls: "border-cobble-500 bg-cobble-600 text-white",
+      title:
+        "Record changes apply IMMEDIATELY — every one is tracked and undoable (actions still ask; they can be irreversible). Click for Off.",
+    },
+    off: {
+      label: "Changes: off",
+      cls: "border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400",
+      title: "Cobb won't propose or make any changes. Click for Ask.",
+    },
+  }[mode];
+  return (
+    <button
+      type="button"
+      onClick={onCycle}
+      title={looks.title}
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] transition ${looks.cls}`}
+    >
+      <PencilLine size={11} />
+      {looks.label}
+    </button>
+  );
+}
+
+/** One consent toggle chip. `on` styling stays quiet; `off` goes amber so a
+ *  disabled capability is visibly non-default. */
+function ConsentToggle({
+  on,
+  onToggle,
+  icon,
+  label,
+  title,
+}: {
+  on: boolean;
+  onToggle: () => void;
+  icon: React.ReactNode;
+  label: string;
+  title: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      onClick={onToggle}
+      title={title}
+      className={
+        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] transition " +
+        (on
+          ? "border-line dark:border-slate-600 text-muted dark:text-slate-400 hover:border-cobble-400"
+          : "border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400")
+      }
+    >
+      {icon}
+      {label}
+      <span
+        className={
+          "ml-0.5 inline-block h-3 w-6 rounded-full relative transition-colors " +
+          (on ? "bg-cobble-600" : "bg-slate-300 dark:bg-slate-600")
+        }
+      >
+        <span
+          className={
+            "absolute top-[1px] h-2.5 w-2.5 rounded-full bg-white transition-all " +
+            (on ? "left-[13px]" : "left-[1px]")
+          }
+        />
+      </span>
+    </button>
+  );
+}
 
 /** `open`/`setOpen` are lifted to AppLayout so the main content can shift left
  *  when the panel opens (the two breakpoint-gated instances share one state). */
@@ -37,8 +124,42 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
   const { activeSlug } = useActiveOrg();
   const aiStatus = useAiStatus();
   const aiOff = !!aiStatus && !aiStatus.available;
+  // Tool consent (per-user, per-workspace, enforced server-side): may Cobb read
+  // your records into prompts / propose changes? Only fetched when the panel is
+  // open and AI is on. Optimistic toggle.
+  const qc = useQueryClient();
+  const prefsQ = useQuery({
+    queryKey: ["ai-chat-prefs", activeSlug],
+    queryFn: () => api.aiChatPrefs(activeSlug),
+    enabled: open && !!activeSlug && !aiOff,
+    staleTime: 60_000,
+  });
+  const prefs = prefsQ.data ?? { read_tools: true, write_mode: "ask" as const };
+  const setPrefs = useMutation({
+    mutationFn: (p: { read_tools: boolean; write_mode: "off" | "ask" | "auto" }) => api.aiChatSetPrefs(activeSlug, p),
+    onMutate: (p) => qc.setQueryData(["ai-chat-prefs", activeSlug], p),
+    onError: () => void qc.invalidateQueries({ queryKey: ["ai-chat-prefs", activeSlug] }),
+  });
+  const undoMut = useMutation({
+    mutationFn: (writeId: string) => api.aiChatUndo(activeSlug, writeId),
+  });
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
+  // Deep-link seam: any surface can open the chat with GUIDANCE
+  // (window.dispatchEvent(new CustomEvent("cobblr:open-chat", {detail:{seed}}))).
+  // The seed is a PLACEHOLDER (ghost text telling you what this conversation
+  // is for), never typed content — the user's first words are their own.
+  const [seedPlaceholder, setSeedPlaceholder] = useState<string | null>(null);
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      const seed = (e as CustomEvent<{ seed?: string }>).detail?.seed;
+      setOpen(true);
+      if (seed) setSeedPlaceholder(seed);
+    };
+    window.addEventListener("cobblr:open-chat", onOpen);
+    return () => window.removeEventListener("cobblr:open-chat", onOpen);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -60,6 +181,7 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
     const text = input.trim();
     if (!text || busy) return;
     setInput("");
+    setSeedPlaceholder(null);
     setError(null);
     const next: Msg[] = [...messages, { role: "user", content: text }];
     setMessages(next);
@@ -96,10 +218,44 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
           { role: "assistant", content: r.summary ?? "Designing your workspace…", building: true, buildDraftId: draftId },
         ]);
         void pollBuild(draftId);
-      } else if (r.type === "proposal" && r.proposal) {
-        setMessages([...next, { role: "assistant", content: r.summary ?? "I can do that — confirm?", proposal: r.proposal }]);
       } else {
-        setMessages([...next, { role: "assistant", content: r.text ?? "(no response)" }]);
+        // AUTO mode: writes already applied this turn — one "✓ done" card each,
+        // with an Undo where the ledger says it's reversible.
+        if ((r.applied ?? []).length > 0) {
+          window.dispatchEvent(new CustomEvent("cobblr:workspace-changed", { detail: { via: "cobb" } }));
+        }
+        const doneCards: Msg[] = (r.applied ?? []).map((a) => ({
+          role: "assistant" as const,
+          content: a.summary,
+          resolved: true,
+          ledgerId: a.ledger_id,
+          undoable: a.undoable,
+        }));
+        if (r.type === "proposal" && r.proposal) {
+          setMessages([
+            ...next,
+            ...doneCards,
+            // The loop may say something useful before proposing ("found 3 skeins
+            // that match — want me to add the pattern?"): keep that text.
+            ...(r.text ? [{ role: "assistant" as const, content: r.text }] : []),
+            { role: "assistant", content: r.summary ?? "I can do that — confirm?", proposal: r.proposal },
+          ]);
+        } else if (r.type === "proposals" && r.items?.length) {
+          // Several writes from one turn — one confirmable card each, so the user
+          // approves or skips them individually.
+          setMessages([
+            ...next,
+            ...doneCards,
+            ...(r.text ? [{ role: "assistant" as const, content: r.text }] : []),
+            ...r.items.map((it) => ({
+              role: "assistant" as const,
+              content: it.summary,
+              proposal: it.proposal,
+            })),
+          ]);
+        } else {
+          setMessages([...next, ...doneCards, { role: "assistant", content: r.text ?? "(no response)" }]);
+        }
       }
     } catch (e) {
       const msg = e instanceof ApiError ? e.message : "Something went wrong.";
@@ -160,7 +316,20 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
     try {
       const r = await api.aiChatExecute(activeSlug, m.proposal);
       markResolved(idx);
-      setMessages((prev) => [...prev, { role: "assistant", content: (r.ok ? "✓ " : "✗ ") + r.message }]);
+      if (r.ok) {
+        // Anything open alongside the chat (the put-away plan, pickers) can
+        // react — Cobb just changed the workspace.
+        window.dispatchEvent(new CustomEvent("cobblr:workspace-changed", { detail: { via: "cobb" } }));
+      }
+      // The executed write carries its change-ledger id — the Undo handle.
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: (r.ok ? "✓ " : "✗ ") + r.message,
+          ...(r.ok && r.ledger_id ? { resolved: true, ledgerId: r.ledger_id, undoable: r.undoable } : {}),
+        },
+      ]);
     } catch (e) {
       markResolved(idx);
       const msg = e instanceof ApiError ? e.message : "Couldn't do that.";
@@ -173,6 +342,22 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
   function cancel(idx: number) {
     markResolved(idx);
     setMessages((prev) => [...prev, { role: "assistant", content: "Okay — left it alone." }]);
+  }
+
+  async function undoWrite(idx: number) {
+    const m = messages[idx];
+    if (!m?.ledgerId || m.undone || busy) return;
+    try {
+      const r = await undoMut.mutateAsync(m.ledgerId);
+      setMessages((prev) => {
+        const copy = [...prev];
+        if (copy[idx]) copy[idx] = { ...copy[idx]!, undone: r.ok };
+        return [...copy, { role: "assistant", content: (r.ok ? "↩ " : "✗ ") + r.message }];
+      });
+    } catch (e) {
+      const msg = e instanceof ApiError ? e.message : "Couldn't undo that.";
+      setMessages((prev) => [...prev, { role: "assistant", content: "✗ " + msg }]);
+    }
   }
 
   if (!activeSlug) return null;
@@ -195,7 +380,10 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
 
       {open &&
         createPortal(
-        <div className="fixed top-0 right-0 z-[60] h-screen w-[min(100vw,440px)] border-l border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-2xl flex flex-col">
+        <div
+          data-modal-escape-exempt
+          className="fixed top-0 right-0 z-[60] h-screen w-[min(100vw,440px)] border-l border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-2xl flex flex-col"
+        >
           <header className="flex items-center justify-between px-4 py-3 border-b border-line dark:border-slate-700 shrink-0">
             <div className="flex items-center gap-2 text-sm font-semibold text-content dark:text-mortar-100">
               <Cobb pose="idle" bust size={42} title="Cobb" className="cobb-lift" /> Ask Cobb
@@ -204,6 +392,34 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
               <X size={18} />
             </button>
           </header>
+
+          {/* Tool consent, always visible while AI is on: since the agent loop,
+              Cobb READS records into prompts (and with a shared AI that data
+              transits another member's connection) — so both capabilities are
+              user-switchable right where they act. Enforced server-side. */}
+          {!aiOff && (
+            <div className="px-4 pt-2 pb-1 shrink-0 flex items-center gap-2 flex-wrap">
+              <ConsentToggle
+                on={prefs.read_tools}
+                onToggle={() => setPrefs.mutate({ ...prefs, read_tools: !prefs.read_tools })}
+                icon={<Eye size={11} />}
+                label="Read my data"
+                title="Let Cobb search and read this workspace's records to answer questions. Record data is sent to the workspace's AI provider."
+              />
+              {/* Claude-Code-style write mode, cycled by click: Ask → Auto → Off.
+                  Auto = record changes apply immediately (every one ledgered +
+                  undoable); ACTIONS still ask — they can be irreversible. */}
+              <WriteModeChip
+                mode={prefs.write_mode}
+                onCycle={() =>
+                  setPrefs.mutate({
+                    ...prefs,
+                    write_mode: prefs.write_mode === "ask" ? "auto" : prefs.write_mode === "auto" ? "off" : "ask",
+                  })
+                }
+              />
+            </div>
+          )}
 
           {/* Up-front, before-you-type: if AI is off, say so now (with a connect
               path) instead of failing after the first message. Pinned below the
@@ -300,6 +516,22 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
                       </button>
                     </div>
                   )}
+                  {/* An EXECUTED write (confirmed or auto-applied): the change-
+                      ledger makes it reversible — Undo restores the before-image
+                      (a recreated delete gets a new id, said honestly). */}
+                  {m.ledgerId && m.undoable && !m.undone && (
+                    <div className="mt-1.5">
+                      <button
+                        type="button"
+                        onClick={() => void undoWrite(i)}
+                        disabled={undoMut.isPending}
+                        className="rounded-md border border-line dark:border-slate-600 text-muted dark:text-slate-400 hover:text-ember-500 hover:border-ember-400 text-[11px] font-medium px-2 py-0.5 transition disabled:opacity-50"
+                      >
+                        ↩ Undo
+                      </button>
+                    </div>
+                  )}
+                  {m.undone && <div className="mt-1 text-[11px] text-faint">↩ undone</div>}
                 </div>
               ),
             )}
@@ -325,7 +557,7 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
                 }
               }}
               rows={1}
-              placeholder="Ask or tell me to do something… (Shift+Enter for a new line)"
+              placeholder={seedPlaceholder ?? "Ask or tell me to do something… (Shift+Enter for a new line)"}
               // text-base (16px) on mobile so iOS Safari doesn't auto-zoom the
               // page on focus (any input <16px triggers the zoom, which then
               // strands you zoomed-in + cut off). sm:text-sm keeps the desktop look.

@@ -33,10 +33,18 @@ const isDir = (p) => {
   }
 };
 
-// api + every module that has a src/ dir. NOT packages/* — those are consumed as
-// .ts source at runtime (node type-stripping), exactly as the tsc build leaves them.
+// api + every module that has a src/ dir. Packages/* are mostly consumed as
+// .ts source at runtime (node type-stripping) — but that only works for a
+// SINGLE-FILE package (platform-contract): type stripping resolves relative
+// `./x.js` specifiers LITERALLY and does not rewrite them to `./x.ts`, so a
+// multi-file package's internal imports throw ERR_MODULE_NOT_FOUND at runtime
+// (this silently unmounted core-ai's whole API in CI once — the loader logs
+// "failed to import api" and moves on). Multi-file packages therefore ship
+// dist (main: dist/index.js) and build here alongside the modules; their
+// `types` still point at src so per-package tsc --noEmit needs no build order.
 const pkgs = [
   "api",
+  "packages/workspace-tools",
   ...readdirSync(join(root, "modules"))
     .map((m) => join("modules", m))
     .filter((p) => isDir(join(root, p, "src"))),

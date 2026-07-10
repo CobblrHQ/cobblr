@@ -13,6 +13,7 @@
 // explicitly accepted here, human-set locations are never re-planned, and
 // apply only ever writes where target_location_id is still null.
 
+import { createHash, randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
@@ -20,6 +21,7 @@ import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { isJunkName } from "../services/enrich.js";
+import { LengthUnitResolver, inboxLongestMm } from "../services/organize-dims.js";
 import {
   gatherUnplacedEntities,
   planOrganize,
@@ -39,11 +41,28 @@ const PlanBody = z
   .object({
     item_ids: z.array(z.string().uuid()).min(1).max(PLAN_MAX_ITEMS).optional(),
     scan_batch_id: z.string().uuid().optional(),
-    /** Phase 3: plan over UNPLACED committed entities instead of the inbox. */
-    scope: z.literal("unplaced").optional(),
+    /** "unplaced": plan over UNPLACED committed entities instead of the
+     *  inbox (Phase 3). "pending": every pending unfiled inbox item — the
+     *  "Plan the pile" front door, no selection needed. */
+    scope: z.enum(["unplaced", "pending"]).optional(),
+    /** Free-text ground truth from the human ("these are camping gear") —
+     *  folded into the AI call; overrides the model's priors. Ephemeral by
+     *  design: the durable way to teach the planner is data (bin names,
+     *  placed items), not stored instructions. */
+    hint: z.string().trim().max(500).optional(),
+    /** Warm the scope:"pending" plan cache (the front-door surfaces fire
+     *  this when they show the count) so the CLICK reveals a ready plan
+     *  instead of starting one. A warm call with a fresh matching draft is
+     *  a no-op. */
+    warm: z.boolean().optional(),
+    /** Force a recompute past the draft cache — the explicit Re-plan button
+     *  (drafts don't see census changes, e.g. locations Cobb just made). */
+    fresh: z.boolean().optional(),
+    /** Stop carrying the session hint forward (the plan line's "clear"). */
+    clear_hint: z.boolean().optional(),
   })
-  .refine((b) => !!b.item_ids || !!b.scan_batch_id || b.scope === "unplaced", {
-    message: "item_ids, scan_batch_id, or scope:\"unplaced\" required",
+  .refine((b) => !!b.item_ids || !!b.scan_batch_id || !!b.scope, {
+    message: "item_ids, scan_batch_id, or scope required",
   });
 
 organizeRouter.post(
@@ -68,7 +87,7 @@ organizeRouter.post(
         });
         return;
       }
-      const plan = await planOrganize(ctx.org.id, gathered.items);
+      const plan = await planOrganize(ctx.org.id, gathered.items, body.hint);
       const payload = {
         ...plan,
         subject: "entities" as const,
@@ -104,10 +123,18 @@ organizeRouter.post(
         "quantity",
       ])
       .where("status", "=", "pending")
-      .limit(PLAN_MAX_ITEMS + 1);
-    q = body.item_ids
-      ? q.where("id", "in", body.item_ids)
-      : q.where("scan_batch_id", "=", body.scan_batch_id!);
+      // scope:"pending" is a one-click CTA — plan the newest cap-full rather
+      // than erroring; explicit selections keep the too-many guard.
+      .limit(body.scope === "pending" ? PLAN_MAX_ITEMS : PLAN_MAX_ITEMS + 1);
+    if (body.item_ids) q = q.where("id", "in", body.item_ids);
+    else if (body.scan_batch_id) q = q.where("scan_batch_id", "=", body.scan_batch_id);
+    else {
+      // scope:"pending" — the whole pending backlog, newest first (the cap
+      // keeps the plan bounded). Filed-but-uncommitted rows ride along too:
+      // they become READY groups ("all set — just put them away") instead of
+      // being invisible; only the unfiled set feeds the planner.
+      q = q.orderBy("created_at", "desc");
+    }
     const rows = await q.execute();
     if (rows.length > PLAN_MAX_ITEMS) {
       res.status(422).json({
@@ -124,6 +151,7 @@ organizeRouter.post(
     const plannable: OrganizeInputItem[] = [];
     const alreadyFiled: string[] = [];
     const needsReview: string[] = [];
+    const lengths = new LengthUnitResolver(ctx.org.id);
     for (const r of rows) {
       if (r.target_location_id || r.target_container_id) {
         alreadyFiled.push(r.id);
@@ -134,15 +162,26 @@ organizeRouter.post(
         continue;
       }
       const meta = (r.suggested_metadata ?? {}) as { category?: unknown };
+      // Size (3b): a metadata value that literally carries a length unit
+      // ("180 mm") gives the item a declared longest dimension; nothing else
+      // does — no guessing from names.
+      const dims = await inboxLongestMm(
+        r.suggested_metadata as Record<string, unknown> | null,
+        lengths,
+      );
       plannable.push({
         id: r.id,
         name: r.suggested_name,
         manufacturer: r.suggested_manufacturer,
         category: typeof meta.category === "string" ? meta.category : null,
         quantity: r.quantity ?? 1,
+        ...(dims ? { longest_mm: dims.longest_mm, dims_detail: dims.detail } : {}),
       });
     }
-    if (plannable.length === 0) {
+    // All-ready is a fine plan ("this is all set — you gonna do it?"): only
+    // 422 when there's truly nothing to show.
+    const hasReady = rows.some((r) => alreadyFiled.includes(r.id) && r.target_location_id);
+    if (plannable.length === 0 && !hasReady) {
       res.status(422).json({
         error: {
           code: "nothing_to_plan",
@@ -155,9 +194,124 @@ organizeRouter.post(
       return;
     }
 
-    const plan: OrganizePlan = await planOrganize(ctx.org.id, plannable);
+    // scope:"pending" (no hint) is CACHEABLE: the front door warms it when it
+    // shows the count, so the click reveals a ready plan instead of starting
+    // one. A draft is valid while it's young (census drift bound), untouched
+    // (nothing applied), and the backlog fingerprint still matches.
+    const DRAFT_FRESH_MS = 10 * 60 * 1000;
+    // EVERY scope:"pending" plan is stamped with the backlog fingerprint —
+    // including hinted ones, so a hint's (better) result BECOMES the standing
+    // draft and survives close/reopen. Only the REUSE check skips hinted
+    // calls: asking with a hint always reasons fresh.
+    const fingerprint =
+      body.scope === "pending"
+        ? createHash("sha1")
+            .update(plannable.map((p) => `${p.id}|${p.name}`).sort().join("\n"))
+            .digest("hex")
+        : null;
+    const candidates =
+      body.scope === "pending"
+        ? await db
+            .selectFrom("core_scan_organize_plans")
+            .select(["id", "payload", "applied_group_ids", "created_at", "expires_at"])
+            .where("expires_at", ">", new Date())
+            .orderBy("created_at", "desc")
+            .limit(5)
+            .execute()
+        : [];
+    const isDraftable = body.scope === "pending" && !body.hint && !body.fresh;
+    if (isDraftable && fingerprint) {
+      const draft = candidates.find((c) => {
+        const p = c.payload as {
+          draft_fingerprint?: string;
+          draft_hinted?: boolean;
+          draft_ready_ids?: string[];
+        };
+        if (p.draft_fingerprint !== fingerprint) return false;
+        // "Untouched" means no USER-accepted groups — ready groups are born
+        // applied (that's what makes them walkable), so they don't count.
+        const bornReady = new Set(p.draft_ready_ids ?? []);
+        const userApplied = (c.applied_group_ids as unknown[]).filter(
+          (id) => typeof id === "string" && !bornReady.has(id),
+        );
+        if (userApplied.length > 0) return false;
+        // A HINTED draft is the human's corrected plan — it holds for the
+        // plan's whole lifetime (the fingerprint still invalidates it the
+        // moment the backlog changes). Un-hinted drafts stay young so census
+        // drift (new bins made elsewhere) can't linger.
+        return p.draft_hinted ? true : Date.now() - c.created_at.getTime() < DRAFT_FRESH_MS;
+      });
+      if (draft) {
+        res.json({
+          plan_id: draft.id,
+          expires_at: draft.expires_at,
+          applied_group_ids: draft.applied_group_ids,
+          ...(draft.payload as Record<string, unknown>),
+        });
+        return;
+      }
+    }
+
+    // THE SESSION HINT CARRIES: scanning more items or sending one back
+    // changes the fingerprint and forces a recompute — but the human's
+    // ground truth ("aviation accessories") didn't stop being true. When no
+    // explicit hint rides this call, reuse the newest plan's stored hint so
+    // it survives backlog churn for its working session (plan TTL). Visible
+    // + clearable on the plan line; clear_hint stops the carry.
+    let effectiveHint = body.hint;
+    if (body.scope === "pending" && !effectiveHint && !body.clear_hint) {
+      const carried = (candidates[0]?.payload as { hint_text?: string } | undefined)?.hint_text;
+      if (typeof carried === "string" && carried.trim()) effectiveHint = carried;
+    }
+
+    const plan: OrganizePlan =
+      plannable.length > 0
+        ? await planOrganize(ctx.org.id, plannable, effectiveHint)
+        : { groups: [], census_truncated: false, source: "heuristic" };
+
+    // READY groups: items a human (or an accepted plan) already gave a
+    // destination, still sitting uncommitted. The plan's job for them is
+    // simply "this is all set — you gonna do it?": pre-accepted (born
+    // applied, so the put-away walk includes them), never re-planned, no
+    // Accept needed. Location-less pre-fills (container targets) stay in the
+    // untouched count.
+    const readyRows = rows.filter(
+      (r) => alreadyFiled.includes(r.id) && r.target_location_id,
+    );
+    const readyByLoc = new Map<string, typeof readyRows>();
+    for (const r of readyRows) {
+      const arr = readyByLoc.get(r.target_location_id!) ?? [];
+      arr.push(r);
+      readyByLoc.set(r.target_location_id!, arr);
+    }
+    const readyGroups: Array<Record<string, unknown>> = [];
+    for (const [locId, members] of readyByLoc) {
+      const loc = await platform()
+        .entities.lookup(ctx.org.id, "core-locations:location", locId)
+        .catch(() => null);
+      if (!loc) continue;
+      readyGroups.push({
+        id: randomUUID(),
+        label: loc.title,
+        rationale: "Already set — these just need to be physically put away.",
+        item_ids: members.map((m) => m.id),
+        destination: {
+          kind: "existing",
+          location_id: locId,
+          location_name: loc.title,
+          location_path: loc.title,
+        },
+        ready: true,
+      });
+    }
+
+    const readyIds = readyGroups.map((g) => g.id as string);
     const payload = {
+      ...(fingerprint ? { draft_fingerprint: fingerprint } : {}),
+      ...(fingerprint && effectiveHint ? { draft_hinted: true, hint_text: effectiveHint } : {}),
+      ...(readyIds.length > 0 ? { draft_ready_ids: readyIds } : {}),
       ...plan,
+      groups: [...readyGroups, ...plan.groups],
       subject: "inbox" as const,
       // Display names ride the payload so the walk never depends on the inbox
       // query still holding the item (it may commit/resolve mid-walk).
@@ -169,13 +323,19 @@ organizeRouter.post(
       .insertInto("core_scan_organize_plans")
       .values({
         payload: sql`${JSON.stringify(payload)}::jsonb` as never,
+        applied_group_ids: sql`${JSON.stringify(readyIds)}::jsonb` as never,
         created_by_user_id: sessionUser(req).id,
         expires_at: new Date(Date.now() + PLAN_TTL_MS),
       })
       .returning(["id", "expires_at"])
       .executeTakeFirstOrThrow();
 
-    res.json({ plan_id: inserted.id, expires_at: inserted.expires_at, ...payload });
+    res.json({
+      plan_id: inserted.id,
+      expires_at: inserted.expires_at,
+      applied_group_ids: readyIds,
+      ...payload,
+    });
   }),
 );
 
@@ -197,6 +357,9 @@ const ApplyBody = z.object({
             parent_id: z.string().uuid().nullable().optional(),
           })
           .optional(),
+        /** Items the user split out of the group ("not related") — they are
+         *  not filed and keep their normal triage path. */
+        exclude_item_ids: z.array(z.string().min(1).max(200)).max(200).optional(),
       }),
     )
     .max(100)
@@ -254,7 +417,10 @@ organizeRouter.post(
     // Resolved destination per applied group — written back into the stored
     // payload so the put-away walk (and any later read) sees the ACTUAL bin,
     // including ones minted here (a "new" destination has no id until now).
-    const resolved = new Map<string, { location_id: string; location_name: string; location_path: string }>();
+    const resolved = new Map<
+      string,
+      { location_id: string; location_name: string; location_path: string; item_ids: string[] }
+    >();
 
     for (const gid of body.group_ids) {
       const group = groups.find((g) => g.id === gid);
@@ -281,6 +447,12 @@ organizeRouter.post(
       }
       if (!locationId && !newLocation) {
         skipped.push({ group_id: gid, reason: "unassigned — pick a destination first" });
+        continue;
+      }
+      const excluded = new Set(ovr?.exclude_item_ids ?? []);
+      const keptIds = group.item_ids.filter((id) => !excluded.has(id));
+      if (keptIds.length === 0) {
+        skipped.push({ group_id: gid, reason: "every item was split out of this group" });
         continue;
       }
 
@@ -322,7 +494,7 @@ organizeRouter.post(
         // same sanctioned seam the sync engine uses — validation + module
         // events fire). An entity that gained a location mid-review (or was
         // deleted) is skipped: the human/most-recent decision wins.
-        for (const ref of group.item_ids) {
+        for (const ref of keptIds) {
           const split = splitEntityRef(ref);
           if (!split) continue;
           const w = platform().entities.getWriter(split.kind);
@@ -344,7 +516,7 @@ organizeRouter.post(
         const stamped = await db
           .updateTable("core_scan_inbox_items")
           .set({ target_location_id: locationId, updated_at: new Date() })
-          .where("id", "in", group.item_ids)
+          .where("id", "in", keptIds)
           .where("status", "=", "pending")
           .where("target_location_id", "is", null)
           .where("target_container_id", "is", null)
@@ -359,6 +531,7 @@ organizeRouter.post(
         location_id: locationId!,
         location_name: locationName ?? prior?.location_name ?? "",
         location_path: prior?.location_path ?? locationName ?? "",
+        item_ids: keptIds,
       });
     }
 
@@ -368,7 +541,9 @@ organizeRouter.post(
       const payload = row.payload as Record<string, unknown>;
       const nextGroups = groups.map((g) => {
         const r = resolved.get(g.id);
-        return r ? { ...g, destination: { kind: "existing" as const, ...r } } : g;
+        if (!r) return g;
+        const { item_ids, ...dest } = r;
+        return { ...g, item_ids, destination: { kind: "existing" as const, ...dest } };
       });
       await db
         .updateTable("core_scan_organize_plans")
@@ -417,12 +592,25 @@ organizeRouter.get(
       res.json({ plan: null });
       return;
     }
+    // Walk progress now lives on the put-away SESSION (the shared execution
+    // engine — docs/product/put-away.md §2.2); the plan row's walk_state is
+    // the legacy fallback for a walk that was mid-flight when sessions
+    // shipped. Same response shape either way.
+    const session = await db
+      .selectFrom("core_scan_putaway_sessions")
+      .select(["id", "state"])
+      .where("plan_id", "=", row.id)
+      .where("ended_at", "is", null)
+      .orderBy("created_at", "desc")
+      .limit(1)
+      .executeTakeFirst();
     res.json({
       plan: {
         plan_id: row.id,
         ...(row.payload as Record<string, unknown>),
         applied_group_ids: row.applied_group_ids,
-        walk_state: row.walk_state,
+        walk_state: session ? session.state : row.walk_state,
+        putaway_session_id: session?.id ?? null,
         expires_at: row.expires_at,
       },
     });
@@ -430,6 +618,9 @@ organizeRouter.get(
 );
 
 // ─────────────────── POST /organize/walk-state ───────────────────
+// DEPRECATED (Phase 0 of docs/product/put-away.md): progress now lives on a
+// put-away session (api/putaway.ts) and plan/latest reads from it. Kept one
+// release for a stale tab loaded before the deploy; remove after.
 // Persist walk progress (which items are physically placed). Idempotent
 // replace — the client owns the truth of its own checklist; only ids that are
 // actually in the plan are kept, so a stale client can't grow the row.

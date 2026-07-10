@@ -67,6 +67,22 @@ export interface CoreScanOrganizePlansTable {
   expires_at: Date;
 }
 
+/** Put-away sessions (docs/product/put-away.md §2.2) — the one resumable
+ *  execution engine under both tempos. mode='plan' = the Guided Organize walk
+ *  (state = { placed_item_ids }); mode='live' = Live Sort (state = { entries,
+ *  sticky }). Ephemeral working state, swept on expiry like plans. */
+export interface CoreScanPutawaySessionsTable {
+  id: Generated<string>;
+  mode: "plan" | "live";
+  plan_id: string | null;
+  catch_all_location_id: string | null;
+  state: Generated<Record<string, unknown>>;
+  created_by_user_id: string | null;
+  created_at: Generated<Date>;
+  ended_at: Date | null;
+  expires_at: Date;
+}
+
 export interface CoreScanBarcodeCacheTable {
   upc: string;
   found: boolean;
@@ -119,6 +135,7 @@ export interface CoreScanDB {
   core_scan_inbox_items: CoreScanInboxItemsTable;
   core_scan_batches: CoreScanBatchesTable;
   core_scan_organize_plans: CoreScanOrganizePlansTable;
+  core_scan_putaway_sessions: CoreScanPutawaySessionsTable;
   core_scan_barcode_cache: CoreScanBarcodeCacheTable;
   core_scan_eval_cases: CoreScanEvalCasesTable;
   core_scan_qr_rules: CoreScanQrRulesTable;

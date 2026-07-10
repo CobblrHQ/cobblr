@@ -12,6 +12,18 @@
 // the active bin — e.g. scanning the room again from inside it) is skipped; we
 // just switch context. The core-locations PATCH rejects cycles too, as a backstop.
 
+/** The core-locations entity kind — the one place the web layer names it.
+ *  Generic components import this instead of hardcoding the string (see
+ *  scripts/lint-generic-component-kinds.ts). */
+export const LOCATION_ENTITY_KIND = "core-locations:location";
+
+/** Is a resolved QR token a location (bin/area) label? */
+export function isLocationQrTarget(
+  resolved: { entity_kind?: string | null; entity_id?: string | null } | null | undefined,
+): resolved is { entity_kind: string; entity_id: string } {
+  return resolved?.entity_kind === LOCATION_ENTITY_KIND && !!resolved.entity_id;
+}
+
 export interface FilingLoc {
   id: string;
   name: string;

@@ -21,6 +21,16 @@
 import { randomUUID } from "node:crypto";
 import { platform } from "@cobblr/platform-contract";
 import { significantTokens } from "./suggest-location.js";
+import { LengthUnitResolver, entityLongestMm, unitFieldDefsByKind } from "./organize-dims.js";
+import {
+  PER_KIND_SWEEP_LIMIT,
+  buildBinCensus,
+  maxAxisMm,
+  routeItem,
+  scoreTitles,
+  type Census,
+  type RouteHit,
+} from "./putaway-route.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -30,6 +40,13 @@ export interface OrganizeInputItem {
   manufacturer: string | null;
   category: string | null;
   quantity: number;
+  /** The item's longest DECLARED dimension in mm — from fields whose def
+   *  declares a length-category unit (entities), or metadata values that
+   *  literally carry a length unit (inbox). Null = undeclared: no size logic
+   *  ever runs for this item (declared-only, never guessed from names). */
+  longest_mm?: number | null;
+  /** Human line for the warning ("Overall length 180 mm"). */
+  dims_detail?: string | null;
 }
 
 export type OrganizeDestination =
@@ -46,6 +63,14 @@ export interface OrganizeGroup {
   /** Why an existing bin is trustworthy: how many similar things already live
    *  there, with a few of their names. Absent for new/unassigned. */
   evidence?: { sibling_count: number; sample_names: string[] };
+  /** Size check (declared dims only): set when a member's longest declared
+   *  dimension exceeds the destination's max interior axis. A WARNING, not a
+   *  silent reroute — the human decides. */
+  size_warning?: string;
+  /** An AI-picked existing destination with NO computed evidence (nothing
+   *  similar lives there). Allowed only for bin-grade locations, and the UI
+   *  must render it as the model's suggestion, never as a finding. */
+  ai_guess?: boolean;
 }
 
 export interface OrganizePlan {
@@ -56,141 +81,10 @@ export interface OrganizePlan {
   source: "ai" | "heuristic";
 }
 
-// ── Bin census ───────────────────────────────────────────────────────────────
-
-interface CensusBin {
-  location_id: string;
-  name: string;
-  path: string;
-  item_count: number;
-  /** Distinct titles of what lives there (capped) — the prompt's evidence and
-   *  the deterministic scorer's corpus. */
-  sample_titles: string[];
-}
-
-interface Census {
-  /** Occupied bins, most-populated first, capped. */
-  bins: CensusBin[];
-  /** Empty locations (names only) — the LLM may target one instead of minting
-   *  a new bin. */
-  empty: Array<{ location_id: string; name: string; path: string }>;
-  /** Every known location id → {name, path} (validation + display, uncapped). */
-  all: Map<string, { name: string; path: string }>;
-  truncated: boolean;
-}
-
-const CENSUS_MAX_BINS = 60;
-const CENSUS_MAX_EMPTY = 40;
-const CENSUS_TITLES_PER_BIN = 30;
-const PER_KIND_SWEEP_LIMIT = 300;
-
-export async function buildBinCensus(orgId: string): Promise<Census> {
-  // All locations first: names + parent chains for paths.
-  const locs = await platform()
-    .entities.list(orgId, "core-locations:location", { limit: 1000 })
-    .then((r) => r.items)
-    .catch(() => []);
-  const byId = new Map(locs.map((l) => [l.id, l] as const));
-  const pathOf = (id: string): string => {
-    const parts: string[] = [];
-    let cur: string | null = id;
-    let hops = 0;
-    while (cur && hops++ < 10) {
-      const node = byId.get(cur);
-      if (!node) break;
-      parts.unshift(node.title);
-      cur = typeof node.fields.parent_id === "string" ? node.fields.parent_id : null;
-    }
-    return parts.join(" / ");
-  };
-  const all = new Map<string, { name: string; path: string }>();
-  for (const l of locs) all.set(l.id, { name: l.title, path: pathOf(l.id) });
-
-  // One sweep per scannable kind, grouped by location_id. Best-effort per kind.
-  const occupied = new Map<string, string[]>(); // location_id → titles
-  const kinds = platform().entities.listScannable();
-  const sweeps = await Promise.all(
-    kinds.map((k) =>
-      platform()
-        .entities.list(orgId, k.kind, { limit: PER_KIND_SWEEP_LIMIT })
-        .then((r) => r.items)
-        .catch(() => []),
-    ),
-  );
-  for (const items of sweeps) {
-    for (const e of items) {
-      const loc = typeof e.fields.location_id === "string" ? e.fields.location_id : null;
-      if (!loc || !all.has(loc)) continue;
-      const titles = occupied.get(loc) ?? [];
-      if (titles.length < CENSUS_TITLES_PER_BIN) titles.push(e.title);
-      occupied.set(loc, titles);
-    }
-  }
-
-  const binsAll = [...occupied.entries()]
-    .map(([location_id, sample_titles]) => ({
-      location_id,
-      name: all.get(location_id)!.name,
-      path: all.get(location_id)!.path,
-      item_count: sample_titles.length,
-      sample_titles: [...new Set(sample_titles)],
-    }))
-    .sort((a, b) => b.item_count - a.item_count);
-  const bins = binsAll.slice(0, CENSUS_MAX_BINS);
-
-  const empty = locs
-    .filter((l) => !occupied.has(l.id))
-    .slice(0, CENSUS_MAX_EMPTY)
-    .map((l) => ({ location_id: l.id, name: l.title, path: pathOf(l.id) }));
-
-  return {
-    bins,
-    empty,
-    all,
-    truncated: binsAll.length > CENSUS_MAX_BINS || locs.length > 1000,
-  };
-}
-
-// ── Deterministic candidate scoring (against the census, no extra DB reads) ──
-
-interface Hint {
-  item_id: string;
-  location_id: string;
-  /** Distinct sibling titles at that bin sharing a significant token. */
-  sibling_count: number;
-  sample_names: string[];
-}
-
-function scoreItemAgainstCensus(item: OrganizeInputItem, census: Census): Hint | null {
-  const want = new Set([
-    ...significantTokens(item.name),
-    ...significantTokens(item.category),
-  ]);
-  if (want.size === 0) return null;
-  let best: Hint | null = null;
-  let bestStrength = 0;
-  for (const bin of census.bins) {
-    let count = 0;
-    let strongest = 0;
-    const samples: string[] = [];
-    for (const title of bin.sample_titles) {
-      const overlap = significantTokens(title).filter((t) => want.has(t)).length;
-      if (overlap < 1) continue;
-      count++;
-      strongest = Math.max(strongest, overlap);
-      if (samples.length < 3) samples.push(title);
-    }
-    // Same plurality gate as suggest-location: 2+ siblings agree, or a single
-    // very strong near-twin (3+ shared significant tokens).
-    if (count < 2 && strongest < 3) continue;
-    const strength = count * 10 + strongest;
-    if (strength > bestStrength) {
-      bestStrength = strength;
-      best = { item_id: item.id, location_id: bin.location_id, sibling_count: count, sample_names: samples };
-    }
-  }
-  return best;
-}
+// The bin census + deterministic scorer live in putaway-route.ts (the shared
+// put-away routing signal — docs/product/put-away.md §2.1); this planner is
+// its batch caller.
+type Hint = RouteHit;
 
 // ── Heuristic plan (no AI) ───────────────────────────────────────────────────
 
@@ -276,9 +170,18 @@ const PLAN_DEADLINE_MS = Number(process.env.SCAN_ORGANIZE_DEADLINE_MS ?? 30_000)
 
 const SYSTEM_PROMPT = `You are an organization planner for a physical workspace. You receive:
 - ITEMS: things just captured, not yet put away (id, name, maker, category, qty).
-- BINS: existing storage locations and a sample of what already lives in each.
-- EMPTY: existing locations that currently hold nothing.
+- BINS: existing storage locations and a sample of what already lives in each
+  (kind: "container" = bin-grade; "area" = a room/zone).
+- EMPTY: existing locations that currently hold nothing (same kinds).
 - HINTS: a deterministic pre-pass ("similar items already live at ...").
+- USER_HINT (optional): ground truth typed by the human ("these are camping
+  gear, not car parts" / "I have a supply closet — office supplies go
+  there"). It OVERRIDES your priors about what the items are, how they group,
+  and what to call them. If it names a place that is NOT in BINS/EMPTY, do not
+  fabricate a location_id — propose it as {"kind":"new"} using the human's own
+  words for the name ("Electrical closet"), parented under a sensible existing
+  location or null for top level. On a brand-new workspace with no locations
+  at all, the hint is how the first places get made.
 
 Produce a put-away plan as STRICT JSON (no prose, no code fences):
 {"groups":[{"label":"...","rationale":"...","item_ids":["..."],"destination":{"kind":"existing","location_id":"..."}|{"kind":"new","name":"...","parent_id":"...or null"}|{"kind":"unassigned"}}]}
@@ -287,9 +190,12 @@ Rules, in priority order:
 1. BLANK BEATS WRONG. If no destination is defensible, use {"kind":"unassigned"}. Never guess.
 2. Group by what items ARE (same family of thing belongs together), not by superficial name overlap.
 3. Prefer an existing bin with real sibling evidence over anything else. Prefer an existing EMPTY location over creating a new one. Only propose "new" when a coherent group has no plausible home; give it a short, durable name (the noun of the group, not a date or adjective pile) and parent it under a sensible existing location (parent_id from BINS/EMPTY) or null for top level.
-4. A coherent group gets ONE destination — never scatter a family across bins.
-5. Every item id appears in exactly one group. Use only ids given. location_id/parent_id must come from BINS or EMPTY.
-6. rationale: one short sentence a person can verify at a glance.`;
+4. PHYSICAL FIT: when an item carries longest_mm and a bin carries interior_mm, never place the item in a bin whose largest interior axis is smaller than longest_mm. Items/bins without declared dims have NO size constraint — do not invent one.
+5. A coherent group gets ONE destination — never scatter a family across bins.
+6. Every item id appears in exactly one group. Use only ids given. location_id/parent_id must come from BINS or EMPTY.
+7. rationale: one short sentence a person can verify at a glance.
+8. NEVER file items directly into a kind:"area" location (a room/zone) unless HINTS show similar items already live there. "Somewhere in the garage" is not a home. A coherent group that belongs in that area gets {"kind":"new"} PARENTED under it instead.
+9. Use THIS workspace's own vocabulary — its location names and the words its items already use — for group labels and new-bin names. Never invent generic retail taxonomy the workspace doesn't use.`;
 
 interface RawGroup {
   label?: unknown;
@@ -315,22 +221,33 @@ async function aiPlan(
   items: OrganizeInputItem[],
   hints: Map<string, Hint>,
   census: Census,
+  userHint?: string,
 ): Promise<OrganizeGroup[] | null> {
   const user = JSON.stringify({
+    ...(userHint ? { USER_HINT: userHint } : {}),
     ITEMS: items.map((i) => ({
       id: i.id,
       name: i.name,
       maker: i.manufacturer ?? undefined,
       category: i.category ?? undefined,
       qty: i.quantity !== 1 ? i.quantity : undefined,
+      longest_mm: i.longest_mm ?? undefined,
     })),
     BINS: census.bins.map((b) => ({
       location_id: b.location_id,
       name: b.name,
       path: b.path,
+      kind: b.kind,
       holds: b.sample_titles,
+      interior_mm: b.interior_mm ?? undefined,
     })),
-    EMPTY: census.empty,
+    EMPTY: census.empty.map((e) => ({
+      location_id: e.location_id,
+      name: e.name,
+      path: e.path,
+      kind: e.kind,
+      interior_mm: e.interior_mm ?? undefined,
+    })),
     HINTS: [...hints.values()].map((h) => ({
       item_id: h.item_id,
       location_id: h.location_id,
@@ -359,9 +276,30 @@ async function aiPlan(
   const raw = res?.content ? parsePlanReply(res.content) : null;
   if (!raw) return null;
 
-  // Validate hard: only known item ids, each item once, only known locations.
-  // A reply that survives none of it falls back to the heuristic.
+  return groundAiGroups(raw, items, hints, census);
+}
+
+/** Ground a raw AI reply against reality (pure — unit-tested directly).
+ *  Hard validation: only known item ids, each item once, only known
+ *  locations; a reply that survives none of it falls back to the heuristic
+ *  (null). Then the honesty pass, because the model's say-so is never
+ *  evidence:
+ *  - evidence for an existing destination = OUR deterministic hints, or a
+ *    post-hoc token-overlap of the group's members against what actually
+ *    lives in that bin;
+ *  - an evidence-less pick of an AREA is converted to a new-bin proposal
+ *    parented under it ("somewhere in the garage" is not a home);
+ *  - an evidence-less pick of a bin-grade location keeps the destination but
+ *    is flagged ai_guess so the UI renders it as a suggestion, not a
+ *    finding. */
+export function groundAiGroups(
+  raw: RawGroup[],
+  items: OrganizeInputItem[],
+  hints: Map<string, Hint>,
+  census: Census,
+): OrganizeGroup[] | null {
   const itemById = new Map(items.map((i) => [i.id, i] as const));
+  const binById = new Map(census.bins.map((b) => [b.location_id, b] as const));
   const claimed = new Set<string>();
   const groups: OrganizeGroup[] = [];
   for (const g of raw) {
@@ -370,6 +308,11 @@ async function aiPlan(
       .filter((x) => itemById.has(x) && !claimed.has(x));
     if (ids.length === 0) continue;
     for (const id of ids) claimed.add(id);
+
+    const label =
+      typeof g.label === "string" && g.label.trim()
+        ? g.label.trim().slice(0, 80)
+        : labelFor(ids.map((id) => itemById.get(id)!));
 
     let destination: OrganizeDestination = { kind: "unassigned" };
     const d = g.destination;
@@ -394,9 +337,11 @@ async function aiPlan(
       };
     }
 
-    // Evidence for existing destinations comes from OUR deterministic scorer,
-    // not the model's say-so.
+    // Evidence for existing destinations comes from OUR deterministic scorer —
+    // per-item hints first, else a post-hoc pass of the whole group against
+    // what actually lives in the chosen bin.
     let evidence: OrganizeGroup["evidence"];
+    let aiGuess = false;
     if (destination.kind === "existing") {
       const locId = destination.location_id;
       const supporting = ids
@@ -407,12 +352,38 @@ async function aiPlan(
           sibling_count: Math.max(...supporting.map((h) => h.sibling_count)),
           sample_names: supporting[0]!.sample_names,
         };
+      } else {
+        const bin = binById.get(locId);
+        const want = new Set(
+          ids.flatMap((id) => {
+            const it = itemById.get(id)!;
+            return [...significantTokens(it.name), ...significantTokens(it.category)];
+          }),
+        );
+        const scored = bin && want.size > 0 ? scoreTitles(bin.sample_titles, want) : null;
+        if (scored) {
+          evidence = { sibling_count: scored.count, sample_names: scored.samples };
+        } else {
+          // No evidence at all. Areas hard-convert (rule 8 belt-and-braces);
+          // bin-grade picks survive as an honestly-labeled guess.
+          const loc = census.all.get(locId)!;
+          if (loc.kind === "area") {
+            destination = {
+              kind: "new",
+              name: label,
+              parent_id: locId,
+              parent_name: loc.name,
+            };
+          } else {
+            aiGuess = true;
+          }
+        }
       }
     }
 
     groups.push({
       id: randomUUID(),
-      label: typeof g.label === "string" && g.label.trim() ? g.label.trim().slice(0, 80) : labelFor(ids.map((id) => itemById.get(id)!)),
+      label,
       rationale:
         typeof g.rationale === "string" && g.rationale.trim()
           ? g.rationale.trim().slice(0, 300)
@@ -420,23 +391,10 @@ async function aiPlan(
       item_ids: ids,
       destination,
       ...(evidence ? { evidence } : {}),
+      ...(aiGuess ? { ai_guess: true } : {}),
     });
   }
-  if (groups.length === 0) return null;
-
-  // Items the model forgot land in an explicit unassigned group rather than
-  // silently vanishing from the plan.
-  const missing = items.filter((i) => !claimed.has(i.id));
-  if (missing.length > 0) {
-    groups.push({
-      id: randomUUID(),
-      label: "Unassigned",
-      rationale: "The planner had no defensible destination for these.",
-      item_ids: missing.map((m) => m.id),
-      destination: { kind: "unassigned" },
-    });
-  }
-  return groups;
+  return groups.length > 0 ? groups : null;
 }
 
 // ── Phase 3: gather UNPLACED committed entities ──────────────────────────────
@@ -478,18 +436,33 @@ export async function gatherUnplacedEntities(orgId: string): Promise<UnplacedGat
   const names: Record<string, string> = {};
   const barcodes: Record<string, string> = {};
   let truncated = false;
-  sweeps.forEach((list) => {
+  // Declared physical dims: field defs with a length-category unit, per kind
+  // (Guided Organize 3b). One meta read + one unit resolution per distinct
+  // unit string for the whole gather.
+  const dimDefs = await unitFieldDefsByKind(orgId, kinds.map((k) => k.kind));
+  const lengths = new LengthUnitResolver(orgId);
+  for (let i = 0; i < sweeps.length; i++) {
+    const list = sweeps[i]!;
+    const kindDefs = dimDefs.get(kinds[i]!.kind) ?? [];
     if (list.length >= PER_KIND_SWEEP_LIMIT) truncated = true;
     for (const e of list) {
       if (typeof e.fields.location_id === "string" && e.fields.location_id) continue;
       if (!e.title?.trim()) continue;
       const ref = `${e.kind}::${e.id}`;
-      items.push({ id: ref, name: e.title, manufacturer: null, category: null, quantity: 1 });
+      const dims = kindDefs.length ? await entityLongestMm(e.fields, kindDefs, lengths) : null;
+      items.push({
+        id: ref,
+        name: e.title,
+        manufacturer: null,
+        category: null,
+        quantity: 1,
+        ...(dims ? { longest_mm: dims.longest_mm, dims_detail: dims.detail } : {}),
+      });
       names[ref] = e.title;
       const bc = typeof e.fields.barcode === "string" ? e.fields.barcode : null;
       if (bc) barcodes[ref] = bc;
     }
-  });
+  }
   if (items.length > UNPLACED_MAX) truncated = true;
   const kept = items.slice(0, UNPLACED_MAX);
   return { items: kept, names, barcodes, truncated };
@@ -500,17 +473,46 @@ export async function gatherUnplacedEntities(orgId: string): Promise<UnplacedGat
 export async function planOrganize(
   orgId: string,
   items: OrganizeInputItem[],
+  userHint?: string,
 ): Promise<OrganizePlan> {
   const census = await buildBinCensus(orgId);
   const hints = new Map<string, Hint>();
   for (const it of items) {
-    const h = scoreItemAgainstCensus(it, census);
+    const h = routeItem(it, census);
     if (h) hints.set(it.id, h);
   }
-  const ai = await aiPlan(orgId, items, hints, census);
+  const ai = await aiPlan(orgId, items, hints, census, userHint);
+  const groups = ai ?? heuristicPlan(items, hints, census);
+  annotateSizeWarnings(groups, items, census);
   return {
-    groups: ai ?? heuristicPlan(items, hints, census),
+    groups,
     census_truncated: census.truncated,
     source: ai ? "ai" : "heuristic",
   };
+}
+
+/** Size check on the FINAL groups (both tiers — the deterministic scorer
+ *  already vetoes, but an AI pick or a later human override can still land on
+ *  a too-small bin). Declared dims only; a WARNING the review UI surfaces,
+ *  never a silent reroute — the human decides. */
+function annotateSizeWarnings(
+  groups: OrganizeGroup[],
+  items: OrganizeInputItem[],
+  census: Census,
+): void {
+  const byId = new Map(items.map((i) => [i.id, i] as const));
+  for (const g of groups) {
+    if (g.destination.kind !== "existing") continue;
+    const loc = census.all.get(g.destination.location_id);
+    const binMax = maxAxisMm(loc?.interior_mm);
+    if (binMax == null) continue;
+    const offender = g.item_ids
+      .map((id) => byId.get(id))
+      .find((i) => i?.longest_mm != null && i.longest_mm > binMax);
+    if (offender) {
+      g.size_warning = `${offender.name} (${Math.round(offender.longest_mm!)} mm${
+        offender.dims_detail ? ` ${offender.dims_detail}` : ""
+      }) may not fit — ${loc!.name}'s interior maxes out at ${Math.round(binMax)} mm.`;
+    }
+  }
 }

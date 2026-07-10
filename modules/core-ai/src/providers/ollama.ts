@@ -10,6 +10,7 @@
 import { platform, type AiCapability } from "@cobblr/platform-contract";
 import { assertSafeAiEndpoint, pinnedFetch, type PinnedResponse } from "../ssrf.js";
 import { TRANSIT_FIELD, viaBridge, edgeKeyFor, edgeFetch } from "./edge-transit.js";
+import { toolsOf, turnsOf, openAiToolsOf, ollamaMessagesOf, parseOllamaToolCalls, looksLikeNoToolSupport } from "./tool-wire.js";
 
 /** Optional bearer auth for the endpoint. Returns {} when no token is
  *  configured (a bare local Ollama). A remote endpoint behind a
@@ -77,31 +78,58 @@ export function register(): void {
           return { result: { vector: body.embedding }, cost_cents: 0 };
         }
         case "chat": {
-          const messages = (ctx.input.messages as Array<{ role: string; content: string }>) ?? [];
+          // Tool-aware turn mapping (Ollama's dialect of the neutral wire — see
+          // tool-wire.ts: arguments are objects, results match by order).
+          const messages = ollamaMessagesOf(turnsOf(ctx.input)) as Array<Record<string, unknown>>;
           // Honour a first-class `system` prompt (chat.ts passes it here, not as
           // a role:"system" message). Every adapter must read input.system; this
           // one was missed when delivery moved there, silently dropping the
           // workspace prompt for direct-Ollama chat.
           const system = typeof ctx.input.system === "string" ? ctx.input.system : undefined;
-          const res = await call("/api/chat", {
+          const toolDefs = toolsOf(ctx.input);
+          const reqBody: Record<string, unknown> = {
+            model: ctx.model,
+            messages: system ? [{ role: "system", content: system }, ...messages] : messages,
+            stream: false,
+          };
+          // Ollama takes OpenAI-shaped tool defs; a model without tool support
+          // 4xxes on the field — retried once without them (graceful degrade).
+          if (toolDefs) reqBody.tools = openAiToolsOf(toolDefs);
+          let res = await call("/api/chat", {
             method: "POST",
             headers: { "content-type": "application/json", ...authHeaders },
-            body: JSON.stringify({
-              model: ctx.model,
-              messages: system ? [{ role: "system", content: system }, ...messages] : messages,
-              stream: false,
-            }),
+            body: JSON.stringify(reqBody),
           });
+          if (!res.ok && toolDefs) {
+            const errText = await res.text().catch(() => "");
+            if (looksLikeNoToolSupport(res.status, errText)) {
+              delete reqBody.tools;
+              res = await call("/api/chat", {
+                method: "POST",
+                headers: { "content-type": "application/json", ...authHeaders },
+                body: JSON.stringify(reqBody),
+              });
+            }
+          }
           // Don't echo the upstream body — for a read-SSRF that body is the
           // exfil channel; the status alone is enough to diagnose.
           if (!res.ok) throw new Error(`ollama: ${res.status}`);
           const body = (await res.json()) as {
-            message: { role: string; content: string };
+            message: {
+              role: string;
+              content: string;
+              tool_calls?: Array<{ function?: { name?: string; arguments?: unknown } }>;
+            };
             prompt_eval_count?: number;
             eval_count?: number;
           };
+          const calls = parseOllamaToolCalls(body.message ?? {});
           return {
-            result: body.message,
+            result: {
+              role: body.message?.role ?? "assistant",
+              content: body.message?.content ?? "",
+              ...(calls ? { tool_calls: calls } : {}),
+            },
             input_tokens: body.prompt_eval_count,
             output_tokens: body.eval_count,
             cost_cents: 0,

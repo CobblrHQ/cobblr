@@ -23,6 +23,10 @@ export interface FpBound {
   /** "plan" = top-down (room: w × depth); "front" = elevation (toolbox face:
    *  w × height). Same geometry — only labels change. */
   view?: "plan" | "front";
+  /** Snap pitch for THIS layout, mm. A garage wants the 100mm default; a
+   *  drawer wants 42 (exact Gridfinity) or whatever "1 square" means to its
+   *  owner. Placement positions AND sizes quantize to it. */
+  grid_mm?: number;
   walls?: FpWall[];
 }
 
@@ -66,11 +70,13 @@ export function readBound(metadata: Record<string, unknown> | null | undefined):
       walls.push({ x1, y1, x2, y2, ...(openings.length ? { openings } : {}) });
     }
   }
+  const grid = num(fp.grid_mm);
   return {
     w_mm: w,
     d_mm: d,
     unit: fp.unit === "ft" || fp.unit === "in" || fp.unit === "m" || fp.unit === "cm" || fp.unit === "mm" ? fp.unit : undefined,
     view: fp.view === "front" ? "front" : fp.view === "plan" ? "plan" : undefined,
+    ...(grid && grid >= 5 && grid <= 1000 ? { grid_mm: grid } : {}),
     ...(walls.length ? { walls } : {}),
   };
 }
@@ -89,10 +95,13 @@ export function snap(v: number, grid: number = SNAP_MM): number {
   return Math.round(v / grid) * grid;
 }
 
-/** Keep a rect inside the bound (shrinks before it clips). */
+/** Keep a rect inside the bound (shrinks before it clips). The minimum cell
+ *  is the layout's own grid pitch, so a 42mm Gridfinity drawer allows 42mm
+ *  bins while a garage keeps its coarser floor. */
 export function clampRect(rect: FpRect, bound: FpBound): FpRect {
-  const w = Math.max(SNAP_MM, Math.min(rect.w_mm, bound.w_mm));
-  const d = Math.max(SNAP_MM, Math.min(rect.d_mm, bound.d_mm));
+  const cell = bound.grid_mm ?? SNAP_MM;
+  const w = Math.max(cell, Math.min(rect.w_mm, bound.w_mm));
+  const d = Math.max(cell, Math.min(rect.d_mm, bound.d_mm));
   const x = Math.max(0, Math.min(rect.x_mm, bound.w_mm - w));
   const y = Math.max(0, Math.min(rect.y_mm, bound.d_mm - d));
   return { ...rect, x_mm: x, y_mm: y, w_mm: w, d_mm: d };

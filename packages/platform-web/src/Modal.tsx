@@ -31,7 +31,7 @@ interface Props {
   subtitle?: ReactNode;
   children: ReactNode;
   /** Width preset. md (default) = 32rem; lg = 48rem; xl = 64rem. */
-  size?: "sm" | "md" | "lg" | "xl";
+  size?: "sm" | "md" | "lg" | "xl" | "content";
   /** Tints the header to signal a destructive context. */
   destructive?: boolean;
   /** Render IN-FLOW as a card (same chrome, no portal/overlay/esc/scroll-lock).
@@ -51,6 +51,9 @@ const SIZE: Record<NonNullable<Props["size"]>, string> = {
   md: "max-w-xl",
   lg: "max-w-3xl",
   xl: "max-w-5xl",
+  /** The standard content column's width (max-w-4xl) — a modal that should
+   *  read as "the page, focused" rather than wider than the strips under it. */
+  content: "max-w-4xl",
 };
 
 export function Modal({ open, onClose, title, subtitle, children, size = "md", destructive, dismissOnBackdrop = true, inline = false }: Props) {
@@ -76,6 +79,9 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
     if (!open || inline) return;
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
+        // A surface marked data-modal-escape-exempt (the docked chat panel)
+        // coexists with modals — its Escape must not close them.
+        if (e.target instanceof HTMLElement && e.target.closest("[data-modal-escape-exempt]")) return;
         e.preventDefault();
         onClose();
       }
@@ -173,7 +179,12 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto"
+      // Center within the CONTENT area, not the raw viewport: the app shell
+      // publishes its reserved edges (pinned left sidebar, docked right panel)
+      // as --modal-inset-left/right on <html>, and the overlay pads by them —
+      // "the active window is the part without the sidebar" (the author).
+      // Defaults to 0, so shells without chrome are unaffected.
+      className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto md:pl-[calc(1rem+var(--modal-inset-left,0px))] xl:pr-[calc(1rem+var(--modal-inset-right,0px))]"
       onClick={handleBackdrop}
       role="dialog"
       aria-modal="true"

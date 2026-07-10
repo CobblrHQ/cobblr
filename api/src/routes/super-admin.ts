@@ -26,7 +26,12 @@ import { hasAuthEmailSender, sendAuthEmail } from "../platform/hosted-seams.js";
 import { notifyAccount } from "../platform/notifications.js";
 import { announce, listAnnounceSettings, setAnnounceSetting, isComposable } from "../platform/announce.js";
 import { reporterCardFields } from "../platform/feedback-card.js";
-import { pokeDiscordResolved, pokeDiscordWaitlistCard } from "../platform/discord-bot-trigger.js";
+import {
+  pokeDiscordResolved,
+  pokeDiscordWaitlistCard,
+  pokeDiscordFeedbackStage,
+  type FeedbackStage,
+} from "../platform/discord-bot-trigger.js";
 import { pokeTriage } from "../platform/triage-trigger.js";
 import { isDmReply } from "../platform/feedback-dm-routing.js";
 import { absoluteAppUrl } from "../platform/public-url.js";
@@ -1282,6 +1287,47 @@ const UpdateFeedback = z.object({
     .optional(),
 });
 
+// Map a feedback row's status + admin_notes to its lifecycle stage, for the
+// Discord reaction trail. Terminal states win; otherwise the autopilot's
+// in-flight markers, most-advanced first (PR up > building > grabbed). Returns
+// null for a plain new/triaged item with no marker (nothing to react yet).
+function feedbackStage(row: { status: string | null; admin_notes: string | null }): FeedbackStage | null {
+  const notes = row.admin_notes ?? "";
+  if (row.status === "resolved") return "shipped";
+  if (row.status === "wontfix") return "passed";
+  if (row.status === "awaiting_decision") return "spec";
+  if (/autopilot PR #/i.test(notes)) return "pr_open";
+  if (notes.includes("🔨 BUILD REQUESTED")) return "building";
+  if (/🔒 CLAIMED by /.test(notes)) return "grabbed";
+  return null;
+}
+
+// GET /super-admin/feedback/:id — one item, reporter resolved (name/email from
+// the joined user, else origin_ref.username) + workspace. The support bot reads
+// this to render the autopilot card's identity fields and its admin_notes (the
+// 🔨 Build handler needs the saved analysis); the in-session skill reads the full
+// record here too. More specific paths (/:id/context, /:id/attachments/…) are
+// registered separately and still match first.
+superAdminRouter.get("/feedback/:id", async (req, res, next) => {
+  try {
+    const row = await meta
+      .selectFrom("feedback as f")
+      .leftJoin("users as u", "u.id", "f.user_id")
+      .leftJoin("orgs as o", "o.id", "f.org_id")
+      .selectAll("f")
+      .select(["u.email as user_email", "u.display_name as user_name", "o.slug as workspace_slug", "o.name as workspace_name"])
+      .where("f.id", "=", req.params.id)
+      .executeTakeFirst();
+    if (!row) {
+      res.status(404).json({ error: { code: "not_found", message: "Feedback not found." } });
+      return;
+    }
+    res.json(row);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /super-admin/feedback?status=new — triage queue, newest first, with who
 // submitted + which workspace.
 superAdminRouter.get("/feedback", async (req, res, next) => {
@@ -1672,11 +1718,40 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
       .updateTable("feedback")
       .set(patch)
       .where("id", "=", req.params.id)
-      .returning(["id", "status", "admin_notes", "updated_at", "user_id", "org_id", "message", "context", "origin", "origin_ref"])
+      .returning([
+        "id",
+        "status",
+        "admin_notes",
+        "updated_at",
+        "user_id",
+        "org_id",
+        "message",
+        "context",
+        "origin",
+        "origin_ref",
+        "announce_message_id",
+        "announce_channel_id",
+      ])
       .executeTakeFirst();
     if (!row) {
       res.status(404).json({ error: { code: "not_found", message: "Feedback not found." } });
       return;
+    }
+
+    // Reflect the item's new lifecycle stage back onto Discord as an emoji
+    // reaction — on the public #feedback post (if tracked) and on the private
+    // autopilot card. Fires on every transition that flows through this handler:
+    // the autopilot's claim (🔒 → grabbed), a 🔨 Build request, a PR-open note,
+    // awaiting_decision (spec), resolve (shipped), wontfix (passed). Add-only +
+    // idempotent, so re-poking the same stage is harmless.
+    const stage = feedbackStage(row);
+    if (stage) {
+      pokeDiscordFeedbackStage({
+        feedback_id: row.id,
+        stage,
+        message_id: row.announce_message_id,
+        channel_id: row.announce_channel_id,
+      });
     }
 
     // Optionally close the loop with the reporter — "we looked at this / it's

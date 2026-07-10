@@ -497,6 +497,8 @@ export interface EntityKindsTable {
   detail_route: string | null;
   endpoints: unknown | null;
   version: Generated<string>;
+  /** The module's primary kind — what /instances/:name/items dispatches to. */
+  is_primary: Generated<boolean>;
   registered_at: Generated<Date>;
   /** Resolved 6-axis trait assignment (Tangibility, Identity,
    *  Containment, Time, Lifecycle, Persistence). Skipped axes are
@@ -672,6 +674,12 @@ export interface ModuleFieldDefsTable {
    *  CatalogSchema.field_renderers — color-hex, image-url,
    *  url-link, year, boolean, code, or null (= plain text). */
   renderer: string | null;
+  /** The unit a numeric value is measured in ("mm", "g", "in"). Free text
+   *  by design — the units vocabulary (core-units) resolves it at
+   *  render/consume time; unmatched strings render as-is. A unit that
+   *  resolves to a catalog category gives the field declared physical
+   *  semantics (length/mass/…) without keyword-matching its name. */
+  unit: string | null;
   /** For type='computed': the {{ }} template rendered at entity-resolve
    *  time over the entity's own fields (tier 1) + registered context
    *  providers (tier 2). Null for stored value fields. */
@@ -858,6 +866,13 @@ export interface FeedbackTable {
   triage_action: string | null;
   triaged_at: Date | null;
   triage_model: string | null;
+  // The Discord "New feedback" post (20260710-081) — captured when announce()
+  // posts with ?wait=true, so the item's lifecycle stage (grabbed → building →
+  // PR up → shipped) can be reflected back onto that same message as emoji
+  // reactions by the support bot. Null when the announce is disabled/undelivered,
+  // or the webhook targets a non-tracked channel.
+  announce_message_id: string | null;
+  announce_channel_id: string | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }

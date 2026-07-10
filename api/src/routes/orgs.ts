@@ -108,6 +108,10 @@ orgsRouter.get("/:slug/modules", requireAuth, withTenant, async (req, res, next)
           fieldDefs: m.contributes.fieldDefs.length,
           wires: m.contributes.wires.length,
         },
+        // Full panel contributions (not just a count) — the web's panel
+        // registry renders these into the target module's pages. Gated at
+        // manifest validation: target module must be in operatesOn.
+        panels: m.contributes.panels,
         enabled: !!on,
         enabled_version: on?.version ?? null,
         enabled_at: on?.enabled_at ?? null,

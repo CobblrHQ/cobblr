@@ -89,3 +89,37 @@ export function pokeDiscordWaitlistCard(card: DiscordWaitlistCardPoke): void {
     }
   })();
 }
+
+// A feedback item's lifecycle stage, for the Discord reaction trail. The bot maps
+// each to an emoji: grabbed 🤖 · building 🔨 · pr_open 👀 · spec 📋 · shipped ✅ ·
+// passed 🚫.
+export type FeedbackStage = "grabbed" | "building" | "pr_open" | "spec" | "shipped" | "passed";
+
+export interface FeedbackStagePoke {
+  feedback_id: string;
+  stage: FeedbackStage;
+  /** The public "New feedback" Discord post to react on, when we tracked it. */
+  message_id?: string | null;
+  channel_id?: string | null;
+}
+
+/** Tell the support bot an item reached a new lifecycle stage so it can add the
+ *  matching emoji reaction — on the public #feedback post (if we captured its
+ *  message id) AND on the private autopilot card (which the bot tracks itself by
+ *  feedback_id). Fire-and-forget; no-op if the bot isn't configured. Reactions
+ *  are add-only + idempotent, so re-poking a stage is harmless. */
+export function pokeDiscordFeedbackStage(poke: FeedbackStagePoke): void {
+  if (!BOT_URL) return;
+  void (async () => {
+    try {
+      await fetch(`${BOT_URL.replace(/\/+$/, "")}/feedback-stage`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(poke),
+        signal: AbortSignal.timeout(4000),
+      });
+    } catch {
+      /* a missed reaction is cosmetic — never worth failing or altering the update. */
+    }
+  })();
+}

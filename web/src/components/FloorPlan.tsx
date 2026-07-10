@@ -10,9 +10,9 @@
 
 import { useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Flame, Loader2, Pencil, Plus, Printer, ScanLine, Sparkles, Tag, X } from "lucide-react";
-import { Modal, useToast } from "@cobblr/platform-web";
+import { Modal, useImageSrc, useToast } from "@cobblr/platform-web";
 import { ApiError, api, type Location } from "../lib/api";
 import { totalUsage, useLocationUsage } from "../lib/useLocationUsage";
 import {
@@ -30,8 +30,45 @@ import {
   type FpWall,
 } from "../lib/floorplanGeometry";
 import { formatLength, parseLength, type LengthUnit } from "../lib/lengthUnits";
+import { gridNames, gridRects, type GridNameScheme } from "../lib/gridFill";
+import { OUTLINE_PRESETS, byAreaDesc, pointsAttr, readFill, readOutline } from "../lib/planDecor";
+import { useDetailRoute } from "../lib/useDetailRoute";
 
-type Sel = { type: "item"; id: string } | { type: "wall"; idx: number } | null;
+type Sel =
+  | { type: "item"; id: string }
+  | { type: "entity"; kind: string; id: string }
+  | { type: "wall"; idx: number }
+  | null;
+
+/** A location-bearing record that can occupy a cell on its location's plan —
+ *  the ratchet in the drawer, not just the drawer. Kinds come from the
+ *  entity-kind REGISTRY: placeable = declares endpoints.list + endpoints.update
+ *  and is physically tangible. No module is ever named here. */
+interface PlanEntity {
+  kind: string;
+  id: string;
+  name: string;
+  image_path: string | null;
+  location_id: string | null;
+  metadata: Record<string, unknown>;
+}
+
+/** Rows a declared listEndpoint returns (the manifest's row-shape contract). */
+interface ListedRow {
+  id: string;
+  name?: string;
+  title?: string;
+  image_path?: string | null;
+  location_id?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+function traitAxis(t: unknown): string | null {
+  if (t == null) return null;
+  if (typeof t === "string") return t;
+  const v = (t as { trait?: unknown }).trait;
+  return typeof v === "string" ? v : null;
+}
 
 const pct = (v: number, total: number) => `${(v / total) * 100}%`;
 
@@ -150,6 +187,7 @@ function PlanFor({
   const [liveWall, setLiveWall] = useState<{ idx: number; wall: FpWall } | null>(null);
   const [seedOpen, setSeedOpen] = useState(false);
   const [createAt, setCreateAt] = useState<FpRect | null>(null);
+  const [gridOpen, setGridOpen] = useState(false);
 
   // Everything drawn on THIS plan: descendants whose nearest planned ancestor
   // is this room (a rack reparented into Bay 1 stays on the garage's plan).
@@ -176,9 +214,95 @@ function PlanFor({
     () => placed.filter((p) => p.loc.kind === "area" && readBound(p.loc.metadata)),
     [placed],
   );
+  // Deep render: everything placed on ANY plan, keyed by its plan owner — a
+  // big-enough room rect previews its own contents as static minis.
+  const placedByOwner = useMemo(() => {
+    const m = new Map<string, Array<{ loc: Location; rect: FpRect }>>();
+    for (const l of items) {
+      const rect = readRect(l.metadata);
+      if (!rect) continue;
+      const owner = planOwnerOf(l.id, byId);
+      if (!owner) continue;
+      const arr = m.get(owner) ?? [];
+      arr.push({ loc: l, rect });
+      m.set(owner, arr);
+    }
+    return m;
+  }, [items, byId]);
   const tray = useMemo(
     () => items.filter((l) => l.parent_id === room.id && !readRect(l.metadata)),
     [items, room.id],
+  );
+
+  // ── entity occupants: the ratchet in the drawer, not just the drawer ──
+  // PLACEABLE KINDS come from the entity-kind registry: a kind that declares
+  // its own list + update endpoints (the manifest seam) and is physically
+  // tangible. Any future module joins with one manifest line; nothing is
+  // named here. Kinds whose rows carry no location_id simply never match.
+  const kindsQ = useQuery({
+    queryKey: ["entity-kinds", slug],
+    queryFn: () => api.listEntityKinds(slug),
+    enabled: !!slug,
+    staleTime: 5 * 60_000,
+  });
+  const placeableKinds = useMemo(
+    () =>
+      (kindsQ.data?.items ?? []).filter(
+        (k) =>
+          k.endpoints?.list &&
+          k.endpoints?.update &&
+          traitAxis(k.traits?.tangibility) === "physical",
+      ),
+    [kindsQ.data],
+  );
+  const kindLists = useQueries({
+    queries: placeableKinds.map((k) => ({
+      queryKey: ["kind-list", slug, k.id],
+      queryFn: () =>
+        api.request<{ items: ListedRow[] }>(
+          "GET",
+          `/orgs/${slug}/${k.instance_name ? `instances/${k.instance_name}` : `modules/${k.module_name}`}${k.endpoints!.list}`,
+        ),
+      staleTime: 30_000,
+    })),
+  });
+  const routeFor = useDetailRoute(slug);
+  const occupants = useMemo(() => {
+    const all: PlanEntity[] = [];
+    placeableKinds.forEach((k, i) => {
+      for (const row of kindLists[i]?.data?.items ?? []) {
+        all.push({
+          kind: k.id,
+          id: row.id,
+          name: row.name ?? row.title ?? "(unnamed)",
+          image_path: row.image_path ?? null,
+          location_id: row.location_id ?? null,
+          metadata: row.metadata ?? {},
+        });
+      }
+    });
+    // An entity draws on the plan its LOCATION belongs to: the location
+    // itself when it owns a plan (a drawer), else that location's plan owner.
+    const ownerOfLoc = (locId: string): string | null => {
+      const l = byId.get(locId);
+      if (!l) return null;
+      if (readBound(l.metadata)) return l.id;
+      return planOwnerOf(locId, byId);
+    };
+    return all.filter((e) => e.location_id && ownerOfLoc(e.location_id) === room.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [placeableKinds, ...kindLists.map((q) => q.data), byId, room.id]);
+  const placedOccupants = useMemo(
+    () =>
+      occupants
+        .filter((e) => readRect(e.metadata))
+        .map((e) => ({ ent: e, rect: readRect(e.metadata)! }))
+        .sort(byAreaDesc),
+    [occupants],
+  );
+  const unplacedOccupants = useMemo(
+    () => occupants.filter((e) => !readRect(e.metadata)),
+    [occupants],
   );
   // Peek drill-in: a placed child that owns its own plan opens zoomed in a
   // modal (kept as an id so edits inside the peek see live data).
@@ -239,8 +363,17 @@ function PlanFor({
 
   const saveRect = (loc: Location, rect: FpRect | null) => {
     const meta = { ...(loc.metadata ?? {}) } as Record<string, unknown>;
-    if (rect) meta.floorplan = rect;
+    // MERGE into the blob — a drag must never strip decoration (fill/outline).
+    if (rect) meta.floorplan = { ...((meta.floorplan as Record<string, unknown>) ?? {}), ...rect };
     else delete meta.floorplan;
+    saveMeta.mutate({ id: loc.id, metadata: meta });
+  };
+  /** Patch decoration keys (fill/outline) on a placed location's blob. */
+  const patchLocFloorplan = (loc: Location, patch: Record<string, unknown>) => {
+    const meta = { ...(loc.metadata ?? {}) } as Record<string, unknown>;
+    const fp = { ...((meta.floorplan as Record<string, unknown>) ?? {}), ...patch };
+    for (const k of Object.keys(fp)) if (fp[k] === undefined || fp[k] === null) delete fp[k];
+    meta.floorplan = fp;
     saveMeta.mutate({ id: loc.id, metadata: meta });
   };
   const saveBound = (next: FpBound) => {
@@ -259,6 +392,97 @@ function PlanFor({
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
+
+  // Entity writes resolve the kind's manifest-declared update endpoint from
+  // the registry — never a hardcoded module route (the workspace-tools rule:
+  // an undeclared kind is honestly not writable, not guessed at).
+  const patchEntity = async (ent: PlanEntity, body: Record<string, unknown>) => {
+    const k = placeableKinds.find((pk) => pk.id === ent.kind);
+    const tmpl = k?.endpoints?.update;
+    if (!k || !tmpl) throw new ApiError(400, "not_writable", `${ent.kind} declares no update endpoint`);
+    await api.request(
+      "PATCH",
+      `/orgs/${slug}/${k.instance_name ? `instances/${k.instance_name}` : `modules/${k.module_name}`}${tmpl.replace("{id}", ent.id)}`,
+      body,
+    );
+  };
+  const invalidateEntities = () => {
+    void qc.invalidateQueries({ queryKey: ["kind-list", slug] });
+  };
+  const saveEntity = useMutation({
+    mutationFn: (p: { ent: PlanEntity; body: Record<string, unknown>; label?: string }) =>
+      patchEntity(p.ent, p.body),
+    onSuccess: (_r, p) => {
+      if (p.label) toast.success(p.label);
+      invalidateEntities();
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+  const saveEntityRect = (ent: PlanEntity, rect: FpRect | null) => {
+    const meta = { ...(ent.metadata ?? {}) } as Record<string, unknown>;
+    const fp = { ...((meta.floorplan as Record<string, unknown>) ?? {}) };
+    if (rect) meta.floorplan = { ...fp, ...rect };
+    else delete meta.floorplan;
+    saveEntity.mutate({ ent, body: { metadata: meta } });
+  };
+
+  function startEntityDrag(e: React.PointerEvent, ent: PlanEntity, rect: FpRect, mode: "move" | "resize") {
+    if (!edit || !bound) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setSel({ type: "entity", kind: ent.kind, id: ent.id });
+    const scale = mmPerPx();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const orig = { ...rect };
+    let last = rect;
+    const onMove = (ev: PointerEvent) => {
+      const dx = (ev.clientX - startX) * scale;
+      const dy = (ev.clientY - startY) * scale;
+      const g = bound.grid_mm ?? SNAP_MM;
+      const next =
+        mode === "move"
+          ? { ...orig, x_mm: snap(orig.x_mm + dx, g), y_mm: snap(orig.y_mm + dy, g) }
+          : { ...orig, w_mm: snap(Math.max(g, orig.w_mm + dx), g), d_mm: snap(Math.max(g, orig.d_mm + dy), g) };
+      last = clampRect(next, bound);
+      setLive({ id: `${ent.kind}:${ent.id}`, rect: last });
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      setLive(null);
+      if (last.x_mm !== rect.x_mm || last.y_mm !== rect.y_mm || last.w_mm !== rect.w_mm || last.d_mm !== rect.d_mm) {
+        let rectToSave = last;
+        let targetLocId = ent.location_id;
+        if (mode === "move") {
+          // Drop = re-file, entity edition: ANY placed location is a target
+          // (bay, room, tote), smallest wins; landing in a space that owns
+          // its own plan rebases into it.
+          const targets = placed.map((pl) => ({ id: pl.loc.id, rect: pl.rect }));
+          const cx = last.x_mm + last.w_mm / 2;
+          const cy = last.y_mm + last.d_mm / 2;
+          const zid = zoneAt(targets, cx, cy);
+          targetLocId = zid ?? room.id;
+          const tLoc = zid ? byId.get(zid) : null;
+          const tBound = tLoc ? readBound(tLoc.metadata) : null;
+          if (zid && tBound) {
+            const region = targets.find((t) => t.id === zid)!.rect;
+            rectToSave = rebaseRect(last, region, tBound);
+          }
+        }
+        const meta = { ...(ent.metadata ?? {}) } as Record<string, unknown>;
+        meta.floorplan = { ...((meta.floorplan as Record<string, unknown>) ?? {}), ...rectToSave };
+        const moved = targetLocId !== ent.location_id;
+        saveEntity.mutate({
+          ent,
+          body: { metadata: meta, ...(moved ? { location_id: targetLocId } : {}) },
+          label: moved ? `Moved into ${byId.get(targetLocId!)?.name ?? room.name}` : undefined,
+        });
+      }
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }
 
   // ── pointer plumbing: px ↔ mm ────────────────────────────────────
   const mmPerPx = () => {
@@ -285,10 +509,11 @@ function PlanFor({
     const onMove = (ev: PointerEvent) => {
       const dx = (ev.clientX - startX) * scale;
       const dy = (ev.clientY - startY) * scale;
+      const g = bound.grid_mm ?? SNAP_MM;
       const next =
         mode === "move"
-          ? { ...orig, x_mm: snap(orig.x_mm + dx), y_mm: snap(orig.y_mm + dy) }
-          : { ...orig, w_mm: snap(Math.max(SNAP_MM, orig.w_mm + dx)), d_mm: snap(Math.max(SNAP_MM, orig.d_mm + dy)) };
+          ? { ...orig, x_mm: snap(orig.x_mm + dx, g), y_mm: snap(orig.y_mm + dy, g) }
+          : { ...orig, w_mm: snap(Math.max(g, orig.w_mm + dx), g), d_mm: snap(Math.max(g, orig.d_mm + dy), g) };
       last = clampRect(next, bound);
       setLive({ id: loc.id, rect: last });
     };
@@ -406,6 +631,7 @@ function PlanFor({
 
   const unit: LengthUnit = bound.unit ?? "ft";
   const view = bound.view ?? defaultView;
+  const grid = bound.grid_mm ?? SNAP_MM;
   const walls = liveWall
     ? (bound.walls ?? []).map((w, i) => (i === liveWall.idx ? liveWall.wall : w))
     : (bound.walls ?? []);
@@ -479,6 +705,14 @@ function PlanFor({
             </button>
             <button
               type="button"
+              onClick={() => setGridOpen(true)}
+              title="Create + place a whole grid of bins/cubbies in one shot (a parts rack's 24 bins, a cabinet's drawers)"
+              className="rounded-md border border-line dark:border-slate-600 px-2 py-1 text-xs text-muted hover:text-content transition"
+            >
+              + grid
+            </button>
+            <button
+              type="button"
               onClick={() => setSeedOpen(true)}
               className="inline-flex items-center gap-1 rounded-md border border-line dark:border-slate-600 px-2 py-1 text-xs text-muted hover:text-accent transition"
             >
@@ -509,8 +743,15 @@ function PlanFor({
       {/* ── the plan ── */}
       <div
         ref={planRef}
-        className={`relative w-full border-2 border-slate-400 dark:border-slate-500 rounded bg-subtle/40 dark:bg-[#0d1526] select-none ${edit ? "bg-[radial-gradient(circle,rgba(100,116,139,.25)_1px,transparent_1px)] [background-size:26px_26px]" : ""}`}
-        style={{ aspectRatio: `${bound.w_mm} / ${bound.d_mm}` }}
+        className={`relative w-full border-2 border-slate-400 dark:border-slate-500 rounded bg-subtle/40 dark:bg-[#0d1526] select-none ${edit ? "bg-[radial-gradient(circle,rgba(100,116,139,.25)_1px,transparent_1px)]" : ""}`}
+        style={{
+          aspectRatio: `${bound.w_mm} / ${bound.d_mm}`,
+          // Edit-mode dots sit at the layout's REAL pitch — a 42mm Gridfinity
+          // drawer shows its actual cells, not a decorative texture.
+          ...(edit
+            ? { backgroundSize: `${(grid / bound.w_mm) * 100}% ${(grid / bound.d_mm) * 100}%` }
+            : {}),
+        }}
         onPointerDown={() => edit && setSel(null)}
       >
         {/* walls, minus their door openings */}
@@ -561,6 +802,31 @@ function PlanFor({
               }}
             >
               <span className="absolute inset-0 pointer-events-none rounded" style={heatStyle(loc.id)} />
+              {/* Big-screen deep render: a room rect wide enough on screen
+                  previews its OWN plan's contents as static minis (its
+                  children's coords are in the room's space — scale them into
+                  this rect). Non-interactive; click still zooms. */}
+              {(() => {
+                if (edit) return null;
+                const el = planRef.current;
+                const pxW = el ? (r.w_mm / bound.w_mm) * el.getBoundingClientRect().width : 0;
+                const rb = readBound(loc.metadata);
+                if (!rb || pxW < 240) return null;
+                return (placedByOwner.get(loc.id) ?? []).map((m) => (
+                  <span
+                    key={m.loc.id}
+                    className="absolute border border-slate-400/60 dark:border-slate-500/50 bg-slate-300/25 dark:bg-slate-600/25 rounded-[2px] overflow-hidden text-[8px] leading-none text-muted dark:text-slate-400 pointer-events-none px-0.5"
+                    style={{
+                      left: pct(m.rect.x_mm, rb.w_mm),
+                      top: pct(m.rect.y_mm, rb.d_mm),
+                      width: pct(m.rect.w_mm, rb.w_mm),
+                      height: pct(m.rect.d_mm, rb.d_mm),
+                    }}
+                  >
+                    {pxW > 380 ? (m.loc.short_name || m.loc.name) : ""}
+                  </span>
+                ));
+              })()}
               <span className="absolute top-0.5 left-1.5 text-[10px] font-medium text-content dark:text-slate-300 truncate max-w-full pr-1">
                 {loc.name}
               </span>
@@ -613,9 +879,11 @@ function PlanFor({
           );
         })}
 
-        {/* placed containers */}
+        {/* placed containers — area-descending so overlapping rects keep
+            the smaller one clickable on top (the interlocked wrench sets) */}
         {placed
           .filter((p) => p.loc.kind !== "area")
+          .sort(byAreaDesc)
           .map(({ loc, rect }) => {
             const r = live?.id === loc.id ? live.rect : rect;
             const el = planRef.current;
@@ -651,11 +919,14 @@ function PlanFor({
                   ...(rotate ? { writingMode: "vertical-rl" as const } : {}),
                 }}
               >
+                <RectDecor imagePath={loc.image_path} fp={loc.metadata?.floorplan as Record<string, unknown> | undefined} />
                 <span
                   className="absolute inset-0 pointer-events-none rounded"
                   style={{ ...(heatStyle(loc.id) ?? {}), ...(rotate ? { writingMode: "horizontal-tb" as const } : {}) }}
                 />
-                {pxW < 30 && pxH < 30 ? (loc.short_name || "·") : (loc.short_name && pxW < 90 && !rotate ? loc.short_name : loc.name)}
+                <span className="relative">
+                  {pxW < 30 && pxH < 30 ? (loc.short_name || "·") : (loc.short_name && pxW < 90 && !rotate ? loc.short_name : loc.name)}
+                </span>
                 {heatBadge(loc.id)}
                 {selected && edit && (
                   <span
@@ -667,18 +938,79 @@ function PlanFor({
               </div>
             );
           })}
+
+        {/* entity occupants — the THINGS themselves (ratchets, guns, parts),
+            placed via their own metadata rect. Cobble-tinted = a thing;
+            slate = a place. Area-descending for overlap clicks. */}
+        {placedOccupants.map(({ ent, rect }) => {
+          const key = `${ent.kind}:${ent.id}`;
+          const r = live?.id === key ? live.rect : rect;
+          const selected = sel?.type === "entity" && sel.id === ent.id;
+          return (
+            <div
+              key={key}
+              onPointerDown={(e) => startEntityDrag(e, ent, r, "move")}
+              onClick={(e) => {
+                if (edit) {
+                  e.stopPropagation();
+                  setSel({ type: "entity", kind: ent.kind, id: ent.id });
+                } else {
+                  const href = routeFor(ent.kind, ent.id);
+                  if (href) navigate(href);
+                }
+              }}
+              title={ent.name}
+              className={`absolute rounded-md border border-cobble-500/70 dark:border-cobble-400/60 bg-cobble-50/60 dark:bg-cobble-900/30 overflow-hidden text-[10px] leading-tight px-1 py-0.5 text-content dark:text-slate-200
+                ${edit ? "cursor-move" : "cursor-pointer hover:border-accent"}
+                ${selected ? "ring-1 ring-accent border-accent" : ""}`}
+              style={{
+                left: pct(r.x_mm, bound.w_mm),
+                top: pct(r.y_mm, bound.d_mm),
+                width: pct(r.w_mm, bound.w_mm),
+                height: pct(r.d_mm, bound.d_mm),
+              }}
+            >
+              <RectDecor imagePath={ent.image_path} fp={ent.metadata?.floorplan as Record<string, unknown> | undefined} />
+              <span className="relative">{ent.name}</span>
+              {selected && edit && (
+                <span
+                  onPointerDown={(e) => startEntityDrag(e, ent, r, "resize")}
+                  className="absolute -right-0.5 -bottom-0.5 w-2.5 h-2.5 bg-accent rounded-sm cursor-nwse-resize"
+                />
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {/* ── edit panel ── */}
-      {edit && (
+      {edit && sel?.type === "entity" && (
+        <EntityPanel
+          ent={occupants.find((o) => o.id === sel.id && o.kind === sel.kind) ?? null}
+          unit={unit}
+          grid={bound.grid_mm}
+          secondAxis={view === "front" ? "tall" : "deep"}
+          onRect={saveEntityRect}
+          onDecor={(ent, patch) => {
+            const meta = { ...(ent.metadata ?? {}) } as Record<string, unknown>;
+            const fp = { ...((meta.floorplan as Record<string, unknown>) ?? {}), ...patch };
+            for (const k of Object.keys(fp)) if (fp[k] === undefined || fp[k] === null) delete fp[k];
+            meta.floorplan = fp;
+            saveEntity.mutate({ ent, body: { metadata: meta } });
+          }}
+        />
+      )}
+      {edit && sel?.type !== "entity" && (
         <EditPanel
           bound={bound}
           unit={unit}
           view={view}
+          grid={grid}
           sel={sel}
           byId={byId}
           onBound={saveBound}
           onRect={(loc, r) => saveRect(loc, r)}
+          onFloorplanPatch={patchLocFloorplan}
           onDeleteWall={(idx) => {
             const next = [...(bound.walls ?? [])];
             next.splice(idx, 1);
@@ -716,6 +1048,39 @@ function PlanFor({
         </div>
       )}
 
+      {/* items filed here but not yet on the plan — tap to drop at center */}
+      {edit && unplacedOccupants.length > 0 && (
+        <div className="flex items-baseline gap-2 flex-wrap text-xs text-faint dark:text-slate-500">
+          <span>items here, not placed:</span>
+          {unplacedOccupants.slice(0, 24).map((e) => (
+            <button
+              key={`${e.kind}:${e.id}`}
+              type="button"
+              onClick={() =>
+                saveEntityRect(
+                  e,
+                  clampRect(
+                    {
+                      x_mm: snap(bound.w_mm / 2 - grid * 2, grid),
+                      y_mm: snap(bound.d_mm / 2 - grid * 1.5, grid),
+                      w_mm: grid * 4,
+                      d_mm: grid * 3,
+                    },
+                    bound,
+                  ),
+                )
+              }
+              className="rounded-md border border-cobble-300/60 dark:border-cobble-700/60 bg-cobble-50/50 dark:bg-cobble-900/20 px-2 py-0.5 text-content dark:text-slate-300 hover:border-accent transition"
+            >
+              {e.name}
+            </button>
+          ))}
+          {unplacedOccupants.length > 24 && (
+            <span className="italic">+{unplacedOccupants.length - 24} more</span>
+          )}
+        </div>
+      )}
+
       {seedOpen && <SeedModal room={room} slug={slug} onClose={() => setSeedOpen(false)} onApplied={invalidate} />}
       {createAt && (
         <CreateOnPlanModal
@@ -723,6 +1088,15 @@ function PlanFor({
           room={room}
           rect={createAt}
           onClose={() => setCreateAt(null)}
+          onCreated={invalidate}
+        />
+      )}
+      {gridOpen && (
+        <GridFillModal
+          slug={slug}
+          room={room}
+          bound={bound}
+          onClose={() => setGridOpen(false)}
           onCreated={invalidate}
         />
       )}
@@ -837,19 +1211,23 @@ function EditPanel({
   bound,
   unit,
   view,
+  grid,
   sel,
   byId,
   onBound,
   onRect,
+  onFloorplanPatch,
   onDeleteWall,
 }: {
   bound: FpBound;
   unit: LengthUnit;
   view: "plan" | "front";
+  grid: number;
   sel: Sel;
   byId: Map<string, Location>;
   onBound: (b: FpBound) => void;
   onRect: (loc: Location, r: FpRect | null) => void;
+  onFloorplanPatch: (loc: Location, patch: Record<string, unknown>) => void;
   onDeleteWall: (idx: number) => void;
 }) {
   const secondAxis = view === "front" ? "tall" : "deep";
@@ -955,6 +1333,11 @@ function EditPanel({
         <span className="font-mono text-[10px] uppercase tracking-widest text-faint">{loc.kind}</span>
         <DimInput label="wide" mm={rect.w_mm} unit={unit} onCommit={(v) => onRect(loc, { ...rect, w_mm: v })} />
         <DimInput label={secondAxis} mm={rect.d_mm} unit={unit} onCommit={(v) => onRect(loc, { ...rect, d_mm: v })} />
+        {bound.grid_mm && (
+          <span className="font-mono text-[10px] text-faint" title={`in ${bound.grid_mm}mm grid units`}>
+            {Math.round(rect.w_mm / bound.grid_mm)} × {Math.round(rect.d_mm / bound.grid_mm)} u
+          </span>
+        )}
         {loc.kind !== "area" && (
           <label className="inline-flex items-center gap-1.5 text-xs text-muted dark:text-slate-400">
             <input
@@ -966,6 +1349,10 @@ function EditPanel({
             wall-mounted
           </label>
         )}
+        <DecorControls
+          fp={(loc.metadata?.floorplan as Record<string, unknown>) ?? {}}
+          onPatch={(patch) => onFloorplanPatch(loc, patch)}
+        />
         <div className="flex-1" />
         <button type="button" onClick={() => onRect(loc, null)} className="text-xs text-faint hover:text-ember-500">
           remove from plan
@@ -1003,6 +1390,13 @@ function EditPanel({
           <option value="front">front (elevation)</option>
         </select>
       </label>
+      {/* Snap pitch: 42mm = exact Gridfinity; anything = "1 square". */}
+      <DimInput
+        label="grid"
+        mm={grid}
+        unit="mm"
+        onCommit={(v) => onBound({ ...bound, grid_mm: Math.max(5, Math.min(1000, v)) })}
+      />
       <span className="text-[11px] text-faint italic">
         numbers live here in edit mode only — the plan itself stays clean
       </span>
@@ -1092,7 +1486,9 @@ function SeedModal({
       <div className="space-y-3">
         <p className="text-xs text-muted dark:text-slate-400">
           Say it like you'd say it to a person — dimensions in whatever unit you think in,
-          walls, doorways, named zones. The AI drafts the plan; you drag it true afterward.
+          walls, doorways, named zones, and the furniture standing in it (named things are
+          matched to your existing sub-locations, never invented). The AI drafts the plan;
+          you drag it true afterward. A full draft can take a minute or two — leave it be.
         </p>
         <textarea
           value={text}
@@ -1255,5 +1651,263 @@ function NewFloorModal({
         />
       </div>
     </Modal>
+  );
+}
+
+/** "Fill grid" — a parts rack's 24 bins (or a cabinet's cubbies) created AND
+ *  placed in one shot: rows × columns tiled at true scale across the face,
+ *  named A1…C8 or Bin 1…24 in reading order. Adds to the existing layout;
+ *  each bin is an ordinary container location afterward (scan, label, heat,
+ *  single-SKU qty card — everything). */
+function GridFillModal({
+  slug,
+  room,
+  bound,
+  onClose,
+  onCreated,
+}: {
+  slug: string;
+  room: Location;
+  bound: FpBound;
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const toast = useToast();
+  const [rows, setRows] = useState("3");
+  const [cols, setCols] = useState("8");
+  const [scheme, setScheme] = useState<GridNameScheme>("row-letter");
+  const [prefix, setPrefix] = useState("Bin ");
+  const [progress, setProgress] = useState<number | null>(null);
+
+  const r = parseInt(rows, 10);
+  const c = parseInt(cols, 10);
+  const rects = Number.isFinite(r) && Number.isFinite(c) ? gridRects(bound, r, c) : null;
+  const preview = rects ? gridNames(r, c, scheme, prefix) : [];
+
+  const run = async () => {
+    if (!rects) return;
+    setProgress(0);
+    try {
+      for (let i = 0; i < rects.length; i++) {
+        await api.createLocation(slug, {
+          name: preview[i]!,
+          parent_id: room.id,
+          kind: "container",
+          metadata: { floorplan: rects[i]! },
+        });
+        setProgress(i + 1);
+      }
+      toast.success(`${rects.length} bins placed — print their labels from the Labels page`);
+      onCreated();
+      onClose();
+    } catch (e) {
+      toast.error(
+        `Stopped after ${progress ?? 0} of ${rects.length}: ${e instanceof ApiError ? e.message : String(e)} — created bins are kept; re-run with fewer.`,
+      );
+      onCreated();
+      setProgress(null);
+    }
+  };
+
+  const busy = progress !== null;
+  return (
+    <Modal open onClose={busy ? () => {} : onClose} title={`Fill ${room.name} with a grid`} size="sm">
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <label className="inline-flex items-center gap-1.5 text-xs text-muted dark:text-slate-400">
+            rows
+            <input
+              value={rows}
+              onChange={(e) => setRows(e.target.value)}
+              inputMode="numeric"
+              className="w-12 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-1.5 py-1 text-sm text-content dark:text-slate-200 text-center"
+            />
+          </label>
+          <span className="text-faint">×</span>
+          <label className="inline-flex items-center gap-1.5 text-xs text-muted dark:text-slate-400">
+            columns
+            <input
+              value={cols}
+              onChange={(e) => setCols(e.target.value)}
+              inputMode="numeric"
+              className="w-12 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-1.5 py-1 text-sm text-content dark:text-slate-200 text-center"
+            />
+          </label>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {(
+            [
+              ["row-letter", "A1 … C8"],
+              ["sequential", "Bin 1 … 24"],
+            ] as const
+          ).map(([k, label]) => (
+            <button
+              key={k}
+              type="button"
+              onClick={() => setScheme(k)}
+              className={`rounded-md border px-2.5 py-1 text-xs transition ${scheme === k ? "border-accent text-accent" : "border-line dark:border-slate-600 text-muted"}`}
+            >
+              {label}
+            </button>
+          ))}
+          {scheme === "sequential" && (
+            <input
+              value={prefix}
+              onChange={(e) => setPrefix(e.target.value)}
+              placeholder="prefix"
+              className="w-20 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-1.5 py-1 text-xs text-content dark:text-slate-200"
+            />
+          )}
+        </div>
+        {rects ? (
+          <p className="text-xs text-muted dark:text-slate-400">
+            {rects.length} bins: {preview.slice(0, 3).join(", ")} … {preview[preview.length - 1]}
+            — placed at true scale, added to what's already on the layout.
+          </p>
+        ) : (
+          <p className="text-xs text-ember-500">That grid doesn't fit this face — fewer rows or columns.</p>
+        )}
+        <div className="flex justify-end">
+          <button
+            type="button"
+            disabled={!rects || busy}
+            onClick={() => void run()}
+            className="rounded-md bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm transition disabled:opacity-50"
+          >
+            {busy ? `Creating ${progress}/${rects?.length ?? 0}…` : `Create ${rects?.length ?? 0} bins`}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/** Decoration inside a rect — the Gridfinity-conversation contract: the RECT
+ *  is all the math ever sees; inside it, a photo fill or a silhouette outline
+ *  (trapezoid wrench rails, a drill profile) is pure paint. */
+function RectDecor({
+  imagePath,
+  fp,
+}: {
+  imagePath: string | null;
+  fp: Record<string, unknown> | null | undefined;
+}) {
+  const fill = readFill(fp);
+  const outline = readOutline(fp);
+  const src = useImageSrc(fill === "photo" ? imagePath : null);
+  return (
+    <>
+      {src && (
+        <span
+          className="absolute inset-0 rounded bg-cover bg-center opacity-80 pointer-events-none"
+          style={{ backgroundImage: `url(${src})` }}
+        />
+      )}
+      {outline && (
+        <svg
+          viewBox="0 0 1000 1000"
+          preserveAspectRatio="none"
+          className="absolute inset-0 w-full h-full pointer-events-none text-slate-500 dark:text-slate-300"
+        >
+          <polygon
+            points={pointsAttr(outline)}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={1.5}
+            vectorEffect="non-scaling-stroke"
+          />
+        </svg>
+      )}
+    </>
+  );
+}
+
+/** Fill + outline pickers, shared by the location and entity panels. */
+function DecorControls({
+  fp,
+  onPatch,
+}: {
+  fp: Record<string, unknown>;
+  onPatch: (patch: Record<string, unknown>) => void;
+}) {
+  const currentOutline = readOutline(fp);
+  const currentPreset =
+    Object.entries(OUTLINE_PRESETS).find(
+      ([, pts]) => JSON.stringify(pts) === JSON.stringify(currentOutline),
+    )?.[0] ?? (currentOutline ? "custom" : "none");
+  return (
+    <>
+      <label className="inline-flex items-center gap-1.5 text-xs text-muted dark:text-slate-400">
+        <input
+          type="checkbox"
+          checked={readFill(fp) === "photo"}
+          onChange={(e) => onPatch({ fill: e.target.checked ? "photo" : null })}
+          className="accent-cobble-600"
+        />
+        photo fill
+      </label>
+      <label className="inline-flex items-center gap-1.5 text-xs text-muted dark:text-slate-400">
+        outline
+        <select
+          value={currentPreset}
+          onChange={(e) => {
+            const v = e.target.value;
+            onPatch({ outline: v === "none" ? null : (OUTLINE_PRESETS[v] ?? null) });
+          }}
+          className="rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-1 py-0.5 text-xs text-content dark:text-slate-200"
+        >
+          <option value="none">none</option>
+          {Object.keys(OUTLINE_PRESETS).map((k) => (
+            <option key={k} value={k}>
+              {k}
+            </option>
+          ))}
+          {currentPreset === "custom" && <option value="custom">custom</option>}
+        </select>
+      </label>
+    </>
+  );
+}
+
+/** Edit panel for a selected ENTITY occupant (a machine/asset/part on the
+ *  plan) — dims, decoration, remove-from-plan. */
+function EntityPanel({
+  ent,
+  unit,
+  grid,
+  secondAxis,
+  onRect,
+  onDecor,
+}: {
+  ent: PlanEntity | null;
+  unit: LengthUnit;
+  grid: number | undefined;
+  secondAxis: string;
+  onRect: (ent: PlanEntity, r: FpRect | null) => void;
+  onDecor: (ent: PlanEntity, patch: Record<string, unknown>) => void;
+}) {
+  if (!ent) return null;
+  const rect = readRect(ent.metadata);
+  if (!rect) return null;
+  const fp = (ent.metadata?.floorplan as Record<string, unknown>) ?? {};
+  return (
+    <div className="flex items-center gap-3 flex-wrap rounded-md border border-cobble-300/60 dark:border-cobble-700/60 bg-cobble-50/40 dark:bg-cobble-900/20 px-3 py-2">
+      <span className="text-xs font-medium text-content dark:text-slate-200">{ent.name}</span>
+      <span className="font-mono text-[10px] uppercase tracking-widest text-faint">
+        {ent.kind.split(":")[1]}
+      </span>
+      <DimInput label="wide" mm={rect.w_mm} unit={unit} onCommit={(v) => onRect(ent, { ...rect, w_mm: v })} />
+      <DimInput label={secondAxis} mm={rect.d_mm} unit={unit} onCommit={(v) => onRect(ent, { ...rect, d_mm: v })} />
+      {grid && (
+        <span className="font-mono text-[10px] text-faint" title={`in ${grid}mm grid units`}>
+          {Math.round(rect.w_mm / grid)} × {Math.round(rect.d_mm / grid)} u
+        </span>
+      )}
+      <DecorControls fp={fp} onPatch={(patch) => onDecor(ent, patch)} />
+      <div className="flex-1" />
+      <button type="button" onClick={() => onRect(ent, null)} className="text-xs text-faint hover:text-ember-500">
+        remove from plan
+      </button>
+    </div>
   );
 }

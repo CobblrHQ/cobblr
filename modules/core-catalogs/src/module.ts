@@ -19,7 +19,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-catalogs",
-  version: "0.1.0",
+  version: "0.2.0",
   displayName: "Catalogs",
   description:
     "Import reference datasets (parts catalogs, ingredient databases, etc.) and MATCH your own entities to entries inside them. v0.1 supports CSV upload; live-API pullers + auto-match deferred.",
@@ -38,6 +38,9 @@ export default defineModule({
     entityKinds: [
       {
         id: "core-catalogs:catalog",
+        createEndpoint: "/catalogs",
+        updateEndpoint: "/catalogs/{id}",
+        deleteEndpoint: "/catalogs/{id}",
         displayName: "Catalog",
         displayNamePlural: "Catalogs",
         icon: "library",
@@ -60,6 +63,8 @@ export default defineModule({
         ],
       },
       {
+        // AI-CRUD: none — entries are import-owned (the catalog importer
+        // writes them); ad-hoc creates would bypass provenance.
         id: "core-catalogs:entry",
         displayName: "Catalog entry",
         displayNamePlural: "Catalog entries",

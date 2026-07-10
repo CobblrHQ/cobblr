@@ -2,4 +2,4 @@
 type: feature
 date: 2026-06-24
 ---
-- Declarative sync-source engine: external systems are mirrored into Cobblr via installable manifests (data), not source-specific code. Phase 1 — the manifest schema + interpreter, proven to reproduce the companion app mapping exactly.
+- Declarative sync-source engine: external systems are mirrored into Cobblr via installable manifests (data), not source-specific code. Phase 1: the manifest schema + interpreter, proven to reproduce the companion app mapping exactly.

@@ -54,8 +54,12 @@ export default defineModule({
       "core-scan.scan.received",
       "core-scan.scan.enriched",
       "core-scan.scan.confirmed",
+      "core-scan.scan.unconfirmed",
       "core-scan.scan.discarded",
       "core-scan.organize.applied",
+      "core-scan.putaway.session-started",
+      "core-scan.putaway.item-placed",
+      "core-scan.putaway.session-ended",
     ],
     api: [],
     actions: [

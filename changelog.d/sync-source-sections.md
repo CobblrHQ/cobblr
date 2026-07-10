@@ -1,1 +1,6 @@
+---
+type: improvement
+date: 2026-06-24
+---
+
 - Sync sources are now a container + sections: expand an installed source to see its sections (entity types), "+ Add section" to sync another thing (paste just that section JSON, e.g. 3D printers), remove a section, or edit the whole container JSON. The source is defined once; you grow it over time.

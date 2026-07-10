@@ -8,7 +8,7 @@ import { ChevronRight, Plus } from "lucide-react";
 import { ApiError, api, type CatalogFieldRenderer, type PlatformFieldDef } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { FieldDefDetailModal } from "../components/FieldDefDetailModal";
-import { FieldRenderer, useToast, usePageTitle } from "@cobblr/platform-web";
+import { FieldRenderer, UnitInput, useToast, usePageTitle } from "@cobblr/platform-web";
 
 // `relation` is deliberately absent: user-authored relation fields (picking a
 // ref_kind in this UI) are a follow-on; today relation defs are contributed by
@@ -70,6 +70,7 @@ export function FieldsPage() {
   const [type, setType] = useState<PlatformFieldDef["type"]>("text");
   const [renderer, setRenderer] = useState<CatalogFieldRenderer>("text");
   const [template, setTemplate] = useState("");
+  const [unit, setUnit] = useState("");
   const [err, setErr] = useState<string | null>(null);
 
   const rendererChoices = RENDERERS_BY_TYPE[type];
@@ -83,6 +84,7 @@ export function FieldsPage() {
         type,
         renderer: renderer === "text" ? null : renderer,
         template: type === "computed" ? template : undefined,
+        unit: type === "number" && unit.trim() ? unit.trim() : undefined,
       }),
     onSuccess: () => {
       toast.success(`Added "${label}" to ${entityKind}.`);
@@ -93,6 +95,7 @@ export function FieldsPage() {
       setType("text");
       setRenderer("text");
       setTemplate("");
+      setUnit("");
       setErr(null);
     },
     onError: (e: unknown) => {
@@ -226,6 +229,17 @@ export function FieldsPage() {
                 or | relative on a date (e.g. {{maintenance.next_scheduled_at | relative}} → "in 6 days").
                 Related data comes from providers like {{maintenance.last_performed}}.`}
               </span>
+            </label>
+          )}
+          {type === "number" && (
+            <label className="block">
+              <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+                Unit
+                <span className="ml-2 normal-case tracking-normal text-faint dark:text-slate-600">
+                  optional — what the number measures ("mm", "g")
+                </span>
+              </span>
+              <UnitInput value={unit} onCommit={setUnit} placeholder="none" />
             </label>
           )}
           {rendererChoices.length > 1 && (

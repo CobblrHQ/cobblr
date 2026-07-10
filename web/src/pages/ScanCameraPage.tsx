@@ -34,9 +34,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeftRight, Camera, Check, Flashlight, Loader2, MapPin, Package, ScanLine, Undo2, X } from "lucide-react";
+import { ArrowLeftRight, ArrowRight, Camera, Check, Flashlight, Loader2, MapPin, Package, ScanLine, SkipForward, Undo2, X, Zap } from "lucide-react";
 import { Modal, usePageTitle, useToast } from "@cobblr/platform-web";
-import { ApiError, api, type ScanInboxItem, type TrackedMatch } from "../lib/api";
+import { ApiError, api, type LiveSortEntry, type ScanInboxItem, type TrackedMatch } from "../lib/api";
 import { decideLocationScan, filingLabel } from "../lib/scanFiling";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { LocationPicker } from "../components/LocationPicker";
@@ -90,7 +90,7 @@ function writeScanSession(slug: string, s: ScanSession) {
 export function ScanCameraPage() {
   usePageTitle("Scan");
   // Preserve the instance-scan target (?into=…) so the modal + return keep it.
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const location = useLocation();
   const backToScan = `/scan${params.toString() ? `?${params}` : ""}`;
@@ -323,6 +323,217 @@ export function ScanCameraPage() {
     return batchMintRef.current;
   }, [activeSlug]);
 
+  // SORT MODE (Live Sort, phone rig — docs/product/put-away.md §3.1): scanning
+  // a product barcode routes it to a destination directive ("→ Bin 1 ·
+  // Fasteners") rendered as an overlay ON the live viewfinder — the camera
+  // never unmounts, no result modal. One big "Done, next" confirms; a scanned
+  // bin QR while a directive shows confirms INTO that bin (retarget).
+  // ?sort=1 (the homepage "Start a Live Sort" link on touch devices) arms
+  // Sort mode on arrival; the preference then persists like the manual toggle.
+  const [sortMode, setSortMode] = useState(() => {
+    if (new URLSearchParams(window.location.search).get("sort") === "1") {
+      localStorage.setItem("cobblr-scan-sort-mode", "1");
+      return true;
+    }
+    return localStorage.getItem("cobblr-scan-sort-mode") === "1";
+  });
+  // Consume-once: ?sort=1 armed Sort mode above (into state + localStorage), so
+  // strip it from the URL. Otherwise it persisted and re-armed Sort mode on every
+  // refresh, overriding the user later toggling it OFF (the same class of bug as
+  // scan?organize=pending; the author, 2026-07-10).
+  useEffect(() => {
+    if (!params.has("sort")) return;
+    const next = new URLSearchParams(params);
+    next.delete("sort");
+    setParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const sortModeRef = useRef(sortMode);
+  sortModeRef.current = sortMode;
+  // Phase 3 experiment: scanning the NEXT item commits the previous directive
+  // (undo chip still covers mistakes). Opt-in, persisted.
+  const [sortImplicit, setSortImplicit] = useState(
+    () => localStorage.getItem("cobblr-scan-sort-implicit") === "1",
+  );
+  const sortImplicitRef = useRef(sortImplicit);
+  sortImplicitRef.current = sortImplicit;
+  const toggleSortImplicit = useCallback(() => {
+    setSortImplicit((v) => {
+      localStorage.setItem("cobblr-scan-sort-implicit", v ? "0" : "1");
+      return !v;
+    });
+  }, []);
+  const [sortEntry, setSortEntry] = useState<LiveSortEntry | null>(null);
+  const sortEntryRef = useRef<LiveSortEntry | null>(null);
+  sortEntryRef.current = sortEntry;
+  const [sortBusy, setSortBusy] = useState(false);
+  const sortBusyRef = useRef(false);
+  const [sortLast, setSortLast] = useState<LiveSortEntry | null>(null);
+  const [sortCount, setSortCount] = useState(0);
+  const sortSessionRef = useRef<string | null>(null);
+  const sortRerouteTimer = useRef<number | null>(null);
+  const toggleSortMode = useCallback(() => {
+    setSortMode((v) => {
+      localStorage.setItem("cobblr-scan-sort-mode", v ? "0" : "1");
+      if (v) {
+        // Toggling OFF pauses, never ends — the session resumes (here or on
+        // the Scan page's Live Sort) and one summary covers the whole run.
+        setSortEntry(null);
+        setSortBusy(false);
+        sortBusyRef.current = false;
+      }
+      return !v;
+    });
+  }, []);
+  // Sort mode on → start/resume the caller's live put-away session.
+  useEffect(() => {
+    if (!sortMode) return;
+    let cancelled = false;
+    void api
+      .startPutaway(activeSlug, {})
+      .then((r) => {
+        if (cancelled) return;
+        sortSessionRef.current = r.session_id;
+        const confirmed = (r.entries ?? []).filter((e) => e.status === "confirmed").length;
+        setSortCount(confirmed);
+        if (r.resumed && confirmed > 0) toast.info(`Sort session resumed — ${confirmed} sorted so far.`);
+      })
+      .catch(() => {
+        toast.error("Couldn't start the sort session.");
+        setSortMode(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sortMode, activeSlug]);
+
+  const routeSortItem = useCallback(
+    async (inboxItemId: string) => {
+      const sid = sortSessionRef.current;
+      if (!sid) return;
+      const r = await api.putawayScan(activeSlug, sid, { inbox_item_id: inboxItemId });
+      if (r.already_placed) {
+        toast.info(`Already lives in ${r.already_placed.location_name ?? "a bin"} — re-find, not a re-sort.`);
+        return;
+      }
+      if (!r.entry) return;
+      setSortEntry(r.entry);
+      // A bare item often gets its name a beat later — one silent re-route
+      // upgrades "Unsorted" into a real bin in place.
+      if (!r.entry.name && r.entry.status === "proposed") {
+        const itemId = r.entry.inbox_item_id;
+        if (sortRerouteTimer.current) window.clearTimeout(sortRerouteTimer.current);
+        sortRerouteTimer.current = window.setTimeout(() => {
+          void api
+            .putawayScan(activeSlug, sid, { inbox_item_id: itemId })
+            .then((again) => {
+              if (again.entry) {
+                setSortEntry((cur) => (cur && cur.inbox_item_id === itemId ? again.entry! : cur));
+              }
+            })
+            .catch(() => {});
+        }, 2_500);
+      }
+    },
+    [activeSlug, toast],
+  );
+
+  const handleSortScan = useCallback(
+    (raw: string) => {
+      if (sortBusyRef.current) return;
+      const pending = sortEntryRef.current;
+      if (pending) {
+        if (sortImplicitRef.current && pending.status === "proposed") {
+          // Implicit commit: the next scan IS the confirm gesture for the
+          // previous directive (undo chip covers mistakes).
+          confirmSortRef.current();
+        } else {
+          return; // one directive at a time
+        }
+      }
+      sortBusyRef.current = true;
+      setSortBusy(true);
+      void (async () => {
+        try {
+          // The scan-moment frame rides along as the item's photo (best-effort).
+          const blob = await (frameBlobRef.current ?? Promise.resolve(null)).catch(() => null);
+          let imageFileId: string | undefined;
+          if (blob) {
+            const file = new File([blob], `sort-${Date.now()}.jpg`, { type: "image/jpeg" });
+            imageFileId = await api
+              .uploadFile(activeSlug, file)
+              .then((rec) => rec.id)
+              .catch(() => undefined);
+          }
+          const batchId = await ensureBatchId();
+          // NOTE: no target_location_id — sort mode ROUTES; the active-bin
+          // stamp would make every scan read as already-placed.
+          const item = await api.scanBarcode(activeSlug, {
+            barcode: raw,
+            source_kind: "barcode",
+            image_file_id: imageFileId,
+            scan_area: areaName ?? undefined,
+            scan_batch_id: batchId ?? undefined,
+            enrich_ms: 3_000,
+          });
+          void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+          await routeSortItem(item.id);
+        } catch (e) {
+          toast.error(e instanceof ApiError ? e.message : String(e));
+        } finally {
+          sortBusyRef.current = false;
+          setSortBusy(false);
+        }
+      })();
+    },
+    [activeSlug, areaName, ensureBatchId, qc, routeSortItem, toast],
+  );
+
+  const confirmSort = useCallback(
+    (overrideLocationId?: string) => {
+      const sid = sortSessionRef.current;
+      const entry = sortEntryRef.current;
+      if (!sid || !entry || entry.status !== "proposed") return;
+      if (!overrideLocationId && !entry.directive.location_id) {
+        toast.info("No bin suggested — scan the bin's QR label to file it there.");
+        return;
+      }
+      void api
+        .putawayConfirm(activeSlug, sid, {
+          entry_id: entry.id,
+          ...(overrideLocationId ? { location_id: overrideLocationId } : {}),
+        })
+        .then((r) => {
+          if (typeof navigator.vibrate === "function") navigator.vibrate(40);
+          setSortLast(r.entry);
+          // Only clear if the banner still shows THIS entry — under implicit
+          // commit the next scan's directive may already be up.
+          setSortEntry((cur) => (cur && cur.id === r.entry.id ? null : cur));
+          setSortCount((n) => n + 1);
+        })
+        .catch((e) => toast.error(e instanceof ApiError ? e.message : String(e)));
+    },
+    [activeSlug, toast],
+  );
+  const confirmSortRef = useRef(confirmSort);
+  confirmSortRef.current = confirmSort;
+
+  const undoSort = useCallback(() => {
+    const sid = sortSessionRef.current;
+    const last = sortLast;
+    if (!sid || !last) return;
+    void api
+      .putawayUndo(activeSlug, sid, { entry_id: last.id })
+      .then(() => {
+        setSortLast(null);
+        setSortCount((n) => Math.max(0, n - 1));
+        toast.success("Undone — back to unsorted.");
+      })
+      .catch((e) => toast.error(e instanceof ApiError ? e.message : String(e)));
+  }, [activeSlug, sortLast, toast]);
+
+
   // Offer to resume a recent session (same workspace, < 4h old, has saves).
   useEffect(() => {
     const s = readScanSession(activeSlug);
@@ -425,6 +636,20 @@ export function ScanCameraPage() {
         );
       }
       const qrLabel = /^https?:\/\/[^/]+\/qr\/([A-Za-z0-9_-]{16,})$/.exec(raw);
+      if (qrLabel && sortModeRef.current && sortEntryRef.current) {
+        // Sort mode with a directive pending: a scanned BIN label is the
+        // retarget gesture — confirm the current item into that bin. Camera
+        // stays live.
+        void (async () => {
+          const resolved = await api.resolveQrToken(qrLabel[1] ?? "").catch(() => null);
+          if (resolved?.entity_kind === "core-locations:location" && resolved.entity_id) {
+            confirmSortRef.current(resolved.entity_id);
+          } else {
+            toast.error("That QR isn't a bin label.");
+          }
+        })();
+        return;
+      }
       if (qrLabel) {
         setPhase("idle");
         const token = qrLabel[1] ?? "";
@@ -509,6 +734,12 @@ export function ScanCameraPage() {
           }
           navigate(`/qr/${token}`);
         })();
+        return;
+      }
+      // SORT MODE: a product barcode routes to a directive inline — the camera
+      // never pauses and the result modal never opens.
+      if (sortModeRef.current) {
+        handleSortScan(raw);
         return;
       }
       // External QR resolver (the redirect table): a foreign label the workspace
@@ -820,6 +1051,18 @@ export function ScanCameraPage() {
         >
           <ArrowLeftRight size={13} /> Move
         </button>
+        {/* Sort mode (Live Sort) — scan a thing, get told which bin it goes
+            in, tap Done. The streaming put-away session, on the camera. */}
+        <button
+          type="button"
+          onClick={toggleSortMode}
+          title="Sort mode: every scan gets a destination bin directive — put it there, tap Done, next"
+          className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs shrink-0 ${
+            sortMode ? "bg-cobble-600 text-white" : "bg-black/50 text-white/70 hover:bg-black/70"
+          }`}
+        >
+          <Zap size={13} /> Sort
+        </button>
         <div className="flex items-center gap-2 shrink-0">
           {running && (
             <span className="inline-flex items-center gap-1.5 bg-black/50 rounded-full px-2.5 py-1 text-white text-xs">
@@ -915,6 +1158,108 @@ export function ScanCameraPage() {
         className="absolute bottom-0 inset-x-0 p-4 space-y-3"
         style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
       >
+        {/* SORT MODE banner — the directive lives ON the viewfinder; the
+            camera never pauses and no modal opens. */}
+        {sortMode && (sortEntry || sortBusy || sortLast) && (
+          <div className="max-w-md mx-auto rounded-2xl bg-black/70 backdrop-blur-sm px-4 py-3 text-white space-y-2">
+            {sortEntry ? (
+              <>
+                <div className="text-xs text-white/70 truncate">
+                  {sortEntry.name ?? "Unidentified item"}
+                  {sortEntry.quantity > 1 && ` ×${sortEntry.quantity}`}
+                </div>
+                {sortEntry.directive.kind === "bin" ? (
+                  <>
+                    <div className="flex items-center gap-2 text-2xl font-bold">
+                      <ArrowRight size={24} className="text-cobble-300 shrink-0" />
+                      <MapPin size={22} className="text-cobble-300 shrink-0" />
+                      <span className="truncate">{sortEntry.directive.location_name}</span>
+                    </div>
+                    <div className="text-xs text-white/70">
+                      {sortEntry.directive.via === "sticky"
+                        ? "Same as the last one."
+                        : `${sortEntry.directive.sibling_count} similar item${
+                            sortEntry.directive.sibling_count === 1 ? "" : "s"
+                          } already here`}
+                    </div>
+                  </>
+                ) : sortEntry.directive.kind === "bind-offer" ? (
+                  <>
+                    <div className="flex items-center gap-2 text-2xl font-bold">
+                      <ArrowRight size={24} className="text-cobble-300 shrink-0" />
+                      <MapPin size={22} className="text-cobble-300 shrink-0" />
+                      <span className="truncate">{sortEntry.directive.location_name}</span>
+                    </div>
+                    <div className="text-xs text-white/70">
+                      Starts your <span className="text-white font-medium">{sortEntry.directive.proposed_name}</span>{" "}
+                      bin — Done names it "{sortEntry.directive.location_name} · {sortEntry.directive.proposed_name}".
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex items-center gap-2 text-xl font-bold text-amber-300">
+                      <ArrowRight size={22} className="shrink-0" />
+                      <span className="truncate">
+                        {sortEntry.directive.location_name ?? "Unsorted bin"}
+                      </span>
+                    </div>
+                    <div className="text-xs text-white/70">
+                      No confident match — park it, it stays findable in the inbox.
+                    </div>
+                  </>
+                )}
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => confirmSort()}
+                    className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-cobble-600 hover:bg-cobble-700 text-white text-base font-semibold px-4 py-3"
+                    data-testid="camera-sort-confirm"
+                  >
+                    <Check size={18} /> Done, next
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSortEntry(null)}
+                    title="Skip — leave it unsorted for now"
+                    className="rounded-xl bg-white/10 hover:bg-white/20 px-3 py-3"
+                  >
+                    <SkipForward size={18} />
+                  </button>
+                </div>
+                <div className="text-[10px] text-white/50 text-center">
+                  scan a bin's QR label to file it somewhere else
+                </div>
+              </>
+            ) : sortBusy ? (
+              <div className="flex items-center gap-2 text-sm">
+                <Loader2 size={16} className="animate-spin text-cobble-300" /> Finding it a home…
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-xs">
+                <Zap size={14} className="text-cobble-300 shrink-0" />
+                <span className="min-w-0 flex-1 truncate">
+                  Sorted {sortCount} — scan the next item
+                </span>
+                <label
+                  className="inline-flex items-center gap-1 text-white/70 shrink-0"
+                  title="The next scan confirms the current directive — zero taps in steady state; Undo covers mistakes"
+                >
+                  <input type="checkbox" checked={sortImplicit} onChange={toggleSortImplicit} />
+                  auto-Done
+                </label>
+                {sortLast && (
+                  <button
+                    type="button"
+                    onClick={undoSort}
+                    className="inline-flex items-center gap-1 text-cobble-200 hover:text-white shrink-0"
+                  >
+                    <Undo2 size={13} /> Undo {sortLast.name ?? "last"}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
         {undoableMoves.length > 0 && (
           <div className="flex items-center gap-2 bg-black/55 rounded-full px-3 py-2 text-white text-xs max-w-md mx-auto">
             <ArrowLeftRight size={14} className="text-emerald-400 shrink-0" />

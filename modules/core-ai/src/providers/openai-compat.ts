@@ -19,6 +19,7 @@ import { platform, type AiCapability, type AiProviderDef } from "@cobblr/platfor
 import { assertSafeAiEndpoint, pinnedFetch, type PinnedResponse } from "../ssrf.js";
 import { TRANSIT_FIELD, viaBridge, edgeKeyFor, edgeFetch } from "./edge-transit.js";
 import { buildMessages } from "./openai.js";
+import { toolsOf, openAiToolsOf, parseOpenAiToolCalls, looksLikeNoToolSupport } from "./tool-wire.js";
 
 const SUPPORTED: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>> = {
   chat: { models: ["default"], defaultModel: "default" },
@@ -119,22 +120,45 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
             model,
             messages: buildMessages(ctx.capability, ctx.input),
           };
+          // Native tool-calling for chat: forward the neutral tool defs. A
+          // server that doesn't support tools 4xxes on the field — retried
+          // once without them (graceful no-tools degrade for local models).
+          const toolDefs = ctx.capability === "chat" ? toolsOf(ctx.input) : null;
+          if (toolDefs) body.tools = openAiToolsOf(toolDefs);
           // response_format json_object is OpenAI-specific; local servers vary.
           // The JSON-shaped prompts already instruct the model, and every
           // consumer robust-parses (parseJsonReply) — so omit it and stay
           // compatible with the widest server set.
-          const res = await call("/chat/completions", {
+          let res = await call("/chat/completions", {
             method: "POST",
             headers,
             body: JSON.stringify(body),
           });
+          if (!res.ok && toolDefs) {
+            const errText = await res.text();
+            if (!looksLikeNoToolSupport(res.status, errText)) throw new Error(`${id}: ${res.status} ${errText}`);
+            delete body.tools;
+            res = await call("/chat/completions", { method: "POST", headers, body: JSON.stringify(body) });
+          }
           if (!res.ok) throw new Error(`${id}: ${res.status} ${await res.text()}`);
           const out = (await res.json()) as {
-            choices: Array<{ message: { role: string; content: string } }>;
+            choices: Array<{
+              message: {
+                role: string;
+                content: string | null;
+                tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: unknown } }>;
+              };
+            }>;
             usage?: { prompt_tokens?: number; completion_tokens?: number };
           };
+          const msg = out.choices[0]?.message ?? { role: "assistant", content: "" };
+          const calls = parseOpenAiToolCalls(msg);
           return {
-            result: out.choices[0]?.message ?? { role: "assistant", content: "" },
+            result: {
+              role: msg.role ?? "assistant",
+              content: msg.content ?? "",
+              ...(calls ? { tool_calls: calls } : {}),
+            },
             input_tokens: out.usage?.prompt_tokens ?? 0,
             output_tokens: out.usage?.completion_tokens ?? 0,
             cost_cents: 0,

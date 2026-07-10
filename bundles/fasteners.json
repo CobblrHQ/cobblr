@@ -77,7 +77,7 @@
             "entity_kind": "inventory:part",
             "name": "length_mm",
             "display_label": "Length (mm)",
-            "type": "number",
+            "type": "number", "unit": "mm",
             "position": 3,
             "help": "Shaft length, not counting the head. Leave blank for nuts/washers."
           },

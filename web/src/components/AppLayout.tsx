@@ -460,6 +460,10 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
         {!fullSide && <EmailVerifyBanner />}
       </div>
 
+      {/* Modals center within the CONTENT area: publish the reserved edges
+          (pinned sidebar left, chat panel right) for platform-web's Modal.
+          Auto-hide mode reserves nothing — the panel overlays content. */}
+      <PublishModalInsets left={navMode === "side" && !navAutoHide ? "14rem" : "0px"} right={chatOpen ? "456px" : "0px"} />
       {/* When the Ask-Cobblr panel (fixed 440px right sidebar) is open, reserve
           its width on wide screens so the centered content shifts LEFT into its
           margin and the two coexist — no overlap, no compression (xl+ has room). */}
@@ -522,4 +526,20 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
       <DriveBanner />
     </div>
   );
+}
+
+
+/** Publish the shell's reserved edges as CSS vars on <html> so overlays
+ *  (platform-web Modal) can center within the content area. */
+function PublishModalInsets({ left, right }: { left: string; right: string }) {
+  useEffect(() => {
+    const el = document.documentElement;
+    el.style.setProperty("--modal-inset-left", left);
+    el.style.setProperty("--modal-inset-right", right);
+    return () => {
+      el.style.removeProperty("--modal-inset-left");
+      el.style.removeProperty("--modal-inset-right");
+    };
+  }, [left, right]);
+  return null;
 }

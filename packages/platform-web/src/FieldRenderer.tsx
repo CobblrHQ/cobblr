@@ -18,6 +18,7 @@ import { Check, ExternalLink, ImageOff, X } from "lucide-react";
 import type { FieldRendererId } from "./types";
 import { Markdown, stripMarkdown } from "./Markdown";
 import { QrCode } from "./QrCode";
+import { useUnits } from "./useUnits";
 
 interface Props {
   fieldName: string;
@@ -32,6 +33,12 @@ interface Props {
    *  (the same `choices` array the field-def carries) — so "Needs drying" can
    *  read "Yes/No", "Dry/Wet", or whatever the author/user set. Defaults no/yes. */
   choices?: string[] | null;
+  /** The field def's declared unit ("mm", "g") — a number value renders as a
+   *  quantity ("12 mm") per the workspace's symbol/name display preference.
+   *  Free text; a string the vocabulary doesn't know renders as typed. Callers
+   *  passing this must be inside PlatformWebProvider (all field-def surfaces
+   *  are). */
+  unit?: string | null;
   /** Inline (single-line summary) vs block (large preview). The
    *  catalog list uses inline; the detail page can use block for
    *  the hero image / color swatch. */
@@ -56,10 +63,16 @@ export function FieldRenderer({
   renderer,
   type,
   choices,
+  unit,
   size = "inline",
 }: Props) {
   if (value === null || value === undefined || value === "") {
     return <span className="text-faint dark:text-slate-600">—</span>;
+  }
+  // A number with a declared unit renders as a quantity ("12 mm"). Its own
+  // component so the units hook mounts only when a consumer passed a unit.
+  if (unit && Number.isFinite(Number(value))) {
+    return <NumberWithUnit value={Number(value)} unit={unit} />;
   }
   // A boolean field renders as a labelled yes/no even without an explicit
   // renderer — the text default would show the raw "true"/"false". A richtext
@@ -103,6 +116,11 @@ export function FieldRenderer({
     default:
       return <span>{String(value)}</span>;
   }
+}
+
+function NumberWithUnit({ value, unit }: { value: number; unit: string }) {
+  const units = useUnits();
+  return <span className="tabular-nums">{units.format(value, unit)}</span>;
 }
 
 function ColorSwatch({ value, size }: { value: unknown; size: "inline" | "block" }) {

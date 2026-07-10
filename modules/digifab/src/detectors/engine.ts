@@ -5,7 +5,7 @@
 
 import { assertSafeMachineUrl } from "../drivers/ssrf.js";
 import type { DetectorManifest } from "./manifest.js";
-import { resolveReading, extractRaw } from "./manifest.js";
+import { resolveReading, extractRaw, meetsMinVersion } from "./manifest.js";
 import type { DetectorContext } from "./types.js";
 
 /** A camera as reported by an external detector's listCameras (the import list). */
@@ -227,18 +227,51 @@ export async function listDetectorPrinters(m: DetectorManifest, conn: Conn): Pro
   return out;
 }
 
-/** The test-button probe: hit the manifest's health endpoint if it has one, else
- *  a bare GET of the base URL. Returns ok + a short detail. */
-export async function testDetectorManifest(m: DetectorManifest, baseUrl: string, apiKey: string | null): Promise<{ ok: boolean; detail?: string }> {
+/** Read the running service's version (a semver string), or null if the manifest
+ *  declares no `serviceVersion` or the read fails. */
+export async function getDetectorVersion(m: DetectorManifest, conn: Conn): Promise<string | null> {
+  if (!m.serviceVersion) return null;
+  const base = conn.baseUrl.replace(/\/+$/, "");
+  const data = await fetchJson(m.serviceVersion.method, base + m.serviceVersion.path, { headers: authHeaders(m, conn.apiKey) });
+  const v = extractRaw(m.serviceVersion.extract, data)[0];
+  return v == null ? null : String(v);
+}
+
+/** The test-button probe: reachability (health endpoint or a bare GET) PLUS a
+ *  version-floor check when the manifest declares `minServiceVersion` — so a
+ *  reachable-but-too-old service reports `ok: false` with a clear reason. */
+export async function testDetectorManifest(
+  m: DetectorManifest,
+  baseUrl: string,
+  apiKey: string | null,
+): Promise<{ ok: boolean; detail?: string; version?: string | null; compatible?: boolean }> {
   const base = baseUrl.replace(/\/+$/, "");
   const headers = authHeaders(m, apiKey);
   const path = m.health ? base + m.health.path : base + "/";
   const method = m.health?.method ?? "GET";
+  let ok: boolean;
+  let detail: string | undefined;
   try {
     await assertSafeMachineUrl(path);
     const res = await fetch(path, { method, headers, signal: AbortSignal.timeout(TIMEOUT_MS) });
-    return { ok: res.ok, detail: res.ok ? undefined : `status ${res.status}` };
+    ok = res.ok;
+    detail = res.ok ? undefined : `status ${res.status}`;
   } catch (e) {
     return { ok: false, detail: (e as Error).message };
   }
+  // Version floor (when declared).
+  let version: string | null | undefined;
+  let compatible: boolean | undefined;
+  if (m.serviceVersion) {
+    try {
+      version = await getDetectorVersion(m, { baseUrl, apiKey });
+    } catch {
+      version = null;
+    }
+    if (m.minServiceVersion) {
+      compatible = meetsMinVersion(version, m.minServiceVersion);
+      if (!compatible) detail = `needs ${m.name} ≥ ${m.minServiceVersion}${version ? ` (found ${version})` : " (version unknown)"}`;
+    }
+  }
+  return { ok: ok && compatible !== false, detail, version, compatible };
 }

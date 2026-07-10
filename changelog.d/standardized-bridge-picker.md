@@ -1,1 +1,6 @@
+---
+type: improvement
+date: 2026-06-24
+---
+
 - Edge bridges: connections (sync + machines) now use a standardized bridge picker that lists your connected bridges with live online status and lets you select one, instead of a free-text field. New GET .../digifab/edge/bridges enumerates them.

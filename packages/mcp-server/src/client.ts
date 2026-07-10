@@ -5,6 +5,7 @@
 // workspace slug, and normalises errors into a shape the tools can surface.
 
 import type { Config } from "./config.js";
+import type { WorkspaceApi } from "@cobblr/workspace-tools";
 
 export class CobblrApiError extends Error {
   constructor(
@@ -89,6 +90,44 @@ export class CobblrClient {
     }
 
     return parsed as T;
+  }
+
+  /** A WorkspaceApi (the @cobblr/workspace-tools transport seam) bound to one
+   *  workspace. Non-throwing on HTTP errors — registry tools turn a status
+   *  into an honest { ok:false, error } result themselves. */
+  workspaceApi(slug: string): WorkspaceApi {
+    const base = `${this.cfg.baseUrl}/orgs/${encodeURIComponent(slug)}`;
+    const token = this.cfg.token;
+    return {
+      async request(method, path, body) {
+        let res: Response;
+        try {
+          res = await fetch(`${base}${path}`, {
+            method,
+            headers: {
+              authorization: `Bearer ${token}`,
+              ...(body !== undefined ? { "content-type": "application/json" } : {}),
+            },
+            body: body !== undefined ? JSON.stringify(body) : undefined,
+          });
+        } catch (e) {
+          return {
+            status: 0,
+            body: { error: { code: "network_error", message: e instanceof Error ? e.message : String(e) } },
+          };
+        }
+        const text = await res.text();
+        let parsed: unknown = {};
+        if (text) {
+          try {
+            parsed = JSON.parse(text);
+          } catch {
+            parsed = { raw: text };
+          }
+        }
+        return { status: res.status, body: (parsed ?? {}) as Record<string, unknown> };
+      },
+    };
   }
 
   // ── Workspace discovery ──────────────────────────────────────────────

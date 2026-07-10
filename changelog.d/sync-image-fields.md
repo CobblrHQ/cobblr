@@ -1,1 +1,6 @@
+---
+type: improvement
+date: 2026-06-25
+---
+
 - Sync sources can pull images across: a section declares "images": { "image_path": "$.image_url" } and the engine fetches each image through the edge bridge, stores it in your file library, and points the record at it. Works for LAN sources (e.g. companion app printer photos) the cloud can’t reach directly.

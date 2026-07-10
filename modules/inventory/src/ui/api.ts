@@ -21,6 +21,9 @@ export interface InvFieldDef {
   renderer?: string | null;
   /** Plain-language one-line hint shown under the input. */
   help?: string | null;
+  /** Declared unit for type='number' values ("mm", "g") — rendered as a
+   *  quantity suffix; resolved against the units vocabulary. */
+  unit?: string | null;
   /** Server-managed: value stamped server-side; never render an input. */
   server_managed?: boolean | null;
   /** type='relation' only: the referenced entity-kind id. */

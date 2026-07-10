@@ -9,7 +9,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "digifab",
-  version: "0.32.0",
+  version: "0.34.0",
   displayName: "Digital Fabrication",
   description:
     "Send a design file to the software that runs your machine — FDM Monster, OctoPrint, and friends — and track the job to completion. Map a manager's printers to your machines and route files to them. Talks to each manager's REST API; it sends files, it never drives the hardware.",
@@ -58,7 +58,11 @@ export default defineModule({
   provides: {
     entityKinds: [
       {
+        // AI-CRUD: no create — jobs are created by the send-to-machine flow
+        // (file + machine + driver), not a generic POST.
         id: "digifab:job",
+        updateEndpoint: "/jobs/{id}",
+        deleteEndpoint: "/jobs/{id}",
         displayName: "Print job",
         displayNamePlural: "Print jobs",
         icon: "printer",
@@ -78,6 +82,21 @@ export default defineModule({
         exposableFields: ["file_ref", "status", "target_device", "progress", "remote_job_id"],
         detailRoute: "/configuration/farm",
       },
+    ],
+  },
+
+  contributes: {
+    // UI presence on the module digifab OPERATES ON (gated by operatesOn —
+    // the manifest schema rejects a panel targeting an undeclared module).
+    // Components live in web/src/panels/registry.tsx under these ids; the
+    // machines pages render them generically, never naming digifab.
+    panels: [
+      // "Just my 3D printers, live" — the scoped fleet floor as a page tab
+      // on every machines collection (3D Printers, Laser Cutters, …).
+      { id: "digifab:fleet-tab", surface: "module-page-tab" as const, target: "machines", title: "Fleet" },
+      // The per-machine cockpit half: link THIS machine to its manager +
+      // live status, inside the machine's own detail modal.
+      { id: "digifab:cockpit", surface: "entity-detail-panel" as const, target: "machines:machine", title: "Print manager" },
     ],
   },
 

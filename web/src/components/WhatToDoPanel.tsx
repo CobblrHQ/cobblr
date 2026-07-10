@@ -886,6 +886,20 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
               ? "Scan barcodes or snap photos with your camera — they file themselves."
               : "No camera here? Pair your phone — scan with it and the items land in this workspace."}
           </p>
+          {/* The messy-pile first mission (put-away.md §5): sorting a physical
+              pile IS a great first session — bins get made and named as you go.
+              On a phone this lands in the camera with Sort mode already on. */}
+          <p className="text-[11px] text-faint dark:text-slate-500 mt-1">
+            Got a pile of stuff to put away?{" "}
+            <Link
+              to={isTouch ? "/scan/camera?sort=1" : "/scan?livesort=1"}
+              className="text-accent hover:underline font-medium"
+            >
+              Start a Live Sort
+            </Link>{" "}
+            — scan each thing and get told which bin it goes in; number a few containers with a
+            marker and the bins name themselves as you sort.
+          </p>
 
           {/* Starter chips — a fresh panel demos the magic in one tap. Only when
               there's nothing captured yet and no funnel selection. */}

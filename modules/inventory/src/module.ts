@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "inventory",
-  version: "0.7.0",
+  version: "0.8.0",
   displayName: "Inventory",
   description:
     "Parts, locations, categories, stock tracking, polymorphic allocations. The generalised toolkit you'd otherwise Frankenstein from a spreadsheet.",
@@ -33,6 +33,11 @@ export default defineModule({
     entityKinds: [
       {
         id: "inventory:part",
+        primary: true,
+        listEndpoint: "/parts",
+        createEndpoint: "/parts",
+        updateEndpoint: "/parts/{id}",
+        deleteEndpoint: "/parts/{id}",
         displayName: "Part",
         displayNamePlural: "Parts",
         icon: "boxes",

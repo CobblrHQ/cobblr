@@ -1,2 +1,7 @@
-- Sync sources: one section can now fan a single endpoint out to several instances with "instanceBy" — e.g. companion app /printers routes to 3d-printers + laser-cutters + cnc by category, instead of one near-duplicate section per category.
+---
+type: fix
+date: 2026-06-25
+---
+
+- Sync sources: one section can now fan a single endpoint out to several instances with "instanceBy": e.g. companion app /printers routes to 3d-printers + laser-cutters + cnc by category, instead of one near-duplicate section per category.
 - The section editor sanity-checks pasted JSON: structural problems block the save; an instance slug that does not match a real workspace instance warns with a "did you mean" suggestion (catches the targetInstance typo that silently shipped lasers nowhere).

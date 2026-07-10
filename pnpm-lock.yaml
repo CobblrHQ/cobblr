@@ -26,6 +26,9 @@ importers:
       '@cobblr/platform-contract':
         specifier: workspace:*
         version: link:../packages/platform-contract
+      '@cobblr/workspace-tools':
+        specifier: workspace:*
+        version: link:../packages/workspace-tools
       '@types/nodemailer':
         specifier: ^8.0.0
         version: 8.0.0
@@ -232,6 +235,9 @@ importers:
       '@cobblr/platform-contract':
         specifier: workspace:*
         version: link:../../packages/platform-contract
+      '@cobblr/workspace-tools':
+        specifier: workspace:*
+        version: link:../../packages/workspace-tools
       express:
         specifier: ^4.21.2
         version: 4.22.2
@@ -1193,6 +1199,9 @@ importers:
 
   packages/mcp-server:
     dependencies:
+      '@cobblr/workspace-tools':
+        specifier: workspace:*
+        version: link:../workspace-tools
       '@modelcontextprotocol/sdk':
         specifier: ^1.0.0
         version: 1.29.0(zod@3.25.76)
@@ -1251,6 +1260,16 @@ importers:
         version: 0.27.37
       typescript:
         specifier: ^5.7.2
+        version: 5.9.3
+
+  packages/workspace-tools:
+    dependencies:
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
+    devDependencies:
+      typescript:
+        specifier: ^5.6.3
         version: 5.9.3
 
   sandboxed-modules/bricklink-sandboxed:

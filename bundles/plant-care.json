@@ -53,7 +53,7 @@
             "entity_kind": "assets:asset",
             "name": "water_every_days",
             "display_label": "Water every (days)",
-            "type": "number",
+            "type": "number", "unit": "d",
             "position": 3,
             "help": "Days between waterings — e.g. 7 for weekly."
           },

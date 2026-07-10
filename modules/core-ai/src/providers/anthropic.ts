@@ -2,6 +2,7 @@
 
 import { platform, type AiCapability } from "@cobblr/platform-contract";
 import { IDENTIFY_PROMPT, measurementContext } from "./identify-prompt.js";
+import { toolsOf, turnsOf, anthropicToolsOf, anthropicMessagesOf, parseAnthropicContent } from "./tool-wire.js";
 
 const SUPPORTED: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>> = {
   chat: {
@@ -66,6 +67,9 @@ export function register(): void {
         messages,
       };
       if (system) body.system = system;
+      // Native tool-calling for chat: forward the neutral tool defs.
+      const toolDefs = ctx.capability === "chat" ? toolsOf(ctx.input) : null;
+      if (toolDefs) body.tools = anthropicToolsOf(toolDefs);
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
@@ -77,16 +81,17 @@ export function register(): void {
       });
       if (!res.ok) throw new Error(`anthropic: ${res.status} ${await res.text()}`);
       const out = (await res.json()) as {
-        content: Array<{ type: string; text?: string }>;
+        content: Array<{ type: string; text?: string; id?: string; name?: string; input?: unknown }>;
         usage: { input_tokens: number; output_tokens: number };
       };
-      const text = out.content.find((c) => c.type === "text")?.text ?? "";
+      const parsed = parseAnthropicContent(out.content);
+      const text = parsed.text;
       return {
         result:
           ctx.capability === "embed-text"
             ? { vector: [] }
             : ctx.capability === "chat"
-              ? { role: "assistant", content: text }
+              ? { role: "assistant", content: text, ...(parsed.tool_calls ? { tool_calls: parsed.tool_calls } : {}) }
               : ctx.capability === "summarise"
                 ? { text }
                 : { text },
@@ -184,10 +189,10 @@ function buildMessages(
     }
     case "chat":
     default: {
-      const msgs = ((input.messages as Array<{ role: string; content: string }>) ?? []).map((m) => ({
-        role: m.role,
-        content: [{ type: "text" as const, text: m.content }],
-      }));
+      // Tool-aware turn mapping: assistant tool_calls → tool_use blocks; tool
+      // results → user turns with tool_result blocks (Anthropic's dialect of
+      // the neutral wire — see tool-wire.ts).
+      const msgs = anthropicMessagesOf(turnsOf(input)) as Array<{ role: string; content: ClaudeContentBlock[] }>;
       const system = typeof input.system === "string" ? input.system : undefined;
       return { system, messages: msgs };
     }

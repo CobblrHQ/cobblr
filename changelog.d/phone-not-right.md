@@ -1,4 +1,5 @@
 ---
+type: fix
 type: feat
 date: 2026-06-24
 ---

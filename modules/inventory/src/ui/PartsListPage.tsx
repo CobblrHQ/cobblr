@@ -906,6 +906,7 @@ function PartsTable({
                     renderer={(c.renderer ?? null) as FieldRendererId | null}
                     type={c.type}
                     choices={c.choices}
+                    unit={c.unit}
                     fieldName={c.display_label}
                   />
                 </td>

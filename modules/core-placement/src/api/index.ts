@@ -12,6 +12,10 @@ import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { tenantContext, sessionUser } from "../db.js";
 import { requireRole } from "./util.js";
+import { registerPlacementActionHandlers } from "./action-handlers.js";
+
+// Side effect on import: the place/remove action handlers.
+registerPlacementActionHandlers();
 
 const router = Router({ mergeParams: true });
 

@@ -41,6 +41,7 @@ function within(actual: number, expected: number, tol: number): boolean {
 }
 
 interface Draft {
+  placements?: Array<{ name: string; rect: { x_mm: number; y_mm: number; w_mm: number; d_mm: number } }>;
   room: {
     w_mm: number;
     d_mm: number;
@@ -89,6 +90,7 @@ async function main(): Promise<void> {
     if (!seedRes.ok) {
       console.error(`✗ seed failed: ${seedRes.status} ${await seedRes.text()}`);
       failures++;
+      process.exitCode = 1; // the early return skips the summary exit — 2026-07-10 this silently exited 0 and a chain promoted past a red eval
       return;
     }
     const { draft } = (await seedRes.json()) as { draft: Draft };
@@ -126,6 +128,23 @@ async function main(): Promise<void> {
     // Nothing invented: no zone named after furniture.
     const furniture = draft.zones.find((z) => /rack|toolbox|bench|table|chest/i.test(z.name));
     check("no furniture drafted as zones", !furniture, `got zone "${furniture?.name}"`);
+
+    // Placements: the named furniture drafts as PLACEMENTS instead — at least
+    // the rack and the work table, every rect inside the room.
+    const placements = (draft as { placements?: Array<{ name: string; rect: { x_mm: number; y_mm: number; w_mm: number; d_mm: number } }> }).placements ?? [];
+    check(
+      "≥4 placements incl. rack + work table",
+      placements.length >= 4 &&
+        placements.some((p) => /rack/i.test(p.name)) &&
+        placements.some((p) => /table|bench/i.test(p.name)),
+      `placements: ${JSON.stringify(placements.map((p) => p.name))}`,
+    );
+    const outOfBounds = placements.find(
+      (p) =>
+        p.rect.x_mm + p.rect.w_mm > draft.room.w_mm + 100 ||
+        p.rect.y_mm + p.rect.d_mm > draft.room.d_mm + 100,
+    );
+    check("every placement inside the room", !outOfBounds, `out: ${JSON.stringify(outOfBounds)}`);
   } finally {
     await fetch(`${base}/${room.id}`, { method: "DELETE", headers: H }).catch(() => {});
   }

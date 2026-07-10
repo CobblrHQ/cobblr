@@ -69,6 +69,12 @@ export const DetectorManifest = z
     shape: z.enum(["frame-scorer", "camera-watcher"]),
     /** Optional health probe for the test button. */
     health: z.object({ method: Method, path: z.string() }).optional(),
+    /** How to read the running service's version (a semver string) — so Cobblr
+     *  can enforce `minServiceVersion`. `extract` runs against the response. */
+    serviceVersion: z.object({ method: Method, path: z.string(), extract: z.string().min(1) }).optional(),
+    /** The lowest service version this package works against (e.g. "2.3.0" for a
+     *  capability that only exists from that release). Compared semver-style. */
+    minServiceVersion: z.string().optional(),
     /** frame-scorer: how a frame is delivered + scored. */
     detect: ProbCall.extend({
       /** "url": pass a snapshot URL the detector fetches (Obico `/p/?img=`).
@@ -229,3 +235,18 @@ export function resolveReading(spec: ProbCall, data: unknown): number | null {
 }
 
 const clamp01 = (n: number): number => Math.max(0, Math.min(1, n));
+
+/** Parse "X.Y.Z" (leading v + any pre-release/build suffix ignored) → tuple. */
+function parseSemver(v: string): [number, number, number] {
+  const m = /^\s*v?(\d+)(?:\.(\d+))?(?:\.(\d+))?/.exec(String(v));
+  return m ? [Number(m[1]), Number(m[2] ?? 0), Number(m[3] ?? 0)] : [0, 0, 0];
+}
+
+/** True if `version` >= `min` (semver X.Y.Z). Unknown/empty version ⇒ false. */
+export function meetsMinVersion(version: string | null | undefined, min: string): boolean {
+  if (!version) return false;
+  const a = parseSemver(version);
+  const b = parseSemver(min);
+  for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i]! > b[i]!;
+  return true; // equal
+}

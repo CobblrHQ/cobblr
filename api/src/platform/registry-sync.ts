@@ -28,6 +28,7 @@ export async function syncManifestRegistries(): Promise<{
     profile: string | null;
     exposable_fields: string[] | null;
     field_read_scopes: Record<string, string> | null;
+    is_primary: boolean;
   }> = [];
   const actionRows: Array<{
     id: string;
@@ -56,13 +57,17 @@ export async function syncManifestRegistries(): Promise<{
         fields: k.fields,
         detail_route: k.detailRoute ?? null,
         endpoints:
-          k.getEndpoint || k.createEndpoint
+          k.getEndpoint || k.createEndpoint || k.updateEndpoint || k.deleteEndpoint || k.listEndpoint
             ? {
                 ...(k.getEndpoint ? { get: k.getEndpoint } : {}),
+                ...(k.listEndpoint ? { list: k.listEndpoint } : {}),
                 ...(k.createEndpoint ? { create: k.createEndpoint } : {}),
+                ...(k.updateEndpoint ? { update: k.updateEndpoint } : {}),
+                ...(k.deleteEndpoint ? { delete: k.deleteEndpoint } : {}),
               }
             : null,
         version: k.version ?? m.version,
+        is_primary: k.primary === true,
         traits: k.traits ?? null,
         profile: k.profile ?? null,
         exposable_fields: k.exposableFields ?? null,
@@ -124,6 +129,7 @@ export async function syncManifestRegistries(): Promise<{
             ? sql`${JSON.stringify(k.endpoints)}::jsonb`
             : null,
           version: k.version,
+          is_primary: k.is_primary,
           traits: k.traits ? sql`${JSON.stringify(k.traits)}::jsonb` : null,
           profile: k.profile,
           exposable_fields: k.exposable_fields
@@ -145,6 +151,7 @@ export async function syncManifestRegistries(): Promise<{
               ? sql`${JSON.stringify(k.endpoints)}::jsonb`
               : null,
             version: k.version,
+            is_primary: k.is_primary,
             traits: k.traits ? sql`${JSON.stringify(k.traits)}::jsonb` : null,
             profile: k.profile,
             exposable_fields: k.exposable_fields

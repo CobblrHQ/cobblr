@@ -62,6 +62,32 @@ export const inboxRouter = Router({ mergeParams: true });
 // :4055→:4000); it's an explicit opt-in, not the default.
 const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
 
+// ─────────────────────────── GET /inbox/stats ──────────────────────
+// Cheap counts for the put-away front door (dashboard card + scan-page
+// strip): how many pending captures exist, and how many of those still have
+// no home (no target location/container). One SQL, no rows.
+
+inboxRouter.get(
+  "/inbox/stats",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member", "guest")) return;
+    const db = tenantDb(req);
+    const row = await db
+      .selectFrom("core_scan_inbox_items")
+      .select((eb) => [
+        eb.fn.countAll<number>().as("pending"),
+        eb.fn
+          .count<number>(
+            sql`case when target_location_id is null and target_container_id is null then 1 end`,
+          )
+          .as("unfiled"),
+      ])
+      .where("status", "=", "pending")
+      .executeTakeFirstOrThrow();
+    res.json({ pending: Number(row.pending), unfiled: Number(row.unfiled) });
+  }),
+);
+
 // ─────────────────────────── POST /scan ────────────────────────────
 
 const ScanBody = z.object({
@@ -1514,7 +1540,7 @@ async function appendScanHistory(
   db: ReturnType<typeof tenantDb>,
   id: string,
   entry: {
-    action: "rerun" | "wrong" | "enrich" | "confirm" | "combine" | "attached" | "split";
+    action: "rerun" | "wrong" | "enrich" | "confirm" | "combine" | "attached" | "split" | "unconfirm";
     note?: string | null;
   },
 ): Promise<void> {
@@ -1956,6 +1982,107 @@ inboxRouter.get(
       name: row.suggested_name,
     });
     res.json(matches);
+  }),
+);
+
+// ─────────────────────── POST /inbox/:id/unconfirm ─────────────────────
+// REVERT a commit: bring a resolved scan back to the pending inbox so a wrong
+// confirm can be redone (the mirror of restore-from-discarded, for the other
+// resolution). Two cases, split on how the row resolved:
+//   - CONFIRMED (an entity was CREATED from this scan): the created entity is
+//     deleted through its kind's registered writer — module validation +
+//     events fire — and the row reopens. If the entity is already gone (user
+//     deleted it by hand) or the kind has no writer, the row still reopens
+//     and the response says what was left behind.
+//   - ATTACHED (this scan updated a PRE-EXISTING entity — add-qty/link/move):
+//     the entity is NEVER deleted; the row reopens and the response notes any
+//     quantity bump is yours to undo.
+
+inboxRouter.post(
+  "/inbox/:id/unconfirm",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const ctx = tenantContext(req);
+    const db = tenantDb(req);
+    const id = String(req.params.id);
+    const row = await db
+      .selectFrom("core_scan_inbox_items")
+      .selectAll()
+      .where("id", "=", id)
+      .executeTakeFirst();
+    if (!row) {
+      res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
+      return;
+    }
+    if (row.status !== "resolved") {
+      res.status(422).json({
+        error: { code: "not_resolved", message: "Only a committed scan can be sent back." },
+      });
+      return;
+    }
+
+    const meta = (row.suggested_metadata ?? {}) as Record<string, unknown>;
+    const attached = meta.attached_to as { kind?: string; id?: string; mode?: string } | undefined;
+    let entityDeleted = false;
+    let note: string | null = null;
+
+    if (attached?.id) {
+      note =
+        attached.mode === "add-qty"
+          ? "The existing entry it attached to was left untouched — undo the quantity bump there if needed."
+          : "The existing entry it attached to was left untouched.";
+    } else if (row.target_entity_id && row.target_module && row.target_kind) {
+      const kindKey = row.target_kind.includes(":")
+        ? row.target_kind
+        : `${row.target_module}:${row.target_kind}`;
+      const existing = await platform()
+        .entities.lookup(ctx.org.id, kindKey, row.target_entity_id)
+        .catch(() => null);
+      if (!existing) {
+        note = "The created entry was already deleted.";
+      } else {
+        const writer = platform().entities.getWriter(kindKey);
+        if (!writer?.delete) {
+          note = `The created entry couldn't be removed automatically — delete it from its own page (${existing.title}).`;
+        } else {
+          try {
+            await writer.delete(ctx.org.id, row.target_entity_id);
+            entityDeleted = true;
+          } catch (err) {
+            note = `The created entry couldn't be removed (${(err as Error).message}) — delete it from its own page.`;
+          }
+        }
+      }
+    }
+
+    // Reopen: back to pending, resolution cleared, resurfaced at the top.
+    // suggested_* stays — the point is to FIX the identification and redo.
+    const { attached_to: _drop, ...restMeta } = meta;
+    const reopened = await db
+      .updateTable("core_scan_inbox_items")
+      .set({
+        status: "pending",
+        target_module: null,
+        target_kind: null,
+        target_entity_id: null,
+        resolved_at: null,
+        suggested_metadata: JSON.stringify(restMeta) as never,
+        created_at: sql`now()`,
+        updated_at: new Date(),
+      })
+      .where("id", "=", id)
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    await appendScanHistory(db, id, {
+      action: "unconfirm",
+      note: entityDeleted ? "commit reverted; created entry removed" : (note ?? "commit reverted"),
+    });
+    void platform().events.emit("core-scan.scan.unconfirmed", {
+      orgId: ctx.org.id,
+      itemId: id,
+      entityDeleted,
+    });
+    res.json({ item: reopened, entity_deleted: entityDeleted, note });
   }),
 );
 

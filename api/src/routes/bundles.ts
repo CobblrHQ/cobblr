@@ -127,10 +127,19 @@ const FieldDefEntry = z
     /** Plain-language one-line hint shown under the input ("the maker's named
      *  shade — e.g. 'Peacock Heather'") so jargon fields explain themselves. */
     help: z.string().max(280).optional(),
+    /** The unit a type='number' value is measured in ("mm", "g") — free text,
+     *  resolved against the units vocabulary at render/consume time. Declares
+     *  physical semantics (a length-category unit IS a length), never derived
+     *  from the field's name. */
+    unit: z.string().trim().min(1).max(40).nullish(),
   })
   .refine((f) => f.type !== "computed" || (f.template && f.template.trim().length > 0), {
     message: "computed field_defs need a template",
     path: ["template"],
+  })
+  .refine((f) => !f.unit || f.type === "number", {
+    message: "unit is only valid for type='number'",
+    path: ["unit"],
   });
 
 const FieldOverrideEntry = z.object({
@@ -876,7 +885,7 @@ bundlesRouter.get(
         .execute();
       const fieldDefs = await meta
         .selectFrom("module_field_defs")
-        .select(["entity_kind", "name", "display_label", "type", "required", "position"])
+        .select(["entity_kind", "name", "display_label", "type", "required", "position", "unit"])
         .where("org_id", "=", orgId)
         .where("bundle_id", "is", null)
         .where("source_module", "is", null)
@@ -1323,6 +1332,7 @@ export async function applyValidatedBundle(
           renderer: (f as { renderer?: string | null }).renderer ?? null,
           template: f.type === "computed" ? f.template ?? null : null,
           help: f.help ?? null,
+          unit: f.type === "number" ? f.unit ?? null : null,
         })
         .execute();
     }
@@ -1400,6 +1410,7 @@ export async function applyValidatedBundle(
             renderer: (f as { renderer?: string | null }).renderer ?? null,
             template: f.type === "computed" ? f.template ?? null : null,
             help: f.help ?? null,
+            unit: f.type === "number" ? f.unit ?? null : null,
           })
           .execute();
       }

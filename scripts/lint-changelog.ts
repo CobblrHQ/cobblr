@@ -20,6 +20,8 @@
 //
 // Diffs against main; no-ops with no base. Run: npx tsx scripts/lint-changelog.ts
 import { execSync } from "node:child_process";
+// @ts-expect-error plain .mjs module, shared with the docs site's lint
+import { lintProse } from "./prose-rules.mjs";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 
 function git(cmd: string): string {
@@ -53,6 +55,47 @@ if (base === tryGit("rev-parse HEAD")) {
 const changed = git(`diff --name-only ${base}...HEAD`).split("\n").filter(Boolean);
 const subjects = git(`log ${base}..HEAD --format=%s`).split("\n").filter(Boolean);
 
+// ── every touched entry must carry full frontmatter (type + date) ──
+// 200+ entries once piled up under "Unreleased" (missing date:) and three
+// features never reached the digest (missing type:) — enforce at the gate.
+const touchedEntries = changed.filter(
+  (f) => /^changelog\.d\/.+\.md$/.test(f) && !f.endsWith("/README.md") && existsSync(f),
+);
+const malformed: string[] = [];
+for (const f of touchedEntries) {
+  const raw = readFileSync(f, "utf8");
+  const fm = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
+  if (!/^type:\s*(feature|improvement|fix)\s*$/m.test(fm)) malformed.push(`${f}: missing/invalid type:`);
+  if (!/^date:\s*\d{4}-\d{2}-\d{2}\s*$/m.test(fm)) malformed.push(`${f}: missing/invalid date: YYYY-MM-DD`);
+}
+if (malformed.length) {
+  console.error(
+    "[lint:changelog] ✗ changelog entries need frontmatter with type: AND date: (else they sit under 'Unreleased' and never reach the digest):\n  " +
+      malformed.join("\n  "),
+  );
+  process.exit(1);
+}
+
+// ── prose style: entries + their staged docs are USER-FACING writing ──
+// The one-liner feeds /changelog + the Discord digest; the ## docs body gets
+// spliced verbatim into the public docs at release. Same voice rules as the
+// docs site, from ONE table (scripts/prose-rules.mjs). Diff-scoped: only
+// entries this push touches are gated; the archive stays as written.
+const proseProblems: string[] = [];
+for (const f of touchedEntries) {
+  for (const h of lintProse(readFileSync(f, "utf8")) as Array<{ line: number; id: string; why: string; excerpt: string }>) {
+    proseProblems.push(`${f}:${h.line} [${h.id}] ${h.why}\n      ${h.excerpt}`);
+  }
+}
+if (proseProblems.length) {
+  console.error(
+    "[lint:changelog] ✗ prose style (rules: scripts/prose-rules.mjs; a genuine false positive can end its line with <!-- prose-ok -->):\n  " +
+      proseProblems.join("\n  "),
+  );
+  process.exit(1);
+}
+
+
 function ver(j: unknown): string | undefined {
   const o = j as { manifest?: { version?: string }; version?: string };
   return o?.manifest?.version ?? o?.version;
@@ -85,27 +128,6 @@ for (const f of changed) {
 if (reasons.length === 0) {
   console.log("[lint:changelog] ✓ no feature detected — no changelog entry required");
   process.exit(0);
-}
-
-// ── every touched entry must carry full frontmatter (type + date) ──
-// 200+ entries once piled up under "Unreleased" (missing date:) and three
-// features never reached the digest (missing type:) — enforce at the gate.
-const touchedEntries = changed.filter(
-  (f) => /^changelog\.d\/.+\.md$/.test(f) && !f.endsWith("/README.md") && existsSync(f),
-);
-const malformed: string[] = [];
-for (const f of touchedEntries) {
-  const raw = readFileSync(f, "utf8");
-  const fm = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
-  if (!/^type:\s*(feature|improvement|fix)\s*$/m.test(fm)) malformed.push(`${f}: missing/invalid type:`);
-  if (!/^date:\s*\d{4}-\d{2}-\d{2}\s*$/m.test(fm)) malformed.push(`${f}: missing/invalid date: YYYY-MM-DD`);
-}
-if (malformed.length) {
-  console.error(
-    "[lint:changelog] ✗ changelog entries need frontmatter with type: AND date: (else they sit under 'Unreleased' and never reach the digest):\n  " +
-      malformed.join("\n  "),
-  );
-  process.exit(1);
 }
 
 // ── staged docs: a feature's changeset carries its user docs ──

@@ -12,7 +12,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "lists",
-  version: "0.1.0",
+  version: "0.2.0",
   displayName: "Lists",
   description:
     "Lightweight checklists — a list + check-off-able items. Shopping lists, to-do, packing. Other modules can auto-add items via a wire (e.g. 'running low' → shopping list).",
@@ -33,6 +33,9 @@ export default defineModule({
     entityKinds: [
       {
         id: "lists:list",
+        createEndpoint: "/lists",
+        updateEndpoint: "/lists/{id}",
+        deleteEndpoint: "/lists/{id}",
         displayName: "List",
         displayNamePlural: "Lists",
         icon: "list-checks",
@@ -48,6 +51,9 @@ export default defineModule({
       },
       {
         id: "lists:item",
+        createEndpoint: "/items",
+        updateEndpoint: "/items/{id}",
+        deleteEndpoint: "/items/{id}",
         displayName: "List item",
         displayNamePlural: "Items",
         icon: "check",

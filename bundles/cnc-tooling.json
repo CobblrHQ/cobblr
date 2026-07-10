@@ -48,7 +48,7 @@
             "entity_kind": "inventory:part",
             "name": "diameter_mm",
             "display_label": "Diameter (mm)",
-            "type": "number",
+            "type": "number", "unit": "mm",
             "position": 2,
             "help": "Cutting diameter, from the calipers."
           },
@@ -56,7 +56,7 @@
             "entity_kind": "inventory:part",
             "name": "shank_dia_mm",
             "display_label": "Shank (mm)",
-            "type": "number",
+            "type": "number", "unit": "mm",
             "position": 3,
             "help": "Shank diameter — the size your collet/holder needs."
           },
@@ -64,7 +64,7 @@
             "entity_kind": "inventory:part",
             "name": "overall_length_mm",
             "display_label": "Overall length (mm)",
-            "type": "number",
+            "type": "number", "unit": "mm",
             "position": 4,
             "help": "Tip to end — for reach + holder clearance."
           },
@@ -72,7 +72,7 @@
             "entity_kind": "inventory:part",
             "name": "flute_length_mm",
             "display_label": "Flute length (mm)",
-            "type": "number",
+            "type": "number", "unit": "mm",
             "position": 5,
             "help": "Length of cut."
           },
@@ -134,7 +134,7 @@
             "entity_kind": "inventory:part",
             "name": "weight_g",
             "display_label": "Weight (g)",
-            "type": "number",
+            "type": "number", "unit": "g",
             "position": 10,
             "help": "From the scale — helps the AI tell carbide from HSS."
           },

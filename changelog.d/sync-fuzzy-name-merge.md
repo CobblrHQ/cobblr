@@ -1,1 +1,6 @@
-- Import name-merge is now case- and punctuation-insensitive, so near-duplicates link instead of duplicating: e.g. "Prusa Mini" merges with "Prusa MINI+". Genuinely different names (CR-10 vs CR-10S) still stay distinct, and every merge is shown in the both-sides preview before it is written.
+---
+type: improvement
+date: 2026-06-25
+---
+
+- Import name-merge is now case- and punctuation-insensitive, so near-duplicates link instead of duplicating: e.g. "Prusa Mini" merges with "Prusa MINI+". Truly different names (CR-10 vs CR-10S) still stay distinct, and every merge is shown in the both-sides preview before it is written.

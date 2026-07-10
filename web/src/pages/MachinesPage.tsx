@@ -12,14 +12,22 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Plus, Printer, Search, Tag as TagIcon, Trash2 } from "lucide-react";
+import { ChevronRight, Plus, Printer, Search, Tag as TagIcon, Trash2, Wrench } from "lucide-react";
+import { ModuleInstanceChooser } from "../components/ModuleInstanceChooser";
 import { queueLabelsBulk } from "../lib/queue-label";
 import { usePersistedState } from "../lib/use-persisted-state";
 import { ApiError, api, type Machine, type OrgModuleListItem, type PlatformFieldDef, type SavedView, type BambuDiscoveredDevice, type DigifabConnection, type DigifabDevice, type DigifabFleetDevice } from "../lib/api";
+import { fleetStatusChip, indexFleetByMachine } from "../lib/fleet-status";
+import { ContributedPageTab, ContributedDetailPanel, hasPageTab, hasDetailPanel } from "../panels/registry";
+import type { ContributedPanel } from "../lib/api";
 import { DirectManagerConnect } from "../components/DirectManagerConnect";
 import { EntityImageEdit } from "../components/EntityImageEdit";
 import { ImageSearchPicker } from "../components/ImageSearchPicker";
-import { FleetView, EdgeBridgeSetup, CreateConnectionModal } from "./DigifabPage";
+// NewMachineModal's inline "connect its manager" flow still reaches the
+// digifab feature directly — candidate for its own seam (an intent/action),
+// noted in machines-digifab-unification.md §9. The Fleet tab and the Print
+// manager panel arrive via the panel registry, NOT this import.
+import { EdgeBridgeSetup } from "../features/digifab/fleet";
 import { BambuConnectWizard } from "../components/BambuConnectWizard";
 import { BambuPrinterPicker } from "../components/BambuPrinterPicker";
 import { resolvePrinterKind, hiddenPrinterFields } from "../lib/printerKind";
@@ -106,6 +114,15 @@ export function MachinesPage({
     queryFn: () => api.orgModules(activeSlug),
     enabled: !!activeSlug,
     staleTime: 60_000,
+  });
+  // Machines instances (3D Printers / Laser Cutters / CNC…). On the base list
+  // (not an instance) with no base-table machines, we show these as a chooser
+  // instead of a bare "nothing here" — the aggregate tile lands here.
+  const machineInstances = useQuery({
+    queryKey: ["instances", activeSlug, "machines"],
+    queryFn: () => api.listInstances(activeSlug, "machines"),
+    enabled: !!activeSlug && !instance,
+    staleTime: 30_000,
   });
 
   // Which extra columns (beyond the base) to show. A lens scopes the
@@ -262,9 +279,34 @@ export function MachinesPage({
   // 3D Printers (and any machines instance) with the Print Manager on get a live
   // "Fleet" tab right here — the cockpit (temps/progress/jobs) that otherwise only
   // lived under Configuration → Print Manager.
-  // Persisted so the tab you're on (items vs fleet) survives a refresh.
-  const [pageTab, setPageTab] = usePersistedState<"items" | "fleet">("machines.tab", "items");
-  const showFleetTab = !!instance && digifabEnabled;
+  // Contributed panels (manifest contributes.panels, machines-digifab-
+  // unification.md §5): whatever ENABLED modules declare for this module's
+  // surfaces, rendered through the panel registry — this page never names a
+  // contributor. digifab's Fleet tab + Print manager arrive this way.
+  const enabledModules = (orgModules.data?.items ?? []).filter((m) => m.enabled);
+  const contributedTabs = enabledModules
+    .flatMap((m) => m.panels ?? [])
+    .filter((p) => p.surface === "module-page-tab" && p.target === "machines" && hasPageTab(p.id));
+  const contributedDetailPanels = enabledModules
+    .flatMap((m) => m.panels ?? [])
+    .filter((p) => p.surface === "entity-detail-panel" && p.target === "machines:machine" && hasDetailPanel(p.id));
+  // Persisted so the tab you're on (items vs a contributed tab) survives a
+  // refresh. A stale persisted id (module disabled since) falls back to items.
+  const [pageTabRaw, setPageTab] = usePersistedState<string>("machines.tab", "items");
+  const pageTab = pageTabRaw !== "items" && contributedTabs.some((p) => p.id === pageTabRaw) ? pageTabRaw : "items";
+  const showContributedTabs = !!instance && contributedTabs.length > 0;
+  // One machine, two lenses: the registry shows each LINKED machine's live
+  // status (● printing 46% / needs clearing / offline) next to its lifecycle
+  // state — the fleet's view of the machine, on the machine's own card. One
+  // gentle background poll for the whole page; off when digifab is disabled.
+  const registryFleet = useQuery({
+    queryKey: ["digifab-fleet", activeSlug],
+    queryFn: () => api.getDigifabFleet(activeSlug),
+    enabled: !!activeSlug && digifabEnabled && pageTab === "items",
+    refetchInterval: 30_000,
+    staleTime: 15_000,
+  });
+  const liveByMachine = useMemo(() => indexFleetByMachine(registryFleet.data), [registryFleet.data]);
   const [viewMode, setViewMode] = useViewMode("machines", "list");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const toastM = useToast();
@@ -386,14 +428,16 @@ export function MachinesPage({
             )}
           </div>
         )}
-        {showFleetTab && (
+        {showContributedTabs && (
           <div className="inline-flex rounded-md border border-line dark:border-slate-600 overflow-hidden text-xs">
             <button type="button" onClick={() => setPageTab("items")} className={"px-2.5 py-1 " + (pageTab === "items" ? "bg-cobble-600 text-white" : "text-muted hover:bg-subtle dark:hover:bg-slate-800")}>
               {noun}s
             </button>
-            <button type="button" onClick={() => setPageTab("fleet")} className={"px-2.5 py-1 " + (pageTab === "fleet" ? "bg-cobble-600 text-white" : "text-muted hover:bg-subtle dark:hover:bg-slate-800")}>
-              Fleet
-            </button>
+            {contributedTabs.map((p) => (
+              <button key={p.id} type="button" onClick={() => setPageTab(p.id)} className={"px-2.5 py-1 " + (pageTab === p.id ? "bg-cobble-600 text-white" : "text-muted hover:bg-subtle dark:hover:bg-slate-800")}>
+                {p.title}
+              </button>
+            ))}
           </div>
         )}
         {!instance && !lensName && availableLenses.length > 0 && (
@@ -456,14 +500,22 @@ export function MachinesPage({
         </div>
       )}
 
-      {pageTab === "fleet" ? (
-        <FleetView slug={activeSlug} />
+      {pageTab !== "items" ? (
+        /* A contributed page tab (e.g. digifab's Fleet — scoped to THIS
+           collection's machines; the whole-shop floor stays on /digifab).
+           Rendered through the panel registry: this page doesn't know or
+           care which module is behind the tab. */
+        <ContributedPageTab id={pageTab} ctx={{ slug: activeSlug, itemNoun: noun, entityIds: new Set(allRows.map((m) => m.id)) }} />
       ) : filtered.length === 0 ? (
-        <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-3 py-10 text-center text-xs text-faint italic">
-          {allRows.length === 0
-            ? `No ${noun}s yet. Click + new to add one.`
-            : "No matches with the current filters."}
-        </div>
+        !instance && allRows.length === 0 && (machineInstances.data?.items.length ?? 0) > 0 ? (
+          <ModuleInstanceChooser instances={machineInstances.data!.items} icon={Wrench} noun={noun} />
+        ) : (
+          <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-3 py-10 text-center text-xs text-faint italic">
+            {allRows.length === 0
+              ? `No ${noun}s yet. Click + new to add one.`
+              : "No matches with the current filters."}
+          </div>
+        )
       ) : viewMode === "tiles" ? (
         instance || lensName ? (
           viewGroupBy ? (
@@ -473,12 +525,12 @@ export function MachinesPage({
                   <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2 capitalize">
                     // {g.key} <span className="text-faint dark:text-slate-500">({g.rows.length})</span>
                   </div>
-                  <MachineTileGrid rows={g.rows} onRowClick={rowClick} />
+                  <MachineTileGrid rows={g.rows} onRowClick={rowClick} live={liveByMachine} />
                 </section>
               ))}
             </div>
           ) : (
-            <MachineTileGrid rows={filtered} onRowClick={rowClick} />
+            <MachineTileGrid rows={filtered} onRowClick={rowClick} live={liveByMachine} />
           )
         ) : (
           <div className="space-y-5">
@@ -488,7 +540,7 @@ export function MachinesPage({
                   // {s.label}{" "}
                   <span className="text-faint dark:text-slate-500">({s.rows.length})</span>
                 </div>
-                <MachineTileGrid rows={s.rows} onRowClick={rowClick} />
+                <MachineTileGrid rows={s.rows} onRowClick={rowClick} live={liveByMachine} />
               </section>
             ))}
           </div>
@@ -502,6 +554,7 @@ export function MachinesPage({
                   // {g.key} <span className="text-faint dark:text-slate-500">({g.rows.length})</span>
                 </div>
                 <MachineTable
+                  live={liveByMachine}
                   rows={g.rows}
                   lensFieldDefs={lensFieldDefs}
                   onRowClick={rowClick}
@@ -521,6 +574,7 @@ export function MachinesPage({
           </div>
         ) : (
           <MachineTable
+            live={liveByMachine}
             rows={filtered}
             lensFieldDefs={lensFieldDefs}
             onRowClick={rowClick}
@@ -540,6 +594,7 @@ export function MachinesPage({
                 <span className="text-faint dark:text-slate-500">({s.rows.length})</span>
               </div>
               <MachineTable
+                live={liveByMachine}
                 rows={s.rows}
                 lensFieldDefs={[]}
                 onRowClick={rowClick}
@@ -562,7 +617,7 @@ export function MachinesPage({
       <MachineDetailModal
         machineId={selectedId}
         instance={instance}
-        digifabEnabled={digifabEnabled}
+        detailPanels={contributedDetailPanels}
         specialisations={instance ? [] : availableLenses}
         onClose={closeDetail}
       />
@@ -890,6 +945,18 @@ function MachineBulkTagModal({
   );
 }
 
+/** Live fleet chip on a registry row — the fleet's view of a linked machine,
+ *  shown beside its lifecycle state (two facts, both labelled as what they are). */
+function LiveChip({ dev }: { dev: DigifabFleetDevice }) {
+  const c = fleetStatusChip(dev);
+  return (
+    <span className="inline-flex items-center gap-1 text-[10px] text-muted dark:text-slate-400 whitespace-nowrap" title="live print-manager status">
+      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${c.dot}`} />
+      {c.label}
+    </span>
+  );
+}
+
 function MachineTable({
   rows,
   lensFieldDefs,
@@ -897,6 +964,7 @@ function MachineTable({
   selected,
   onToggle,
   onSelectAll,
+  live,
 }: {
   rows: Machine[];
   lensFieldDefs: PlatformFieldDef[];
@@ -904,6 +972,8 @@ function MachineTable({
   selected?: Set<string>;
   onToggle?: (id: string, checked: boolean) => void;
   onSelectAll?: (checked: boolean) => void;
+  /** machine_id → its linked fleet device, for the live status chip. */
+  live?: Map<string, { dev: DigifabFleetDevice; connId: string }>;
 }) {
   const showSelect = !!selected && !!onToggle;
   const allChecked = showSelect && rows.length > 0 && rows.every((r) => selected!.has(r.id));
@@ -977,9 +1047,12 @@ function MachineTable({
                 {m.manufacturer || "—"}
               </td>
               <td className="px-3 py-2">
-                <span className="font-mono text-[10px] uppercase tracking-widest text-muted dark:text-slate-400">
-                  {m.state}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-[10px] uppercase tracking-widest text-muted dark:text-slate-400">
+                    {m.state}
+                  </span>
+                  {live?.get(m.id) && <LiveChip dev={live.get(m.id)!.dev} />}
+                </div>
               </td>
               {lensFieldDefs.map((d) => {
                 const v = (m.metadata as Record<string, unknown>)[d.name];
@@ -1006,9 +1079,12 @@ function MachineTable({
 function MachineTileGrid({
   rows,
   onRowClick,
+  live,
 }: {
   rows: Machine[];
   onRowClick: (id: string) => void;
+  /** machine_id → its linked fleet device, for the live status chip. */
+  live?: Map<string, { dev: DigifabFleetDevice; connId: string }>;
 }) {
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
@@ -1025,6 +1101,11 @@ function MachineTileGrid({
             subtitle={m.family || m.manufacturer || m.short_name || null}
             badge={m.state}
           />
+          {live?.get(m.id) && (
+            <div className="mt-1 px-0.5">
+              <LiveChip dev={live.get(m.id)!.dev} />
+            </div>
+          )}
         </button>
       ))}
     </div>
@@ -1034,13 +1115,14 @@ function MachineTileGrid({
 function MachineDetailModal({
   machineId,
   instance,
-  digifabEnabled,
+  detailPanels = [],
   specialisations,
   onClose,
 }: {
   machineId: string | null;
   instance?: string;
-  digifabEnabled?: boolean;
+  /** Contributed entity-detail panels for machines:machine (panel registry). */
+  detailPanels?: ContributedPanel[];
   specialisations: { name: string; label: string }[];
   onClose: () => void;
 }) {
@@ -1288,14 +1370,21 @@ function MachineDetailModal({
               generic placement panel — same one a server asset or a drawer uses. */}
           <ContentsPanel slug={activeSlug} container={{ kind: "machines:machine", id: m.id }} title="Installed components" />
 
-          {digifabEnabled && (
-            <MachineDigifabPanel
-              slug={activeSlug}
-              machineId={m.id}
-              machineName={m.name}
-              driverHint={KIND_BRIDGE_DRIVER[typeof m.metadata?.printer_kind === "string" ? (m.metadata.printer_kind as string) : ""]}
+          {/* Contributed detail panels (e.g. digifab's Print manager) — the
+              panel registry renders whatever enabled modules declare for
+              machines:machine; this modal names no contributor. */}
+          {detailPanels.map((p) => (
+            <ContributedDetailPanel
+              key={p.id}
+              id={p.id}
+              ctx={{
+                slug: activeSlug,
+                entityId: m.id,
+                entityTitle: m.name,
+                hints: { printer_kind: typeof m.metadata?.printer_kind === "string" ? (m.metadata.printer_kind as string) : undefined },
+              }}
             />
-          )}
+          ))}
 
           {/* Secondary stuff stays out of the way: small add-pills (Tag / File /
               Link / Note) that only grow into full fields once used — so the
@@ -1830,241 +1919,6 @@ function NewMachineModal({
   );
 }
 
-/** Per-machine "Print manager" panel — shown in the detail modal when digifab
- *  is enabled (the 3D Printers bundle brings both modules under one roof). Lets
- *  you link THIS machine to a manager's device (FDM Monster / OctoPrint / …)
- *  without leaving the machine's page, so a job routed to the machine goes to
- *  the right printer. Mirrors the link model on the /digifab page. */
-// Live status chip for a linked machine — derived from the fleet's view of the
-// device. Falls back to "linked" before the fleet has reported (or for a device
-// the manager doesn't surface live).
-function digifabStatusChip(dev: DigifabFleetDevice | undefined): { label: string; dot: string } {
-  if (!dev) return { label: "linked", dot: "bg-emerald-500" };
-  if (dev.needs_attention) return { label: "needs clearing", dot: "bg-amber-500" };
-  if (dev.active_job?.status === "printing" || dev.state === "printing") {
-    const p = dev.active_job?.progress;
-    return { label: typeof p === "number" ? `printing ${Math.round(p * 100)}%` : "printing", dot: "bg-cobble-500" };
-  }
-  switch (dev.state) {
-    case "paused": return { label: "paused", dot: "bg-amber-500" };
-    case "idle": return { label: "idle", dot: "bg-emerald-500" };
-    case "completed": return { label: "done", dot: "bg-emerald-500" };
-    case "failed":
-    case "error": return { label: "error", dot: "bg-ember-500" };
-    case "offline": return { label: "offline", dot: "bg-slate-400 dark:bg-slate-500" };
-    default: return { label: "connected", dot: "bg-emerald-500" };
-  }
-}
-
-// Printer kind → the bridge driver key, so connecting a manager from a printer
-// pre-selects the right driver (Klipper→moonraker, Prusa→prusalink, Duet→duet).
-const KIND_BRIDGE_DRIVER: Record<string, string> = { klipper: "moonraker", prusa: "prusalink", reprap: "duet", duet: "duet" };
-
-function MachineDigifabPanel({
-  slug,
-  machineId,
-  machineName,
-  driverHint,
-}: {
-  slug: string;
-  machineId: string;
-  machineName: string;
-  /** Pre-selected bridge driver (from the printer's kind), for the inline connect. */
-  driverHint?: string;
-}) {
-  const qc = useQueryClient();
-  const toast = useToast();
-  const links = useQuery({
-    queryKey: ["digifab-links", slug],
-    queryFn: () => api.listDigifabLinks(slug),
-    enabled: !!slug,
-  });
-  const conns = useQuery({
-    queryKey: ["digifab-connections", slug],
-    queryFn: () => api.listDigifabConnections(slug),
-    enabled: !!slug,
-  });
-  const link = (links.data?.items ?? []).find((l) => l.machine_id === machineId);
-  const connections = conns.data?.items ?? [];
-  // Live status of this machine's linked device (polls while the modal is open).
-  const fleet = useQuery({
-    queryKey: ["digifab-fleet", slug],
-    queryFn: () => api.getDigifabFleet(slug),
-    enabled: !!slug && !!link,
-    refetchInterval: 15_000,
-  });
-  const fleetDev = link
-    ? fleet.data?.connections.find((c) => c.connection_id === link.connection_id)?.devices.find((d) => d.id === link.remote_device_id)
-    : undefined;
-  const chip = digifabStatusChip(fleetDev);
-
-  const [connId, setConnId] = useState("");
-  const [createConnOpen, setCreateConnOpen] = useState(false);
-  const devices = useQuery({
-    queryKey: ["digifab-devices", slug, connId],
-    queryFn: () => api.listDigifabDevices(slug, connId),
-    enabled: !!connId,
-  });
-  const [deviceId, setDeviceId] = useState("");
-  // Not linked yet? Pre-choose the manager (when there's only one) and its printer
-  // (when there's only one) so the Print Manager isn't sitting on "choose…" — the
-  // user just clicks Link.
-  useEffect(() => {
-    if (link || connId) return;
-    if (connections.length === 1 && connections[0]) setConnId(connections[0].id);
-  }, [link, connId, connections]);
-  useEffect(() => {
-    const d = devices.data?.items ?? [];
-    if (!deviceId && d.length === 1 && d[0]) setDeviceId(d[0].id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [devices.dataUpdatedAt, deviceId]);
-
-  const invalidate = () => void qc.invalidateQueries({ queryKey: ["digifab-links", slug] });
-  const createLink = useMutation({
-    mutationFn: () => {
-      const dev = (devices.data?.items ?? []).find((d) => d.id === deviceId);
-      return api.createDigifabLink(slug, {
-        connection_id: connId,
-        remote_device_id: deviceId,
-        remote_device_name: dev?.name ?? null,
-        machine_id: machineId,
-        machine_label: machineName,
-      });
-    },
-    onSuccess: () => {
-      toast.success("Linked to print manager.");
-      setConnId("");
-      setDeviceId("");
-      invalidate();
-    },
-    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't link."),
-  });
-  const removeLink = useMutation({
-    mutationFn: (id: string) => api.deleteDigifabLink(slug, id),
-    onSuccess: () => {
-      toast.success("Unlinked from print manager.");
-      invalidate();
-    },
-    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't unlink."),
-  });
-
-  const conn = link ? connections.find((c) => c.id === link.connection_id) : undefined;
-
-  return (
-    <div className="rounded-lg border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/30 p-3 space-y-2">
-      <div className="flex items-center gap-2">
-        <div className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-widest text-accent">
-          <Printer size={12} /> Print manager
-        </div>
-        {link && (
-          <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-subtle dark:bg-slate-800 px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider text-content dark:text-mortar-200">
-            <span className={`w-1.5 h-1.5 rounded-full ${chip.dot}`} />
-            {chip.label}
-          </span>
-        )}
-      </div>
-
-      {link ? (
-        <div className="flex items-center justify-between gap-2 text-sm">
-          <span className="text-content dark:text-mortar-100">
-            Linked to{" "}
-            <span className="font-medium">{conn?.label ?? "a manager"}</span>
-            {" · "}
-            <span className="font-mono text-xs text-muted">
-              {link.remote_device_name ?? link.remote_device_id}
-            </span>
-          </span>
-          <button
-            onClick={() => removeLink.mutate(link.id)}
-            disabled={removeLink.isPending}
-            className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-ember-500 transition flex items-center gap-1 disabled:opacity-50"
-          >
-            <Trash2 size={11} /> unlink
-          </button>
-        </div>
-      ) : connections.length === 0 ? (
-        <p className="text-xs text-muted dark:text-slate-400">
-          No print managers connected yet — add FDM Monster, OctoPrint, Klipper, Duet, Prusa, or Bambu.{" "}
-          <button type="button" onClick={() => setCreateConnOpen(true)} className="text-accent hover:underline">
-            Connect one →
-          </button>
-        </p>
-      ) : (
-        <div className="flex flex-wrap items-end gap-2">
-          <label className="block">
-            <span className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
-              Manager
-              <button type="button" onClick={() => setCreateConnOpen(true)} className="text-accent hover:underline normal-case tracking-normal">
-                + new
-              </button>
-            </span>
-            <select
-              value={connId}
-              onChange={(e) => {
-                setConnId(e.target.value);
-                setDeviceId("");
-              }}
-              className="input !py-1 !text-xs !w-auto"
-            >
-              <option value="">choose…</option>
-              {connections.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          {connId && (() => {
-            const devs = devices.data?.items ?? [];
-            // A direct driver (PrusaLink / Duet / a LAN Bambu) IS the one printer —
-            // exactly one device, nothing to pick. Only a true farm manager (FDM
-            // Monster / OctoPrint fronting several printers) needs a "which printer"
-            // step. So show the dropdown only for 2+; otherwise state the target.
-            if (devices.isLoading) return <span className="text-[11px] text-muted dark:text-slate-400 self-center">checking…</span>;
-            if (devices.isError) return <span className="text-[11px] text-rose-500 self-center">couldn't reach it — is the bridge + printer on?</span>;
-            if (devs.length === 0) return <span className="text-[11px] text-muted dark:text-slate-400 self-center">no printer found at this connection</span>;
-            if (devs.length === 1) return <span className="text-[11px] text-muted dark:text-slate-400 self-center">→ {devs[0]!.name} <span className="text-faint dark:text-slate-500">(direct)</span></span>;
-            return (
-              <label className="block">
-                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Printer</span>
-                <select value={deviceId} onChange={(e) => setDeviceId(e.target.value)} className="input !py-1 !text-xs !w-auto">
-                  <option value="">choose…</option>
-                  {devs.map((d) => (<option key={d.id} value={d.id}>{d.name}</option>))}
-                </select>
-              </label>
-            );
-          })()}
-          <button
-            onClick={() => createLink.mutate()}
-            disabled={!connId || !deviceId || createLink.isPending}
-            className="rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white text-xs px-2.5 py-1.5"
-          >
-            {createLink.isPending ? "linking…" : "Link"}
-          </button>
-        </div>
-      )}
-      {createConnOpen && (
-        <CreateConnectionModal
-          types={conns.data?.types ?? ["fdm_monster", "mock"]}
-          presetType="edge_adapter"
-          presetName={machineName}
-          presetDriver={driverHint}
-          onClose={() => setCreateConnOpen(false)}
-          onCreated={(connectionId) => {
-            // Auto-select the just-created manager so it's not back on "choose…";
-            // its single device then auto-picks → the user just clicks Link.
-            void qc.invalidateQueries({ queryKey: ["digifab-connections", slug] });
-            if (connectionId) {
-              setConnId(connectionId);
-              setDeviceId("");
-            }
-            setCreateConnOpen(false);
-          }}
-        />
-      )}
-    </div>
-  );
-}
 
 function EditField({
   label,

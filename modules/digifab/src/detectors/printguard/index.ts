@@ -32,6 +32,8 @@ export const builtin: DetectorPackage = {
     name: "PrintGuard",
     shape: "camera-watcher",
     auth: { kind: "header", header: "Authorization", from: "apiKey", prefix: "Bearer " },
+    // The running version (for min-version gating): GET /api/v1/state → version.
+    serviceVersion: { method: "GET", path: "/api/v1/state", extract: "$.version" },
     status: {
       method: "GET",
       path: "/api/v1/cameras/{deviceCam}",

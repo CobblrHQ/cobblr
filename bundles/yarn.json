@@ -99,7 +99,7 @@
             "entity_kind": "inventory:part",
             "name": "length_per_skein",
             "display_label": "Length / skein (m)",
-            "type": "number",
+            "type": "number", "unit": "m",
             "position": 6,
             "help": "Metres per skein, from the label \u2014 used to estimate if you have enough for a project."
           },

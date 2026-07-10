@@ -103,6 +103,11 @@ export interface MatchCandidate {
   /** When the item data implies a count ("1 Pack Of 9 Skein", "10 Pack"),
    *  the unit quantity to pre-fill. Omitted when nothing implies one. */
   quantity?: number;
+  /** Field names in `fields` that were COMPLETED from the model's own knowledge
+   *  of a confidently-identified entity (a known book's ISBN/publisher/year),
+   *  NOT read off the photo/catalog data. Provenance so a wrong guess stays
+   *  visible; only set on a high-confidence match to a specific known work. */
+  inferred?: string[];
   /** Capture-first: copied from the chosen menu entry when this candidate routes
    *  to a not-yet-installed flagship bundle — the bundle to materialize. */
   bundle_external_id?: string;
@@ -111,6 +116,16 @@ export interface MatchCandidate {
 function clamp01(n: number): number {
   if (!Number.isFinite(n)) return 0;
   return Math.min(1, Math.max(0, n));
+}
+
+/** Sanitize the model's `inferred` list (fields it backfilled from knowledge of a
+ *  known entity) against the fields it actually filled: keep only string names
+ *  that exist in `filled`, de-duped. A name the model lists but never filled (or a
+ *  field not on the table) is dropped, so the provenance marker can never point at
+ *  an absent value. Non-array input → []. Pure; unit-tested. */
+export function normalizeInferred(rawInferred: unknown, filled: Record<string, unknown>): string[] {
+  if (!Array.isArray(rawInferred)) return [];
+  return [...new Set(rawInferred.filter((n): n is string => typeof n === "string" && Object.hasOwn(filled, n)))];
 }
 
 /**
@@ -568,7 +583,19 @@ export async function runMatchmaker(
     "output a CSS hex code for the named colour (e.g. '#6F8FAF' for " +
     "Country Blue), not a word. If lookup_metadata.user_hint is present it " +
     "is the user's own correction — treat it as authoritative over every " +
-    "other source. Omit only what nothing in the data supports; never invent. Strip " +
+    "other source. Omit only what nothing in the data supports; never invent. " +
+    "COMPLETE A KNOWN ENTITY (backfill): the 'never invent' rule bends ONLY when " +
+    "your top candidate is a HIGH-confidence (>=0.8) match to a SPECIFIC, " +
+    "identifiable real-world entity you recognize with certainty — a named book, " +
+    "film, album, or game by its title + creator, or a product by make + model. " +
+    "For that exact known entity you MAY fill additional declared fields you " +
+    "reliably KNOW (e.g. a book's isbn, publisher, publication year, page count) " +
+    "even when the photo does not show them, and you MUST list every field you " +
+    "filled this way (from your own knowledge, not the item data) in `inferred`. " +
+    "This is completing a known fact, not inventing: it applies ONLY to a " +
+    "confident, specific identity. For a generic, ambiguous, or uncertain item " +
+    "keep omitting, and NEVER fabricate a plausible-looking value — a made-up " +
+    "isbn is worse than a blank. Strip " +
     "retailer noise from `name` ('Amazon.com:', '1 Pack Of 9 Skein' suffixes " +
     "-> a clean product name).\n" +
     "3. On the FIRST candidate, add `notes` ONLY when something genuinely " +
@@ -590,6 +617,7 @@ export async function runMatchmaker(
     "Always strip pack suffixes from `name` regardless.\n\n" +
     'Reply with ONLY JSON: {"candidates":[{"module":<string>,"instance":<string|null>,' +
     '"confidence":<0..1>,"name":<string>,"fields":{<field_name>:<value>},' +
+    '"inferred":[<field_name>,...] (top candidate only; the fields you filled from KNOWLEDGE of a confident known entity, not the item data; omit when none),' +
     '"notes":<string, first candidate ONLY when reconciling is needed; else omit>,"quantity":<int, optional>}]}. ' +
     "Inside string values NEVER use the double-quote character — quote words " +
     "with single quotes ('medium weight') — or the JSON will not parse. " +
@@ -735,6 +763,14 @@ export async function runMatchmaker(
       }
     }
     const qty = Number(cand.quantity);
+    // Backfill provenance: field names the model filled from its KNOWLEDGE of a
+    // confident known entity, sanitized against what it actually filled.
+    const inferred = normalizeInferred(cand.inferred, fields);
+    // Surface the provenance in the notes line (where the user already looks), so
+    // a value filled from knowledge rather than the photo is flagged for a glance.
+    const baseNotes = typeof cand.notes === "string" && cand.notes.trim() ? cand.notes.trim().slice(0, 1800) : "";
+    const inferredNote = inferred.length ? `Filled from catalog knowledge (double-check): ${inferred.join(", ")}.` : "";
+    const notes = [baseNotes, inferredNote].filter(Boolean).join(" ");
     const candidate: MatchCandidate = {
       module: entry.module,
       instance: entry.instance,
@@ -743,9 +779,8 @@ export async function runMatchmaker(
       confidence: clamp01(typeof cand.confidence === "number" ? cand.confidence : 0.5),
       name: typeof cand.name === "string" && cand.name.trim() ? cand.name.trim() : item.name,
       fields,
-      ...(typeof cand.notes === "string" && cand.notes.trim()
-        ? { notes: cand.notes.trim().slice(0, 2000) }
-        : {}),
+      ...(inferred.length ? { inferred } : {}),
+      ...(notes ? { notes } : {}),
       ...(Number.isInteger(qty) && qty > 0 && qty <= 10_000 ? { quantity: qty } : {}),
       // Carry the bundle pointer through from the chosen menu entry so a
       // capture against a not-yet-installed bundle remembers what to install.

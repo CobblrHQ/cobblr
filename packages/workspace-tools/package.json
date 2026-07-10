@@ -1,0 +1,19 @@
+{
+  "name": "@cobblr/workspace-tools",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "The ONE registry of workspace read/write tools an AI can call — consumed by the in-app Ask Cobb chat AND the MCP server, so both surfaces stay capability-identical by construction.",
+  "main": "dist/index.js",
+  "types": "src/index.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}

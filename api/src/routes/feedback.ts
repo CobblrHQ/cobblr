@@ -7,7 +7,7 @@ import { sql } from "kysely";
 import { z } from "zod";
 import { requireAuth } from "../auth/middleware.js";
 import { meta } from "../db/meta.js";
-import { announce } from "../platform/announce.js";
+import { announceReturningMessage } from "../platform/announce.js";
 import { reporterCardFields } from "../platform/feedback-card.js";
 import { pokeTriage } from "../platform/triage-trigger.js";
 import { verifyReplyToken } from "../platform/feedback-reply.js";
@@ -175,16 +175,34 @@ feedbackRouter.post("/", async (req, res, next) => {
       parsed.data.type === "bug" ? "🐛" : parsed.data.type === "confusing" ? "😕" : parsed.data.type === "idea" ? "💡" : "•";
     const route = typeof parsed.data.context.route === "string" ? parsed.data.context.route : "";
     const cardFields = await reporterCardFields({ userId, orgId, route });
-    void announce("feedback.new", {
-      title: `${emoji} New ${parsed.data.type} feedback`,
-      body: parsed.data.message.slice(0, 1500),
-      color: 0xb5651d,
-      fields: cardFields,
-      // Show the reporter's screenshots inline in the Discord post (c53a6c4f).
-      ...(orgId && attachments.length
-        ? { images: attachments.map((a) => ({ orgId, fileId: a.file_id, name: a.name })) }
-        : {}),
-    });
+    // Fire-and-forget, but ask Discord to echo the created message so we can
+    // remember WHICH post this item produced — the support bot reacts onto that
+    // same message as the item is worked (🤖 grabbed → 👀 PR up → ✅ shipped).
+    // Never blocks or fails the submission; a failed capture just means no
+    // lifecycle reactions for this one item.
+    void (async () => {
+      try {
+        const posted = await announceReturningMessage("feedback.new", {
+          title: `${emoji} New ${parsed.data.type} feedback`,
+          body: parsed.data.message.slice(0, 1500),
+          color: 0xb5651d,
+          fields: cardFields,
+          // Show the reporter's screenshots inline in the Discord post (c53a6c4f).
+          ...(orgId && attachments.length
+            ? { images: attachments.map((a) => ({ orgId, fileId: a.file_id, name: a.name })) }
+            : {}),
+        });
+        if (posted.messageId) {
+          await meta
+            .updateTable("feedback")
+            .set({ announce_message_id: posted.messageId, announce_channel_id: posted.channelId })
+            .where("id", "=", row.id)
+            .execute();
+        }
+      } catch (err) {
+        console.error("[feedback] announce/message-id capture failed:", err);
+      }
+    })();
 
     // Nudge the host-side triage analyzer so the item is judged within seconds
     // (it sweeps hourly as a backstop). Fire-and-forget; no-op if unconfigured.

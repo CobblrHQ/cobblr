@@ -758,6 +758,59 @@ export async function listKinds(): Promise<EntityKindRecord[]> {
   return rows.map(rowToKindRecord);
 }
 
+/** The kinds a WORKSPACE sees: every manifest kind, plus one synthesized
+ *  `<instance_name>:item` kind per named (non-default) instance in this org.
+ *  A synthesized kind copies its module's PRIMARY kind's shape (fields,
+ *  traits, exposable fields) and carries `instance_name` — its endpoints are
+ *  then relative to /orgs/:slug/instances/<name>, not /modules/<module>.
+ *  detail_route points at the instance's page (items open in-page there; a
+ *  per-item deep link is UI that doesn't exist yet). Multi modules without a
+ *  declared primary kind simply synthesize nothing — never guessed.
+ *  Fixes the pre-2026-07-10 gap where instance items were invisible to every
+ *  registry consumer (search detail routes, MCP kind listing, generic
+ *  surfaces). */
+export async function listKindsForOrg(orgId: string): Promise<EntityKindRecord[]> {
+  const base = await listKinds();
+  let instances: Array<{ module_name: string; instance_name: string; display_name: string }> = [];
+  try {
+    instances = await meta
+      .selectFrom("workspace_module_instances")
+      .select(["module_name", "instance_name", "display_name"])
+      .where("org_id", "=", orgId)
+      .where("is_default", "=", false)
+      .execute();
+  } catch (err) {
+    console.error("[entities] instance-kind synthesis query failed:", (err as Error).message);
+    return base;
+  }
+  if (instances.length === 0) return base;
+  const primaryByModule = new Map(
+    base.filter((k) => k.is_primary).map((k) => [k.module_name, k] as const),
+  );
+  const synthesized: EntityKindRecord[] = [];
+  for (const inst of instances) {
+    const primary = primaryByModule.get(inst.module_name);
+    if (!primary) continue;
+    synthesized.push({
+      ...primary,
+      id: `${inst.instance_name}:item`,
+      display_name: inst.display_name,
+      display_name_plural: inst.display_name,
+      detail_route: `/instances/${inst.instance_name}`,
+      endpoints: {
+        list: "/items",
+        get: "/items/{id}",
+        create: "/items",
+        update: "/items/{id}",
+        delete: "/items/{id}",
+      },
+      is_primary: false,
+      instance_name: inst.instance_name,
+    });
+  }
+  return [...base, ...synthesized];
+}
+
 export async function getKind(kind: string): Promise<EntityKindRecord | null> {
   const row = await meta
     .selectFrom("entity_kinds")
@@ -812,6 +865,7 @@ function rowToKindRecord(row: {
   detail_route: string | null;
   endpoints: unknown;
   version: string;
+  is_primary?: boolean;
   traits: unknown | null;
   profile: string | null;
   exposable_fields: unknown | null;
@@ -827,6 +881,7 @@ function rowToKindRecord(row: {
     detail_route: row.detail_route,
     endpoints: (row.endpoints as EntityKindRecord["endpoints"]) ?? null,
     version: row.version,
+    is_primary: row.is_primary === true,
     traits: (row.traits as EntityKindRecord["traits"]) ?? null,
     profile: row.profile,
     exposable_fields: (row.exposable_fields as string[] | null) ?? null,

@@ -87,6 +87,11 @@ export function FieldDefDetailModal({ open, onClose, slug, fieldDef }: Props) {
               </span>
             </Row>
           )}
+          {fieldDef.unit && (
+            <Row label="Unit">
+              <span className="font-mono text-accent dark:text-cobble-300">{fieldDef.unit}</span>
+            </Row>
+          )}
         </dl>
 
         <div className="p-3 rounded-md bg-subtle dark:bg-slate-800/70 text-xs text-content dark:text-mortar-200">

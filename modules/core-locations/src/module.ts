@@ -21,7 +21,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-locations",
-  version: "0.1.0",
+  version: "0.2.0",
   displayName: "Locations",
   description:
     "Workspace-wide hierarchical tree of physical places (rooms, shelves, bins). Every module's location-bearing entities reference rows here via polymorphic location_id.",
@@ -39,6 +39,9 @@ export default defineModule({
     entityKinds: [
       {
         id: "core-locations:location",
+        createEndpoint: "/locations",
+        updateEndpoint: "/locations/{id}",
+        deleteEndpoint: "/locations/{id}",
         displayName: "Location",
         displayNamePlural: "Locations",
         icon: "map-pin",
@@ -55,6 +58,10 @@ export default defineModule({
           { name: "description", type: "text", role: "summary" },
           { name: "notes", type: "text" },
           { name: "image_path", type: "image-path", role: "image" },
+          // A container's declared interior size in millimeters, {x,y,z}
+          // (metadata.interior_mm) — DECLARED capacity, what size-aware
+          // consumers (Guided Organize) read. Never inferred.
+          { name: "interior_mm", type: "object" },
         ],
         getEndpoint: "/locations/{id}",
         // Direct detail route — promoted from "list-with-tree-nav"
@@ -77,6 +84,9 @@ export default defineModule({
           "position",
           "description",
           "image_path",
+          // Declared interior size — read by size-aware consumers (the
+          // organize planner's fit checks).
+          "interior_mm",
         ],
       },
     ],

@@ -31,6 +31,23 @@ export function SearchPage() {
     staleTime: 5 * 60_000,
   });
 
+  // Where-is-it chip: hits whose fields carry a location_id get their
+  // location's name inline — zone chips for search, zero API changes (kinds
+  // whose resolver doesn't expose location_id just never show one).
+  const locsQ = useQuery({
+    queryKey: ["core-locations", activeSlug],
+    queryFn: () => api.listLocations(activeSlug),
+    enabled: !!activeSlug,
+    staleTime: 60_000,
+  });
+  const locName = useMemo(() => {
+    const m = new Map((locsQ.data?.items ?? []).map((l) => [l.id, l.name] as const));
+    return (h: SearchHit): string | null => {
+      const lid = h.fields?.location_id;
+      return typeof lid === "string" ? (m.get(lid) ?? null) : null;
+    };
+  }, [locsQ.data]);
+
   const results = useQuery({
     queryKey: ["search-full", activeSlug, q, kinds ?? "", tag ?? ""],
     queryFn: () => api.search(activeSlug, { q: q || undefined, kinds, tag }),
@@ -188,6 +205,11 @@ export function SearchPage() {
                   {h.subtitle && (
                     <span className="text-xs text-muted truncate">
                       {h.subtitle}
+                    </span>
+                  )}
+                  {locName(h) && (
+                    <span className="ml-auto shrink-0 font-mono text-[10px] uppercase tracking-wider text-accent border border-line dark:border-slate-600 rounded-full px-1.5 py-0.5">
+                      {locName(h)}
                     </span>
                   )}
                 </Link>

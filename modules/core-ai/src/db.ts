@@ -64,6 +64,37 @@ export interface CoreAiDB {
   core_ai_calls: CoreAiCallsTable;
   core_ai_cache: CoreAiCacheTable;
   core_ai_basics: CoreAiBasicsTable;
+  core_ai_chat_prefs: CoreAiChatPrefsTable;
+  core_ai_chat_writes: CoreAiChatWritesTable;
+}
+
+// Ask Cobb per-user tool consent: may the chat READ this user's workspace data
+// into prompts, and what's the write mode (off / ask / auto)? Absent row =
+// read on + ask. write_tools is the boolean-era column kept for back-compat;
+// write_mode is the source of truth.
+export interface CoreAiChatPrefsTable {
+  user_id: string;
+  read_tools: Generated<boolean>;
+  write_tools: Generated<boolean>;
+  write_mode: Generated<string>;
+  updated_at: Generated<Date>;
+}
+
+// The AI change ledger: every write Cobb executes (confirmed or auto-applied),
+// with a before-image so undo is mechanical. An undo is its own row (undo_of).
+export interface CoreAiChatWritesTable {
+  id: Generated<string>;
+  user_id: string;
+  tool: "create" | "update" | "delete" | "action";
+  entity_kind: string;
+  entity_id: string | null;
+  entity_label: Generated<string>;
+  before: unknown | null;
+  payload: unknown | null;
+  auto_applied: Generated<boolean>;
+  undone_at: Date | null;
+  undo_of: string | null;
+  created_at: Generated<Date>;
 }
 
 // Ask Cobb "basic mode" per-workspace rows: overrides of built-in rules

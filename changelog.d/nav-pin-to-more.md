@@ -1,1 +1,6 @@
-- Navbar: pin individual entries to the “more ▾” overflow so they always fold there even when the bar has room — per-entry toggle in the navbar Customize menu (the ••• icon next to each entry). Keeps a busy header down to the few sections you use most; the rest still auto-fold responsively as before.
+---
+type: improvement
+date: 2026-06-25
+---
+
+- Navbar: pin individual entries to the “more ▾” overflow so they always fold there even when the bar has room: per-entry toggle in the navbar Customize menu (the ••• icon next to each entry). Keeps a busy header down to the few sections you use most; the rest still auto-fold responsively as before.

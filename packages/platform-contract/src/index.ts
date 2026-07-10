@@ -242,10 +242,36 @@ const EntityKind = z
     getEndpoint: z.string().optional(),
     // Module-relative POST collection endpoint that creates one record of this
     // kind (e.g. "/entries"). Declaring it makes the kind creatable by generic
-    // callers — today the Ask Cobb chat's create proposals; the tool-calling
-    // layer next. Only declare it when the plain collection POST accepts a
-    // simple fields body; leave unset for kinds created via actions/wizards.
+    // callers — the Ask Cobb chat's create proposals + the workspace-tools
+    // registry (in-app tool loop + MCP). Only declare it when the plain
+    // collection POST accepts a simple fields body; leave unset for kinds
+    // created via actions/wizards.
     createEndpoint: z.string().optional(),
+    // Module-relative PATCH endpoint that partially updates one record
+    // (e.g. "/entries/{id}"). Same contract as createEndpoint: declaring it
+    // makes the kind updatable by generic callers; the PATCH must accept a
+    // partial fields body.
+    updateEndpoint: z.string().optional(),
+    // Module-relative DELETE endpoint for one record (e.g. "/entries/{id}").
+    // Declaring it makes the kind deletable by generic callers.
+    deleteEndpoint: z.string().optional(),
+    // THE module's primary kind — the entity its instance-scoped item routes
+    // (/orgs/:slug/instances/:name/items) dispatch to (primaryRouter). At most
+    // one kind per module declares it. Instance-kind synthesis copies the
+    // primary kind's shape (fields/traits/endpoints) for each named instance;
+    // a multi module without a declared primary simply gets no synthesized
+    // instance kinds (honest opt-in, never guessed — sales' FIRST kind is
+    // customer but its primary is order, so declaration order can't be trusted).
+    primary: z.boolean().optional(),
+    // Module-relative GET collection endpoint listing this kind's records
+    // (e.g. "/entries") — the module's OWN full-fat list, enforcing its own
+    // role gating. Declaring it lets FIRST-PARTY generic surfaces (the floor
+    // plan's entity occupants, future pickers) enumerate rows with the fields
+    // the module's own pages see (location_id, metadata, image_path) — data
+    // the exposableFields-projected /entities/:kind list deliberately hides
+    // from foreign/member callers. Response contract: { items: [...] } where
+    // rows carry at least id + the kind's declared fields.
+    listEndpoint: z.string().optional(),
     version: z.string().optional(),
     // Cross-module trait declarations. Three mutually-exclusive
     // forms:
@@ -579,6 +605,31 @@ const ModuleManifest = z.object({
           }),
         )
         .default([]),
+      // Pillar E (UI) — panels this module contributes INTO another
+      // module's web surfaces: a page-level tab on the target module's
+      // list page, or a panel inside the target kind's detail modal.
+      // The web renders contributions through its panel registry
+      // (web/src/panels/registry.tsx) — a host page renders whatever
+      // enabled modules contribute, never naming a contributor. A
+      // contribution is honored ONLY when the target's module is in
+      // this module's `operatesOn` (validated below): operatesOn is
+      // the declared capability that grants UI presence. See
+      // docs/design-decisions/machines-digifab-unification.md §5.
+      panels: z
+        .array(
+          z.object({
+            /** Registry id, `<module>:<panel>` (e.g. "digifab:fleet-tab") —
+             *  must have a component registered web-side. */
+            id: z.string().regex(/^[a-z][a-z0-9-]*:[a-z][a-z0-9-]*$/),
+            surface: z.enum(["module-page-tab", "entity-detail-panel"]),
+            /** Target module ("machines") for a page tab, or entity kind
+             *  ("machines:machine") for a detail panel. */
+            target: z.string().min(1),
+            /** The tab/panel label the host renders. */
+            title: z.string().min(1),
+          }),
+        )
+        .default([]),
       wires: z
         .array(
           z.object({
@@ -603,7 +654,7 @@ const ModuleManifest = z.object({
         )
         .default([]),
     })
-    .default({ fieldDefs: [], wires: [] }),
+    .default({ fieldDefs: [], panels: [], wires: [] }),
   subscribes: z.array(z.string()).default([]),
 
   // Lifecycle hooks — let a module register background work the
@@ -629,6 +680,21 @@ const ModuleManifest = z.object({
       onShutdown: z.function().returns(z.promise(z.unknown())).optional(),
     })
     .optional(),
+}).superRefine((m, ctx) => {
+  // The panel gate: contributing UI into another module's surfaces
+  // requires DECLARING you operate on it. Keeps `operatesOn` honest
+  // (it stops being decorative) and makes drive-by UI injection a
+  // manifest-validation failure, not a review argument.
+  for (const p of m.contributes.panels) {
+    const targetModule = p.target.includes(":") ? p.target.split(":")[0]! : p.target;
+    if (!m.operatesOn.includes(targetModule)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["contributes", "panels"],
+        message: `panel "${p.id}" targets "${p.target}" but "${targetModule}" is not in operatesOn — a module may only contribute panels into modules it declares it operates on`,
+      });
+    }
+  }
 });
 
 export type ModuleManifest = z.infer<typeof ModuleManifest>;
@@ -1240,6 +1306,10 @@ export interface PlatformEntities {
   ): Promise<ResolvedEntity[]>;
   /** List all declared kinds from cobblr_meta.entity_kinds. */
   listKinds(): Promise<EntityKindRecord[]>;
+  /** listKinds plus one synthesized `<instance>:item` kind per named
+   *  instance in the org (shape copied from the module's PRIMARY kind;
+   *  endpoints relative to /instances/<name>, marked by instance_name). */
+  listKindsForOrg(orgId: string): Promise<EntityKindRecord[]>;
   /** Get a single kind's full declaration. */
   getKind(kind: string): Promise<EntityKindRecord | null>;
   /** The names of a kind's SERVER-MANAGED custom fields (field defs with
@@ -1264,7 +1334,13 @@ export interface EntityKindRecord {
   icon: string | null;
   fields: EntityFieldDecl[];
   detail_route: string | null;
-  endpoints: { get?: string; create?: string } | null;
+  endpoints: { get?: string; list?: string; create?: string; update?: string; delete?: string } | null;
+  /** The module's primary kind (see the manifest `primary` flag). */
+  is_primary?: boolean;
+  /** Set ONLY on registry records synthesized for a workspace's named
+   *  instances (`<instance>:item`): endpoints are then relative to
+   *  /orgs/:slug/instances/<instance_name>, NOT /modules/<module_name>. */
+  instance_name?: string;
   version: string;
   /** Resolved 6-axis trait fingerprint (or null if the kind declared
    *  no traits). Used by action matching when an action's appliesTo
@@ -2679,6 +2755,7 @@ export interface Platform {
   notifications: PlatformNotifications;
   integrations: PlatformIntegrations;
   ai: PlatformAi;
+  units: PlatformUnits;
   edge: PlatformEdge;
   egress: PlatformEgress;
   auth: PlatformAuth;
@@ -2788,6 +2865,43 @@ export interface PlatformDevices {
   /** The connection store, for a connection-managing consumer (digifab CRUD).
    *  Throws if no store is registered (core-devices always registers one). */
   connections(): DeviceConnectionStore;
+}
+
+// ── Units (vocabulary owner: core-units) ────────────────────────────────────
+// Server-side unit resolution/conversion for modules + the kernel. The
+// vocabulary AND the conversion math live in core-units (see
+// scripts/lint-unit-conversion.ts — nothing else may hand-roll factors);
+// this surface is how any consumer asks. A field def's declared `unit`
+// resolved here is what gives a number machine-readable physical semantics
+// (a length-category unit IS a length) — never the field's name.
+
+/** A resolved unit: identity + category + the category-base factor when
+ *  convertible (count-style units carry none). */
+export interface PlatformUnitInfo {
+  code: string;
+  symbol: string;
+  name: string;
+  plural: string;
+  category: string;
+  factor?: number;
+}
+
+export interface UnitsService {
+  /** Resolve a raw unit string ("mm", "grams") against the built-in
+   *  vocabulary + the org's custom units. Null when unknown. */
+  resolve(orgId: string, raw: string): Promise<PlatformUnitInfo | null>;
+  /** Convert between raw unit strings (same category, both factored).
+   *  Null when not convertible. */
+  convert(orgId: string, value: number, fromRaw: string, toRaw: string): Promise<number | null>;
+}
+
+export interface PlatformUnits {
+  /** The vocabulary owner (core-units) registers this at load. */
+  registerService(svc: UnitsService): void;
+  /** Null when unknown, or when no service is registered (core-units off) —
+   *  consumers degrade to "no physical semantics", never guess. */
+  resolve(orgId: string, raw: string): Promise<PlatformUnitInfo | null>;
+  convert(orgId: string, value: number, fromRaw: string, toRaw: string): Promise<number | null>;
 }
 
 let _platform: Platform | null = null;

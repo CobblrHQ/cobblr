@@ -67,7 +67,7 @@
             "entity_kind": "assets:asset",
             "name": "weight_kg",
             "display_label": "Weight (kg)",
-            "type": "number",
+            "type": "number", "unit": "kg",
             "position": 4,
             "help": "Current weight — handy for dosing meds + spotting changes."
           },

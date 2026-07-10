@@ -4,6 +4,7 @@
 
 import { platform, type AiCapability } from "@cobblr/platform-contract";
 import { IDENTIFY_PROMPT, measurementContext } from "./identify-prompt.js";
+import { toolsOf, turnsOf, openAiToolsOf, openAiMessagesOf, parseOpenAiToolCalls } from "./tool-wire.js";
 
 const SUPPORTED: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>> = {
   chat: { models: ["gpt-4o", "gpt-4o-mini", "o1-mini"], defaultModel: "gpt-4o-mini" },
@@ -82,6 +83,9 @@ export function register(): void {
             model: ctx.model,
             messages,
           };
+          // Native tool-calling for chat: forward the neutral tool defs.
+          const toolDefs = ctx.capability === "chat" ? toolsOf(ctx.input) : null;
+          if (toolDefs) body.tools = openAiToolsOf(toolDefs);
           if (
             ctx.capability === "classify-image" ||
             ctx.capability === "identify-image" ||
@@ -99,11 +103,23 @@ export function register(): void {
           });
           if (!res.ok) throw new Error(`openai: ${res.status} ${await res.text()}`);
           const out = (await res.json()) as {
-            choices: Array<{ message: { role: string; content: string } }>;
+            choices: Array<{
+              message: {
+                role: string;
+                content: string | null;
+                tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: unknown } }>;
+              };
+            }>;
             usage: { prompt_tokens: number; completion_tokens: number };
           };
+          const msg = out.choices[0]?.message ?? { role: "assistant", content: "" };
+          const calls = parseOpenAiToolCalls(msg);
           return {
-            result: out.choices[0]?.message ?? { role: "assistant", content: "" },
+            result: {
+              role: msg.role ?? "assistant",
+              content: msg.content ?? "",
+              ...(calls ? { tool_calls: calls } : {}),
+            },
             input_tokens: out.usage.prompt_tokens,
             output_tokens: out.usage.completion_tokens,
             cost_cents: estimateCost(ctx.model, out.usage.prompt_tokens, out.usage.completion_tokens),
@@ -206,10 +222,9 @@ export function buildMessages(
     }
     case "chat":
     default: {
-      const msgs = ((input.messages as Array<{ role: string; content: string }>) ?? []).map((m) => ({
-        role: m.role,
-        content: m.content,
-      }));
+      // Tool-aware turn mapping (assistant tool_calls / role:"tool" results) —
+      // OpenAI's dialect of the neutral wire; see tool-wire.ts.
+      const msgs = openAiMessagesOf(turnsOf(input)) as Array<{ role: string; content: unknown }>;
       // Honour a first-class `system` prompt (chat.ts passes it here, not as a
       // role:"system" message) by prepending it as the system turn.
       const system = typeof input.system === "string" ? input.system : undefined;

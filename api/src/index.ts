@@ -47,6 +47,7 @@ import * as computedFields from "./platform/computed-fields.js";
 import * as createDefaults from "./platform/create-defaults.js";
 import * as deviceApply from "./platform/device-apply.js";
 import * as scanRegistry from "./platform/scan-registry.js";
+import * as unitsImpl from "./platform/units.js";
 import * as instancesImpl from "./platform/instances.js";
 import * as scanResolvers from "./platform/scan-resolvers.js";
 import * as queue from "./platform/queue.js";
@@ -155,6 +156,7 @@ async function boot() {
       walkPairings: entities.walkPairings,
       walkPath: entities.walkPath,
       listKinds: entities.listKinds,
+      listKindsForOrg: entities.listKindsForOrg,
       getKind: entities.getKind,
       serverManagedFields: entities.serverManagedFields,
     },
@@ -170,6 +172,11 @@ async function boot() {
       connections: devices.connections,
     },
     templates: { render: templates.render },
+    units: {
+      registerService: unitsImpl.registerService,
+      resolve: unitsImpl.resolve,
+      convert: unitsImpl.convert,
+    },
     wires: { fireEvent: wires.fireEvent },
     health: {
       registerProbe: health.registerProbe,

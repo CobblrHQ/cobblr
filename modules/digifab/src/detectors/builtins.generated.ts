@@ -7,5 +7,6 @@ import { builtin as b1 } from "./llm/index.js";
 import { builtin as b2 } from "./local-http/index.js";
 import { builtin as b3 } from "./obico-ml/index.js";
 import { builtin as b4 } from "./printguard/index.js";
+import { builtin as b5 } from "./printguard-frame/index.js";
 
-export const BUILTINS: DetectorPackage[] = [b0, b1, b2, b3, b4];
+export const BUILTINS: DetectorPackage[] = [b0, b1, b2, b3, b4, b5];

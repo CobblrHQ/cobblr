@@ -1,53 +1,130 @@
-// Agentic chat — the assistant can DO things, not just talk. One AI call per
-// turn returns ONE structured move: a plain reply, a proposed CREATE, or a
-// proposed ACTION on an existing record. Writes never run here — they're
-// returned as a "proposal" the user confirms via POST /chat/execute. Entity
-// resolution for actions (name → id) happens server-side via core-search.
+// Agentic chat — Cobb can READ the workspace and PROPOSE writes, in a real
+// tool-calling loop (agent-loop.ts): read tools (search/list/get/kinds/
+// actions) auto-run under the caller's own permissions and feed back into the
+// model; WRITE tools stop the loop and come back as PROPOSALS the user
+// confirms via POST /chat/execute — writes NEVER run inside the loop. The
+// tools come from the SHARED registry (@cobblr/workspace-tools — the exact
+// set the MCP server exposes), so the two AI surfaces stay capability-
+// identical. Providers without tool support (e.g. a bridge target that
+// ignores the field) degrade to the legacy one-JSON-move protocol below.
 
 import { Router } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
-import { tenantContext, sessionUserId } from "../db.js";
+import { tenantContext, sessionUserId, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import {
+  WORKSPACE_TOOLS,
+  WRITE_TOOLS,
+  getTool,
+  jsonSchemaOf,
+  resolveCreatePath,
+  resolveUpdatePath,
+  resolveDeletePath,
+  fetchKinds,
+  type KindRec,
+  type WorkspaceApi,
+} from "@cobblr/workspace-tools";
+import { runAgentLoop, type AgentLoopOutcome, type AppliedWrite } from "./agent-loop.js";
+import { performWrite, undoWrite, undoableOf, type WriteRequest, type WriteOutcome } from "./chat-ledger.js";
+import type { ToolCall, ChatTurn } from "../providers/tool-wire.js";
 
-export const chatRouter = Router({ mergeParams: true });
-
-// Kind → that module's create endpoint, for kinds that predate the manifest
-// `createEndpoint` declaration. Pinned here until each module declares it; a
-// kind that DOES declare `createEndpoint` needs no entry — resolveCreatePath
-// reads the manifest. Do NOT add new rows: declare `createEndpoint` on the
-// kind instead.
-const KIND_CREATE_PATHS: Record<string, string> = {
-  "inventory:part": "inventory/parts",
-  "machines:machine": "machines/machines",
-  "assets:asset": "assets/assets",
-  "projects:project": "projects/projects",
-  "projects:task": "projects/tasks",
-  "lists:list": "lists/lists",
-  "lists:item": "lists/items",
-};
-
-export interface KindRec {
-  id: string;
-  display_name?: string;
-  module_name?: string;
-  endpoints?: { get?: string; create?: string } | null;
-  fields?: Array<{ name: string; type?: string; role?: string; required?: boolean }>;
+/** ToolCall → the ledgered write request shape (null = not a known write). */
+function writeRequestOf(call: ToolCall): WriteRequest | null {
+  const a = call.args ?? {};
+  const kind = typeof a.kind === "string" ? a.kind : typeof a.entity_kind === "string" ? a.entity_kind : "";
+  switch (call.name) {
+    case "create_record":
+      return kind ? { tool: "create", entity_kind: kind, fields: (a.fields as Record<string, unknown>) ?? {} } : null;
+    case "update_record":
+      return kind && a.id
+        ? { tool: "update", entity_kind: kind, entity_id: String(a.id), fields: (a.fields as Record<string, unknown>) ?? {} }
+        : null;
+    case "delete_record":
+      return kind && a.id ? { tool: "delete", entity_kind: kind, entity_id: String(a.id) } : null;
+    case "invoke_action":
+      return {
+        tool: "action",
+        entity_kind: kind,
+        entity_id: a.entity_id ? String(a.entity_id) : undefined,
+        action_id: String(a.action_id ?? ""),
+        args: (a.args as Record<string, unknown>) ?? undefined,
+      };
+    default:
+      return null;
+  }
 }
 
-/** The `POST /modules/<path>` route that creates a record of `kind`, or null
- *  when the kind isn't creatable from chat. A manifest-declared
- *  `createEndpoint` wins (the module's own promise that the plain collection
- *  POST works); the pinned map covers the pre-declaration kinds. No guessing —
- *  a kind with neither is honestly not offered, instead of being advertised
- *  and 404ing at confirm time. Exported (pure over `kinds`) for tests. */
-export function resolveCreatePath(kind: string, kinds: KindRec[]): string | null {
-  const rec = kinds.find((k) => k.id === kind);
-  const create = rec?.endpoints?.create;
-  if (rec?.module_name && create) {
-    return `${rec.module_name}/${create.replace(/^\//, "")}`;
+/** Applied-write summaries for the widget's "✓ done — Undo" cards. */
+function appliedSummaries(applied: AppliedWrite[]): Array<{ summary: string; ledger_id?: string; undoable?: boolean }> {
+  return applied.map((a) => {
+    const r = a.result as WriteOutcome;
+    return { summary: r?.message ?? a.call.name, ledger_id: r?.ledger_id, undoable: r?.undoable };
+  });
+}
+
+export const chatRouter = Router({ mergeParams: true });
+export { resolveCreatePath, type KindRec };
+
+const WRITE_NAMES = new Set(WRITE_TOOLS.map((t) => t.name));
+
+/** The registry's transport seam, bound to this request's workspace + auth —
+ *  read tools run with exactly the caller's permissions. */
+function chatWorkspaceApi(c: Ctx): WorkspaceApi {
+  return {
+    async request(method, path, body) {
+      return callApi(c, method, path, body);
+    },
+  };
+}
+
+/** Per-user tool consent (migrations 0004+0005): may the chat READ workspace
+ *  data into prompts, and the WRITE MODE — Claude-Code style:
+ *    off  → no write proposals at all
+ *    ask  → every write is a proposal the user confirms (default)
+ *    auto → record creates/updates/deletes APPLY IMMEDIATELY (ledgered +
+ *           undoable); ACTIONS still ask (irreversible side effects).
+ *  Absent row = read on + ask. */
+export type WriteMode = "off" | "ask" | "auto";
+export interface ChatToolPrefs {
+  read_tools: boolean;
+  write_mode: WriteMode;
+}
+const DEFAULT_PREFS: ChatToolPrefs = { read_tools: true, write_mode: "ask" };
+
+function asWriteMode(v: unknown): WriteMode {
+  return v === "off" || v === "auto" ? v : "ask";
+}
+
+async function chatPrefsOf(req: Parameters<typeof tenantDb>[0]): Promise<ChatToolPrefs> {
+  try {
+    const row = await tenantDb(req)
+      .selectFrom("core_ai_chat_prefs")
+      .select(["read_tools", "write_mode"])
+      .where("user_id", "=", sessionUserId(req) ?? "")
+      .executeTakeFirst();
+    return row ? { read_tools: !!row.read_tools, write_mode: asWriteMode(row.write_mode) } : DEFAULT_PREFS;
+  } catch {
+    return DEFAULT_PREFS; // fail-open to defaults, never break the chat
   }
-  return kind in KIND_CREATE_PATHS ? KIND_CREATE_PATHS[kind]! : null;
+}
+
+/** Neutral tool defs for the providers, FILTERED by the user's consent. Write
+ *  tool descriptions match the mode (propose vs apply-with-undo). Read off +
+ *  write off → [] → no tools sent, pure conversation. Exported for tests. */
+export function toolDefsFor(prefs: ChatToolPrefs): Array<{ name: string; description: string; parameters: unknown }> {
+  return WORKSPACE_TOOLS.filter((t) => (t.mode === "read" ? prefs.read_tools : prefs.write_mode !== "off")).map(
+    (t) => ({
+      name: t.name,
+      description:
+        t.mode === "write"
+          ? prefs.write_mode === "auto" && t.name !== "invoke_action"
+            ? `${t.description} (Applied immediately — every change is tracked and undoable.)`
+            : `${t.description} (This PROPOSES the change — the user confirms before anything runs.)`
+          : t.description,
+      parameters: jsonSchemaOf(t.params),
+    }),
+  );
 }
 
 async function createPathFor(c: Ctx, kind: string): Promise<string | null> {
@@ -96,7 +173,9 @@ interface Move {
 }
 
 async function buildSystemPrompt(c: Ctx): Promise<string> {
-  const kindsRes = await callApi(c, "GET", "/entity-kinds");
+  // include=custom_fields → the workspace's user-defined fields ride along, so
+  // the hints below cover the WHOLE settable shape, not just native fields.
+  const kindsRes = await callApi(c, "GET", "/entity-kinds?include=custom_fields");
   const kinds = ((kindsRes.body.items as KindRec[] | undefined) ?? []);
   const kindLines = kinds.map((k) => `- ${k.id} (${k.display_name ?? k.id})`).join("\n") || "(none)";
 
@@ -120,7 +199,14 @@ async function buildSystemPrompt(c: Ctx): Promise<string> {
         const req = f.required || f.role === "title" ? " (required)" : "";
         return `${f.name}${f.type && f.type !== "text" ? `:${f.type}` : ""}${req}`;
       });
-      return fs.length ? `- ${k.id}: ${fs.join(", ")}` : null;
+      // The workspace's own custom fields are just as settable (values land in
+      // the record's metadata) — hint them too, marked so the model can tell.
+      const cfs = (k.custom_fields ?? []).slice(0, 8).map((f) => {
+        const choices = f.choices?.length ? ` [${f.choices.slice(0, 6).join("|")}]` : "";
+        return `${f.name}${f.type && f.type !== "text" ? `:${f.type}` : ""}${choices} (custom)`;
+      });
+      const all = [...fs, ...cfs];
+      return all.length ? `- ${k.id}: ${all.join(", ")}` : null;
     })
     .filter(Boolean) as string[];
 
@@ -145,6 +231,8 @@ ${createFieldLines.join("\n") || "(none)"}
 ACTIONS you can run on existing records:
 ${actionLines.join("\n") || "(none)"}
 
+TOOLS: when tools are available to you, PREFER them over the JSON shapes below. Use the read tools (search_records, list_records, get_record, list_record_kinds, list_actions, get_putaway_plan) to look at the user's ACTUAL data before answering questions about it — never guess what they have. get_putaway_plan is the live put-away/organize state — reach for it whenever the user mentions putting things away, bins, or their plan. After creating/renaming locations for them, call replan_putaway ONCE (non-destructive; their open plan refreshes itself) — optionally with a hint distilling the conversation. Use the write tools (create_record, update_record, delete_record, invoke_action) to act; they only PROPOSE — the user confirms every change. You can chain: read first, then write. The JSON shapes below are the fallback for when you cannot call tools.
+
 Reply with ONE JSON object and nothing else, in ONE of these shapes:
 - Chat/answer/ask:   {"type":"reply","text":"<your full, helpful answer or question>"}
 - Create a record:   {"type":"create","entity_kind":"<id>","fields":{"name":"<...>", ...},"summary":"<one line, e.g. Create a part called Widget>"}
@@ -158,6 +246,84 @@ Rules:
 - create: use the kind's field names from the list above (its required/title field at minimum); add other obvious fields the user gave.
 - action: entity_query is the name/text to find the existing record — the system looks it up.
 - Use "build" only when the user wants to SET UP or DESIGN a whole new app/workspace (several kinds/modules at once). Put their full description in "intent". Never use "build" for a single record.`;
+}
+
+/** Best-effort display label for a record (falls back to the id). */
+async function labelOf(wsApi: WorkspaceApi, kind: string, id: string): Promise<string> {
+  try {
+    const r = await getTool("get_record")!.execute(wsApi, { kind, id });
+    if (r.ok) {
+      const d = r.data as { title?: string; name?: string; fields?: { title?: string; name?: string } };
+      return d.title ?? d.name ?? d.fields?.title ?? d.fields?.name ?? id;
+    }
+  } catch {
+    /* fall through */
+  }
+  return id;
+}
+
+/** Turn one WRITE tool call into a user-facing proposal — or an honest error
+ *  when the call couldn't succeed on confirm (undeclared kind, missing args). */
+async function proposalOf(
+  wsApi: WorkspaceApi,
+  kinds: KindRec[],
+  call: ToolCall,
+): Promise<{ summary: string; proposal: Record<string, unknown> } | { error: string }> {
+  const a = call.args ?? {};
+  const kind = typeof a.kind === "string" ? a.kind : typeof a.entity_kind === "string" ? a.entity_kind : "";
+  switch (call.name) {
+    case "create_record": {
+      if (!kind || !resolveCreatePath(kind, kinds)) return { error: `I can't create "${kind || "that"}" from chat yet.` };
+      const fields = (a.fields as Record<string, unknown>) ?? {};
+      const name = String(fields.title ?? fields.name ?? "").trim();
+      return {
+        summary: `Create a ${kind}${name ? `: “${name}”` : ""}`,
+        proposal: { kind: "create", entity_kind: kind, fields },
+      };
+    }
+    case "update_record": {
+      const id = String(a.id ?? "");
+      if (!kind || !id || !resolveUpdatePath(kind, id, kinds)) {
+        return { error: `Records of "${kind || "that"}" can't be updated from chat yet.` };
+      }
+      const fields = (a.fields as Record<string, unknown>) ?? {};
+      const label = await labelOf(wsApi, kind, id);
+      return {
+        summary: `Update “${label}” (${Object.keys(fields).join(", ") || "fields"})`,
+        proposal: { kind: "update", entity_kind: kind, entity_id: id, fields, entity_label: label },
+      };
+    }
+    case "delete_record": {
+      const id = String(a.id ?? "");
+      if (!kind || !id || !resolveDeletePath(kind, id, kinds)) {
+        return { error: `Records of "${kind || "that"}" can't be deleted from chat yet.` };
+      }
+      const label = await labelOf(wsApi, kind, id);
+      return {
+        summary: `Delete “${label}” — permanent`,
+        proposal: { kind: "delete", entity_kind: kind, entity_id: id, entity_label: label },
+      };
+    }
+    case "invoke_action": {
+      const actionId = String(a.action_id ?? "");
+      const id = String(a.entity_id ?? "");
+      if (!actionId || !kind || !id) return { error: "I need the action and the exact record to run it on." };
+      const label = await labelOf(wsApi, kind, id);
+      return {
+        summary: `Run ${actionId} on “${label}”`,
+        proposal: {
+          kind: "action",
+          action_id: actionId,
+          entity_kind: kind,
+          entity_id: id,
+          entity_label: label,
+          ...(a.args && typeof a.args === "object" ? { args: a.args } : {}),
+        },
+      };
+    }
+    default:
+      return { error: `I tried an operation I don't actually have (“${call.name}”).` };
+  }
 }
 
 function parseMove(raw: string): Move | null {
@@ -192,22 +358,71 @@ chatRouter.post(
       system = `You are Cobb, the helpful assistant inside the Cobblr workspace "${c.slug}". Introduce yourself as Cobb if asked. Chat helpfully; reply with {"type":"reply","text":"..."}.`;
     }
 
-    let text: string;
+    // The agent loop: read tools auto-run (through THIS caller's permissions,
+    // via chatWorkspaceApi); write tool calls stop the loop and become the
+    // proposals below. Tool-less providers never emit tool_calls, so the loop
+    // degrades to exactly one model call → the legacy JSON-move parse.
+    const wsApi = chatWorkspaceApi(c);
+    // The user's tool consent gates everything downstream: which tool defs the
+    // model sees, and (below) whether legacy JSON-move writes may propose.
+    const prefs = await chatPrefsOf(req);
+    const toolDefs = toolDefsFor(prefs);
+    if (!prefs.read_tools || prefs.write_mode === "off") {
+      system += `\n\nCONSENT: the user has turned OFF ${
+        !prefs.read_tools && prefs.write_mode === "off"
+          ? "workspace reading AND change proposals"
+          : !prefs.read_tools
+            ? "workspace reading (do not claim to know their data)"
+            : "change proposals (answer + explain, but do not propose creates/updates/actions)"
+      } for this chat. Respect that; if they ask for something it blocks, tell them about the toggles at the top of the chat.`;
+    }
+    if (prefs.write_mode === "auto") {
+      system += `\n\nAUTO MODE: your record creates/updates/deletes apply IMMEDIATELY (every change is tracked and the user can undo it) — report what you did plainly. Actions still require the user's confirm.`;
+    }
+    // AUTO mode: record CRUD applies immediately through the ledger (undoable);
+    // actions return null → still proposed. Hard cap per turn.
+    const AUTO_WRITE_CAP = 10;
+    let autoWrites = 0;
+    const userId = sessionUserId(req) ?? "";
+    const ldb = tenantDb(req);
+    let outcome: AgentLoopOutcome;
     try {
-      const r = await platform().ai.invoke({
-        orgId,
-        capability: "chat",
-        // Pass the prompt as `system` (a first-class field every adapter reads),
-        // NOT as a role:"system" message — Anthropic's Messages API drops a
-        // "system"-role turn, so the workspace instructions were being lost on
-        // the managed provider but honoured on the edge-bridge. Same input, two
-        // behaviours; this makes providers consistent.
-        input: { system, messages: parsed.data.messages },
-        source: { kind: "core-ai:chat", id: orgId },
-        userId: sessionUserId(req),
+      outcome = await runAgentLoop(parsed.data.messages as ChatTurn[], {
+        callModel: async (turns) => {
+          const r = await platform().ai.invoke({
+            orgId,
+            capability: "chat",
+            // system rides as a first-class field (Anthropic drops a
+            // "system"-role message); tools are the neutral defs every adapter
+            // translates to its native dialect (tool-wire.ts).
+            input: { system, messages: turns, ...(toolDefs.length ? { tools: toolDefs } : {}) },
+            source: { kind: "core-ai:chat", id: orgId },
+            userId: sessionUserId(req),
+          });
+          const result = r.result as
+            | { content?: string; text?: string; tool_calls?: ToolCall[] }
+            | string;
+          if (typeof result === "string") return { content: result };
+          return { content: result?.content ?? result?.text ?? "", tool_calls: result?.tool_calls };
+        },
+        executeRead: async (name, args) => {
+          const tool = getTool(name);
+          if (!tool || tool.mode !== "read") return { ok: false, error: `no such read tool: ${name}` };
+          return tool.execute(wsApi, args);
+        },
+        isWrite: (name) => WRITE_NAMES.has(name),
+        ...(prefs.write_mode === "auto"
+          ? {
+              executeWrite: async (call: ToolCall) => {
+                const w = writeRequestOf(call);
+                // Actions keep the confirm gate (irreversible); over-cap too.
+                if (!w || w.tool === "action" || autoWrites >= AUTO_WRITE_CAP) return null;
+                autoWrites++;
+                return performWrite(wsApi, ldb, userId, w, { auto: true });
+              },
+            }
+          : {}),
       });
-      const result = r.result as { content?: string; text?: string } | string;
-      text = typeof result === "string" ? result : result?.content ?? result?.text ?? "";
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       res.status(/no provider|not entitled|not available/i.test(msg) ? 409 : 502).json({
@@ -217,9 +432,61 @@ chatRouter.post(
       return;
     }
 
+    const done = appliedSummaries(outcome.applied);
+
+    // Write tool calls → user-confirmed proposals (one per call; the widget
+    // renders each with its own Confirm). Invalid calls turn into an honest
+    // reply instead of a proposal that would fail on confirm. Anything ALREADY
+    // auto-applied this turn rides along as `applied` (done-cards with Undo).
+    if (outcome.kind === "writes" && prefs.write_mode === "off") {
+      // Belt-and-braces: the model shouldn't have write tools when consent is
+      // off, but a hallucinated call must still never become a proposal.
+      res.json({ type: "reply", text: "Change proposals are turned off for this chat (see the toggles at the top). Flip “Propose changes” back on and ask again." });
+      return;
+    }
+    if (outcome.kind === "writes") {
+      const items: Array<{ summary: string; proposal: Record<string, unknown> }> = [];
+      const problems: string[] = [];
+      const kinds = await fetchKinds(wsApi).catch(() => [] as KindRec[]);
+      for (const call of outcome.calls) {
+        const built = await proposalOf(wsApi, kinds, call);
+        if ("error" in built) problems.push(built.error);
+        else items.push(built);
+      }
+      if (items.length === 0) {
+        res.json({
+          type: "reply",
+          text: problems.join(" ") || outcome.text || "I couldn't line that up — can you rephrase?",
+          ...(done.length ? { applied: done } : {}),
+        });
+        return;
+      }
+      if (items.length === 1) {
+        res.json({
+          type: "proposal",
+          text: outcome.text || undefined,
+          summary: items[0]!.summary,
+          proposal: items[0]!.proposal,
+          ...(done.length ? { applied: done } : {}),
+        });
+        return;
+      }
+      res.json({ type: "proposals", text: outcome.text || undefined, items, ...(done.length ? { applied: done } : {}) });
+      return;
+    }
+
+    const text = outcome.text;
+
     const move = parseMove(text);
     if (!move || move.type === "reply") {
-      res.json({ type: "reply", text: move?.text ?? text });
+      res.json({ type: "reply", text: move?.text ?? text, ...(done.length ? { applied: done } : {}) });
+      return;
+    }
+
+    // Consent gate for the LEGACY JSON-move protocol too (a tool-less provider
+    // never saw the filtered tool list, so it can still emit write moves).
+    if (prefs.write_mode === "off") {
+      res.json({ type: "reply", text: "Change proposals are turned off for this chat (see the toggles at the top). Flip “Propose changes” back on and ask again." });
       return;
     }
 
@@ -312,11 +579,116 @@ chatRouter.post(
   }),
 );
 
+// ── GET/PUT /chat/prefs — the user's tool consent for THIS workspace ──
+chatRouter.get(
+  "/prefs",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    res.json(await chatPrefsOf(req));
+  }),
+);
+
+// write_mode is the source of truth; write_tools (boolean era) accepted for
+// back-compat (false → off, true → ask) and kept in sync for old readers.
+const PrefsBody = z.object({
+  read_tools: z.boolean(),
+  write_mode: z.enum(["off", "ask", "auto"]).optional(),
+  write_tools: z.boolean().optional(),
+});
+
+chatRouter.put(
+  "/prefs",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const parsed = PrefsBody.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const userId = sessionUserId(req);
+    if (!userId) {
+      res.status(401).json({ error: { code: "no_session", message: "Sign in first." } });
+      return;
+    }
+    const mode: WriteMode = parsed.data.write_mode ?? (parsed.data.write_tools === false ? "off" : "ask");
+    const writeTools = mode !== "off";
+    await tenantDb(req)
+      .insertInto("core_ai_chat_prefs")
+      .values({ user_id: userId, read_tools: parsed.data.read_tools, write_tools: writeTools, write_mode: mode })
+      .onConflict((oc) =>
+        oc.column("user_id").doUpdateSet({
+          read_tools: parsed.data.read_tools,
+          write_tools: writeTools,
+          write_mode: mode,
+          updated_at: new Date(),
+        }),
+      )
+      .execute();
+    res.json({ read_tools: parsed.data.read_tools, write_mode: mode });
+  }),
+);
+
+// ── The AI change ledger: list + undo ──
+chatRouter.get(
+  "/writes",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const c = ctxOf(req);
+    const wsApi = chatWorkspaceApi(c);
+    const kinds = await fetchKinds(wsApi).catch(() => [] as KindRec[]);
+    const rows = await tenantDb(req)
+      .selectFrom("core_ai_chat_writes")
+      .selectAll()
+      .orderBy("created_at", "desc")
+      .limit(50)
+      .execute();
+    res.json({
+      items: rows.map((r) => ({
+        id: r.id,
+        tool: r.tool,
+        entity_kind: r.entity_kind,
+        entity_id: r.entity_id,
+        entity_label: r.entity_label,
+        auto_applied: r.auto_applied,
+        undone_at: r.undone_at,
+        undo_of: r.undo_of,
+        created_at: r.created_at,
+        undoable: undoableOf(r, kinds),
+      })),
+    });
+  }),
+);
+
+chatRouter.post(
+  "/writes/:id/undo",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const c = ctxOf(req);
+    const userId = sessionUserId(req);
+    if (!userId) {
+      res.status(401).json({ error: { code: "no_session", message: "Sign in first." } });
+      return;
+    }
+    const out = await undoWrite(chatWorkspaceApi(c), tenantDb(req), userId, String(req.params.id));
+    res.status(out.ok ? 200 : 400).json(out);
+  }),
+);
+
 // ── POST /chat/execute — run a confirmed proposal ──
 const ExecBody = z.object({
   proposal: z.union([
     z.object({ kind: z.literal("create"), entity_kind: z.string(), fields: z.record(z.unknown()) }),
-    z.object({ kind: z.literal("action"), action_id: z.string(), entity_kind: z.string(), entity_id: z.string() }),
+    z.object({
+      kind: z.literal("update"),
+      entity_kind: z.string(),
+      entity_id: z.string(),
+      fields: z.record(z.unknown()),
+    }),
+    z.object({ kind: z.literal("delete"), entity_kind: z.string(), entity_id: z.string() }),
+    z.object({
+      kind: z.literal("action"),
+      action_id: z.string(),
+      entity_kind: z.string(),
+      entity_id: z.string(),
+      args: z.record(z.unknown()).optional(),
+    }),
     z.object({ kind: z.literal("build"), draft_id: z.string() }),
   ]),
 });
@@ -330,19 +702,24 @@ chatRouter.post(
     const c = ctxOf(req);
     const p = parsed.data.proposal;
 
-    if (p.kind === "create") {
-      const path = await createPathFor(c, p.entity_kind);
-      if (!path) {
-        res.status(400).json({ ok: false, message: `Can't create ${p.entity_kind}.` });
-        return;
-      }
-      const r = await callApi(c, "POST", `/modules/${path}`, p.fields);
-      if (r.status >= 400) {
-        res.status(r.status).json({ ok: false, message: (r.body.error as { message?: string } | undefined)?.message ?? "Create failed." });
-        return;
-      }
-      const created = r.body as { id?: string; name?: string; title?: string };
-      res.json({ ok: true, message: `Created ${created.name ?? created.title ?? p.entity_kind}.`, entity: { kind: p.entity_kind, id: created.id } });
+    // Every record write + action runs through performWrite → the AI change
+    // ledger (before-image captured, undo available). One path, confirmed or
+    // auto — the ONLY way chat writes happen.
+    if (p.kind === "create" || p.kind === "update" || p.kind === "delete") {
+      const userId = sessionUserId(req) ?? "";
+      const out = await performWrite(
+        chatWorkspaceApi(c),
+        tenantDb(req),
+        userId,
+        {
+          tool: p.kind,
+          entity_kind: p.entity_kind,
+          ...(p.kind !== "create" ? { entity_id: p.entity_id } : {}),
+          ...(p.kind !== "delete" ? { fields: p.fields } : {}),
+        },
+        { auto: false },
+      );
+      res.status(out.ok ? 200 : 400).json(out);
       return;
     }
 
@@ -367,16 +744,14 @@ chatRouter.post(
       return;
     }
 
-    // action
-    const r = await callApi(c, "POST", `/actions/invoke`, {
-      actionId: p.action_id,
-      entityKind: p.entity_kind,
-      entityId: p.entity_id,
-    });
-    if (r.status >= 400) {
-      res.status(r.status).json({ ok: false, message: (r.body.error as { message?: string } | undefined)?.message ?? "Action failed." });
-      return;
-    }
-    res.json({ ok: true, message: `Done.` });
+    // action — ledgered too (recorded, not undoable).
+    const out = await performWrite(
+      chatWorkspaceApi(c),
+      tenantDb(req),
+      sessionUserId(req) ?? "",
+      { tool: "action", entity_kind: p.entity_kind, entity_id: p.entity_id, action_id: p.action_id, args: p.args },
+      { auto: false },
+    );
+    res.status(out.ok ? 200 : 400).json(out);
   }),
 );

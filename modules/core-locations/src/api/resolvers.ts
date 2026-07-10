@@ -91,6 +91,7 @@ function toResolved(row: {
   id: string;
   name: string;
   short_name: string | null;
+  metadata?: Record<string, unknown> | null;
   kind: "area" | "container";
   parent_id: string | null;
   depth: number;
@@ -108,6 +109,10 @@ function toResolved(row: {
       parent_id: row.parent_id,
       depth: row.depth,
       position: row.position,
+      // Declared interior size ({x,y,z} in mm) — the ONLY metadata key
+      // exposed through the generic layer; the rest of the blob stays
+      // private to core-locations.
+      interior_mm: (row.metadata as { interior_mm?: unknown } | null)?.interior_mm ?? null,
     },
   };
 }

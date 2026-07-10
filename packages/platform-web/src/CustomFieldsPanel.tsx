@@ -17,6 +17,7 @@ import { fieldControl } from "./fieldControl";
 import { FieldRenderer, boolLabel } from "./FieldRenderer";
 import { MarkdownEditor } from "./MarkdownEditor";
 import { relativeTime } from "./relativeTime";
+import { useUnits } from "./useUnits";
 
 interface Props {
   entityKind: string;
@@ -259,6 +260,9 @@ function PlainRow({
   // real time. The input keeps the raw value; the renderer reads
   // the current draft so the preview updates on every keystroke.
   const showPreview = !!def.renderer && def.renderer !== "text";
+  // A declared unit shows as a quiet suffix token on the input row ("mm"),
+  // so the person typing knows what the number means.
+  const showUnit = !!def.unit && def.type === "number";
   return (
     <label className="block">
       <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
@@ -270,7 +274,7 @@ function PlainRow({
           </span>
         )}
       </span>
-      <div className={showPreview ? "flex items-center gap-2" : ""}>
+      <div className={showPreview || showUnit ? "flex items-center gap-2" : ""}>
         <input
           type={def.type === "number" ? "number" : def.type === "date" ? "date" : "text"}
           defaultValue={initial}
@@ -288,6 +292,7 @@ function PlainRow({
           }
           data-draft={draft}
         />
+        {showUnit && <UnitSuffix unit={def.unit!} />}
         {showPreview && (
           <FieldRenderer
             fieldName={def.name}
@@ -298,6 +303,15 @@ function PlainRow({
         )}
       </div>
     </label>
+  );
+}
+
+/** The declared unit as a quiet token next to a number input, honoring the
+ *  workspace's symbol/name display preference. */
+function UnitSuffix({ unit }: { unit: string }) {
+  const units = useUnits();
+  return (
+    <span className="shrink-0 text-xs text-muted dark:text-slate-400">{units.unit(unit)}</span>
   );
 }
 

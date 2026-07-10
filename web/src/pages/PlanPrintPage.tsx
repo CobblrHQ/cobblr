@@ -82,7 +82,7 @@ export function PlanPrintPage() {
   );
 }
 
-function PrintPlan({
+export function PrintPlan({
   owner,
   items,
   byId,

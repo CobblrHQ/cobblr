@@ -11,7 +11,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "projects",
-  version: "0.1.1",
+  version: "0.2.0",
   displayName: "Projects",
   description:
     "Projects + tasks + dependencies. Tasks can wait on other tasks or on any module's entity — the platform brokers.",
@@ -31,6 +31,10 @@ export default defineModule({
     entityKinds: [
       {
         id: "projects:project",
+        primary: true,
+        createEndpoint: "/projects",
+        updateEndpoint: "/projects/{id}",
+        deleteEndpoint: "/projects/{id}",
         displayName: "Project",
         displayNamePlural: "Projects",
         icon: "layers",
@@ -58,6 +62,9 @@ export default defineModule({
       },
       {
         id: "projects:task",
+        createEndpoint: "/tasks",
+        updateEndpoint: "/tasks/{id}",
+        deleteEndpoint: "/tasks/{id}",
         displayName: "Task",
         displayNamePlural: "Tasks",
         icon: "check-square",

@@ -344,6 +344,12 @@ function EditLocationModal({
   const [kind, setKind] = useState<"area" | "container">(location.kind);
   const [description, setDescription] = useState(location.description ?? "");
   const [notes, setNotes] = useState(location.notes ?? "");
+  // Declared interior size, {x,y,z} in mm (metadata.interior_mm) — what the
+  // organize planner's fit checks read. Blank = undeclared (never guessed).
+  const dims0 = (location.metadata?.interior_mm ?? {}) as { x?: number; y?: number; z?: number };
+  const [dimX, setDimX] = useState(dims0.x != null ? String(dims0.x) : "");
+  const [dimY, setDimY] = useState(dims0.y != null ? String(dims0.y) : "");
+  const [dimZ, setDimZ] = useState(dims0.z != null ? String(dims0.z) : "");
 
   const save = useMutation({
     mutationFn: () =>
@@ -353,6 +359,22 @@ function EditLocationModal({
         kind,
         description: description.trim() || null,
         notes: notes.trim() || null,
+        // metadata is replaced wholesale by the PATCH — merge over the
+        // current blob so container identity etc. survives a dims edit.
+        metadata: (() => {
+          const next = { ...(location.metadata ?? {}) } as Record<string, unknown>;
+          const nums = [dimX, dimY, dimZ].map((v) => (v.trim() ? Number(v) : null));
+          if (kind === "container" && nums.some((n) => n != null && Number.isFinite(n) && n > 0)) {
+            next.interior_mm = {
+              ...(nums[0] ? { x: nums[0] } : {}),
+              ...(nums[1] ? { y: nums[1] } : {}),
+              ...(nums[2] ? { z: nums[2] } : {}),
+            };
+          } else {
+            delete next.interior_mm;
+          }
+          return next;
+        })(),
       }),
     onSuccess: () => {
       toast.success("Location updated.");
@@ -418,6 +440,44 @@ function EditLocationModal({
             placeholder="Anything that helps future-you remember what lives here."
           />
         </Field>
+        {kind === "container" && (
+          <Field label="Interior size (mm) — optional">
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={1}
+                value={dimX}
+                onChange={(e) => setDimX(e.target.value)}
+                className="input w-24"
+                placeholder="L"
+                aria-label="Interior length in millimeters"
+              />
+              <span className="text-faint">×</span>
+              <input
+                type="number"
+                min={1}
+                value={dimY}
+                onChange={(e) => setDimY(e.target.value)}
+                className="input w-24"
+                placeholder="W"
+                aria-label="Interior width in millimeters"
+              />
+              <span className="text-faint">×</span>
+              <input
+                type="number"
+                min={1}
+                value={dimZ}
+                onChange={(e) => setDimZ(e.target.value)}
+                className="input w-24"
+                placeholder="H"
+                aria-label="Interior height in millimeters"
+              />
+            </div>
+            <p className="mt-1 text-[11px] text-faint dark:text-slate-500">
+              Lets Organize warn when something won't fit this container. Leave blank to skip.
+            </p>
+          </Field>
+        )}
         <div className="flex gap-2 pt-2">
           <button
             type="button"

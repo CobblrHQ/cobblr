@@ -53,7 +53,7 @@
             "entity_kind": "machines:machine",
             "name": "wattage",
             "display_label": "Wattage (W)",
-            "type": "number",
+            "type": "number", "unit": "W",
             "position": 21
           },
           {
@@ -89,7 +89,7 @@
             "entity_kind": "machines:machine",
             "name": "focal_length_mm",
             "display_label": "Focal length (mm)",
-            "type": "number",
+            "type": "number", "unit": "mm",
             "position": 24
           }
         ],

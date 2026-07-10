@@ -40,6 +40,7 @@ import {
   Upload,
   Wand2,
   X,
+  Zap,
 } from "lucide-react";
 import { Modal, useImageSrc, useToast, usePageTitle } from "@cobblr/platform-web";
 import { ScanImportModal } from "../components/ScanImportModal";
@@ -47,6 +48,7 @@ import { CameraCaptureSheet } from "../components/CameraCaptureSheet";
 import { LocationTreePicker } from "../components/LocationTreePicker";
 import { OrganizePlanSheet } from "../components/OrganizePlanSheet";
 import { OrganizeWalkSheet } from "../components/OrganizeWalkSheet";
+import { LiveSortSheet } from "../components/LiveSortSheet";
 import { ImageSearchPicker } from "../components/ImageSearchPicker";
 import { TrackedMatchBanner } from "../components/TrackedMatchBanner";
 import { BinAdjustModal } from "../components/BinAdjustModal";
@@ -650,7 +652,7 @@ export type ScanTarget = { instance: string; module: string; kind: string; label
 export function ScanPage() {
   usePageTitle("Scan");
   const { activeSlug } = useActiveOrg();
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   // Active filing "bin" — a core-locations node every scan files into until
   // cleared (the active-bin pattern). Stamped as target_location_id on each
   // scan so the item lands pre-filed; persists per workspace in localStorage.
@@ -1146,6 +1148,36 @@ export function ScanPage() {
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
 
+  // Recently committed: a confirm is revertible too — "Send back" reopens the
+  // scan as pending and removes the entity it CREATED (a scan that merely
+  // attached to an existing entity leaves it untouched). The mirror of
+  // Recently deleted, for the other resolution — a wrong commit is redoable,
+  // not a dead end.
+  const resolvedQ = useQuery({
+    queryKey: ["scan-inbox-resolved", activeSlug],
+    queryFn: () => api.listScanInbox(activeSlug, { status: "resolved" }),
+    enabled: !!activeSlug,
+  });
+  const recentlyCommitted = (resolvedQ.data?.items ?? [])
+    .slice()
+    .sort((a, b) => String(b.resolved_at ?? "").localeCompare(String(a.resolved_at ?? "")))
+    .slice(0, 20);
+  const [showCommitted, setShowCommitted] = useState(false);
+  const unconfirm = useMutation({
+    mutationFn: (id: string) => api.unconfirmScanItem(activeSlug, id),
+    onSuccess: (r) => {
+      toast.success(
+        r.entity_deleted
+          ? "Sent back to the inbox — the created entry was removed."
+          : `Sent back to the inbox.${r.note ? ` ${r.note}` : ""}`,
+      );
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      void qc.invalidateQueries({ queryKey: ["scan-inbox-resolved", activeSlug] });
+      void qc.invalidateQueries({ queryKey: ["scan-stats", activeSlug] });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+
   // Hardware barcode scanners (USB/Bluetooth HID, 1D or 2D) "type" the code +
   // Enter. Capture that burst page-wide so a physical scan intakes a barcode
   // hands-free — no need to open the UPC modal first. Keystrokes aimed at a real
@@ -1364,6 +1396,47 @@ export function ScanPage() {
   const [organizeOpen, setOrganizeOpen] = useState(false);
   // Phase 3: the same planner over committed entities with no location yet.
   const [organizeUnplacedOpen, setOrganizeUnplacedOpen] = useState(false);
+  // Live Sort — the streaming put-away session (scan → "→ Bin 1" → confirm).
+  // ?livesort=1 (the onboarding mission deep link) opens it on arrival.
+  const [liveSortOpen, setLiveSortOpen] = useState(() => params.get("livesort") === "1");
+  // "Plan the pile" — Guided Organize over EVERY pending unfiled item
+  // (scope:"pending", no selection needed). ?organize=pending deep-links it
+  // (the dashboard put-away card's other button).
+  const [organizePendingOpen, setOrganizePendingOpen] = useState(
+    () => params.get("organize") === "pending",
+  );
+  // Deep-link params (?organize=pending, ?livesort=1) are consume-once: they seed
+  // the modal open-state above, then we strip them from the URL. Otherwise the
+  // param persisted, so closing the modal left it in the URL and every refresh
+  // re-opened the modal against the user's wish (the author, 2026-07-10). Mount-only:
+  // the useState defaults already captured the arrival value; after that nothing
+  // reads these params, and opening a modal by button is pure state (no URL).
+  useEffect(() => {
+    if (!params.has("organize") && !params.has("livesort")) return;
+    const next = new URLSearchParams(params);
+    next.delete("organize");
+    next.delete("livesort");
+    setParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // The put-away strip's counts (cheap SQL; also feeds the dashboard card).
+  const scanStatsQ = useQuery({
+    queryKey: ["scan-stats", activeSlug],
+    queryFn: () => api.getScanStats(activeSlug),
+    enabled: !!activeSlug,
+    staleTime: 15_000,
+  });
+  // Warm the pending plan when unfiled items exist (debounced 5s so an active
+  // scanning burst settles) — "Put them away" should reveal a ready plan, not
+  // start one. Server-side fingerprint dedupe makes repeats free.
+  const unfiledCount = scanStatsQ.data?.unfiled ?? 0;
+  useEffect(() => {
+    if (!activeSlug || unfiledCount === 0) return;
+    const t = setTimeout(() => {
+      void api.organizePlan(activeSlug, { scope: "pending", warm: true }).catch(() => {});
+    }, 5_000);
+    return () => clearTimeout(t);
+  }, [activeSlug, unfiledCount]);
   // Phase 2: the put-away walk. `walkPlan` set = walk sheet open. The latest
   // stored plan also powers a "resume walk" chip after a reload mid-walk.
   const [walkPlan, setWalkPlan] = useState<OrganizeStoredPlan | null>(null);
@@ -1383,6 +1456,24 @@ export function ScanPage() {
       .filter((id) => !placed.has(id));
     return remaining.length > 0 ? { plan: p, remaining: remaining.length } : null;
   })();
+  // The organize plan's item accordion renders the REAL card inline, in
+  // identity-fixer mode (planContext: no confirm form, no chips, no discard).
+  const renderPlanItemCard = (id: string) => {
+    const it = items.find((i) => i.id === id);
+    if (!it || it.status !== "pending") return null;
+    return (
+      <InboxCard
+        item={it}
+        pageTarget={target}
+        menu={menu}
+        hasLocations={hasLocations}
+        rateLimitGaveUp={rlGaveUp.has(it.id)}
+        defaultExpanded
+        planContext
+      />
+    );
+  };
+
   const startWalk = async () => {
     setOrganizeOpen(false);
     try {
@@ -1694,6 +1785,14 @@ export function ScanPage() {
         </button>
         <button
           type="button"
+          onClick={() => setLiveSortOpen(true)}
+          title="Live Sort: scan a thing, get told which bin it goes in, confirm, next — sort a pile in one pass"
+          className={headerBtn}
+        >
+          <Zap size={15} /> Live Sort
+        </button>
+        <button
+          type="button"
           onClick={() => fileRef.current?.click()}
           disabled={uploading}
           title="Upload a photo from this device"
@@ -1757,7 +1856,7 @@ export function ScanPage() {
               >
                 <MapPin size={14} /> New scans →
               </span>
-              <div className="min-w-0 max-w-[14rem]">
+              <div className="min-w-0 max-w-[16rem] sm:max-w-[26rem]">
                 <LocationTreePicker
                   value={fileBin || null}
                   onChange={(v) => setFileBin(v ?? "")}
@@ -1777,7 +1876,10 @@ export function ScanPage() {
             </div>
           )}
           {receiptAddress && (
-            <div className="flex items-center gap-1.5 min-w-0 text-xs text-muted dark:text-slate-400">
+            // sm:ml-auto pushes the receipt drop-box to the far right on a wide
+            // header, freeing the middle so the location picker (widened above)
+            // can show a full "Room > Bin" path instead of truncating.
+            <div className="flex items-center gap-1.5 min-w-0 text-xs text-muted dark:text-slate-400 sm:ml-auto">
               <FileText size={13} className="text-faint shrink-0" />
               <span className="shrink-0">Email receipts to</span>
               {/* Capped, horizontally-scrollable chip: the long +tag address is
@@ -1849,6 +1951,30 @@ export function ScanPage() {
             </button>
           </div>
         ))}
+
+      {/* The put-away front door on the page itself: a captured backlog is
+          Guided Organize's native situation — ONE verb, preview-first
+          (put-away.md §5). Live Sort lives where scanning starts instead. */}
+      {(scanStatsQ.data?.unfiled ?? 0) > 0 && (
+        <div
+          className="flex flex-wrap items-center gap-3 rounded-lg border border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20 px-3 py-2 text-sm"
+          data-testid="putaway-strip"
+        >
+          <span className="shrink-0">📦</span>
+          <span className="min-w-0 flex-1 text-content dark:text-mortar-100">
+            <span className="font-semibold">{scanStatsQ.data!.unfiled}</span> scanned item
+            {scanStatsQ.data!.unfiled === 1 ? "" : "s"} without a home
+            <span className="text-muted dark:text-slate-400"> · preview first, nothing moves until you confirm</span>
+          </span>
+          <button
+            type="button"
+            onClick={() => setOrganizePendingOpen(true)}
+            className="rounded bg-cobble-600 hover:bg-cobble-700 text-white text-xs font-medium px-2.5 py-1.5 transition shrink-0"
+          >
+            Put them away
+          </button>
+        </div>
+      )}
 
       {/* A put-away walk left unfinished (reload / tab switch) — offer to resume. */}
       {resumablePlan && !walkPlan && (
@@ -1970,6 +2096,28 @@ export function ScanPage() {
             void qc.invalidateQueries({ queryKey: ["organize-plan-latest", activeSlug] });
           }}
           onStartWalk={() => void startWalk()}
+          renderItemCard={renderPlanItemCard}
+        />
+      )}
+
+      {organizePendingOpen && (
+        <OrganizePlanSheet
+          slug={activeSlug}
+          scope="pending"
+          itemIds={[]}
+          itemsById={new Map(items.map((i) => [i.id, i]))}
+          open={organizePendingOpen}
+          onClose={() => setOrganizePendingOpen(false)}
+          onApplied={() => {
+            void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+            void qc.invalidateQueries({ queryKey: ["scan-stats", activeSlug] });
+            void qc.invalidateQueries({ queryKey: ["organize-plan-latest", activeSlug] });
+          }}
+          onStartWalk={() => {
+            setOrganizePendingOpen(false);
+            void startWalk();
+          }}
+          renderItemCard={renderPlanItemCard}
         />
       )}
 
@@ -1987,6 +2135,18 @@ export function ScanPage() {
           onStartWalk={() => {
             setOrganizeUnplacedOpen(false);
             void startWalk();
+          }}
+          renderItemCard={renderPlanItemCard}
+        />
+      )}
+
+      {liveSortOpen && (
+        <LiveSortSheet
+          slug={activeSlug}
+          onClose={() => {
+            setLiveSortOpen(false);
+            void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+            void qc.invalidateQueries({ queryKey: ["scan-stats", activeSlug] });
           }}
         />
       )}
@@ -2265,6 +2425,51 @@ export function ScanPage() {
         </div>
       )}
 
+      {recentlyCommitted.length > 0 && (
+        <div className="mt-3">
+          <button
+            type="button"
+            onClick={() => setShowCommitted((s) => !s)}
+            className="flex items-center gap-1.5 text-xs text-faint hover:text-muted"
+          >
+            <ChevronDown size={13} className={`transition ${showCommitted ? "rotate-180" : ""}`} />
+            Recently committed ({recentlyCommitted.length})
+          </button>
+          {showCommitted && (
+            <div className="mt-2 space-y-1.5">
+              <p className="text-[11px] text-faint">
+                Committed the wrong thing? Send it back: the scan returns to the inbox to redo, and
+                the entry it created is removed (an entry it merely updated is left alone).
+              </p>
+              {recentlyCommitted.map((d) => (
+                <div
+                  key={d.id}
+                  className="flex items-center gap-2 rounded-md border border-line dark:border-slate-700 bg-surface/50 dark:bg-slate-800/30 px-3 py-2"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm text-muted truncate">
+                      {d.suggested_name ?? d.barcode_text ?? "Unknown scan"}
+                    </div>
+                    <div className="text-[10px] font-mono text-faint truncate">
+                      {d.target_kind ? `→ ${d.target_kind}` : ""}
+                      {d.barcode_text ? ` · ${d.barcode_text}` : ""}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => unconfirm.mutate(d.id)}
+                    disabled={unconfirm.isPending}
+                    className="shrink-0 inline-flex items-center gap-1 text-xs rounded border border-line px-2 py-1 text-muted hover:text-content disabled:opacity-50"
+                  >
+                    <RotateCcw size={12} /> Send back
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       <ScanImportModal
         slug={activeSlug}
         open={importOpen}
@@ -2427,6 +2632,7 @@ function InboxCard({
   onToggleSelect,
   rateLimitGaveUp,
   defaultExpanded,
+  planContext,
 }: {
   item: ScanInboxItem;
   pageTarget: ScanTarget | null;
@@ -2437,6 +2643,12 @@ function InboxCard({
   rateLimitGaveUp?: boolean;
   /** Open pre-expanded (the gallery view's focus modal). */
   defaultExpanded?: boolean;
+  /** Rendered INSIDE an organize plan's accordion: the card is an identity
+   *  FIXER there (name, photo, AI hint/rerun), never a commit surface —
+   *  confirming into a table mid-plan yanks the item out of the plan (the
+   *  trap the author hit). Hides the confirm form, table chips, and
+   *  discard; the accordion owns collapse. */
+  planContext?: boolean;
 }) {
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
@@ -2478,9 +2690,13 @@ function InboxCard({
     setExpanded(true);
   }
 
-  // Gallery focus modal opens the card pre-expanded (one tap to triage).
+  // Gallery focus modal opens the card pre-expanded (one tap to triage);
+  // plan accordions expand WITHOUT arming the (hidden) confirm form.
   useEffect(() => {
-    if (defaultExpanded) openForm();
+    if (defaultExpanded) {
+      if (planContext) setExpanded(true);
+      else openForm();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -3048,7 +3264,7 @@ function InboxCard({
               match shows + a "+N" to expand; desktop shows them all. Field chips
               skip anything already in the subtitle (author, publisher/brand,
               ISBN) so there's no echo. */}
-          {(seriesOf(item) || candidates.length > 0) && (
+          {!planContext && (seriesOf(item) || candidates.length > 0) && (
             <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
               {seriesOf(item) && (
                 <span
@@ -3157,15 +3373,17 @@ function InboxCard({
           >
             <RotateCcw size={14} className={aiWorking ? "animate-spin text-accent" : ""} />
           </button>
-          <button
-            type="button"
-            onClick={() => discard.mutate()}
-            disabled={discard.isPending}
-            className="text-faint hover:text-ember-500 p-1.5 disabled:opacity-30"
-            title="Discard (recoverable from Recently deleted)"
-          >
-            <X size={14} />
-          </button>
+          {!planContext && (
+            <button
+              type="button"
+              onClick={() => discard.mutate()}
+              disabled={discard.isPending}
+              className="text-faint hover:text-ember-500 p-1.5 disabled:opacity-30"
+              title="Discard (recoverable from Recently deleted)"
+            >
+              <X size={14} />
+            </button>
+          )}
           <button
             type="button"
             onClick={() => (expanded ? setExpanded(false) : openForm())}
@@ -3537,8 +3755,10 @@ function InboxCard({
           </div>
 
           {/* The inline confirm form — full width below (the right-rail
-              attempt collided labels at every width; reverted per the author). */}
-          <ConfirmForm
+              attempt collided labels at every width; reverted per the author).
+              NEVER in plan context: committing mid-plan removes the item from
+              the plan — fixing identity is the only job here. */}
+          {!planContext && <ConfirmForm
             key={`${item.id}:${formCtx.selKey ?? "auto"}:${item.suggested_name ?? ""}:${item.suggested_manufacturer ?? ""}:${item.ai_suggested_at ?? ""}:${topCand ? topCand.label + JSON.stringify(topCand.fields) + (topCand.quantity ?? "") : "none"}`}
             item={item}
             menu={menu}
@@ -3548,7 +3768,7 @@ function InboxCard({
             prefill={formCtx.prefill}
             onDone={() => setExpanded(false)}
             onCancel={() => setExpanded(false)}
-          />
+          />}
         </div>
       )}
     </div>
@@ -3960,55 +4180,99 @@ function SeriesBanner({ slug, items }: { slug: string; items: ScanInboxItem[] })
   const qc = useQueryClient();
   const toast = useToast();
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+  // Series the user has ACCEPTED this session (tapped "Tag series"). We keep
+  // auto-applying them to late-arriving members instead of re-surfacing the
+  // banner — incremental vision identify means a book can join the group AFTER
+  // the tap (that's the "1 of 9 isn't tagged yet" straggler the author hit: he tagged
+  // the 8, "The Long Winter" identified two days later and was never swept in).
+  // Sticky = tag the straggler and stay quiet.
+  const [accepted, setAccepted] = useState<Set<string>>(new Set());
+  // ids we've already fired an auto-tag for, so a slow refetch can't double-fire.
+  const autoTagged = useRef<Set<string>>(new Set());
   const apply = useMutation({
-    mutationFn: ({ series, ids }: { series: string; ids: string[] }) =>
+    mutationFn: ({ series, ids }: { series: string; ids: string[]; silent?: boolean }) =>
       api.applyScanTheme(slug, { tag: series, tag_item_ids: ids }),
     onSuccess: (r, v) => {
-      toast.success(`Tagged ${r.tagged} as "${v.series}" — applied when you confirm each.`);
+      // Only toast when the user tapped (a real batch); silent for the sticky
+      // auto-tag of a single straggler so it doesn't nag.
+      if (!v.silent) toast.success(`Tagged ${r.tagged} as "${v.series}" — applied when you confirm each.`);
       void qc.invalidateQueries({ queryKey: ["scan-inbox", slug] });
-      setDismissed((d) => new Set([...d, v.series.toLowerCase()]));
+      // Remember the series so late members auto-tag. NOT `dismissed` — a dismiss
+      // would also hide a genuinely-new straggler; accepted keeps sweeping it in.
+      setAccepted((a) => new Set([...a, v.series.toLowerCase()]));
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't apply that."),
   });
-  // Group pending items by series (case-insensitive), ≥2 to offer.
-  const groups = new Map<string, { series: string; items: ScanInboxItem[] }>();
-  for (const it of items) {
-    const s = seriesOf(it);
-    if (!s) continue;
-    const key = s.toLowerCase();
-    if (!groups.has(key)) groups.set(key, { series: s, items: [] });
-    groups.get(key)!.items.push(it);
-  }
-  // The vision identify stamps `series` per-item and can MISS it on one book of an
-  // otherwise-obvious set (the count then reads "8" of 9). Pull in same-author
-  // pending items that carry NO series of their own — but only when that author
-  // has exactly ONE series here, so there's no ambiguity about which set they join
-  // (a prolific author with two series stays hands-off). This is what makes the
-  // banner count every book the user sees as part of the series.
-  const authorSeries = new Map<string, Set<string>>();
-  for (const g of groups.values()) {
-    for (const it of g.items) {
-      const a = creatorOf(it)?.toLowerCase();
-      if (!a) continue;
-      if (!authorSeries.has(a)) authorSeries.set(a, new Set());
-      authorSeries.get(a)!.add(g.series.toLowerCase());
+  // Group pending items by series, splitting members by how confident the match
+  // is: `vision` = the item's OWN vision series matches (canonical); `pullIn` =
+  // a same-author seriesless book folded in (a weak "probably in the series"
+  // guess — only when that author has exactly ONE series here, no ambiguity).
+  // The split matters for stickiness: we auto-sweep late VISION members but never
+  // a weak pull-in (see the effect below).
+  const groups = useMemo(() => {
+    const m = new Map<string, { series: string; vision: ScanInboxItem[]; pullIn: ScanInboxItem[] }>();
+    for (const it of items) {
+      const s = seriesOf(it);
+      if (!s) continue;
+      const key = s.toLowerCase();
+      if (!m.has(key)) m.set(key, { series: s, vision: [], pullIn: [] });
+      m.get(key)!.vision.push(it);
     }
-  }
-  for (const it of items) {
-    if (seriesOf(it)) continue; // already grouped by its own series
-    const a = creatorOf(it)?.toLowerCase();
-    const forAuthor = a ? authorSeries.get(a) : undefined;
-    if (!forAuthor || forAuthor.size !== 1) continue; // no / ambiguous series for this author
-    const g = groups.get([...forAuthor][0]!);
-    if (g && !g.items.some((x) => x.id === it.id)) g.items.push(it);
-  }
-  // Only offer for items NOT already tagged with the series. Once every item in
-  // a group carries the series pending_tag, there's nothing to do — hide the
-  // banner (before, it re-offered a done tag, "tagging" no-op'd, and it came
-  // back on refresh). `untagged` also drives the count + the tag action.
-  const offers = [...groups.values()]
-    .map((g) => ({ ...g, untagged: g.items.filter((it) => !hasPendingTag(it, g.series)) }))
-    .filter((g) => g.items.length >= 2 && g.untagged.length >= 1 && !dismissed.has(g.series.toLowerCase()));
+    const authorSeries = new Map<string, Set<string>>();
+    for (const g of m.values())
+      for (const it of g.vision) {
+        const a = creatorOf(it)?.toLowerCase();
+        if (!a) continue;
+        if (!authorSeries.has(a)) authorSeries.set(a, new Set());
+        authorSeries.get(a)!.add(g.series.toLowerCase());
+      }
+    for (const it of items) {
+      if (seriesOf(it)) continue; // grouped by its own series already
+      const a = creatorOf(it)?.toLowerCase();
+      const forAuthor = a ? authorSeries.get(a) : undefined;
+      if (!forAuthor || forAuthor.size !== 1) continue; // no / ambiguous series
+      const g = m.get([...forAuthor][0]!);
+      if (g && !g.vision.some((x) => x.id === it.id) && !g.pullIn.some((x) => x.id === it.id)) g.pullIn.push(it);
+    }
+    return m;
+  }, [items]);
+
+  // Sticky sweep: for every ACCEPTED series, auto-tag any untagged VISION member
+  // (its own series matches — confident), catching the late straggler without
+  // re-surfacing the banner. Author pull-ins are NEVER auto-tagged (weak guess →
+  // still need an explicit tap). The refetch after each tag re-runs this until
+  // there's nothing left to sweep.
+  useEffect(() => {
+    if (apply.isPending) return;
+    for (const key of accepted) {
+      const g = groups.get(key);
+      if (!g) continue;
+      const late = g.vision.filter((it) => !hasPendingTag(it, g.series) && !autoTagged.current.has(it.id));
+      if (late.length) {
+        for (const it of late) autoTagged.current.add(it.id);
+        apply.mutate({ series: g.series, ids: late.map((i) => i.id), silent: true });
+        return; // one series per pass; the refetch re-triggers for the rest
+      }
+    }
+  }, [groups, accepted, apply]);
+
+  // Banners to SHOW. For an ACCEPTED series the vision members auto-sweep (above),
+  // so only surface it if untagged author PULL-INS remain (those need an explicit
+  // tap). For a fresh series, offer the whole untagged set as before.
+  const offers = useMemo(() => {
+    const out: Array<{ series: string; items: ScanInboxItem[]; untagged: ScanInboxItem[] }> = [];
+    for (const [key, g] of groups) {
+      if (dismissed.has(key)) continue;
+      const all = [...g.vision, ...g.pullIn];
+      if (all.length < 2) continue;
+      const untagged = accepted.has(key)
+        ? g.pullIn.filter((it) => !hasPendingTag(it, g.series)) // vision handled by the sweep
+        : all.filter((it) => !hasPendingTag(it, g.series));
+      if (untagged.length === 0) continue;
+      out.push({ series: g.series, items: all, untagged });
+    }
+    return out;
+  }, [groups, dismissed, accepted]);
   if (offers.length === 0) return null;
   return (
     <>
