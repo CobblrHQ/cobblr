@@ -54,7 +54,7 @@ function parseMatch(result: unknown): { template_id: unknown; confidence: unknow
  * Never throws on missing-provider / model failure — degrades to
  * { template_id: null, ai: false } so the caller falls back to catalog-read.
  */
-export async function matchTemplateHosted(orgId: string, intent: string): Promise<TemplateMatch> {
+export async function matchTemplateHosted(orgId: string, intent: string, userId?: string | null): Promise<TemplateMatch> {
   const valid = new Set(listTemplates().map((t) => t.id));
   const { system, user } = buildPrompt(intent);
 
@@ -62,6 +62,7 @@ export async function matchTemplateHosted(orgId: string, intent: string): Promis
   try {
     const r = await platform().ai.invoke({
       orgId,
+      userId: userId ?? undefined,
       capability: "chat",
       input: { messages: [{ role: "system", content: system }, { role: "user", content: user }] },
       source: { kind: "core-authoring:match-template", id: orgId },

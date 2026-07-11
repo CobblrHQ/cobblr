@@ -167,61 +167,70 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
         {list.data && list.data.items.length === 0 && (
           <div className="px-3 py-4 text-[11px] text-faint italic">No notifications yet.</div>
         )}
-        <ul>
-          {list.data?.items.map((n) => (
-            <li
-              key={n.id}
-              className={
-                "group flex items-stretch border-b border-line dark:border-slate-700 last:border-0 transition " +
-                (n.read_at
-                  ? "opacity-60 hover:bg-subtle/50 dark:hover:bg-slate-800/50"
-                  : "hover:bg-subtle dark:hover:bg-slate-800")
-              }
-            >
-              {/* Body click = open it (navigate + mark read). A clickable div, not
-                  a <button>, so the markdown body can use block elements
-                  (blockquote/p) — those are invalid nested inside a button. */}
-              <div
-                role="button"
-                tabIndex={0}
-                onClick={() => handleItemClick(n)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    handleItemClick(n);
-                  }
-                }}
-                className="flex-1 min-w-0 text-left px-3 py-2 cursor-pointer"
+        {/* Each notification is its own rounded "bubble" card with breathing room
+            between them (space-y), not a border-divided wall of text — the
+            reported gripe was that runs of notifications blur into one block.
+            Unread cards get an accent tint + left rail so they stand out from
+            the muted, already-read ones. */}
+        <ul className="px-2 py-2 space-y-2">
+          {list.data?.items.map((n) => {
+            const isUnread = !n.read_at;
+            return (
+              <li
+                key={n.id}
+                className={
+                  "group flex items-stretch gap-1 rounded-xl border overflow-hidden transition " +
+                  (isUnread
+                    ? "border-l-2 border-cobble-200 border-l-accent dark:border-slate-700 dark:border-l-cobble-400 bg-cobble-50/50 dark:bg-cobble-900/15 hover:bg-cobble-50 dark:hover:bg-cobble-900/25"
+                    : "border-line dark:border-slate-800 bg-subtle/40 dark:bg-slate-800/30 opacity-70 hover:opacity-100 hover:bg-subtle dark:hover:bg-slate-800/50")
+                }
               >
-                {/* Render the message as markdown so a quoted report (Discord-style
-                    "> …") shows as a block quote instead of a literal ">". */}
-                <div className="prose prose-sm dark:prose-invert max-w-none text-sm text-content dark:text-mortar-100 prose-p:my-1 prose-blockquote:my-1 break-words">
-                  <ReactMarkdown>{n.message}</ReactMarkdown>
-                </div>
-                {/* flex-wrap so the timestamp wraps instead of clipping "PM". */}
-                <div className="text-[10px] font-mono text-faint dark:text-slate-500 mt-1 flex items-center gap-1.5 flex-wrap">
-                  <span className="px-1 py-0.5 rounded bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300">
-                    {n.event_type === "workspace.invited" ? "invite" : n.org_name}
-                  </span>
-                  <span>·</span>
-                  <span>{new Date(n.created_at).toLocaleString()}</span>
-                </div>
-              </div>
-              {/* Mark read WITHOUT navigating — a checkmark (not an ×) so it reads
-                  as "acknowledge", not "delete" (reported). */}
-              {!n.read_at && (
-                <button
-                  onClick={() => markRead.mutate(n.id)}
-                  disabled={markRead.isPending}
-                  title="Mark as read"
-                  aria-label="Mark notification as read"
-                  className="shrink-0 px-2 text-faint hover:text-accent dark:text-slate-500 dark:hover:text-cobble-300 transition"
+                {/* Body click = open it (navigate + mark read). A clickable div, not
+                    a <button>, so the markdown body can use block elements
+                    (blockquote/p) — those are invalid nested inside a button. */}
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => handleItemClick(n)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      handleItemClick(n);
+                    }
+                  }}
+                  className="flex-1 min-w-0 text-left px-3 py-2.5 cursor-pointer"
                 >
-                  <Check size={14} />
-                </button>
-              )}
-            </li>
-          ))}
+                  {/* Message "header": who + when up top, like a chat bubble's
+                      sender/timestamp line — visually separates it from the body.
+                      flex-wrap so the timestamp wraps instead of clipping "PM". */}
+                  <div className="text-[10px] font-mono text-faint dark:text-slate-500 mb-1.5 flex items-center gap-1.5 flex-wrap">
+                    <span className="px-1.5 py-0.5 rounded-full bg-cobble-100 dark:bg-cobble-900/40 text-accent dark:text-cobble-300 font-semibold uppercase tracking-wider">
+                      {n.event_type === "workspace.invited" ? "invite" : n.org_name}
+                    </span>
+                    <span>{new Date(n.created_at).toLocaleString()}</span>
+                  </div>
+                  {/* Render the message as markdown so a quoted report (Discord-style
+                      "> …") shows as a block quote instead of a literal ">". */}
+                  <div className="prose prose-sm dark:prose-invert max-w-none text-sm text-content dark:text-mortar-100 prose-p:my-1 prose-blockquote:my-1 break-words">
+                    <ReactMarkdown>{n.message}</ReactMarkdown>
+                  </div>
+                </div>
+                {/* Mark read WITHOUT navigating — a checkmark (not an ×) so it reads
+                    as "acknowledge", not "delete" (reported). */}
+                {isUnread && (
+                  <button
+                    onClick={() => markRead.mutate(n.id)}
+                    disabled={markRead.isPending}
+                    title="Mark as read"
+                    aria-label="Mark notification as read"
+                    className="shrink-0 px-2 text-faint hover:text-accent dark:text-slate-500 dark:hover:text-cobble-300 transition"
+                  >
+                    <Check size={14} />
+                  </button>
+                )}
+              </li>
+            );
+          })}
         </ul>
       </div>
       <Link

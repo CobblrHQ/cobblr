@@ -89,13 +89,28 @@ export function MachinesPage({
 
   const [localSel, setLocalSel] = useState<string | null>(null);
   const selectedId = instance ? localSel : id ?? null;
+  // Instance detail is local state (no /<instance>/:id route), but it's ALSO
+  // deep-linkable via ?machine=<id> — so a fleet tile's "Open machine" can jump
+  // straight to a printer's record on its own collection page. The param and
+  // localSel stay in sync: arriving with the param opens the modal; opening a
+  // card stamps the param; closing clears it.
+  useEffect(() => {
+    if (!instance) return;
+    const m = searchParams.get("machine");
+    if (m && m !== localSel) setLocalSel(m);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [instance, searchParams]);
   const openDetail = (mid: string) => {
-    if (instance) setLocalSel(mid);
-    else navigate(`/machines/${mid}${searchParams.toString() ? `?${searchParams}` : ""}`);
+    if (instance) {
+      setLocalSel(mid);
+      setSearchParams((prev) => { prev.set("machine", mid); return prev; }, { replace: true });
+    } else navigate(`/machines/${mid}${searchParams.toString() ? `?${searchParams}` : ""}`);
   };
   const closeDetail = () => {
-    if (instance) setLocalSel(null);
-    else navigate(`/machines${searchParams.toString() ? `?${searchParams}` : ""}`);
+    if (instance) {
+      setLocalSel(null);
+      setSearchParams((prev) => { prev.delete("machine"); return prev; }, { replace: true });
+    } else navigate(`/machines${searchParams.toString() ? `?${searchParams}` : ""}`);
   };
 
   const machines = useQuery({

@@ -139,17 +139,23 @@ function PutAwayCard({ slug }: { slug: string }) {
     refetchInterval: 60_000,
   });
   const unfiled = q.data?.unfiled ?? 0;
-  // Warm the plan the moment the card shows the count (debounced so a
-  // scanning burst settles first): the click should REVEAL a plan, not start
-  // one. The server dedupes by backlog fingerprint, so repeats are free.
+  const ready = q.data?.ready ?? 0;
+  // Warm the plan the moment the card shows a count (debounced so a scanning
+  // burst settles first): the click should REVEAL a plan, not start one. The
+  // server dedupes by backlog fingerprint, so repeats are free.
   useEffect(() => {
-    if (unfiled === 0) return;
+    if (unfiled === 0 && ready === 0) return;
     const t = setTimeout(() => {
       void api.organizePlan(slug, { scope: "pending", warm: true }).catch(() => {});
     }, 5_000);
     return () => clearTimeout(t);
-  }, [slug, unfiled]);
-  if (unfiled === 0) return null;
+  }, [slug, unfiled, ready]);
+  if (unfiled === 0 && ready === 0) return null;
+  // Acknowledge BOTH: things that still need a home AND things already set,
+  // just waiting to be physically put away.
+  const parts: string[] = [];
+  if (unfiled > 0) parts.push(`${unfiled} scanned item${unfiled === 1 ? "" : "s"} without a home`);
+  if (ready > 0) parts.push(`${ready} ready to put away`);
   return (
     <section
       className="rounded-lg border border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20 px-4 py-3 flex flex-wrap items-center gap-3"
@@ -158,15 +164,14 @@ function PutAwayCard({ slug }: { slug: string }) {
       <span className="text-xl shrink-0">📦</span>
       <div className="min-w-0 flex-1">
         <div className="text-sm font-semibold text-content dark:text-mortar-100">
-          {unfiled} scanned item{unfiled === 1 ? "" : "s"} do{unfiled === 1 ? "es" : ""}n't have a
-          home yet.
+          {parts.join(", and ")}.
         </div>
         <div className="text-xs text-muted dark:text-slate-400">
           Preview where everything should go — nothing moves until you confirm.
         </div>
       </div>
       <Link
-        to="/scan?organize=pending"
+        to="/scan?view=plan"
         className="inline-flex items-center gap-1.5 rounded-lg bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm font-medium transition shrink-0"
       >
         Put them away <ArrowRight size={14} />
@@ -1487,18 +1492,29 @@ function PinnedView({
   const allItems = data.data?.items ?? [];
   const items = allItems.slice(0, 5);
   const imgField = (view.config?.image_field as string) || "image_path";
-  // Group counts, highest first. The group value lives under `fields[group_by]`
-  // (falls back to the row subtitle, which is what the list preview shows).
+  // Group counts, highest first. Group STRICTLY by the view's group_by field —
+  // an empty value is its own "unset" bucket ("" key), NOT the row subtitle. The
+  // old subtitle fallback conflated an unset group with a DIFFERENT field: a
+  // "Laser fleet by tube type" view whose lasers had no tube_type showed their
+  // STATE ("functional/building") as if it were the tube type (the author, 2026-07-10).
   const groupCounts = useMemo<Array<[string, number]>>(() => {
     if (!isGrouped || !groupBy) return [];
     const m = new Map<string, number>();
     for (const r of allItems) {
-      const raw = (r.fields?.[groupBy] ?? r.subtitle) as unknown;
-      const key = raw == null || raw === "" ? "—" : String(raw);
+      const raw = r.fields?.[groupBy] as unknown;
+      const key = raw == null || raw === "" ? "" : String(raw); // "" = unset
       m.set(key, (m.get(key) ?? 0) + 1);
     }
     return [...m.entries()].sort((a, b) => b[1] - a[1]);
   }, [isGrouped, groupBy, allItems]);
+  // A readable label for the grouping field, for the "nothing set yet" hint.
+  const groupLabel = groupBy ? groupBy.replace(/_/g, " ") : "";
+  // The count reads in the item's OWN noun ("5 machines"), not DB-speak "5 rows"
+  // (the author, 2026-07-11). The noun is the kind's suffix (machines:machine → machine).
+  const kindNoun = (data.data?.view?.entity_kind ?? "").split(":")[1] ?? "";
+  const countLabel = kindNoun
+    ? `${allItems.length} ${kindNoun}${allItems.length === 1 ? "" : "s"}`
+    : `${allItems.length}`;
   const galleryImg = (r: (typeof allItems)[number]): string | null => {
     // Mirror the modal's fieldVal: custom + native fields live under `fields`
     // (and native image_path is also mirrored there), with a top-level fallback.
@@ -1522,7 +1538,7 @@ function PinnedView({
         </span>
         <div className="flex-1" />
         <span className="text-[10px] font-mono text-faint">
-          {data.data?.items.length ?? 0} rows
+          {countLabel}
         </span>
       </div>
       {data.isLoading && (
@@ -1537,23 +1553,49 @@ function PinnedView({
       {!data.isLoading && items.length > 0 && (
         isGrouped ? (
           // The group distribution — the whole point of a "by state" / "by type"
-          // view. Highest-count group first; a subtle bar hints at proportion.
-          <div className="flex flex-wrap gap-x-4 gap-y-2">
-            {groupCounts.map(([label, n]) => (
-              <div key={label} className="min-w-0">
-                <div className="flex items-baseline gap-1.5">
-                  <span className="text-sm text-content dark:text-mortar-100 capitalize truncate">{label}</span>
-                  <span className="font-mono text-xs text-faint tabular-nums">{n}</span>
+          // view. Split the populated groups from the "unset" bucket: when NOTHING
+          // carries the grouping field, a distribution is meaningless, so say so
+          // (and point at the fix) rather than draw an empty/misleading bar.
+          (() => {
+            const setGroups = groupCounts.filter(([k]) => k !== "");
+            const unset = groupCounts.find(([k]) => k === "")?.[1] ?? 0;
+            if (setGroups.length === 0) {
+              return (
+                <div className="text-xs text-muted dark:text-slate-400 italic">
+                  No {groupLabel} set on {allItems.length === 1 ? "this item" : `these ${allItems.length}`} yet — set it to group them here.
                 </div>
-                <div className="mt-1 h-1 rounded-full bg-subtle dark:bg-slate-800 overflow-hidden" style={{ width: "5rem" }}>
-                  <div
-                    className="h-full bg-accent/60"
-                    style={{ width: `${allItems.length ? Math.round((n / allItems.length) * 100) : 0}%` }}
-                  />
-                </div>
+              );
+            }
+            return (
+              <div className="flex flex-wrap gap-x-4 gap-y-2">
+                {setGroups.map(([label, n]) => (
+                  <div key={label} className="min-w-0">
+                    <div className="flex items-baseline gap-1.5">
+                      <span className="text-sm text-content dark:text-mortar-100 capitalize truncate">{label}</span>
+                      <span className="font-mono text-xs text-faint tabular-nums">{n}</span>
+                    </div>
+                    <div className="mt-1 h-1 rounded-full bg-subtle dark:bg-slate-800 overflow-hidden" style={{ width: "5rem" }}>
+                      <div
+                        className="h-full bg-accent/60"
+                        style={{ width: `${allItems.length ? Math.round((n / allItems.length) * 100) : 0}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
+                {unset > 0 && (
+                  <div className="min-w-0">
+                    <div className="flex items-baseline gap-1.5">
+                      <span className="text-sm text-faint italic truncate">no {groupLabel}</span>
+                      <span className="font-mono text-xs text-faint tabular-nums">{unset}</span>
+                    </div>
+                    <div className="mt-1 h-1 rounded-full bg-subtle dark:bg-slate-800 overflow-hidden" style={{ width: "5rem" }}>
+                      <div className="h-full bg-line dark:bg-slate-600" style={{ width: `${allItems.length ? Math.round((unset / allItems.length) * 100) : 0}%` }} />
+                    </div>
+                  </div>
+                )}
               </div>
-            ))}
-          </div>
+            );
+          })()
         ) : isGallery ? (
           <div className="flex gap-3 overflow-x-auto pb-1">
             {allItems.slice(0, 20).map((r) => (

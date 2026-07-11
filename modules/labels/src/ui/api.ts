@@ -89,6 +89,8 @@ export class LabelsApi {
     description: string;
     qty?: number;
   }) => this.request<QueueItem>("POST", "/queue", b);
+  updateQueueQty = (id: string, qty: number) =>
+    this.request<QueueItem>("PATCH", `/queue/${id}`, { qty });
   removeFromQueue = (id: string) => this.request<void>("DELETE", `/queue/${id}`);
   print = () => this.request<PrintResponse>("POST", "/print", {});
 
@@ -139,4 +141,57 @@ export class LabelsApi {
       `/api/v1/orgs/${this.slug}/modules/core-print/printers/${printerId}/print`,
       body,
     );
+
+  // Queue a label the RIGHT way: mint (or reuse) a QR scan token via
+  // core-labels-qr and queue the full scan_url it hands back, so the label
+  // encodes `<base>/qr/<token>` (honouring the workspace's custom label base
+  // URL) instead of a bare `/entities/<kind>/<id>` path a phone can't open.
+  // core-labels-qr is a sibling module reached over HTTP (no import), same as
+  // core-print above.
+  queueLabelForEntity = async (b: {
+    entity_kind: string; // e.g. "core-locations:location"
+    entity_id: string;
+    description: string;
+    qty?: number;
+  }): Promise<void> => {
+    const q = `entity_kind=${encodeURIComponent(b.entity_kind)}&entity_id=${encodeURIComponent(b.entity_id)}`;
+    let scanUrl: string | null = null;
+    // Reuse an active token if one exists, to avoid littering the table on
+    // repeated prints of the same thing.
+    try {
+      const list = await this.requestAbs<{ items: Array<{ scan_url: string; revoked_at: string | null }> }>(
+        "GET",
+        `/api/v1/orgs/${this.slug}/modules/core-labels-qr/tokens?${q}`,
+      );
+      scanUrl = list.items.find((t) => !t.revoked_at)?.scan_url ?? null;
+    } catch {
+      /* fall through to mint */
+    }
+    if (!scanUrl) {
+      const m = await this.requestAbs<{ scan_url: string }>(
+        "POST",
+        `/api/v1/orgs/${this.slug}/modules/core-labels-qr/tokens`,
+        { entity_kind: b.entity_kind, entity_id: b.entity_id, mode: "navigate", auth: "session" },
+      );
+      scanUrl = m.scan_url;
+    }
+    const [moduleName, entityType] = b.entity_kind.split(":");
+    await this.addToQueue({
+      module_name: moduleName ?? "unknown",
+      entity_type: entityType ?? "entity",
+      entity_id: b.entity_id,
+      qr_payload: scanUrl,
+      description: b.description,
+      qty: b.qty,
+    });
+  };
+
+  /** The workspace's custom label base URL (or null), read from core-labels-qr
+   *  over HTTP. Used to rebuild queued labels' URLs live at preview time so a
+   *  base-URL change is reflected without re-queuing. */
+  qrLabelBaseUrl = () =>
+    this.requestAbs<{ label_base_url: string | null }>(
+      "GET",
+      `/api/v1/orgs/${this.slug}/modules/core-labels-qr/settings`,
+    ).then((s) => s.label_base_url);
 }

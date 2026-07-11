@@ -2852,6 +2852,8 @@ superAdminRouter.post("/authoring-eval", async (req, res, next) => {
     const prompt = compilePrompt(ctx, parsed.data.intent);
     let text = "";
     try {
+      // ai-userless: super-admin operator authoring (bundle generation), not a
+      // workspace user's request — no personal connection to route to.
       const r = await platform().ai.invoke({
         orgId,
         capability: "chat",

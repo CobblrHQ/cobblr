@@ -369,10 +369,10 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
           still portals to <body> so the header's backdrop-blur can't trap it. */}
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={() => setOpen(!open)}
         className={asRow ? "w-full flex items-center gap-2.5 px-3 py-1.5 rounded text-[13px] text-muted dark:text-slate-400 hover:text-accent hover:bg-subtle/60 dark:hover:bg-slate-800/40 transition" : "transition p-1.5 text-faint dark:text-slate-500 hover:text-accent"}
-        title="Ask Cobb"
-        aria-label="Ask Cobb"
+        title={open ? "Hide Cobb" : "Ask Cobb"}
+        aria-label={open ? "Hide Cobb" : "Ask Cobb"}
       >
         <Sparkles size={16} className="shrink-0" />
         {asRow && <span>Ask Cobb</span>}
@@ -443,8 +443,15 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
                     <>Ask me the basics — "what can you do", "how do I add a part", "where do I scan". For
                     questions about your actual data or to have me make changes, connect AI up top.</>
                   ) : (
+                    // The last line must match the write-mode chip: "I'll check
+                    // with you" is only true in ASK mode — in AUTO, changes apply
+                    // as we go; in OFF, nothing changes (the author, 2026-07-11).
                     <>Ask about your workspace, or tell me to do something — "add a part called Widget", "what's low on
-                    stock?". I'll always check with you before changing anything.</>
+                    stock?".{" "}{{
+                      ask: "I'll check with you before I change anything.",
+                      auto: "Changes apply as we go, and every one is tracked so you can undo it.",
+                      off: "I won't make any changes right now, just ask me things.",
+                    }[prefs.write_mode]}</>
                   )}
                 </p>
               </div>

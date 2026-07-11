@@ -207,7 +207,7 @@ fleetRouter.get(
     // each linked machine through the entity registry so the tile wears the
     // machine's own name/photo/lifecycle state. Batched, exposable-fields-
     // projected; a resolver failure degrades to connection-side identity.
-    const machineById = new Map<string, { name: string; image_path: string | null; state: string | null }>();
+    const machineById = new Map<string, { name: string; image_path: string | null; state: string | null; detail_url: string | null }>();
     const machineRefs = [...new Set(links.map((l) => l.machine_id))].map((id) => ({ kind: "machines:machine", id }));
     if (machineRefs.length) {
       try {
@@ -216,6 +216,10 @@ fleetRouter.get(
             name: m.title,
             image_path: (m.fields?.image_path as string | null) ?? null,
             state: (m.fields?.state as string | null) ?? null,
+            // The registry knows which collection this machine lives in and
+            // builds the correct clean URL (instance-aware) — the tile's
+            // "Open machine" click-through rides this, no instance guessing here.
+            detail_url: m.detailUrl ?? null,
           });
         }
       } catch {

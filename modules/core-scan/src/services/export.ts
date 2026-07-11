@@ -4,9 +4,22 @@
 // scan inbox round-trips Cobblr→Cobblr (and out to an external system, which reads the
 // same shape). Contract: the inbox-export interop spec (v1).
 //
-// Photo URLs are injected by the caller (photoUrl(fileId) → a fetchable URL),
-// because only the router knows the request origin + can mint the no-auth image
-// token the importer's best-effort photo fetch will GET.
+// Photos are injected by the caller as a resolver (fileId → a PhotoRef), because
+// only the router knows the request origin + secret (to mint the no-auth, per-file
+// image token a `link`-mode export bakes into each URL) AND can read the bytes an
+// `embed`-mode export base64s inline. A `link` ref keeps the file small but needs
+// the destination to reach this instance; an `embed` ref is self-contained (works
+// LAN-only / air-gapped) at the cost of size. `none` → the resolver returns null.
+
+/** How the caller chose to carry each photo. `url` = a fetchable link (link
+ *  mode); `embed` = the bytes inline as base64 (baked-in mode). */
+export type PhotoRef = { url: string } | { embed: EmbeddedPhoto };
+export type PhotoResolver = (fileId: string) => PhotoRef | null;
+export interface EmbeddedPhoto {
+  mime: string;
+  /** base64 (not data-URI) of the raw bytes. */
+  data: string;
+}
 
 /** The subset of a core_scan_inbox_items row the exporter reads. */
 export interface ScanRowForExport {
@@ -53,7 +66,12 @@ export interface ExportItem {
   notes: string | null;
   research_hint: string | null;
   source_url: string | null;
+  /** `link`-mode / external-catalog photos as fetchable URLs (null in a
+   *  baked-in export). */
   photo_urls: { identify: string | null; display: string | null };
+  /** `embed`-mode photos: raw bytes base64'd inline, so the export needs no
+   *  network to restore them. Null unless at least one photo was baked in. */
+  photos_embedded: { identify: EmbeddedPhoto | null; display: EmbeddedPhoto | null } | null;
   created_at: string;
   updated_at: string;
   /** Cobblr-native richness the interop schema has no slot for — routing
@@ -90,9 +108,12 @@ function metaObj(row: ScanRowForExport): Record<string, unknown> {
   return (row.suggested_metadata ?? {}) as Record<string, unknown>;
 }
 
-/** Build one interop item from a Cobblr scan row. `photoUrl` returns a fetchable
- *  URL for a stored file id (or null if it can't be served). */
-export function rowToItem(row: ScanRowForExport, photoUrl: (fileId: string) => string | null): ExportItem {
+const refUrl = (r: PhotoRef | null): string | null => (r && "url" in r ? r.url : null);
+const refEmbed = (r: PhotoRef | null): EmbeddedPhoto | null => (r && "embed" in r ? r.embed : null);
+
+/** Build one interop item from a Cobblr scan row. `resolve` returns a PhotoRef
+ *  (a url or embedded bytes) for a stored file id, or null. */
+export function rowToItem(row: ScanRowForExport, resolve: PhotoResolver): ExportItem {
   const meta = metaObj(row);
   const sourceStates = (meta.source_states ?? {}) as Record<string, unknown>;
   const cat = (meta.hint_category ?? {}) as { domain?: unknown; sub?: unknown };
@@ -104,9 +125,17 @@ export function rowToItem(row: ScanRowForExport, photoUrl: (fileId: string) => s
     const c = Number(row.ai_confidence);
     if (Number.isFinite(c)) confidence = c;
   }
-  // display photo: a downloaded catalog file if we have one, else the external
-  // catalog URL (already fetchable), else nothing.
-  const displayUrl = row.catalog_image_file_id ? photoUrl(row.catalog_image_file_id) : null;
+  // identify = the photo the user took (a stored file).
+  const idRef = row.image_file_id ? resolve(row.image_file_id) : null;
+  // display = a downloaded catalog file if we have one (resolvable), else the
+  // external catalog URL (already public + fetchable — never embedded), else none.
+  const dispRef: PhotoRef | null = row.catalog_image_file_id
+    ? resolve(row.catalog_image_file_id)
+    : row.catalog_image_url
+      ? { url: str(row.catalog_image_url)! }
+      : null;
+  const embedId = refEmbed(idRef);
+  const embedDisplay = refEmbed(dispRef);
   return {
     source_id: row.id,
     status: row.status,
@@ -128,10 +157,9 @@ export function rowToItem(row: ScanRowForExport, photoUrl: (fileId: string) => s
     notes: str(meta.notes),
     research_hint: str(meta.research_hint),
     source_url: str(row.source_url),
-    photo_urls: {
-      identify: row.image_file_id ? photoUrl(row.image_file_id) : null,
-      display: displayUrl ?? str(row.catalog_image_url),
-    },
+    photo_urls: { identify: refUrl(idRef), display: refUrl(dispRef) },
+    photos_embedded:
+      embedId || embedDisplay ? { identify: embedId, display: embedDisplay } : null,
     created_at: iso(row.created_at),
     updated_at: iso(row.updated_at),
     x_cobblr: {
@@ -145,10 +173,10 @@ export function rowToItem(row: ScanRowForExport, photoUrl: (fileId: string) => s
 
 export function buildEnvelope(
   rows: ScanRowForExport[],
-  photoUrl: (fileId: string) => string | null,
+  resolve: PhotoResolver,
   opts: { sourceInstance: string | null; exportedAt: string; status: string; batchId: string | null },
 ): ExportEnvelope {
-  const items = rows.map((r) => rowToItem(r, photoUrl));
+  const items = rows.map((r) => rowToItem(r, resolve));
   return {
     schema_version: 1,
     source: "cobblr",
@@ -182,9 +210,15 @@ function csvCell(v: unknown): string {
 }
 
 export function buildCsv(rows: ScanRowForExport[], photoUrl: (fileId: string) => string | null): string {
+  // CSV is a flat, link-only shape — no place for embedded bytes. Wrap the
+  // url factory into a resolver that only ever yields url refs.
+  const resolve: PhotoResolver = (id) => {
+    const u = photoUrl(id);
+    return u ? { url: u } : null;
+  };
   const lines = [CSV_HEADERS.join(",")];
   for (const row of rows) {
-    const it = rowToItem(row, photoUrl);
+    const it = rowToItem(row, resolve);
     const cells: Record<(typeof CSV_HEADERS)[number], unknown> = {
       source_id: it.source_id,
       status: it.status,

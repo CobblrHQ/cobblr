@@ -176,6 +176,9 @@ function toResolvedAsset(row: {
     id: row.id,
     title: row.name,
     subtitle: row.state,
+    // Carry the photo so generic surfaces (the labels browser tiles) show it
+    // instead of an initial-letter chip. Mirrors inventory's toResolvedPart.
+    image_path: (row.image_path as string | null | undefined) ?? undefined,
     fields: row as unknown as Record<string, unknown>,
   };
 }

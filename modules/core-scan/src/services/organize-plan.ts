@@ -21,6 +21,7 @@
 import { randomUUID } from "node:crypto";
 import { platform } from "@cobblr/platform-contract";
 import { significantTokens } from "./suggest-location.js";
+import { bucketForCategory, type CategoryBucket } from "./category-buckets.js";
 import { LengthUnitResolver, entityLongestMm, unitFieldDefsByKind } from "./organize-dims.js";
 import {
   PER_KIND_SWEEP_LIMIT,
@@ -129,11 +130,41 @@ function heuristicPlan(
       evidence: { sibling_count: Math.max(...counts), sample_names: sampleNames },
     });
   }
-  // 2. Leftovers cluster by shared dominant token (2+ members), destination
-  //    unassigned — the heuristic proposes no new bins on purpose.
+  // 2. CATEGORY STARTER BINS. Most captured goods carry a catalog category; on
+  //    a workspace with no matching bin yet (the fresh-install common case) the
+  //    heuristic used to strand every one of them at "unassigned" — nowhere to
+  //    put anything. Roll the noisy categories into coarse shelves and PROPOSE a
+  //    new bin per shelf, named from the item's own data (not the LLM's). This
+  //    is the deterministic naming exception the "no new bins" rule allows: the
+  //    category IS a durable, human bin name.
+  const byBucket = new Map<string, { bucket: CategoryBucket; members: OrganizeInputItem[] }>();
+  const uncategorized: OrganizeInputItem[] = [];
+  for (const it of rest) {
+    const bucket = bucketForCategory(it.category);
+    if (bucket) {
+      const g = byBucket.get(bucket.key) ?? { bucket, members: [] };
+      g.members.push(it);
+      byBucket.set(bucket.key, g);
+    } else uncategorized.push(it);
+  }
+  for (const { bucket, members } of byBucket.values()) {
+    groups.push({
+      id: randomUUID(),
+      label: bucket.name,
+      rationale:
+        members.length > 1
+          ? `Grouped by category — start a "${bucket.name}" bin for these.`
+          : `Start a "${bucket.name}" bin for this.`,
+      item_ids: members.map((m) => m.id),
+      destination: { kind: "new", name: bucket.name, parent_id: null, parent_name: null },
+    });
+  }
+  // 3. What's left has no category to shelve on. Cluster by shared dominant
+  //    name token (2+ members), destination unassigned — no new bins guessed
+  //    from a bare name.
   const byToken = new Map<string, OrganizeInputItem[]>();
   const singles: OrganizeInputItem[] = [];
-  for (const it of rest) {
+  for (const it of uncategorized) {
     const toks = significantTokens(it.name).sort((a, b) => b.length - a.length);
     const key = toks[0] ?? null;
     if (key) (byToken.get(key) ?? byToken.set(key, []).get(key)!).push(it);
@@ -152,12 +183,18 @@ function heuristicPlan(
       singles.push(...members);
     }
   }
-  if (singles.length > 0) {
+  // 4. True orphans — no placed siblings, no category, no shared family — each
+  //    stands ALONE.
+  //    Merging them into one "Unassigned" group falsely implies they belong
+  //    together (several unrelated orphans are several separate decisions), and
+  //    a group has ONE destination, so a merged orphan group can never be filed
+  //    correctly. One item, one group, one destination.
+  for (const it of singles) {
     groups.push({
       id: randomUUID(),
-      label: "Unassigned",
-      rationale: "No similar items are placed anywhere yet — pick a spot, or organize these by hand.",
-      item_ids: singles.map((s) => s.id),
+      label: it.name,
+      rationale: "Nothing similar is placed yet — pick a spot for this one, or organize it by hand.",
+      item_ids: [it.id],
       destination: { kind: "unassigned" },
     });
   }
@@ -188,7 +225,7 @@ Produce a put-away plan as STRICT JSON (no prose, no code fences):
 
 Rules, in priority order:
 1. BLANK BEATS WRONG. If no destination is defensible, use {"kind":"unassigned"}. Never guess.
-2. Group by what items ARE (same family of thing belongs together), not by superficial name overlap.
+2. Group by what items ARE (same family of thing belongs together), not by superficial name overlap. A group is a COHERENT FAMILY — even an "unassigned" group. NEVER merge unrelated items into one group just because they all lack a home: several unrelated orphans are several separate decisions, not one "miscellaneous" pile. Each unrelated orphan is its OWN single-item group (label = the item's name). Only group items that genuinely belong together.
 3. Prefer an existing bin with real sibling evidence over anything else. Prefer an existing EMPTY location over creating a new one. Only propose "new" when a coherent group has no plausible home; give it a short, durable name (the noun of the group, not a date or adjective pile) and parent it under a sensible existing location (parent_id from BINS/EMPTY) or null for top level.
 4. PHYSICAL FIT: when an item carries longest_mm and a bin carries interior_mm, never place the item in a bin whose largest interior axis is smaller than longest_mm. Items/bins without declared dims have NO size constraint — do not invent one.
 5. A coherent group gets ONE destination — never scatter a family across bins.
@@ -222,6 +259,7 @@ async function aiPlan(
   hints: Map<string, Hint>,
   census: Census,
   userHint?: string,
+  userId?: string | null,
 ): Promise<OrganizeGroup[] | null> {
   const user = JSON.stringify({
     ...(userHint ? { USER_HINT: userHint } : {}),
@@ -258,6 +296,11 @@ async function aiPlan(
   const call = platform()
     .ai.invoke({
       orgId,
+      // Pass the requesting user so a USER-SCOPED personal AI connection (BYO
+      // creds routed by that user) resolves — org-scoped routes resolve either
+      // way, but without this a user-only route silently falls through to the
+      // managed provider (and its entitlement gate), landing on the heuristic.
+      userId: userId ?? undefined,
       capability: "chat",
       input: {
         messages: [
@@ -474,6 +517,7 @@ export async function planOrganize(
   orgId: string,
   items: OrganizeInputItem[],
   userHint?: string,
+  userId?: string | null,
 ): Promise<OrganizePlan> {
   const census = await buildBinCensus(orgId);
   const hints = new Map<string, Hint>();
@@ -481,7 +525,7 @@ export async function planOrganize(
     const h = routeItem(it, census);
     if (h) hints.set(it.id, h);
   }
-  const ai = await aiPlan(orgId, items, hints, census, userHint);
+  const ai = await aiPlan(orgId, items, hints, census, userHint, userId);
   const groups = ai ?? heuristicPlan(items, hints, census);
   annotateSizeWarnings(groups, items, census);
   return {

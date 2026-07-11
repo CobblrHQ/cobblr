@@ -12,7 +12,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
-import { tenantContext } from "../db.js";
+import { sessionUserId, tenantContext } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 
 export const matchToCatalogRouter = Router({ mergeParams: true });
@@ -89,6 +89,7 @@ matchToCatalogRouter.post(
     try {
       const aiRes = await platform().ai.invoke({
         orgId: ctx.org.id,
+        userId: sessionUserId(req),
         capability: "match-to-catalog",
         input: {
           user_entity: parsed.data.user_entity,

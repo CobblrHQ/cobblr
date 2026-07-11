@@ -73,7 +73,10 @@ export class ErrorBoundary extends Component<Props, State> {
     }
     const scope = this.props.scope ?? "page";
     return (
-      <div className="m-6 max-w-2xl rounded-xl border border-ember-200 dark:border-ember-800 bg-ember-50/60 dark:bg-slate-900 p-6">
+      <div
+        data-testid="app-error-boundary"
+        className="m-6 max-w-2xl rounded-xl border border-ember-200 dark:border-ember-800 bg-ember-50/60 dark:bg-slate-900 p-6"
+      >
         <h2 className="text-lg font-semibold text-ember-700 dark:text-ember-300">
           Something broke on this {scope}.
         </h2>

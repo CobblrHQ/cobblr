@@ -1,0 +1,4 @@
+[
+  "modules/inventory/src/ui/ImportDialog.tsx::{commit.isPending ? \"…\" : `Import ${preview.rows.length} rows`}",
+  "web/src/pages/BackupPage.tsx::toast.success(`Restored ${r?.rows ?? 0} rows, ${r?.files ?? 0} files.`);"
+]

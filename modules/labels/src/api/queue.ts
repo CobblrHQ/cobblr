@@ -78,6 +78,37 @@ queueRouter.post(
   }),
 );
 
+const QueuePatch = z.object({
+  qty: z.number().int().min(1).max(99),
+});
+
+queueRouter.patch(
+  "/:id",
+  asyncHandler(async (req, res) => {
+    const parsed = QueuePatch.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const db = tenantDb(req);
+    const session = sessionUser(req);
+    const id = req.params.id;
+    if (!id) {
+      res.status(400).json({ error: { code: "missing_id", message: "id required" } });
+      return;
+    }
+    const updated = await db
+      .updateTable("labels_queue")
+      .set({ qty: parsed.data.qty })
+      .where("id", "=", id)
+      .where("user_id", "=", session.id)
+      .returningAll()
+      .executeTakeFirst();
+    if (!updated) {
+      res.status(404).json({ error: { code: "not_found", message: "queue item not found" } });
+      return;
+    }
+    res.json(updated);
+  }),
+);
+
 queueRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {

@@ -138,6 +138,24 @@ async function fetchPhotoToFile(orgSlug: string, token: string, url: string): Pr
   return ((await up.json()) as { id: string }).id;
 }
 
+/** Store a baked-in (embed-mode) photo: decode its base64 and hand the bytes to
+ *  core-files. NO network — this is the offline / LAN-only import path. */
+async function storeEmbeddedToFile(orgSlug: string, token: string, embed: { mime: string; data: string }): Promise<string> {
+  const bytes = Buffer.from(embed.data, "base64");
+  if (bytes.byteLength === 0) throw new Error("embedded photo is empty / not valid base64");
+  if (bytes.byteLength > PHOTO_MAX_BYTES) throw new Error(`embedded photo larger than ${PHOTO_MAX_BYTES / 1024 / 1024}MB cap`);
+  const fd = new FormData();
+  const ext = embed.mime.includes("png") ? "png" : embed.mime.includes("webp") ? "webp" : "jpg";
+  fd.append("file", new Blob([bytes], { type: embed.mime }), `import-${Date.now()}.${ext}`);
+  const up = await fetch(`${INTERNAL_API}/api/v1/orgs/${orgSlug}/modules/core-files/files`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: fd,
+  });
+  if (!up.ok) throw new Error(`file store failed: HTTP ${up.status}`);
+  return ((await up.json()) as { id: string }).id;
+}
+
 async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T) => Promise<R>): Promise<R[]> {
   const out: R[] = new Array(items.length);
   let next = 0;
@@ -176,7 +194,7 @@ importRouter.post(
         quantity: i.quantity,
         scan_area: i.scan_area,
         hint_category: i.metadata.hint_category ?? null,
-        has_photo: !!i.photo_identify_url,
+        has_photo: !!(i.photo_identify_url || i.photo_identify_embedded),
       })),
     });
   }),
@@ -242,7 +260,25 @@ importRouter.post(
     }
 
     const createdIds: string[] = [];
-    const photoJobs: Array<{ id: string; identify: string | null; display: string | null; row: number }> = [];
+    type PhotoJob = {
+      id: string;
+      row: number;
+      identify: string | null;
+      display: string | null;
+      identifyEmbed: { mime: string; data: string } | null;
+      displayEmbed: { mime: string; data: string } | null;
+    };
+    const photoJobs: PhotoJob[] = [];
+    const jobFor = (id: string, i: NormalizedImportItem): PhotoJob => ({
+      id,
+      row: i.row,
+      // Embedded photos ride in the file → always processed (no network). URLs
+      // are only pulled when fetch_photos is on.
+      identify: fetchPhotos ? i.photo_identify_url : null,
+      display: fetchPhotos ? i.photo_display_url : null,
+      identifyEmbed: i.photo_identify_embedded,
+      displayEmbed: i.photo_display_embedded,
+    });
     for (const p of toWrite) {
       const i = p.item;
       const values = {
@@ -264,7 +300,7 @@ importRouter.post(
         if (p.action === "replace" && p.existingId) {
           await db.updateTable("core_scan_inbox_items").set(values).where("id", "=", p.existingId).execute();
           createdIds.push(p.existingId);
-          if (fetchPhotos) photoJobs.push({ id: p.existingId, identify: i.photo_identify_url, display: i.photo_display_url, row: i.row });
+          photoJobs.push(jobFor(p.existingId, i));
         } else {
           const ins = await db
             .insertInto("core_scan_inbox_items")
@@ -272,7 +308,7 @@ importRouter.post(
             .returning("id")
             .executeTakeFirstOrThrow();
           createdIds.push(ins.id);
-          if (fetchPhotos) photoJobs.push({ id: ins.id, identify: i.photo_identify_url, display: i.photo_display_url, row: i.row });
+          photoJobs.push(jobFor(ins.id, i));
         }
       } catch (e) {
         errors.push({ row: i.row, field: "", message: `insert failed: ${(e as Error).message}` });
@@ -280,28 +316,33 @@ importRouter.post(
     }
 
     // Photos: best-effort, bounded concurrency, per-row errors — the batch
-    // never aborts on a missing/unreachable photo.
+    // never aborts on a missing/unreachable photo. Baked-in (embedded) photos
+    // are stored from their bytes (no network); otherwise a link is fetched.
     let photosFetched = 0;
     let photosFailed = 0;
-    if (fetchPhotos) {
-      await mapLimit(photoJobs, PHOTO_CONCURRENCY, async (job) => {
-        for (const [role, url] of [["identify", job.identify], ["display", job.display]] as const) {
-          if (!url) continue;
-          try {
-            const fileId = await fetchPhotoToFile(ctx.org.slug, token, url);
-            await db
-              .updateTable("core_scan_inbox_items")
-              .set(role === "identify" ? { image_file_id: fileId, updated_at: new Date() } : { catalog_image_file_id: fileId, updated_at: new Date() })
-              .where("id", "=", job.id)
-              .execute();
-            photosFetched++;
-          } catch (e) {
-            photosFailed++;
-            errors.push({ row: job.row, field: `${role}_photo_url`, message: (e as Error).message });
-          }
+    await mapLimit(photoJobs, PHOTO_CONCURRENCY, async (job) => {
+      const roles = [
+        ["identify", job.identify, job.identifyEmbed],
+        ["display", job.display, job.displayEmbed],
+      ] as const;
+      for (const [role, url, embed] of roles) {
+        if (!embed && !url) continue;
+        try {
+          const fileId = embed
+            ? await storeEmbeddedToFile(ctx.org.slug, token, embed)
+            : await fetchPhotoToFile(ctx.org.slug, token, url!);
+          await db
+            .updateTable("core_scan_inbox_items")
+            .set(role === "identify" ? { image_file_id: fileId, updated_at: new Date() } : { catalog_image_file_id: fileId, updated_at: new Date() })
+            .where("id", "=", job.id)
+            .execute();
+          photosFetched++;
+        } catch (e) {
+          photosFailed++;
+          errors.push({ row: job.row, field: embed ? `${role}_photo_embedded` : `${role}_photo_url`, message: (e as Error).message });
         }
-      });
-    }
+      }
+    });
 
     res.json({
       imported_count: createdIds.length,

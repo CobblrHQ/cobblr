@@ -53,30 +53,14 @@ export function BrowsePanel() {
   }, [queueQ.data]);
 
   const add = useMutation({
-    mutationFn: (it: LabelableItem) => {
-      const [moduleName, entityType] = splitKind(it.kind);
-      return api.addToQueue({
-        module_name: moduleName,
-        entity_type: entityType,
-        entity_id: it.id,
-        qr_payload: it.detail_url ?? `/entities/${it.kind}/${it.id}`,
-        description: it.title,
-      });
-    },
+    // Mint a QR token + queue the full scan URL, so browse-printed labels
+    // encode `<base>/qr/<token>` like every other print path. Setting a bare
+    // `/entities/<kind>/<id>` here was the bug that made these labels
+    // unscannable and ignored the workspace's custom label base URL.
+    mutationFn: (it: LabelableItem) =>
+      api.queueLabelForEntity({ entity_kind: it.kind, entity_id: it.id, description: it.title }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["labels-queue"] }),
   });
-
-  if (tabsQ.isLoading) {
-    return <div className="text-sm text-faint dark:text-slate-500">loading labelable items…</div>;
-  }
-  if (tabs.length === 0) {
-    return (
-      <div className="border-2 border-dashed border-line dark:border-slate-700 rounded-xl p-8 text-center text-faint dark:text-slate-500 text-sm">
-        Nothing to label yet. Add some items to a module that supports labels
-        (Inventory, Machines, Assets, …) and they'll show up here to print.
-      </div>
-    );
-  }
 
   const items = itemsQ.data?.items ?? [];
   // When a tab's items carry hierarchy (today: locations — rooms & bins), show
@@ -88,6 +72,10 @@ export function BrowsePanel() {
   // THE shared locations model — same tree build + (position, then natural
   // name) sort the Locations page uses, so "Bin 2" sorts before "Bin 10" here
   // too. One viewer, global.
+  // NOTE: this hook must run BEFORE the early returns below. It used to sit
+  // after them, so a render that bailed on `tabsQ.isLoading` ran one fewer
+  // hook than the loaded render — React #310 crashed the Labels page the
+  // instant the tabs query resolved. All hooks stay above the first return.
   const sections = useMemo(() => {
     if (!hierarchical) return null;
     const forest = buildLocationForest<LabelableItem>(items, {
@@ -102,6 +90,18 @@ export function BrowsePanel() {
       containers: flattenLocationForest(forest.containers),
     };
   }, [hierarchical, items]);
+
+  if (tabsQ.isLoading) {
+    return <div className="text-sm text-faint dark:text-slate-500">loading labelable items…</div>;
+  }
+  if (tabs.length === 0) {
+    return (
+      <div className="border-2 border-dashed border-line dark:border-slate-700 rounded-xl p-8 text-center text-faint dark:text-slate-500 text-sm">
+        Nothing to label yet. Add some items to a module that supports labels
+        (Inventory, Machines, Assets, …) and they'll show up here to print.
+      </div>
+    );
+  }
 
   // One row — shared by the flat grid and the indented tree.
   const renderRow = (it: LabelableItem, indent = 0) => {
@@ -200,7 +200,7 @@ export function BrowsePanel() {
             {sections.areas.length > 0 && (
               <div>
                 <SectionHeader label="Areas" count={sections.areas.length} />
-                <ul className="space-y-1.5">
+                <ul className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                   {sections.areas.map((r) => renderRow(r.node, r.depth))}
                 </ul>
               </div>
@@ -208,7 +208,7 @@ export function BrowsePanel() {
             {sections.containers.length > 0 && (
               <div>
                 <SectionHeader label="Containers" count={sections.containers.length} />
-                <ul className="space-y-1.5">
+                <ul className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                   {sections.containers.map((r) => renderRow(r.node, r.depth))}
                 </ul>
               </div>
@@ -218,14 +218,6 @@ export function BrowsePanel() {
       </div>
     </div>
   );
-}
-
-/** "inventory:part" → ["inventory", "part"]; tolerant of instance kinds
- *  like "pantry:item" (the colon split is all the queue-add needs). */
-function splitKind(kind: string): [string, string] {
-  const i = kind.indexOf(":");
-  if (i < 0) return [kind, "entity"];
-  return [kind.slice(0, i), kind.slice(i + 1)];
 }
 
 function SectionHeader({ label, count }: { label: string; count: number }) {

@@ -87,7 +87,7 @@ organizeRouter.post(
         });
         return;
       }
-      const plan = await planOrganize(ctx.org.id, gathered.items, body.hint);
+      const plan = await planOrganize(ctx.org.id, gathered.items, body.hint, sessionUser(req).id);
       const payload = {
         ...plan,
         subject: "entities" as const,
@@ -161,7 +161,23 @@ organizeRouter.post(
         needsReview.push(r.id);
         continue;
       }
-      const meta = (r.suggested_metadata ?? {}) as { category?: unknown };
+      const meta = (r.suggested_metadata ?? {}) as {
+        category?: unknown;
+        hint_category?: { domain?: unknown; sub?: unknown };
+      };
+      // The category feeds the planner's coarse starter-bin roll-up
+      // (category-buckets.ts). The barcode/enrichment path writes `category`;
+      // the CSV/import path writes `hint_category.{domain,sub}` — honour either
+      // so an imported-onboarding workspace gets starter bins too. Prefer the
+      // more specific sub, fall back to the domain.
+      const category =
+        typeof meta.category === "string"
+          ? meta.category
+          : typeof meta.hint_category?.sub === "string"
+            ? (meta.hint_category.sub as string)
+            : typeof meta.hint_category?.domain === "string"
+              ? (meta.hint_category.domain as string)
+              : null;
       // Size (3b): a metadata value that literally carries a length unit
       // ("180 mm") gives the item a declared longest dimension; nothing else
       // does — no guessing from names.
@@ -173,7 +189,7 @@ organizeRouter.post(
         id: r.id,
         name: r.suggested_name,
         manufacturer: r.suggested_manufacturer,
-        category: typeof meta.category === "string" ? meta.category : null,
+        category,
         quantity: r.quantity ?? 1,
         ...(dims ? { longest_mm: dims.longest_mm, dims_detail: dims.detail } : {}),
       });
@@ -222,19 +238,9 @@ organizeRouter.post(
     const isDraftable = body.scope === "pending" && !body.hint && !body.fresh;
     if (isDraftable && fingerprint) {
       const draft = candidates.find((c) => {
-        const p = c.payload as {
-          draft_fingerprint?: string;
-          draft_hinted?: boolean;
-          draft_ready_ids?: string[];
-        };
+        const p = c.payload as { draft_fingerprint?: string; draft_hinted?: boolean };
         if (p.draft_fingerprint !== fingerprint) return false;
-        // "Untouched" means no USER-accepted groups — ready groups are born
-        // applied (that's what makes them walkable), so they don't count.
-        const bornReady = new Set(p.draft_ready_ids ?? []);
-        const userApplied = (c.applied_group_ids as unknown[]).filter(
-          (id) => typeof id === "string" && !bornReady.has(id),
-        );
-        if (userApplied.length > 0) return false;
+        if ((c.applied_group_ids as unknown[]).length > 0) return false;
         // A HINTED draft is the human's corrected plan — it holds for the
         // plan's whole lifetime (the fingerprint still invalidates it the
         // moment the backlog changes). Un-hinted drafts stay young so census
@@ -242,19 +248,14 @@ organizeRouter.post(
         return p.draft_hinted ? true : Date.now() - c.created_at.getTime() < DRAFT_FRESH_MS;
       });
       if (draft) {
-        res.json({
-          plan_id: draft.id,
-          expires_at: draft.expires_at,
-          applied_group_ids: draft.applied_group_ids,
-          ...(draft.payload as Record<string, unknown>),
-        });
+        res.json({ plan_id: draft.id, expires_at: draft.expires_at, ...(draft.payload as Record<string, unknown>) });
         return;
       }
     }
 
     // THE SESSION HINT CARRIES: scanning more items or sending one back
     // changes the fingerprint and forces a recompute — but the human's
-    // ground truth ("aviation accessories") didn't stop being true. When no
+    // ground truth (its stored hint) didn't stop being true. When no
     // explicit hint rides this call, reuse the newest plan's stored hint so
     // it survives backlog churn for its working session (plan TTL). Visible
     // + clearable on the plan line; clear_hint stops the carry.
@@ -264,17 +265,68 @@ organizeRouter.post(
       if (typeof carried === "string" && carried.trim()) effectiveHint = carried;
     }
 
-    const plan: OrganizePlan =
-      plannable.length > 0
-        ? await planOrganize(ctx.org.id, plannable, effectiveHint)
-        : { groups: [], census_truncated: false, source: "heuristic" };
+    // INCREMENTAL PRESERVATION: adding items must not destroy the plan you
+    // already built for the others. If the newest untouched draft's planned
+    // (non-ready) groups cover a SUBSET of the current unfiled items with
+    // UNCHANGED names — i.e. you only ADDED items (scanned one more item onto
+    // an existing plan) — keep those groups verbatim and plan ONLY
+    // the new items. Full recompute would throw the existing grouping away the
+    // moment the AI call flakes on the recompute (the heuristic can't know it).
+    // Only when not fresh and not an explicit hint (both mean "reason anew").
+    interface StoredPlanGroup {
+      id: string;
+      item_ids: string[];
+      ready?: boolean;
+      destination: { kind: string };
+    }
+    const parent =
+      body.scope === "pending" && !body.fresh && !body.hint && plannable.length > 0
+        ? candidates.find((c) => {
+            if ((c.applied_group_ids as unknown[]).length > 0) return false;
+            const pl = c.payload as { groups?: StoredPlanGroup[]; item_names?: Record<string, string> };
+            const planned = (pl.groups ?? []).filter((g) => !g.ready);
+            const plannedIds = planned.flatMap((g) => g.item_ids);
+            if (plannedIds.length === 0) return false;
+            const nowById = new Map(plannable.map((p) => [p.id, p.name] as const));
+            // Every planned item still present with the SAME name (a rename
+            // changes grouping, so bail to a full recompute then).
+            if (!plannedIds.every((id) => nowById.get(id) === (pl.item_names ?? {})[id])) return false;
+            // And there must be genuinely NEW items (otherwise the exact-match
+            // reuse above would have returned it).
+            return plannable.some((p) => !plannedIds.includes(p.id));
+          })
+        : undefined;
+
+    let plan: OrganizePlan;
+    if (parent) {
+      const pl = parent.payload as { groups?: StoredPlanGroup[]; source?: "ai" | "heuristic" };
+      const preserved = (pl.groups ?? []).filter((g) => !g.ready) as unknown as OrganizePlan["groups"];
+      const preservedIds = new Set(preserved.flatMap((g) => g.item_ids));
+      const newItems = plannable.filter((p) => !preservedIds.has(p.id));
+      const newPlan =
+        newItems.length > 0
+          ? await planOrganize(ctx.org.id, newItems, effectiveHint, sessionUser(req).id)
+          : { groups: [], census_truncated: false, source: "heuristic" as const };
+      plan = {
+        groups: [...preserved, ...newPlan.groups],
+        census_truncated: newPlan.census_truncated,
+        // Keep the parent's label (the preserved grouping is the headline).
+        source: pl.source ?? newPlan.source,
+      };
+    } else {
+      plan =
+        plannable.length > 0
+          ? await planOrganize(ctx.org.id, plannable, effectiveHint, sessionUser(req).id)
+          : { groups: [], census_truncated: false, source: "heuristic" };
+    }
 
     // READY groups: items a human (or an accepted plan) already gave a
     // destination, still sitting uncommitted. The plan's job for them is
-    // simply "this is all set — you gonna do it?": pre-accepted (born
-    // applied, so the put-away walk includes them), never re-planned, no
-    // Accept needed. Location-less pre-fills (container targets) stay in the
-    // untouched count.
+    // simply "this is all set — you gonna do it?": a DISPLAY card the user
+    // completes with an "I did it!" commit (never the walk, never Accept,
+    // never re-planned). NOT born applied — that made a background-warmed
+    // plan fake a started walk and nag "resume put-away walk". Location-less
+    // pre-fills (container targets) stay in the untouched count.
     const readyRows = rows.filter(
       (r) => alreadyFiled.includes(r.id) && r.target_location_id,
     );
@@ -305,11 +357,9 @@ organizeRouter.post(
       });
     }
 
-    const readyIds = readyGroups.map((g) => g.id as string);
     const payload = {
       ...(fingerprint ? { draft_fingerprint: fingerprint } : {}),
       ...(fingerprint && effectiveHint ? { draft_hinted: true, hint_text: effectiveHint } : {}),
-      ...(readyIds.length > 0 ? { draft_ready_ids: readyIds } : {}),
       ...plan,
       groups: [...readyGroups, ...plan.groups],
       subject: "inbox" as const,
@@ -323,19 +373,13 @@ organizeRouter.post(
       .insertInto("core_scan_organize_plans")
       .values({
         payload: sql`${JSON.stringify(payload)}::jsonb` as never,
-        applied_group_ids: sql`${JSON.stringify(readyIds)}::jsonb` as never,
         created_by_user_id: sessionUser(req).id,
         expires_at: new Date(Date.now() + PLAN_TTL_MS),
       })
       .returning(["id", "expires_at"])
       .executeTakeFirstOrThrow();
 
-    res.json({
-      plan_id: inserted.id,
-      expires_at: inserted.expires_at,
-      applied_group_ids: readyIds,
-      ...payload,
-    });
+    res.json({ plan_id: inserted.id, expires_at: inserted.expires_at, ...payload });
   }),
 );
 

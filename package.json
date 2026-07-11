@@ -39,6 +39,8 @@
     "lint:unit-conversion": "tsx scripts/lint-unit-conversion.ts",
     "lint:component-kinds": "tsx scripts/lint-generic-component-kinds.ts",
     "lint:consume-params": "tsx scripts/lint-consume-once-params.ts",
+    "lint:ui-jargon": "tsx scripts/lint-ui-jargon.ts",
+    "lint:ai-invoke": "tsx scripts/lint-ai-invoke.ts",
     "build": "pnpm -r run --if-present build",
     "dev:api": "npm run dev -w api",
     "dev:web": "npm run dev -w web",

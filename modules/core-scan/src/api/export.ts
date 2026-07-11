@@ -4,17 +4,45 @@
 // importer — no DB surgery. Photo URLs point at the no-auth, token-gated
 // image route so the importer's best-effort photo fetch carries the images.
 //
-//   GET /export            → JSON envelope   (?status=all|pending|discarded, ?batch=<id>)
-//   GET /export.csv        → flattened CSV    (same filters)
+//   GET  /export           → JSON envelope   (?status=all|pending|discarded, ?batch=<id>) — link photos, legacy
+//   GET  /export.csv       → flattened CSV    (same filters)
+//   GET  /export/options   → the export modal's config (default photo mode + TTL choices)
+//   POST /export           → JSON envelope with a chosen SELECTION + photo mode + TTL
+//                            body { ids?, status?, batch?, photo_mode, ttl_ms }
 
 import { Router } from "express";
 import type { Request } from "express";
+import { z } from "zod";
+import { platform } from "@cobblr/platform-contract";
 import { tenantContext, tenantDb } from "../db.js";
-import { asyncHandler, requireRole } from "./util.js";
-import { buildEnvelope, buildCsv, type ScanRowForExport } from "../services/export.js";
+import { asyncHandler, badBody, requireRole } from "./util.js";
+import { buildEnvelope, buildCsv, type ScanRowForExport, type PhotoResolver, type EmbeddedPhoto } from "../services/export.js";
 import { signExportToken } from "../services/export-token.js";
 
 export const exportRouter = Router({ mergeParams: true });
+
+// ── Photo mode + TTL policy ──────────────────────────────────────────────────
+// Default photo mode is deploy-configurable: a self-hoster should default to
+// `embed` (self-contained, no public links, works LAN-only / offline); a hosted
+// instance can set SCAN_EXPORT_DEFAULT_PHOTO_MODE=link (small files, links fetched
+// on import). The export modal always lets the user override per-export.
+type PhotoMode = "link" | "embed" | "none";
+function defaultPhotoMode(): PhotoMode {
+  const v = (process.env.SCAN_EXPORT_DEFAULT_PHOTO_MODE ?? "embed").toLowerCase();
+  return v === "link" || v === "none" ? v : "embed";
+}
+const TTL_CHOICES = [
+  { label: "1 hour", ms: 60 * 60 * 1000 },
+  { label: "24 hours", ms: 24 * 60 * 60 * 1000 },
+  { label: "7 days", ms: 7 * 24 * 60 * 60 * 1000 },
+] as const;
+const DEFAULT_TTL_MS = TTL_CHOICES[1].ms; // 24h
+const MIN_TTL_MS = 60 * 1000;
+const MAX_TTL_MS = TTL_CHOICES[2].ms; // 7d
+/** Per-photo embed cap: skip baking in an unusually large file rather than
+ *  bloat the export past reason (it's still recoverable via a re-export as a
+ *  link). Typical scan photos are well under this. */
+const EMBED_MAX_BYTES = 10 * 1024 * 1024;
 
 /** The instance origin to build absolute photo URLs against: an
  *  `x-cobblr-base-url` override (isolated-stack e2e), else the request's own
@@ -35,25 +63,120 @@ const EXPORT_COLS = [
   "created_at", "updated_at",
 ] as const;
 
-async function loadRows(req: Request): Promise<{ rows: ScanRowForExport[]; status: string; batchId: string | null }> {
+async function loadRows(
+  req: Request,
+  sel: { status?: string; batchId?: string | null; ids?: string[] | null } = {},
+): Promise<{ rows: ScanRowForExport[]; status: string; batchId: string | null }> {
   const db = tenantDb(req);
-  const statusQ = typeof req.query.status === "string" ? req.query.status : "all";
-  const batchId = typeof req.query.batch === "string" && req.query.batch ? req.query.batch : null;
+  const statusQ = sel.status ?? (typeof req.query.status === "string" ? req.query.status : "all");
+  const batchId = sel.batchId ?? (typeof req.query.batch === "string" && req.query.batch ? req.query.batch : null);
   let q = db.selectFrom("core_scan_inbox_items").select(EXPORT_COLS as unknown as (typeof EXPORT_COLS)[number][]);
-  if (statusQ !== "all") q = q.where("status", "=", statusQ as never);
-  if (batchId) q = q.where("scan_batch_id", "=", batchId);
+  // An explicit id selection is the primary filter (the export modal's checked
+  // items); status/batch are the fallback for the legacy GET.
+  if (sel.ids && sel.ids.length) q = q.where("id", "in", sel.ids);
+  else {
+    if (statusQ !== "all") q = q.where("status", "=", statusQ as never);
+    if (batchId) q = q.where("scan_batch_id", "=", batchId);
+  }
   const rows = (await q.orderBy("created_at", "asc").execute()) as unknown as ScanRowForExport[];
-  return { rows, status: statusQ, batchId };
+  return { rows, status: sel.ids?.length ? "selection" : statusQ, batchId };
 }
 
-/** A photoUrl(fileId) closure over a freshly-minted, org-scoped export token. */
-function photoUrlFactory(req: Request, orgId: string): (fileId: string) => string {
+/** A `link`-mode resolver: one PER-FILE signed token baked into each URL (scoped
+ *  to exactly that file, TTL from the modal), so the export leaks no more than
+ *  the files it names, and only for as long as the user chose. */
+function linkResolver(req: Request, orgId: string, ttlMs: number): PhotoResolver {
   const base = baseUrl(req);
-  const token = signExportToken(orgId);
-  return (fileId: string) => `${base}/api/v1/public/scan-export/${token}/files/${fileId}/raw`;
+  return (fileId) => ({
+    url: `${base}/api/v1/public/scan-export/${signExportToken(orgId, fileId, ttlMs)}/files/${fileId}/raw`,
+  });
+}
+
+/** An `embed`-mode resolver: pre-read every referenced file's bytes and base64
+ *  them, so the export is fully self-contained (no public links, works offline /
+ *  LAN-only). Files over the cap (or unreadable / non-image) are simply omitted. */
+async function embedResolver(orgId: string, rows: ScanRowForExport[]): Promise<PhotoResolver> {
+  const fileIds = new Set<string>();
+  for (const r of rows) {
+    if (r.image_file_id) fileIds.add(r.image_file_id);
+    if (r.catalog_image_file_id) fileIds.add(r.catalog_image_file_id);
+  }
+  const map = new Map<string, EmbeddedPhoto>();
+  await Promise.all(
+    [...fileIds].map(async (id) => {
+      try {
+        const f = (await platform().files.read(orgId, id, "medium")) ?? (await platform().files.read(orgId, id, "original"));
+        if (!f || !f.mimeType.startsWith("image/")) return;
+        const bytes = Buffer.from(f.bytes);
+        if (bytes.byteLength > EMBED_MAX_BYTES) return;
+        map.set(id, { mime: f.mimeType, data: bytes.toString("base64") });
+      } catch {
+        /* unreadable → omit; export still succeeds */
+      }
+    }),
+  );
+  return (fileId) => {
+    const e = map.get(fileId);
+    return e ? { embed: e } : null;
+  };
 }
 
 const stamp = () => new Date().toISOString().slice(0, 10);
+
+// The export modal's config: what photo mode to pre-select + the TTL choices.
+exportRouter.get(
+  "/export/options",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    res.json({
+      default_photo_mode: defaultPhotoMode(),
+      ttl_choices: TTL_CHOICES.map((c) => ({ label: c.label, ms: c.ms })),
+      default_ttl_ms: DEFAULT_TTL_MS,
+    });
+  }),
+);
+
+const PostBody = z.object({
+  ids: z.array(z.string().min(1)).max(5000).optional(),
+  status: z.enum(["all", "pending", "discarded"]).optional(),
+  batch: z.string().min(1).optional(),
+  photo_mode: z.enum(["link", "embed", "none"]).optional(),
+  ttl_ms: z.number().int().min(MIN_TTL_MS).max(MAX_TTL_MS).optional(),
+});
+
+// The rich export the modal drives: an explicit selection + chosen photo mode.
+exportRouter.post(
+  "/export",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const parsed = PostBody.safeParse(req.body ?? {});
+    if (!parsed.success) return badBody(res, parsed.error);
+    const body = parsed.data;
+    const ctx = tenantContext(req);
+    const mode: PhotoMode = body.photo_mode ?? defaultPhotoMode();
+    const ttlMs = body.ttl_ms ?? DEFAULT_TTL_MS;
+    const { rows, status, batchId } = await loadRows(req, {
+      status: body.status,
+      batchId: body.batch ?? null,
+      ids: body.ids ?? null,
+    });
+    const resolve: PhotoResolver =
+      mode === "embed"
+        ? await embedResolver(ctx.org.id, rows)
+        : mode === "none"
+          ? () => null
+          : linkResolver(req, ctx.org.id, ttlMs);
+    const env = buildEnvelope(rows, resolve, {
+      sourceInstance: baseUrl(req),
+      exportedAt: new Date().toISOString(),
+      status,
+      batchId,
+    });
+    res.setHeader("Content-Type", "application/json");
+    res.setHeader("Content-Disposition", `attachment; filename="cobblr-scan-${status}-${stamp()}.json"`);
+    res.send(JSON.stringify(env, null, 2));
+  }),
+);
 
 exportRouter.get(
   "/export",
@@ -61,7 +184,9 @@ exportRouter.get(
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const ctx = tenantContext(req);
     const { rows, status, batchId } = await loadRows(req);
-    const env = buildEnvelope(rows, photoUrlFactory(req, ctx.org.id), {
+    // Legacy GET keeps link photos at the default TTL (the modal's POST is where
+    // embed / selection / custom TTL live).
+    const env = buildEnvelope(rows, linkResolver(req, ctx.org.id, DEFAULT_TTL_MS), {
       sourceInstance: baseUrl(req),
       exportedAt: new Date().toISOString(),
       status,
@@ -79,7 +204,8 @@ exportRouter.get(
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const ctx = tenantContext(req);
     const { rows, status } = await loadRows(req);
-    const csv = buildCsv(rows, photoUrlFactory(req, ctx.org.id));
+    const base = baseUrl(req);
+    const csv = buildCsv(rows, (fileId) => `${base}/api/v1/public/scan-export/${signExportToken(ctx.org.id, fileId, DEFAULT_TTL_MS)}/files/${fileId}/raw`);
     res.setHeader("Content-Type", "text/csv");
     res.setHeader("Content-Disposition", `attachment; filename="cobblr-scan-${status}-${stamp()}.csv"`);
     res.send(csv);

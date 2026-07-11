@@ -205,7 +205,7 @@ const ExtractBody = z.object({ text: z.string().min(1).max(20_000) });
 
 /** The materials-extraction prompt + call, shared by the paste-text and
  *  attached-PDF paths. Returns the {ai, yarn, hooks} shape both render. */
-async function extractMaterials(orgId: string, designId: string, text: string) {
+async function extractMaterials(orgId: string, designId: string, text: string, userId?: string | null) {
   const system =
     "You read a crochet/knitting pattern and extract ONLY the materials it " +
     "calls for. Reply with ONLY a JSON object, no prose:\n" +
@@ -216,6 +216,7 @@ async function extractMaterials(orgId: string, designId: string, text: string) {
     "no hooks, use an empty array. Convert yards to metres (×0.9144).";
   const r = await platform().ai.invoke({
     orgId,
+    userId: userId ?? undefined,
     capability: "chat",
     input: {
       messages: [
@@ -268,7 +269,7 @@ projectsRouter.post(
       return;
     }
     try {
-      const out = await extractMaterials(ctx.org.id, req.params.id ?? "", text);
+      const out = await extractMaterials(ctx.org.id, req.params.id ?? "", text, sessionUser(req)?.id ?? null);
       if (!out) {
         res.json({ ai: false, reason: "Couldn't read that pattern.", yarn: [], hooks: [] });
         return;
@@ -438,6 +439,7 @@ projectsRouter.post(
     try {
       const r = await platform().ai.invoke({
         orgId: ctx.org.id,
+        userId: sessionUser(req)?.id ?? null,
         capability: "chat",
         input: {
           messages: [

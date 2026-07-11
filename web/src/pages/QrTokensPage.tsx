@@ -99,27 +99,50 @@ export function QrTokensPage({ embedded = false }: { embedded?: boolean } = {}) 
           New-code style
         </div>
         <div className="flex gap-2">
-          {(["descriptive", "opaque"] as const).map((opt) => (
+          {(
+            [
+              {
+                opt: "descriptive",
+                title: "Self-describing",
+                desc: "Encodes /qr/<kind>/<id> — portable, still interpretable if this instance is gone. Denser code.",
+              },
+              {
+                opt: "opaque",
+                title: "Opaque",
+                desc: "A short random token — reveals nothing and scans cleanly on tiny labels, but needs this instance to resolve.",
+              },
+            ] as const
+          ).map(({ opt, title, desc }) => (
             <button
               key={opt}
               type="button"
               onClick={() => style !== opt && setStyle.mutate(opt)}
               disabled={setStyle.isPending}
+              aria-pressed={style === opt}
               className={
-                "text-xs px-2.5 py-1.5 rounded border transition " +
+                "flex-1 basis-0 text-left px-3 py-2 rounded-lg border transition disabled:opacity-60 " +
                 (style === opt
-                  ? "border-cobble-500 bg-cobble-50 dark:bg-cobble-900/40 text-content dark:text-mortar-100"
-                  : "border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:text-content")
+                  ? "border-cobble-500 bg-cobble-50 dark:bg-cobble-900/40"
+                  : "border-line dark:border-slate-700 hover:border-cobble-400 dark:hover:border-slate-600")
               }
             >
-              {opt === "descriptive" ? "Self-describing" : "Opaque"}
+              <div
+                className={
+                  "text-xs font-semibold " +
+                  (style === opt
+                    ? "text-content dark:text-mortar-100"
+                    : "text-muted dark:text-slate-300")
+                }
+              >
+                {title}
+              </div>
+              <div className="text-[11px] leading-snug text-muted dark:text-slate-400 mt-0.5">
+                {desc}
+              </div>
             </button>
           ))}
         </div>
         <p className="text-[11px] text-muted dark:text-slate-400 mt-1.5">
-          {style === "descriptive"
-            ? "New codes encode /qr/<kind>/<id> — self-describing and portable: still interpretable if this instance is gone. Denser code."
-            : "New codes encode a short random token — reveals nothing and scans cleanly on tiny labels, but needs this instance to resolve."}{" "}
           Codes you've already printed keep working either way.
         </p>
       </div>

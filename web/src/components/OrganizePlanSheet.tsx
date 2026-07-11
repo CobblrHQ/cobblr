@@ -1,7 +1,14 @@
-// Guided Organize — the plan review sheet (docs/product/guided-organize.md).
+// Guided Organize — the sorting plan (docs/product/guided-organize.md).
 //
-// Opened from the scan inbox's bulk toolbar (and the put-away front door):
-// sends the selection to POST /organize/plan and renders the proposed groups.
+// The put-away plan is a RE-EXPRESSION of the scan inbox: the same pending
+// items, grouped by DESTINATION instead of by scan session. So the primary
+// surface is `SortingPlanView` — an INLINE view the scan page swaps in on a
+// header toggle ("By session ｜ Sorting plan"), not a modal over the inbox.
+// `OrganizePlanSheet` (bottom of file) is the thin modal wrapper kept for the
+// two secondary subjects that aren't the pending backlog: a hand-picked
+// selection, and "Organize what you track" (committed, unplaced entities).
+//
+// Either way it sends to POST /organize/plan and renders the proposed groups.
 // Each group shows its members, a destination with EVIDENCE ("14 similar
 // items already live here"), and applies only on an explicit Accept — per
 // group or all at once. Nothing files until accepted. The human has the
@@ -14,7 +21,8 @@
 //   - a hint box + Re-plan re-runs the plan with your ground truth folded in
 //     (already-applied groups stay filed; the remainder regroups).
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, ChevronDown, FolderPlus, MapPin, Pencil, RotateCcw, Sparkles, Wand2, X } from "lucide-react";
 import { Modal, useImageSrc, useToast } from "@cobblr/platform-web";
 import {
@@ -24,6 +32,7 @@ import {
   type ScanInboxItem,
 } from "../lib/api";
 import { LocationTreePicker } from "./LocationTreePicker";
+import { useAiStatus, AiOffNotice } from "./AiStatusNotice";
 
 // Unaccepted tweaks per plan (splits, renames, overrides, the typed hint),
 // keyed by plan_id — the server's draft cache returns the SAME plan on
@@ -54,12 +63,18 @@ function DestinationChip({
   group,
   onRename,
   onPick,
+  onPickParent,
+  parentOverride,
 }: {
   group: OrganizeGroup & { renamed?: string };
-  /** New-bin chips edit their name IN PLACE — the chip is the control. */
+  /** New-bin chips: click the NAME to edit it in place. */
   onRename?: () => void;
-  /** Existing/unassigned chips open the location picker on click. */
+  /** Existing/unassigned chips: click to open the location picker. */
   onPick?: () => void;
+  /** New-bin chips: click the "in <parent>" to change the parent location. */
+  onPickParent?: () => void;
+  /** New-bin parent name after a change (shows the picked parent). */
+  parentOverride?: string | null;
 }) {
   const d = group.destination;
   if (d.kind === "existing") {
@@ -84,21 +99,35 @@ function DestinationChip({
     );
   }
   if (d.kind === "new") {
+    // Two independent click targets so the NAME and the PARENT each edit in
+    // place (a nested <button> is invalid HTML — this is a div of spans).
+    const parentName = parentOverride ?? d.parent_name;
     return (
-      <button
-        type="button"
-        onClick={onRename}
-        disabled={!onRename}
-        title={onRename ? "Click to rename the new bin — your word for it beats the AI's" : undefined}
-        className={`inline-flex items-center gap-1.5 rounded-full border border-dashed border-accent/60 text-accent px-2.5 py-1 text-xs font-medium ${
-          onRename ? "hover:bg-cobble-50 dark:hover:bg-cobble-900/30 transition" : ""
-        }`}
-      >
-        <FolderPlus className="h-3.5 w-3.5" />
-        New bin: {group.renamed ?? d.name}
-        {d.parent_name ? <span className="text-muted">in {d.parent_name}</span> : null}
-        {onRename && <Pencil className="h-3 w-3 opacity-60" />}
-      </button>
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-accent/60 text-accent px-2.5 py-1 text-xs font-medium">
+        <FolderPlus className="h-3.5 w-3.5 shrink-0" />
+        <span>New bin:</span>
+        <span
+          role={onRename ? "button" : undefined}
+          tabIndex={onRename ? 0 : undefined}
+          onClick={onRename}
+          onKeyDown={onRename ? (e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), onRename()) : undefined}
+          title={onRename ? "Click to rename the new bin" : undefined}
+          className={onRename ? "underline decoration-dotted decoration-accent/40 hover:decoration-accent cursor-pointer" : ""}
+        >
+          {group.renamed ?? d.name}
+        </span>
+        <span
+          role={onPickParent ? "button" : undefined}
+          tabIndex={onPickParent ? 0 : undefined}
+          onClick={onPickParent}
+          onKeyDown={onPickParent ? (e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), onPickParent()) : undefined}
+          title={onPickParent ? "Click to change which location it goes under" : undefined}
+          className={`text-muted ${onPickParent ? "underline decoration-dotted hover:text-content cursor-pointer" : ""}`}
+        >
+          in {parentName ?? "top level"}
+        </span>
+        {onRename && <Pencil className="h-3 w-3 opacity-60 shrink-0" />}
+      </span>
     );
   }
   return (
@@ -116,11 +145,10 @@ function DestinationChip({
   );
 }
 
-export function OrganizePlanSheet({
+export function SortingPlanView({
   slug,
   itemIds,
   itemsById,
-  open,
   onClose,
   onApplied,
   onStartWalk,
@@ -130,8 +158,10 @@ export function OrganizePlanSheet({
   slug: string;
   itemIds: string[];
   itemsById: Map<string, ScanInboxItem>;
-  open: boolean;
-  onClose: () => void;
+  /** Modal mode only: renders a Done/Cancel button in the footer that closes
+   *  the wrapper. Omitted for the inline (toggle) surface — the page's toggle
+   *  owns leaving the view, so there's nothing to close. */
+  onClose?: () => void;
   /** Fired after any successful apply, with the item ids that were filed. */
   onApplied: (filedItemIds: string[]) => void;
   /** Phase 2: open the put-away walk over the just-applied groups. */
@@ -146,18 +176,37 @@ export function OrganizePlanSheet({
   renderItemCard?: (itemId: string) => ReactNode;
 }) {
   const toast = useToast();
+  const aiStatus = useAiStatus();
+  // Self-heal: a saved plan is served from cache on open, so a plan made while
+  // AI wasn't connected stays the no-AI (heuristic) one forever. When we open
+  // one AND AI is now available, auto-re-plan EXACTLY ONCE (guarded) so it fixes
+  // itself, without re-running on every open (which would burn a token each time).
+  const autoHealedRef = useRef(false);
   const [plan, setPlan] = useState<OrganizePlanResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [applied, setApplied] = useState<Set<string>>(new Set());
   const [overrides, setOverrides] = useState<Map<string, string>>(new Map()); // group → location_id
-  const [pickerFor, setPickerFor] = useState<string | null>(null);
+  const [pickerFor, setPickerFor] = useState<string | null>(null); // existing/ready re-route
+  const [parentPickerFor, setParentPickerFor] = useState<string | null>(null); // new-bin parent
   const [busy, setBusy] = useState(false);
   // Items split out per group ("not related") — excluded at apply-time.
   const [splitOut, setSplitOut] = useState<Map<string, Set<string>>>(new Map());
   // Inline renames of PROPOSED new bins (your vocabulary beats the model's).
   const [renames, setRenames] = useState<Map<string, string>>(new Map());
   const [renaming, setRenaming] = useState<string | null>(null);
+  // New-bin parent overrides (group → {id,name}) — click "in X" to change it.
+  const [newParents, setNewParents] = useState<Map<string, { id: string; name: string }>>(new Map());
+  // Ready groups completed via "I did it!" (committed) — group → done/busy.
+  const [readyDone, setReadyDone] = useState<Set<string>>(new Set());
+  const [readyBusy, setReadyBusy] = useState<string | null>(null);
+  const locationsQ = useQuery({
+    queryKey: ["locations", slug],
+    queryFn: () => api.listLocations(slug),
+    staleTime: 60_000,
+  });
+  const locName = (id: string) =>
+    locationsQ.data?.items.find((l) => l.id === id)?.name ?? "that location";
   // Ground truth for a re-plan.
   const [hint, setHint] = useState("");
   // The one item whose fixer accordion is open.
@@ -200,6 +249,9 @@ export function OrganizePlanSheet({
           saved ? new Map([...saved.splitOut].map(([k, v]) => [k, new Set(v)])) : new Map(),
         );
         setRenames(saved ? new Map(saved.renames) : new Map());
+        setNewParents(new Map());
+        setParentPickerFor(null);
+        setReadyDone(new Set());
         // A processed hint doesn't linger in the box (the author) — its result
         // IS the plan, and the plan line carries the provenance.
         setHint("");
@@ -212,18 +264,33 @@ export function OrganizePlanSheet({
   };
 
   useEffect(() => {
-    if (!open) return;
     setHint("");
     setPlan(null);
     setApplied(new Set());
     setOverrides(new Map());
     setSplitOut(new Map());
     setRenames(new Map());
+    setNewParents(new Map());
+    setReadyDone(new Set());
+    autoHealedRef.current = false;
     runPlan();
-    // Plan only when the sheet (re)opens — the selection is frozen at open;
-    // Re-plan is an explicit button.
+    // Plan once when this view mounts (the toggle mounts it, the modal wrapper
+    // mounts it on open) — the selection is frozen at mount; Re-plan is an
+    // explicit button.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, []);
+
+  // Self-heal a cached no-AI plan (see autoHealedRef). Fires at most once per
+  // open: when the loaded plan isn't an AI plan but AI is now available, run a
+  // single fresh re-plan. If that STILL comes back non-AI (AI genuinely can't
+  // resolve), the guard stops it from looping / re-burning.
+  useEffect(() => {
+    if (!plan || autoHealedRef.current) return;
+    if (plan.source === "ai" || !aiStatus?.available) return;
+    autoHealedRef.current = true;
+    runPlan(undefined, { fresh: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan, aiStatus]);
 
   // Persist the working state per plan (see planUiState above).
   useEffect(() => {
@@ -245,7 +312,7 @@ export function OrganizePlanSheet({
   // after the assistant acts. scope:"pending" only (the standing-draft
   // surface); never mid-action.
   useEffect(() => {
-    if (scope !== "pending" || !open) return;
+    if (scope !== "pending") return;
     const t = setInterval(() => {
       if (busy || loading || replanning) return;
       void api
@@ -269,6 +336,9 @@ export function OrganizePlanSheet({
           setOverrides(new Map());
           setSplitOut(new Map());
           setRenames(new Map());
+          setNewParents(new Map());
+          setParentPickerFor(null);
+          setReadyDone(new Set());
           setPickerFor(null);
           setRenaming(null);
           setExpandedItem(null);
@@ -279,7 +349,7 @@ export function OrganizePlanSheet({
     }, 8_000);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope, open, plan?.plan_id, busy, loading, replanning]);
+  }, [scope, plan?.plan_id, busy, loading, replanning]);
 
   // STALE detection: an item edited through the embedded triage card (renamed,
   // re-identified) no longer matches what this plan grouped on. Compare what
@@ -324,9 +394,16 @@ export function OrganizePlanSheet({
               new_location?: { name: string; parent_id?: string | null };
               exclude_item_ids?: string[];
             } = { group_id: gid };
+            const parent = newParents.get(gid);
             if (overrides.has(gid)) o.location_id = overrides.get(gid)!;
-            else if (rename && g?.destination.kind === "new" && rename !== g.destination.name) {
-              o.new_location = { name: rename, parent_id: g.destination.parent_id };
+            else if (
+              g?.destination.kind === "new" &&
+              ((rename && rename !== g.destination.name) || parent)
+            ) {
+              o.new_location = {
+                name: rename || g.destination.name,
+                parent_id: parent ? parent.id : g.destination.parent_id,
+              };
             }
             if (excluded.length > 0) o.exclude_item_ids = excluded;
             return o;
@@ -350,19 +427,62 @@ export function OrganizePlanSheet({
     }
   };
 
-  return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title={
-        scope === "pending"
-          ? "Put away your scanned backlog"
-          : scope === "unplaced"
-            ? "Organize what you track"
-            : "Organize this batch"
+  // "I did it!" on a READY group: the items already have a home, so completing
+  // = COMMIT them into their matched tables at that location (carrying the
+  // pre-set target_location_id — the confirm endpoint never defaults to it, so
+  // we pass it explicitly, else the books would land with no location). They
+  // then leave the pending backlog and the group is done. Unmatched/unnamed
+  // items keep their triage path (reported).
+  const commitReady = async (g: OrganizeGroup) => {
+    setReadyBusy(g.id);
+    const overrideLoc = overrides.get(g.id) ?? null;
+    const destName = overrideLoc
+      ? locName(overrideLoc)
+      : g.destination.kind === "existing"
+        ? g.destination.location_name
+        : "its bin";
+    const filed: string[] = [];
+    let skipped = 0;
+    let failed = 0;
+    for (const id of g.item_ids) {
+      const it = itemsById.get(id);
+      const cand = it?.suggested_candidates?.[0];
+      if (!it || !cand || !it.suggested_name) {
+        skipped++;
+        continue;
       }
-      size="content"
-    >
+      try {
+        await api.confirmScanItem(slug, id, {
+          target_module: cand.module,
+          target_kind: cand.kind,
+          instance: cand.instance ?? undefined,
+          name: it.suggested_name,
+          quantity: it.quantity ?? cand.quantity ?? undefined,
+          extras: cand.fields,
+          location_id: overrideLoc ?? it.target_location_id ?? undefined,
+        });
+        filed.push(id);
+      } catch {
+        failed++;
+      }
+    }
+    setReadyBusy(null);
+    if (filed.length > 0) onApplied(filed);
+    // Only "done" when EVERY item filed — a partial keeps the group live so
+    // the skipped/failed ones stay actionable (the toast breaks it down).
+    if (filed.length === g.item_ids.length) {
+      setReadyDone((prev) => new Set([...prev, g.id]));
+    }
+    const parts: string[] = [];
+    if (filed.length) parts.push(`${filed.length} filed to ${destName}`);
+    if (skipped) parts.push(`${skipped} need identifying first`);
+    if (failed) parts.push(`${failed} failed`);
+    if (filed.length) toast.success(parts.join(" · "));
+    else toast.error(parts.join(" · ") || "Nothing to file yet");
+  };
+
+  return (
+    <div className="space-y-0">
       {loading && (
         <div className="flex items-center gap-2 py-8 justify-center text-muted text-sm">
           <Wand2 className="h-4 w-4 animate-pulse" />
@@ -399,8 +519,8 @@ export function OrganizePlanSheet({
                 )}
               </span>
             ) : (
-              <span title="No AI provider — grouped by where similar items already live.">
-                Similarity plan (no AI)
+              <span title="Grouped by where similar items already live — no AI plan.">
+                Similarity plan{aiStatus && !aiStatus.available ? " (no AI connected)" : " (AI unavailable this run)"}
               </span>
             )}
             {plan.already_filed_item_ids.length > 0 && !plan.groups.some((g) => g.ready) && (
@@ -413,6 +533,33 @@ export function OrganizePlanSheet({
             )}
             {plan.census_truncated && <span>Large workspace: planned against the busiest bins.</span>}
           </div>
+
+          {/* A heuristic plan can only reuse bins that already have similar
+              things — it never proposes NEW homes, so a fresh workspace dead-ends
+              at "unassigned". Say so out loud, with the fix, instead of a silent
+              degrade. Two cases: no AI connected (actionable → Connect AI) vs AI
+              connected but it failed this run (Re-plan). */}
+          {!replanning && plan.source !== "ai" && aiStatus && !aiStatus.available && (
+            <AiOffNotice status={aiStatus}>
+              <strong>No AI connected — the planner is grouping by where similar
+              things already live.</strong> Without AI it won't propose new homes,
+              so brand-new items with nothing like them yet stay unassigned.
+              Connect AI to get smart put-away suggestions.{" "}
+            </AiOffNotice>
+          )}
+          {!replanning && plan.source !== "ai" && aiStatus?.available && (
+            <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/20 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+              <Sparkles size={14} className="shrink-0" />
+              AI couldn't build a plan this time — showing similarity grouping. Re-plan to try again.
+              <button
+                type="button"
+                onClick={() => runPlan(hint, { fresh: true })}
+                className="rounded bg-cobble-600 hover:bg-cobble-700 text-white font-medium px-2 py-1 transition"
+              >
+                Re-plan
+              </button>
+            </div>
+          )}
 
           {cobbTouched && !replanning && (
             <div className="flex flex-wrap items-center gap-2 rounded-lg border border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20 px-3 py-2 text-xs text-content dark:text-mortar-100">
@@ -442,11 +589,12 @@ export function OrganizePlanSheet({
           {plan.groups.map((g) => {
             const isApplied = applied.has(g.id);
             const override = overrides.get(g.id);
+            const done = readyDone.has(g.id);
             const canApply = !isApplied && (g.destination.kind !== "unassigned" || !!override);
             return (
               <div
                 key={g.id}
-                className={`rounded-lg border border-line dark:border-slate-700 p-3 ${isApplied ? "opacity-60" : ""}`}
+                className={`rounded-lg border border-line dark:border-slate-700 p-3 ${isApplied || done ? "opacity-60" : ""}`}
               >
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium text-content">{g.label}</span>
@@ -488,21 +636,37 @@ export function OrganizePlanSheet({
                   ) : (
                     <DestinationChip
                       group={{ ...g, renamed: renames.get(g.id) }}
-                      onRename={!isApplied ? () => setRenaming(g.id) : undefined}
+                      parentOverride={newParents.get(g.id)?.name ?? null}
+                      onRename={!isApplied && !done ? () => setRenaming(g.id) : undefined}
                       onPick={
-                        !isApplied
+                        !isApplied && !done
                           ? () => setPickerFor((p) => (p === g.id ? null : g.id))
+                          : undefined
+                      }
+                      onPickParent={
+                        !isApplied && !done && g.destination.kind === "new"
+                          ? () => setParentPickerFor((p) => (p === g.id ? null : g.id))
                           : undefined
                       }
                     />
                   )}
                   {g.ready ? (
-                    <span
-                      className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 text-xs font-medium"
-                      title="Already set — it's in the put-away walk; nothing to accept"
-                    >
-                      <CheckCircle2 className="h-4 w-4" /> All set — just put them away
-                    </span>
+                    done ? (
+                      <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 text-xs font-medium">
+                        <CheckCircle2 className="h-4 w-4" /> Done — filed
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={readyBusy === g.id}
+                        onClick={() => void commitReady(g)}
+                        title="These already have a home — mark them done and file them as records"
+                        className="inline-flex items-center gap-1.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium px-2.5 py-1 transition disabled:opacity-50"
+                      >
+                        <CheckCircle2 className="h-4 w-4" />
+                        {readyBusy === g.id ? "Filing…" : "I did it!"}
+                      </button>
+                    )
                   ) : isApplied ? (
                     <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 text-xs font-medium">
                       <CheckCircle2 className="h-4 w-4" /> Filed
@@ -520,7 +684,7 @@ export function OrganizePlanSheet({
                     </>
                   )}
                 </div>
-                {pickerFor === g.id && !isApplied && (
+                {pickerFor === g.id && !isApplied && !done && (
                   <div className="mt-2 rounded-lg border border-accent/40 bg-subtle/40 dark:bg-slate-900/40 p-2">
                     <LocationTreePicker
                       value={override ?? null}
@@ -530,7 +694,24 @@ export function OrganizePlanSheet({
                           setPickerFor(null);
                         }
                       }}
-                      label="File this group into"
+                      label={g.ready ? "Move these to a different location" : "File this group into"}
+                    />
+                  </div>
+                )}
+                {parentPickerFor === g.id && !isApplied && (
+                  <div className="mt-2 rounded-lg border border-accent/40 bg-subtle/40 dark:bg-slate-900/40 p-2">
+                    <LocationTreePicker
+                      value={newParents.get(g.id)?.id ?? null}
+                      onChange={(v) => {
+                        setNewParents((prev) => {
+                          const next = new Map(prev);
+                          if (v) next.set(g.id, { id: v, name: locName(v) });
+                          else next.delete(g.id);
+                          return next;
+                        });
+                        setParentPickerFor(null);
+                      }}
+                      label="Put the new bin under…"
                     />
                   </div>
                 )}
@@ -542,7 +723,7 @@ export function OrganizePlanSheet({
                 {g.ai_guess && !override && !isApplied && (
                   <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
                     Nothing similar lives there yet — this is the AI's suggestion, not a match.
-                    Accept if it fits, or Change…
+                    Accept if it fits, or click the chip to send it elsewhere.
                   </p>
                 )}
                 {(g.rationale || g.evidence) && (
@@ -717,13 +898,15 @@ export function OrganizePlanSheet({
               <Sparkles className="h-3.5 w-3.5" /> or tell Cobb instead
             </button>
             <span className="flex-1" />
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded border border-line dark:border-slate-700 text-sm px-3 py-1.5 text-content hover:bg-subtle dark:hover:bg-slate-800 transition"
-            >
-              {applied.size > 0 ? "Done" : "Cancel"}
-            </button>
+            {onClose && (
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded border border-line dark:border-slate-700 text-sm px-3 py-1.5 text-content hover:bg-subtle dark:hover:bg-slate-800 transition"
+              >
+                {applied.size > 0 ? "Done" : "Cancel"}
+              </button>
+            )}
             {applied.size > 0 && onStartWalk && (
               <button
                 type="button"
@@ -748,6 +931,47 @@ export function OrganizePlanSheet({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** The modal wrapper — kept for the two secondary subjects that AREN'T the
+ *  pending backlog toggle: a hand-picked selection ("Organize this batch") and
+ *  committed unplaced entities ("Organize what you track"). The pending-backlog
+ *  plan renders `SortingPlanView` INLINE via the scan page's view toggle, not
+ *  here. Mounts the view only while open, so the plan loads on open (and its
+ *  polling/auto-adopt stop on close). */
+export function OrganizePlanSheet({
+  open,
+  onClose,
+  scope,
+  ...rest
+}: {
+  slug: string;
+  itemIds: string[];
+  itemsById: Map<string, ScanInboxItem>;
+  open: boolean;
+  onClose: () => void;
+  onApplied: (filedItemIds: string[]) => void;
+  onStartWalk?: () => void;
+  scope?: "unplaced" | "pending";
+  renderItemCard?: (itemId: string) => ReactNode;
+}) {
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={
+        scope === "pending"
+          ? "Put away your scanned backlog"
+          : scope === "unplaced"
+            ? "Organize what you track"
+            : "Organize this batch"
+      }
+      size="content"
+      fillHeight
+    >
+      {open && <SortingPlanView scope={scope} onClose={onClose} {...rest} />}
     </Modal>
   );
 }

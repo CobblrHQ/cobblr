@@ -8,7 +8,7 @@ import { sql } from "kysely";
 import { randomBytes } from "node:crypto";
 import { platform } from "@cobblr/platform-contract";
 import QRCode from "qrcode";
-import { tenantContext, tenantDb, getQrTokenStyle, getQrLabelBaseUrl, qrScanUrl, descriptiveToken } from "../db.js";
+import { tenantContext, tenantDb, getQrTokenStyle, getQrLabelBaseUrl, qrScanUrl, qrShortcode } from "../db.js";
 import type { Request } from "express";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 
@@ -38,10 +38,17 @@ const TokenCreate = z.object({
   expires_in_days: z.number().int().positive().nullable().optional(),
 });
 
-function newSlug(): string {
-  // 24-char URL-safe random — collision-proof for any reasonable
-  // workspace scale + short enough for a 200x200 QR with Q-level EC.
-  return randomBytes(18).toString("base64url");
+// One slug length for everything: 12 chars (~72 bits). Unguessable enough for a
+// public bearer token (anyone with the URL can open it, so it must resist
+// enumeration) and trivially unique for a session one, so length is a constant,
+// not a knob. The unique constraint + retry-on-collision below cover the rare
+// duplicate. The only real toggle is descriptive-vs-opaque (readability).
+function slug(): string {
+  return randomBytes(9).toString("base64url"); // 12 chars
+}
+function isDupKey(e: unknown): boolean {
+  const err = e as { code?: string; message?: string };
+  return err.code === "23505" || /duplicate key|unique constraint/i.test(err.message ?? "");
 }
 
 interface MetaQrToken {
@@ -85,13 +92,15 @@ tokensRouter.post(
     // second mint for the same entity would collide with (and reuse) its nav
     // token, silently dropping the new mode/expiry.
     const style = await getQrTokenStyle(tenantDb(req));
-    const wantsDescriptive =
+    // Descriptive (readable "<code>/<slug>") is for a plain, permanent navigate
+    // label AND session auth only: a public label must not leak its kind, and an
+    // action / expiring token needs a distinct disposable token. Everything else
+    // is opaque (a bare slug).
+    const isDescriptive =
       style === "descriptive" &&
       parsed.data.mode === "navigate" &&
-      !parsed.data.expires_in_days;
-    const token = wantsDescriptive
-      ? descriptiveToken(parsed.data.entity_kind, parsed.data.entity_id)
-      : newSlug();
+      !parsed.data.expires_in_days &&
+      parsed.data.auth === "session";
     const meta = platform().db.meta as unknown as {
       insertInto: (table: string) => unknown;
       selectFrom: (table: string) => unknown;
@@ -99,22 +108,22 @@ tokensRouter.post(
     // Resolve the base once so every response (reuse or fresh) carries a
     // ready-to-print scan_url — clients never guess the origin.
     const base = await effectiveBase(req);
-    // A descriptive token is deterministic per entity — reuse an existing row
-    // so re-printing the same label doesn't collide on the unique token.
-    if (wantsDescriptive) {
-      const existing = (await (
-        meta.selectFrom("core_labels_qr_tokens") as unknown as {
-          selectAll: () => {
-            where: (c: string, op: string, v: unknown) => {
-              executeTakeFirst: () => Promise<MetaQrToken | undefined>;
-            };
-          };
-        }
-      )
-        .selectAll()
-        .where("token", "=", token)
-        .executeTakeFirst()) as MetaQrToken | undefined;
-      if (existing) {
+    // A descriptive nav token is one-per-entity: reuse an existing (unrevoked)
+    // one so a reprint keeps the already-printed URL. Query by entity (the slug
+    // is random now, not computable from the entity).
+    if (isDescriptive) {
+      const sel = meta.selectFrom("core_labels_qr_tokens") as unknown as { selectAll: () => unknown };
+      let q = sel.selectAll() as unknown as {
+        where: (col: string, op: string, val: unknown) => unknown;
+      };
+      q = q.where("org_id", "=", ctx.org.id) as typeof q;
+      q = q.where("entity_kind", "=", parsed.data.entity_kind) as typeof q;
+      q = q.where("entity_id", "=", parsed.data.entity_id) as typeof q;
+      q = q.where("mode", "=", "navigate") as typeof q;
+      const existing = (await (q as unknown as {
+        executeTakeFirst: () => Promise<MetaQrToken | undefined>;
+      }).executeTakeFirst()) as MetaQrToken | undefined;
+      if (existing && !existing.revoked_at) {
         res.status(200).json({ ...existing, scan_url: qrScanUrl(base, existing.token) });
         return;
       }
@@ -122,24 +131,38 @@ tokensRouter.post(
     const expiresAt = parsed.data.expires_in_days
       ? new Date(Date.now() + parsed.data.expires_in_days * 86_400_000)
       : null;
-    const row = (await (meta.insertInto("core_labels_qr_tokens") as unknown as {
-      values: (v: Record<string, unknown>) => {
-        returningAll: () => { executeTakeFirstOrThrow: () => Promise<MetaQrToken> };
-      };
-    })
-      .values({
-        token,
-        org_id: ctx.org.id,
-        entity_kind: parsed.data.entity_kind,
-        entity_id: parsed.data.entity_id,
-        mode: parsed.data.mode,
-        action_id: parsed.data.action_id ?? null,
-        auth: parsed.data.auth,
-        config: sql`${JSON.stringify(parsed.data.config ?? {})}::jsonb` as never,
-        expires_at: expiresAt,
+    const mkToken = () =>
+      isDescriptive ? `${qrShortcode(parsed.data.entity_kind)}/${slug()}` : slug();
+    const insertToken = (token: string) =>
+      (meta.insertInto("core_labels_qr_tokens") as unknown as {
+        values: (v: Record<string, unknown>) => {
+          returningAll: () => { executeTakeFirstOrThrow: () => Promise<MetaQrToken> };
+        };
       })
-      .returningAll()
-      .executeTakeFirstOrThrow()) as MetaQrToken;
+        .values({
+          token,
+          org_id: ctx.org.id,
+          entity_kind: parsed.data.entity_kind,
+          entity_id: parsed.data.entity_id,
+          mode: parsed.data.mode,
+          action_id: parsed.data.action_id ?? null,
+          auth: parsed.data.auth,
+          config: sql`${JSON.stringify(parsed.data.config ?? {})}::jsonb` as never,
+          expires_at: expiresAt,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+    let row: MetaQrToken | undefined;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        row = (await insertToken(mkToken())) as MetaQrToken;
+        break;
+      } catch (e) {
+        if (isDupKey(e) && attempt < 4) continue; // slug collided on unique(token) — try a new one
+        throw e;
+      }
+    }
+    if (!row) throw new Error("could not mint a unique QR token");
     void platform().events.emit("core-labels-qr.token.created", {
       orgId: ctx.org.id,
       tokenId: row.id,

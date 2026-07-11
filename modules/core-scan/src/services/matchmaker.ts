@@ -532,6 +532,9 @@ export async function runMatchmaker(
   /** The inbox item's UUID — links the AI-log row to the scan (source_id is a
    *  UUID column; passing the barcode/name here breaks the audit insert). */
   sourceId?: string,
+  /** The scanning user (null for a cron/background match) — routes to their
+   *  personal AI connection. */
+  userId?: string | null,
 ): Promise<MatchCandidate[]> {
   // A physical scan never routes to a record table — drop them before the model
   // even sees the menu, so it can't suggest one (and the heuristic fallback below
@@ -708,6 +711,7 @@ export async function runMatchmaker(
     const call = platform()
       .ai.invoke({
         orgId,
+        userId: userId ?? undefined,
         capability: "chat",
         input: { messages: [{ role: "system", content: system }, { role: "user", content: user }] },
         source: { kind: "core-scan:matchmaker", id: sourceId ?? "" },

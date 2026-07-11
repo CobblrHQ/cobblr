@@ -2,9 +2,9 @@
 //
 // Layout (the author's spec):
 //   · ONE narrow header row — title + count + the intake buttons
-//     (UPC / Upload / Camera). No dead space, no explainer paragraph;
-//     typed-UPC and photo-upload intake live in a modal, the camera is
-//     its own full-screen route.
+//     (UPC / Photo / Camera). No dead space, no explainer paragraph;
+//     typed-UPC intake lives in a modal, Photo fires a device file picker
+//     (accept=image/*), and the camera is its own full-screen route.
 //   · Straight to the matches: each inbox item is an ACCORDION card —
 //     the collapsed row is the at-a-glance match (photo, name, one-tap
 //     table chips); expanding reveals the full triage surface: catalog
@@ -44,9 +44,10 @@ import {
 } from "lucide-react";
 import { Modal, useImageSrc, useToast, usePageTitle } from "@cobblr/platform-web";
 import { ScanImportModal } from "../components/ScanImportModal";
+import { ExportInboxModal } from "../components/ExportInboxModal";
 import { CameraCaptureSheet } from "../components/CameraCaptureSheet";
 import { LocationTreePicker } from "../components/LocationTreePicker";
-import { OrganizePlanSheet } from "../components/OrganizePlanSheet";
+import { OrganizePlanSheet, SortingPlanView } from "../components/OrganizePlanSheet";
 import { OrganizeWalkSheet } from "../components/OrganizeWalkSheet";
 import { LiveSortSheet } from "../components/LiveSortSheet";
 import { ImageSearchPicker } from "../components/ImageSearchPicker";
@@ -60,7 +61,6 @@ import {
   type AiStatus,
   ApiError,
   api,
-  getToken,
   type OrganizeStoredPlan,
   type ScanInboxItem,
   type ScanCandidate,
@@ -412,57 +412,49 @@ function useScanDrive(slug: string | undefined, batchId: string | undefined): Sc
   return { on, active, toggle, scan: (code) => scanMut.mutate(code) };
 }
 
-/** The opt-in card: "this is my scan screen." */
+/** Second-screen opt-in: make THIS tab follow scans from another device (scan a
+ *  bin's QR on your phone → this screen jumps to that bin). It's for a wall
+ *  screen / kiosk setup — normal scanning (USB/BT scanner, phone photo, UPC)
+ *  already lands items in the inbox below WITHOUT this, and a QR scanned on this
+ *  same tab navigates locally regardless. So OFF it's a tiny link, not a card;
+ *  it only grows into a status pill once you actually turn it on. */
 function ScanDrivePanel({ drive }: { drive: ScanDrive }) {
   const active = drive.active;
-  return (
-    <div
-      className={
-        "flex items-center gap-3 rounded-md border px-3 py-2 text-sm transition " +
-        (drive.on
-          ? "border-cobble-400 dark:border-cobble-600 bg-cobble-50 dark:bg-cobble-900/30"
-          : "border-line dark:border-slate-700")
-      }
-    >
-      <MonitorSmartphone
-        size={18}
-        className={(drive.on ? "text-accent" : "text-faint") + " shrink-0"}
-      />
-      <div className="min-w-0 flex-1">
-        <div className="text-content dark:text-mortar-100">
-          {drive.on ? "This screen follows your scans" : "Drive this screen with scans"}
-        </div>
-        <div className="text-xs text-muted dark:text-slate-400">
-          {drive.on
-            ? active
-              ? "Scan a bin or item from anywhere — it jumps to it here."
-              : "Connecting this screen…"
-            : "Make this the screen a wireless scan jumps to — a bin opens that bin, an item opens its intake."}
-        </div>
-      </div>
-      {drive.on && (
-        <span
-          className={
-            "shrink-0 rounded-full px-2 py-0.5 text-xs " +
-            (active
-              ? "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300"
-              : "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300")
-          }
-        >
-          {active ? "live" : "…"}
-        </span>
-      )}
+  if (!drive.on) {
+    return (
       <button
         type="button"
         onClick={drive.toggle}
+        title="Turn this tab into a second screen that follows scans from another device — scan a bin's QR on your phone and this screen opens that bin. Not needed for normal scanning: a USB/Bluetooth scanner or a photo already lands items in the inbox below."
+        className="inline-flex items-center gap-1.5 text-xs text-muted dark:text-slate-400 hover:text-accent dark:hover:text-cobble-300 transition"
+      >
+        <MonitorSmartphone size={14} className="shrink-0" />
+        Drive this screen with scans
+      </button>
+    );
+  }
+  return (
+    <div className="inline-flex items-center gap-2 rounded-md border border-cobble-400 dark:border-cobble-600 bg-cobble-50 dark:bg-cobble-900/30 px-2.5 py-1 text-xs">
+      <MonitorSmartphone size={14} className="text-accent shrink-0" />
+      <span className="text-content dark:text-mortar-100">
+        {active ? "This screen follows your scans" : "Connecting this screen…"}
+      </span>
+      <span
         className={
-          "shrink-0 rounded border px-2.5 py-1 text-sm transition " +
-          (drive.on
-            ? "border-line dark:border-slate-700 text-content hover:bg-subtle dark:hover:bg-slate-800/70"
-            : "border-cobble-600 bg-cobble-600 text-white hover:bg-cobble-700")
+          "shrink-0 rounded-full px-1.5 py-0.5 " +
+          (active
+            ? "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300"
+            : "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300")
         }
       >
-        {drive.on ? "Stop" : "Use this screen"}
+        {active ? "live" : "…"}
+      </span>
+      <button
+        type="button"
+        onClick={drive.toggle}
+        className="shrink-0 text-muted hover:text-content dark:text-slate-400 dark:hover:text-mortar-100 transition"
+      >
+        Stop
       </button>
     </div>
   );
@@ -679,38 +671,11 @@ export function ScanPage() {
   // anyway); Upload triggers the hidden file input DIRECTLY — no modal hop.
   const [upcOpen, setUpcOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [urlsOpen, setUrlsOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const receiptRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
-  const [exporting, setExporting] = useState(false);
-
-  // Export the whole inbox as the interop envelope (JSON) — the mirror of
-  // Import. An authed fetch (the endpoint needs a bearer) → blob → download.
-  // Feeds straight back into another instance's "Import from file".
-  async function exportInbox() {
-    setExporting(true);
-    try {
-      const res = await fetch(`/api/v1/orgs/${activeSlug}/modules/core-scan/export?status=all`, {
-        headers: { Authorization: `Bearer ${getToken() ?? ""}` },
-      });
-      if (!res.ok) throw new Error(`export failed: ${res.status}`);
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `cobblr-scan-all-${new Date().toISOString().slice(0, 10)}.json`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-      toast.success("Inbox exported — import it into another workspace via ‘Import’");
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Couldn't export");
-    } finally {
-      setExporting(false);
-    }
-  }
 
   async function uploadPhoto(file: File) {
     setUploading(true);
@@ -1016,7 +981,8 @@ export function ScanPage() {
       isBatch: boolean;
       batchId: string | null;
       items: ScanInboxItem[];
-      latest: number;
+      latest: number; // max(created_at) — the session's real scan time
+      lastTouched: number; // max(updated_at) — later edits (un-confirm, fixes)
       area: string | null;
     };
     const groups: Group[] = [];
@@ -1034,13 +1000,13 @@ export function ScanPage() {
         const existing = byBatch.get(it.scan_batch_id);
         if (existing) g = existing;
         else {
-          g = { key: it.scan_batch_id, isBatch: true, batchId: it.scan_batch_id, items: [], latest: 0, area: null };
+          g = { key: it.scan_batch_id, isBatch: true, batchId: it.scan_batch_id, items: [], latest: 0, lastTouched: 0, area: null };
           byBatch.set(it.scan_batch_id, g);
           groups.push(g);
         }
       } else {
         if (!pseudo || !Number.isFinite(t) || pseudoLastT - t > SESSION_GAP_MS) {
-          pseudo = { key: `gap:${it.id}`, isBatch: false, batchId: null, items: [], latest: 0, area: null };
+          pseudo = { key: `gap:${it.id}`, isBatch: false, batchId: null, items: [], latest: 0, lastTouched: 0, area: null };
           groups.push(pseudo);
         }
         if (Number.isFinite(t)) pseudoLastT = t;
@@ -1048,6 +1014,8 @@ export function ScanPage() {
       }
       g.items.push(it);
       if (Number.isFinite(t) && t > g.latest) g.latest = t;
+      const u = Date.parse(it.updated_at);
+      if (Number.isFinite(u) && u > g.lastTouched) g.lastTouched = u;
       if (!g.area && it.scan_area) g.area = it.scan_area;
     }
     return groups.sort((a, b) => b.latest - a.latest);
@@ -1056,6 +1024,10 @@ export function ScanPage() {
   // them whenever we're grouping at all.
   const showSessionHeaders = !!sessionGroups && sessionGroups.length > 0;
   const [collapsedSessions, setCollapsedSessions] = useState<Set<string>>(new Set());
+  // A sent-back item returns to its ORIGINAL spot (created_at preserved), so
+  // it isn't at the top — surface it non-destructively (expand its session,
+  // scroll, flash a ring). Never a created_at rewrite.
+  const [highlightId, setHighlightId] = useState<string | null>(null);
   const toggleSession = (key: string) =>
     setCollapsedSessions((s) => {
       const next = new Set(s);
@@ -1063,6 +1035,25 @@ export function ScanPage() {
       else next.add(key);
       return next;
     });
+  // Surface a sent-back item: expand its (possibly collapsed, old) session so
+  // the row renders, scroll to it, then clear the ring. Re-runs as the list
+  // refetches; no-ops cleanly if the item isn't grouped/visible.
+  useEffect(() => {
+    if (!highlightId) return;
+    const grp = sessionGroups?.find((g) => g.items.some((i) => i.id === highlightId));
+    if (grp && collapsedSessions.has(grp.key)) {
+      setCollapsedSessions((s) => {
+        const n = new Set(s);
+        n.delete(grp.key);
+        return n;
+      });
+      return; // re-runs after the expand renders
+    }
+    const el = document.getElementById(`scan-item-${highlightId}`);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    const t = setTimeout(() => setHighlightId(null), 2600);
+    return () => clearTimeout(t);
+  }, [highlightId, sessionGroups, collapsedSessions]);
   // Camera "Done" lands on /scan#s-<batchId> — the FULL grouped inbox (all
   // sessions as sections, newest first), with the just-scanned session scrolled
   // to. This replaced landing on ?batch, which scoped the inbox to one session
@@ -1086,6 +1077,13 @@ export function ScanPage() {
   // The active scanning session (localStorage), for the "Scanning into…" chip.
   const activeSession = readScanSession(activeSlug ?? "");
   const sessionActive = isSessionFresh(activeSession);
+  // Is that active session ALREADY shown as its own group in the list below?
+  // When it is (the common case on /scan), the standalone green banner just
+  // repeats the "Session · <time>" row — so we suppress the banner and fold
+  // its one unique control (End session) onto that row instead.
+  const activeSessionInList =
+    !!activeSession?.batchId &&
+    !!sessionGroups?.some((g) => g.isBatch && g.batchId === activeSession.batchId);
 
   // Auto-retry rate-limited scans, one at a time, paced. Rapid scanning throttles
   // the resolver (go-upc gate / upcitemdb burst); those rows are tagged
@@ -1171,6 +1169,7 @@ export function ScanPage() {
           ? "Sent back to the inbox — the created entry was removed."
           : `Sent back to the inbox.${r.note ? ` ${r.note}` : ""}`,
       );
+      setHighlightId(r.item.id);
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
       void qc.invalidateQueries({ queryKey: ["scan-inbox-resolved", activeSlug] });
       void qc.invalidateQueries({ queryKey: ["scan-stats", activeSlug] });
@@ -1399,23 +1398,26 @@ export function ScanPage() {
   // Live Sort — the streaming put-away session (scan → "→ Bin 1" → confirm).
   // ?livesort=1 (the onboarding mission deep link) opens it on arrival.
   const [liveSortOpen, setLiveSortOpen] = useState(() => params.get("livesort") === "1");
-  // "Plan the pile" — Guided Organize over EVERY pending unfiled item
-  // (scope:"pending", no selection needed). ?organize=pending deep-links it
-  // (the dashboard put-away card's other button).
-  const [organizePendingOpen, setOrganizePendingOpen] = useState(
-    () => params.get("organize") === "pending",
+  // The inbox has two lenses on the SAME pending items: "By session" (grouped by
+  // scan time — the default) and "Sorting plan" (grouped by destination — the
+  // put-away plan, inline, not a modal). A header toggle switches between them.
+  // ?view=plan (and the legacy ?organize=pending the dashboard card used to send)
+  // deep-links straight to the plan lens.
+  const [viewMode, setViewMode] = useState<"sessions" | "plan">(() =>
+    params.get("view") === "plan" || params.get("organize") === "pending" ? "plan" : "sessions",
   );
-  // Deep-link params (?organize=pending, ?livesort=1) are consume-once: they seed
-  // the modal open-state above, then we strip them from the URL. Otherwise the
-  // param persisted, so closing the modal left it in the URL and every refresh
-  // re-opened the modal against the user's wish (the author, 2026-07-10). Mount-only:
-  // the useState defaults already captured the arrival value; after that nothing
-  // reads these params, and opening a modal by button is pure state (no URL).
+  // Deep-link params (?view=plan / ?organize=pending, ?livesort=1) are
+  // consume-once: they seed the state above, then we strip them from the URL.
+  // Otherwise the param persisted, so leaving the view/modal left it in the URL
+  // and every refresh re-forced it against the user's wish (the author, 2026-07-10).
+  // Mount-only: the useState defaults already captured the arrival value; after
+  // that nothing reads these params, and the toggle/buttons are pure state.
   useEffect(() => {
-    if (!params.has("organize") && !params.has("livesort")) return;
+    if (!params.has("organize") && !params.has("livesort") && !params.has("view")) return;
     const next = new URLSearchParams(params);
     next.delete("organize");
     next.delete("livesort");
+    next.delete("view");
     setParams(next, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1430,13 +1432,14 @@ export function ScanPage() {
   // scanning burst settles) — "Put them away" should reveal a ready plan, not
   // start one. Server-side fingerprint dedupe makes repeats free.
   const unfiledCount = scanStatsQ.data?.unfiled ?? 0;
+  const readyCount = scanStatsQ.data?.ready ?? 0;
   useEffect(() => {
-    if (!activeSlug || unfiledCount === 0) return;
+    if (!activeSlug || (unfiledCount === 0 && readyCount === 0)) return;
     const t = setTimeout(() => {
       void api.organizePlan(activeSlug, { scope: "pending", warm: true }).catch(() => {});
     }, 5_000);
     return () => clearTimeout(t);
-  }, [activeSlug, unfiledCount]);
+  }, [activeSlug, unfiledCount, readyCount]);
   // Phase 2: the put-away walk. `walkPlan` set = walk sheet open. The latest
   // stored plan also powers a "resume walk" chip after a reload mid-walk.
   const [walkPlan, setWalkPlan] = useState<OrganizeStoredPlan | null>(null);
@@ -1537,12 +1540,27 @@ export function ScanPage() {
   } | null>(null);
   // Gallery view's focus modal: which item is open as a full triage card.
   const [galleryFocusId, setGalleryFocusId] = useState<string | null>(null);
-  // Fold one scan session into the previous one (merge-batches).
+  // Fold one scan session into the previous one (merge-batches). We carry the
+  // ids of the items being moved so the success toast can offer a real Undo —
+  // reassigning EXACTLY those items back to their original (now-empty) batch,
+  // never disturbing items that were already in the target session.
   const mergeBatches = useMutation({
-    mutationFn: (v: { from: string; into: string }) => api.mergeScanBatches(activeSlug, v.from, v.into),
-    onSuccess: (r) => {
-      toast.success(`Merged ${r.moved} item${r.moved === 1 ? "" : "s"} into the previous session`);
+    mutationFn: (v: { from: string; into: string; itemIds: string[] }) =>
+      api.mergeScanBatches(activeSlug, v.from, v.into),
+    onSuccess: (r, v) => {
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      toast.action(`Merged ${r.moved} item${r.moved === 1 ? "" : "s"} into the previous session.`, {
+        actionLabel: "Undo",
+        onAction: async () => {
+          try {
+            await api.reassignScanBatch(activeSlug, v.itemIds, v.from);
+            await qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+            toast.success("Merge undone — the session is back on its own");
+          } catch (e) {
+            toast.error(e instanceof ApiError ? e.message : String(e));
+          }
+        },
+      });
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
@@ -1604,6 +1622,10 @@ export function ScanPage() {
           name: it.suggested_name,
           quantity: it.quantity ?? cand.quantity ?? undefined,
           extras: cand.fields,
+          // Carry a pre-set home (active-bin filing, an organize apply) — the
+          // confirm endpoint never defaults to target_location_id, so without
+          // this a bulk-confirm of already-located items drops their location.
+          location_id: it.target_location_id ?? undefined,
         });
         ok++;
       } catch {
@@ -1637,6 +1659,34 @@ export function ScanPage() {
           {totalPending}
           <span className="hidden sm:inline"> pending</span>
         </span>
+        {/* The two lenses on the same pending items: by scan session, or by
+            destination (the sorting plan). Only worth offering when there's a
+            backlog to sort. */}
+        {(unfiledCount > 0 || readyCount > 0) && (
+          <div className="inline-flex items-center rounded-full border border-line dark:border-slate-700 p-0.5 text-xs shrink-0">
+            {(
+              [
+                ["sessions", "By session"],
+                ["plan", "Sorting plan"],
+              ] as const
+            ).map(([mode, label]) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setViewMode(mode)}
+                aria-pressed={viewMode === mode}
+                className={
+                  "rounded-full px-2.5 py-0.5 transition " +
+                  (viewMode === mode
+                    ? "bg-cobble-600 text-white font-medium"
+                    : "text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-100")
+                }
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
         {reviewCount > 0 && (
           <button
             type="button"
@@ -1750,6 +1800,29 @@ export function ScanPage() {
         >
           <ScanLine size={15} /> UPC
         </button>
+        {/* Photo intake sits SECOND (right after UPC) so it's reachable on
+            mobile without scrolling the strip — and carries an image icon, not
+            the Upload icon, so it can't be mistaken for the batch Import below.
+            accept="image/*" → phone offers Take Photo / Photo Library / Files. */}
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          disabled={uploading}
+          title="Add a photo — take one now or choose one from this device"
+          className={headerBtn + (uploading ? " opacity-50" : "")}
+        >
+          <ImageIcon size={15} /> {uploading ? "adding…" : "Photo"}
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) void uploadPhoto(f);
+          }}
+        />
         <button
           type="button"
           onClick={() => setUrlsOpen(true)}
@@ -1768,12 +1841,11 @@ export function ScanPage() {
         </button>
         <button
           type="button"
-          onClick={() => void exportInbox()}
-          disabled={exporting}
-          title="Export this whole inbox as a file — import it into another workspace or instance (photos included)"
-          className={headerBtn + (exporting ? " opacity-50" : "")}
+          onClick={() => setExportOpen(true)}
+          title="Export inbox items to a file — pick which items and how photos travel (link vs baked-in)"
+          className={headerBtn}
         >
-          <Download size={15} /> {exporting ? "exporting…" : "Export"}
+          <Download size={15} /> Export
         </button>
         <button
           type="button"
@@ -1791,25 +1863,6 @@ export function ScanPage() {
         >
           <Zap size={15} /> Live Sort
         </button>
-        <button
-          type="button"
-          onClick={() => fileRef.current?.click()}
-          disabled={uploading}
-          title="Upload a photo from this device"
-          className={headerBtn + (uploading ? " opacity-50" : "")}
-        >
-          <Upload size={15} /> Upload
-        </button>
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) void uploadPhoto(f);
-          }}
-        />
         <button
           type="button"
           onClick={() => receiptRef.current?.click()}
@@ -1955,20 +2008,27 @@ export function ScanPage() {
       {/* The put-away front door on the page itself: a captured backlog is
           Guided Organize's native situation — ONE verb, preview-first
           (put-away.md §5). Live Sort lives where scanning starts instead. */}
-      {(scanStatsQ.data?.unfiled ?? 0) > 0 && (
+      {viewMode !== "plan" &&
+        ((scanStatsQ.data?.unfiled ?? 0) > 0 || (scanStatsQ.data?.ready ?? 0) > 0) && (
         <div
           className="flex flex-wrap items-center gap-3 rounded-lg border border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20 px-3 py-2 text-sm"
           data-testid="putaway-strip"
         >
           <span className="shrink-0">📦</span>
           <span className="min-w-0 flex-1 text-content dark:text-mortar-100">
-            <span className="font-semibold">{scanStatsQ.data!.unfiled}</span> scanned item
-            {scanStatsQ.data!.unfiled === 1 ? "" : "s"} without a home
+            {[
+              (scanStatsQ.data!.unfiled ?? 0) > 0
+                ? `${scanStatsQ.data!.unfiled} scanned item${scanStatsQ.data!.unfiled === 1 ? "" : "s"} without a home`
+                : null,
+              (scanStatsQ.data!.ready ?? 0) > 0 ? `${scanStatsQ.data!.ready} ready to put away` : null,
+            ]
+              .filter(Boolean)
+              .join(", and ")}
             <span className="text-muted dark:text-slate-400"> · preview first, nothing moves until you confirm</span>
           </span>
           <button
             type="button"
-            onClick={() => setOrganizePendingOpen(true)}
+            onClick={() => setViewMode("plan")}
             className="rounded bg-cobble-600 hover:bg-cobble-700 text-white text-xs font-medium px-2.5 py-1.5 transition shrink-0"
           >
             Put them away
@@ -2100,26 +2160,8 @@ export function ScanPage() {
         />
       )}
 
-      {organizePendingOpen && (
-        <OrganizePlanSheet
-          slug={activeSlug}
-          scope="pending"
-          itemIds={[]}
-          itemsById={new Map(items.map((i) => [i.id, i]))}
-          open={organizePendingOpen}
-          onClose={() => setOrganizePendingOpen(false)}
-          onApplied={() => {
-            void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-            void qc.invalidateQueries({ queryKey: ["scan-stats", activeSlug] });
-            void qc.invalidateQueries({ queryKey: ["organize-plan-latest", activeSlug] });
-          }}
-          onStartWalk={() => {
-            setOrganizePendingOpen(false);
-            void startWalk();
-          }}
-          renderItemCard={renderPlanItemCard}
-        />
-      )}
+      {/* The pending-backlog plan is now the inline "Sorting plan" lens (see the
+          header toggle + the list block above), not a modal. */}
 
       {organizeUnplacedOpen && (
         <OrganizePlanSheet
@@ -2164,7 +2206,7 @@ export function ScanPage() {
         />
       )}
 
-      {sessionActive && !batchId && (
+      {sessionActive && !batchId && !activeSessionInList && (
         <div className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-emerald-300/60 dark:border-emerald-800/60 bg-emerald-50/50 dark:bg-emerald-950/20 px-2.5 py-1.5 text-xs text-muted">
           <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
           <span className="text-content dark:text-mortar-100 font-medium">
@@ -2196,6 +2238,25 @@ export function ScanPage() {
       )}
 
       <div className="space-y-2">
+        {viewMode === "plan" && (unfiledCount > 0 || readyCount > 0) ? (
+          // The sorting plan: the inbox re-expressed by DESTINATION. An inline
+          // view swapped in by the header toggle (not a modal over the list) —
+          // same pending items, grouped by where they should go.
+          <SortingPlanView
+            slug={activeSlug}
+            scope="pending"
+            itemIds={[]}
+            itemsById={new Map(items.map((i) => [i.id, i]))}
+            onApplied={() => {
+              void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+              void qc.invalidateQueries({ queryKey: ["scan-stats", activeSlug] });
+              void qc.invalidateQueries({ queryKey: ["organize-plan-latest", activeSlug] });
+            }}
+            onStartWalk={() => void startWalk()}
+            renderItemCard={renderPlanItemCard}
+          />
+        ) : (
+        <>
         {pendingScans.map((p) => (
           <div
             key={p.id}
@@ -2218,7 +2279,15 @@ export function ScanPage() {
           const card = (item: ScanInboxItem) => {
             const cluster = clusterByFirstId.get(item.id);
             return (
-              <Fragment key={item.id}>
+              <div
+                key={item.id}
+                id={`scan-item-${item.id}`}
+                className={
+                  highlightId === item.id
+                    ? "rounded-lg ring-2 ring-accent ring-offset-2 ring-offset-surface dark:ring-offset-slate-950 transition"
+                    : ""
+                }
+              >
                 {cluster && combineBanner(cluster)}
                 <InboxCard
                   item={item}
@@ -2229,7 +2298,7 @@ export function ScanPage() {
                   onToggleSelect={() => toggleSelected(item.id)}
                   rateLimitGaveUp={rlGaveUp.has(item.id)}
                 />
-              </Fragment>
+              </div>
             );
           };
           // Gallery view: a flat photo-tile grid for visual triage; a tap opens
@@ -2259,6 +2328,10 @@ export function ScanPage() {
             // the one clear "is the whole session done thinking?" signal. Drives
             // the header pill: "N finishing…" while any churn, "All set" when 0.
             const busy = g.items.filter((it) => itemEnriching(it)).length;
+            // This group IS the live scanning session (localStorage) — so it
+            // carries the "active" pulse + End control that used to live in the
+            // now-suppressed green banner.
+            const isActiveSession = sessionActive && g.isBatch && g.batchId === activeSession?.batchId;
             return (
               <div key={g.key} id={g.batchId ? `s-${g.batchId}` : undefined} className="space-y-2 scroll-mt-24">
                 <div className="flex w-full items-center gap-2 rounded-md bg-mortar-50 dark:bg-slate-800/40 px-2.5 py-1.5 text-left text-xs">
@@ -2288,6 +2361,23 @@ export function ScanPage() {
                     <span className="font-medium text-content dark:text-mortar-100">
                       Session · {formatSessionTime(g.latest)}
                     </span>
+                    {isActiveSession && (
+                      <span
+                        className="inline-flex items-center gap-1 shrink-0 text-emerald-600/80 dark:text-emerald-400/80"
+                        title="The live scanning session — new scans keep grouping here until 30 min idle"
+                      >
+                        <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                        active
+                      </span>
+                    )}
+                    {g.lastTouched - g.latest > 6 * 3600_000 && (
+                      <span
+                        className="text-faint truncate"
+                        title="A later change (a fix, or an item sent back from a commit) — the session's own time is unchanged"
+                      >
+                        · edited {timeAgo(new Date(g.lastTouched).toISOString())}
+                      </span>
+                    )}
                     {g.area && <span className="text-muted truncate">· {g.area}</span>}
                     <span className="ml-auto shrink-0 flex items-center gap-2">
                       {busy > 0 ? (
@@ -2319,19 +2409,44 @@ export function ScanPage() {
                       open →
                     </Link>
                   )}
-                  {mergeInto && g.batchId && (
+                  {isActiveSession && (
                     <button
                       type="button"
-                      title="Fold this session into the previous one"
-                      onClick={() => void mergeBatches.mutateAsync({ from: g.batchId!, into: mergeInto })}
-                      disabled={mergeBatches.isPending}
-                      className="shrink-0 text-faint hover:text-accent disabled:opacity-50"
+                      title="End this scan session — the next scan starts a new one"
+                      onClick={() => {
+                        clearScanSession(activeSlug);
+                        toast.success("Session ended — the next scan starts a new one");
+                      }}
+                      className="shrink-0 text-faint hover:text-accent"
                     >
-                      merge ↓
+                      End
                     </button>
                   )}
                 </div>
-                {!collapsed && <div className="space-y-2">{g.items.map(card)}</div>}
+                {!collapsed && (
+                  <div className="space-y-2">
+                    {g.items.map(card)}
+                    {/* Merge lives INSIDE the expanded session (reveal-to-use),
+                        not on the collapsed header where its old ↓ was mistaken
+                        for the accordion and folded sessions by accident. It's a
+                        rare re-unify action; every merge is Undo-able via toast. */}
+                    {mergeInto && g.batchId && (
+                      <div className="pt-0.5">
+                        <button
+                          type="button"
+                          title="Two bursts that are really one job? Fold this session into the previous (older) one. You can undo it."
+                          onClick={() =>
+                            void mergeBatches.mutateAsync({ from: g.batchId!, into: mergeInto, itemIds: groupIds })
+                          }
+                          disabled={mergeBatches.isPending}
+                          className="text-xs text-faint hover:text-accent disabled:opacity-50"
+                        >
+                          Merge into the previous session
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             );
           });
@@ -2341,6 +2456,8 @@ export function ScanPage() {
           <div ref={loadMoreRef} className="py-4 text-center text-xs text-faint">
             {isFetchingNextPage ? "loading more…" : ""}
           </div>
+        )}
+        </>
         )}
       </div>
 
@@ -2476,6 +2593,14 @@ export function ScanPage() {
         onClose={() => setImportOpen(false)}
         onImported={() => void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] })}
       />
+      {exportOpen && (
+        <ExportInboxModal
+          slug={activeSlug}
+          items={items.map((i) => ({ id: i.id, name: i.suggested_name ?? "" }))}
+          preselectedIds={[...selected]}
+          onClose={() => setExportOpen(false)}
+        />
+      )}
       {upcOpen && <UpcModal onClose={() => setUpcOpen(false)} />}
       {urlsOpen && <UrlsModal onClose={() => setUrlsOpen(false)} />}
     </div>
@@ -4312,9 +4437,9 @@ function SeriesBanner({ slug, items }: { slug: string; items: ScanInboxItem[] })
 }
 
 // Session-theme banner: after a batch, offer to TAG everything with a derived
-// theme + suggest a CATEGORY for the non-media subset — "these 6 aviation
-// things → tag 'Aviation', category 'Aviation Accessories' on the 2
-// accessories." Nothing hardcoded; derived server-side, degrades to nothing.
+// theme + suggest a CATEGORY for the non-media subset — e.g. "these 6 things →
+// tag 'Camping', category 'Camp Cookware' on the 2 pots, leaving the 4 books
+// tagged but uncategorized." Nothing hardcoded; derived server-side, degrades to nothing.
 function SessionThemeBanner({ slug, pendingCount }: { slug: string; pendingCount: number }) {
   const qc = useQueryClient();
   const toast = useToast();

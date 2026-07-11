@@ -610,9 +610,9 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           saved_views: [
             {
               entity_kind: "machines:machine",
-              name: "Laser fleet by tube type",
+              name: "Laser fleet by state",
               view_type: "kanban",
-              config: { group_by: "tube_type" },
+              config: { group_by: "state" },
               pinned: true,
             },
           ],

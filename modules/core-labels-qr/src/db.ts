@@ -63,10 +63,33 @@ export function qrScanUrl(base: string, token: string): string {
 /** A readable, deterministic token for the descriptive style:
  *  "<kind-local-name>/<entity-id>", e.g. "location/9a8e…". The full kind
  *  still lives on the token row, so this is purely the human-readable label
- *  (and stays unique because the entity id is a UUID). */
+ *  (and stays unique because the entity id is a UUID).
+ *  Superseded by qrShortcode + a short slug for new descriptive tokens; kept for
+ *  reference and for resolving already-printed labels. */
 export function descriptiveToken(entityKind: string, entityId: string): string {
   const alias = entityKind.split(":").pop() || entityKind;
   return `${alias}/${entityId}`;
+}
+
+// A short, curated code per kind so a descriptive token reads short
+// ("loc/<slug>" not "location/<slug>"). Instance-specific codes (a "3D Printers"
+// machines instance → "3dp") are a later registry; this keys on the kind.
+const KIND_SHORTCODES: Record<string, string> = {
+  location: "loc",
+  part: "inv", // inventory items
+  asset: "ast",
+  machine: "mch",
+  project: "prj",
+  task: "tsk",
+  list: "lst",
+};
+
+/** 3-char shortcode for a descriptive token's readable half. Built-in kinds get
+ *  a curated code; anything else falls back to the first url-safe chars of its
+ *  local name. Never empty. */
+export function qrShortcode(entityKind: string): string {
+  const alias = (entityKind.split(":").pop() || entityKind).toLowerCase();
+  return KIND_SHORTCODES[alias] ?? (alias.replace(/[^a-z0-9]/g, "").slice(0, 3) || "obj");
 }
 
 export type OrgRole = "owner" | "admin" | "member" | "guest";

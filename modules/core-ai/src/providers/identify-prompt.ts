@@ -41,9 +41,9 @@ export function measurementContext(input: Record<string, unknown>): string {
     parts.push("Visual observations: " + JSON.stringify(o));
   }
   // A user correction/hint OVERRIDES the visual read — the person telling you
-  // "it's an RA200 headset" when the photo shows a bag means the item they want
-  // is the headset (inside/attached), not the most prominent object. Trust the
-  // words over the pixels; the hint may name a DIFFERENT item than the obvious one.
+  // "it's the headset" when the photo shows a carrying case means the item they
+  // want is the headset (inside/attached), not the most prominent object. Trust
+  // the words over the pixels; the hint may name a DIFFERENT item than the obvious one.
   const hint = typeof input.user_hint === "string" ? input.user_hint.trim() : "";
   let out = "";
   if (parts.length) {

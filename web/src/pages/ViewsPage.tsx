@@ -241,6 +241,9 @@ export function SavedViewBody({
   isLoading: boolean;
 }) {
   const cfg = (view.config ?? {}) as ViewConfig;
+  // Count reads in the entity's own noun ("5 machines"), not DB-speak "5 rows".
+  const noun = (view.entity_kind || "").split(":")[1] ?? "";
+  const plural = noun ? `${noun}s` : "items";
   return (
     <div className="space-y-2">
       <div className="text-xs text-muted dark:text-slate-400 flex items-center gap-2">
@@ -248,11 +251,11 @@ export function SavedViewBody({
         <span className="px-1.5 py-0.5 rounded bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300 font-mono text-[10px] uppercase">
           {view.view_type}
         </span>
-        <span>{items.length} rows</span>
+        <span>{items.length} {items.length === 1 && noun ? noun : plural}</span>
       </div>
       {isLoading && <div className="text-sm text-muted">Loading…</div>}
       {items.length === 0 && !isLoading && (
-        <div className="text-sm text-muted italic">No matching rows.</div>
+        <div className="text-sm text-muted italic">No matching {plural}.</div>
       )}
       {items.length > 0 && view.view_type === "kanban" && (
         <KanbanRenderer items={items} groupBy={cfg.group_by ?? "subtitle"} />

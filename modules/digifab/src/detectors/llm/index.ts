@@ -14,6 +14,8 @@ export const builtin: DetectorPackage = {
   score: async (ctx) => {
     const frame = await ctx.grabFrame();
     if (!frame) return null;
+    // ai-userless: driver auto-detection scores a device frame during setup —
+    // a system detection pass, not a user's AI request.
     const out = await platform().ai.invoke({
       orgId: ctx.orgId,
       capability: "classify-image",

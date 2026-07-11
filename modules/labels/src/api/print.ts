@@ -2,12 +2,13 @@
 // prints, then clear the queue. Returns the rendered batch with QR
 // SVGs so the client can drop them straight into a print preview.
 
-import { Router } from "express";
+import { Router, type Request } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { qrSvg } from "./qr.js";
+import { liveQrUrl } from "../live-qr-url.js";
 import { renderLabelsPdf, type PrintItem } from "../print/pdf.js";
 import { SIZES } from "../print/layout.js";
 
@@ -22,6 +23,29 @@ printRouter.use((req, res, next) => {
   }
   next();
 });
+
+// The workspace's custom label base URL lives in core-labels-qr (a sibling
+// module), read over a loopback to its settings endpoint (same pattern
+// scan-drive uses). Lets us rebuild each queued label's URL against the CURRENT
+// base at print time, so what prints matches the live preview. Null on any
+// failure → labels keep their stored URL.
+async function qrBaseFor(req: Request): Promise<string | null> {
+  try {
+    const slug = req.params.slug;
+    if (!slug) return null;
+    const auth = req.headers.authorization;
+    const port = process.env.API_PORT ?? "4000";
+    const r = await fetch(
+      `http://127.0.0.1:${port}/api/v1/orgs/${encodeURIComponent(slug)}/modules/core-labels-qr/settings`,
+      { headers: auth ? { authorization: auth } : {} },
+    );
+    if (!r.ok) return null;
+    const s = (await r.json()) as { label_base_url?: string | null };
+    return s.label_base_url ?? null;
+  } catch {
+    return null;
+  }
+}
 
 // ── direct-to-printer (CUPS via core-print) ──────────────────────────
 // Render the queue to a print-ready PDF with the print-sheet renderer
@@ -59,10 +83,11 @@ printRouter.post(
 
     // Queue row → renderer item, expanded by qty. description is the label
     // text; qr_payload is the URL the QR encodes.
+    const base = await qrBaseFor(req);
     const items: PrintItem[] = [];
     rows.forEach((r, i) => {
       for (let n = 0; n < (r.qty ?? 1); n++) {
-        items.push({ kind: r.entity_type, id: i + 1, title: r.description, url: r.qr_payload });
+        items.push({ kind: r.entity_type, id: i + 1, title: r.description, url: liveQrUrl(r.qr_payload, base) });
       }
     });
 
@@ -92,6 +117,8 @@ printRouter.post(
       res.status(400).json({ error: { code: "empty_queue", message: "Queue is empty" } });
       return;
     }
+    // Resolve the live base once, and record the ACTUAL printed URL in history.
+    const base = await qrBaseFor(req);
 
     // Snapshot in one transaction so a half-cleared queue can't
     // happen if the client retries.
@@ -109,7 +136,7 @@ printRouter.post(
             module_name: it.module_name,
             entity_type: it.entity_type,
             entity_id: it.entity_id,
-            qr_payload: it.qr_payload,
+            qr_payload: liveQrUrl(it.qr_payload, base),
             description: it.description,
             qty: it.qty,
           })
@@ -128,7 +155,7 @@ printRouter.post(
     // hundred items.
     const printables: { description: string; qr_svg: string }[] = [];
     for (const it of items) {
-      const svg = await qrSvg(it.qr_payload, { margin: 1 });
+      const svg = await qrSvg(liveQrUrl(it.qr_payload, base), { margin: 1 });
       for (let i = 0; i < it.qty; i++) {
         printables.push({ description: it.description, qr_svg: svg });
       }

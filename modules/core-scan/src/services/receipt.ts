@@ -65,9 +65,10 @@ function aiText(r: { result: unknown }): string {
   return res.text ?? res.content ?? "";
 }
 
-async function chatExtract(orgId: string, text: string, sourceId: string): Promise<string> {
+async function chatExtract(orgId: string, text: string, sourceId: string, userId?: string | null): Promise<string> {
   const r = await platform().ai.invoke({
     orgId,
+    userId: userId ?? undefined,
     capability: "chat",
     input: {
       messages: [
@@ -88,9 +89,11 @@ async function visionExtract(
   imageB64: string,
   mediaType: string,
   sourceId: string,
+  userId?: string | null,
 ): Promise<string> {
   const r = await platform().ai.invoke({
     orgId,
+    userId: userId ?? undefined,
     capability: "classify-image",
     input: {
       image_b64: imageB64,
@@ -133,7 +136,7 @@ async function readPdf(bytes: Buffer): Promise<{ text: string; tables: string[][
 /** Parse a receipt file (CSV, PDF, or image, already stored in core-files) into
  *  a ParsedReceipt. Deterministic tiers run first; AI is the fallback. Never
  *  throws — every failure is a typed `{ ok:false, reason }`. */
-export async function parseReceipt(orgId: string, fileId: string): Promise<ReceiptResult> {
+export async function parseReceipt(orgId: string, fileId: string, userId?: string | null): Promise<ReceiptResult> {
   const file = await platform().files.read(orgId, fileId, "original");
   if (!file) return { ok: false, reason: "Couldn't read that file." };
   const bytes = Buffer.from(file.bytes);
@@ -164,7 +167,7 @@ export async function parseReceipt(orgId: string, fileId: string): Promise<Recei
       };
     }
     try {
-      const receipt = shapeReceipt(await chatExtract(orgId, pdf.text, fileId));
+      const receipt = shapeReceipt(await chatExtract(orgId, pdf.text, fileId, userId));
       if (!receipt) return { ok: false, reason: "Couldn't find any line items on that receipt." };
       return { ok: true, receipt, method: "ai-chat" };
     } catch (e) {
@@ -175,7 +178,7 @@ export async function parseReceipt(orgId: string, fileId: string): Promise<Recei
   // ── Tier 3: image → AI vision ──────────────────────────────────────────────
   if (isImage) {
     try {
-      const receipt = shapeReceipt(await visionExtract(orgId, bytes.toString("base64"), mime, fileId));
+      const receipt = shapeReceipt(await visionExtract(orgId, bytes.toString("base64"), mime, fileId, userId));
       if (!receipt) return { ok: false, reason: "Couldn't find any line items on that receipt." };
       return { ok: true, receipt, method: "ai-vision" };
     } catch (e) {
@@ -185,7 +188,7 @@ export async function parseReceipt(orgId: string, fileId: string): Promise<Recei
 
   // ── Non-CSV text file → AI on the raw text ─────────────────────────────────
   try {
-    const receipt = shapeReceipt(await chatExtract(orgId, bytes.toString("utf8"), fileId));
+    const receipt = shapeReceipt(await chatExtract(orgId, bytes.toString("utf8"), fileId, userId));
     if (!receipt) return { ok: false, reason: "Couldn't find any line items on that receipt." };
     return { ok: true, receipt, method: "ai-chat" };
   } catch (e) {

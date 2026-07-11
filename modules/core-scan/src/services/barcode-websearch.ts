@@ -215,6 +215,7 @@ export async function llmIdentify(
   upc: string,
   titles: string[],
   hint?: string | null,
+  userId?: string | null,
 ): Promise<LlmIdentity | null> {
   const system =
     "You identify ONE retail product from its barcode (UPC/EAN) and any " +
@@ -267,6 +268,7 @@ export async function llmIdentify(
   const call = platform()
     .ai.invoke({
       orgId,
+      userId: userId ?? undefined,
       capability: "chat",
       input: { messages: [{ role: "system", content: system }, { role: "user", content: user }] },
       source: { kind: "core-scan:barcode", id: upc },
@@ -311,6 +313,7 @@ export async function resolveBarcodeViaWebSearch(
   orgId: string,
   upc: string,
   hint?: string | null,
+  userId?: string | null,
 ): Promise<WebSearchProduct | null> {
   // Self-host privacy: the DuckDuckGo + LLM web-search fallback is a third-party
   // call, gated by the master switch and its own toggle (COBBLR_SCAN_WEBSEARCH).
@@ -347,7 +350,7 @@ export async function resolveBarcodeViaWebSearch(
 
   // Stage 2 — folded identify+classify via core-ai. Reached even with zero
   // titles; the heuristic floor only applies when titles actually existed.
-  const llm = await llmIdentify(orgId, code, rawTitles.slice(0, 12), hint);
+  const llm = await llmIdentify(orgId, code, rawTitles.slice(0, 12), hint, userId);
 
   const name = llm?.name ?? heuristicName;
   if (!name) return null; // genuinely nothing — caller falls to "fill in manually"

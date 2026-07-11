@@ -2497,7 +2497,7 @@ export const api = {
   /** Cheap inbox counts for the put-away front door (dashboard card / scan
    *  strip): pending captures, and how many still have no home. */
   getScanStats: (slug: string) =>
-    request<{ pending: number; unfiled: number }>(
+    request<{ pending: number; unfiled: number; ready: number }>(
       "GET",
       `/orgs/${slug}/modules/core-scan/inbox/stats`,
     ),
@@ -2611,6 +2611,12 @@ export const api = {
     request<{ moved: number }>("POST", `/orgs/${slug}/modules/core-scan/inbox/merge-batches`, {
       from_batch_id: fromBatchId,
       into_batch_id: intoBatchId,
+    }),
+  /** Move specific items into a batch — the Undo path for a merge. */
+  reassignScanBatch: (slug: string, itemIds: string[], batchId: string) =>
+    request<{ moved: number }>("POST", `/orgs/${slug}/modules/core-scan/inbox/reassign-batch`, {
+      item_ids: itemIds,
+      batch_id: batchId,
     }),
   /** Fill catalog images for pending items that have a name but no catalog art. */
   backfillScanCatalogPhotos: (slug: string) =>
@@ -4856,7 +4862,7 @@ export interface DigifabFleetDevice {
   linked_machine_id: string | null;
   /** The linked machine's own identity (name/photo/lifecycle state) — when
    *  present the tile wears it, so fleet and registry are one identity. */
-  linked_machine?: { id: string; name: string; image_path: string | null; state: string | null } | null;
+  linked_machine?: { id: string; name: string; image_path: string | null; state: string | null; detail_url?: string | null } | null;
   pool_id: string | null;
   pool_name: string | null;
   /** Cockpit: live temps the manager reports (°C), if any. */

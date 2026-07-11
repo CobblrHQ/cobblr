@@ -12,7 +12,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "re
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
-import { Check, Star, ChevronDown, GripVertical, Pencil, Plus, Sliders, Users } from "lucide-react";
+import { Star, ChevronDown, GripVertical, Pencil, Plus, Sliders, Users } from "lucide-react";
 import {
   DndContext,
   PointerSensor,
@@ -326,50 +326,55 @@ function WorkspaceRow({
   dragHandle?: React.ReactNode;
 }) {
   return (
-    <li className="group flex items-stretch hover:bg-subtle dark:hover:bg-slate-800 transition">
+    <li className="group relative flex items-stretch hover:bg-subtle dark:hover:bg-slate-800 transition">
+      {/* Active workspace = a thin accent bar on the far left, NOT a reserved
+          checkmark column. The old transparent <Check> reserved ~20px on every
+          inactive row (feedback: "dead space, names can move left"). The bar
+          costs zero layout width, so every name starts at the same left edge. */}
+      {active && (
+        <span aria-hidden className="absolute left-0 inset-y-1.5 w-[3px] rounded-full bg-accent dark:bg-cobble-400" />
+      )}
       {dragHandle}
-      <button onClick={onPick} className="flex-1 text-left px-3 py-2 flex items-center gap-2 min-w-0">
-        <Check size={12} className={active ? "text-accent dark:text-cobble-300" : "text-transparent"} />
-        <div className="flex-1 min-w-0">
-          <div className="text-sm text-content dark:text-mortar-100 truncate flex items-center gap-1.5">
-            <span className="truncate">{o.name}</span>
-            {/* On a workspace you don't own, your role is the key signal. */}
-            {o.role !== "owner" && (
-              <span className="shrink-0 text-[9px] font-mono uppercase tracking-wide px-1 py-0.5 rounded bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300">
-                {o.role}
-              </span>
-            )}
-          </div>
-          <div className="text-[10px] font-mono text-faint dark:text-slate-500 truncate">
-            {o.role !== "owner" && o.owner_name ? `owner: ${o.owner_name} · ` : ""}
-            {displaySlug(o.slug)}
-          </div>
+      <button onClick={onPick} className="flex-1 text-left pl-2.5 pr-3 py-2 min-w-0" aria-current={active ? "true" : undefined}>
+        <div className={"text-sm truncate flex items-center gap-1.5 " + (active ? "text-accent dark:text-cobble-200 font-medium" : "text-content dark:text-mortar-100")}>
+          <span className="truncate">{o.name}</span>
+          {/* On a workspace you don't own, your role is the key signal. */}
+          {o.role !== "owner" && (
+            <span className="shrink-0 text-[9px] font-mono uppercase tracking-wide px-1 py-0.5 rounded bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300">
+              {o.role}
+            </span>
+          )}
+        </div>
+        <div className="text-[10px] font-mono text-faint dark:text-slate-500 truncate">
+          {o.role !== "owner" && o.owner_name ? `owner: ${o.owner_name} · ` : ""}
+          {displaySlug(o.slug)}
         </div>
       </button>
-      {/* The DEFAULT star stays visible at rest — it's a meaningful indicator. */}
+      {/* The DEFAULT star stays visible at rest — it's a meaningful indicator —
+          then fades under the hover overlay (which carries its own toggle). */}
       {onSetDefault && o.is_default && (
         <button
           onClick={(e) => { e.stopPropagation(); onSetDefault(); }}
-          className="px-2 shrink-0 text-accent dark:text-cobble-300 transition"
+          className="px-2 shrink-0 text-accent dark:text-cobble-300 group-hover:opacity-0 transition-opacity"
           title="Default workspace — opens on a fresh device. Click to unset."
           aria-label="Unset default workspace"
         >
           <Star size={13} className="fill-current" />
         </button>
       )}
-      {/* Reveal-on-hover actions collapse to zero WIDTH at rest (not just
-          opacity-0) so they never steal room from the workspace name — in the
-          narrow full-sidebar (w-56) an always-laid-out button cluster crushed
-          names to a single letter (feedback: "names cut off in full sidebar"). */}
-      <div className="flex items-stretch shrink-0 w-0 overflow-hidden opacity-0 transition-[width,opacity] group-hover:w-auto group-hover:opacity-100 group-focus-within:w-auto group-focus-within:opacity-100">
-        {onSetDefault && !o.is_default && (
+      {/* Hover actions OVERLAY the right edge (absolute + a background fade)
+          rather than taking flex width, so revealing them never reflows or
+          truncates the workspace name (feedback: "name gets hidden on mouse
+          over"). At rest they're invisible AND non-interactive. */}
+      <div className="absolute right-0 inset-y-0 flex items-stretch pl-10 opacity-0 pointer-events-none transition-opacity bg-gradient-to-l from-subtle from-60% to-transparent dark:from-slate-800 group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto">
+        {onSetDefault && (
           <button
             onClick={(e) => { e.stopPropagation(); onSetDefault(); }}
-            className="px-2 text-faint dark:text-slate-500 hover:text-accent dark:hover:text-cobble-300 transition"
-            title={`Make ${o.name} the default a fresh device opens into`}
-            aria-label="Set as default workspace"
+            className={"px-2 transition " + (o.is_default ? "text-accent dark:text-cobble-300" : "text-faint dark:text-slate-500 hover:text-accent dark:hover:text-cobble-300")}
+            title={o.is_default ? "Default workspace — click to unset." : `Make ${o.name} the default a fresh device opens into`}
+            aria-label={o.is_default ? "Unset default workspace" : "Set as default workspace"}
           >
-            <Star size={13} />
+            <Star size={13} className={o.is_default ? "fill-current" : ""} />
           </button>
         )}
         {onRename && (
@@ -384,7 +389,7 @@ function WorkspaceRow({
         {onManage && (
           <button
             onClick={(e) => { e.stopPropagation(); onManage(); }}
-            className="px-3 text-faint dark:text-slate-500 hover:text-accent dark:hover:text-cobble-300 transition"
+            className="pl-2 pr-3 text-faint dark:text-slate-500 hover:text-accent dark:hover:text-cobble-300 transition"
             title={`Manage members + invites for ${o.name}`}
           >
             <Users size={13} />
@@ -415,11 +420,11 @@ function SortableRow(props: {
             type="button"
             {...attributes}
             {...listeners}
-            className="px-1.5 flex items-center text-faint dark:text-slate-600 hover:text-muted dark:hover:text-slate-400 cursor-grab active:cursor-grabbing touch-none"
+            className="pl-1.5 pr-0.5 flex items-center text-faint/70 dark:text-slate-700 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-muted dark:hover:text-slate-400 cursor-grab active:cursor-grabbing touch-none transition-opacity"
             title="Drag to reorder"
             aria-label="Drag to reorder"
           >
-            <GripVertical size={13} />
+            <GripVertical size={12} />
           </button>
         }
       />

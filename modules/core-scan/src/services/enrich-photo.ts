@@ -84,7 +84,7 @@ interface PhotoEnrichContext {
   /** A user-triggered re-run → bypass the AI cache so the identify reflects the
    *  current prompt, not a stale result cached for this image. */
   force?: boolean;
-  /** The user's research hint ("RA200 headset") — folded into the vision
+  /** The user's research hint (a short text correction) — folded into the vision
    *  identify as an AUTHORITATIVE correction that overrides the visual read, so
    *  a hint naming a DIFFERENT item than the obvious one re-identifies to it. */
   hint?: string;
@@ -205,6 +205,7 @@ export async function observeScanPhoto(
   orgId: string,
   imageFileId: string,
   sourceId?: string,
+  userId?: string | null,
 ): Promise<string | null> {
   const file =
     (await platform().files.read(orgId, imageFileId, "medium")) ??
@@ -214,6 +215,7 @@ export async function observeScanPhoto(
   try {
     const r = await platform().ai.invoke({
       orgId,
+      userId: userId ?? undefined,
       capability: "classify-image",
       input: {
         image_b64: imageB64,
@@ -266,6 +268,8 @@ export async function crossCheckScanPhoto(
   let verdict: { match?: string; reason?: string; correct_name?: string; correct_brand?: string } | null =
     null;
   try {
+    // ai-userless: background barcode-vs-photo mismatch cross-check (runs
+    // detached from the cron, no request user in scope).
     const r = await platform().ai.invoke({
       orgId,
       capability: "classify-image",

@@ -28,6 +28,11 @@ export interface NormalizedImportItem {
   source_url: string | null;
   photo_identify_url: string | null;
   photo_display_url: string | null;
+  /** Baked-in photos (embed-mode export): raw bytes as base64 + mime. When
+   *  present the importer stores them directly — no network — so an offline /
+   *  LAN-only import still gets its images. Preferred over the *_url when both. */
+  photo_identify_embedded: { mime: string; data: string } | null;
+  photo_display_embedded: { mime: string; data: string } | null;
   /** Everything hint-shaped rides in suggested_metadata: hint_category,
    *  user_hint (matchmaker prior), barcode_aliases, source pack/box states,
    *  notes/research_hint, originally_captured_at, import_provenance. */
@@ -167,6 +172,16 @@ function normalize(raw: Record<string, unknown>, row: number, sourceInstance: st
   const sourceUrl = asStr(raw.source_url);
   const identify = asStr(raw.identify_photo_url) ?? asStr((raw.photo_urls as { identify?: unknown } | undefined)?.identify);
   const display = asStr(raw.display_photo_url) ?? asStr((raw.photo_urls as { display?: unknown } | undefined)?.display);
+  const embedded = raw.photos_embedded as { identify?: unknown; display?: unknown } | undefined;
+  const asEmbed = (v: unknown): { mime: string; data: string } | null => {
+    if (!v || typeof v !== "object") return null;
+    const o = v as { mime?: unknown; data?: unknown };
+    const mime = asStr(o.mime);
+    const data = asStr(o.data);
+    return mime && data && mime.startsWith("image/") ? { mime, data } : null;
+  };
+  const identifyEmbedded = asEmbed(embedded?.identify);
+  const displayEmbedded = asEmbed(embedded?.display);
 
   // quantity: integer ≥ 1 (default 1); a bad value is a row error but the row
   // still imports with 1 — a wrong quantity shouldn't drop a whole item.
@@ -256,6 +271,8 @@ function normalize(raw: Record<string, unknown>, row: number, sourceInstance: st
     source_url: sourceUrl,
     photo_identify_url: identify,
     photo_display_url: display,
+    photo_identify_embedded: identifyEmbedded,
+    photo_display_embedded: displayEmbedded,
     metadata,
   };
 }

@@ -1319,6 +1319,25 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
   // Blocking reason — say WHY a machine isn't doing anything (SimplyPrint's
   // strongest pattern). Attention has its own richer banner below.
   const blocked = !d.enabled ? "disabled — not taking jobs" : d.klass === "offline" ? "offline — check the machine" : d.klass === "error" && !att ? "error — see the manager" : null;
+  // WHY this machine is in the "Needs you" bucket — always named on the tile,
+  // never a bare amber ring. The deviceBucket() rule is: needs_attention (the
+  // Cobblr bed-clear gate), OR klass "error", OR klass "complete". The last one
+  // is the silent case the author hit: a print that finished OUTSIDE a Cobblr job (a
+  // Bambu started from its own slicer) reads "complete" with no attention row —
+  // it still needs the bed cleared, there's just no verdict flow to offer, so
+  // it clears itself once the printer reports idle again. (Firmware-update-
+  // available is NOT a needs reason — it never enters deviceBucket.)
+  const needsReason =
+    att?.reason === "print-failed" ? "print failed — check the bed"
+    : att ? "print done — clear the bed"
+    : d.klass === "complete" ? "print finished — clear the bed"
+    : d.klass === "error" ? "error — see the manager"
+    : null;
+  const needsShort =
+    att?.reason === "print-failed" ? "failed"
+    : (att || d.klass === "complete") ? "clear bed"
+    : d.klass === "error" ? "error"
+    : null;
   const dragProps = {
     onDragOver: (e: React.DragEvent) => { if (e.dataTransfer.types.includes(LIBRARY_DRAG_MIME)) { e.preventDefault(); setDropHover(true); } },
     onDragLeave: () => setDropHover(false),
@@ -1353,7 +1372,7 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
             <span className="text-xs font-medium text-content dark:text-mortar-100 truncate">{title ?? d.name}</span>
             <span className="flex-1" />
             {pct != null && <span className="text-[10px] font-mono text-faint shrink-0">{pct}%{doneBy ? ` · ~${doneBy}` : ""}</span>}
-            {att && <span className="text-[10px] text-amber-600 shrink-0">clear bed</span>}
+            {needsShort && <span className="text-[10px] text-amber-600 shrink-0">{needsShort}</span>}
           </div>
         </button>
         {detailOpen && <PrinterDetailModal slug={slug} connId={connId} device={d} onClose={() => setDetailOpen(false)} />}
@@ -1383,7 +1402,7 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
               <div className="text-[9px] font-mono text-faint mt-0.5 truncate">{pct}%{doneBy ? ` · ~${doneBy}` : ""}</div>
             </>
           ) : (
-            <div className={`text-[9px] font-mono uppercase tracking-wider truncate ${st.text}`}>{att ? "clear bed" : blocked ?? d.state}</div>
+            <div className={`text-[9px] font-mono uppercase tracking-wider truncate ${st.text}`}>{needsShort ?? blocked ?? d.state}</div>
           )}
         </div>
         {detailOpen && <PrinterDetailModal slug={slug} connId={connId} device={d} onClose={() => setDetailOpen(false)} />}
@@ -1468,6 +1487,12 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
         </div>
       ) : null}
       {blocked && <div className="mt-1 text-[10px] text-ember-600 dark:text-ember-500">{blocked}</div>}
+      {/* A print that finished outside a Cobblr job (no attention row, no verdict
+          flow) still owes you a bed-clear — name it so the amber tile isn't
+          silent. The richer att banner below owns the Cobblr-tracked case. */}
+      {!att && !blocked && d.klass === "complete" && (
+        <div className="mt-1 text-[10px] text-amber-600 dark:text-amber-500">{needsReason}</div>
+      )}
       {/* Next up — what this machine will do next (queued to it or its pool). */}
       {d.next_job && !att && (
         <div className="mt-1 text-[10px] text-faint truncate" title={d.next_job.file_ref}>
@@ -2390,6 +2415,12 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
             <div className="flex-1 min-w-[8rem]" />
             <div className="text-muted dark:text-slate-400">
               {linkedMachine ? <>Linked to <span className="text-accent">{linkedMachine.name}{linkedMachine.instLabel ? ` · ${linkedMachine.instLabel}` : ""}</span></> : <span className="text-faint italic">Not linked to a machine</span>}
+              {/* Jump to the machine's own record (specs, mods, notes) — the
+                  reverse of the machine page's "Open controls". The instance-
+                  aware URL comes from the fleet payload (registry-built). */}
+              {device.linked_machine?.detail_url && (
+                <Link to={device.linked_machine.detail_url} onClick={onClose} className="text-accent hover:underline ml-1.5">Open machine →</Link>
+              )}
               <button type="button" onClick={() => setLinkEdit((v) => !v)} className="text-accent hover:underline ml-1.5">{linkEdit ? "close" : linkedMachine ? "change" : "link"}</button>
             </div>
           </div>
@@ -2581,6 +2612,11 @@ export function MachineDigifabPanel({
 
   const [connId, setConnId] = useState("");
   const [createConnOpen, setCreateConnOpen] = useState(false);
+  // The cockpit — the same PrinterDetailModal a fleet tile opens (camera,
+  // temps, controls, files, history). Reachable from the machine's own page,
+  // so "operate this machine" is identical from either doorway
+  // (machines-digifab-unification.md §6).
+  const [cockpitOpen, setCockpitOpen] = useState(false);
   const devices = useQuery({
     queryKey: ["digifab-devices", slug, connId],
     queryFn: () => api.listDigifabDevices(slug, connId),
@@ -2646,21 +2682,35 @@ export function MachineDigifabPanel({
       </div>
 
       {link ? (
-        <div className="flex items-center justify-between gap-2 text-sm">
-          <span className="text-content dark:text-mortar-100">
-            Linked to{" "}
-            <span className="font-medium">{conn?.label ?? "a manager"}</span>
-            {" · "}
-            <span className="font-mono text-xs text-muted">
-              {link.remote_device_name ?? link.remote_device_id}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2 text-sm">
+            <span className="text-content dark:text-mortar-100">
+              Linked to{" "}
+              <span className="font-medium">{conn?.label ?? "a manager"}</span>
+              {" · "}
+              <span className="font-mono text-xs text-muted">
+                {link.remote_device_name ?? link.remote_device_id}
+              </span>
             </span>
-          </span>
+            <button
+              onClick={() => removeLink.mutate(link.id)}
+              disabled={removeLink.isPending}
+              className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-ember-500 transition flex items-center gap-1 disabled:opacity-50"
+            >
+              <Trash2 size={11} /> unlink
+            </button>
+          </div>
+          {/* Open the cockpit — the SAME modal a fleet tile opens. Enabled once
+              the manager has reported this printer live (fleetDev present); a
+              printer the manager can't currently see has nothing to control. */}
           <button
-            onClick={() => removeLink.mutate(link.id)}
-            disabled={removeLink.isPending}
-            className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-ember-500 transition flex items-center gap-1 disabled:opacity-50"
+            type="button"
+            onClick={() => setCockpitOpen(true)}
+            disabled={!fleetDev}
+            title={fleetDev ? "Camera, temperatures, controls, files & history" : "Waiting for the manager to report this printer…"}
+            className="w-full inline-flex items-center justify-center gap-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium py-1.5 transition"
           >
-            <Trash2 size={11} /> unlink
+            <Sliders size={13} /> Open controls
           </button>
         </div>
       ) : connections.length === 0 ? (
@@ -2741,6 +2791,17 @@ export function MachineDigifabPanel({
             }
             setCreateConnOpen(false);
           }}
+        />
+      )}
+      {/* The cockpit, opened from the machine's own page — same component the
+          fleet tile mounts. Portals to body, so it layers over the machine
+          detail modal cleanly. */}
+      {cockpitOpen && link && fleetDev && (
+        <PrinterDetailModal
+          slug={slug}
+          connId={link.connection_id}
+          device={fleetDev}
+          onClose={() => setCockpitOpen(false)}
         />
       )}
     </div>

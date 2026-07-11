@@ -44,6 +44,12 @@ interface Props {
    *  so unsaved input is never lost to a stray click. Set **false** to forbid
    *  backdrop-close entirely, even when untouched. */
   dismissOnBackdrop?: boolean;
+  /** CLAIM the available height: the panel grows to (nearly) the full viewport
+   *  and its body scrolls within, instead of shrinking to its content and
+   *  leaving a dead band above/below. For content-heavy working surfaces where
+   *  "no use wasting screen space" (the author). Off by default so a small confirm
+   *  dialog still sizes to its content. */
+  fillHeight?: boolean;
 }
 
 const SIZE: Record<NonNullable<Props["size"]>, string> = {
@@ -56,7 +62,7 @@ const SIZE: Record<NonNullable<Props["size"]>, string> = {
   content: "max-w-4xl",
 };
 
-export function Modal({ open, onClose, title, subtitle, children, size = "md", destructive, dismissOnBackdrop = true, inline = false }: Props) {
+export function Modal({ open, onClose, title, subtitle, children, size = "md", destructive, dismissOnBackdrop = true, inline = false, fillHeight = false }: Props) {
   // "Dirty" = the user has entered/changed something inside this modal. Tracked
   // by listening (capture) for input/change events bubbling from any descendant
   // field — so we never have to know in advance whether a modal is a form. Only
@@ -103,9 +109,14 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
         className={
           // Height-constrained + column layout so a tall form scrolls WITHIN the
           // modal (header pinned) instead of running off the page (the bug Grace
-          // hit). my-12 = 6rem of vertical margin, so cap at 100vh − 6rem.
-          "bg-surface dark:bg-slate-900 rounded-xl shadow-2xl border w-full my-12 " +
-          "flex flex-col max-h-[calc(100vh-6rem)] " +
+          // hit). my-8 = 4rem of vertical margin (was 6rem — a content-heavy
+          // modal like the put-away plan was wasting a band of screen top and
+          // bottom, the author 2026-07-11), so cap at 100vh − 4rem to match.
+          "bg-surface dark:bg-slate-900 rounded-xl shadow-2xl border w-full my-8 " +
+          "flex flex-col max-h-[calc(100vh-4rem)] " +
+          // fillHeight: also claim a min-height so the panel stays tall even when
+          // its content is short (no dead band below); the body scrolls within.
+          (fillHeight ? "min-h-[calc(100vh-4rem)] " : "") +
           SIZE[size] +
           " " +
           (destructive

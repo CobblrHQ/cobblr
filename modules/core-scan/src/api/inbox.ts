@@ -81,10 +81,19 @@ inboxRouter.get(
             sql`case when target_location_id is null and target_container_id is null then 1 end`,
           )
           .as("unfiled"),
+        // READY: already has a home (target_location_id set), still uncommitted
+        // — the "all set, just put them away" count.
+        eb.fn
+          .count<number>(sql`case when target_location_id is not null then 1 end`)
+          .as("ready"),
       ])
       .where("status", "=", "pending")
       .executeTakeFirstOrThrow();
-    res.json({ pending: Number(row.pending), unfiled: Number(row.unfiled) });
+    res.json({
+      pending: Number(row.pending),
+      unfiled: Number(row.unfiled),
+      ready: Number(row.ready),
+    });
   }),
 );
 
@@ -452,7 +461,7 @@ inboxRouter.post(
     if (token) {
       const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
       void matchItem({
-        orgId: ctx.org.id,
+        orgId: ctx.org.id, userId: sessionUser(req)?.id ?? null,
         orgSlug: ctx.org.slug,
         token,
         baseUrl,
@@ -485,7 +494,7 @@ inboxRouter.post(
     const ctx = tenantContext(req);
     const session = sessionUser(req);
 
-    const result = await parseReceipt(ctx.org.id, parsed.data.file_id);
+    const result = await parseReceipt(ctx.org.id, parsed.data.file_id, session?.id ?? null);
     if (!result.ok) {
       // 422: the file was read but yielded no usable line items (bad scan, no
       // AI provider, not a receipt). The reason is user-facing.
@@ -543,7 +552,7 @@ inboxRouter.post(
       const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
       for (const row of rows) {
         void matchItem({
-          orgId: ctx.org.id,
+          orgId: ctx.org.id, userId: sessionUser(req)?.id ?? null,
           orgSlug: ctx.org.slug,
           token,
           baseUrl,
@@ -897,7 +906,7 @@ inboxRouter.patch(
       const ctx = tenantContext(req);
       const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
       void matchItem({
-        orgId: ctx.org.id,
+        orgId: ctx.org.id, userId: sessionUser(req)?.id ?? null,
         orgSlug: ctx.org.slug,
         token,
         baseUrl,
@@ -1687,7 +1696,7 @@ inboxRouter.post(
         const workDb = (await platform().tenants.getDb(ctx.org.id)) as unknown as typeof db;
         await enrichPhotoItem({ db: workDb, orgId: ctx.org.id, itemId: id, imageFileId, userId: uid, force: true, hint: photoHint });
         void platform().events.emit("core-scan.scan.enriched", { orgId: ctx.org.id, itemId: id });
-        await matchItem({ orgId: ctx.org.id, orgSlug: ctx.org.slug, token, baseUrl, itemId: id, force: true });
+        await matchItem({ orgId: ctx.org.id, userId: sessionUser(req)?.id ?? null, orgSlug: ctx.org.slug, token, baseUrl, itemId: id, force: true });
       })().catch((err) => {
         console.error("[core-scan] photo rerun-ai work failed:", (err as Error)?.message ?? err);
       });
@@ -1750,7 +1759,7 @@ inboxRouter.post(
     // already carries the re-ranked candidates + reconciliation notes
     // (the web's spinner spans this await — honest end-to-end).
     await matchItem({
-      orgId: ctx.org.id,
+      orgId: ctx.org.id, userId: sessionUser(req)?.id ?? null,
       orgSlug: ctx.org.slug,
       token,
       baseUrl,
@@ -2055,8 +2064,12 @@ inboxRouter.post(
       }
     }
 
-    // Reopen: back to pending, resolution cleared, resurfaced at the top.
-    // suggested_* stays — the point is to FIX the identification and redo.
+    // Reopen: back to pending, resolution cleared, RESTORED to its original
+    // spot — un-confirm is an UNDO, not a re-scan. created_at stays (it's when
+    // the item was scanned, immutable history); rewriting it to now() dragged
+    // the item's whole SESSION header time + sort position forward to the undo
+    // moment (the session reads max(created_at) across its items). Only
+    // updated_at moves. suggested_* stays — the point is to FIX + redo.
     const { attached_to: _drop, ...restMeta } = meta;
     const reopened = await db
       .updateTable("core_scan_inbox_items")
@@ -2067,7 +2080,6 @@ inboxRouter.post(
         target_entity_id: null,
         resolved_at: null,
         suggested_metadata: JSON.stringify(restMeta) as never,
-        created_at: sql`now()`,
         updated_at: new Date(),
       })
       .where("id", "=", id)
@@ -2633,7 +2645,7 @@ inboxRouter.post(
       if (token) {
         const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
         void matchItem({
-          orgId: ctx.org.id,
+          orgId: ctx.org.id, userId: sessionUser(req)?.id ?? null,
           orgSlug: ctx.org.slug,
           token,
           baseUrl,
@@ -2736,6 +2748,32 @@ inboxRouter.post(
   }),
 );
 
+// ─────────────────────── POST /inbox/reassign-batch ─────────────────
+// Move a SPECIFIC set of items into a batch. Undo path for a merge: after
+// merge-batches folds session A into B, the client reassigns exactly the
+// items it just moved back to A's (still-valid, now-empty) batch id. Unlike
+// merge-batches this is item-scoped, not whole-batch — so folding A into B
+// and then re-splitting only A's items out is precise even if B had items.
+const ReassignBatchBody = z.object({
+  item_ids: z.array(z.string().min(1)).min(1),
+  batch_id: z.string().min(1),
+});
+inboxRouter.post(
+  "/inbox/reassign-batch",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const parsed = ReassignBatchBody.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const db = tenantDb(req);
+    const r = await db
+      .updateTable("core_scan_inbox_items")
+      .set({ scan_batch_id: parsed.data.batch_id, updated_at: new Date() })
+      .where("id", "in", parsed.data.item_ids)
+      .executeTakeFirst();
+    res.json({ moved: Number(r.numUpdatedRows ?? 0) });
+  }),
+);
+
 // ──────────────── POST /inbox/backfill-catalog-photos ───────────────
 // Fill catalog images for pending items that have a real name but no catalog
 // art (image-search by name, same as a re-identify's refresh — honors the
@@ -2767,8 +2805,8 @@ inboxRouter.post(
 
 // ──────────────────────── POST /inbox/combine ───────────────────────
 // ─────────── Session theme: derive a tag + category ON THE FLY ───────────
-// After a capture session, the pending items often share a theme (the author scanned
-// aviation gear: some books, some accessories). One AI call over the pending
+// After a capture session, the pending items often share a theme (a mixed
+// batch of related gear: some books, some accessories). One AI call over the pending
 // items proposes (a) ONE cross-cutting TAG that fits them ALL regardless of
 // where each lands, and (b) a CATEGORY value for the subset that are generic
 // products (not titled media like books, which route to a Bookshelf). Nothing
@@ -2815,7 +2853,7 @@ inboxRouter.get(
       "You spot the common theme in a batch of just-scanned inventory items and propose a shared tag + an optional category. " +
       "Output ONLY one JSON object, no prose: " +
       '{"tag": "<a short 1-2 word tag that fits ALL items, Title Case, or null if they have no clear shared theme>", ' +
-      '"category": "<a category value (e.g. \"Aviation Accessories\") for the NON-titled-media items only, or null>", ' +
+      '"category": "<a short product-category value for the NON-titled-media items only, or null>", ' +
       '"category_item_numbers": [<the 1-based numbers of the items the category applies to — the generic products, NEVER titled media>]}. ' +
       "Rules: the tag must genuinely fit every item or be null (don't force it). The category groups the non-media products; titled media (books) get the tag but not the category. Derive both from what you see — invent nothing generic like \"Miscellaneous\".";
     let parsed: { tag?: unknown; category?: unknown; category_item_numbers?: unknown } | null = null;
@@ -2988,6 +3026,9 @@ interface MatchItemOpts {
   token: string;
   baseUrl: string;
   itemId: string;
+  /** Scanning user (null for a background/cron match) — routes AI to their
+   *  personal connection. */
+  userId?: string | null;
   /** true = explicit re-rank (rerun / POST /match); false = intake
    *  auto-match, which SKIPS items already matched (matched_at stamp). */
   force: boolean;
@@ -3116,7 +3157,7 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
     let photoObservations = meta.photo_observations ?? null;
     if (!photoObservations && row.image_file_id) {
       photoObservations = await Promise.race([
-        observeScanPhoto(opts.orgId, row.image_file_id, opts.itemId),
+        observeScanPhoto(opts.orgId, row.image_file_id, opts.itemId, opts.userId),
         new Promise<null>((resolve) => setTimeout(() => resolve(null), 15_000)),
       ]);
     }
@@ -3141,6 +3182,7 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
       },
       menu,
       opts.itemId, // links the AI-log row to this scan
+      opts.userId,
     );
 
     // Persist: candidates + the matched_at stamp (the web renders a passive
@@ -3367,7 +3409,7 @@ inboxRouter.post(
     }
     const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
     const candidates = await matchItem({
-      orgId: ctx.org.id,
+      orgId: ctx.org.id, userId: sessionUser(req)?.id ?? null,
       orgSlug: ctx.org.slug,
       token,
       baseUrl,

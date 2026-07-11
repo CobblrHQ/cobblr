@@ -227,6 +227,9 @@ interface EnrichContext {
   /** Same-host base URL — `${protocol}://${host}` from the
    *  triggering request. */
   baseUrl: string;
+  /** The scanning user (null for a cron/background enrich) — passed to every
+   *  AI call so their user-scoped personal connection resolves. */
+  userId?: string | null;
   /** UPC to resolve. */
   upc: string;
   /** Skip BOTH cache tiers (tenant + cross-tenant shared) and re-resolve
@@ -468,7 +471,7 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
   if (!hit) {
     // Catalog DBs have nothing — fall back to web search (what a person
     // does: search the UPC, read the name off the agreeing results).
-    const web = await resolveBarcodeViaWebSearch(ctx.orgId, ctx.upc, ctx.hint).catch(() => null);
+    const web = await resolveBarcodeViaWebSearch(ctx.orgId, ctx.upc, ctx.hint, ctx.userId).catch(() => null);
     // A junk "name" ("Unknown Item" / "XXXXXXXX") means the web couldn't identify
     // it either — DON'T accept it as a result. Fall through to the photo/manual
     // path with no name, so it never gets shown as valid or image-searched.
@@ -709,7 +712,7 @@ function looksNonEnglish(s: string | null | undefined): boolean {
  *  shakier guess. Detached/best-effort. */
 async function enrichThinHit(ctx: EnrichContext, hit: BarcodeHit): Promise<void> {
   const thin = hit.title?.trim() ?? "";
-  const web = await resolveBarcodeViaWebSearch(ctx.orgId, ctx.upc, ctx.hint).catch(() => null);
+  const web = await resolveBarcodeViaWebSearch(ctx.orgId, ctx.upc, ctx.hint, ctx.userId).catch(() => null);
   const enriched = web?.name?.trim();
   if (!web || !enriched || web.confidence < 0.5 || isJunkName(enriched)) return;
   // Only upgrade when the web result adds REAL SKU information — the package

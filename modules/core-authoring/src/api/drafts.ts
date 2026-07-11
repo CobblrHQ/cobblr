@@ -201,7 +201,7 @@ draftsRouter.post(
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const parsed = MatchBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
-    const match = await matchTemplateHosted(tenantContext(req).org.id, parsed.data.intent);
+    const match = await matchTemplateHosted(tenantContext(req).org.id, parsed.data.intent, sessionUser(req)?.id ?? null);
     res.json(match);
   }),
 );

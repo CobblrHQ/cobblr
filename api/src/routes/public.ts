@@ -23,11 +23,12 @@ import { env } from "../env.js";
 
 export const publicRouter = Router();
 
-// Verify a scan-export photo token → orgId (or null). Byte-compatible mirror of
-// modules/core-scan/src/services/export-token.ts `verifyExportToken` — keep the
-// two in lockstep (same payload shape, same HMAC over JWT_SECRET). Grants
-// org-wide IMAGE read (the serving route below is images-only) until it expires.
-function verifyScanExportToken(token: string): string | null {
+// Verify a scan-export photo token → { orgId, fileId } (or null). Byte-compatible
+// mirror of modules/core-scan/src/services/export-token.ts `verifyExportToken` —
+// keep the two in lockstep (same payload shape, same HMAC over JWT_SECRET).
+// A token carries `f` (the one file it authorises); a legacy token without `f`
+// grants org-wide image read so in-flight pre-per-file exports keep working.
+function verifyScanExportToken(token: string): { orgId: string; fileId: string | null } | null {
   const dot = token.lastIndexOf(".");
   if (dot < 1) return null;
   const payload = token.slice(0, dot);
@@ -36,9 +37,9 @@ function verifyScanExportToken(token: string): string | null {
   const b = Buffer.from(expected);
   if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
   try {
-    const { o, e } = JSON.parse(Buffer.from(payload, "base64url").toString()) as { o?: unknown; e?: unknown };
+    const { o, f, e } = JSON.parse(Buffer.from(payload, "base64url").toString()) as { o?: unknown; f?: unknown; e?: unknown };
     if (typeof o !== "string" || typeof e !== "number" || Date.now() > e) return null;
-    return o;
+    return { orgId: o, fileId: typeof f === "string" ? f : null };
   } catch {
     return null;
   }
@@ -424,14 +425,21 @@ publicRouter.get("/:token/files/:id/raw", (req, res, next) => {
 // read only.
 publicRouter.get("/scan-export/:token/files/:id/raw", (req, res, next) => {
   void (async () => {
-    const orgId = verifyScanExportToken(req.params.token ?? "");
-    if (!orgId) {
+    const verdict = verifyScanExportToken(req.params.token ?? "");
+    if (!verdict) {
       res.status(403).json({ error: { code: "bad_token", message: "invalid or expired export token" } });
       return;
     }
+    const { orgId, fileId } = verdict;
     const id = req.params.id;
     if (!id) {
       res.status(404).json({ error: { code: "not_found", message: "no such file" } });
+      return;
+    }
+    // Per-file token: it only unlocks the ONE file it was minted for. (A legacy
+    // token has fileId=null and stays org-wide for backward compatibility.)
+    if (fileId && fileId !== id) {
+      res.status(403).json({ error: { code: "scope", message: "token not valid for this file" } });
       return;
     }
     const file =

@@ -124,14 +124,26 @@ function toResolvedMachine(row: {
   id: string;
   name: string;
   state: string;
+  instance?: string | null;
   [k: string]: unknown;
 }): ResolvedEntity {
+  // A machine in a named instance ("3d-printers") lives at the instance's clean
+  // URL, opened via ?machine=<id>; only the DEFAULT collection uses /machines.
+  // Cross-module "open this machine" links (e.g. a fleet tile) read this, so it
+  // must point at the collection the record actually belongs to.
+  const detailUrl =
+    row.instance && row.instance !== "machines"
+      ? `/${row.instance}?machine=${row.id}`
+      : `/machines/${row.id}`;
   return {
     kind: "machines:machine",
     id: row.id,
     title: row.name,
     subtitle: row.state,
-    detailUrl: `/machines/${row.id}`,
+    detailUrl,
+    // Carry the photo so generic surfaces (the labels browser tiles) show it
+    // instead of an initial-letter chip. Mirrors inventory's toResolvedPart.
+    image_path: (row.image_path as string | null | undefined) ?? undefined,
     fields: row as unknown as Record<string, unknown>,
   };
 }

@@ -68,6 +68,7 @@ export function registerScanHandlers(): void {
     try {
       const r = await platform().ai.invoke({
         orgId: ctx.orgId,
+        userId: ctx.userId,
         capability: "identify-image",
         input,
         source: { kind: "core-scan:identify", id: fileId ?? "args" },

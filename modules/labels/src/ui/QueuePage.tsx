@@ -5,11 +5,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import QRCode from "qrcode";
-import { Printer, Send, Trash2 } from "lucide-react";
+import { Minus, Plus, Printer, Send, Trash2 } from "lucide-react";
 import { usePageTitle, useToast } from "@cobblr/platform-web";
 import { useLabels } from "./context";
 import { BrowsePanel } from "./BrowsePanel";
 import { renderPrintSheetHtml } from "./renderPrintSheet";
+import { liveQrUrl } from "../live-qr-url";
 import {
   PAPER_SIZES,
   findPaper,
@@ -72,23 +73,37 @@ export function QueuePage() {
     () => items.flatMap((it) => Array.from({ length: it.qty }, () => it)),
     [items],
   );
+  // The workspace's current custom label base URL. Queued rows store the URL
+  // resolved at queue time; rebuild against this so the preview + row reflect a
+  // base-URL change with no re-queue (see liveUrl).
+  const qrBase = useQuery({
+    queryKey: ["labels-qr-base", orgSlug],
+    queryFn: () => api.qrLabelBaseUrl(),
+  });
+  const liveUrl = (payload: string) => liveQrUrl(payload, qrBase.data ?? null);
   const previewQr = useQuery({
-    queryKey: ["labels-preview-qr", expanded.map((e) => e.id).join(",")],
+    queryKey: ["labels-preview-qr", qrBase.data ?? "", expanded.map((e) => e.id).join(",")],
     queryFn: async (): Promise<Printable[]> => {
       const cache = new Map<string, string>();
       for (const it of expanded) {
-        if (!cache.has(it.qr_payload)) cache.set(it.qr_payload, await qrSvg(it.qr_payload));
+        const u = liveUrl(it.qr_payload);
+        if (!cache.has(u)) cache.set(u, await qrSvg(u));
       }
       return expanded.map((it) => ({
         description: it.description,
-        qr_svg: cache.get(it.qr_payload)!,
+        qr_svg: cache.get(liveUrl(it.qr_payload))!,
       }));
     },
-    enabled: expanded.length > 0,
+    enabled: expanded.length > 0 && !qrBase.isLoading,
   });
 
   const remove = useMutation({
     mutationFn: (id: string) => api.removeFromQueue(id),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["labels-queue"] }),
+  });
+
+  const setQty = useMutation({
+    mutationFn: ({ id, qty }: { id: string; qty: number }) => api.updateQueueQty(id, qty),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["labels-queue"] }),
   });
 
@@ -192,38 +207,79 @@ export function QueuePage() {
         </div>
       )}
 
-      {items.length > 0 && (
-        <>
-          <ul className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 divide-y divide-line dark:divide-slate-700">
-            {items.map((it) => (
-              <li key={it.id} className="px-4 py-3 flex items-baseline gap-3 text-sm">
-                <span className="font-mono text-[10px] text-faint dark:text-slate-500 shrink-0">
-                  {it.module_name}/{it.entity_type}
-                </span>
-                <span className="text-content dark:text-mortar-100 flex-1 truncate">{it.description}</span>
-                <span className="font-mono text-xs text-muted dark:text-slate-400 shrink-0">×{it.qty}</span>
-                <button
-                  onClick={() => remove.mutate(it.id)}
-                  className="text-faint dark:text-slate-600 hover:text-ember-500 transition"
-                  title="Remove from queue"
-                >
-                  <Trash2 size={14} />
-                </button>
-              </li>
-            ))}
-          </ul>
-
-          <SheetPreview
-            sizeKey={sizeKey}
-            printables={previewQr.data ?? []}
-            paperW={paper?.width_in ?? 8.5}
-            paperH={paper?.height_in ?? 11}
-          />
-        </>
-      )}
-
       {/* Find things to label — tabbed by the kinds that support labels. */}
       <BrowsePanel />
+
+      {/* The queue and its live preview, kept together as the review-then-print
+          unit. Side by side on a wide desktop (preview to the right); stacked on
+          anything narrower or portrait. */}
+      {items.length > 0 && (
+        <div className="flex flex-col xl:flex-row xl:items-start gap-4">
+          <div className="xl:flex-1 xl:min-w-0 space-y-2">
+            <ul className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 divide-y divide-line dark:divide-slate-700">
+              {items.map((it) => (
+                <li key={it.id} className="px-4 py-3 flex items-baseline gap-3 text-sm">
+                  <span className="font-mono text-[10px] text-faint dark:text-slate-500 shrink-0">
+                    {it.module_name}/{it.entity_type}
+                  </span>
+                  <span className="text-content dark:text-mortar-100 shrink-0 max-w-[16rem] truncate">{it.description}</span>
+                  <span
+                    className="font-mono text-[10px] text-faint dark:text-slate-500 flex-1 min-w-0 truncate"
+                    title={liveUrl(it.qr_payload)}
+                  >
+                    {liveUrl(it.qr_payload)}
+                  </span>
+                  <div className="flex items-center gap-1 shrink-0" title="Copies to print">
+                    <button
+                      onClick={() => setQty.mutate({ id: it.id, qty: Math.max(1, it.qty - 1) })}
+                      disabled={it.qty <= 1 || setQty.isPending}
+                      className="w-5 h-5 grid place-items-center rounded border border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-100 disabled:opacity-30 disabled:cursor-not-allowed transition"
+                      aria-label="Fewer copies"
+                    >
+                      <Minus size={11} />
+                    </button>
+                    <span className="font-mono text-xs text-muted dark:text-slate-400 w-7 text-center tabular-nums">
+                      ×{it.qty}
+                    </span>
+                    <button
+                      onClick={() => setQty.mutate({ id: it.id, qty: Math.min(99, it.qty + 1) })}
+                      disabled={it.qty >= 99 || setQty.isPending}
+                      className="w-5 h-5 grid place-items-center rounded border border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-100 disabled:opacity-30 disabled:cursor-not-allowed transition"
+                      aria-label="More copies"
+                    >
+                      <Plus size={11} />
+                    </button>
+                  </div>
+                  <button
+                    onClick={() => remove.mutate(it.id)}
+                    className="text-faint dark:text-slate-600 hover:text-ember-500 transition"
+                    title="Remove from queue"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+
+            <p className="text-[11px] text-faint dark:text-slate-500">
+              Live preview. These codes follow your current QR settings and update
+              if you change the label base URL. Use{" "}
+              <span className="text-muted dark:text-slate-400">Print</span> or{" "}
+              <span className="text-muted dark:text-slate-400">Send to printer</span>{" "}
+              to bake the current address onto physical labels.
+            </p>
+          </div>
+
+          <div className="xl:flex-1 xl:min-w-0 overflow-x-auto">
+            <SheetPreview
+              sizeKey={sizeKey}
+              printables={previewQr.data ?? []}
+              paperW={paper?.width_in ?? 8.5}
+              paperH={paper?.height_in ?? 11}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
