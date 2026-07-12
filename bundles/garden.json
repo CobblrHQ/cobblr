@@ -1,9 +1,9 @@
 {
   "manifest": {
     "id": "cobblr.community.garden",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "name": "Garden",
-    "description": "Custom assets:asset fields for tracking plants — species, planted date, watering RRULE, sun exposure.",
+    "description": "Custom assets:asset fields for tracking plants — species, planted date, watering schedule, sun exposure.",
     "author": "Cobblr community",
     "requires": [
       {
@@ -29,7 +29,7 @@
       {
         "entity_kind": "assets:asset",
         "name": "water_rrule",
-        "display_label": "Watering schedule (RRULE)",
+        "display_label": "Watering schedule",
         "type": "text",
         "position": 3
       },

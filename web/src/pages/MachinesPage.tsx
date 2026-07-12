@@ -16,6 +16,7 @@ import { ChevronRight, Plus, Printer, Search, Tag as TagIcon, Trash2, Wrench } f
 import { ModuleInstanceChooser } from "../components/ModuleInstanceChooser";
 import { queueLabelsBulk } from "../lib/queue-label";
 import { usePersistedState } from "../lib/use-persisted-state";
+import { usePublishChatContext } from "../lib/chat-context";
 import { ApiError, api, type Machine, type OrgModuleListItem, type PlatformFieldDef, type SavedView, type BambuDiscoveredDevice, type DigifabConnection, type DigifabDevice, type DigifabFleetDevice } from "../lib/api";
 import { fleetStatusChip, indexFleetByMachine } from "../lib/fleet-status";
 import { ContributedPageTab, ContributedDetailPanel, hasPageTab, hasDetailPanel } from "../panels/registry";
@@ -171,6 +172,21 @@ export function MachinesPage({
   // Filter machines: with a lens, show only rows that have any of
   // the lens's fields populated. Without a lens, show all.
   const allRows = machines.data?.items ?? [];
+  // Tell Ask Cobb what's on this screen. Generic: a breakdown by whatever states
+  // this workspace's machines actually use (no hardcoded "rebuilding" etc.).
+  const machineStates = (() => {
+    const by = new Map<string, number>();
+    for (const m of allRows) by.set(m.state || "unset", (by.get(m.state || "unset") ?? 0) + 1);
+    return [...by.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+      .map(([s, n]) => `${n} ${s}`)
+      .join(", ");
+  })();
+  usePublishChatContext({
+    label: instance ? `Machines (${instance})` : "Machines",
+    summary: `${allRows.length} machine${allRows.length === 1 ? "" : "s"}` + (machineStates ? ` (${machineStates})` : ""),
+  });
   const rows = lensName
     ? allRows.filter((m) =>
         lensFieldDefs.some((d) => {
@@ -1357,6 +1373,7 @@ function MachineDetailModal({
             {!fp.hidden("family") && <EditField label={fp.label("family", "Family")} value={m.family ?? ""} onCommit={(v) => update.mutate({ family: v || null })} />}
             {!fp.hidden("type") && (m.type || !instance) && <EditField label={fp.label("type", "Type")} value={m.type ?? ""} onCommit={(v) => update.mutate({ type: v || null })} />}
             {!fp.hidden("manufacturer") && <EditField label={fp.label("manufacturer", "Manufacturer")} value={m.manufacturer ?? ""} onCommit={(v) => update.mutate({ manufacturer: v || null })} />}
+            {!fp.hidden("serial_number") && (m.serial_number || !instance) && <EditField label={fp.label("serial_number", "Serial number")} value={m.serial_number ?? ""} onCommit={(v) => update.mutate({ serial_number: v || null })} />}
             {!fp.hidden("state") && (
               <label className="block">
                 <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">{fp.label("state", "State")}</span>

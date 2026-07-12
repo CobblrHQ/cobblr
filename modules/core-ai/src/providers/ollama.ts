@@ -46,6 +46,14 @@ export function register(): void {
         label: "Bearer token (optional — for a remote/proxied endpoint; sent as Authorization: Bearer …)",
         secret: true,
       },
+      mcp_relay: {
+        label: "How this AI runs tools",
+        secret: false,
+        choices: [
+          { value: "", label: "Returns tool calls for Cobblr to run (standard)" },
+          { value: "bridge", label: "Runs tools itself — give it read-only workspace access via MCP" },
+        ],
+      },
       ...TRANSIT_FIELD,
     }),
     capabilities: SUPPORTED,
@@ -95,6 +103,12 @@ export function register(): void {
           // Ollama takes OpenAI-shaped tool defs; a model without tool support
           // 4xxes on the field — retried once without them (graceful degrade).
           if (toolDefs) reqBody.tools = openAiToolsOf(toolDefs);
+          // MCP tool relay (a Claude-subscription bridge, not a real Ollama):
+          // forward the per-request `{token, workspace}` grant so the bridge can
+          // spawn `claude -p --mcp-config` against this workspace. A real Ollama
+          // ignores this unknown field. See core-ai's ai.ts invoke().
+          const mcpRelay = (ctx.input as Record<string, unknown>).mcp;
+          if (mcpRelay && typeof mcpRelay === "object") reqBody.mcp = mcpRelay;
           let res = await call("/api/chat", {
             method: "POST",
             headers: { "content-type": "application/json", ...authHeaders },

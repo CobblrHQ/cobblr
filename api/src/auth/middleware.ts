@@ -88,6 +88,28 @@ function appTokenPathAllowed(method: string, rel: string, appScope: string): boo
   return false;
 }
 
+// MCP read-grant clamp (Ask Cobb over the subscription bridge). A JWT with
+// `aud: mcp-read:<slug>` carries the member's full identity, so — exactly like
+// the app-token clamp above — this server-side allowlist is the ONLY thing
+// keeping it from being a full session. DENY-by-default: GET only, pinned to the
+// grant's own workspace slug, and only the handful of read paths the hosted MCP
+// tools proxy to (entity-kinds, entities, registered-actions). A write
+// (POST /actions/invoke) or any other workspace is 403, so "read-only" is
+// enforced HERE, not just in the bridge's --allowed-tools. Keep this list as
+// narrow as the hosted-mcp tool set (cloud/src/hosted-mcp.ts) — widen only when
+// a new READ tool is added there.
+export function mcpReadPathAllowed(method: string, originalUrl: string, slug: string): boolean {
+  if (method !== "GET") return false;
+  const safeSlug = slug.replace(/[^a-z0-9-]/gi, "");
+  if (!safeSlug) return false;
+  const path = (originalUrl.split("?")[0] ?? "").replace(/\/+$/, "");
+  const prefix = `/api/v1/orgs/${safeSlug}`;
+  if (!path.startsWith(prefix + "/")) return false; // pinned to THIS workspace
+  const rel = path.slice(prefix.length); // e.g. "/entity-kinds", "/entities/<kind>/<id>"
+  if (rel.includes("..")) return false;
+  return rel === "/entity-kinds" || rel === "/registered-actions" || rel.startsWith("/entities/");
+}
+
 // Augment Express's Request without leaking the field globally —
 // declare it here and import where needed.
 declare module "express-serve-static-core" {
@@ -118,6 +140,7 @@ export async function requireAuth(
     let authMethod: "session" | "api_token" = "session";
     let apiTokenId: string | null = null;
     let appScope: string | null = null;
+    let mcpReadSlug: string | null = null;
     let tokenScopes: string[] | null = null;
     let tokenIssuedAt: number | null = null; // JWT iat (seconds), session/app only
     if (token.startsWith("cbt_")) {
@@ -134,6 +157,8 @@ export async function requireAuth(
       tokenIssuedAt = typeof claims.iat === "number" ? claims.iat : null;
       if (typeof claims.aud === "string" && claims.aud.startsWith("app:")) {
         appScope = claims.aud.slice("app:".length);
+      } else if (typeof claims.aud === "string" && claims.aud.startsWith("mcp-read:")) {
+        mcpReadSlug = claims.aud.slice("mcp-read:".length);
       }
     }
     if (!userId) {
@@ -183,6 +208,18 @@ export async function requireAuth(
         });
         return;
       }
+    }
+    // MCP read-grant — DENY-by-default clamp to GET-only workspace reads pinned
+    // to its own slug. Blocks writes + other workspaces even though the token
+    // carries the member's full identity (see mcpReadPathAllowed).
+    if (mcpReadSlug !== null && !mcpReadPathAllowed(req.method, req.originalUrl, mcpReadSlug)) {
+      res.status(403).json({
+        error: {
+          code: "mcp_read_out_of_scope",
+          message: "This read-grant may only GET workspace records in its own workspace.",
+        },
+      });
+      return;
     }
     // Capability-scoped API token — DENY-by-default clamp to its scopes'
     // allowlist, before any handler runs. The token still carries the user's

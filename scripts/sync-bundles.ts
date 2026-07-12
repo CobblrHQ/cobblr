@@ -16,13 +16,17 @@
 //     bumped over the EXISTING file's so installed workspaces see the upgrade;
 //   • leaves non-featured files untouched.
 //
-// Run:  npx tsx scripts/sync-bundles.ts        (rerun whenever featured-bundles changes)
-// Lint: scripts/lint-versions.ts enforces the bump; CI runs it.
+// Run:  npx tsx scripts/sync-bundles.ts          (rerun whenever featured-bundles changes)
+// Check: npx tsx scripts/sync-bundles.ts --check  (CI/pre-push: fail if a bundles/*.json
+//        is out of sync with the source — someone edited the GENERATED json directly, or
+//        edited featured-bundles.ts but didn't re-run the sync). See lint:bundles-synced.
+// Lint: scripts/lint-versions.ts enforces the version bump; CI runs it.
 import { FEATURED_BUNDLES } from "../web/src/lib/featured-bundles.js";
 import fs from "node:fs";
 import path from "node:path";
 
 const OUT = path.join(process.cwd(), "bundles");
+const CHECK = process.argv.includes("--check");
 
 function slugOf(id: string): string {
   return id.replace(/^cobblr\.(flagship|community)\./, "").replace(/[^a-z0-9-]/gi, "-");
@@ -47,6 +51,7 @@ function cmpVer(a: string, b: string): number {
 }
 
 let wrote = 0, unchanged = 0;
+const drifted: string[] = [];
 for (const fb of FEATURED_BUNDLES) {
   const manifest = JSON.parse(JSON.stringify(fb.manifest)) as Record<string, unknown>;
   const id = String(manifest.id ?? "");
@@ -56,6 +61,10 @@ for (const fb of FEATURED_BUNDLES) {
     ? ((JSON.parse(fs.readFileSync(file, "utf8")) as { manifest?: Record<string, unknown> }).manifest ?? null)
     : null;
   if (existing && sig(existing) === sig(manifest)) { unchanged++; continue; }
+  // Out of sync: the generated json's content doesn't match the source. Either
+  // someone hand-edited the GENERATED bundles/*.json (it's an artifact, not a
+  // source — edit featured-bundles.ts) or edited the source and didn't re-sync.
+  if (CHECK) { drifted.push(`${slugOf(id)}.json${existing ? "" : " (missing)"}`); continue; }
   if (existing) {
     // Content changed → the emitted version must move past the existing file's
     // (installed workspaces upgrade off THESE files, not the web bundle's).
@@ -67,4 +76,18 @@ for (const fb of FEATURED_BUNDLES) {
   console.log(`wrote ${path.basename(file)}  v${manifest.version}${existing ? ` (was ${existing.version})` : " (new)"}`);
   wrote++;
 }
-console.log(`\n${wrote} written, ${unchanged} already in sync.`);
+
+if (CHECK) {
+  if (drifted.length > 0) {
+    console.error(
+      `[lint:bundles-synced] ✗ ${drifted.length} bundle(s) out of sync with web/src/lib/featured-bundles.ts:\n` +
+        drifted.map((d) => `  - bundles/${d}`).join("\n") +
+        `\n\nbundles/*.json are GENERATED. Edit the manifest in web/src/lib/featured-bundles.ts,\n` +
+        `then run:  npx tsx scripts/sync-bundles.ts   and commit the regenerated json.`,
+    );
+    process.exit(1);
+  }
+  console.log("[lint:bundles-synced] ✓ all bundles/*.json in sync with featured-bundles.ts");
+} else {
+  console.log(`\n${wrote} written, ${unchanged} already in sync.`);
+}

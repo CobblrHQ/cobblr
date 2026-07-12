@@ -195,9 +195,9 @@ export const CONFIG_DESTINATIONS: ConfigDestination[] = [
     icon: Library,
     label: "Catalogs",
     description:
-      "Imported reference datasets (Rebrickable parts, McMaster, USDA, ISBN). Your own entities can be matched to entries inside a catalog so the catalog's photo + metadata appears alongside.",
+      "Reference datasets you match your entities against (Rebrickable's Lego catalog ships with the Lego setup; bring your own as a CSV). A matched entity shows the catalog's photo + metadata alongside.",
     to: "/configuration/catalogs",
-    keywords: ["reference", "datasets", "match", "rebrickable", "isbn"],
+    keywords: ["reference", "datasets", "match", "rebrickable", "isbn", "catalog"],
   },
   {
     group: "data",

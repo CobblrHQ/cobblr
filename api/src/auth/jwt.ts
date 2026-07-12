@@ -67,6 +67,30 @@ export async function signAppToken(
   return { token, expires_in: APP_TOKEN_TTL_SECONDS };
 }
 
+// MCP read-grant (Ask Cobb over the subscription bridge). A SHORT-LIVED token
+// carrying the member's own identity (sub = userId) + an `mcp-read:<slug>`
+// audience. It verifies as a normal session (verifySession ignores aud), so
+// every call runs AS the member — bounded by their capabilities + field-read
+// scope. requireAuth clamps it HARD to GET-only workspace reads pinned to
+// <slug> (mcpReadPathAllowed), so a write (POST /actions/invoke) or a different
+// workspace is 403 even though the token carries the member's full identity.
+// Minted per chat turn by core-ai when the workspace's chat provider is a
+// Claude-subscription bridge, and handed to that bridge so `claude -p` can read
+// the workspace over MCP. See docs/design-decisions/ask-cobb-bridge-mcp-tools.md.
+const MCP_READ_TTL_SECONDS = 15 * 60; // 15 minutes — one chat turn's worth
+
+export async function signMcpReadGrant(userId: string, orgSlug: string): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  return new SignJWT({})
+    .setProtectedHeader({ alg: ALG })
+    .setIssuer(ISSUER)
+    .setSubject(userId)
+    .setAudience(`mcp-read:${orgSlug}`)
+    .setIssuedAt(now)
+    .setExpirationTime(now + MCP_READ_TTL_SECONDS)
+    .sign(secretKey());
+}
+
 // Operator impersonation ("View as"). A SHORT-LIVED token distinct from a
 // session: it carries BOTH identities — `sub` is the operator (never replaced,
 // so attribution can't be forged), `act` the target member, `org` the scope,

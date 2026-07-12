@@ -250,13 +250,26 @@ function toResolvedProject(row: {
   priority: string | null;
   start_date: Date | null;
   target_date: Date | null;
+  instance: string;
 }): ResolvedEntity {
+  // A named instance's projects (e.g. a "Designs" instance) live at
+  // /instances/<name>/:id — the ProjectsUI `:id` route, mounted UNDER the
+  // instance provider, so the detail page's back-link reads "back to Designs"
+  // and stays scoped. The default ("projects") instance lives at the base
+  // /projects/:id. Without this, any surface that follows the resolved
+  // detailUrl (search, dashboard, saved views, QR) sent an instance project to
+  // the base route → no instance context → "back to projects". Mirrors the
+  // same instance-aware detailUrl inventory's resolver already emits.
+  const detailUrl =
+    row.instance && row.instance !== "projects"
+      ? `/instances/${row.instance}/${row.id}`
+      : `/projects/${row.id}`;
   return {
     kind: "projects:project",
     id: row.id,
     title: row.name,
     subtitle: row.status,
-    detailUrl: `/projects/${row.id}`,
+    detailUrl,
     fields: {
       name: row.name,
       description: row.description,
@@ -264,6 +277,10 @@ function toResolvedProject(row: {
       priority: row.priority,
       start_date: row.start_date,
       target_date: row.target_date,
+      // Structural instances-system attribute (which named collection this
+      // item belongs to). Always exposable per the platform's
+      // IMPLICIT_EXPOSABLE_PROPS — lets generic surfaces group / route by it.
+      instance: row.instance,
     },
   };
 }

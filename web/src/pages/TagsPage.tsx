@@ -24,12 +24,19 @@ interface TagAttachment {
 
 // Map a (source_module, source_type) to the route prefix for the
 // detail page. Same convention the EntityChip uses.
+// NOTE: these are the BASE (default-instance) routes. A tag attachment row
+// carries only source_module / source_type / source_id — NOT the item's
+// `instance` — so this page can't yet route an instance-owned item to its
+// instance detail (/instances/<name>/…). Closing that needs the attachment
+// payload (or a per-row resolve) to surface the item's instance; tracked as a
+// deferred follow-up. Search/dashboard/QR already route correctly via the
+// resolver-owned detailUrl.
 function detailRoute(sourceModule: string, sourceType: string, id: string): string | null {
   const map: Record<string, string> = {
     "inventory:part": `/inventory/parts/${id}`,
     "machines:machine": `/machines/${id}`,
     "assets:asset": `/assets/${id}`,
-    "projects:project": `/projects/projects/${id}`,
+    "projects:project": `/projects/${id}`,
     "projects:task": `/projects/tasks/${id}`,
     "purchases:order": `/purchases/${id}`,
   };

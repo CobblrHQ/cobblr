@@ -28,6 +28,7 @@ export function registerMachinesWriter(): void {
           family: asStr(fields.family),
           type: asStr(fields.type),
           manufacturer: asStr(fields.manufacturer),
+          serial_number: asStr(fields.serial_number),
           state: asStr(fields.state) ?? "functional",
           image_path: asStr(fields.image_path),
           notes: asStr(fields.notes),
@@ -56,6 +57,7 @@ export function registerMachinesWriter(): void {
       if (fields.family !== undefined) patch.family = asStr(fields.family);
       if (fields.type !== undefined) patch.type = asStr(fields.type);
       if (fields.manufacturer !== undefined) patch.manufacturer = asStr(fields.manufacturer);
+      if (fields.serial_number !== undefined) patch.serial_number = asStr(fields.serial_number);
       if (fields.state !== undefined) patch.state = asStr(fields.state) ?? "functional";
       if (fields.image_path !== undefined) patch.image_path = asStr(fields.image_path);
       if (fields.notes !== undefined) patch.notes = asStr(fields.notes);
@@ -90,7 +92,7 @@ export function registerMachinesWriter(): void {
       const db = (await platform().tenants.getDb(orgId)) as Kysely<MachinesDB>;
       const row = await db
         .selectFrom("machines_machines")
-        .select(["name", "short_name", "family", "type", "manufacturer", "state", "image_path", "notes", "metadata"])
+        .select(["name", "short_name", "family", "type", "manufacturer", "serial_number", "state", "image_path", "notes", "metadata"])
         .where("id", "=", id)
         .executeTakeFirst();
       if (!row) return null;
@@ -100,6 +102,7 @@ export function registerMachinesWriter(): void {
         family: row.family,
         type: row.type,
         manufacturer: row.manufacturer,
+        serial_number: row.serial_number,
         state: row.state,
         image_path: row.image_path,
         notes: row.notes,

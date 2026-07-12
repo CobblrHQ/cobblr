@@ -153,6 +153,7 @@ export function SortingPlanView({
   onApplied,
   onStartWalk,
   scope,
+  refs,
   renderItemCard,
 }: {
   slug: string;
@@ -167,8 +168,12 @@ export function SortingPlanView({
   /** Phase 2: open the put-away walk over the just-applied groups. */
   onStartWalk?: () => void;
   /** Phase 3: "unplaced" plans over committed entities with no location
-   *  (itemIds is ignored; names come from the plan payload). */
-  scope?: "unplaced" | "pending";
+   *  (itemIds is ignored; names come from the plan payload). "refs" plans a
+   *  specific set of committed entity refs passed in `refs` (the door an action
+   *  opens over the pile it just produced — a disassemble's spawned parts). */
+  scope?: "unplaced" | "pending" | "refs";
+  /** For scope:"refs" — the "<kind>::<uuid>" refs to plan. */
+  refs?: string[];
   /** Render the REAL inbox card INLINE under a row (accordion) so a wrong
    *  identification is fixable without leaving the plan — no modal stacking.
    *  The page owns the card; the sheet owns the accordion. Only meaningful
@@ -231,7 +236,11 @@ export function SortingPlanView({
     else setReplanning(true); // keep the old plan rendered, dimmed
     api
       .organizePlan(slug, {
-        ...(scope ? { scope } : { item_ids: itemIds }),
+        ...(scope === "refs"
+          ? { scope: "refs" as const, refs: refs ?? [] }
+          : scope
+            ? { scope }
+            : { item_ids: itemIds }),
         ...(withHint?.trim() ? { hint: withHint.trim() } : {}),
         ...(opts?.fresh ? { fresh: true } : {}),
         ...(opts?.clearHint ? { clear_hint: true } : {}),
@@ -954,7 +963,8 @@ export function OrganizePlanSheet({
   onClose: () => void;
   onApplied: (filedItemIds: string[]) => void;
   onStartWalk?: () => void;
-  scope?: "unplaced" | "pending";
+  scope?: "unplaced" | "pending" | "refs";
+  refs?: string[];
   renderItemCard?: (itemId: string) => ReactNode;
 }) {
   return (
@@ -966,7 +976,9 @@ export function OrganizePlanSheet({
           ? "Put away your scanned backlog"
           : scope === "unplaced"
             ? "Organize what you track"
-            : "Organize this batch"
+            : scope === "refs"
+              ? "Sort these parts into bins"
+              : "Organize this batch"
       }
       size="content"
       fillHeight

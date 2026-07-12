@@ -60,6 +60,11 @@ export interface UserCredentialView {
   share_status: Record<string, "pending" | "approved" | "active">;
   /** Which credential keys are set (names only — never the secret values). */
   credential_keys: string[];
+  /** Values of the NON-SECRET credential fields (base_url, choices like transit /
+   *  mcp_relay, model …), so the edit form can pre-fill them. Secret fields are
+   *  never included — they stay write-only. Empty unless the caller passes an
+   *  `isSecret` predicate (which knows each provider's field secrecy). */
+  credential_values: Record<string, string>;
   /** Depends on the user's personal edge agent (the edge-bridge provider, or a
    *  URL provider with bridge transit) — drives the live status indicators. */
   uses_edge: boolean;
@@ -161,7 +166,7 @@ export async function updateUserCredential(
 ): Promise<boolean> {
   const owned = await meta
     .selectFrom("user_credentials")
-    .select(["id"])
+    .select(["id", "credentials_encrypted"])
     .where("id", "=", credentialId)
     .where("user_id", "=", userId)
     .executeTakeFirst();
@@ -171,7 +176,17 @@ export async function updateUserCredential(
   if (patch.route_mode !== undefined) set.route_mode = patch.route_mode;
   if (patch.auto_enable_new !== undefined) set.auto_enable_new = patch.auto_enable_new;
   if (patch.credentials !== undefined) {
-    set.credentials_encrypted = encryptCreds(JSON.stringify(patch.credentials));
+    // MERGE, don't replace: the form sends non-secret fields (base_url, choices)
+    // plus only the secrets the user actually re-typed — so a blank secret must
+    // KEEP its stored value, not wipe it. Merge the patch over the existing creds.
+    let base: Record<string, unknown> = {};
+    try {
+      base = JSON.parse(decryptCreds(owned.credentials_encrypted)) as Record<string, unknown>;
+    } catch {
+      base = {};
+    }
+    const merged = { ...base, ...patch.credentials };
+    set.credentials_encrypted = encryptCreds(JSON.stringify(merged));
   }
   // Per-workspace routing wins: providing routes forces 'explicit' scope. Only
   // honour an explicit route_scope patch when no routes are given.
@@ -192,7 +207,12 @@ export async function deleteUserCredential(userId: string, credentialId: string)
   return Number(res.numDeletedRows ?? 0) > 0;
 }
 
-export async function listUserCredentials(userId: string): Promise<UserCredentialView[]> {
+export async function listUserCredentials(
+  userId: string,
+  /** Per-provider secrecy check (from the AI provider catalogue) so we can return
+   *  non-secret field values without ever exposing a secret. Omit → no values. */
+  isSecret?: (providerId: string, key: string) => boolean,
+): Promise<UserCredentialView[]> {
   const rows = await meta
     .selectFrom("user_credentials")
     .selectAll()
@@ -232,6 +252,7 @@ export async function listUserCredentials(userId: string): Promise<UserCredentia
     routes: routesByCred.get(r.id) ?? [],
     share_status: statusByCred.get(r.id) ?? {},
     credential_keys: keysOf(r.credentials_encrypted),
+    credential_values: nonSecretValues(r.provider_id, r.credentials_encrypted, isSecret),
     uses_edge: usesEdge(r.provider_id, r.credentials_encrypted),
     created_at: r.created_at,
     updated_at: r.updated_at,
@@ -241,9 +262,31 @@ export async function listUserCredentials(userId: string): Promise<UserCredentia
 function keysOf(encrypted: string): string[] {
   try {
     const obj = JSON.parse(decryptCreds(encrypted)) as Record<string, unknown>;
-    return Object.keys(obj);
+    return Object.keys(obj).filter((k) => !k.startsWith("__"));
   } catch {
     return [];
+  }
+}
+
+/** The non-secret credential values, for pre-filling the edit form. Skips
+ *  internal keys (`__connection_user_id`) and anything the provider marks secret
+ *  — with no predicate, returns nothing (safe default: never expose a value). */
+function nonSecretValues(
+  providerId: string,
+  encrypted: string,
+  isSecret?: (providerId: string, key: string) => boolean,
+): Record<string, string> {
+  if (!isSecret) return {};
+  try {
+    const obj = JSON.parse(decryptCreds(encrypted)) as Record<string, unknown>;
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      if (k.startsWith("__")) continue;
+      if (typeof v === "string" && !isSecret(providerId, k)) out[k] = v;
+    }
+    return out;
+  } catch {
+    return {};
   }
 }
 

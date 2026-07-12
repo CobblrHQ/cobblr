@@ -13,6 +13,18 @@ import { PDFDocument, StandardFonts, rgb, PDFPage, PDFFont } from "pdf-lib";
 import QRCode from "qrcode";
 import { findSize, type LabelSheet } from "./layout.js";
 import { packShelvesBigFirst } from "./pack.js";
+import { computeCapsule, validateOverlay } from "./qr-overlay.js";
+
+/** A label whose center code would make its QR hard/impossible to scan. The
+ *  render still emits the label; the caller surfaces these so the user can
+ *  shorten the code or pick a larger size before committing a bad batch. */
+export interface LabelWarning {
+  kind: string;
+  id: number;
+  code: string;
+  reason: string;
+  coveredFraction: number;
+}
 
 export interface PrintItem {
   /** Source entity kind — only used in error messages, so any string. */
@@ -183,6 +195,7 @@ async function placeLabel(
   page: PDFPage, doc: PDFDocument, font: PDFFont, boldFont: PDFFont,
   item: PrintItem, x: number, y: number, w: number, h: number,
   borders: CellBorders = ALL_CELL_BORDERS,
+  warnings?: LabelWarning[],
 ) {
   // 0.75pt hairline cut guides on the requested sides. Was 1.5pt
   // earlier (to fight anti-aliased grey on the Rollo's 1-bit head)
@@ -200,6 +213,16 @@ async function placeLabel(
   const pad = 0.08 * PT;
   const png = await qrPng(item.url, item.centerCode);
   const qrImg = await doc.embedPng(png);
+
+  // Draw the center code (if any) at the QR's position/size and record a
+  // warning when the overlay would push the QR past its scannable budget.
+  function overlay(ox: number, oy: number, size: number) {
+    if (item.centerCode == null) return;
+    const v = drawCenterOverlay(page, boldFont, ox, oy, size, item.centerCode, item.url);
+    if (!v.safe && warnings) {
+      warnings.push({ kind: item.kind, id: item.id, code: item.centerCode, reason: v.reason ?? "QR not scannable", coveredFraction: v.coveredFraction });
+    }
+  }
 
   // Draw a multi-line block of centered text starting at top baseline.
   // Returns the bottom Y (where the next thing should start).
@@ -219,7 +242,7 @@ async function placeLabel(
     const qrX = x + pad;
     const qrY = y + pad;
     page.drawImage(qrImg, { x: qrX, y: qrY, width: qrSize, height: qrSize });
-    if (item.centerCode != null) drawCenterOverlay(page, boldFont, qrX, qrY, qrSize, item.centerCode);
+    overlay(qrX, qrY, qrSize);
 
     const textX = qrX + qrSize + 0.04 * PT;
     const textW = x + w - pad - textX;
@@ -274,7 +297,7 @@ async function placeLabel(
     // half-height (qrSize was capped by width). Anchor to bottomMargin.
     const qrYBottomAnchored = Math.max(y + bottomMargin, qrY);
     page.drawImage(qrImg, { x: qrX, y: qrYBottomAnchored, width: qrSize, height: qrSize });
-    if (item.centerCode != null) drawCenterOverlay(page, boldFont, qrX, qrYBottomAnchored, qrSize, item.centerCode);
+    overlay(qrX, qrYBottomAnchored, qrSize);
   } else {
     // Square / squarish: title at top, QR centred in remaining. Title
     // keeps the fixed (single-line) font size but is allowed to wrap to
@@ -292,31 +315,42 @@ async function placeLabel(
     const qrX = x + (w - qrSize) / 2;
     const qrY = qrBot + (qrTop - qrBot - qrSize) / 2;
     page.drawImage(qrImg, { x: qrX, y: qrY, width: qrSize, height: qrSize });
-    if (item.centerCode != null) drawCenterOverlay(page, boldFont, qrX, qrY, qrSize, item.centerCode);
+    overlay(qrX, qrY, qrSize);
   }
 }
 
-// White circle + black centered digit/code overlaid on the QR — same
-// look as the in-app QrWithCenter SVG overlay. The circle stays at a
-// fixed size (~13% of QR diameter — keeps the obscured area within
-// EC=H's 30% redundancy budget) and the font auto-shrinks for longer
-// strings so 1-char ("9") and 3-char ("P99") codes both fit on one
-// line, properly centered (vertically: cap-height/2 above the
-// baseline; horizontally: glyph midpoint at the circle's cx).
-function drawCenterOverlay(page: PDFPage, font: PDFFont, qrX: number, qrY: number, qrSize: number, text: string) {
-  const cx = qrX + qrSize / 2;
-  const cy = qrY + qrSize / 2;
-  const radius = qrSize * 0.13;
-  page.drawEllipse({ x: cx, y: cy, xScale: radius, yScale: radius, color: rgb(1, 1, 1), borderWidth: 0 });
+// White capsule (stadium) + black centered code overlaid on the QR. Fixed
+// vertical half-height, width that grows with the code, so glyph height stays
+// constant across 1-char and 5-char codes (a circle shrank both dimensions and
+// smeared past ~3 chars). A 1-char code has a zero-length middle => it renders
+// as a plain circle, identical to the legacy overlay. Geometry + scannability
+// validation live in qr-overlay.ts; this draws the shape and returns whether
+// the label will still scan (payload = the QR's own URL, so the check is
+// module-count aware). Vertical centering: cap-height/2 above the baseline.
+function drawCenterOverlay(
+  page: PDFPage, font: PDFFont, qrX: number, qrY: number, qrSize: number,
+  text: string, payload: string,
+): ReturnType<typeof validateOverlay> {
+  const cap = computeCapsule(qrSize, text, (t, s) => font.widthOfTextAtSize(t, s));
+  const cx = qrX + cap.cx * qrSize;
+  const cy = qrY + cap.cy * qrSize;
+  const hh = cap.hh * qrSize;
+  const hwInner = cap.hwInner * qrSize;
+  const white = rgb(1, 1, 1);
 
-  const maxWidth = radius * 1.7;
-  // Shrink from the single-char target size until width fits with a
-  // small padding margin inside the circle.
-  let size = radius * 1.6;
-  while (font.widthOfTextAtSize(text, size) > maxWidth && size > 3) size *= 0.9;
-  const tw = font.widthOfTextAtSize(text, size);
-  const ch = font.heightAtSize(size, { descender: false });
-  page.drawText(text, { x: cx - tw / 2, y: cy - ch / 2, size, font, color: rgb(0, 0, 0) });
+  // Stadium = a rectangular middle + a semicircular cap at each end. Drawn as a
+  // white rectangle plus two white circles of radius hh centered on the ends.
+  if (hwInner > 0.1) {
+    page.drawRectangle({ x: cx - hwInner, y: cy - hh, width: 2 * hwInner, height: 2 * hh, color: white, borderWidth: 0 });
+  }
+  page.drawEllipse({ x: cx - hwInner, y: cy, xScale: hh, yScale: hh, color: white, borderWidth: 0 });
+  page.drawEllipse({ x: cx + hwInner, y: cy, xScale: hh, yScale: hh, color: white, borderWidth: 0 });
+
+  const tw = font.widthOfTextAtSize(text, cap.fontSize);
+  const ch = font.heightAtSize(cap.fontSize, { descender: false });
+  page.drawText(text, { x: cx - tw / 2, y: cy - ch / 2, size: cap.fontSize, font, color: rgb(0, 0, 0) });
+
+  return validateOverlay(payload, cap);
 }
 
 function pickFontSize(cellW: number, cellH: number, title: string, maxLines = 2): number {
@@ -358,6 +392,9 @@ export interface RenderResult {
   /** Actual sheet count after packing — caller reports this in the
    *  print-direct response so the UI can show the right number. */
   sheets: number;
+  /** Labels whose center code would make the QR hard/impossible to scan.
+   *  Empty in the normal case. */
+  warnings: LabelWarning[];
 }
 
 export async function renderLabelsPdf(input: RenderInput): Promise<RenderResult> {
@@ -399,6 +436,7 @@ async function renderUniformGrid(items: PrintItem[], size: LabelSheet): Promise<
   const doc = await PDFDocument.create();
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const boldFont = await doc.embedFont(StandardFonts.HelveticaBold);
+  const warnings: LabelWarning[] = [];
 
   const sheetWpt = size.sheet_w * PT;
   const sheetHpt = size.sheet_h * PT;
@@ -450,19 +488,19 @@ async function renderUniformGrid(items: PrintItem[], size: LabelSheet): Promise<
         : ALL_CELL_BORDERS;
       const cellItems = cells[ci]!;
       if (subdivisions === 1) {
-        if (cellItems[0]) await placeLabel(page, doc, font, boldFont, cellItems[0], cellX, cellY, cellWpt, cellHpt, cellBorders);
+        if (cellItems[0]) await placeLabel(page, doc, font, boldFont, cellItems[0], cellX, cellY, cellWpt, cellHpt, cellBorders, warnings);
       } else {
         for (let si = 0; si < subdivisions; si++) {
           const it = cellItems[si];
           if (!it) continue;
           const subX = cellX + si * subWpt;
-          await placeLabel(page, doc, font, boldFont, it, subX, cellY, subWpt, cellHpt, cellBorders);
+          await placeLabel(page, doc, font, boldFont, it, subX, cellY, subWpt, cellHpt, cellBorders, warnings);
         }
       }
     }
   }
 
-  return { pdf: Buffer.from(await doc.save()), sheets: pages.length };
+  return { pdf: Buffer.from(await doc.save()), sheets: pages.length, warnings };
 }
 
 // Packed path: mixed sizes on continuous-roll sheets. Items are
@@ -486,6 +524,7 @@ async function renderPacked(
   const doc = await PDFDocument.create();
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const boldFont = await doc.embedFont(StandardFonts.HelveticaBold);
+  const warnings: LabelWarning[] = [];
 
   // Shelf-pack on inch coordinates (mirrors the web preview's math).
   const packables = resolved.map((r) => ({
@@ -506,9 +545,9 @@ async function renderPacked(
       const cellHpt = placement.h * PT;
       const cellX = placement.x * PT;
       const cellY = sheetHpt - (placement.y + placement.h) * PT;
-      await placeLabel(page, doc, font, boldFont, placement.item.item, cellX, cellY, cellWpt, cellHpt);
+      await placeLabel(page, doc, font, boldFont, placement.item.item, cellX, cellY, cellWpt, cellHpt, ALL_CELL_BORDERS, warnings);
     }
   }
 
-  return { pdf: Buffer.from(await doc.save()), sheets: sheets.length };
+  return { pdf: Buffer.from(await doc.save()), sheets: sheets.length, warnings };
 }

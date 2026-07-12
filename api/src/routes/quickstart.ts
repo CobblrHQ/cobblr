@@ -117,6 +117,10 @@ const MaterializeBody = z.object({
   bundle_external_id: z.string().min(1).max(200),
   /** Limit to specific captures; omitted → all pending that fit this bundle. */
   item_ids: z.array(z.string().uuid()).optional(),
+  /** The bundle was already installed by the caller (e.g. the feature-picker
+   *  modal, which lets the user choose optional capabilities). Skip the
+   *  install step and only commit the matching captures onto its tables. */
+  skip_install: z.boolean().optional(),
 });
 
 quickstartRouter.post("/materialize", requireAuth, withTenant, async (req, res, next) => {
@@ -145,16 +149,20 @@ quickstartRouter.post("/materialize", requireAuth, withTenant, async (req, res, 
     }
 
     // Install (autoEnable: enable the bundle's required modules in one step).
-    const v = await validateBundle(orgId, manifest, { autoEnable: true });
-    if (!v.valid) {
-      res.status(400).json({ error: { code: "invalid_bundle", message: "Bundle failed validation", details: { errors: v.errors } } });
-      return;
+    // Unless the caller already installed it via the feature-picker modal — then
+    // just commit the captures onto the tables that install created.
+    if (!parsed.data.skip_install) {
+      const v = await validateBundle(orgId, manifest, { autoEnable: true });
+      if (!v.valid) {
+        res.status(400).json({ error: { code: "invalid_bundle", message: "Bundle failed validation", details: { errors: v.errors } } });
+        return;
+      }
+      await applyValidatedBundle(
+        orgId,
+        { id: req.session!.id, display_name: req.session!.display_name ?? null, auth_method: req.session!.auth_method, api_token_id: req.session!.api_token_id ?? null },
+        v,
+      );
     }
-    await applyValidatedBundle(
-      orgId,
-      { id: req.session!.id, display_name: req.session!.display_name ?? null, auth_method: req.session!.auth_method, api_token_id: req.session!.api_token_id ?? null },
-      v,
-    );
 
     const targets = flagshipBundleTargets(bundleId);
     if (targets.length === 0) {

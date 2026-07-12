@@ -340,7 +340,26 @@ function parseMove(raw: string): Move | null {
 
 const ChatBody = z.object({
   messages: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string() })).min(1).max(40),
+  // What the user is looking at right now (route + a one-line view summary the
+  // page publishes). BOUNDED so a client can't stuff the prompt. See
+  // web/src/lib/chat-context.ts.
+  context: z
+    .object({ label: z.string().min(1).max(120), summary: z.string().max(600).optional() })
+    .optional(),
 });
+
+/** The system-prompt line telling Cobb what screen the user is on, for
+ *  situational relevance. Empty when no context. Pure — the injection point is
+ *  one call, so it can't silently drift. */
+export function pageContextLine(context?: { label: string; summary?: string }): string {
+  if (!context?.label) return "";
+  const showing = context.summary ? ` Currently showing: ${context.summary}.` : "";
+  return (
+    `\n\nCURRENT VIEW: the user is looking at the "${context.label}" screen.${showing} ` +
+    `Use this for situational relevance — you may lead with or reference what they're looking at — ` +
+    `but still answer their ACTUAL question: if they ask about the whole workspace, answer workspace-wide, not just this screen.`
+  );
+}
 
 chatRouter.post(
   "/",
@@ -357,6 +376,8 @@ chatRouter.post(
     } catch {
       system = `You are Cobb, the helpful assistant inside the Cobblr workspace "${c.slug}". Introduce yourself as Cobb if asked. Chat helpfully; reply with {"type":"reply","text":"..."}.`;
     }
+    // Situational awareness: what screen is the user on right now?
+    system += pageContextLine(parsed.data.context);
 
     // The agent loop: read tools auto-run (through THIS caller's permissions,
     // via chatWorkspaceApi); write tool calls stop the loop and become the

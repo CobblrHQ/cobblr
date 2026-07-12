@@ -4,14 +4,13 @@
 
 import { useState, type FocusEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, Copy, Library, Printer, ShieldCheck, Trash2 } from "lucide-react";
+import { Archive, Copy, Library, Minus, Plus, Printer, ShieldCheck, Trash2 } from "lucide-react";
 import { CustomFieldsPanel, EntityActionsBar, EntityThumb, Modal, UnitInput, useConfirm, usePageTitle, useToast, useUnits } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { NewPartDialog } from "./NewPartDialog";
 import { ParentPicker } from "./ParentPicker";
 import { useMatchedCatalogEntry } from "./useMatchedCatalogEntry";
 import { AllocationsPanel } from "./AllocationsPanel";
-import { StockAdjustButton } from "./StockAdjustButton";
 import { PartGallery } from "./PartGallery";
 import { MaintenancePanel } from "./MaintenancePanel";
 import { useFieldPresentation } from "./useFieldPresentation";
@@ -153,6 +152,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
             alt={p.name}
             size={96}
             color={(p.metadata as Record<string, unknown> | null)?.color as string | undefined}
+            values={p.metadata as Record<string, unknown> | null}
             className="ring-1 ring-line dark:ring-slate-700"
           />
           <div className="flex-1 min-w-0">
@@ -205,29 +205,29 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
           excludeActionIds={excludeActionIds}
         />
         <div className="grid grid-cols-2 gap-3">
-          {!hide("qty") && (
-          <Field label="Qty">
+          {/* Quantity + unit read as ONE control: an inline +/- stepper sits
+              flush against the unit ("[-] 1 [+] skein") so it's clear they
+              belong together. The stepper writes through the same signed
+              stock-adjust API as before — no modal hop. */}
+          {(!hide("qty") || !hide("unit")) && (
+          <Field label="Qty" className="col-span-2">
             <div className="flex items-center gap-2">
-              <span className="font-mono text-lg text-content dark:text-mortar-100">
-                {units.format(typeof p.qty === "number" ? p.qty : Number(p.qty), p.unit)}
-              </span>
-              <StockAdjustButton partId={p.id} />
+              {!hide("qty") && <QtyStepper partId={p.id} qty={Number(p.qty)} />}
+              {!hide("unit") && (
+                // Changing the unit auto-converts the quantity when the two are
+                // interconvertible (1000 g → kg = 1); otherwise just the unit
+                // changes. (e55169b1)
+                <UnitInput
+                  className="w-32"
+                  value={p.unit}
+                  onCommit={(v) => {
+                    const n = Number(p.qty);
+                    const c = Number.isFinite(n) ? units.convert(n, p.unit, v) : null;
+                    update.mutate(c != null ? { unit: v, qty: c } : { unit: v });
+                  }}
+                />
+              )}
             </div>
-          </Field>
-          )}
-          {!hide("unit") && (
-          <Field label={fp.label("unit", "Unit")}>
-            {/* Changing the unit auto-converts the quantity when the two are
-                interconvertible (1000 g → kg = 1); otherwise just the unit
-                changes. (e55169b1) */}
-            <UnitInput
-              value={p.unit}
-              onCommit={(v) => {
-                const n = Number(p.qty);
-                const c = Number.isFinite(n) ? units.convert(n, p.unit, v) : null;
-                update.mutate(c != null ? { unit: v, qty: c } : { unit: v });
-              }}
-            />
           </Field>
           )}
           {!hide("min_qty") && (
@@ -445,6 +445,11 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
           unit={p.unit}
           capacity={pmeta.capacity != null ? Number(pmeta.capacity) : null}
           trackedBy={typeof pmeta.tracked_by === "string" ? pmeta.tracked_by : null}
+          // Instances whose bundle declares the `consumable` section (e.g. Yarn)
+          // present consumption tracking as active by default, rather than an
+          // opt-in link. Generic — driven by the per-instance override, no
+          // per-bundle branch here.
+          defaultOn={fp.configured("consumable")}
           onSetCapacity={(c) => update.mutate({ metadata: { ...pmeta, capacity: c } })}
         />
       )}
@@ -612,14 +617,72 @@ function PrintQrButton({
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({
+  label,
+  children,
+  className = "",
+}: {
+  label: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
   return (
-    <label className="block">
+    <label className={`block ${className}`}>
       <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
         {label}
       </span>
       {children}
     </label>
+  );
+}
+
+// Inline qty stepper — the +/- that adjusts stock right on the detail (no modal
+// hop). Matches the copies stepper in the labels queue. Each tap writes a signed
+// delta through the same stock-adjust ledger the old "Adjust" modal used, so
+// history is preserved; it just skips the dialog for the common ±1 case.
+function QtyStepper({ partId, qty }: { partId: string; qty: number }) {
+  const { api } = useInventory();
+  const qc = useQueryClient();
+  const adjust = useMutation({
+    mutationFn: (delta: number) => api.stockAdjust(partId, delta),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["inventory-part", partId] });
+      void qc.invalidateQueries({ queryKey: ["inventory-parts"] });
+    },
+  });
+  const step = (delta: number) => {
+    if (adjust.isPending) return;
+    adjust.mutate(delta);
+  };
+  const display = Number.isFinite(qty)
+    ? Number.isInteger(qty)
+      ? String(qty)
+      : String(parseFloat(qty.toFixed(3)))
+    : "—";
+  return (
+    <div className="inline-flex items-center gap-1" title="Adjust stock">
+      <button
+        type="button"
+        onClick={() => step(-1)}
+        disabled={qty <= 0 || adjust.isPending}
+        className="w-7 h-7 grid place-items-center rounded-md border border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-100 disabled:opacity-30 disabled:cursor-not-allowed transition"
+        aria-label="Decrease quantity"
+      >
+        <Minus size={13} />
+      </button>
+      <span className="font-mono text-lg text-content dark:text-mortar-100 w-10 text-center tabular-nums">
+        {display}
+      </span>
+      <button
+        type="button"
+        onClick={() => step(1)}
+        disabled={adjust.isPending}
+        className="w-7 h-7 grid place-items-center rounded-md border border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-100 disabled:opacity-30 disabled:cursor-not-allowed transition"
+        aria-label="Increase quantity"
+      >
+        <Plus size={13} />
+      </button>
+    </div>
   );
 }
 
@@ -764,6 +827,7 @@ function ConsumptionPanel({
   unit,
   capacity,
   trackedBy,
+  defaultOn = false,
   onSetCapacity,
 }: {
   partId: string;
@@ -771,6 +835,9 @@ function ConsumptionPanel({
   unit: string;
   capacity: number | null;
   trackedBy?: string | null;
+  /** The instance treats its items as consumables (bundle-declared), so the
+   *  section presents as active instead of a collapsed opt-in link. */
+  defaultOn?: boolean;
   onSetCapacity: (c: number | null) => void;
 }) {
   const { api } = useInventory();
@@ -814,8 +881,11 @@ function ConsumptionPanel({
     );
   }
 
-  // Not a consumable yet (no capacity, no history) — offer to make it one.
-  if (capacity == null && rows.length === 0 && !editing) {
+  // Not a consumable yet (no capacity, no history). On a generic instance this
+  // stays a quiet opt-in link (a screw isn't a consumable). On an instance whose
+  // bundle turned consumable-tracking on (defaultOn — e.g. Yarn), skip the link
+  // and fall through to the active section so setting a capacity is right there.
+  if (capacity == null && rows.length === 0 && !editing && !defaultOn) {
     return (
       <div className="pt-1">
         <button onClick={() => setEditing(true)} className="text-[11px] text-faint hover:text-accent">
@@ -842,6 +912,12 @@ function ConsumptionPanel({
           </button>
         )}
       </div>
+
+      {capacity == null && !editing && rows.length === 0 && (
+        <p className="text-[11px] text-faint">
+          Set a full amount to track how much is left as you use it up.
+        </p>
+      )}
 
       {editing ? (
         <div className="flex items-center gap-2">

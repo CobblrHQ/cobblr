@@ -8,16 +8,29 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Sparkles, X, Send, Check, Eye, PencilLine } from "lucide-react";
+import { Sparkles, X, Send, Check, Eye, PencilLine, Trash2 } from "lucide-react";
 import { api, ApiError, type AiChatProposal, type BundleValidationPreview } from "../lib/api";
 import { Cobb } from "./Cobb";
+import { useNavigate } from "react-router-dom";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { getChatPageContext } from "../lib/chat-context";
+import { useDetailRoute } from "../lib/useDetailRoute";
 import { useAiStatus, AiOffNotice } from "./AiStatusNotice";
 
 // Shown only if the basic-mode endpoint itself is unreachable (network error) —
 // the server otherwise always returns a reply (its own no-match nudge).
 const BASIC_FALLBACK =
   "I couldn't reach the assistant just now. For anything about your workspace, connect AI using the link at the top.";
+
+// Chat history is cached per-workspace in localStorage so a page refresh doesn't
+// wipe the conversation. We store ONLY the plain text turns — never the live
+// interactive state (pending proposals, build-draft polls, undo handles), which
+// would be stale on reload. Capped so it can't grow unbounded.
+const CHAT_STORE_PREFIX = "cobblr.cobbchat.";
+const CHAT_STORE_MAX = 100;
+function chatStoreKey(slug: string | null | undefined): string | null {
+  return slug ? `${CHAT_STORE_PREFIX}${slug}` : null;
+}
 
 interface Msg {
   role: "user" | "assistant";
@@ -31,6 +44,8 @@ interface Msg {
   ledgerId?: string; // an EXECUTED write's change-ledger row — the Undo handle
   undoable?: boolean;
   undone?: boolean; // this write was undone from the chat
+  entityKind?: string; // an executed CREATE's entity — powers a "View it" link
+  entityId?: string;
 }
 
 const kindLabel = (id: string) => id.split(":")[1] ?? id;
@@ -122,6 +137,8 @@ function ConsentToggle({
  *  when the panel opens (the two breakpoint-gated instances share one state). */
 export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; setOpen: (v: boolean) => void; asRow?: boolean }) {
   const { activeSlug } = useActiveOrg();
+  const navigate = useNavigate();
+  const detailRoute = useDetailRoute(activeSlug ?? "");
   const aiStatus = useAiStatus();
   const aiOff = !!aiStatus && !aiStatus.available;
   // Tool consent (per-user, per-workspace, enforced server-side): may Cobb read
@@ -177,6 +194,57 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
   }, [input, open]);
 
+  // ── Per-workspace history cache (survives a page refresh) ──────────────────
+  // Tracks which workspace the in-state `messages` belong to. The PERSIST effect
+  // is intentionally defined BEFORE the LOAD effect: on a workspace switch both
+  // fire in the same flush, and effects run in definition order — so persist
+  // runs first, sees the OLD slug in this ref, and skips, instead of writing the
+  // previous workspace's messages under the new workspace's key.
+  const msgsSlugRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (msgsSlugRef.current !== (activeSlug ?? null)) return; // messages not yet reloaded for this slug
+    const key = chatStoreKey(activeSlug);
+    if (!key) return;
+    try {
+      const slim = messages
+        .filter((m) => m.content && m.content.trim())
+        .slice(-CHAT_STORE_MAX)
+        .map((m) => ({ role: m.role, content: m.content }));
+      if (slim.length) localStorage.setItem(key, JSON.stringify(slim));
+      else localStorage.removeItem(key);
+    } catch {
+      /* quota exceeded / storage disabled — history just won't persist */
+    }
+  }, [messages, activeSlug]);
+  useEffect(() => {
+    const key = chatStoreKey(activeSlug);
+    let loaded: Msg[] = [];
+    if (key) {
+      try {
+        const raw = localStorage.getItem(key);
+        const parsed = raw ? (JSON.parse(raw) as unknown) : [];
+        if (Array.isArray(parsed)) loaded = parsed as Msg[];
+      } catch {
+        loaded = [];
+      }
+    }
+    msgsSlugRef.current = activeSlug ?? null;
+    setMessages(loaded);
+  }, [activeSlug]);
+
+  function clearChat() {
+    setMessages([]);
+    setError(null);
+    const key = chatStoreKey(activeSlug);
+    if (key) {
+      try {
+        localStorage.removeItem(key);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
   async function send() {
     const text = input.trim();
     if (!text || busy) return;
@@ -208,6 +276,7 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
       const r = await api.aiChat(
         activeSlug,
         next.map((m) => ({ role: m.role, content: m.content })),
+        getChatPageContext() ?? undefined,
       );
       if (r.type === "build-proposal" && r.building && r.draft_id) {
         // The build runs async (~150s). Show a "designing…" message and poll
@@ -327,7 +396,9 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
         {
           role: "assistant",
           content: (r.ok ? "✓ " : "✗ ") + r.message,
-          ...(r.ok && r.ledger_id ? { resolved: true, ledgerId: r.ledger_id, undoable: r.undoable } : {}),
+          ...(r.ok && r.ledger_id
+            ? { resolved: true, ledgerId: r.ledger_id, undoable: r.undoable, entityKind: r.entity?.kind, entityId: r.entity?.id }
+            : {}),
         },
       ]);
     } catch (e) {
@@ -388,9 +459,22 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
             <div className="flex items-center gap-2 text-sm font-semibold text-content dark:text-mortar-100">
               <Cobb pose="idle" bust size={42} title="Cobb" className="cobb-lift" /> Ask Cobb
             </div>
-            <button type="button" onClick={() => setOpen(false)} className="text-faint hover:text-content dark:hover:text-mortar-200 transition" aria-label="Close">
-              <X size={18} />
-            </button>
+            <div className="flex items-center gap-1">
+              {messages.length > 0 && (
+                <button
+                  type="button"
+                  onClick={clearChat}
+                  className="text-faint hover:text-content dark:hover:text-mortar-200 transition p-1"
+                  aria-label="Clear conversation"
+                  title="Clear this conversation"
+                >
+                  <Trash2 size={15} />
+                </button>
+              )}
+              <button type="button" onClick={() => setOpen(false)} className="text-faint hover:text-content dark:hover:text-mortar-200 transition" aria-label="Close">
+                <X size={18} />
+              </button>
+            </div>
           </header>
 
           {/* Tool consent, always visible while AI is on: since the agent loop,
@@ -523,6 +607,26 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
                       </button>
                     </div>
                   )}
+                  {/* Take-me-there: after a create, offer a jump to the new
+                      record instead of leaving the user to go hunt for it. Only
+                      when the entity kind has a detail route. */}
+                  {(() => {
+                    const to = m.entityKind && m.entityId ? detailRoute(m.entityKind, m.entityId) : null;
+                    return to ? (
+                      <div className="mt-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setOpen(false);
+                            navigate(to);
+                          }}
+                          className="rounded-md bg-cobble-600 hover:bg-cobble-500 text-white text-[11px] font-medium px-2.5 py-0.5 transition"
+                        >
+                          View it →
+                        </button>
+                      </div>
+                    ) : null;
+                  })()}
                   {/* An EXECUTED write (confirmed or auto-applied): the change-
                       ledger makes it reversible — Undo restores the before-image
                       (a recreated delete gets a new id, said honestly). */}

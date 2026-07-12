@@ -202,7 +202,11 @@ function ConnectionForm({
   const isEdit = !!existing;
   const [providerId, setProviderId] = useState(existing?.provider_id ?? providers[0]?.id ?? "");
   const [label, setLabel] = useState(existing?.label ?? "");
-  const [creds, setCreds] = useState<Record<string, string>>({});
+  // Pre-fill the NON-SECRET fields (base_url, choices like transit / mcp_relay,
+  // model) from the saved connection so the form shows what's actually stored —
+  // a dropdown especially must reflect its saved value, not snap to the default.
+  // Secrets aren't returned; they stay blank ("unchanged").
+  const [creds, setCreds] = useState<Record<string, string>>(existing?.credential_values ?? {});
   // Per-workspace routing: org_id → mode. Absence = "Off". Seeded from the
   // connection's saved routes; a dynamic-scope (legacy) connection seeds from
   // its global mode applied to whichever workspaces it currently reaches.
@@ -223,8 +227,19 @@ function ConnectionForm({
 
   const save = useMutation({
     mutationFn: async () => {
+      // NON-secret fields (base_url, choices, model) always ride — their current
+      // value fully represents the desired state (a choice's "" is a real pick,
+      // e.g. "standard", not "keep"). SECRETS only ride when re-typed (blank =
+      // keep); the server MERGES, so a blank secret keeps its stored value.
       const cleanCreds: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(creds)) if (v.trim() !== "") cleanCreds[k] = v;
+      for (const [key, def] of credFields) {
+        const v = creds[key] ?? "";
+        if (def.secret) {
+          if (v.trim() !== "") cleanCreds[key] = v;
+        } else {
+          cleanCreds[key] = v;
+        }
+      }
       const routes = Object.entries(perWs).map(([org_id, mode]) => ({ org_id, mode }));
       if (isEdit) {
         // On edit, only send credentials the user actually re-entered (blank = keep).
@@ -295,7 +310,7 @@ function ConnectionForm({
         <label key={key} className="block">
           <div className="text-xs text-muted mb-1">
             {def.label}
-            {isEdit && existing?.credential_keys.includes(key) && (
+            {isEdit && def.secret && existing?.credential_keys.includes(key) && (
               <span className="text-faint"> · set (leave blank to keep)</span>
             )}
           </div>

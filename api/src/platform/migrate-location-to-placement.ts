@@ -89,6 +89,14 @@ end;
 $$;
 `;
 
+// Advisory-lock key that serialises the placement-sync DDL WITHIN a tenant DB.
+// Advisory locks are scoped to the database they're taken in, and every tenant
+// is its own DB, so this single constant never cross-contends between orgs — it
+// only serialises concurrent installers racing on the SAME tenant (see
+// backfillOne). Any stable bigint works; this one is arbitrary + namespaced by
+// comment.
+const PLACEMENT_SYNC_DDL_LOCK = 0x504c4143n; // "PLAC"
+
 // Per located table: ins/del fire always; update fires only when location_id
 // actually changes (so unrelated updates don't churn placed_at). Idempotent —
 // drop-if-exists + create. Table/kind are hardcoded constants, not user input.
@@ -144,9 +152,36 @@ async function backfillOne(orgId: string): Promise<{ rowsInserted: number }> {
   // Install the sync triggers so placement stays in step with location_id going
   // forward (the backfill above only seeds the current state). One function +
   // two triggers per present table; idempotent, so a re-run refreshes them.
-  await pool.query(TRIGGER_FUNCTION_SQL);
-  for (const t of present) {
-    await pool.query(triggerSql(t.table, t.kind));
+  //
+  // SERIALISED behind a transaction-scoped advisory lock: `enableModuleForOrg`
+  // is called CONCURRENTLY for one fresh org (the test harness's
+  // enableAllModulesForTests fires ~29 `/enable` calls in capped-concurrency
+  // waves against the SAME org), so two located modules (inventory + machines +
+  // assets) can reach HERE at the same time on the SAME tenant DB. Bare
+  // concurrent `CREATE OR REPLACE FUNCTION` on one catalog object
+  // races → Postgres raises `tuple concurrently updated`, and the enable-time
+  // caller (ensurePlacementSyncIfLocated) SWALLOWS it — silently leaving the org
+  // WITHOUT the location_id→placement trigger. A part created afterwards then
+  // gets no placement row and `/of` reads back null: the intermittent
+  // placement-semantics flake. The advisory lock makes concurrent installers
+  // serialise instead of collide; the DDL is idempotent, so the second one
+  // through re-applies cleanly. Now the trigger is GUARANTEED present by the time
+  // the (awaited) enable/checkout returns — placement is coherent on the very
+  // next write, no read-back race.
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    await client.query("select pg_advisory_xact_lock($1)", [PLACEMENT_SYNC_DDL_LOCK.toString()]);
+    await client.query(TRIGGER_FUNCTION_SQL);
+    for (const t of present) {
+      await client.query(triggerSql(t.table, t.kind));
+    }
+    await client.query("commit");
+  } catch (err) {
+    await client.query("rollback").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
   }
 
   return { rowsInserted };

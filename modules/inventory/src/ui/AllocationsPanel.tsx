@@ -166,7 +166,7 @@ function EntityPicker({
   onSelect: (e: { module: string; type: string; id: string; label: string }) => void;
   onClear: () => void;
 }) {
-  const { api } = useInventory();
+  const { api, orgSlug } = useInventory();
   const [q, setQ] = useState("");
   const [debounced, setDebounced] = useState("");
   const [open, setOpen] = useState(false);
@@ -179,6 +179,28 @@ function EntityPicker({
     queryFn: () => api.searchEntities(debounced),
     enabled: debounced.trim().length >= 2,
   });
+
+  // Word the search hint in THIS workspace's vocabulary rather than hardcoded
+  // generic nouns: pull the workspace's instance names (Yarn, Designs, Hooks…)
+  // and name a few, so a yarn+design workspace reads "search a design,
+  // project…" not "task, project". Falls back to a noun-free prompt (never a
+  // hardcoded specific noun) when the list isn't available.
+  const instances = useQuery({
+    queryKey: ["reserve-noun-instances", orgSlug],
+    queryFn: () => api.listWorkspaceInstances(),
+    staleTime: 60_000,
+    enabled: !!orgSlug,
+  });
+  const nouns = Array.from(
+    new Set(
+      (instances.data?.items ?? [])
+        .map((i) => i.display_name.trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  );
+  const searchHint = nouns.length
+    ? `search a ${nouns.slice(0, 3).join(", ")}…`
+    : "search anything to reserve for…";
 
   if (selected) {
     return (
@@ -206,7 +228,7 @@ function EntityPicker({
           setOpen(true);
         }}
         onFocus={() => setOpen(true)}
-        placeholder="search a task, project, anything to reserve for…"
+        placeholder={searchHint}
         className="input text-sm"
       />
       {open && debounced.trim().length >= 2 && (

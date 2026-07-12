@@ -2,13 +2,14 @@
 // sheet preview, print. 'Print' snapshots the queue into a batch
 // and opens a print-ready window at the chosen size.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import QRCode from "qrcode";
-import { Minus, Plus, Printer, Send, Trash2 } from "lucide-react";
-import { usePageTitle, useToast } from "@cobblr/platform-web";
+import { Hash, Minus, Plus, Printer, Send, Trash2 } from "lucide-react";
+import { usePageTitle, useToast, Modal } from "@cobblr/platform-web";
 import { useLabels } from "./context";
 import { BrowsePanel } from "./BrowsePanel";
+import { CodesPanel } from "./CodesPanel";
 import { renderPrintSheetHtml } from "./renderPrintSheet";
 import { liveQrUrl } from "../live-qr-url";
 import {
@@ -22,11 +23,11 @@ import type { Printable } from "./api";
 const PAPER_LS = "cobblr:label-paper";
 const SIZE_LS = "cobblr:label-size";
 
-function qrSvg(payload: string): Promise<string> {
+function qrSvg(payload: string, ecLevel: "M" | "H" = "M"): Promise<string> {
   return QRCode.toString(payload, {
     type: "svg",
     margin: 1,
-    errorCorrectionLevel: "M",
+    errorCorrectionLevel: ecLevel,
   });
 }
 
@@ -51,6 +52,7 @@ export function QueuePage() {
   const [pickedSize, setPickedSize] = useState(
     () => localStorage.getItem(SIZE_LS) ?? "",
   );
+  const [codesOpen, setCodesOpen] = useState(false);
   const sizesForPaper = labelSizesForPaper(paperKey);
   // Effective label size: the user's pick if it's valid for the
   // current paper, else that paper's first size. Derived during
@@ -81,20 +83,74 @@ export function QueuePage() {
     queryFn: () => api.qrLabelBaseUrl(),
   });
   const liveUrl = (payload: string) => liveQrUrl(payload, qrBase.data ?? null);
-  const previewQr = useQuery({
-    queryKey: ["labels-preview-qr", qrBase.data ?? "", expanded.map((e) => e.id).join(",")],
-    queryFn: async (): Promise<Printable[]> => {
-      const cache = new Map<string, string>();
-      for (const it of expanded) {
-        const u = liveUrl(it.qr_payload);
-        if (!cache.has(u)) cache.set(u, await qrSvg(u));
+
+  // Get-or-assign a code per queued entity — shown as a chip on each row and
+  // baked into the preview + print. Idempotent; best-effort (empty on failure).
+  const codes = useQuery({
+    queryKey: ["labels-codes", orgSlug, items.map((i) => i.entity_id).join(",")],
+    queryFn: async (): Promise<Record<string, string>> => {
+      const refs = Array.from(
+        new Map(
+          items.map((it) => [it.entity_id, { kind: `${it.module_name}:${it.entity_type}`, id: it.entity_id }]),
+        ).values(),
+      );
+      try {
+        return (await api.assignCodes(refs)).codes;
+      } catch {
+        return {};
       }
-      return expanded.map((it) => ({
-        description: it.description,
-        qr_svg: cache.get(liveUrl(it.qr_payload))!,
-      }));
     },
-    enabled: expanded.length > 0 && !qrBase.isLoading,
+    enabled: items.length > 0,
+  });
+
+  // Per-kind "draw the code in the QR center" flag (default true) — the preview
+  // must mirror the print, which suppresses the overlay for opted-out kinds.
+  const kinds = useMemo(
+    () => [...new Set(items.map((i) => `${i.module_name}:${i.entity_type}`))],
+    [items],
+  );
+  const overlayCfg = useQuery({
+    queryKey: ["labels-overlay-center", orgSlug, kinds.join(",")],
+    queryFn: async (): Promise<Record<string, boolean>> => {
+      const entries = await Promise.all(
+        kinds.map(async (k) => [k, (await api.getCodeConfig(k)).overlay_center] as const),
+      );
+      return Object.fromEntries(entries);
+    },
+    enabled: kinds.length > 0,
+  });
+
+  const previewQr = useQuery({
+    queryKey: [
+      "labels-preview-qr",
+      qrBase.data ?? "",
+      expanded.map((e) => e.id).join(","),
+      codes.data ? "c" : "0",
+      overlayCfg.data ? Object.entries(overlayCfg.data).map(([k, v]) => `${k}:${v ? 1 : 0}`).join(",") : "o",
+    ],
+    queryFn: async (): Promise<Printable[]> => {
+      const codeMap = codes.data ?? {};
+      const overlayMap = overlayCfg.data ?? {};
+      // A QR carrying a center code is rendered at EC=H so the pill stays scannable.
+      const cache = new Map<string, string>();
+      const svgFor = async (payload: string, hasCode: boolean) => {
+        const key = `${payload}|${hasCode ? "H" : "M"}`;
+        if (!cache.has(key)) cache.set(key, await qrSvg(payload, hasCode ? "H" : "M"));
+        return cache.get(key)!;
+      };
+      return Promise.all(
+        expanded.map(async (it) => {
+          const overlayOn = overlayMap[`${it.module_name}:${it.entity_type}`] ?? true;
+          const code = overlayOn ? codeMap[it.entity_id] : undefined;
+          return {
+            description: it.description,
+            qr_svg: await svgFor(liveUrl(it.qr_payload), !!code),
+            center_code: code,
+          };
+        }),
+      );
+    },
+    enabled: expanded.length > 0 && !qrBase.isLoading && !codes.isLoading && !overlayCfg.isLoading,
   });
 
   const remove = useMutation({
@@ -131,17 +187,22 @@ export function QueuePage() {
         throw new Error("No printer configured — add one at Configuration → Printers.");
       }
       const printer = printers.find((p) => p.is_default) ?? printers[0]!;
-      const { pdf_base64 } = await api.renderPdf(sizeKey);
+      const { pdf_base64, warnings } = await api.renderPdf(sizeKey);
       const job = await api.printToPrinter(printer.id, {
         document_base64: pdf_base64,
         content_type: "application/pdf",
         filename: "labels.pdf",
         job_name: "labels",
       });
-      return { printer, job };
+      return { printer, job, warnings: warnings ?? [] };
     },
-    onSuccess: ({ printer, job }) =>
-      toast.success(`Sent to ${printer.name} — job ${job.jobId} (${job.state})`),
+    onSuccess: ({ printer, job, warnings }) => {
+      toast.success(`Sent to ${printer.name} — job ${job.jobId} (${job.state})`);
+      if (warnings.length) {
+        const codes = warnings.map((w) => w.code).join(", ");
+        toast.error(`Heads up: code${warnings.length === 1 ? "" : "s"} ${codes} may be too long to scan reliably. Shorten the prefix or use a larger label.`);
+      }
+    },
     onError: (e) => toast.error((e as Error).message),
   });
 
@@ -198,6 +259,14 @@ export function QueuePage() {
           <Printer size={14} />
           {print.isPending ? "…" : `Print ${total}`}
         </button>
+        <button
+          onClick={() => setCodesOpen(true)}
+          className="rounded-md border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
+          title="Find an item by code, rename a prefix, or change what codes group by"
+        >
+          <Hash size={14} />
+          Codes
+        </button>
       </div>
 
       {list.isLoading && <div className="text-sm text-faint dark:text-slate-500">loading…</div>}
@@ -218,45 +287,57 @@ export function QueuePage() {
           <div className="xl:flex-1 xl:min-w-0 space-y-2">
             <ul className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 divide-y divide-line dark:divide-slate-700">
               {items.map((it) => (
-                <li key={it.id} className="px-4 py-3 flex items-baseline gap-3 text-sm">
-                  <span className="font-mono text-[10px] text-faint dark:text-slate-500 shrink-0">
-                    {it.module_name}/{it.entity_type}
-                  </span>
-                  <span className="text-content dark:text-mortar-100 shrink-0 max-w-[16rem] truncate">{it.description}</span>
-                  <span
-                    className="font-mono text-[10px] text-faint dark:text-slate-500 flex-1 min-w-0 truncate"
+                <li key={it.id} className="px-4 py-3 space-y-1.5 text-sm">
+                  {/* Line 1 — identity + controls. */}
+                  <div className="flex items-baseline gap-3">
+                    <span className="font-mono text-[10px] text-faint dark:text-slate-500 shrink-0">
+                      {it.module_name}/{it.entity_type}
+                    </span>
+                    <span className="text-content dark:text-mortar-100 flex-1 min-w-0 truncate">{it.description}</span>
+                    {codes.data?.[it.entity_id] && (
+                      <span
+                        className="font-mono text-[11px] font-bold shrink-0 px-1.5 py-0.5 rounded bg-subtle dark:bg-slate-800 text-content dark:text-mortar-100"
+                        title="This item's label code"
+                      >
+                        {codes.data[it.entity_id]}
+                      </span>
+                    )}
+                    <div className="flex items-center gap-1 shrink-0" title="Copies to print">
+                      <button
+                        onClick={() => setQty.mutate({ id: it.id, qty: Math.max(1, it.qty - 1) })}
+                        disabled={it.qty <= 1 || setQty.isPending}
+                        className="w-5 h-5 grid place-items-center rounded border border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-100 disabled:opacity-30 disabled:cursor-not-allowed transition"
+                        aria-label="Fewer copies"
+                      >
+                        <Minus size={11} />
+                      </button>
+                      <span className="font-mono text-xs text-muted dark:text-slate-400 w-7 text-center tabular-nums">
+                        ×{it.qty}
+                      </span>
+                      <button
+                        onClick={() => setQty.mutate({ id: it.id, qty: Math.min(99, it.qty + 1) })}
+                        disabled={it.qty >= 99 || setQty.isPending}
+                        className="w-5 h-5 grid place-items-center rounded border border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-100 disabled:opacity-30 disabled:cursor-not-allowed transition"
+                        aria-label="More copies"
+                      >
+                        <Plus size={11} />
+                      </button>
+                    </div>
+                    <button
+                      onClick={() => remove.mutate(it.id)}
+                      className="text-faint dark:text-slate-600 hover:text-ember-500 transition shrink-0"
+                      title="Remove from queue"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                  {/* Line 2 — the full scan URL on its own row, no longer clipped. */}
+                  <div
+                    className="font-mono text-[10px] text-faint dark:text-slate-500 break-all"
                     title={liveUrl(it.qr_payload)}
                   >
                     {liveUrl(it.qr_payload)}
-                  </span>
-                  <div className="flex items-center gap-1 shrink-0" title="Copies to print">
-                    <button
-                      onClick={() => setQty.mutate({ id: it.id, qty: Math.max(1, it.qty - 1) })}
-                      disabled={it.qty <= 1 || setQty.isPending}
-                      className="w-5 h-5 grid place-items-center rounded border border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-100 disabled:opacity-30 disabled:cursor-not-allowed transition"
-                      aria-label="Fewer copies"
-                    >
-                      <Minus size={11} />
-                    </button>
-                    <span className="font-mono text-xs text-muted dark:text-slate-400 w-7 text-center tabular-nums">
-                      ×{it.qty}
-                    </span>
-                    <button
-                      onClick={() => setQty.mutate({ id: it.id, qty: Math.min(99, it.qty + 1) })}
-                      disabled={it.qty >= 99 || setQty.isPending}
-                      className="w-5 h-5 grid place-items-center rounded border border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-100 disabled:opacity-30 disabled:cursor-not-allowed transition"
-                      aria-label="More copies"
-                    >
-                      <Plus size={11} />
-                    </button>
                   </div>
-                  <button
-                    onClick={() => remove.mutate(it.id)}
-                    className="text-faint dark:text-slate-600 hover:text-ember-500 transition"
-                    title="Remove from queue"
-                  >
-                    <Trash2 size={14} />
-                  </button>
                 </li>
               ))}
             </ul>
@@ -280,6 +361,15 @@ export function QueuePage() {
           </div>
         </div>
       )}
+
+      <Modal
+        open={codesOpen}
+        onClose={() => setCodesOpen(false)}
+        title="Label codes"
+        subtitle="Find an item by code · rename a prefix · change grouping"
+      >
+        <CodesPanel />
+      </Modal>
     </div>
   );
 }
@@ -298,13 +388,30 @@ function SheetPreview({
   paperW: number;
   paperH: number;
 }) {
-  // Scale the real-inch sheet to fit within a generous box, keeping
-  // aspect ratio — wide rolls and tall Letter sheets both fill it.
-  const MAX_W = 660;
+  // Fit the real-inch sheet to the ACTUAL column width, not a fixed 660px — in
+  // the half-width side-by-side layout the column is narrower than that, so a
+  // fixed width overflowed and clipped the 2nd label tile. Measure the padded
+  // box with a ResizeObserver and scale the whole first sheet to fit it (still
+  // capped in height so a tall Letter sheet doesn't run off the page).
   const MAX_H = 820;
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [boxW, setBoxW] = useState(0);
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width;
+      if (w != null) setBoxW(w);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   const natW = paperW * 96;
   const natH = paperH * 96;
-  const scale = Math.min(MAX_W / natW, MAX_H / natH);
+  // Until the first measurement lands, fall back to natW so nothing over-scales.
+  const availW = boxW > 0 ? boxW : natW;
+  const scale = Math.min(availW / natW, MAX_H / natH);
   const html = renderPrintSheetHtml(printables, sizeKey, { previewOnly: true });
 
   return (
@@ -312,7 +419,10 @@ function SheetPreview({
       <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
         // sheet preview <span className="text-faint dark:text-slate-500">— {paperW}″ × {paperH}″, first sheet</span>
       </div>
-      <div className="rounded-xl border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/40 p-5 flex justify-center">
+      <div
+        ref={boxRef}
+        className="rounded-xl border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/40 p-5 flex justify-center"
+      >
         <div
           className="rounded-lg border border-line dark:border-slate-700 bg-surface overflow-hidden shadow-md"
           style={{ width: natW * scale, height: natH * scale }}

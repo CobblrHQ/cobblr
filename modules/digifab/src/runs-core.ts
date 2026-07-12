@@ -62,44 +62,63 @@ async function coveringCounts(db: Kysely<DigifabDB>, runIds: string[]): Promise<
 }
 
 /** Mint queued pool jobs for every active run, up to the over-dispatch ceiling.
- *  Returns how many jobs were minted (callers only need it for logging/tests). */
+ *  Returns how many jobs were minted (callers only need it for logging/tests).
+ *
+ *  Each run is minted inside its own transaction that LOCKS the run row
+ *  (`forUpdate`). recordRunVerdict's close path takes the same lock, so the two
+ *  can never interleave: this pass either mints while the run is provably still
+ *  `active` (and a concurrent close then commits AFTER us and sweeps the queued
+ *  jobs we just inserted), or it observes the run already `completed` and mints
+ *  nothing. Without the lock, a pass that read the run as active a beat before a
+ *  verdict closed it could INSERT a queued job AFTER the close swept the queue —
+ *  leaving the run completed with a phantom `queued` sibling (jobs_queued stuck
+ *  at 1). Recomputing `covering` under the same lock also stops two overlapping
+ *  passes from both minting the same replacement (over-dispatch past the ceiling). */
 export async function mintRunJobs(db: Kysely<DigifabDB>, _orgId: string): Promise<number> {
-  const runs = (await db
+  const activeRuns = await db
     .selectFrom("digifab_production_runs")
-    .selectAll()
+    .select("id")
     .where("status", "=", "active")
-    .execute()) as RunRow[];
-  if (!runs.length) return 0;
-
-  const covering = await coveringCounts(
-    db,
-    runs.map((r) => r.id),
-  );
+    .execute();
+  if (!activeRuns.length) return 0;
 
   let minted = 0;
-  for (const run of runs) {
-    const ppp = Math.max(1, run.parts_per_plate);
-    const remaining = run.target_qty - run.completed_qty;
-    if (remaining <= 0) continue; // closed at verdict time; belt-and-braces
-    const needed = Math.ceil(remaining / ppp) - (covering.get(run.id) ?? 0);
-    for (let i = 0; i < needed; i++) {
-      await db
-        .insertInto("digifab_jobs")
-        .values({
-          file_ref: run.file_ref,
-          file_id: run.file_id,
-          target_pool: run.pool_id,
-          run_id: run.id,
-          status: "queued",
-          priority: run.priority,
-          material_part_id: run.material_part_id,
-          material_grams: run.material_grams,
-          linked_build_id: run.linked_build_id,
-          build_qty: run.build_qty,
-        })
-        .execute();
-      minted++;
-    }
+  for (const { id: runId } of activeRuns) {
+    minted += await db.transaction().execute(async (trx) => {
+      const run = (await trx
+        .selectFrom("digifab_production_runs")
+        .selectAll()
+        .where("id", "=", runId)
+        .forUpdate()
+        .executeTakeFirst()) as RunRow | undefined;
+      // Closed (or cancelled/paused) since the unlocked scan above → mint nothing.
+      if (!run || run.status !== "active") return 0;
+      const ppp = Math.max(1, run.parts_per_plate);
+      const remaining = run.target_qty - run.completed_qty;
+      if (remaining <= 0) return 0; // closed at verdict time; belt-and-braces
+      const covering = (await coveringCounts(trx, [runId])).get(runId) ?? 0;
+      const needed = Math.ceil(remaining / ppp) - covering;
+      let n = 0;
+      for (let i = 0; i < needed; i++) {
+        await trx
+          .insertInto("digifab_jobs")
+          .values({
+            file_ref: run.file_ref,
+            file_id: run.file_id,
+            target_pool: run.pool_id,
+            run_id: run.id,
+            status: "queued",
+            priority: run.priority,
+            material_part_id: run.material_part_id,
+            material_grams: run.material_grams,
+            linked_build_id: run.linked_build_id,
+            build_qty: run.build_qty,
+          })
+          .execute();
+        n++;
+      }
+      return n;
+    });
   }
   return minted;
 }
@@ -148,39 +167,54 @@ export async function recordRunVerdict(
   if (Number(claim.numUpdatedRows ?? 0n) === 0) return { counted: false, runCompleted: false };
   if (outcome === "scrapped") return { counted: false, runCompleted: false };
 
-  const run = (await db
-    .selectFrom("digifab_production_runs")
-    .selectAll()
-    .where("id", "=", job.run_id)
-    .executeTakeFirst()) as RunRow | undefined;
-  if (!run) return { counted: false, runCompleted: false };
+  const runId = job.run_id;
+  // Count + (maybe) close atomically under a lock on the run row. mintRunJobs
+  // takes the SAME lock, so the count/close and any concurrent minting pass
+  // serialize: if we close first, that pass then sees `completed` and mints
+  // nothing; if it mints first, our close's queue sweep below catches its freshly
+  // inserted jobs. Either way the run never ends completed-with-a-queued-sibling.
+  const settled = await db.transaction().execute(async (trx) => {
+    const run = (await trx
+      .selectFrom("digifab_production_runs")
+      .selectAll()
+      .where("id", "=", runId)
+      .forUpdate()
+      .executeTakeFirst()) as RunRow | undefined;
+    if (!run) return null;
 
-  const ppp = Math.max(1, run.parts_per_plate);
-  const newCompleted = run.completed_qty + ppp;
-  const done = newCompleted >= run.target_qty && run.status !== "completed";
-  await db
-    .updateTable("digifab_production_runs")
-    .set({ completed_qty: newCompleted, ...(done ? { status: "completed" } : {}), updated_at: new Date() })
-    .where("id", "=", run.id)
-    .execute();
-
-  if (done) {
-    // Cancel plates that never left the queue — in-flight ones finish normally
-    // (their good verdicts may overshoot completed_qty past target; honest ledger).
-    await db
-      .updateTable("digifab_jobs")
-      .set({ status: "cancelled", error: "production run reached its target", updated_at: new Date() })
-      .where("run_id", "=", run.id)
-      .where("status", "=", "queued")
+    const ppp = Math.max(1, run.parts_per_plate);
+    const newCompleted = run.completed_qty + ppp;
+    const done = newCompleted >= run.target_qty && run.status !== "completed";
+    await trx
+      .updateTable("digifab_production_runs")
+      .set({ completed_qty: newCompleted, ...(done ? { status: "completed" } : {}), updated_at: new Date() })
+      .where("id", "=", run.id)
       .execute();
+
+    if (done) {
+      // Cancel plates that never left the queue — in-flight ones finish normally
+      // (their good verdicts may overshoot completed_qty past target; honest ledger).
+      await trx
+        .updateTable("digifab_jobs")
+        .set({ status: "cancelled", error: "production run reached its target", updated_at: new Date() })
+        .where("run_id", "=", run.id)
+        .where("status", "=", "queued")
+        .execute();
+    }
+    return { run, newCompleted, done };
+  });
+  if (!settled) return { counted: false, runCompleted: false };
+
+  if (settled.done) {
+    // Emit after the transaction commits (never fire a wire for a rolled-back close).
     void platform().events.emit("digifab.run.completed", {
       orgId,
-      runId: run.id,
-      name: run.name,
-      targetQty: run.target_qty,
-      completedQty: newCompleted,
-      linkedBuildId: run.linked_build_id,
+      runId: settled.run.id,
+      name: settled.run.name,
+      targetQty: settled.run.target_qty,
+      completedQty: settled.newCompleted,
+      linkedBuildId: settled.run.linked_build_id,
     });
   }
-  return { counted: true, runCompleted: done };
+  return { counted: true, runCompleted: settled.done };
 }

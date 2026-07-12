@@ -283,6 +283,17 @@ const EntityKind = z
     traits: RawTraits.optional(),
     profile: PresetNameSchema.optional(),
     overrides: RawTraits.optional(),
+    // Labeling hint (read generically by the `labels` module via the kernel
+    // entity-kind registry — NOT a labels-specific coupling). Whether a
+    // printed label draws the human-readable code in the QR center DEFAULTS
+    // to this per-kind value when the workspace hasn't set an explicit
+    // toggle. Omitted => true (today's behavior). A kind sets it `false`
+    // when its entities are name-unique / non-enumerable enough that a
+    // disambiguating code is noise — e.g. a location ("the Office"), unlike
+    // "monitor 5 of 17". Any module may declare it; a generic extension
+    // point, not a special case. A user's explicit per-kind toggle still
+    // wins over this default. See docs/design-decisions/label-codes.md.
+    labelCodeOverlayDefault: z.boolean().optional(),
   })
   .superRefine((data, ctx) => {
     if (data.traits && data.profile) {
@@ -1349,6 +1360,13 @@ export interface EntityKindRecord {
   /** Preset name (e.g. "owned-thing") if the manifest used profile
    *  shorthand. Bookkeeping for tooling. */
   profile: string | null;
+  /** Labeling hint declared by the owning module: the default for
+   *  drawing the human-readable code in the QR center when a workspace
+   *  hasn't set an explicit per-kind toggle. Null = undeclared (the
+   *  labels module treats null/absent as true — today's behavior). The
+   *  labels module reads this generically off the registry rather than
+   *  branching on any kind string. See docs/design-decisions/label-codes.md. */
+  label_code_overlay_default: boolean | null;
   /** Cross-module read whitelist. Null = legacy (full fields returned,
    *  deprecation logged). Array = the names of fields foreign callers
    *  may read; the kernel projects ResolvedEntity.fields to this list
@@ -1366,6 +1384,23 @@ export interface EntityKindRecord {
  *  wire-engine running an event-triggered action, in which case
  *  the return is mostly ignored. */
 export type ActionHandler = (ctx: ActionInvokeContext) => Promise<unknown>;
+
+/** A UI directive an action handler MAY include in its result to ask the web
+ *  shell to open a first-party FLOW after the action completes — e.g.
+ *  disassemble-kit returning `{ ok, ui: { flow: "core-scan:organize", args:
+ *  { scope: "refs", refs } } }` so the sorting planner opens over exactly the
+ *  parts it just spawned. The shell's action-invoke path (EntityActionsBar)
+ *  reads `result.ui` and opens the registered flow; unknown flows are ignored,
+ *  so this is safe to return whether or not the shell yet honors it. Declarative
+ *  from the module's side — the handler returns data, never touches the web app
+ *  (module isolation). Generic: any action of any module can hand off to any
+ *  registered flow. See docs/architecture/invokable-flows-and-lego-redesign.md. */
+export interface ActionUiDirective {
+  /** Registered flow id, e.g. "core-scan:organize". */
+  flow: string;
+  /** Opaque args passed to the flow (e.g. { scope: "refs", refs: [...] }). */
+  args?: Record<string, unknown>;
+}
 
 /** Per-request authentication context. Inherited from the originating
  *  request so wires fired async still carry the right actor (a stock

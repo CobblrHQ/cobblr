@@ -61,7 +61,14 @@ interface FeaturedMode {
    *  panel and navigate straight into the bundle's landing module (the first
    *  next-step, else the first required module) so the user isn't stranded. */
   autoLand?: boolean;
+  /** Post-install hook. When set, it replaces autoLand + the "what's next"
+   *  panel: after a successful install the modal calls this and closes, handing
+   *  control back to the caller. The capture flow uses it to commit the pending
+   *  captures onto the tables this install just created, then navigate. */
+  onInstalled?: (result: InstallResult) => void | Promise<void>;
 }
+
+type InstallResult = Awaited<ReturnType<typeof api.installBundle>>;
 
 type Props = {
   open: boolean;
@@ -80,6 +87,10 @@ export function BundleDetailModal(props: Props) {
   // showing the "what's next" panel (which is the right call from the
   // marketplace, but leaves a brand-new user a click short of their data).
   const autoLand = props.mode === "featured" && props.autoLand === true;
+  // A caller-supplied post-install hook (the capture flow). Like autoLand it
+  // replaces the "what's next" panel — the caller drives what happens next.
+  const onInstalledCb = props.mode === "featured" ? props.onInstalled : undefined;
+  const hasPostInstall = autoLand || !!onInstalledCb;
   // An installed bundle whose installed version differs from this manifest's
   // version → offer an Update (install supersedes by external_id).
   const installedVersion = props.mode === "featured" ? props.installedVersion ?? null : null;
@@ -264,11 +275,11 @@ export function BundleDetailModal(props: Props) {
           nextSteps: deriveNextSteps(props.manifest, props.nextSteps, selectedFeatures),
         });
       }
-      // Wizard mode lands straight in the module (handled in handleInstall).
+      // Wizard mode + the post-install hook land/hand-off in handleInstall.
       // An update just closes — no "where to start". A fresh marketplace install
       // keeps the modal open on the guided "what's next" panel.
-      if (autoLand) {
-        /* landAfterInstall navigates */
+      if (hasPostInstall) {
+        /* handleInstall runs landAfterInstall or onInstalled */
       } else if (isUpdate) {
         // Return the user to where they launched the update from (e.g. the
         // workspace home), not stranded on /bundles. Dashboard passes ?returnTo.
@@ -517,8 +528,13 @@ export function BundleDetailModal(props: Props) {
     // then the clean install. Each handled error sets up the next retry.
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        await install.mutateAsync({ manifest, confirm: confirmEnable, enabledFeatures, takeTheirs });
-        await landAfterInstall();
+        const r = await install.mutateAsync({ manifest, confirm: confirmEnable, enabledFeatures, takeTheirs });
+        if (onInstalledCb) {
+          await onInstalledCb(r);
+          onClose();
+        } else {
+          await landAfterInstall();
+        }
         return;
       } catch (e) {
         if (!(e instanceof ApiError)) return;
@@ -700,7 +716,10 @@ export function BundleDetailModal(props: Props) {
             {props.blurb}
           </p>
         )}
-        {description && (
+        {/* Skip the description when it just repeats the blurb — several featured
+            entries set both to the same string, which rendered the paragraph
+            twice. */}
+        {description && description.trim() !== (props.mode === "featured" ? props.blurb?.trim() : undefined) && (
           <p className="text-sm text-content dark:text-mortar-200">{description}</p>
         )}
 

@@ -41,6 +41,7 @@ export default defineModule({
           { name: "family", type: "text" },
           { name: "type", type: "text" },
           { name: "manufacturer", type: "text" },
+          { name: "serial_number", type: "text" },
           { name: "state", type: "text" },
           { name: "image_path", type: "image-path", role: "image" },
           { name: "notes", type: "text" },

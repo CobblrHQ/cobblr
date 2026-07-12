@@ -9,6 +9,9 @@ export interface CatalogsTable {
   description: string | null;
   source_url: string | null;
   puller_id: string | null;
+  /** Where the ROWS live: "local" (tenant DB, imported) or "hosted" (the shared
+   *  reference service). Default "local". See migration 0003 + docs. */
+  source: Generated<string>;
   schema: Generated<Record<string, unknown>>;
   last_sync_at: Date | null;
   entry_count: Generated<number>;

@@ -16,12 +16,24 @@ export interface QueueItem {
 export interface Printable {
   description: string;
   qr_svg: string;
+  /** Human-readable code drawn in the QR center (m1, p42, …), when assigned. */
+  center_code?: string;
 }
 
 export interface PrintResponse {
   batch_id: string;
   count: number;
   printables: Printable[];
+}
+
+/** A code group: the thing that owns a prefix + number line. */
+export interface CodeGroup {
+  group_key: string;
+  entity_kind: string;
+  prefix: string;
+  label: string | null;
+  count: number;
+  frozen: boolean;
 }
 
 /** One tab in the browser — a labelable, non-empty INSTANCE the workspace
@@ -109,12 +121,48 @@ export class LabelsApi {
     );
   };
 
-  /** Render the queue to a print-ready PDF (server-side, pdf-lib). */
+  /** Render the queue to a print-ready PDF (server-side, pdf-lib). `warnings`
+   *  flags any label whose center code would crowd the QR past scannable. */
   renderPdf = (size_key: string, item_ids?: string[]) =>
-    this.request<{ pdf_base64: string; sheets: number; labels: number }>(
-      "POST",
-      "/print/render",
-      { size_key, item_ids },
+    this.request<{
+      pdf_base64: string;
+      sheets: number;
+      labels: number;
+      warnings?: Array<{ kind: string; code: string; reason: string; coveredFraction: number }>;
+    }>("POST", "/print/render", { size_key, item_ids });
+
+  // ── human-readable codes ────────────────────────────────────────────
+  /** Get-or-assign codes for a batch of entity refs. */
+  assignCodes = (refs: Array<{ kind: string; id: string }>) =>
+    this.request<{ codes: Record<string, string> }>("POST", "/codes/assign", { refs });
+  /** Resolve a typed/scanned code to its entity (tolerant of case + look-alikes). */
+  resolveCode = (q: string) =>
+    this.request<{ entity_kind: string; entity_id: string; code: string; title: string | null; detail_url: string | null }>(
+      "GET",
+      `/codes/resolve?q=${encodeURIComponent(q)}`,
+    );
+  /** The per-kind grain (which field groups codes) + whether the code is drawn
+   *  in the QR center for this kind (default true). */
+  getCodeConfig = (kind: string) =>
+    this.request<{ entity_kind: string; group_field: string; overlay_center: boolean }>(
+      "GET",
+      `/codes/config?kind=${encodeURIComponent(kind)}`,
+    );
+  /** Patch a kind's grain and/or its QR-center toggle. Send only what changed. */
+  setCodeConfig = (kind: string, patch: { group_field?: string; overlay_center?: boolean }) =>
+    this.request<{ entity_kind: string; group_field: string; overlay_center: boolean }>(
+      "PATCH",
+      "/codes/config",
+      { kind, ...patch },
+    );
+  /** Every code group with its prefix + count, for the management panel. */
+  listCodeGroups = () => this.request<{ groups: CodeGroup[] }>("GET", "/codes/groups");
+  /** Rename a group's prefix (rejected once the group has printed codes). */
+  renameCodePrefix = (groupKey: string, prefix: string) =>
+    this.request<{ group_key: string; prefix: string }>(
+      "PATCH",
+      `/codes/groups/${encodeURIComponent(groupKey)}`,
+      { prefix },
     );
 
   // core-print is a sibling module reached over HTTP (no import). Labels

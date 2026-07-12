@@ -13,6 +13,10 @@ export const IDENTIFY_PROMPT =
   "component, consumable, material or supply).\n\n" +
   "If a UPC/EAN barcode is printed on the package and the digits are clearly " +
   "legible, read them.\n\n" +
+  "If a serial number or service tag is printed on the item or its label and " +
+  "clearly legible, read it VERBATIM (exactly the characters shown). Never " +
+  "guess one, and never complete a partly-hidden or blurry one — omit it " +
+  "instead. It is an identifier, not a description.\n\n" +
   "If the item is a titled work that belongs to a KNOWN SERIES or franchise — " +
   "a book in a series (Harry Potter, Little House on the Prairie), a film in a " +
   "franchise (John Wick), an album in a set — name that series. Only when you " +
@@ -21,6 +25,7 @@ export const IDENTIFY_PROMPT =
   '"category": <string|null>, "entity_type": "asset"|"part"|null, ' +
   '"series": <the series/franchise name if this is part of one, else null>, ' +
   '"barcode": <the UPC/EAN digits if clearly legible, else null>, ' +
+  '"serial_number": <the serial number / service tag read verbatim if clearly legible, else null>, ' +
   '"confidence": <0..1, how sure you are>}. If the photo is unclear, empty, or ' +
   "not a single identifiable object, reply name \"\" and confidence 0.";
 

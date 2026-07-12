@@ -254,9 +254,12 @@ function PresentationRow({
         (hidden ? "border-line dark:border-slate-700 opacity-60" : "border-line dark:border-slate-700")
       }
     >
+      {/* Fixed-width so the KIND/INSTANCE tag column is the same width on every
+          row (INSTANCE is wider than KIND) — the title column then starts at the
+          same x and the rows align left-to-right. */}
       <span
         className={
-          "shrink-0 text-[10px] font-mono uppercase tracking-widest " +
+          "shrink-0 w-16 text-[10px] font-mono uppercase tracking-widest " +
           (row.target_kind === "instance" ? "text-accent" : "text-faint")
         }
       >

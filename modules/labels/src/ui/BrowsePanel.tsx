@@ -8,7 +8,7 @@
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Plus, Search } from "lucide-react";
+import { Check, Plus, Search, X } from "lucide-react";
 import { EntityThumb, buildLocationForest, flattenLocationForest } from "@cobblr/platform-web";
 import { useLabels } from "./context";
 import type { LabelableItem } from "./api";
@@ -44,12 +44,15 @@ export function BrowsePanel() {
     queryFn: () => api.listQueue(),
     enabled: !!orgSlug,
   });
-  const queuedKeys = useMemo(() => {
-    const s = new Set<string>();
+  // Map "{kind}:{id}" → the queue item's id, so an "Added" row can REMOVE the
+  // exact queue entry (not just show a checkmark). One entry per entity; qty is
+  // managed by the stepper in the queue list, so browse is purely in/out.
+  const queuedIds = useMemo(() => {
+    const m = new Map<string, string>();
     for (const it of queueQ.data?.items ?? []) {
-      s.add(`${it.module_name}:${it.entity_type}:${it.entity_id}`);
+      m.set(`${it.module_name}:${it.entity_type}:${it.entity_id}`, it.id);
     }
-    return s;
+    return m;
   }, [queueQ.data]);
 
   const add = useMutation({
@@ -59,6 +62,11 @@ export function BrowsePanel() {
     // unscannable and ignored the workspace's custom label base URL.
     mutationFn: (it: LabelableItem) =>
       api.queueLabelForEntity({ entity_kind: it.kind, entity_id: it.id, description: it.title }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["labels-queue"] }),
+  });
+
+  const remove = useMutation({
+    mutationFn: (queueItemId: string) => api.removeFromQueue(queueItemId),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["labels-queue"] }),
   });
 
@@ -105,8 +113,11 @@ export function BrowsePanel() {
 
   // One row — shared by the flat grid and the indented tree.
   const renderRow = (it: LabelableItem, indent = 0) => {
-    const queued = queuedKeys.has(`${it.kind}:${it.id}`);
+    const queueItemId = queuedIds.get(`${it.kind}:${it.id}`);
+    const queued = queueItemId != null;
     const adding = add.isPending && add.variables?.id === it.id;
+    const removing = remove.isPending && remove.variables === queueItemId;
+    const busy = adding || removing;
     return (
       <li
         key={it.id}
@@ -120,20 +131,33 @@ export function BrowsePanel() {
             <div className="text-[11px] text-faint dark:text-slate-500 truncate">{it.subtitle}</div>
           )}
         </div>
-        <button
-          onClick={() => add.mutate(it)}
-          disabled={adding}
-          className={
-            "shrink-0 rounded-md text-xs font-medium px-2.5 py-1.5 transition flex items-center gap-1 disabled:opacity-50 " +
-            (queued
-              ? "text-emerald-600 dark:text-emerald-400"
-              : "border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200")
-          }
-          title={queued ? "Already in the queue — add another" : "Add to the label queue"}
-        >
-          {queued ? <Check size={13} /> : <Plus size={13} />}
-          {queued ? "Added" : adding ? "…" : "Add"}
-        </button>
+        {queued ? (
+          // A queued row is a REMOVE toggle: "Added ✓" at rest, "Remove ✕"
+          // (ember) on hover/focus. Clicking takes it back out of the queue.
+          <button
+            onClick={() => queueItemId && remove.mutate(queueItemId)}
+            disabled={busy}
+            aria-label={`Remove ${it.title} from the label queue`}
+            title="In the queue — click to remove"
+            className="group/qbtn shrink-0 rounded-md text-xs font-medium px-2.5 py-1.5 transition flex items-center gap-1 disabled:opacity-50 text-emerald-600 dark:text-emerald-400 hover:text-ember-600 dark:hover:text-ember-400 border border-transparent hover:border-ember-400/60"
+          >
+            <Check size={13} className="group-hover/qbtn:hidden" />
+            <X size={13} className="hidden group-hover/qbtn:inline" />
+            <span className="group-hover/qbtn:hidden">{removing ? "…" : "Added"}</span>
+            <span className="hidden group-hover/qbtn:inline">Remove</span>
+          </button>
+        ) : (
+          <button
+            onClick={() => add.mutate(it)}
+            disabled={busy}
+            aria-label={`Add ${it.title} to the label queue`}
+            title="Add to the label queue"
+            className="shrink-0 rounded-md text-xs font-medium px-2.5 py-1.5 transition flex items-center gap-1 disabled:opacity-50 border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200"
+          >
+            <Plus size={13} />
+            {adding ? "…" : "Add"}
+          </button>
+        )}
       </li>
     );
   };

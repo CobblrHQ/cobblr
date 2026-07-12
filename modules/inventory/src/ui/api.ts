@@ -514,6 +514,17 @@ export class InventoryApi {
       )}`,
     );
 
+  /** Every module instance in this workspace (Yarn, Designs, Hooks…), across
+   *  all modules. Used to word UI placeholders in the workspace's OWN
+   *  vocabulary instead of hardcoded generic nouns — e.g. the reserve-for
+   *  search hint reads "search a design, project…" on a yarn+design
+   *  workspace. Read-only; safe to fail soft. */
+  listWorkspaceInstances = () =>
+    this.requestAbs<{ items: Array<{ module_name: string; instance_name: string; display_name: string }> }>(
+      "GET",
+      `/api/v1/orgs/${this.slug}/instances`,
+    );
+
   /** Writes a `relationship_kind=matches` row in entity_pairings.
    *  Called after createPart() when the user picked a catalog hit on
    *  the quick-add form. */

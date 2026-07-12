@@ -11,6 +11,7 @@
 
 import type { ReactNode } from "react";
 import { useImageSrc } from "./useImageSrc";
+import { pickThumb, type SwatchFieldDef } from "./swatch";
 
 interface Props {
   /** Image URL or null. Falls back to an initial-letter card. */
@@ -28,19 +29,32 @@ interface Props {
    *  with this instead of the initial-letter card — e.g. a yarn/filament
    *  colour is the item's identity. Mirrors EntityThumb's `color`. */
   color?: string | null;
+  /** The item's stored field VALUES (its metadata bag). Passing this opts the
+   *  tile into swatch-preference: a swatch-eligible colour field with a hex
+   *  value fills the square INSTEAD of the photo. Mirrors EntityThumb. */
+  values?: Record<string, unknown> | null;
+  /** Field DEFS, paired with `values` to decide swatch-eligibility. Optional —
+   *  without defs the conventional `color`/`colour` keys are recognised. */
+  fieldDefs?: readonly SwatchFieldDef[] | null;
   /** Optional ember-tinted border when the row wants attention
    *  (low-stock, blocked, expired). */
   attention?: boolean;
 }
 
-export function EntityTile({ src, title, subtitle, badge, color, attention }: Props) {
+export function EntityTile({ src, title, subtitle, badge, color, values, fieldDefs, attention }: Props) {
   const borderCls = attention
     ? "border-ember-300 dark:border-ember-700"
     : "border-line dark:border-slate-700";
+  // A swatch-eligible colour field with a hex WINS over the photo (yarn's
+  // colourway is its identity, not a generic catalog shot). Decided before the
+  // fetch — skip loading the image when the swatch wins.
+  const choice = pickThumb({ hasImage: !!src, values, defs: fieldDefs, color });
+  const wantSwatch = choice.kind === "swatch";
   // Internal /api/v1/files URLs need Bearer auth, so route them
   // through useImageSrc which blob-loads them. External URLs and
   // null both pass through unchanged.
-  const resolved = useImageSrc(src);
+  const resolved = useImageSrc(wantSwatch ? null : src);
+  const swatchHexColor = wantSwatch ? choice.hex : color;
   return (
     <div
       className={`rounded-xl overflow-hidden border bg-surface dark:bg-slate-900 hover:border-accent dark:hover:border-cobble-600 transition flex flex-col h-full ${borderCls}`}
@@ -53,13 +67,14 @@ export function EntityTile({ src, title, subtitle, badge, color, attention }: Pr
             loading="lazy"
             className="w-full h-full object-cover"
           />
-        ) : color ? (
-          // No photo but a swatch colour — the colour IS the identity (yarn,
-          // filament, paint). Fill the square; the initial sits subtly on top
-          // so two same-colour items are still distinguishable at a glance.
+        ) : swatchHexColor ? (
+          // A swatch colour — the colour IS the identity (yarn, filament,
+          // paint), either because there's no photo or because the colourway
+          // wins over a generic catalog shot. Fill the square; the initial sits
+          // subtly on top so two same-colour items stay distinguishable.
           <div
             className="w-full h-full flex items-center justify-center text-3xl font-mono text-black/25 dark:text-black/30"
-            style={{ backgroundColor: color }}
+            style={{ backgroundColor: swatchHexColor }}
           >
             {title.trim().slice(0, 1).toUpperCase()}
           </div>

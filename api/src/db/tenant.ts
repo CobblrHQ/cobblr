@@ -99,7 +99,13 @@ async function openTenant(orgId: string): Promise<CachedTenant> {
     database: org.db_name,
     user: creds.user,
     password: creds.password,
-    max: 5,
+    // Per-tenant connection cap. Total tenant connections ≈ (live pools) × this.
+    // Tunable so a high-parallelism env (CI: 8 vitest forks provisioning many
+    // orgs at once) can shrink the FOOTPRINT rather than forever raising the
+    // Postgres max_connections ceiling — a burst can transiently outrun the LRU
+    // pool-cap eviction, so bounding per-pool conns is the durable lever. Default
+    // 5 (prod); CI sets COBBLR_TENANT_POOL_MAX=3.
+    max: Number(process.env.COBBLR_TENANT_POOL_MAX) || 5,
   });
   // Without an 'error' listener, a pg-pool idle-client error (e.g.
   // backend kills a connection during DROP DATABASE on this tenant,

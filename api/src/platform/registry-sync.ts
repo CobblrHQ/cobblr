@@ -26,6 +26,7 @@ export async function syncManifestRegistries(): Promise<{
     version: string;
     traits: unknown | null;
     profile: string | null;
+    label_code_overlay_default: boolean | null;
     exposable_fields: string[] | null;
     field_read_scopes: Record<string, string> | null;
     is_primary: boolean;
@@ -70,6 +71,7 @@ export async function syncManifestRegistries(): Promise<{
         is_primary: k.primary === true,
         traits: k.traits ?? null,
         profile: k.profile ?? null,
+        label_code_overlay_default: k.labelCodeOverlayDefault ?? null,
         exposable_fields: k.exposableFields ?? null,
         field_read_scopes: k.fieldReadScopes ?? null,
       });
@@ -132,6 +134,7 @@ export async function syncManifestRegistries(): Promise<{
           is_primary: k.is_primary,
           traits: k.traits ? sql`${JSON.stringify(k.traits)}::jsonb` : null,
           profile: k.profile,
+          label_code_overlay_default: k.label_code_overlay_default,
           exposable_fields: k.exposable_fields
             ? sql`${JSON.stringify(k.exposable_fields)}::jsonb`
             : null,
@@ -154,6 +157,7 @@ export async function syncManifestRegistries(): Promise<{
             is_primary: k.is_primary,
             traits: k.traits ? sql`${JSON.stringify(k.traits)}::jsonb` : null,
             profile: k.profile,
+            label_code_overlay_default: k.label_code_overlay_default,
             exposable_fields: k.exposable_fields
               ? sql`${JSON.stringify(k.exposable_fields)}::jsonb`
               : null,

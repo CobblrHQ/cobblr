@@ -137,17 +137,25 @@ export function ScanResultModal({
   // already carries the (wrong) barcode name, so stillEnriching is false. Force the
   // poll while `reading` and clear it once vision stamps ai_suggested_at.
   const [reading, setReading] = useState(false);
-  const stillEnriching =
-    !!item &&
-    !item.ai_suggested_at &&
-    (!item.suggested_name || (!item.catalog_image_file_id && !item.catalog_image_url));
+  // Enrichment is still plausibly running until the item is FULLY enriched (a
+  // name AND a catalog image) or a generous window from scan time elapses. A
+  // thin catalog hit stamps `ai_suggested_at` early while the web-search +
+  // image-fetch tail (up to ~150s) is still resolving the real name/photo — so
+  // ai_suggested_at alone is NOT "done", or the card stops polling + shows a
+  // premature "No catalog match" while the real answer is still on its way.
+  const enrichedFully =
+    !!item?.suggested_name && (!!item?.catalog_image_file_id || !!item?.catalog_image_url);
+  const withinEnrichWindow =
+    !!item?.created_at && Date.now() - Date.parse(item.created_at) < 180_000;
+  const stillEnriching = !!item && !enrichedFully && (withinEnrichWindow || reading);
   const live = useQuery({
     queryKey: ["scan-item-live", activeSlug, item?.id],
     queryFn: () => api.getScanItem(activeSlug, item!.id),
     enabled: !!item?.id && (stillEnriching || reading),
-    // 2s cadence, capped — an item that will never enrich (no AI provider,
-    // no catalog hit) shouldn't poll for as long as the card stays open.
-    refetchInterval: (query) => (query.state.dataUpdateCount >= 14 ? false : 2_000),
+    // 2s cadence while enrichment is in flight; `enabled` (stillEnriching) is
+    // bounded by the 180s window above, so this self-stops. The generous hard
+    // cap is just a runaway guard (>200s of polls) if that ever gets stuck.
+    refetchInterval: (query) => (query.state.dataUpdateCount >= 100 ? false : 2_000),
     gcTime: 0,
   });
   const readingAnchor = useRef<string | null>(null);
@@ -378,7 +386,13 @@ export function ScanResultModal({
               <div className="text-sm text-muted animate-pulse">Looking up…</div>
             ) : (
               <div className="font-medium text-content dark:text-mortar-100">
-                {item?.suggested_name ?? <span className="text-faint italic">No catalog match</span>}
+                {item?.suggested_name ?? (
+                  stillEnriching ? (
+                    <span className="text-faint italic animate-pulse">Identifying…</span>
+                  ) : (
+                    <span className="text-faint italic">No catalog match</span>
+                  )
+                )}
               </div>
             )}
             {!scan.isPending && item && !item.suggested_name && (

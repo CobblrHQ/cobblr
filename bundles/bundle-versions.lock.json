@@ -1,0 +1,114 @@
+{
+  "cobblr.community.3d-printers": {
+    "version": "0.3.0",
+    "hash": "324f7efc8b2d69112c459728cd5b2c1b582972a0377391e14713fbe1298706e7"
+  },
+  "cobblr.community.bookshelf": {
+    "version": "0.1.0",
+    "hash": "080046908a6ac666a8966f1e79998bdddd27ddfe75edd0b3c5e3b6674f91e787"
+  },
+  "cobblr.community.cnc-machines": {
+    "version": "0.3.0",
+    "hash": "df61670308b1fed7f4402e397329ee330fb30f30a5f39d6c391a835f9c686898"
+  },
+  "cobblr.community.garden": {
+    "version": "0.1.0",
+    "hash": "ad2fb078f7016410414e8193d024f9f99251f27b898d334baf6185c75df5dc1b"
+  },
+  "cobblr.community.laser-cutters": {
+    "version": "0.3.0",
+    "hash": "79233db8126f953a0996fe7236d648b8f880d4a9e0b80b519fce5c8bb19fa638"
+  },
+  "cobblr.community.lego": {
+    "version": "0.4.1",
+    "hash": "649c6e1b4580195badba79497c29a50553054e04b1f25124b84cfd4c57672e44"
+  },
+  "cobblr.community.printer-parts": {
+    "version": "0.2.0",
+    "hash": "387652c72eb85e0a17c891e7990a24ed795944ed066730d0c6e02ac6a1748cd1"
+  },
+  "cobblr.community.tool-library": {
+    "version": "0.1.0",
+    "hash": "c26b6118ddfd23d5dd2a00d0dc5f7b7ed7298d942b79e37bf2aa4612e0bca09a"
+  },
+  "cobblr.community.vintage-tools": {
+    "version": "0.1.0",
+    "hash": "0b6b6342e616f282a60660ec07f90c8e18cb7d90a327c5feca4f7c883f1cba8c"
+  },
+  "cobblr.flagship.cnc-tooling": {
+    "version": "0.2.0",
+    "hash": "c2b4e5d0b1d5192923f8d00bf07e00926d94ad746a247deac362d75277c2822a"
+  },
+  "cobblr.flagship.collections": {
+    "version": "0.2.0",
+    "hash": "92c7249a7a6fabeaa2dd1f53209810b5e81b3b0377830524fb21401a2bc5b0f4"
+  },
+  "cobblr.flagship.documents-renewals": {
+    "version": "0.2.1",
+    "hash": "9a2569d92f2f4d5b9525c40a53eef30320cb6bea62915364a33a4d37d94af5a5"
+  },
+  "cobblr.flagship.fasteners": {
+    "version": "0.1.0",
+    "hash": "82aa755ee1c35bebf0690b129ef5a896586afcc385e37185656d417e72e2caaa"
+  },
+  "cobblr.flagship.filament-stash": {
+    "version": "0.5.3",
+    "hash": "f86cad791181cab7350fefa86f057e8b011e1f68ee630b9fa604717a3d21ed66"
+  },
+  "cobblr.flagship.food-cluster": {
+    "version": "0.1.0",
+    "hash": "f1dc013ca98eb8f8322805f9b3dee38b681bc860cb77693db1ff7bf96b02a86c"
+  },
+  "cobblr.flagship.gifts-occasions": {
+    "version": "0.2.0",
+    "hash": "a66a2ef3d729d75d135f811f0076cede97ca1b973fb2a49e9e9c73cda10b304b"
+  },
+  "cobblr.flagship.home-inventory": {
+    "version": "0.3.0",
+    "hash": "80e67116a610e13956c460e9d5abe423117f5892eaa479323526834ebf9c5262"
+  },
+  "cobblr.flagship.home-maintenance": {
+    "version": "0.2.0",
+    "hash": "461e65dde48e92c142f612bd0d5ed15179e561e3e41e6150da787b0b22322577"
+  },
+  "cobblr.flagship.household-supplies": {
+    "version": "0.2.0",
+    "hash": "531fa9fe20b191d15ad80eee4a2e62f61ebfc0e486a05f518ed66c60c13b5e83"
+  },
+  "cobblr.flagship.kitchen-fitness": {
+    "version": "0.1.0",
+    "hash": "a758888a3dfe1e0712d3b192c543355f556577a5af2fa31ff8c3325b538acd5f"
+  },
+  "cobblr.flagship.maker-workshop": {
+    "version": "0.1.0",
+    "hash": "2d333935819dab627eca76f22cb88163b3d9a4b00e057ad8275470e6b53b1947"
+  },
+  "cobblr.flagship.medications": {
+    "version": "0.3.0",
+    "hash": "eaa724986fd4355b9a05954eb04dc25ff9f7f475c5317d74640dc02dad6bc7fb"
+  },
+  "cobblr.flagship.pet-care": {
+    "version": "0.2.0",
+    "hash": "93e9d04c9df4918a2518d3035c67d7a3294f43d5ac6bc345a74feac687ee16b8"
+  },
+  "cobblr.flagship.plant-care": {
+    "version": "0.3.0",
+    "hash": "b995ea97553a54a2145d3ae231dd9f565e50b23b2dc4e41f44a685eaffc56db6"
+  },
+  "cobblr.flagship.subscriptions": {
+    "version": "0.2.1",
+    "hash": "a323eaa4899f76041b05cef361781edc618a6579e98964c4f24cc779c7381a7f"
+  },
+  "cobblr.flagship.wardrobe": {
+    "version": "0.1.1",
+    "hash": "4cd83c2a3a388bf4c776756196d7d26072ae48c7d41413aa766cbd7c3f84c83f"
+  },
+  "cobblr.flagship.warranties-receipts": {
+    "version": "0.2.0",
+    "hash": "e7ddeb6d864df7ede547f325241b5bdae9a83b13a704f39e109ce1a8d9465326"
+  },
+  "cobblr.flagship.yarn": {
+    "version": "0.5.0",
+    "hash": "b64ae55df8a4869d7bd96d52839f95929dde792a4bbb6f1e0b51097f5e16f015"
+  }
+}

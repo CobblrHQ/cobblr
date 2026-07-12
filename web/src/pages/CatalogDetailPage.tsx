@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Library, Upload } from "lucide-react";
+import { ArrowLeft, Download, Library, Upload } from "lucide-react";
 import { BackToTop, Modal, useToast, usePageTitle } from "@cobblr/platform-web";
 import { ApiError, api, type CatalogEntry, type CatalogSchema } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -29,6 +29,19 @@ export function CatalogDetailPage() {
     queryKey: ["core-catalog", activeSlug, id],
     queryFn: () => api.getCatalog(activeSlug, id!),
     enabled: !!activeSlug && !!id,
+  });
+  const toast = useToast();
+  // The built-in puller: one-tap import from the catalog's source_url (a
+  // bundle-shipped shell, e.g. Rebrickable), instead of hand-running a script.
+  const pullMut = useMutation({
+    mutationFn: () => api.pullCatalog(activeSlug, id!),
+    onSuccess: (r) => {
+      toast.success(`Imported ${r.imported.toLocaleString()} entries from source.`);
+      void qc.invalidateQueries({ queryKey: ["core-catalog", activeSlug, id] });
+      void qc.invalidateQueries({ queryKey: ["core-catalog-entries", activeSlug, id] });
+    },
+    onError: () =>
+      toast.error("Couldn't pull from the source — check the catalog's source URL (large datasets like the BOM use the bulk seeder)."),
   });
   const PAGE_SIZE = 60;
   const entriesQ = useInfiniteQuery({
@@ -98,16 +111,39 @@ export function CatalogDetailPage() {
         </h1>
         {catalog && (
           <span className="text-sm text-muted dark:text-slate-400">
-            {catalog.entry_count} {catalog.entry_count === 1 ? "entry" : "entries"}
+            {catalog.source === "hosted" ? (
+              <span
+                title="Served from Cobblr's shared reference catalog — ready to match against, nothing to import."
+                className="text-[11px] font-mono uppercase tracking-widest text-accent dark:text-cobble-400 rounded bg-accent/10 dark:bg-cobble-400/10 px-1.5 py-0.5"
+              >
+                Hosted
+              </span>
+            ) : (
+              `${catalog.entry_count} ${catalog.entry_count === 1 ? "entry" : "entries"}`
+            )}
           </span>
         )}
         <div className="flex-1" />
-        <button
-          onClick={() => setImportOpen(true)}
-          className="inline-flex items-center gap-2 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm transition"
-        >
-          <Upload size={14} /> Import CSV
-        </button>
+        {/* Hosted catalogs are served centrally — the local import/pull paths
+            would create a confusing per-workspace copy, so hide them. */}
+        {catalog?.source !== "hosted" && catalog?.source_url && (
+          <button
+            onClick={() => pullMut.mutate()}
+            disabled={pullMut.isPending}
+            title={`Pull rows from ${catalog.source_url}`}
+            className="inline-flex items-center gap-2 rounded border border-line dark:border-slate-600 hover:bg-subtle dark:hover:bg-slate-800 text-content dark:text-mortar-100 px-3 py-1.5 text-sm transition disabled:opacity-50"
+          >
+            <Download size={14} /> {pullMut.isPending ? "Pulling…" : "Pull from source"}
+          </button>
+        )}
+        {catalog?.source !== "hosted" && (
+          <button
+            onClick={() => setImportOpen(true)}
+            className="inline-flex items-center gap-2 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm transition"
+          >
+            <Upload size={14} /> Import CSV
+          </button>
+        )}
       </div>
 
       {catalog?.description && (
@@ -140,8 +176,19 @@ export function CatalogDetailPage() {
 
       {entries.length === 0 && !entriesQ.isLoading && (
         <div className="text-sm italic text-muted dark:text-slate-400">
-          No entries{debounced ? ` matching "${debounced}"` : " yet"}.
-          {!debounced && catalog?.entry_count === 0 && " Click 'Import CSV' to start."}
+          {entriesQ.data?.pages[0]?.browsable === false ? (
+            // Hosted but not browsable here (the ~5M-row set bill-of-materials).
+            <>
+              Served from Cobblr's shared reference catalog. This one powers
+              Disassemble behind the scenes and isn't browsed directly — match
+              against it from your items and the details come along.
+            </>
+          ) : (
+            <>
+              No entries{debounced ? ` matching "${debounced}"` : " yet"}.
+              {!debounced && catalog?.source !== "hosted" && catalog?.entry_count === 0 && " Click 'Import CSV' to start."}
+            </>
+          )}
         </div>
       )}
 

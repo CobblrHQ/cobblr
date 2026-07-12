@@ -52,7 +52,7 @@ export function registerMachinesResolvers(): void {
       q = q.where((eb) => eb(eb.fn("lower", ["name"]), "like", needle));
     }
     if (query.filter) {
-      const NATIVE = new Set(["state", "family", "type", "manufacturer", "location_id"]);
+      const NATIVE = new Set(["state", "family", "type", "manufacturer", "serial_number", "location_id"]);
       for (const [key, val] of Object.entries(query.filter)) {
         if (val === undefined || val === null) continue;
         if (key === "_tag") {

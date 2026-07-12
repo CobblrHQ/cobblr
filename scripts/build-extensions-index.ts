@@ -1,10 +1,14 @@
+// LEGACY (kept for producing a standalone external index.json). As of the
+// self-hosted catalog, prod no longer reads a GitHub-published index: the app
+// builds the official catalog in-process from its baked-in bundle manifests and
+// serves it at GET /api/v1/registry/index.json (see api/src/lib/extensions-
+// index.ts). The catalog is therefore always current with the deploy — no
+// manual publish. Only run this if you want to generate a static index.json to
+// host elsewhere and point COBBLR_EXTENSIONS_URL at it.
+//
 // Regenerate the `bundles` lane of the cobblr-extensions registry index from
 // the web app's embedded FEATURED_BUNDLES — the single source of truth for the
-// flagship/community bundle catalog. The marketplace is registry-backed (it
-// reads this index.json via the GitHub contents API), so after editing
-// web/src/lib/featured-bundles.ts you MUST run this + push the index, or prod
-// keeps serving the stale catalog (the embedded list is only a fallback when
-// the registry is unreachable).
+// flagship/community bundle catalog.
 //
 // Preserves the other lanes (drivers / modules / renderers / trusted_keys) and
 // top-level fields untouched — only `bundles` is rebuilt.

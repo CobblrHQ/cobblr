@@ -207,23 +207,27 @@ export async function importAppData(
   // (target-scoped) URL. An internal core-files photo is duplicated byte-for-byte
   // (read from source → write to target → new URL) so it survives even if the app
   // is later deleted; an EXTERNAL url (a catalog image) is portable, so pass it
-  // through. Returns null on any miss/failure (the item just lands photoless).
+  // through. Returns null ONLY when the source item genuinely has no photo.
+  //
+  // A source item that DOES carry an internal photo MUST arrive with it: a
+  // read/write failure THROWS rather than silently landing the item photoless.
+  // Swallowing it (the old `return null`) made graduation best-effort — under
+  // 8-fork CI contention a transient IO hiccup was absorbed, the item copied
+  // without its picture, `import-app` still 200'd, and the read-back saw
+  // `image_path === undefined` (the graduation-photos flake). Failing loud makes
+  // the flow ATOMIC: a 2xx response now guarantees every copied item's photo
+  // path is durably set before the flow reports done.
   const FILE_URL_RE = /\/orgs\/[^/]+\/modules\/core-files\/files\/([^/?]+)\/raw/;
   async function copyPhoto(src: unknown): Promise<string | null> {
-    if (typeof src !== "string" || !src) return null;
+    if (typeof src !== "string" || !src) return null; // genuinely photoless
     const fileId = src.match(FILE_URL_RE)?.[1];
     if (!fileId) return src; // external (catalog) URL — portable, copy the string as-is
-    if (!targetSlug) return null;
-    try {
-      const bytes = await platform().files.read(sourceOrgId, fileId, "original");
-      if (!bytes) return null;
-      const w = await platform().files.write(targetOrgId, bytes.bytes, { filename: bytes.filename, mimeType: bytes.mimeType });
-      if (!w) return null;
-      return `/api/v1/orgs/${targetSlug}/modules/core-files/files/${w.fileId}/raw`;
-    } catch (e) {
-      console.error("[importAppData] photo copy failed:", (e as Error).message);
-      return null;
-    }
+    if (!targetSlug) throw new ProvisionAppError("target_slug_missing", "The target workspace has no slug — cannot scope the copied photo URL.");
+    const bytes = await platform().files.read(sourceOrgId, fileId, "original");
+    if (!bytes) throw new ProvisionAppError("photo_copy_failed", `Could not read source photo ${fileId} to copy into the graduated workspace.`);
+    const w = await platform().files.write(targetOrgId, bytes.bytes, { filename: bytes.filename, mimeType: bytes.mimeType });
+    if (!w) throw new ProvisionAppError("photo_copy_failed", "Could not write the copied photo into the graduated workspace.");
+    return `/api/v1/orgs/${targetSlug}/modules/core-files/files/${w.fileId}/raw`;
   }
 
   // 2. Copy the source instance's items into the target instance.
@@ -234,25 +238,28 @@ export async function importAppData(
     const f = (it.fields ?? {}) as Record<string, unknown>;
     const customFields = f.metadata && typeof f.metadata === "object" ? (f.metadata as Record<string, unknown>) : {};
     const image_path = await copyPhoto((it as { image_path?: unknown }).image_path ?? f.image_path);
-    await platform()
-      .actions.invoke("inventory:create-item", {
-        orgId: targetOrgId,
-        userId,
-        entity: { kind, id: "" },
-        event: { name: "sales.import", payload: {}, actor: { user_id: userId, display_name: null, auth_method: "session" }, timestamp: new Date().toISOString(), trigger_type: "event" },
-        args: {
-          instance: app.instanceName,
-          name: it.title ?? (typeof f.name === "string" ? f.name : "Untitled"),
-          qty: typeof f.qty === "number" ? f.qty : Number(f.qty) || 1,
-          unit: typeof f.unit === "string" ? f.unit : undefined,
-          manufacturer: typeof f.manufacturer === "string" ? f.manufacturer : undefined,
-          image_path: image_path ?? undefined,
-          fields: customFields,
-        },
-        entityKind: kind,
-        entityId: "",
-      })
-      .catch((e) => console.error("[importAppData] create-item failed:", (e as Error).message));
+    // Awaited AND unguarded: a failed create must fail the whole import, not be
+    // silently swallowed (the old `.catch()` counted the item as imported while
+    // it never landed — a graduated workspace missing a row, and the second half
+    // of the graduation-photos flake). Atomic: the import 2xx's only when every
+    // item is actually created.
+    await platform().actions.invoke("inventory:create-item", {
+      orgId: targetOrgId,
+      userId,
+      entity: { kind, id: "" },
+      event: { name: "sales.import", payload: {}, actor: { user_id: userId, display_name: null, auth_method: "session" }, timestamp: new Date().toISOString(), trigger_type: "event" },
+      args: {
+        instance: app.instanceName,
+        name: it.title ?? (typeof f.name === "string" ? f.name : "Untitled"),
+        qty: typeof f.qty === "number" ? f.qty : Number(f.qty) || 1,
+        unit: typeof f.unit === "string" ? f.unit : undefined,
+        manufacturer: typeof f.manufacturer === "string" ? f.manufacturer : undefined,
+        image_path: image_path ?? undefined,
+        fields: customFields,
+      },
+      entityKind: kind,
+      entityId: "",
+    });
     imported++;
   }
   return { imported, instance: app.instanceName };

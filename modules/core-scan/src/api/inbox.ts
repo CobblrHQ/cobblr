@@ -29,6 +29,7 @@ import { downloadCatalogImage, enrichBarcodeItem, isJunkName } from "../services
 import {
   crossCheckScanPhoto,
   enrichPhotoItem,
+  extractSerial,
   observeScanPhoto,
   refreshCatalogImageByName,
 } from "../services/enrich-photo.js";
@@ -1077,6 +1078,13 @@ inboxRouter.post(
     const body: Record<string, unknown> = {
       name: parsed.data.name ?? row.suggested_name ?? "Untitled",
       manufacturer: row.suggested_manufacturer ?? undefined,
+      // A serial/service tag the vision read off the label → the destination
+      // table's NATIVE serial_number field (inventory/assets/machines all
+      // declare it; an unknown target routes it to metadata harmlessly). Native
+      // key like manufacturer; a user-typed value in restExtras still wins below.
+      ...((meta as { serial_number?: string }).serial_number
+        ? { serial_number: (meta as { serial_number?: string }).serial_number }
+        : {}),
       // Carry the SKU + barcode + source into metadata so a future
       // catalog-match step can find this entity.
       metadata: {
@@ -1232,23 +1240,35 @@ inboxRouter.post(
             role: "gallery",
           }),
         });
-        // Optionally also point image_path at the catalog photo. An
-        // instance-scoped entity is invisible to the bare module route
-        // (its CRUD filters to the default instance), so the patch must
-        // ride the same instance path the create used.
+        // Optionally also point image_path at the catalog photo — UNLESS the
+        // item's identity is a colour swatch (a valid colour hex on the item,
+        // e.g. a yarn's colourway). A generic internet photo of "a skein" then
+        // suppresses the swatch the user actually wants (the thumbnail prefers a
+        // photo over a colour). Keep the catalog photo in the gallery (attached
+        // above), just don't make it the primary thumbnail. The user's own
+        // uploaded photo still wins — this only skips the auto-catalog stamp.
+        const committedColor = String(
+          ((body.metadata as Record<string, unknown> | undefined)?.color ?? "") as string,
+        ).trim();
+        const hasColorSwatch = /^#[0-9a-fA-F]{3,8}$/.test(committedColor);
+        // An instance-scoped entity is invisible to the bare module route (its
+        // CRUD filters to the default instance), so the patch must ride the same
+        // instance path the create used.
         const patchUrl = parsed.data.instance
           ? `${baseUrl}/api/v1/orgs/${ctx.org.slug}/instances/${parsed.data.instance}/items/${created.id}`
           : `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/${createPath}/${created.id}`;
-        await fetch(patchUrl, {
-          method: "PATCH",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            image_path: `/api/v1/orgs/${ctx.org.slug}/modules/core-files/files/${row.catalog_image_file_id}/raw`,
-          }),
-        });
+        if (!hasColorSwatch) {
+          await fetch(patchUrl, {
+            method: "PATCH",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              image_path: `/api/v1/orgs/${ctx.org.slug}/modules/core-files/files/${row.catalog_image_file_id}/raw`,
+            }),
+          });
+        }
       } catch (err) {
         console.error("[core-scan] attach catalog image failed:", (err as Error).message);
       }
@@ -3230,6 +3250,22 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
         // series stamp) is silently clobbered. `||` overlays keys DB-side.
         suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({
           ...(photoObservations ? { photo_observations: photoObservations } : {}),
+          // Reliability net: if identify didn't STRUCTURE a serial but the model
+          // named one in its reasoning/observations, promote it to the native
+          // key so it reaches the item's serial_number field on commit. Only
+          // when not already set (never clobber a structured read).
+          ...((() => {
+            const existing = (row.suggested_metadata as { serial_number?: string } | null)?.serial_number;
+            if (existing) return {};
+            const s = extractSerial(
+              [
+                top && typeof top === "object" && "notes" in top ? (top as { notes?: string }).notes ?? "" : "",
+                photoObservations ?? "",
+                row.ai_notes ?? "",
+              ].join("\n"),
+            );
+            return s ? { serial_number: s } : {};
+          })()),
           matched_at: new Date().toISOString(),
         })}::jsonb` as never,
         ...(top && typeof top === "object" && "notes" in top && (top as { notes?: string }).notes && !barcodeIdentified

@@ -29,6 +29,7 @@ const MachineCreate = z.object({
   family: z.string().max(120).nullable().optional(),
   type: z.string().max(120).nullable().optional(),
   manufacturer: z.string().max(120).nullable().optional(),
+  serial_number: z.string().max(120).nullable().optional(),
   state: z.string().max(40).optional(),
   excitement: z.number().int().min(0).max(5).optional(),
   image_path: z.string().max(500).nullable().optional(),

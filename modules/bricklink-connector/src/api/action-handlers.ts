@@ -58,16 +58,39 @@ export function registerBricklinkHandlers(): void {
       : [];
     const partByNum = new Map(partEntries.map((p) => [p.externalId, p]));
 
+    // 4b. Part-category NAMES (the bin-defining shape) — resolve part_cat_id →
+    // name from the lego.part-category catalog, so each spawned part carries a
+    // human category ("Plate", "Wedge, Plate"). This is the signal the organize
+    // planner's exact-category facet routes on (a "plates" bin vs a "wedges"
+    // bin). Best-effort: no category catalog / no match → the part has none and
+    // the planner falls back to name-token routing.
+    const partCatCat = await platform().catalogs.findBySemanticType(ctx.orgId, "lego.part-category");
+    const catIds = Array.from(
+      new Set(partEntries.map((p) => String(p.payload.part_cat_id ?? "")).filter(Boolean)),
+    );
+    const catEntries = partCatCat && catIds.length > 0
+      ? await platform().catalogs.queryEntries({ orgId: ctx.orgId, catalogId: partCatCat.id, externalIdIn: catIds })
+      : [];
+    const catNameById = new Map(catEntries.map((c) => [c.externalId, String(c.payload.name ?? "")]));
+
     // 5. Compose the child specs, then CREATE them through inventory's generic
     // bulk action (returns ids in input order so we can wire pairings).
     const specs = bomRows.map((row) => {
       const partNum = String(row.payload.part_num ?? "");
       const partEntry = partByNum.get(partNum);
       const imgUrl = typeof row.payload.img_url === "string" && row.payload.img_url.length > 0 ? row.payload.img_url : null;
+      const catId = partEntry ? String(partEntry.payload.part_cat_id ?? "") : "";
+      // Local BOM rows are raw (part_num/color only) and get name+category from
+      // the parts / part-category catalogs. A HOSTED BOM row is already hydrated
+      // (name + category on the row itself), and the local parts catalog is empty
+      // — so fall back to the row's own name/category when the lookup misses.
+      const rowName = typeof row.payload.name === "string" ? row.payload.name : undefined;
+      const rowCategory = typeof row.payload.category === "string" ? row.payload.category : undefined;
+      const category = catNameById.get(catId) || rowCategory || null;
       return {
         partEntryId: partEntry?.id ?? null,
         item: {
-          name: (partEntry?.payload.name as string | undefined) ?? `Part ${partNum}`,
+          name: (partEntry?.payload.name as string | undefined) ?? rowName ?? `Part ${partNum}`,
           qty: Number(row.payload.quantity ?? 1),
           unit: "each",
           image_path: imgUrl,
@@ -78,6 +101,9 @@ export function registerBricklinkHandlers(): void {
             set_num: setNum,
             part_num: partNum,
             lifecycle: "loose",
+            // The bin-defining shape — the organize planner's exact-category
+            // facet routes on this so the parts land in the right bins.
+            ...(category ? { category } : {}),
           },
         },
       };
@@ -103,9 +129,24 @@ export function registerBricklinkHandlers(): void {
     await platform().pairings.createMany(matchesValues);
     await platform().pairings.createMany(derivedFromValues);
 
-    // 7. Mark the kit parted-out, through inventory's generic update.
-    await platform().actions.invoke("inventory:update-item", { ...ctx, args: { id: kitId, fields: { lifecycle: "parted-out" } } });
+    // 7. Mark the kit disassembled, through inventory's generic update. (The Lego
+    // bundle's Sets state vocabulary is sealed / built / disassembled.)
+    await platform().actions.invoke("inventory:update-item", { ...ctx, args: { id: kitId, fields: { lifecycle: "disassembled" } } });
 
-    return { ok: true, kitId, setNum, spawned: ids.length, message: `Spawned ${ids.length} parts from set ${setNum}.` };
+    // 8. Hand off to the sorting planner: open the organize flow over EXACTLY the
+    // parts we just spawned (the scope:"refs" door), so the user goes straight
+    // from "disassembled" to "here's a plan to bin these". The web shell reads
+    // result.ui and opens the registered flow; ignored where it isn't honored.
+    return {
+      ok: true,
+      kitId,
+      setNum,
+      spawned: ids.length,
+      message: `Spawned ${ids.length} parts from set ${setNum}.`,
+      ui: {
+        flow: "core-scan:organize",
+        args: { scope: "refs", refs: ids.map((id) => `inventory:part::${id}`) },
+      },
+    };
   });
 }

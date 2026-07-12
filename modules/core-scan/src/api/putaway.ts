@@ -81,7 +81,7 @@ export type Directive =
       location_path: string;
       sibling_count: number;
       sample_names: string[];
-      via: "census" | "session" | "sticky";
+      via: "census" | "session" | "sticky" | "category";
     }
   | { kind: "catch-all"; location_id: string | null; location_name: string | null }
   /** Bin binding (Phase 2, spec §2.4): no existing bin fits, but the session

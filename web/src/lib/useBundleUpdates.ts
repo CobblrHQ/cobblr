@@ -28,6 +28,11 @@ export interface BundleUpdate {
   latestV: string;
   /** Catalog manifest for the new version — what an inline "Update Now" installs. */
   manifest: PlatformBundleManifest;
+  /** Manifest of the version CURRENTLY installed. Needed to detect a catalog
+   *  DROP (the installed version shipped a catalog the new one removed) — a
+   *  data-loss case the new manifest alone can't reveal. Undefined for old
+   *  install rows without a stored manifest → callers must treat that as unsafe. */
+  installedManifest: PlatformBundleManifest | undefined;
   /** Features enabled on the CURRENT install — replayed on an inline update so a
    *  one-click update never silently re-enables defaults the user turned off. */
   enabledFeatures: string[];
@@ -55,6 +60,7 @@ export function useBundleUpdates(slug: string): BundleUpdate[] {
         installedV: b.version,
         latestV: cat.manifest.version,
         manifest: cat.manifest,
+        installedManifest: b.manifest,
         enabledFeatures: b.enabled_features ?? [],
       });
     }

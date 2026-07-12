@@ -631,6 +631,67 @@ async function boot() {
           };
         };
         const tdb = (await getTenantDb(orgId)) as unknown as Kysely<CatalogsXReadDB>;
+        // HOSTED ROUTING: when a catalog's rows live in the shared reference
+        // service (source='hosted'), resolve from it instead of the empty tenant
+        // table. Today the routed read is the Lego BOM by set_num (disassemble);
+        // other hosted reads fall through. Tightly gated — only fires for a
+        // hosted catalog (none until a workspace opts in), so the local path
+        // below is unchanged. See docs/architecture/shared-reference-catalogs.md.
+        const catResolver = (process.env.COBBLR_CATALOG_RESOLVER_URL ?? "").replace(/\/+$/, "");
+        if (catResolver && payloadEq?.set_num) {
+          const meta = (
+            await sql<{ source: string | null; semantic_type: string | null }>`
+              select source, schema->>'semantic_type' as semantic_type
+                from core_catalogs_catalogs where id = ${catalogId} limit 1
+            `.execute(tdb as never)
+          ).rows[0];
+          if (meta?.source === "hosted" && meta.semantic_type === "lego.bom") {
+            try {
+              const url = `${catResolver}/bom?dataset=rebrickable&set_num=${encodeURIComponent(payloadEq.set_num)}`;
+              const res = await egressImpl.guardedFetch(orgId, url, {
+                headers: { Authorization: `Bearer ${process.env.COBBLR_CATALOG_RESOLVER_TOKEN ?? ""}` },
+              });
+              if (res.ok) {
+                const body = (await res.json()) as {
+                  parts?: Array<{
+                    part_num: string;
+                    color_id?: number | string | null;
+                    quantity?: number;
+                    is_spare?: boolean;
+                    image?: string | null;
+                    name?: string;
+                    category?: string | null;
+                  }>;
+                };
+                const rows = (body.parts ?? []).map((p) => {
+                  const rowId = `${payloadEq.set_num}-${p.part_num}-${p.color_id ?? ""}-${p.is_spare ? "t" : "f"}`;
+                  return {
+                    id: rowId,
+                    catalogId,
+                    externalId: rowId,
+                    // The hosted /bom is already fully hydrated (name + category
+                    // + image), so a hosted disassemble reads these straight from
+                    // the BOM row — no separate parts/part-category lookups, which
+                    // would hit the (empty) hosted parts catalog.
+                    payload: {
+                      set_num: payloadEq.set_num,
+                      part_num: p.part_num,
+                      color_id: p.color_id == null ? "" : String(p.color_id),
+                      quantity: p.quantity ?? 1,
+                      is_spare: p.is_spare ?? false,
+                      img_url: p.image ?? "",
+                      name: p.name,
+                      category: p.category ?? undefined,
+                    } as Record<string, unknown>,
+                  };
+                });
+                return limit ? rows.slice(0, limit) : rows;
+              }
+            } catch {
+              /* resolver unreachable → fall through to the local table */
+            }
+          }
+        }
         let q = tdb
           .selectFrom("core_catalogs_entries")
           .select(["id", "catalog_id", "external_id", "payload"])

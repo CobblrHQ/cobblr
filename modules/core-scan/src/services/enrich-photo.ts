@@ -108,6 +108,11 @@ export interface PhotoIdentity {
   /** A UPC/EAN the vision model read off the package (digits only), or null.
    *  OCR'd — lower trust than a hardware scan, so it's captured as AI-read. */
   barcode: string | null;
+  /** A serial number / service tag read verbatim off the item's label, or null.
+   *  A universal identifier — routed to the destination table's native
+   *  serial_number field on commit. OCR'd, so read-only-if-legible + never
+   *  guessed (the prompt forbids completing a partial one). */
+  serial_number: string | null;
 }
 
 /**
@@ -153,10 +158,40 @@ export async function identifyImage(
     console.error("[core-scan] identifyImage failed:", (err as Error)?.message ?? err);
     return null;
   }
-  // Tolerant extraction: the model mostly returns the asked-for {name,…} shape,
-  // but sometimes a richer one ({product_line, product_name, type, manufacturer,
-  // …}). Pull a usable name from either rather than failing the whole identify
-  // (which surfaced as a bogus "no vision provider" note — the vision worked).
+  return parseIdentityReply(parsed);
+}
+
+/**
+ * Deterministic fallback for a serial the model READ but didn't structure.
+ * The identify prompt asks for `serial_number`, but the vision/matchmaker model
+ * sometimes only cites the serial in its prose ("Serial 023GHCLF300971D is
+ * confirmed on the label") and leaves the field null. This pulls a LABELLED
+ * serial out of any such text so it still reaches the item's native serial
+ * field on commit. Conservative on purpose: it only fires on an explicit
+ * label (Serial / S/N / Service tag) AND requires a digit, so English words
+ * like "serial field" / "serial number" don't get mistaken for a value.
+ */
+export function extractSerial(text: string): string | null {
+  if (!text) return null;
+  const m = text.match(
+    /\b(?:serial(?:\s*(?:number|no\.?|#))?|s\/?n|service\s*tag)\b\s*[:#]?\s*([A-Za-z0-9][A-Za-z0-9-]{4,40})/i,
+  );
+  if (!m) return null;
+  const s = (m[1] ?? "").replace(/[.,;:)\]]+$/, "").trim();
+  // Serials carry digits — this rejects prose like "serial field"/"serial number".
+  return s.length >= 5 && /\d/.test(s) ? s : null;
+}
+
+/**
+ * Pure, tolerant parse of the identify-image model reply into a `PhotoIdentity`.
+ * The model mostly returns the asked-for {name,…} shape but sometimes a richer
+ * one ({product_line, product_name, type, manufacturer, …}); pull a usable name
+ * from either rather than failing the whole identify (which once surfaced as a
+ * bogus "no vision provider" note — the vision worked). Exported so the parse is
+ * unit-tested without a live vision call (mirrors matchmaker's parse split).
+ * Returns null when no name is recoverable.
+ */
+export function parseIdentityReply(parsed: Record<string, unknown> | null): PhotoIdentity | null {
   const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
   const p = (parsed ?? {}) as Record<string, unknown>;
   const name =
@@ -181,6 +216,13 @@ export async function identifyImage(
     barcode: (() => {
       const b = (str(p.barcode) || str(p.upc) || str(p.ean) || str(p.barcode_number)).replace(/\D/g, "");
       return /^[0-9]{8,14}$/.test(b) ? b : null;
+    })(),
+    // A serial / service tag read off the label (various keys it might use).
+    // Kept verbatim (serials are alphanumeric with dashes) — just trimmed and
+    // length-capped; empty/placeholder reads collapse to null.
+    serial_number: (() => {
+      const s = (str(p.serial_number) || str(p.serial) || str(p.service_tag) || str(p.serialNumber)).slice(0, 80);
+      return s && !/^(n\/?a|none|unknown)$/i.test(s) ? s : null;
     })(),
   };
 }
@@ -224,7 +266,9 @@ export async function observeScanPhoto(
           "Describe ONLY what is physically present in this photo, in 2-3 short " +
           "factual sentences: how many retail units are visible (one loose unit, " +
           "a sealed multipack of N, a shelf of several); the packaging state; any " +
-          "label text you can read (QTY, pack size, model/SKU, size). " +
+          "label text you can read (QTY, pack size, model/SKU, size, and a serial " +
+          "number or service tag if one is printed and clearly legible — read it " +
+          "verbatim, never guess or complete a partly-hidden one). " +
           "No speculation, no marketing language. Reply with plain text only.",
       },
       source: { kind: "core-scan:photo-observe", id: sourceId ?? "" },
@@ -453,6 +497,9 @@ export async function enrichPhotoItem(ctx: PhotoEnrichContext): Promise<void> {
         category: identity.category,
         entity_type: identity.entityType,
         ...(identity.series ? { series: identity.series } : {}),
+        // A serial/service tag read off the label → carried to the destination
+        // table's native serial_number field on commit (see inbox.ts commit).
+        ...(identity.serial_number ? { serial_number: identity.serial_number } : {}),
         ...(captureBarcode ? { barcode_source: "ai-photo" } : {}),
         ...(parsePackSize(identity.name) ? { pack_size: parsePackSize(identity.name) } : {}),
         // Preserve the correction so the matchmaker (which runs after this

@@ -79,6 +79,11 @@ services:
       # Empty = core-scan resolves directly as before.
       COBBLR_BARCODE_RESOLVER_URL: ${COBBLR_BARCODE_RESOLVER_URL:-}
       COBBLR_BARCODE_RESOLVER_TOKEN: ${COBBLR_BARCODE_RESOLVER_TOKEN:-}
+      # Shared reference-catalog service (core-catalogs hosted mode — the box's
+      # reference-catalogs service; docs/architecture/shared-reference-catalogs.md).
+      # Empty = catalogs resolve from the tenant DB as before (self-host default).
+      COBBLR_CATALOG_RESOLVER_URL: ${COBBLR_CATALOG_RESOLVER_URL:-}
+      COBBLR_CATALOG_RESOLVER_TOKEN: ${COBBLR_CATALOG_RESOLVER_TOKEN:-}
       # Third-party barcode lookups (core-scan): master switch + per-provider
       # toggles + API keys — see docs/SELF_HOSTING.md → Privacy. All optional;
       # unset = sensible defaults (go-upc scraper OFF, upcitemdb/OpenFacts/web
@@ -111,9 +116,12 @@ services:
       # (GET /registry/index) to read the PRIVATE cobblr-extensions repo.
       # Without it the marketplace falls back to the app's built-in list.
       COBBLR_REGISTRY_TOKEN: ${COBBLR_REGISTRY_TOKEN:-}
-      # Extension registry (the marketplace index). Defaults in code to the
-      # cobblr-extensions repo's index.json via the GitHub API contents
-      # endpoint; override only to point at a different/local index.
+      # Extension registry (the marketplace index). SELF-HOSTED by default:
+      # the app builds the official catalog in-process from its baked-in bundle
+      # manifests and serves it at GET /api/v1/registry/index.json — no GitHub,
+      # always current with the deploy. Set this ONLY to override with an
+      # external index.json (e.g. another cobblr.me's /api/v1/registry/
+      # index.json, or a signed index). Empty/unset → local build.
       COBBLR_EXTENSIONS_URL: ${COBBLR_EXTENSIONS_URL:-}
       COBBLR_EXTENSIONS_SIG_URL: ${COBBLR_EXTENSIONS_SIG_URL:-}
       # Notarised-open trust anchor (Phase D): the PUBLIC ed25519 root key

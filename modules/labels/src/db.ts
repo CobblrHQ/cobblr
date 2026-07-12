@@ -43,11 +43,45 @@ export interface LabelsPrintsTable {
   printed_at: Generated<Date>;
 }
 
+// Human-readable label codes (see migrations/0002_codes.sql).
+export interface LabelsCodeConfigTable {
+  entity_kind: string;
+  group_field: Generated<string>;
+  // Draw the human-readable code inside the QR center for this kind. Default
+  // true; a user turns it off for singular kinds (see 0003_overlay_center.sql).
+  overlay_center: Generated<boolean>;
+  updated_at: Generated<Date>;
+}
+
+export interface LabelsCodePrefixesTable {
+  group_key: string;
+  entity_kind: string;
+  prefix: string;
+  label: string | null;
+  next_seq: Generated<number>;
+  frozen: Generated<boolean>;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+export interface LabelsCodesTable {
+  entity_kind: string;
+  entity_id: string;
+  group_key: string;
+  prefix: string;
+  seq: number;
+  code: string;
+  created_at: Generated<Date>;
+}
+
 export interface LabelsDB {
   labels_templates: LabelsTemplatesTable;
   labels_queue: LabelsQueueTable;
   labels_batches: LabelsBatchesTable;
   labels_prints: LabelsPrintsTable;
+  labels_code_config: LabelsCodeConfigTable;
+  labels_code_prefixes: LabelsCodePrefixesTable;
+  labels_codes: LabelsCodesTable;
 }
 
 export type OrgRole = "owner" | "admin" | "member" | "guest";

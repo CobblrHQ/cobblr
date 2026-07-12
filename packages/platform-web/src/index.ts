@@ -1,10 +1,25 @@
 // Public exports for the shared web components package.
 export { JsonField, evaluateJson, type JsonFieldProps, type JsonEval } from "./JsonField";
 
-export { PlatformWebProvider, usePlatformWeb } from "./context";
+export {
+  PlatformWebProvider,
+  usePlatformWeb,
+  useFlowHost,
+  type FlowComponent,
+  type FlowRegistry,
+} from "./context";
 export { EntityActionsBar } from "./EntityActionsBar";
 export { EntityChip } from "./EntityChip";
 export { EntityThumb } from "./EntityThumb";
+export {
+  wantsSwatch,
+  colorSwatch,
+  swatchHex,
+  resolveSwatchHex,
+  pickThumb,
+  type SwatchFieldDef,
+  type ThumbChoice,
+} from "./swatch";
 export {
   buildLocationForest,
   flattenLocationForest,
@@ -46,6 +61,7 @@ export {
 export { BackToTop } from "./BackToTop";
 export { CatalogTypeahead, type CatalogTypeaheadHit } from "./CatalogTypeahead";
 export { usePageTitle } from "./usePageTitle";
+export { usePublishChatContext, getChatPageContext, type ChatPageContext } from "./chat-context";
 export { Modal } from "./Modal";
 export { ToastProvider, useToast } from "./ToastContext";
 export { ConfirmProvider, useConfirm } from "./ConfirmContext";

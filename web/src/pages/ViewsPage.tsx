@@ -14,7 +14,7 @@ import { WEEKDAYS, MONTHS, isoLocal, buildMonthGrid, shiftMonth } from "../lib/m
 import { useMutation } from "@tanstack/react-query";
 import { ApiError, api, type SavedView } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { Modal, useToast, useConfirm, usePageTitle, BulkActionBar, useFlowHost } from "@cobblr/platform-web";
 import {
   useKindFields,
   FieldSelect,
@@ -244,6 +244,18 @@ export function SavedViewBody({
   // Count reads in the entity's own noun ("5 machines"), not DB-speak "5 rows".
   const noun = (view.entity_kind || "").split(":")[1] ?? "";
   const plural = noun ? `${noun}s` : "items";
+  // Bulk select (table view): pick rows → open the organize planner over them.
+  // Generic — the planner files whatever the kind's writer accepts a location on;
+  // a non-locatable kind just yields nothing to file.
+  const { openFlow } = useFlowHost();
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const toggle = (id: string) =>
+    setSelected((s) => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
   return (
     <div className="space-y-2">
       <div className="text-xs text-muted dark:text-slate-400 flex items-center gap-2">
@@ -261,7 +273,32 @@ export function SavedViewBody({
         <KanbanRenderer items={items} groupBy={cfg.group_by ?? "subtitle"} />
       )}
       {items.length > 0 && view.view_type === "table" && (
-        <TableRenderer items={items} columns={cfg.visible_fields} groupBy={cfg.group_by} />
+        <TableRenderer
+          items={items}
+          columns={cfg.visible_fields}
+          groupBy={cfg.group_by}
+          selection={{ selected, toggle }}
+        />
+      )}
+      {view.view_type === "table" && selected.size > 0 && (
+        <BulkActionBar
+          count={selected.size}
+          onClear={() => setSelected(new Set())}
+          actions={
+            <button
+              onClick={() => {
+                openFlow("core-scan:organize", {
+                  scope: "refs",
+                  refs: [...selected].map((rowId) => `${view.entity_kind}::${rowId}`),
+                });
+                setSelected(new Set());
+              }}
+              className="rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1 text-sm transition"
+            >
+              Organize selected
+            </button>
+          }
+        />
       )}
       {items.length > 0 && view.view_type === "trend" && (
         <TrendRenderer items={items} cfg={cfg} />
@@ -650,14 +687,18 @@ function TableRenderer({
   items,
   columns,
   groupBy,
+  selection,
 }: {
   items: ViewRow[];
   columns?: string[];
   groupBy?: string;
+  /** When present, renders a checkbox column for bulk actions. */
+  selection?: { selected: Set<string>; toggle: (id: string) => void };
 }) {
   // Default to title + subtitle when no visible_fields declared.
   // When declared, render each as a column read from row.fields.
   const cols = columns && columns.length > 0 ? columns : ["title", "subtitle"];
+  const selectCols = selection ? cols.length + 1 : cols.length;
 
   // When group_by is set, split rows into ordered sections with a header
   // row each. Reuses fieldVal so the group key reaches custom fields too.
@@ -681,6 +722,16 @@ function TableRenderer({
 
   const Row = (r: ViewRow) => (
     <tr key={`${r.kind}:${r.id}`} className="border-b border-line dark:border-slate-800 last:border-b-0">
+      {selection && (
+        <td className="px-2 py-1.5 align-top w-8">
+          <input
+            type="checkbox"
+            checked={selection.selected.has(r.id)}
+            onChange={() => selection.toggle(r.id)}
+            aria-label={`Select ${r.title}`}
+          />
+        </td>
+      )}
       {cols.map((c) => (
         <td key={c} className="px-3 py-1.5 align-top truncate max-w-[260px]">
           {formatCell(c, r)}
@@ -694,6 +745,7 @@ function TableRenderer({
       <table className="w-full text-xs">
         <thead>
           <tr className="border-b border-line dark:border-slate-700 bg-subtle/60 dark:bg-slate-800/40">
+            {selection && <th className="px-2 py-1.5 w-8" />}
             {cols.map((c) => (
               <th
                 key={c}
@@ -708,7 +760,7 @@ function TableRenderer({
           groups.map((g) => (
             <tbody key={g.key}>
               <tr className="bg-cobble-50/70 dark:bg-cobble-900/20">
-                <td colSpan={cols.length} className="px-3 py-1 font-mono text-[10px] uppercase tracking-widest text-accent">
+                <td colSpan={selectCols} className="px-3 py-1 font-mono text-[10px] uppercase tracking-widest text-accent">
                   {g.key} · {g.rows.length}
                 </td>
               </tr>

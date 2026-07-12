@@ -10,6 +10,7 @@ export interface MachinesMachinesTable {
   family: string | null;
   type: string | null;
   manufacturer: string | null;
+  serial_number: string | null;
   state: Generated<string>;
   excitement: Generated<number>;
   image_path: string | null;

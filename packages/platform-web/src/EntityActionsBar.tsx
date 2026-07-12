@@ -4,7 +4,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { usePlatformWeb } from "./context";
+import { usePlatformWeb, useFlowHost } from "./context";
 import type { PlatformAction, PlatformActionBinding } from "./types";
 
 interface Props {
@@ -76,6 +76,7 @@ function ActionButton({
   action: PlatformAction;
 }) {
   const { api, orgSlug } = usePlatformWeb();
+  const { openFlow } = useFlowHost();
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [flash, setFlash] = useState<"ok" | "err" | null>(null);
@@ -83,10 +84,17 @@ function ActionButton({
   const invoke = useMutation({
     mutationFn: () =>
       api.invokeAction(orgSlug, { actionId: action.id, entityKind, entityId }),
-    onSuccess: () => {
+    onSuccess: (data) => {
       setFlash("ok");
       setTimeout(() => setFlash(null), 1200);
       void qc.invalidateQueries({ queryKey: ["labels-queue"] });
+      // An action result may carry a `ui` directive asking the shell to open a
+      // first-party flow (e.g. disassemble → the organize planner over the
+      // spawned parts). Honored generically; a flow this shell doesn't host is
+      // a no-op. See docs/architecture/invokable-flows-and-lego-redesign.md.
+      const ui = (data as { result?: { ui?: { flow?: string; args?: Record<string, unknown> } } })
+        ?.result?.ui;
+      if (ui && typeof ui.flow === "string") openFlow(ui.flow, ui.args ?? {});
     },
     onError: () => {
       setFlash("err");

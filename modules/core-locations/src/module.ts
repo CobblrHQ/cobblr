@@ -71,6 +71,13 @@ export default defineModule({
         // and they CONTAIN physical things. Lets labels:print apply
         // to locations too — "label the bin."
         profile: "place",
+        // A location is name-unique (there is one "Office"), so a
+        // disambiguating code drawn in the QR center is noise. Declare the
+        // labeling default OFF for this kind; parts/machines (many similar
+        // items) keep it on. The labels module reads this generically off the
+        // registry — this is a DECLARATION, not a labels-side special case.
+        // A user's explicit per-kind toggle still overrides it.
+        labelCodeOverlayDefault: false,
         exposableFields: [
           "name",
           "short_name",

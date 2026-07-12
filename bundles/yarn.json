@@ -1,12 +1,12 @@
 {
   "manifest": {
     "id": "cobblr.flagship.yarn",
-    "version": "0.4.1",
+    "version": "0.5.0",
     "name": "Yarn",
-    "description": "Yarn as its own inventory instance \u2014 skein-tracked, yarn-only fields, grouped by weight. Optional Hooks + Designs tables.",
+    "description": "Yarn as its own inventory instance — skein-tracked, yarn-only fields, grouped by weight. Optional Hooks + Designs tables.",
     "author": "Cobblr",
     "released_at": "2026-06-16",
-    "changelog": "Your Yarn table now reads \"yarn\" everywhere - the \"New\", search box, and empty-state labels say \"yarn\" instead of \"part\". (Earlier installs picked up the generic \"part\" wording; upgrading applies the fix.) Real yarn-user polish: the Color field is a swatch picker (type a hex or pick one), Brand + Price now show right on the \u201cNew yarn\u201d modal, and a \u201cSuggested needle size\u201d field was added. Dropdowns (vendor, fibre\u2026) let you add a new option on the fly that sticks for next time. Dropped the confusing \u201cSummary\u201d computed field. \u2014 Yarn is its OWN table (a Yarn instance), not a skin over generic inventory: only yarn fields show, the button reads \u201cNew yarn\u201d, quantities are in skeins. Hooks and Designs become their own tables too. The generic inventory cruft (warranty, insured, lifecycle\u2026) is hidden, and the pinned view is named for its lens (\u201cBy weight\u201d).",
+    "changelog": "Your Yarn table now reads “yarn” everywhere — the “New”, search box, and empty-state labels say “yarn” instead of “part”. (Earlier installs picked up the generic “part” wording; upgrading applies the fix.) Real yarn-user polish: the Color field is a swatch picker (type a hex or pick one), Brand + Price now show right on the “New yarn” modal, and a “Suggested needle size” field was added. Dropdowns (vendor, fibre…) let you add a new option on the fly that sticks for next time. Dropped the confusing “Summary” computed field. — Yarn is its OWN table (a Yarn instance), not a skin over generic inventory: only yarn fields show, the button reads “New yarn”, quantities are in skeins. Hooks and Designs become their own tables too. The generic inventory cruft (warranty, insured, lifecycle…) is hidden, and the pinned view is named for its lens (“By weight”). Opening a yarn now hides the Maintenance log (that section is for machines) and turns on skein-by-skein consumption tracking by default, so you can see at a glance how much of a skein is left. Existing yarn tables pick this up on upgrade.",
     "requires": [
       {
         "module": "inventory"
@@ -17,7 +17,7 @@
         "module": "inventory",
         "instance_name": "yarn",
         "display_name": "Yarn",
-        "glyph": "\ud83e\uddf6",
+        "glyph": "🧶",
         "item_noun": "yarn",
         "qty_unit": "skein",
         "field_defs": [
@@ -28,7 +28,7 @@
             "type": "text",
             "position": 1,
             "renderer": "color-hex",
-            "help": "The basic shade \u2014 pick a hex/colour for the swatch."
+            "help": "The basic shade — pick a hex/colour for the swatch."
           },
           {
             "entity_kind": "inventory:part",
@@ -36,7 +36,7 @@
             "display_label": "Colorway",
             "type": "text",
             "position": 2,
-            "help": "The maker's named shade \u2014 e.g. \u201cPeacock Heather\u201d (printed on the yarn label)."
+            "help": "The maker's named shade — e.g. “Peacock Heather” (printed on the yarn label)."
           },
           {
             "entity_kind": "inventory:part",
@@ -67,16 +67,16 @@
             "type": "text",
             "position": 4,
             "choices": [
-              "0 \u2013 Lace",
-              "1 \u2013 Fingering",
-              "2 \u2013 Sport",
-              "3 \u2013 DK",
-              "4 \u2013 Worsted",
-              "4 \u2013 Aran",
-              "5 \u2013 Bulky",
-              "6 \u2013 Super Bulky"
+              "0 – Lace",
+              "1 – Fingering",
+              "2 – Sport",
+              "3 – DK",
+              "4 – Worsted",
+              "4 – Aran",
+              "5 – Bulky",
+              "6 – Super Bulky"
             ],
-            "help": "Craft Yarn Council standard weight \u2014 0 (Lace, thinnest) to 6 (Super Bulky, thickest)."
+            "help": "Craft Yarn Council standard weight — 0 (Lace, thinnest) to 6 (Super Bulky, thickest)."
           },
           {
             "entity_kind": "inventory:part",
@@ -99,9 +99,10 @@
             "entity_kind": "inventory:part",
             "name": "length_per_skein",
             "display_label": "Length / skein (m)",
-            "type": "number", "unit": "m",
+            "type": "number",
+            "unit": "m",
             "position": 6,
-            "help": "Metres per skein, from the label \u2014 used to estimate if you have enough for a project."
+            "help": "Metres per skein, from the label — used to estimate if you have enough for a project."
           },
           {
             "entity_kind": "inventory:part",
@@ -109,7 +110,7 @@
             "display_label": "Dye lot",
             "type": "text",
             "position": 7,
-            "help": "The batch code on the label \u2014 buy the same lot so colours match across skeins."
+            "help": "The batch code on the label — buy the same lot so colours match across skeins."
           },
           {
             "entity_kind": "inventory:part",
@@ -182,6 +183,15 @@
             "entity_kind": "inventory:part",
             "name": "model_number",
             "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "maintenance",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "consumable"
           }
         ],
         "saved_views": [
@@ -212,7 +222,7 @@
         "key": "designs",
         "name": "Designs",
         "question": "Want to track your designs & patterns too?",
-        "description": "A 'Designs' table (a projects instance) \u2014 each design with its pattern (file/link) + category, and the yarn it needs allocated to it.",
+        "description": "A 'Designs' table (a projects instance) — each design with its pattern (file/link) + category, and the yarn it needs allocated to it.",
         "default": false,
         "requires": [
           {
@@ -232,7 +242,7 @@
             "module": "projects",
             "instance_name": "designs",
             "display_name": "Designs",
-            "glyph": "\ud83e\uddf5",
+            "glyph": "🧵",
             "item_noun": "design",
             "field_defs": [
               {
@@ -242,7 +252,7 @@
                 "type": "url",
                 "position": 1,
                 "renderer": "url-link",
-                "help": "Link to the pattern (Ravelry, a PDF, a blog post\u2026)."
+                "help": "Link to the pattern (Ravelry, a PDF, a blog post…)."
               },
               {
                 "entity_kind": "projects:project",
@@ -283,7 +293,7 @@
         "key": "hooks",
         "name": "Hooks & needles",
         "question": "Keep track of your hooks & needles?",
-        "description": "A separate 'Hooks' table (an inventory instance) \u2014 your crochet hooks / knitting needles by gauge + material.",
+        "description": "A separate 'Hooks' table (an inventory instance) — your crochet hooks / knitting needles by gauge + material.",
         "default": false,
         "next_steps": [
           {
@@ -298,7 +308,7 @@
             "module": "inventory",
             "instance_name": "hooks",
             "display_name": "Hooks",
-            "glyph": "\ud83e\udea1",
+            "glyph": "🪡",
             "item_noun": "hook",
             "qty_unit": "each",
             "field_defs": [
@@ -341,7 +351,7 @@
                   "Bamboo",
                   "Plastic"
                 ],
-                "help": "What the hook is made of \u2014 affects grip + glide."
+                "help": "What the hook is made of — affects grip + glide."
               }
             ],
             "field_overrides": [

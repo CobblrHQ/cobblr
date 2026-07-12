@@ -9,6 +9,7 @@ import { Router } from "express";
 import { queueRouter } from "./queue.js";
 import { printRouter } from "./print.js";
 import { browseRouter } from "./browse.js";
+import { codesRouter } from "./codes.js";
 import { registerLabelsHandlers } from "./handlers.js";
 
 registerLabelsHandlers();
@@ -18,5 +19,6 @@ const router = Router({ mergeParams: true });
 router.use("/queue", queueRouter);
 router.use("/print", printRouter);
 router.use("/browse", browseRouter);
+router.use("/codes", codesRouter);
 
 export default router;

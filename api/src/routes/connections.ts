@@ -159,9 +159,24 @@ connectionsRouter.get("/me/edge-agent", requireAuth, (req, res) => {
   res.json({ connected: platform().edge.hasChannel(req.session!.id) });
 });
 
+/** Per-(provider, field) secrecy from the AI catalogue, so listUserCredentials
+ *  can return NON-secret values (for pre-filling the edit form) while secrets
+ *  stay write-only. Unknown provider/field → treated as secret (never exposed). */
+function providerSecretLookup(): (providerId: string, key: string) => boolean {
+  const map = new Map<string, Set<string>>();
+  for (const p of aiImpl.listProviders()) {
+    const secrets = new Set<string>();
+    for (const [k, def] of Object.entries(p.credentials ?? {})) {
+      if ((def as { secret?: boolean }).secret) secrets.add(k);
+    }
+    map.set(p.id, secrets);
+  }
+  return (providerId, key) => map.get(providerId)?.has(key) ?? true;
+}
+
 connectionsRouter.get("/me/connections", requireAuth, async (req, res, next) => {
   try {
-    res.json({ items: await listUserCredentials(req.session!.id) });
+    res.json({ items: await listUserCredentials(req.session!.id, providerSecretLookup()) });
   } catch (err) {
     next(err);
   }

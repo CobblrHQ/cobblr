@@ -11,6 +11,7 @@ import { qrSvg } from "./qr.js";
 import { liveQrUrl } from "../live-qr-url.js";
 import { renderLabelsPdf, type PrintItem } from "../print/pdf.js";
 import { SIZES } from "../print/layout.js";
+import { assignCodes, getOverlayCenter } from "../services/codes.js";
 
 export const printRouter = Router({ mergeParams: true });
 
@@ -84,16 +85,28 @@ printRouter.post(
     // Queue row → renderer item, expanded by qty. description is the label
     // text; qr_payload is the URL the QR encodes.
     const base = await qrBaseFor(req);
+    // Get-or-assign a human-readable code (m1, p42, b7) per entity — the same
+    // code is reused across a queue row's qty copies and across reprints.
+    const ctx = tenantContext(req);
+    const codes = await assignCodes(
+      ctx.org.id,
+      db,
+      rows.map((r) => ({ kind: `${r.module_name}:${r.entity_type}`, id: r.entity_id })),
+    );
+    // Per-kind: some kinds opt out of the QR-center code (default on).
+    const overlay = await getOverlayCenter(db, rows.map((r) => `${r.module_name}:${r.entity_type}`));
     const items: PrintItem[] = [];
     rows.forEach((r, i) => {
+      const overlayOn = overlay.get(`${r.module_name}:${r.entity_type}`) ?? true;
+      const centerCode = overlayOn ? codes.get(r.entity_id) : undefined;
       for (let n = 0; n < (r.qty ?? 1); n++) {
-        items.push({ kind: r.entity_type, id: i + 1, title: r.description, url: liveQrUrl(r.qr_payload, base) });
+        items.push({ kind: r.entity_type, id: i + 1, title: r.description, url: liveQrUrl(r.qr_payload, base), centerCode });
       }
     });
 
     try {
-      const { pdf, sheets } = await renderLabelsPdf({ size_key, items });
-      res.json({ pdf_base64: pdf.toString("base64"), sheets, labels: items.length });
+      const { pdf, sheets, warnings } = await renderLabelsPdf({ size_key, items });
+      res.json({ pdf_base64: pdf.toString("base64"), sheets, labels: items.length, warnings });
     } catch (e) {
       res.status(400).json({ error: { code: "render_failed", message: (e as Error).message } });
     }
@@ -153,11 +166,22 @@ printRouter.post(
     // per copy) so the UI just iterates and prints. SVGs are tiny;
     // doing N renders in a row is fine for queues up to a few
     // hundred items.
-    const printables: { description: string; qr_svg: string }[] = [];
+    // Assign a human-readable code per entity and draw it in the QR center;
+    // bump those QRs to EC=H so the overlay stays scannable.
+    const codes = await assignCodes(
+      ctx.org.id,
+      db,
+      items.map((it) => ({ kind: `${it.module_name}:${it.entity_type}`, id: it.entity_id })),
+    );
+    // Per-kind: some kinds opt out of the QR-center code (default on).
+    const overlay = await getOverlayCenter(db, items.map((it) => `${it.module_name}:${it.entity_type}`));
+    const printables: { description: string; qr_svg: string; center_code?: string }[] = [];
     for (const it of items) {
-      const svg = await qrSvg(liveQrUrl(it.qr_payload, base), { margin: 1 });
+      const overlayOn = overlay.get(`${it.module_name}:${it.entity_type}`) ?? true;
+      const center_code = overlayOn ? codes.get(it.entity_id) : undefined;
+      const svg = await qrSvg(liveQrUrl(it.qr_payload, base), { margin: 1, ecLevel: center_code ? "H" : "M" });
       for (let i = 0; i < it.qty; i++) {
-        printables.push({ description: it.description, qr_svg: svg });
+        printables.push({ description: it.description, qr_svg: svg, center_code });
       }
     }
 

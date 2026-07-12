@@ -10,8 +10,65 @@
 import { sql, type Kysely } from "kysely";
 import { platform, type ResolvedEntity } from "@cobblr/platform-contract";
 import type { CoreCatalogsDB } from "../db.js";
+import {
+  catalogResolverConfigured,
+  datasetForKind,
+  hostedSearch,
+  hostedLookup,
+  type HostedEntry,
+} from "../services/hosted-resolver.js";
 
 let registered = false;
+
+// ── Hosted catalogs (shared reference service) ────────────────────────────────
+// A catalog with source='hosted' has no tenant rows — its entries are served by
+// the shared service. Such an entry's id is the composite "<catalogId>::<external_id>"
+// so a match/pairing to it round-trips through the single resolver → /lookup, and
+// the disassemble handler reads fields.external_id + catalog_id as usual.
+// See docs/architecture/shared-reference-catalogs.md.
+
+const HOSTED_ID_SEP = "::";
+
+/** If `catalogId` is a hosted catalog, the dataset + kind to query the service
+ *  with; else null (→ resolve locally). */
+async function hostedCatalogMeta(
+  orgId: string,
+  catalogId: string,
+): Promise<{ kind: string; dataset: string } | null> {
+  if (!catalogResolverConfigured()) return null;
+  const db = (await platform().tenants.getDb(orgId)) as Kysely<CoreCatalogsDB>;
+  const cat = await db
+    .selectFrom("core_catalogs_catalogs")
+    .select(["source", "schema"])
+    .where("id", "=", catalogId)
+    .executeTakeFirst();
+  if (!cat || cat.source !== "hosted") return null;
+  const kind =
+    typeof (cat.schema as Record<string, unknown> | null)?.semantic_type === "string"
+      ? ((cat.schema as Record<string, unknown>).semantic_type as string)
+      : "";
+  if (!kind) return null;
+  const dataset = await datasetForKind(orgId, kind);
+  return dataset ? { kind, dataset } : null;
+}
+
+function hostedResolvedEntity(catalogId: string, externalId: string, e: HostedEntry): ResolvedEntity {
+  const title = e.name ?? e.title ?? externalId;
+  return {
+    kind: "core-catalogs:entry",
+    id: `${catalogId}${HOSTED_ID_SEP}${externalId}`,
+    title,
+    subtitle: e.category ?? undefined,
+    image_path: e.image,
+    fields: {
+      name: title,
+      image_url: e.image,
+      external_id: externalId,
+      catalog_id: catalogId,
+      category: e.category,
+    },
+  };
+}
 
 export function registerCatalogsResolvers(): void {
   if (registered) return;
@@ -57,6 +114,17 @@ export function registerCatalogsResolvers(): void {
   platform().entities.registerResolver(
     "core-catalogs:entry",
     async (orgId, id) => {
+      // Hosted entry: composite id "<catalogId>::<external_id>" → /lookup.
+      const sep = id.indexOf(HOSTED_ID_SEP);
+      if (sep > 0) {
+        const catalogId = id.slice(0, sep);
+        const externalId = id.slice(sep + HOSTED_ID_SEP.length);
+        const meta = await hostedCatalogMeta(orgId, catalogId);
+        if (meta) {
+          const r = await hostedLookup(orgId, meta.dataset, meta.kind, externalId);
+          return r?.entry ? hostedResolvedEntity(catalogId, externalId, r.entry) : null;
+        }
+      }
       const db = (await platform().tenants.getDb(orgId)) as Kysely<CoreCatalogsDB>;
       const row = await db
         .selectFrom("core_catalogs_entries as e")
@@ -79,6 +147,31 @@ export function registerCatalogsResolvers(): void {
   platform().entities.registerListResolver(
     "core-catalogs:entry",
     async (orgId, query) => {
+      // Hosted catalog: no tenant rows — search the shared service. The match
+      // picker filters by catalog_id + a query; a hosted catalog can't be
+      // browsed whole (millions of rows), so an empty query returns nothing.
+      const filterEarly = query.filter ?? {};
+      const hostedCatalogId =
+        typeof filterEarly.catalog_id === "string" ? filterEarly.catalog_id : null;
+      if (hostedCatalogId) {
+        const meta = await hostedCatalogMeta(orgId, hostedCatalogId);
+        if (meta) {
+          const qtext = (query.q ?? "").trim();
+          if (!qtext) return { items: [] };
+          const r = await hostedSearch(
+            orgId,
+            meta.dataset,
+            meta.kind,
+            qtext,
+            Math.min(query.limit ?? 50, 100),
+          );
+          return {
+            items: (r?.results ?? []).map((e) =>
+              hostedResolvedEntity(hostedCatalogId, e.external_id, e),
+            ),
+          };
+        }
+      }
       const db = (await platform().tenants.getDb(orgId)) as Kysely<CoreCatalogsDB>;
       const limit = Math.min(query.limit ?? 50, 200);
       const offset = query.offset ?? 0;

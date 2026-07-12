@@ -23,6 +23,7 @@ import { asyncHandler, badBody, requireRole } from "./util.js";
 import { isJunkName } from "../services/enrich.js";
 import { LengthUnitResolver, inboxLongestMm } from "../services/organize-dims.js";
 import {
+  gatherEntitiesByRefs,
   gatherUnplacedEntities,
   planOrganize,
   splitEntityRef,
@@ -43,8 +44,12 @@ const PlanBody = z
     scan_batch_id: z.string().uuid().optional(),
     /** "unplaced": plan over UNPLACED committed entities instead of the
      *  inbox (Phase 3). "pending": every pending unfiled inbox item — the
-     *  "Plan the pile" front door, no selection needed. */
-    scope: z.enum(["unplaced", "pending"]).optional(),
+     *  "Plan the pile" front door, no selection needed. "refs": plan over a
+     *  SPECIFIC set of committed entity refs (the batch-scoped door an action
+     *  opens after it produces a pile — a disassemble's spawned parts). */
+    scope: z.enum(["unplaced", "pending", "refs"]).optional(),
+    /** Composite "<kind>::<uuid>" refs to plan, for scope:"refs". */
+    refs: z.array(z.string().min(1).max(200)).min(1).max(2000).optional(),
     /** Free-text ground truth from the human ("these are camping gear") —
      *  folded into the AI call; overrides the model's priors. Ephemeral by
      *  design: the durable way to teach the planner is data (bin names,
@@ -63,6 +68,9 @@ const PlanBody = z
   })
   .refine((b) => !!b.item_ids || !!b.scan_batch_id || !!b.scope, {
     message: "item_ids, scan_batch_id, or scope required",
+  })
+  .refine((b) => b.scope !== "refs" || (b.refs && b.refs.length > 0), {
+    message: "scope:\"refs\" requires a non-empty refs array",
   });
 
 organizeRouter.post(
@@ -78,12 +86,22 @@ organizeRouter.post(
     // Expired plans are working state, not history — sweep opportunistically.
     await db.deleteFrom("core_scan_organize_plans").where("expires_at", "<", new Date()).execute();
 
-    // ── Phase 3: the same planner pointed at unplaced committed entities. ──
-    if (body.scope === "unplaced") {
-      const gathered = await gatherUnplacedEntities(ctx.org.id);
+    // ── The same planner pointed at committed entities: "unplaced" sweeps the
+    // whole workspace, "refs" plans a specific pile an action just produced. ──
+    if (body.scope === "unplaced" || body.scope === "refs") {
+      const gathered =
+        body.scope === "refs"
+          ? await gatherEntitiesByRefs(ctx.org.id, body.refs!)
+          : await gatherUnplacedEntities(ctx.org.id);
       if (gathered.items.length === 0) {
         res.status(422).json({
-          error: { code: "nothing_to_plan", message: "Everything already has a home." },
+          error: {
+            code: "nothing_to_plan",
+            message:
+              body.scope === "refs"
+                ? "None of those need a home yet."
+                : "Everything already has a home.",
+          },
         });
         return;
       }
@@ -132,8 +150,10 @@ organizeRouter.post(
       // scope:"pending" — the whole pending backlog, newest first (the cap
       // keeps the plan bounded). Filed-but-uncommitted rows ride along too:
       // they become READY groups ("all set — just put them away") instead of
-      // being invisible; only the unfiled set feeds the planner.
-      q = q.orderBy("created_at", "desc");
+      // being invisible; only the unfiled set feeds the planner. id breaks
+      // created_at ties (items imported in one batch share a timestamp) so the
+      // capped slice is a stable set, matching the inbox list's keyset order.
+      q = q.orderBy("created_at", "desc").orderBy("id", "desc");
     }
     const rows = await q.execute();
     if (rows.length > PLAN_MAX_ITEMS) {
@@ -231,7 +251,12 @@ organizeRouter.post(
             .selectFrom("core_scan_organize_plans")
             .select(["id", "payload", "applied_group_ids", "created_at", "expires_at"])
             .where("expires_at", ">", new Date())
+            // seq (monotonic) breaks created_at ties so "newest first" is exact
+            // and stable — draft reuse + hint carry both key off candidates[0]
+            // / the first match, and a tie returned in arbitrary order flaked
+            // whichever plan won (a hinted plan not surviving close/reopen).
             .orderBy("created_at", "desc")
+            .orderBy("seq", "desc")
             .limit(5)
             .execute()
         : [];
@@ -629,7 +654,9 @@ organizeRouter.get(
       .selectFrom("core_scan_organize_plans")
       .select(["id", "payload", "applied_group_ids", "walk_state", "expires_at"])
       .where("expires_at", ">", new Date())
+      // seq tiebreaks same-timestamp plans so "the latest" is deterministic.
       .orderBy("created_at", "desc")
+      .orderBy("seq", "desc")
       .limit(1)
       .executeTakeFirst();
     if (!row) {

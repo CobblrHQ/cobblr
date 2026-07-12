@@ -4,10 +4,15 @@
 
 import QRCode from "qrcode";
 
-export async function qrSvg(payload: string, opts: { margin?: number } = {}): Promise<string> {
+export async function qrSvg(
+  payload: string,
+  opts: { margin?: number; ecLevel?: "L" | "M" | "Q" | "H" } = {},
+): Promise<string> {
   return QRCode.toString(payload, {
     type: "svg",
     margin: opts.margin ?? 1,
-    errorCorrectionLevel: "M",
+    // H (~30% recovery) when the label carries a center code, so the overlay
+    // stays scannable; M otherwise.
+    errorCorrectionLevel: opts.ecLevel ?? "M",
   });
 }

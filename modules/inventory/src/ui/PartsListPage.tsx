@@ -30,6 +30,7 @@ import {
   usePageTitle,
   useViewMode,
   usePlatformWeb,
+  usePublishChatContext,
   type FieldRendererId,
 } from "@cobblr/platform-web";
 import { useInventory } from "./context";
@@ -227,6 +228,14 @@ export function PartsListPage() {
   }
 
   const partItems = parts.data?.pages.flatMap((p) => p.items) ?? [];
+  // Tell Ask Cobb what's on this screen — `low_stock` is the module's own flag.
+  const lowStock = partItems.filter((p) => p.low_stock).length;
+  usePublishChatContext({
+    label: itemNounPlural ? itemNounPlural.replace(/^\w/, (ch) => ch.toUpperCase()) : "Inventory",
+    summary:
+      `${partItems.length} ${partItems.length === 1 ? itemNoun : itemNounPlural}` +
+      (lowStock ? `, ${lowStock} low on stock` : ""),
+  });
 
   // Progressive column density (redesign B6): a young table used to open as a
   // wall of "—" (every bundle field = a column, mostly empty at 1-5 rows).
@@ -874,6 +883,7 @@ function PartsTable({
                     alt={p.name}
                     size={56}
                     color={(p.metadata as Record<string, unknown> | null)?.color as string | undefined}
+                    values={p.metadata as Record<string, unknown> | null}
                   />
                   <div className="min-w-0">
                     <Link to={`${basePath}/parts/${p.id}`} className="font-medium text-content dark:text-mortar-100 hover:text-accent">
@@ -984,6 +994,7 @@ function PartsTable({
                 alt={p.name}
                 size={48}
                 color={(p.metadata as Record<string, unknown> | null)?.color as string | undefined}
+                values={p.metadata as Record<string, unknown> | null}
               />
               <div className="flex-1 min-w-0">
                 <Link
@@ -1089,6 +1100,7 @@ function PartsTileGrid({ items, basePath }: { items: PartListItem[]; basePath: s
           <EntityTile
             src={p.image_path}
             color={(p.metadata as Record<string, unknown> | null)?.color as string | undefined}
+            values={p.metadata as Record<string, unknown> | null}
             title={p.name}
             subtitle={p.manufacturer || p.category_name || null}
             badge={

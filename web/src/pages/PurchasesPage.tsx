@@ -10,6 +10,9 @@ import { ChevronRight, Plus, Search, Store, Trash2 } from "lucide-react";
 import { ApiError, api, type Order, type VendorSummary } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useFieldPresentation } from "../lib/useFieldPresentation";
+import { ModuleInstanceChooser } from "../components/ModuleInstanceChooser";
+import { ModulePurposeHint } from "../components/ModulePurposeHint";
+import { usePublishChatContext } from "../lib/chat-context";
 import { BulkActionBar, EntityActionsBar, Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 
 const STATUSES: Order["status"][] = ["planned", "ordered", "in-transit", "arrived", "cancelled"];
@@ -25,8 +28,29 @@ export function PurchasesPage() {
     queryFn: () => api.listOrders(activeSlug),
     enabled: !!activeSlug,
   });
+  // Purchases instances (named collections of the module). With no base-table
+  // orders, present these as a chooser instead of a bare "nothing here" — the
+  // aggregate dashboard tile lands here. Same pattern as Machines / Assets.
+  const orderInstances = useQuery({
+    queryKey: ["instances", activeSlug, "purchases"],
+    queryFn: () => api.listInstances(activeSlug, "purchases"),
+    enabled: !!activeSlug,
+    staleTime: 30_000,
+  });
 
   const allRows = orders.data?.items ?? [];
+  // Tell Ask Cobb what's on this screen (uses the order module's own statuses).
+  const inTransit = allRows.filter((o) => o.status === "in-transit").length;
+  const openOrders = allRows.filter(
+    (o) => o.status === "planned" || o.status === "ordered" || o.status === "in-transit",
+  ).length;
+  usePublishChatContext({
+    label: "Purchases",
+    summary:
+      `${allRows.length} order${allRows.length === 1 ? "" : "s"}` +
+      (openOrders ? `, ${openOrders} open` : "") +
+      (inTransit ? `, ${inTransit} in transit` : ""),
+  });
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"" | Order["status"]>("");
 
@@ -112,6 +136,11 @@ export function PurchasesPage() {
         </button>
       </div>
 
+      {orders.isSuccess && allRows.length === 0 && <ModulePurposeHint moduleName="purchases" />}
+
+      {allRows.length === 0 && (orderInstances.data?.items.length ?? 0) > 0 ? (
+        <ModuleInstanceChooser instances={orderInstances.data!.items} icon={Store} noun="order" />
+      ) : (
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-subtle/60 dark:bg-slate-800/40 text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
@@ -190,6 +219,7 @@ export function PurchasesPage() {
           </tbody>
         </table>
       </div>
+      )}
 
       <OrderDetailModal orderId={id ?? null} onClose={() => navigate("/purchases")} />
       <NewOrderModal open={newOpen} onClose={() => setNewOpen(false)} />

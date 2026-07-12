@@ -42,7 +42,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { Modal, useImageSrc, useToast, usePageTitle } from "@cobblr/platform-web";
+import { Modal, useImageSrc, useToast, usePageTitle, colorSwatch, wantsSwatch } from "@cobblr/platform-web";
 import { ScanImportModal } from "../components/ScanImportModal";
 import { ExportInboxModal } from "../components/ExportInboxModal";
 import { CameraCaptureSheet } from "../components/CameraCaptureSheet";
@@ -57,6 +57,7 @@ import { PairPhoneButton } from "../components/PairPhoneButton";
 import { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
 export { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
 import { decideLocationScan, filingLabel } from "../lib/scanFiling";
+import { entryKey, withRoutedInstances, pickDestinationKey } from "../lib/scanDestination";
 import {
   type AiStatus,
   ApiError,
@@ -68,6 +69,7 @@ import {
   type TrackedMatch,
 } from "../lib/api";
 import { matchParentType, readField } from "../lib/parent-type-match";
+import { usePublishChatContext } from "../lib/chat-context";
 import { useBarcodeWedge } from "../lib/useBarcodeWedge";
 import { resolveSessionBatch, clearScanSession, readScanSession, isSessionFresh, SESSION_GAP_MS } from "../lib/scanSession";
 import { tabBrowserId } from "../hooks/useBrowserDrive";
@@ -491,11 +493,6 @@ function dedupeCandidates(cands: ScanCandidate[]): ScanCandidate[] {
   return [...byKey.values()];
 }
 
-/** Selection key for a menu entry. */
-function entryKey(module: string, instance: string | null): string {
-  return `${module}::${instance ?? ""}`;
-}
-
 /** A vendor/URL resolver (a Polar spool QR, …) stows its structured parse under
  *  `suggested_metadata.fields` — keys aligned to field-def names (size,
  *  batch_code, material, color, …). Pull that nested object out as a flat map. */
@@ -510,20 +507,9 @@ function humanizeKey(k: string): string {
   return k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-/** A colour VALUE → a CSS colour usable as a swatch background, or null if it
- *  isn't a colour we can render. A `#rrggbb` (or `rrggbb`) is used as-is; a NAME
- *  ("Royal Blue") is normalised to a CSS named colour ("royalblue") — vendors
- *  like Polar give us only the name, no hex (pfil.us returns `color:"Royal
- *  Blue"`), so this is the only way to show a swatch. Maker-specific names that
- *  aren't CSS colours ("Galaxy Black") return null → the caller shows text. */
-function colorSwatch(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const v = value.trim();
-  if (!v) return null;
-  if (/^#?[0-9a-fA-F]{6}$/.test(v)) return v[0] === "#" ? v : `#${v}`;
-  const named = v.toLowerCase().replace(/\s+/g, "");
-  return typeof CSS !== "undefined" && CSS.supports?.("color", named) ? named : null;
-}
+// `colorSwatch` (a colour value → CSS colour) now lives in @cobblr/platform-web
+// so the scan form and the shared EntityThumb agree on what renders as a
+// swatch. Imported at the top of this file.
 
 /** The at-the-moment-of-pain variant: a nameless miss in the confirm flow. */
 export function AiOffMissHint({ status }: { status: AiStatus | null }) {
@@ -810,6 +796,15 @@ export function ScanPage() {
   const [staleOnly, setStaleOnly] = useState(false);
   const staleCount = items.filter(isStale).length;
   const reviewCount = items.filter(needsReview).length;
+  // Tell Ask Cobb what's on this screen, so "what do I have going on?" can
+  // reference the inbox backlog (the inbox isn't a record kind Cobb can read).
+  usePublishChatContext({
+    label: "Scan Inbox",
+    summary:
+      `${totalPending} pending` +
+      (staleCount ? `, ${staleCount} waiting 2d+` : "") +
+      (reviewCount ? `, ${reviewCount} need review` : ""),
+  });
   // Free-text search over the pending queue: tokenized — every word must
   // match somewhere across name / barcode / AI notes / brand / scan area.
   const [searchQ, setSearchQ] = useState("");
@@ -1913,7 +1908,7 @@ export function ScanPage() {
                 <LocationTreePicker
                   value={fileBin || null}
                   onChange={(v) => setFileBin(v ?? "")}
-                  placeholder="pick a bin"
+                  placeholder="pick a location"
                   size="sm"
                 />
               </div>
@@ -2242,6 +2237,25 @@ export function ScanPage() {
           // The sorting plan: the inbox re-expressed by DESTINATION. An inline
           // view swapped in by the header toggle (not a modal over the list) —
           // same pending items, grouped by where they should go.
+          <>
+          {/* Loud in-mode banner + an obvious way back. The tiny header toggle
+              alone left users stranded here, wondering where their per-item
+              fields + Confirm went (they're in "By session"). */}
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-cobble-400 dark:border-cobble-600 bg-cobble-50 dark:bg-cobble-900/30 px-3 py-2.5">
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-content dark:text-mortar-100">You're in the Sorting plan</div>
+              <div className="text-[11px] text-muted dark:text-slate-400">
+                Scans grouped by where they'll go. To review and Confirm items one at a time, go back.
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setViewMode("sessions")}
+              className="shrink-0 rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-xs font-medium px-3 py-1.5"
+            >
+              ‹ Back to items
+            </button>
+          </div>
           <SortingPlanView
             slug={activeSlug}
             scope="pending"
@@ -2255,6 +2269,7 @@ export function ScanPage() {
             onStartWalk={() => void startWalk()}
             renderItemCard={renderPlanItemCard}
           />
+          </>
         ) : (
         <>
         {pendingScans.map((p) => (
@@ -2959,6 +2974,30 @@ function InboxCard({
   const isPhotoItem = !item.barcode_text && !!item.image_file_id;
   const [reading, setReading] = useState(false);
   const readingSnapshot = useRef<string | null>(null);
+  // One-tap confirm from the collapsed row — commit into the AI's top candidate
+  // without opening the accordion (mirrors the form's confirm path). Ready only
+  // when we have a routed candidate + a name (same guard as bulk-confirm).
+  const quickConfirmReady = !!topCand && !!item.suggested_name;
+  const quickConfirm = useMutation({
+    mutationFn: () => {
+      if (!topCand || !item.suggested_name) throw new Error("not ready to confirm");
+      return api.confirmScanItem(activeSlug, item.id, {
+        target_module: topCand.module,
+        target_kind: baseKind(topCand.module),
+        instance: topCand.instance ?? undefined,
+        name: item.suggested_name,
+        quantity: item.quantity ?? topCand.quantity ?? undefined,
+        location_id: item.target_location_id ?? undefined,
+        extras:
+          topCand.fields && Object.keys(topCand.fields).length ? { metadata: topCand.fields } : undefined,
+      });
+    },
+    onSuccess: () => {
+      toast.success(`Added ${item.suggested_name}`);
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
   const rerun = useMutation({
     mutationFn: (vars?: { hint?: string; wrong?: boolean; enrich?: boolean }) =>
       api.rerunScanAi(activeSlug, item.id, vars?.hint, vars?.wrong, vars?.enrich),
@@ -3489,6 +3528,17 @@ function InboxCard({
             the card's full height: rerun at the top, discard centered, the
             expand chevron pinned near the bottom (rather than a tight top cluster). */}
         <div className="flex flex-col items-center justify-between shrink-0 self-stretch py-2 pr-0.5" onClick={(e) => e.stopPropagation()}>
+          {!planContext && (
+            <button
+              type="button"
+              onClick={() => quickConfirm.mutate()}
+              disabled={!quickConfirmReady || quickConfirm.isPending}
+              className="text-emerald-500 hover:text-emerald-400 p-1.5 disabled:opacity-30"
+              title={quickConfirmReady ? `Confirm as ${topCand?.label ?? "suggested"} — no need to open it` : "Not ready to confirm yet"}
+            >
+              <CheckCircle size={17} className={quickConfirm.isPending ? "animate-pulse" : ""} />
+            </button>
+          )}
           <button
             type="button"
             onClick={() => rerun.mutate(undefined)}
@@ -4528,31 +4578,38 @@ function ConfirmForm({
   const [saveEvalCase, setSaveEvalCase] = useState(false);
   const [evalNote, setEvalNote] = useState("");
 
-  const entries = menu && menu.length > 0 ? menu : FALLBACK_MENU;
-  // Initial pick: the routed entry if it's on the menu; else the identify's
-  // asset/part hint; else the first table.
-  const hintedKey = (() => {
-    if (initialKey && entries.some((m) => entryKey(m.module, m.instance) === initialKey)) {
-      return initialKey;
-    }
-    // No clean routed match → fall back to a GENERIC default table, never an
-    // arbitrary named instance. A "Bookshelf" (or any specialised instance)
-    // must not be the catch-all — a radio bag landing on the book-fields form
-    // was the routed candidate (a not-yet-installed flagship) failing the
-    // match above and dropping to entries[0]. Prefer, in order: the AI's
-    // entity_type default, inventory's default, assets' default, ANY module
-    // default (no instance), and only then the first entry.
-    const entityType = (item.suggested_metadata as { entity_type?: string } | null)?.entity_type;
-    const isDefault = (m: ScanMenuEntry) => !m.instance;
-    const pick =
-      (entityType === "asset" && entries.find((m) => m.module === "assets" && isDefault(m))) ||
-      entries.find((m) => m.module === "inventory" && isDefault(m)) ||
-      entries.find((m) => m.module === "assets" && isDefault(m)) ||
-      entries.find(isDefault) ||
-      entries[0]!;
-    return entryKey(pick.module, pick.instance);
-  })();
+  // The workspace scan menu (with named instances like "Yarn") loads async, so
+  // while it's in flight `menu` is null and we'd otherwise pick from FALLBACK_MENU
+  // — which has ONLY the generic base tables. Seed the routed live-instance
+  // candidates into the menu from the candidate itself (`withRoutedInstances`),
+  // so a yarn-routed scan defaults to "Yarn" on the FIRST render instead of
+  // flashing "Inventory part" (and filing there if the user confirms before the
+  // fetch lands). Once the real menu resolves it already carries the instance —
+  // with field defs — and the placeholder is dropped as a duplicate.
+  const entries = withRoutedInstances(
+    menu && menu.length > 0 ? menu : FALLBACK_MENU,
+    candidates,
+  );
+  // Initial pick: the routed entry if it resolves; else a GENERIC default table
+  // (never an arbitrary named instance). Pure + unit-tested in scanDestination.ts.
+  const hintedKey = pickDestinationKey({
+    initialKey,
+    entries,
+    entityType: (item.suggested_metadata as { entity_type?: string } | null)?.entity_type ?? null,
+  });
   const [selKey, setSelKey] = useState<string>(hintedKey);
+  // `withRoutedInstances` keeps `hintedKey` correct for a routed LIVE instance
+  // even mid-load, so this adopt-on-change mainly covers the OTHER direction: a
+  // routed candidate that turns out NOT to be a real table (a not-yet-installed
+  // bundle key the loaded menu doesn't carry) → `hintedKey` flips to the generic
+  // default once the menu resolves, and we follow it. When the real menu resolves
+  // and now contains the routed instance, adopt it — unless the user already
+  // picked a destination by hand.
+  const userPickedDest = useRef(false);
+  useEffect(() => {
+    if (userPickedDest.current) return;
+    if (selKey !== hintedKey) setSelKey(hintedKey);
+  }, [hintedKey]);
   const entry =
     entries.find((m) => entryKey(m.module, m.instance) === selKey) ?? entries[0]!;
 
@@ -4582,6 +4639,15 @@ function ConfirmForm({
   })();
 
   const [name, setName] = useState(initialCand?.name ?? item.suggested_name ?? "");
+  // A serial/service tag the vision read off the label. It already commits to the
+  // destination's native serial_number column, but was never SHOWN — so the user
+  // couldn't tell it was captured (and the matchmaker note "no serial field in
+  // this table" reinforced that). Surface it, pre-filled + editable (fix OCR
+  // slips), for items where a serial applies: one was captured, or the target is
+  // equipment (machines/assets). It rides to the native column via `extras`.
+  const capturedSerial = String((item.suggested_metadata as { serial_number?: unknown } | null)?.serial_number ?? "");
+  const [serial, setSerial] = useState(capturedSerial);
+  const showSerial = !!capturedSerial || entry.module === "machines" || entry.module === "assets";
   const aiStatus = useAiStatus();
   // Quantity: the matchmaker's pack-count read ("1 Pack Of 9 Skein" -> 9)
   // beats the row's default 1; an explicitly-set row quantity beats both.
@@ -4649,6 +4715,9 @@ function ConfirmForm({
       );
       const extras = {
         ...(manufacturer.trim() ? { manufacturer: manufacturer.trim() } : {}),
+        // Top-level (not under metadata) so it lands in the destination's NATIVE
+        // serial_number column via the confirm handler's restExtras.
+        ...(serial.trim() ? { serial_number: serial.trim() } : {}),
         ...(Object.keys(cleanMeta).length ? { metadata: cleanMeta } : {}),
       };
       return api.confirmScanItem(activeSlug, item.id, {
@@ -4709,6 +4778,7 @@ function ConfirmForm({
           value={selKey}
           onChange={(e) => {
             const k = e.target.value;
+            userPickedDest.current = true;
             setSelKey(k);
             // Switching to a table the matchmaker already extracted for →
             // merge its field values in (typed values keep winning where
@@ -4762,6 +4832,19 @@ function ConfirmForm({
           />
         </label>
 
+        {showSerial && (
+          <label className="block">
+            <div className={labelCls}>Serial number</div>
+            <input
+              type="text"
+              value={serial}
+              onChange={(e) => setSerial(e.target.value)}
+              placeholder={capturedSerial || "—"}
+              className={`${inputCls} font-mono`}
+            />
+          </label>
+        )}
+
         {/* "From the label" — everything the resolver parsed that ISN'T a
             field on this table (so the user sees the info was captured even
             though there's no box for it here — e.g. a spool's material/colour/
@@ -4771,7 +4854,8 @@ function ConfirmForm({
           const parsed = parsedScanFields(item.suggested_metadata as Record<string, unknown> | null);
           const covered = new Set(entry.fields.map((f) => f.name));
           const extra = Object.entries(parsed).filter(
-            ([k, v]) => v != null && v !== "" && !covered.has(k),
+            // serial_number has its own editable field above — don't also chip it.
+            ([k, v]) => v != null && v !== "" && !covered.has(k) && k !== "serial_number",
           );
           if (extra.length === 0) return null;
           return (
@@ -4900,17 +4984,8 @@ interface FieldDefLike {
   choices?: string[] | null;
 }
 
-/** Does this field want a colour swatch? The platform has no dedicated
- *  color TYPE — bundles ship them as text whose help says "pick a
- *  hex/colour for the swatch" (yarn's `color`). Render those with a
- *  native picker + the text in sync; the matchmaker is prompted to fill
- *  them with CSS hex codes. */
-function wantsSwatch(def: FieldDefLike): boolean {
-  return (
-    def.type === "text" &&
-    (/hex|swatch/i.test(def.help ?? "") || def.name === "color" || def.name === "colour")
-  );
-}
+// `wantsSwatch` (is this field a colour swatch field?) now lives in
+// @cobblr/platform-web, shared with EntityThumb. Imported at the top.
 const HEX_RE = /^#[0-9a-f]{6}$/i;
 
 /** One custom-field input on the scan-confirm form, by the field def's type

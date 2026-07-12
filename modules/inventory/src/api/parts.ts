@@ -291,8 +291,13 @@ partsRouter.get(
     // image_path, walk the `matches → core-catalogs:entry` pairing
     // and use the matched entry's image_path. One batched pairings
     // lookup + one batched lookupMany — no N+1.
+    // Skip parts whose identity is a colour SWATCH (a valid colour hex, e.g. a
+    // yarn's colourway): a generic catalog photo would suppress the swatch the
+    // user wants (the thumbnail prefers a photo over a colour).
+    const hasColorSwatch = (p: { metadata?: unknown }) =>
+      /^#[0-9a-fA-F]{3,8}$/.test(String((p.metadata as Record<string, unknown> | null | undefined)?.color ?? "").trim());
     const partsNeedingImage = filtered
-      .filter((p) => !p.image_path)
+      .filter((p) => !p.image_path && !hasColorSwatch(p))
       .map((p) => p.id);
     if (partsNeedingImage.length > 0) {
       const pairs = await platform().pairings.findBySources({

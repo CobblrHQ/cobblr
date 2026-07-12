@@ -246,6 +246,38 @@ export function cmpVersion(a: string, b: string): number {
   return 0;
 }
 
+// A catalog SHELL (name + schema config, no rows). Shared by the top-level
+// manifest and by opt-in features (so "Link to Rebrickable" installs the
+// catalogs only when that box is checked).
+const CatalogEntry = z.object({
+  external_id: z.string().regex(/^[a-z0-9][a-z0-9_-]*$/),
+  name: z.string().min(1),
+  description: z.string().optional(),
+  source_url: z.string().optional(),
+  puller_id: z.string().optional(),
+  schema: z
+    .object({
+      id_column: z.string().optional(),
+      title_column: z.string().optional(),
+      image_column: z.string().optional(),
+      subtitle_column: z.string().optional(),
+      description_column: z.string().optional(),
+      field_renderers: z
+        .record(
+          z.enum(["text", "color-hex", "image-url", "url-link", "year", "boolean", "code"]),
+        )
+        .optional(),
+      field_labels: z.record(z.string()).optional(),
+      bindable_to_kinds: z.array(z.string()).optional(),
+      semantic_type: z.string().regex(/^[a-z0-9][a-z0-9.-]*$/).optional(),
+      hero_field: z.string().optional(),
+      hero_renderer: z
+        .enum(["text", "color-hex", "image-url", "url-link", "year", "boolean", "code"])
+        .optional(),
+    })
+    .default({}),
+});
+
 export const BundleManifest = z.object({
   id: z.string().min(1),
   version: z.string().min(1),
@@ -298,6 +330,9 @@ export const BundleManifest = z.object({
         saved_views: z.array(SavedViewEntry).default([]),
         provides_instances: z.array(InstanceEntry).default([]),
         provides_apps: z.array(AppEntry).default([]),
+        /** Catalog shells this feature installs when its box is checked (e.g.
+         *  the Rebrickable catalogs behind "Link to Rebrickable"). */
+        catalogs: z.array(CatalogEntry).default([]),
       }),
     )
     .default([]),
@@ -353,41 +388,7 @@ export const BundleManifest = z.object({
    *  blow past the express body limit and make installs synchronous-
    *  multi-second. Bundle authors point users at the row import
    *  separately. */
-  catalogs: z
-    .array(
-      z.object({
-        /** Stable id within the bundle (e.g. "rebrickable-colors").
-         *  Used to find this catalog on uninstall + on re-install
-         *  for in-place schema updates. */
-        external_id: z.string().regex(/^[a-z0-9][a-z0-9_-]*$/),
-        name: z.string().min(1),
-        description: z.string().optional(),
-        source_url: z.string().optional(),
-        puller_id: z.string().optional(),
-        schema: z
-          .object({
-            id_column: z.string().optional(),
-            title_column: z.string().optional(),
-            image_column: z.string().optional(),
-            subtitle_column: z.string().optional(),
-            description_column: z.string().optional(),
-            field_renderers: z
-              .record(
-                z.enum(["text", "color-hex", "image-url", "url-link", "year", "boolean", "code"]),
-              )
-              .optional(),
-            field_labels: z.record(z.string()).optional(),
-            bindable_to_kinds: z.array(z.string()).optional(),
-            semantic_type: z.string().regex(/^[a-z0-9][a-z0-9.-]*$/).optional(),
-            hero_field: z.string().optional(),
-            hero_renderer: z
-              .enum(["text", "color-hex", "image-url", "url-link", "year", "boolean", "code"])
-              .optional(),
-          })
-          .default({}),
-      }),
-    )
-    .default([]),
+  catalogs: z.array(CatalogEntry).default([]),
   /** Optional lens contribution — turns this bundle into a Pillar-E-
    *  style specialisation. The nav reads installed bundles with
    *  provides_lens to render the parent-module's popover and the
@@ -547,6 +548,7 @@ export function resolveManifestFeatures(full: BundleManifestT, enabledKeys: stri
     saved_views: [...full.saved_views, ...on.flatMap((f) => f.saved_views)],
     provides_instances: mergeInstances([...full.provides_instances, ...on.flatMap((f) => f.provides_instances)]),
     provides_apps: [...full.provides_apps, ...on.flatMap((f) => f.provides_apps)],
+    catalogs: [...(full.catalogs ?? []), ...on.flatMap((f) => f.catalogs ?? [])],
   };
 }
 
@@ -1454,6 +1456,37 @@ export async function applyValidatedBundle(
   if (m.catalogs.length > 0) {
     try {
       const tdb = (await getTenantDb(orgId)) as unknown as Kysely<BundleTenantDB>;
+      // Hosted-eligibility: search + lookup + bom all route to the shared service
+      // now, so a NEW catalog whose dataset the resolver holds installs as
+      // source='hosted' (rows served from the service, not copied per tenant).
+      // Matched by semantic_type / external_id against /datasets. Best-effort:
+      // resolver down → all local. Re-install never changes an existing catalog's
+      // source (a user's override stands). See docs/architecture/shared-reference-catalogs.md §4.5.
+      const catResolver = (process.env.COBBLR_CATALOG_RESOLVER_URL ?? "").replace(/\/+$/, "");
+      const hostedKinds = new Set<string>();
+      const hostedDatasets: string[] = [];
+      if (catResolver) {
+        try {
+          const dres = await fetch(`${catResolver}/datasets`, {
+            headers: { Authorization: `Bearer ${process.env.COBBLR_CATALOG_RESOLVER_TOKEN ?? ""}` },
+          });
+          if (dres.ok) {
+            const ds = (await dres.json()) as Array<{ dataset: string; kinds: string[] }>;
+            for (const d of ds) {
+              hostedDatasets.push(d.dataset);
+              for (const k of d.kinds ?? []) hostedKinds.add(k);
+            }
+          }
+        } catch {
+          /* resolver unreachable → nothing eligible → all local */
+        }
+      }
+      const hostedSourceFor = (c: (typeof m.catalogs)[number]): "hosted" | "local" => {
+        const st = (c.schema as { semantic_type?: string } | undefined)?.semantic_type;
+        if (st && hostedKinds.has(st)) return "hosted";
+        if (hostedDatasets.some((d) => c.external_id.startsWith(d))) return "hosted";
+        return "local";
+      };
       for (const c of m.catalogs) {
         const existing = await tdb
           .selectFrom("core_catalogs_catalogs")
@@ -1481,6 +1514,7 @@ export async function applyValidatedBundle(
               description: c.description ?? null,
               source_url: c.source_url ?? null,
               puller_id: c.puller_id ?? null,
+              source: hostedSourceFor(c),
               schema: sql`${JSON.stringify(c.schema)}::jsonb`,
               bundle_external_id: `${m.id}/${c.external_id}`,
             } as never)
@@ -2081,21 +2115,33 @@ async function uninstallBundleId(
     }
     // v1.6: drop catalogs whose bundle_external_id starts with
     // "<bundle-id>/" (the install prefix we wrote). Rows in
-    // core_catalogs_entries cascade via the FK. This DOES delete
-    // user-imported rows — same as bundle uninstall removing
-    // user-edited field defs. Re-install restores the catalog shells
-    // but not the rows.
-    try {
-      const tdb = (await getTenantDb(bundleRow.org_id)) as unknown as Kysely<BundleTenantDB>;
-      await tdb
-        .deleteFrom("core_catalogs_catalogs")
-        .where("bundle_external_id", "like", `${bundleRow.external_id}/%`)
-        .execute();
-    } catch (err) {
-      console.error(
-        `[bundle-uninstall] catalogs cleanup failed for bundle ${bundleId}:`,
-        err,
-      );
+    // core_catalogs_entries cascade via the FK — and EVERY entry is
+    // user-imported: bundles ship catalog SHELLS only (rows are never in
+    // the manifest), the importer writes the rows. So this delete is pure
+    // user-data loss and must ONLY run on a REAL uninstall — NEVER on the
+    // upgrade-replace path (applyValidatedBundle → uninstallBundleId(old,
+    // {snapshotReason:"replaced"}) with NO teardownResources). On upgrade
+    // the shell is left in place and applyValidatedBundle's idempotent
+    // catalog upsert refreshes it (UPDATE by bundle_external_id), so the
+    // user's imported rows survive — "updates self-heal, never reset user
+    // data." Gated identically to the instance/module refcount teardown
+    // below, for the same reason. Without this gate a patch/minor
+    // auto-apply silently destroys imported rows, and a version that DROPS
+    // a catalog deletes them with no re-seed at all (the silent data-loss
+    // edge this branch closes).
+    if (opts?.teardownResources) {
+      try {
+        const tdb = (await getTenantDb(bundleRow.org_id)) as unknown as Kysely<BundleTenantDB>;
+        await tdb
+          .deleteFrom("core_catalogs_catalogs")
+          .where("bundle_external_id", "like", `${bundleRow.external_id}/%`)
+          .execute();
+      } catch (err) {
+        console.error(
+          `[bundle-uninstall] catalogs cleanup failed for bundle ${bundleId}:`,
+          err,
+        );
+      }
     }
     // v1.6: lens override rows scoped to this bundle. Best-effort —
     // workspace edits to a bundle's row are also blown away here, but

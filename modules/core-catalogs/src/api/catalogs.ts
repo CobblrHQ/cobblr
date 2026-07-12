@@ -4,12 +4,14 @@
 // (parts, machines, etc.) match against rows inside them via
 // entity_pairings with relationship_kind='matches'.
 
+import { gunzipSync } from "node:zlib";
 import { Router } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { catalogResolverConfigured, datasetForKind, hostedSearch, isHostedSearchable } from "../services/hosted-resolver.js";
 
 export const catalogsRouter = Router({ mergeParams: true });
 
@@ -55,9 +57,9 @@ const SchemaConfig = z.object({
   hero_field: z.string().optional(),
   hero_renderer: FieldRenderer.optional(),
   /** Opt out of the cross-catalog search endpoint. Catalogs that
-   *  are huge (McMaster scale) or otherwise not bindable to user
-   *  entities can set this so the quick-add typeahead doesn't pull
-   *  them in. Default false. */
+   *  are huge (a set bill-of-materials — millions of rows) or otherwise
+   *  not bindable to user entities can set this so the quick-add
+   *  typeahead doesn't pull them in. Default false. */
   exclude_from_global_search: z.boolean().optional(),
   /** Which entity kinds this catalog is meaningful to match against.
    *  Picker filters by source_kind ∈ bindable_to_kinds (or shows the
@@ -427,7 +429,7 @@ function parseCsv(text: string): { headers: string[]; rows: string[][] } {
   // Minimal RFC-4180-ish CSV parser. Handles quoted fields with
   // embedded commas and doubled-quote escapes. Doesn't try to be
   // a full CSV library — real-world catalog CSVs (Rebrickable,
-  // McMaster, USDA) all fit this shape.
+  // Open Library, Open Food Facts) all fit this shape.
   const rows: string[][] = [];
   let cur: string[] = [];
   let field = "";
@@ -484,6 +486,98 @@ function parseCsv(text: string): { headers: string[]; rows: string[][] } {
   return { headers, rows };
 }
 
+/** Shared CSV → catalog upsert (the built-in v0.1 puller's core). Used by the
+ *  manual import-csv route AND the source-URL pull route. Returns an error shape
+ *  instead of throwing so each caller maps it to its own HTTP status. */
+async function importCsvIntoCatalog(
+  db: ReturnType<typeof tenantDb>,
+  orgId: string,
+  catalog: { id: string; schema: unknown },
+  csvText: string,
+  schemaOverride?: z.infer<typeof SchemaConfig>,
+): Promise<
+  | { ok: true; imported: number; total: number; schema_used: z.infer<typeof SchemaConfig> }
+  | { ok: false; code: string; message: string }
+> {
+  const { headers, rows } = parseCsv(csvText);
+  if (headers.length === 0) return { ok: false, code: "empty_csv", message: "CSV had no header row." };
+  const schemaConfig = {
+    ...(catalog.schema as Record<string, unknown>),
+    ...(schemaOverride ?? {}),
+  } as z.infer<typeof SchemaConfig>;
+  const idCol = schemaConfig.id_column ?? headers[0]!;
+  const idIdx = headers.indexOf(idCol);
+  if (idIdx < 0)
+    return {
+      ok: false,
+      code: "id_column_missing",
+      message: `CSV has no column named '${idCol}'. Available: ${headers.join(", ")}`,
+    };
+
+  const parsedRows: ParsedRow[] = [];
+  for (const row of rows) {
+    const externalId = (row[idIdx] ?? "").trim();
+    if (!externalId) continue;
+    const payload: Record<string, unknown> = {};
+    for (let j = 0; j < headers.length; j++) {
+      if (j === idIdx) continue;
+      const v = row[j];
+      if (v !== undefined && v !== "") payload[headers[j]!] = v;
+    }
+    parsedRows.push({ external_id: externalId, payload });
+  }
+  if (parsedRows.length === 0) return { ok: true, imported: 0, total: 0, schema_used: schemaConfig };
+
+  // Upsert in batches so a 50k-row import doesn't ship one monstrous statement.
+  const BATCH = 500;
+  let upserted = 0;
+  for (let start = 0; start < parsedRows.length; start += BATCH) {
+    const batch = parsedRows.slice(start, start + BATCH);
+    await db
+      .insertInto("core_catalogs_entries")
+      .values(
+        batch.map((r) => ({
+          catalog_id: catalog.id,
+          external_id: r.external_id,
+          payload: sql`${JSON.stringify(r.payload)}::jsonb` as never,
+        })),
+      )
+      .onConflict((oc) =>
+        oc.columns(["catalog_id", "external_id"]).doUpdateSet({
+          payload: sql`excluded.payload` as never,
+          updated_at: new Date(),
+        }),
+      )
+      .execute();
+    upserted += batch.length;
+  }
+
+  const { count } = (await db
+    .selectFrom("core_catalogs_entries")
+    .select((eb) => eb.fn.countAll().as("count"))
+    .where("catalog_id", "=", catalog.id)
+    .executeTakeFirstOrThrow()) as { count: string | number };
+  await db
+    .updateTable("core_catalogs_catalogs")
+    .set({
+      entry_count: Number(count),
+      last_sync_at: new Date(),
+      schema: sql`${JSON.stringify(schemaConfig)}::jsonb` as never,
+      updated_at: new Date(),
+    } as never)
+    .where("id", "=", catalog.id)
+    .execute();
+
+  void platform().events.emit("core-catalogs.catalog.synced", {
+    orgId,
+    catalogId: catalog.id,
+    imported: upserted,
+    total: Number(count),
+  });
+
+  return { ok: true, imported: upserted, total: Number(count), schema_used: schemaConfig };
+}
+
 catalogsRouter.post(
   "/:id/import-csv",
   asyncHandler(async (req, res) => {
@@ -506,102 +600,88 @@ catalogsRouter.post(
       res.status(404).json({ error: { code: "not_found", message: "catalog not found" } });
       return;
     }
-
-    const { headers, rows } = parseCsv(parsed.data.csv);
-    if (headers.length === 0) {
-      res.status(400).json({
-        error: { code: "empty_csv", message: "CSV had no header row." },
-      });
+    const result = await importCsvIntoCatalog(db, ctx.org.id, catalog, parsed.data.csv, parsed.data.schema);
+    if (!result.ok) {
+      res.status(400).json({ error: { code: result.code, message: result.message } });
       return;
     }
-    const schemaConfig = {
-      ...(catalog.schema as Record<string, unknown>),
-      ...(parsed.data.schema ?? {}),
-    } as z.infer<typeof SchemaConfig>;
-    const idCol = schemaConfig.id_column ?? headers[0]!;
-    const idIdx = headers.indexOf(idCol);
-    if (idIdx < 0) {
+    res.json({ imported: result.imported, total: result.total, schema_used: result.schema_used });
+  }),
+);
+
+// The built-in PULLER: fetch a catalog's source_url and import it, so a bundle
+// that ships catalog shells with a source_url (the Rebrickable feature) becomes
+// a one-tap "import" instead of a hand-run seeder script. Fetch is SSRF-guarded
+// (platform egress); .gz is gunzipped; a size cap rejects the multi-million-row
+// BOM (that one still uses the bulk seeder — it would OOM an in-request import).
+// See docs/architecture/invokable-flows-and-lego-redesign.md §C.5–C.6.
+const PULL_MAX_BYTES = 80 * 1024 * 1024; // 80 MB decompressed
+catalogsRouter.post(
+  "/:id/pull",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const id = req.params.id;
+    if (!id) {
+      res.status(400).json({ error: { code: "missing_id", message: "id required" } });
+      return;
+    }
+    const db = tenantDb(req);
+    const ctx = tenantContext(req);
+    const catalog = await db
+      .selectFrom("core_catalogs_catalogs")
+      .selectAll()
+      .where("id", "=", id)
+      .executeTakeFirst();
+    if (!catalog) {
+      res.status(404).json({ error: { code: "not_found", message: "catalog not found" } });
+      return;
+    }
+    const url = (catalog.source_url as string | null) ?? null;
+    if (!url) {
       res.status(400).json({
         error: {
-          code: "id_column_missing",
-          message: `CSV has no column named '${idCol}'. Available: ${headers.join(", ")}`,
+          code: "no_source_url",
+          message: "This catalog has no source_url to pull from — import a CSV instead.",
         },
       });
       return;
     }
 
-    const parsedRows: ParsedRow[] = [];
-    for (const row of rows) {
-      const externalId = (row[idIdx] ?? "").trim();
-      if (!externalId) continue;
-      const payload: Record<string, unknown> = {};
-      for (let j = 0; j < headers.length; j++) {
-        if (j === idIdx) continue;
-        const v = row[j];
-        if (v !== undefined && v !== "") payload[headers[j]!] = v;
+    let csvText: string;
+    try {
+      const resp = await platform().egress.guardedFetch(ctx.org.id, url);
+      if (!resp.ok) {
+        res.status(502).json({
+          error: { code: "fetch_failed", message: `Source responded ${resp.status}.` },
+        });
+        return;
       }
-      parsedRows.push({ external_id: externalId, payload });
-    }
-
-    if (parsedRows.length === 0) {
-      res.json({ imported: 0, total: 0, schema_used: schemaConfig });
+      const buf = Buffer.from(await resp.arrayBuffer());
+      const raw = url.endsWith(".gz") ? gunzipSync(buf) : buf;
+      if (raw.length > PULL_MAX_BYTES) {
+        res.status(413).json({
+          error: {
+            code: "too_large",
+            message:
+              "This dataset is too large to pull in one request — use the bulk CSV importer / seeder.",
+          },
+        });
+        return;
+      }
+      csvText = raw.toString("utf8");
+    } catch {
+      res.status(502).json({
+        error: { code: "pull_failed", message: "Couldn't fetch or decompress the source file." },
+      });
       return;
     }
 
-    // Upsert in batches so a 50k-row import doesn't try to ship one
-    // monstrous statement.
-    const BATCH = 500;
-    let upserted = 0;
-    for (let start = 0; start < parsedRows.length; start += BATCH) {
-      const batch = parsedRows.slice(start, start + BATCH);
-      await db
-        .insertInto("core_catalogs_entries")
-        .values(
-          batch.map((r) => ({
-            catalog_id: id,
-            external_id: r.external_id,
-            payload: sql`${JSON.stringify(r.payload)}::jsonb` as never,
-          })),
-        )
-        .onConflict((oc) =>
-          oc.columns(["catalog_id", "external_id"]).doUpdateSet({
-            payload: sql`excluded.payload` as never,
-            updated_at: new Date(),
-          }),
-        )
-        .execute();
-      upserted += batch.length;
+    const result = await importCsvIntoCatalog(db, ctx.org.id, catalog, csvText);
+    if (!result.ok) {
+      res.status(400).json({ error: { code: result.code, message: result.message } });
+      return;
     }
-
-    // Cache the count + bump schema if we overrode it.
-    const { count } = (await db
-      .selectFrom("core_catalogs_entries")
-      .select((eb) => eb.fn.countAll().as("count"))
-      .where("catalog_id", "=", id)
-      .executeTakeFirstOrThrow()) as { count: string | number };
-    await db
-      .updateTable("core_catalogs_catalogs")
-      .set({
-        entry_count: Number(count),
-        last_sync_at: new Date(),
-        schema: sql`${JSON.stringify(schemaConfig)}::jsonb` as never,
-        updated_at: new Date(),
-      } as never)
-      .where("id", "=", id)
-      .execute();
-
-    void platform().events.emit("core-catalogs.catalog.synced", {
-      orgId: ctx.org.id,
-      catalogId: id,
-      imported: upserted,
-      total: Number(count),
-    });
-
-    res.json({
-      imported: upserted,
-      total: Number(count),
-      schema_used: schemaConfig,
-    });
+    res.json({ imported: result.imported, total: result.total, source_url: url });
   }),
 );
 
@@ -623,15 +703,62 @@ catalogsRouter.get(
     const db = tenantDb(req);
     const catalog = await db
       .selectFrom("core_catalogs_catalogs")
-      .select(["id", "schema"])
+      .select(["id", "schema", "source"])
       .where("id", "=", id)
       .executeTakeFirst();
     if (!catalog) {
       res.status(404).json({ error: { code: "not_found", message: "catalog not found" } });
       return;
     }
-    const titleColumn =
-      (catalog.schema as Record<string, unknown>).title_column ?? "name";
+    const schema = (catalog.schema ?? {}) as Record<string, unknown>;
+    const titleColumn = schema.title_column ?? "name";
+
+    // Hosted catalogs keep their rows in the shared reference-catalog service,
+    // not this tenant's DB — so browse/search them THROUGH the service. Maps the
+    // hosted hit into the same {external_id, payload} shape the local rows use,
+    // so the page renders identically. The BOM (exclude_from_global_search) and
+    // any kind the service doesn't hold aren't browsable here.
+    if (catalog.source === "hosted") {
+      const orgId = tenantContext(req).org.id;
+      const kind =
+        typeof schema.semantic_type === "string" ? (schema.semantic_type as string) : "";
+      // A hosted kind is browsable only if the service can /search it. Some kinds
+      // are HELD (eligible) but not browse targets — the BOM powers Disassemble
+      // and isn't paged through. (Its schema's exclude_from_global_search flag
+      // isn't persisted on install, so gate on the service's own `searchable`.)
+      const dataset =
+        kind && catalogResolverConfigured() && (await isHostedSearchable(orgId, kind))
+          ? await datasetForKind(orgId, kind)
+          : null;
+      if (!dataset) {
+        res.json({ items: [], title_column: titleColumn, hosted: true, browsable: false });
+        return;
+      }
+      const imageColumn = String(schema.image_column ?? "image_url");
+      const r = await hostedSearch(
+        orgId,
+        dataset,
+        kind,
+        parsed.data.q ?? "",
+        parsed.data.limit,
+        parsed.data.offset,
+      );
+      const items = (r?.results ?? []).map((e) => ({
+        id: e.external_id,
+        catalog_id: id,
+        external_id: e.external_id,
+        payload: {
+          [String(titleColumn)]: e.title ?? e.name ?? e.external_id,
+          [imageColumn]: e.image ?? null,
+          category: e.category ?? null,
+          external_id: e.external_id,
+          ...(e.facets ?? {}),
+        },
+      }));
+      res.json({ items, title_column: titleColumn, hosted: true, browsable: true });
+      return;
+    }
+
     let query = db
       .selectFrom("core_catalogs_entries")
       .selectAll()

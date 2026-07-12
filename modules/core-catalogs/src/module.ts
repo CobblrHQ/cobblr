@@ -7,8 +7,8 @@
 // everywhere the user's entity is rendered.
 //
 // Stock band — workspaces that don't import external datasets don't
-// pay the cost. Specific data sources (Rebrickable, McMaster,
-// OpenLibrary, USDA, Discogs) become small modules that register a
+// pay the cost. Specific data sources (Rebrickable, Open Library,
+// Open Food Facts, Discogs) become small modules that register a
 // puller with the platform contract (v0.3, deferred). v0.1 ships
 // only CSV upload as the import path — no module code required for
 // static datasets.

@@ -129,9 +129,22 @@ export function register(): void {
   platform().ai.registerProvider({
     id: EDGE_BRIDGE_ID,
     label: "Local AI (via edge bridge)",
-    // Credential-less: routing is by the connected edge, keyed on the user who
-    // owns the personal Connection (injected by the resolver as __connection_user_id).
-    describeCredentials: () => ({}),
+    // Near-credential-less: routing is by the connected edge, keyed on the user
+    // who owns the personal Connection (injected as __connection_user_id). The one
+    // optional field is a GENERIC capability declaration — does the backend return
+    // tool calls, or run tools itself? An agent-style backend (it executes tools
+    // internally and only returns text) gets workspace tools relayed to it via MCP
+    // (read-only) instead; same seam as the ollama/openai-compat providers.
+    describeCredentials: () => ({
+      mcp_relay: {
+        label: "How this AI runs tools",
+        secret: false,
+        choices: [
+          { value: "", label: "Returns tool calls for Cobblr to run (standard)" },
+          { value: "bridge", label: "Runs tools itself — give it read-only workspace access via MCP" },
+        ],
+      },
+    }),
     // NOT a zero-config default: it only works once an edge agent is connected
     // and routed via a personal Connection. Excluding it from auto-select keeps a
     // no-provider workspace's degrade path a clean no_ai_provider.
@@ -163,6 +176,12 @@ export function register(): void {
             messages: system ? [{ role: "system", content: system }, ...messages] : messages,
           };
           if (toolDefs) req.tools = openAiToolsOf(toolDefs);
+          // MCP tool relay: forward the per-request grant so the local claude
+          // bridge (behind the edge agent) can read this workspace via MCP. A
+          // real local Ollama ignores this unknown field. Rides verbatim through
+          // the edge relay + the AI-relay agent (both forward the body as-is).
+          const mcpRelay = (ctx.input as Record<string, unknown>).mcp;
+          if (mcpRelay && typeof mcpRelay === "object") req.mcp = mcpRelay;
           let body: Record<string, unknown>;
           try {
             body = await edgePost(channelKey, "/api/chat", req);

@@ -137,7 +137,10 @@ export function SearchBar() {
             <button
               key={`${h.kind}:${h.id}`}
               onClick={() => {
-                navigate(detailRoute(h.kind, h.id));
+                // Prefer the resolver-owned per-item detailUrl (carries
+                // instance context, e.g. /instances/designs/<id>); the
+                // kind→route registry map is the fallback for hits without one.
+                navigate(h.detailUrl ?? detailRoute(h.kind, h.id));
                 setOpen(false);
               }}
               className="w-full text-left px-3 py-2 hover:bg-subtle dark:hover:bg-slate-800/60 text-sm"

@@ -57,6 +57,10 @@ export interface CoreScanBatchesTable {
  *  what was shown, and a reload mid-session can resume. */
 export interface CoreScanOrganizePlansTable {
   id: Generated<string>;
+  /** Monotonic insertion-order key (bigserial). Ordering by (created_at desc,
+   *  seq desc) makes "newest plan wins" deterministic — created_at alone can
+   *  tie for plans minted in the same clock tick (0010_organize_plan_seq). */
+  seq: Generated<string>;
   payload: Record<string, unknown>;
   applied_group_ids: Generated<unknown[]>;
   /** Put-away-walk progress: { placed_item_ids: string[] }. Bookkeeping only —

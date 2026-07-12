@@ -2,9 +2,15 @@
 // users can one-click install without copy-pasting JSON. Until we
 // have a hosted registry, this is the curated list.
 //
+// ⚠️ THIS FILE IS THE SINGLE SOURCE OF TRUTH for bundle manifests.
+// `bundles/*.json` at the repo root are GENERATED from here by
+// `scripts/sync-bundles.ts` (the server's capture-first menu + quickstart
+// install read those). Do NOT hand-edit `bundles/*.json` — edit the entry
+// here, then run `npx tsx scripts/sync-bundles.ts` and commit both. CI's
+// `lint:bundles-synced` fails the build if they drift.
+//
 // Each entry is the raw manifest we'd send to /bundles/install.
-// Adding a bundle: drop a JSON manifest in bundles/<name>.json at
-// the repo root, then import + push it here.
+// Adding a bundle: add a FeaturedBundle entry here, then run the sync.
 
 import type { PlatformBundleManifest, PlatformBundleFeature } from "./api";
 import { OUTFIT_PLANNER_HTML } from "./outfit-planner-app";
@@ -73,6 +79,7 @@ export function resolveBundleManifest(
     field_overrides: [...(manifest.field_overrides ?? []), ...on.flatMap((f) => f.field_overrides ?? [])],
     saved_views: [...(manifest.saved_views ?? []), ...on.flatMap((f) => f.saved_views ?? [])],
     provides_instances: [...(manifest.provides_instances ?? []), ...on.flatMap((f) => f.provides_instances ?? [])],
+    catalogs: [...(manifest.catalogs ?? []), ...on.flatMap((f) => f.catalogs ?? [])],
   };
 }
 
@@ -221,48 +228,148 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
     glyph: "🧱",
     blurb:
-      "Lego set inventory with set ID, year, theme, color, condition, and a label template that prints LEGO-flavored.",
+      "Lego as its own tables — Sets you own (sealed / built / disassembled), optional Bricks bins, a Rebrickable catalog link, and one-tap Disassemble that spawns the parts and opens the sorting planner.",
+    next_steps: [
+      { label: "Add your first set", module: "inventory", path: "/instances/sets", hint: "Sealed, built, or already taken apart." },
+    ],
     manifest: {
       id: "cobblr.community.lego",
-      version: "0.1.0",
+      version: "0.4.1",
       name: "Lego",
       description:
-        "Custom inventory fields + label wires for Lego set collections.",
+        "Lego as its own tables — Sets you own (sealed / built / disassembled) with optional Bricks bins, a Rebrickable catalog link, and a one-tap Disassemble that spawns the parts and opens the sorting planner.",
       author: "Cobblr community",
+      released_at: "2026-07-11",
+      changelog:
+        "Lego is now its OWN tables, not a skin over generic inventory. Installing it gives you a Sets table (each set sealed, built, or disassembled) with set number, theme, year, piece count and minifig count — the generic warranty/serial/supplier clutter is hidden. Turn on the checkboxes you want: track individual Bricks in bins, link to the Rebrickable catalog so sets and parts match real data, disassemble a built set into its parts and sort them into bins, print QR labels, or add by scanning.",
       requires: [{ module: "inventory" }],
+      // The always-on BASE: a Sets table (the noun everyone with Lego has). The
+      // Bricks/bins world, the Rebrickable link, and Disassemble are opt-in
+      // features (default on) — the Yarn model, one base + checkboxes.
+      provides_instances: [
+        {
+          module: "inventory",
+          instance_name: "sets",
+          display_name: "Sets",
+          glyph: "🧱",
+          item_noun: "set",
+          qty_unit: "each",
+          field_defs: [
+            { entity_kind: "inventory:part", name: "lifecycle", display_label: "State", type: "text", position: 1, choices: ["sealed", "built", "disassembled"], help: "Where this set is — still sealed in the box, built, or taken apart into bricks." },
+            { entity_kind: "inventory:part", name: "set_number", display_label: "Set number", type: "text", position: 2, help: "The number printed on the box (e.g. 75192)." },
+            { entity_kind: "inventory:part", name: "theme", display_label: "Theme", type: "text", position: 3, help: "Star Wars, City, Technic, Botanicals…" },
+            { entity_kind: "inventory:part", name: "year", display_label: "Release year", type: "number", position: 4, help: "The year the set was released." },
+            { entity_kind: "inventory:part", name: "piece_count", display_label: "Pieces", type: "number", position: 5, help: "How many pieces the set has, from the box." },
+            { entity_kind: "inventory:part", name: "minifig_count", display_label: "Minifigs", type: "number", position: 6, help: "How many minifigures come with the set." },
+            { entity_kind: "inventory:part", name: "instructions_url", display_label: "Instructions", type: "url", position: 7, renderer: "url-link", help: "Link to the build instructions (a PDF or Rebrickable page)." },
+          ],
+          field_overrides: [
+            { entity_kind: "inventory:part", name: "category", hidden: true },
+            { entity_kind: "inventory:part", name: "warranty", hidden: true },
+            { entity_kind: "inventory:part", name: "min_qty", hidden: true },
+            { entity_kind: "inventory:part", name: "supplier_url", hidden: true },
+            { entity_kind: "inventory:part", name: "serial_number", hidden: true },
+            { entity_kind: "inventory:part", name: "model_number", hidden: true },
+          ],
+          saved_views: [
+            { entity_kind: "inventory:part", name: "By theme", view_type: "table", pinned: true, config: { group_by: "theme", visible_fields: ["title", "set_number", "theme", "year", "piece_count", "lifecycle"] } },
+          ],
+        },
+      ],
       features: [
+        {
+          key: "bricks",
+          name: "Bricks & bins",
+          question: "Track individual bricks in bins too?",
+          description: "A separate 'Bricks' table for loose parts — each brick by shape (part category) and colour, filed into a bin. This is where a disassembled set's parts land.",
+          default: true,
+          next_steps: [
+            { label: "Open your Bricks table", module: "inventory", path: "/instances/bricks", hint: "Loose parts by shape + colour, filed into bins." },
+          ],
+          provides_instances: [
+            {
+              module: "inventory",
+              instance_name: "bricks",
+              display_name: "Bricks",
+              glyph: "🧱",
+              item_noun: "brick",
+              qty_unit: "each",
+              field_defs: [
+                { entity_kind: "inventory:part", name: "part_num", display_label: "Part number", type: "text", position: 2, help: "The Rebrickable/Lego element id (e.g. 3005 for a 1x1 brick)." },
+                { entity_kind: "inventory:part", name: "color", display_label: "Colour", type: "text", position: 3, renderer: "color-hex", help: "The brick's colour — pick a hex/colour for the swatch." },
+                { entity_kind: "inventory:part", name: "color_id", display_label: "Colour id", type: "text", position: 4, help: "The Rebrickable colour id (set automatically when parts come from a disassemble)." },
+                { entity_kind: "inventory:part", name: "condition", display_label: "Condition", type: "text", position: 5, choices: ["new", "used", "damaged"], help: "The state of the brick." },
+              ],
+              field_overrides: [
+                { entity_kind: "inventory:part", name: "category", display_label: "Part category" },
+                { entity_kind: "inventory:part", name: "warranty", hidden: true },
+                { entity_kind: "inventory:part", name: "min_qty", hidden: true },
+                { entity_kind: "inventory:part", name: "supplier_url", hidden: true },
+                { entity_kind: "inventory:part", name: "serial_number", hidden: true },
+                { entity_kind: "inventory:part", name: "model_number", hidden: true },
+              ],
+              saved_views: [
+                { entity_kind: "inventory:part", name: "By part category", view_type: "table", pinned: true, config: { group_by: "category", visible_fields: ["title", "category", "color", "location", "qty"] } },
+              ],
+            },
+          ],
+        },
+        {
+          key: "rebrickable",
+          name: "Rebrickable catalog",
+          question: "Link to the Rebrickable catalog?",
+          description: "Installs the Rebrickable reference catalogs (themes, part categories, colours, parts, sets, minifigs) so your sets and bricks match real data — and a set's bill of materials powers Disassemble. Import the rows in one tap from the catalog page.",
+          default: true,
+          requires: [{ module: "core-catalogs" }],
+          next_steps: [
+            { label: "Import Rebrickable data", module: "core-catalogs", path: "/configuration/catalogs", hint: "One tap pulls the catalog rows from Rebrickable." },
+          ],
+          catalogs: [
+            { external_id: "rebrickable-themes", name: "Rebrickable themes", description: "Lego themes — Star Wars, City, Technic, etc.", source_url: "https://cdn.rebrickable.com/media/downloads/themes.csv.gz", puller_id: "rebrickable", schema: { id_column: "id", title_column: "name", bindable_to_kinds: [], semantic_type: "lego.theme" } },
+            { external_id: "rebrickable-part-categories", name: "Rebrickable part categories", description: "Part categories — bricks, plates, slopes, tiles, wedges, etc. The bin taxonomy.", source_url: "https://cdn.rebrickable.com/media/downloads/part_categories.csv.gz", puller_id: "rebrickable", schema: { id_column: "id", title_column: "name", bindable_to_kinds: [], semantic_type: "lego.part-category" } },
+            { external_id: "rebrickable-colors", name: "Rebrickable colors", description: "Every Lego colour, with a swatch.", source_url: "https://cdn.rebrickable.com/media/downloads/colors.csv.gz", puller_id: "rebrickable", schema: { id_column: "id", title_column: "name", hero_field: "rgb", hero_renderer: "color-hex", field_renderers: { is_trans: "boolean" }, field_labels: { is_trans: "Transparent" }, bindable_to_kinds: [], semantic_type: "lego.color" } },
+            { external_id: "rebrickable-parts", name: "Rebrickable parts", description: "Individual Lego parts. Match a brick to identify it.", source_url: "https://cdn.rebrickable.com/media/downloads/parts.csv.gz", puller_id: "rebrickable", schema: { id_column: "part_num", title_column: "name", image_column: "img_url", field_labels: { part_num: "Part number", part_cat_id: "Category" }, bindable_to_kinds: ["inventory:part"], semantic_type: "lego.part" } },
+            { external_id: "rebrickable-sets", name: "Rebrickable sets", description: "Lego sets. Match a set to pull its number, theme, year and pieces.", source_url: "https://cdn.rebrickable.com/media/downloads/sets.csv.gz", puller_id: "rebrickable", schema: { id_column: "set_num", title_column: "name", image_column: "img_url", field_renderers: { year: "year" }, field_labels: { set_num: "Set number", theme_id: "Theme", num_parts: "Pieces", year: "Year" }, bindable_to_kinds: ["inventory:part"], semantic_type: "lego.set" } },
+            { external_id: "rebrickable-minifigs", name: "Rebrickable minifigs", description: "Minifigure catalog.", source_url: "https://cdn.rebrickable.com/media/downloads/minifigs.csv.gz", puller_id: "rebrickable", schema: { id_column: "fig_num", title_column: "name", image_column: "img_url", field_labels: { fig_num: "Figure number", num_parts: "Pieces" }, bindable_to_kinds: ["inventory:part"], semantic_type: "lego.minifig" } },
+            { external_id: "rebrickable-inventory-parts", name: "Rebrickable set inventories", description: "The set bill of materials — which parts each set contains. Powers Disassemble. Large (~5M rows); import when you need it.", source_url: "https://cdn.rebrickable.com/media/downloads/inventory_parts.csv.gz", puller_id: "rebrickable", schema: { id_column: "row_id", title_column: "part_num", image_column: "img_url", field_renderers: { is_spare: "boolean" }, field_labels: { set_num: "Set number", part_num: "Part number", color_id: "Colour" }, exclude_from_global_search: true, bindable_to_kinds: [], semantic_type: "lego.bom" } },
+          ],
+        },
+        {
+          key: "disassemble",
+          name: "Disassemble into bricks",
+          question: "Disassemble a set into its bricks and sort them?",
+          description: "Adds a one-tap Disassemble on a set: it spawns the set's parts (from the Rebrickable bill of materials) into your Bricks table and opens the sorting planner to file them into bins. Needs the Bricks table and the Rebrickable catalog.",
+          default: true,
+          requires: [{ module: "bricklink-connector" }],
+          next_steps: [
+            { label: "Open a built set to disassemble it", module: "inventory", path: "/instances/sets", hint: "Open a set, then use Disassemble — its parts land in Bricks and the planner opens." },
+          ],
+        },
         {
           key: "labels",
           name: "Label printing",
           question: "Print QR labels for these?",
-          description: "Adds the Labels module + a one-tap print action on each item.",
+          description: "Adds the Labels module + a one-tap print action on each set or brick.",
+          default: false,
           requires: [{ module: "labels" }],
           wires: [
-        {
-          source_kind: "inventory:part",
-          action_id: "labels:print",
-          trigger_type: "user-invoked",
-          template:
-            'LEGO {{theme | default: "misc"}} #{{set_id | default: "---"}} • {{name}} ({{year | default: "???"}})',
-        },
+            {
+              source_kind: "inventory:part",
+              action_id: "labels:print",
+              trigger_type: "user-invoked",
+              template:
+                'LEGO {{theme | default: "misc"}} #{{set_number | default: "---"}} • {{name}} ({{year | default: "???"}})',
+            },
           ],
         },
-      ],
-      field_defs: [
-        // Kit lifecycle (H6): the declarative half of sealed → built →
-        // disassembled. The user marks a kit `sealed` (boxed) or `built`
-        // here; the platform sets `parted-out` (and spawns `loose` parts)
-        // when the disassemble-kit action runs. Stored in metadata.lifecycle
-        // — the same key the parts list's lifecycle filter and the
-        // disassemble handler read, so the field, the filter, and the
-        // action all compose with no custom code.
-        { entity_kind: "inventory:part", name: "lifecycle", display_label: "Kit state", type: "text", choices: ["loose", "sealed", "built", "parted-out"], position: 1 },
-        { entity_kind: "inventory:part", name: "set_id", display_label: "Set ID", type: "text", position: 2 },
-        { entity_kind: "inventory:part", name: "year", display_label: "Release year", type: "number", position: 3 },
-        { entity_kind: "inventory:part", name: "theme", display_label: "Theme", type: "text", position: 4 },
-        { entity_kind: "inventory:part", name: "color", display_label: "Primary color", type: "text", position: 5 },
-        { entity_kind: "inventory:part", name: "condition", display_label: "Condition", type: "text", position: 6 },
-        { entity_kind: "inventory:part", name: "minifig_count", display_label: "Minifig count", type: "number", position: 7 },
+        {
+          key: "scan",
+          name: "Scan to add",
+          question: "Add sets or bricks by scanning a barcode or box?",
+          description: "Snap a set box barcode or a parts bag to stock Lego fast.",
+          default: false,
+          requires: [{ module: "core-scan" }],
+        },
       ],
     },
   },
@@ -720,14 +827,14 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.yarn",
-      version: "0.4.1",
+      version: "0.5.0",
       name: "Yarn",
       description:
         "Yarn as its own inventory instance — skein-tracked, yarn-only fields, grouped by weight. Optional Hooks + Designs tables.",
       author: "Cobblr",
       released_at: "2026-06-16",
       changelog:
-        "Your Yarn table now reads “yarn” everywhere — the “New”, search box, and empty-state labels say “yarn” instead of “part”. (Earlier installs picked up the generic “part” wording; upgrading applies the fix.) Real yarn-user polish: the Color field is a swatch picker (type a hex or pick one), Brand + Price now show right on the “New yarn” modal, and a “Suggested needle size” field was added. Dropdowns (vendor, fibre…) let you add a new option on the fly that sticks for next time. Dropped the confusing “Summary” computed field. — Yarn is its OWN table (a Yarn instance), not a skin over generic inventory: only yarn fields show, the button reads “New yarn”, quantities are in skeins. Hooks and Designs become their own tables too. The generic inventory cruft (warranty, insured, lifecycle…) is hidden, and the pinned view is named for its lens (“By weight”).",
+        "Your Yarn table now reads “yarn” everywhere — the “New”, search box, and empty-state labels say “yarn” instead of “part”. (Earlier installs picked up the generic “part” wording; upgrading applies the fix.) Real yarn-user polish: the Color field is a swatch picker (type a hex or pick one), Brand + Price now show right on the “New yarn” modal, and a “Suggested needle size” field was added. Dropdowns (vendor, fibre…) let you add a new option on the fly that sticks for next time. Dropped the confusing “Summary” computed field. — Yarn is its OWN table (a Yarn instance), not a skin over generic inventory: only yarn fields show, the button reads “New yarn”, quantities are in skeins. Hooks and Designs become their own tables too. The generic inventory cruft (warranty, insured, lifecycle…) is hidden, and the pinned view is named for its lens (“By weight”). Opening a yarn now hides the Maintenance log (that section is for machines) and turns on skein-by-skein consumption tracking by default, so you can see at a glance how much of a skein is left. Existing yarn tables pick this up on upgrade.",
       requires: [{ module: "inventory" }],
       // The always-on base: a "Yarn" instance of inventory.
       provides_instances: [
@@ -760,6 +867,14 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             { entity_kind: "inventory:part", name: "supplier_url", hidden: true },
             { entity_kind: "inventory:part", name: "serial_number", hidden: true },
             { entity_kind: "inventory:part", name: "model_number", hidden: true },
+            // Yarn is a consumable, not serviceable equipment. Which optional
+            // detail sections show is declared here, per instance, so the part
+            // render code stays generic (no yarn-special-case):
+            //   • maintenance hidden — a maintenance log is for machines/assets.
+            //   • consumable present (not hidden) — turns the "how much is left"
+            //     tracker ON by default instead of burying it behind an opt-in.
+            { entity_kind: "inventory:part", name: "maintenance", hidden: true },
+            { entity_kind: "inventory:part", name: "consumable" },
           ],
           saved_views: [
             { entity_kind: "inventory:part", name: "By weight", view_type: "table", pinned: true, config: { group_by: "weight_class", visible_fields: ["title", "color", "colorway", "fiber", "vendor", "qty", "unit", "length_per_skein"] } },

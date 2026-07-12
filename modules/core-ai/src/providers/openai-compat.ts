@@ -125,6 +125,11 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
           // once without them (graceful no-tools degrade for local models).
           const toolDefs = ctx.capability === "chat" ? toolsOf(ctx.input) : null;
           if (toolDefs) body.tools = openAiToolsOf(toolDefs);
+          // MCP tool relay (a Claude-subscription bridge behind the OpenAI wire):
+          // forward the per-request grant so the bridge spawns `claude -p
+          // --mcp-config`. A real OpenAI-compatible server ignores this field.
+          const mcpRelay = (ctx.input as Record<string, unknown>).mcp;
+          if (ctx.capability === "chat" && mcpRelay && typeof mcpRelay === "object") body.mcp = mcpRelay;
           // response_format json_object is OpenAI-specific; local servers vary.
           // The JSON-shaped prompts already instruct the model, and every
           // consumer robust-parses (parseJsonReply) — so omit it and stay
@@ -207,6 +212,14 @@ export function register(): void {
         model: {
           label: "Model (optional — leave blank for LM Studio; gateways/vLLM need the exact name)",
           secret: false,
+        },
+        mcp_relay: {
+          label: "How this AI runs tools",
+          secret: false,
+          choices: [
+            { value: "", label: "Returns tool calls for Cobblr to run (standard)" },
+            { value: "bridge", label: "Runs tools itself — give it read-only workspace access via MCP" },
+          ],
         },
         ...TRANSIT_FIELD,
       }),

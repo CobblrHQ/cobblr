@@ -197,7 +197,7 @@ export function SearchPage() {
             {items.map((h) => (
               <li key={`${h.kind}:${h.id}`} className="px-3 py-2 text-sm">
                 <Link
-                  to={detailRoute(h.kind, h.id)}
+                  to={h.detailUrl ?? detailRoute(h.kind, h.id)}
                   className="flex items-center gap-3 hover:text-accent"
                 >
                   <EntityThumb src={h.image_path} alt={h.title} size={36} />

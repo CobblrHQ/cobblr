@@ -497,7 +497,14 @@ export async function gatherUnplacedEntities(orgId: string): Promise<UnplacedGat
         id: ref,
         name: e.title,
         manufacturer: null,
-        category: null,
+        // Pass the entity's own category through so the planner can match it to
+        // the sorting style already in place (the exact-category facet in
+        // putaway-route.ts). Was hardcoded null — which blinded every entity
+        // plan to the one signal that makes granular bin routing reliable.
+        // Generic: any kind whose bundle populates `category` benefits.
+        category: typeof e.fields.category === "string" && e.fields.category.trim()
+          ? e.fields.category.trim()
+          : null,
         quantity: 1,
         ...(dims ? { longest_mm: dims.longest_mm, dims_detail: dims.detail } : {}),
       });
@@ -511,7 +518,65 @@ export async function gatherUnplacedEntities(orgId: string): Promise<UnplacedGat
   return { items: kept, names, barcodes, truncated };
 }
 
+// ── Gather SPECIFIC entity refs (the scope:"refs" door) ──────────────────────
+// The batch-scoped plan: an action that just produced a pile of entities (a
+// disassemble spawning parts, an order receipt stocking items) opens the organize
+// flow over EXACTLY those refs, instead of "everything unplaced workspace-wide".
+// Refs are the same composite "<kind>::<uuid>" the walk uses. Refs that already
+// have a location are dropped (a human decision stands); unknown/foreign refs are
+// skipped. Higher cap than the inbox path: a large kit disassembles into many
+// distinct part+colour lines, and the deterministic tier (below) places them
+// without an LLM ceiling.
+const REFS_MAX = 2000;
+
+export async function gatherEntitiesByRefs(
+  orgId: string,
+  refs: string[],
+): Promise<UnplacedGather> {
+  const dedup = [...new Set(refs)].slice(0, REFS_MAX);
+  const truncated = refs.length > REFS_MAX;
+  // Distinct kinds present, so we resolve the length-unit field defs once each.
+  const kinds = [...new Set(dedup.map((r) => splitEntityRef(r)?.kind).filter((k): k is string => !!k))];
+  const dimDefs = await unitFieldDefsByKind(orgId, kinds);
+  const lengths = new LengthUnitResolver(orgId);
+  const items: OrganizeInputItem[] = [];
+  const names: Record<string, string> = {};
+  const barcodes: Record<string, string> = {};
+  for (const ref of dedup) {
+    const split = splitEntityRef(ref);
+    if (!split) continue;
+    const e = await platform()
+      .entities.lookup(orgId, split.kind, split.id)
+      .catch(() => null);
+    if (!e || !e.title?.trim()) continue;
+    if (typeof e.fields.location_id === "string" && e.fields.location_id) continue;
+    const kindDefs = dimDefs.get(split.kind) ?? [];
+    const dims = kindDefs.length ? await entityLongestMm(e.fields, kindDefs, lengths) : null;
+    items.push({
+      id: ref,
+      name: e.title,
+      manufacturer: null,
+      category:
+        typeof e.fields.category === "string" && e.fields.category.trim()
+          ? e.fields.category.trim()
+          : null,
+      quantity: 1,
+      ...(dims ? { longest_mm: dims.longest_mm, dims_detail: dims.detail } : {}),
+    });
+    names[ref] = e.title;
+    const bc = typeof e.fields.barcode === "string" ? e.fields.barcode : null;
+    if (bc) barcodes[ref] = bc;
+  }
+  return { items, names, barcodes, truncated };
+}
+
 // ── Entry point ──────────────────────────────────────────────────────────────
+
+// The LLM sees at most this many items in one call. A small pile goes whole (the
+// model's holistic grouping is worth it). A big batch (a kit disassembled into
+// hundreds of part+colour lines) routes deterministically first — no AI ceiling —
+// and only the residue the router couldn't place goes to the LLM, bounded.
+const AI_ITEM_CAP = Number(process.env.SCAN_ORGANIZE_AI_ITEM_CAP ?? 150);
 
 export async function planOrganize(
   orgId: string,
@@ -525,14 +590,36 @@ export async function planOrganize(
     const h = routeItem(it, census);
     if (h) hints.set(it.id, h);
   }
-  const ai = await aiPlan(orgId, items, hints, census, userHint, userId);
-  const groups = ai ?? heuristicPlan(items, hints, census);
+
+  // Small pile: unchanged — the whole batch to the LLM for best holistic grouping.
+  if (items.length <= AI_ITEM_CAP) {
+    const ai = await aiPlan(orgId, items, hints, census, userHint, userId);
+    const groups = ai ?? heuristicPlan(items, hints, census);
+    annotateSizeWarnings(groups, items, census);
+    return { groups, census_truncated: census.truncated, source: ai ? "ai" : "heuristic" };
+  }
+
+  // Large batch. Everything the deterministic router placed groups by its bin
+  // (heuristic step 1) with no LLM cost. Only the residue it couldn't route goes
+  // to the LLM, capped; overflow past the cap is heuristic-grouped so nothing is
+  // ever dropped. This is what lets a full-set disassemble be organized at once.
+  const placed = items.filter((it) => hints.has(it.id));
+  const residue = items.filter((it) => !hints.has(it.id));
+  const detGroups = placed.length > 0 ? heuristicPlan(placed, hints, census) : [];
+  let residueGroups: OrganizeGroup[] = [];
+  let usedAi = false;
+  if (residue.length > 0) {
+    const forAi = residue.slice(0, AI_ITEM_CAP);
+    const ai = await aiPlan(orgId, forAi, hints, census, userHint, userId);
+    usedAi = !!ai;
+    residueGroups = ai ?? heuristicPlan(forAi, hints, census);
+    if (residue.length > AI_ITEM_CAP) {
+      residueGroups = [...residueGroups, ...heuristicPlan(residue.slice(AI_ITEM_CAP), hints, census)];
+    }
+  }
+  const groups = [...detGroups, ...residueGroups];
   annotateSizeWarnings(groups, items, census);
-  return {
-    groups,
-    census_truncated: census.truncated,
-    source: ai ? "ai" : "heuristic",
-  };
+  return { groups, census_truncated: census.truncated, source: usedAi ? "ai" : "heuristic" };
 }
 
 /** Size check on the FINAL groups (both tiers — the deterministic scorer

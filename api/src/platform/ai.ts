@@ -22,9 +22,31 @@ import type {
   PlatformAi,
 } from "@cobblr/platform-contract";
 import { getTenantDb } from "../db/tenant.js";
+import { meta } from "../db/meta.js";
 import * as integrationsImpl from "./integrations.js";
 import { resolvePersonalProvider } from "./user-credentials.js";
+import { signMcpReadGrant } from "../auth/jwt.js";
+import { publicBaseUrl } from "./public-url.js";
 import { env } from "../env.js";
+
+/** True when the chat input carries workspace tool defs (the AI wants to read
+ *  the workspace) — the only case where the bridge MCP relay is relevant. */
+function inputHasTools(input: unknown): boolean {
+  if (!input || typeof input !== "object") return false;
+  const t = (input as Record<string, unknown>).tools;
+  return Array.isArray(t) && t.length > 0;
+}
+
+/** The workspace slug for an org id (from cobblr_meta) — the MCP endpoint is
+ *  addressed by slug (`?workspace=<slug>`), and the grant is pinned to it. */
+async function orgSlugOf(orgId: string): Promise<string | null> {
+  const r = await meta
+    .selectFrom("orgs")
+    .select("slug")
+    .where("id", "=", orgId)
+    .executeTakeFirst();
+  return r?.slug ?? null;
+}
 
 const providers = new Map<string, AiProviderDef>();
 
@@ -321,6 +343,40 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
       model: req.model,
     }));
 
+  // Ask-Cobb-over-the-bridge (MCP tool relay). When the resolved chat provider
+  // is a Claude-subscription bridge (the connection's `mcp_relay` flag — works
+  // for the ollama/openai-compat AND the edge-bridge providers, workspace OR
+  // personal connection), the bridge can't hand tool_calls back (claude -p
+  // can't) — so instead we mint a short-lived, read-only, workspace-pinned grant
+  // and pass it as `input.mcp`; the adapters forward it, and the bridge spawns
+  // `claude -p --mcp-config` pointed at THIS instance's MCP endpoint. The `url`
+  // is THIS instance's own public origin (publicBaseUrl) so one shared bridge can
+  // serve many Cobblr instances — each grant is minted + validated by its own
+  // instance (a staging grant never validates on prod). The grant is clamped
+  // server-side (auth middleware `mcp-read:<slug>` → GET reads only), so
+  // read-only holds regardless of the bridge. Reused as the real-call
+  // credentials below so we decrypt once. See
+  // docs/design-decisions/ask-cobb-bridge-mcp-tools.md.
+  let earlyCredentials: Record<string, unknown> | undefined;
+  if (req.capability === "chat" && req.userId && inputHasTools(req.input)) {
+    earlyCredentials =
+      personalCredentials ??
+      (row.credentials_enc ? await integrationsImpl.decryptCredentials(req.orgId, row.credentials_enc) : {});
+    if (earlyCredentials.mcp_relay === "bridge") {
+      const slug = await orgSlugOf(req.orgId);
+      if (slug) {
+        const grant = await signMcpReadGrant(req.userId, slug);
+        // Endpoint = this instance's own hosted MCP surface. When the public
+        // origin isn't configured (publicBaseUrl unset), send no url and let the
+        // bridge fall back to its own BRIDGE_MCP_RELAY_URL env.
+        const base = publicBaseUrl();
+        const url = base ? `${base}/api/v1/hooks/mcp` : undefined;
+        (req.input as Record<string, unknown>).mcp = { token: grant, workspace: slug, ...(url ? { url } : {}) };
+        req.bypass_cache = true; // per-request grant — a tool-relay chat is never cacheable
+      }
+    }
+  }
+
   // Entitlement gate (hosted overlay only — open core registers no guard).
   // Denials surface in the "no provider" error family so existing degrade
   // paths (ai:false) handle them with no per-feature changes.
@@ -409,6 +465,7 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
   // credential-less row has no ciphertext — the provider brings its own).
   const credentials =
     personalCredentials ??
+    earlyCredentials ??
     (row.credentials_enc
       ? await integrationsImpl.decryptCredentials(req.orgId, row.credentials_enc)
       : {});

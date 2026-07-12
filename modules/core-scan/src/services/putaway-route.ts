@@ -64,6 +64,13 @@ export interface CensusBin {
   /** Distinct titles of what lives there (capped) — the prompt's evidence and
    *  the deterministic scorer's corpus. */
   sample_titles: string[];
+  /** Distinct category values of what lives there (capped). The exact-category
+   *  facet: a bin that already holds category X is the defensible home for a new
+   *  item of category X — a stronger, granular signal than token overlap (a
+   *  "1x1 plate" bin vs a "2x2 plate" bin, whose distinguishing tokens are
+   *  dimensions the tokenizer drops). Generic: any category-bearing domain
+   *  benefits, no Lego knowledge here. */
+  sample_categories: string[];
   /** DECLARED interior size in mm (a container's metadata.interior_mm),
    *  null when the workspace hasn't declared one — no dims, no size logic. */
   interior_mm: InteriorMm | null;
@@ -131,6 +138,7 @@ export async function buildBinCensus(orgId: string): Promise<Census> {
 
   // One sweep per scannable kind, grouped by location_id. Best-effort per kind.
   const occupied = new Map<string, string[]>(); // location_id → titles
+  const categorized = new Map<string, string[]>(); // location_id → category values
   const kinds = platform().entities.listScannable();
   const sweeps = await Promise.all(
     kinds.map((k) =>
@@ -147,6 +155,12 @@ export async function buildBinCensus(orgId: string): Promise<Census> {
       const titles = occupied.get(loc) ?? [];
       if (titles.length < CENSUS_TITLES_PER_BIN) titles.push(e.title);
       occupied.set(loc, titles);
+      const cat = typeof e.fields.category === "string" ? e.fields.category.trim() : "";
+      if (cat) {
+        const cats = categorized.get(loc) ?? [];
+        if (cats.length < CENSUS_TITLES_PER_BIN) cats.push(cat);
+        categorized.set(loc, cats);
+      }
     }
   }
 
@@ -158,6 +172,7 @@ export async function buildBinCensus(orgId: string): Promise<Census> {
       kind: all.get(location_id)!.kind,
       item_count: sample_titles.length,
       sample_titles: [...new Set(sample_titles)],
+      sample_categories: [...new Set(categorized.get(location_id) ?? [])],
       interior_mm: all.get(location_id)!.interior_mm,
     }))
     .sort((a, b) => b.item_count - a.item_count);
@@ -201,8 +216,9 @@ export interface RouteHit {
   /** Distinct sibling titles at that bin sharing a significant token. */
   sibling_count: number;
   sample_names: string[];
-  /** Why this bin won — session context beats the census when both fire. */
-  via: "census" | "session" | "sticky";
+  /** Why this bin won — session context beats the census when both fire.
+   *  "category" = an exact category-facet match (the strongest census signal). */
+  via: "census" | "session" | "sticky" | "category";
 }
 
 /** A live session's routing context: what THIS session already filed where
@@ -270,6 +286,27 @@ export function routeItem(
       }
     }
     if (best) return best;
+  }
+
+  // ── Category facet (strongest census signal): a bin that already holds this
+  // exact category is the defensible home. Deterministic, granular, and blind to
+  // the tokenizer dropping dimension tokens ("1x1" vs "2x2"). Among bins that
+  // hold the category, the most-populated wins (census.bins is pre-sorted by
+  // item_count), subject to the size veto.
+  const wantCat = item.category?.trim().toLowerCase();
+  if (wantCat) {
+    for (const bin of census.bins) {
+      if (!fitsBin(item, bin.interior_mm)) continue;
+      if (!bin.sample_categories.some((c) => c.toLowerCase() === wantCat)) continue;
+      const catCount = bin.sample_categories.filter((c) => c.toLowerCase() === wantCat).length;
+      return {
+        item_id: item.id,
+        location_id: bin.location_id,
+        sibling_count: Math.max(catCount, 1),
+        sample_names: bin.sample_titles.slice(0, 3),
+        via: "category",
+      };
+    }
   }
 
   // ── Census tier: the batch planner's scorer, verbatim.

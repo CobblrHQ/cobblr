@@ -2051,7 +2051,15 @@ superAdminRouter.post("/feedback/batch-resolve", async (req, res, next) => {
           orgId = m?.org_id ?? null;
         }
         if (!orgId) continue;
-        let email: { subject: string; text: string; html?: string } | undefined;
+        // Tokenized Reply-To so a reply to this combined email threads back
+        // inbound (Cloudflare → /inbound-email → appended as a followup) instead
+        // of vanishing into the sender mailbox — the SAME threading the
+        // single-resolve path gets. A batch email covers several of one
+        // reporter's items, so thread to the first (userRows is order-sorted);
+        // any of them reopens the conversation for that person. Omitting this was
+        // the gap that stranded a reporter's reply (2026-07-12).
+        const replyAddr = feedbackReplyAddress(userRows[0]!.id);
+        let email: { subject: string; text: string; html?: string; replyTo?: string } | undefined;
         if (status === "resolved") {
           const u = await meta.selectFrom("users").select(["display_name"]).where("id", "=", userId).executeTakeFirst();
           const hi = u?.display_name ? `Hi ${u.display_name},` : "Hi,";
@@ -2087,6 +2095,7 @@ superAdminRouter.post("/feedback/batch-resolve", async (req, res, next) => {
               `${blocks}\n\n` +
               `Thanks for helping make Cobblr better.\n— The Cobblr team`,
             html: `<!DOCTYPE html><html><body style="margin:0;background:#f3f4f6;padding:24px 12px;"><div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2937;font-size:15px;line-height:1.5;max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:28px;"><p style="margin:0 0 16px;">${escHtml(hi)}</p>${intro ? `<p style="margin:0 0 16px;">${escHtml(intro).replace(/\n/g, "<br>")}</p>` : ""}${htmlBlocks}<p style="margin:14px 0 0;"><a href="${escHtml(absoluteAppUrl("/me/feedback"))}" style="display:inline-block;background:#8a6f47;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:8px;">View your feedback</a></p><p style="margin:18px 0 0;color:#9ca3af;font-size:12px;">— The Cobblr team</p></div></body></html>`,
+            replyTo: replyAddr ?? undefined,
           };
         }
         const { deliveredVia } = await notifyAccount({

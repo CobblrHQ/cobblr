@@ -42,7 +42,7 @@ import { feedbackRouter, feedbackInboundRouter } from "./routes/feedback.js";
 import { receiptInboundRouter, receiptAddressRouter } from "./routes/receipt-ingest.js";
 import { inboundEmailRouter } from "./routes/inbound-email.js";
 import { sandboxInstallRouter } from "./routes/sandbox-install.js";
-import { registryRouter } from "./routes/registry.js";
+import { registryRouter, registryPublicRouter } from "./routes/registry.js";
 import { customRolesRouter } from "./routes/custom-roles.js";
 import { driveRouter } from "./routes/drive.js";
 import { scanDriveRouter } from "./routes/scan-drive.js";
@@ -227,6 +227,10 @@ export function createApp(): AppHandles {
   // register without restart. See sandbox-install.ts +
   // docs/architecture/module-isolation.md.
   v1.use("/sandbox", sandboxInstallRouter);
+  // Public, unauthenticated catalog: GET /api/v1/registry/index.json — the
+  // self-hosted replacement for the GitHub-hosted cobblr-extensions index.json.
+  // Mounted BEFORE the authed registry router so requireAuth doesn't catch it.
+  v1.use("/registry", registryPublicRouter);
   v1.use("/registry", registryRouter);
   // Bundles live one layer further down — same auth + tenant
   // middleware, dedicated mount for clarity.

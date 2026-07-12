@@ -22,6 +22,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/rea
 import { Link, useNavigate } from "react-router-dom";
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpCircle, CheckCircle2, ChevronDown, Compass, Eye, EyeOff, GripVertical, LayoutList, Maximize2, Minimize2, Pin, Plus, Sliders, Sparkles, X } from "lucide-react";
 import { useBundleUpdates, type BundleUpdate } from "../lib/useBundleUpdates";
+import { classifyBundleUpdate, tierAutoApplies, updateMayTeardownCatalogs } from "../lib/bundleUpdateTier";
 import { useDetailRoute } from "../lib/useDetailRoute";
 import { useSetupCards, dismissSetup } from "../lib/setupCards";
 import { EntityThumb,
@@ -37,6 +38,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useAuth } from "../auth/AuthContext";
 import { WhatToDoPanel } from "../components/WhatToDoPanel";
 import { PendingAiShareCallout } from "../components/PendingAiShareCallout";
+import { useNavModules, INSTANCE_PREFIX } from "../components/useNavModules";
 import { HeatmapRenderer } from "./ViewsPage";
 import { liveNextStepLabel } from "../lib/featured-bundles";
 import {
@@ -47,9 +49,51 @@ import {
   type ActivityEntry,
   type DashboardLayout,
   type OrgModuleListItem,
-  type PlatformBundleManifest,
   type SavedView,
 } from "../lib/api";
+
+/** Homepage quick-links: big tap targets for the destinations this workspace
+ *  actually uses (Scan Inbox, each instance like "Yarn", the domain modules),
+ *  driven by the SAME nav source as the sidebar/hamburger so labels + order
+ *  stay consistent. Mobile-first — on a phone the nav is otherwise hidden
+ *  behind the hamburger, which users don't discover. Renders nothing until the
+ *  nav is known. */
+function QuickLinks({ slug }: { slug: string }) {
+  const nav = useNavModules(slug);
+  const dests = nav.tops
+    .filter(
+      (m) =>
+        !(m as { hidden?: boolean }).hidden &&
+        !m.name.startsWith("__heading__") &&
+        !m.name.startsWith("__group__"),
+    )
+    .slice(0, 8)
+    .map((m) => ({
+      key: m.name,
+      label: m.displayName,
+      to: m.name.startsWith(INSTANCE_PREFIX) ? `/${m.name.slice(INSTANCE_PREFIX.length)}` : `/${m.name}`,
+    }));
+  if (dests.length === 0) return null;
+  return (
+    <div>
+      <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-2">
+        Jump to
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+        {dests.map((d) => (
+          <Link
+            key={d.key}
+            to={d.to}
+            className="flex items-center justify-between gap-2 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-4 py-3 text-sm font-medium text-content dark:text-mortar-100 hover:border-accent active:scale-[0.99] transition"
+          >
+            <span className="truncate">{d.label}</span>
+            <ArrowRight size={16} className="text-faint dark:text-slate-500 shrink-0" />
+          </Link>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export function Dashboard() {
   usePageTitle("Dashboard");
@@ -99,6 +143,11 @@ export function Dashboard() {
           are THE founding mess — when any exist, say so and offer both tempos.
           Renders nothing when everything has a home. */}
       <PutAwayCard slug={activeSlug} />
+
+      {/* Quick links to the things this workspace uses most (Scan Inbox, Yarn,
+          …). High up + big tap targets so a phone user isn't forced to find the
+          hamburger to reach her instance or the scan inbox. */}
+      <QuickLinks slug={activeSlug} />
 
       <SetupCardsPanel slug={activeSlug} />
 
@@ -765,6 +814,7 @@ function WorkspaceHeader({
               key={u.externalId}
               slug={slug}
               update={u}
+              canApply={role === "owner" || role === "admin"}
               onDone={() =>
                 setCompleted((c) => ({ ...c, [u.externalId]: { name: u.name, glyph: u.glyph, version: u.latestV } }))
               }
@@ -796,22 +846,56 @@ function WorkspaceHeader({
   );
 }
 
-// One bundle-update line in the dashboard header strip. A conflict-free update
-// applies inline (one click, no modal — feedback e429a627); only an update that
-// collides with a field the user customized routes to the modal to resolve. We
-// learn which by previewing via validateBundle (cheap, one POST per update).
+// Guard so an auto-applied (patch/minor) update fires AT MOST ONCE per
+// (workspace, bundle, target version) — even across the remounts a bundles
+// refetch causes. A failed auto-apply is NOT retried (the key stays set): the
+// row falls back to its manual controls rather than looping the apply against
+// live workspace data. Module-level so it survives BundleUpdateRow remounts.
+const autoAppliedUpdates = new Set<string>();
+
+// One bundle-update line in the dashboard header strip.
+//
+// Update FLOW is decided by the SemVer delta (owner-approved policy — see
+// lib/bundleUpdateTier.ts):
+//   • PATCH  → silent auto-apply. No toast; audited via the server's
+//              `bundle_installed` activity-log entry (applyValidatedBundle).
+//   • MINOR  → auto-apply + a toast naming what was added.
+//   • MAJOR / non-semver / ambiguous → the existing explicit prompt. NEVER
+//              silent.
+//
+// SAFETY GATE: auto-apply (patch/minor) only runs when the inline apply is
+// provably safe for THIS workspace — validateBundle reports no upgrade
+// conflicts (a field the user customised that the new version changes/removes
+// routes to the modal), and the apply itself doesn't hit needs_enable /
+// field_def_collision (those throw → we fall back to the prompt, never guess).
+// A conflict-free update applies inline (one POST, no modal — feedback
+// e429a627); the only change here is that patch/minor no longer need the click.
 function BundleUpdateRow({
   slug,
   update,
+  canApply,
   onDone,
 }: {
   slug: string;
   update: BundleUpdate;
+  /** Whether this viewer may apply updates (owner/admin). Auto-apply never
+   *  fires for a guest — the install endpoint would 403 and loop. */
+  canApply: boolean;
   onDone: () => void;
 }) {
   const navigate = useNavigate();
   const toast = useToast();
   const qc = useQueryClient();
+
+  // A catalog-bearing update NEVER auto-applies. Gate on BOTH manifests: the
+  // DROP case (installed shipped a catalog the new version removed) still tears
+  // the catalog down on a pre-fix api, and the new manifest alone can't reveal
+  // it. The server now self-heals (uninstallBundleId only deletes catalogs on a
+  // real uninstall), so this is the rollout-window backstop, not the permanent
+  // guard. Demand an explicit confirm rather than risk dropping user data.
+  const shipsCatalogs = updateMayTeardownCatalogs(update.installedManifest, update.manifest);
+  const tier = shipsCatalogs ? "prompt" : classifyBundleUpdate(update.installedV, update.latestV);
+  const autoKey = `${slug}:${update.externalId}@${update.latestV}`;
 
   const preview = useQuery({
     queryKey: ["bundle-update-preview", slug, update.externalId, update.latestV],
@@ -820,6 +904,9 @@ function BundleUpdateRow({
     staleTime: 60_000,
   });
   const hasConflict = (preview.data?.preview?.upgrade_conflicts?.length ?? 0) > 0;
+  // Preview came back AND nothing the user customised collides → the inline
+  // apply is safe to take without routing through the modal.
+  const previewClean = !!preview.data && !hasConflict;
 
   function openModal() {
     navigate(
@@ -828,10 +915,21 @@ function BundleUpdateRow({
   }
 
   const install = useMutation({
-    mutationFn: (vars: { manifest: PlatformBundleManifest; confirm: boolean; enabledFeatures: string[] }) =>
-      api.installBundle(slug, vars.manifest, vars.confirm, vars.enabledFeatures),
-    onSuccess: (r) => {
-      toast.success(`Updated ${r.bundle.name} to v${r.bundle.version}.`);
+    mutationFn: (_vars: { silent: boolean }) =>
+      api.installBundle(slug, update.manifest, false, update.enabledFeatures),
+    onSuccess: (r, vars) => {
+      // PATCH auto-apply is silent (no toast) — still auditable via the
+      // server-side `bundle_installed` activity entry. MINOR + any manual
+      // click get a toast; MINOR names what landed so the user knows what's new.
+      if (!vars.silent) {
+        const bits = [
+          r.applied.field_defs ? `${r.applied.field_defs} field${r.applied.field_defs === 1 ? "" : "s"}` : null,
+          r.applied.wires ? `${r.applied.wires} automation${r.applied.wires === 1 ? "" : "s"}` : null,
+        ].filter(Boolean);
+        toast.success(
+          `Updated ${r.bundle.name} to v${r.bundle.version}` + (bits.length ? `. Added ${bits.join(", ")}.` : "."),
+        );
+      }
       // Mirror BundleDetailModal's post-install refresh — an update can move
       // field defs / wires / instances, so the same queries must invalidate.
       for (const key of ["bundles", "bindings", "field-defs", "org-modules", "instances", "entity-kind-overrides"]) {
@@ -841,19 +939,37 @@ function BundleUpdateRow({
     },
   });
 
-  async function updateNow() {
+  async function runUpdate(silent: boolean) {
     try {
-      await install.mutateAsync({ manifest: update.manifest, confirm: false, enabledFeatures: update.enabledFeatures });
+      await install.mutateAsync({ silent });
     } catch (e) {
-      // Anything that needs a decision (module-enable / collision / unexpected)
-      // falls back to the full modal flow rather than guessing.
+      // Anything that needs a decision (module-enable / field collision /
+      // unexpected) is NEVER resolved silently. A manual click routes to the
+      // modal; a silent auto-apply just stops and lets the row fall back to its
+      // manual controls (the autoAppliedUpdates guard prevents a re-fire), so
+      // the user is never yanked into a modal they didn't ask for.
       if (e instanceof ApiError && (e.code === "needs_enable" || e.code === "field_def_collision")) {
-        openModal();
+        if (!silent) openModal();
         return;
       }
-      toast.error(e instanceof ApiError ? e.message : (e as Error).message);
+      if (!silent) toast.error(e instanceof ApiError ? e.message : (e as Error).message);
     }
   }
+
+  // Auto-apply patch/minor once the preview is clean. Guarded so it fires at
+  // most once per target version and never for a guest.
+  useEffect(() => {
+    if (!canApply) return;
+    if (!tierAutoApplies(tier)) return; // major / non-semver → manual prompt only
+    if (!previewClean) return; // wait for a clean, conflict-free preview
+    if (install.isPending || install.isSuccess) return;
+    if (autoAppliedUpdates.has(autoKey)) return;
+    autoAppliedUpdates.add(autoKey);
+    void runUpdate(tier === "patch"); // patch: silent · minor: toast
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canApply, tier, previewClean, autoKey]);
+
+  const updateNow = () => void runUpdate(false);
 
   const version = (
     <>
@@ -871,13 +987,19 @@ function BundleUpdateRow({
       {install.isPending ? (
         <span className="shrink-0 text-faint dark:text-slate-500">Updating…</span>
       ) : preview.isPending ? (
-        <button
-          type="button"
-          onClick={openModal}
-          className="shrink-0 text-accent hover:underline font-medium"
-        >
-          See details
-        </button>
+        // While the preview loads: an auto tier (patch/minor) is about to apply
+        // itself, so show a passive "Checking…" rather than a manual action.
+        canApply && tierAutoApplies(tier) ? (
+          <span className="shrink-0 text-faint dark:text-slate-500">Checking…</span>
+        ) : (
+          <button
+            type="button"
+            onClick={openModal}
+            className="shrink-0 text-accent hover:underline font-medium"
+          >
+            See details
+          </button>
+        )
       ) : hasConflict ? (
         <button
           type="button"
@@ -890,7 +1012,7 @@ function BundleUpdateRow({
         <>
           <button
             type="button"
-            onClick={() => void updateNow()}
+            onClick={updateNow}
             className="shrink-0 text-accent hover:underline font-medium"
           >
             Update now
@@ -1708,14 +1830,14 @@ function groupActivity(items: ActivityEntry[]): ActivityGroup[] {
 
 function ActivityRow({ entry: e }: { entry: ActivityEntry }) {
   return (
-    <li className="px-4 py-2 flex items-baseline gap-1.5 text-sm">
+    <li className="px-3 py-2 flex items-baseline gap-1.5 text-sm">
       <span className="text-muted dark:text-slate-400 shrink-0">
         {actorLabel(e)}
       </span>
       <span className="text-content dark:text-mortar-200 shrink-0">
         {humanAction(e.action)}
       </span>
-      <span className="text-content dark:text-mortar-100 truncate">
+      <span className="text-content dark:text-mortar-100 truncate min-w-0">
         {activityTitle(e)}
       </span>
       <span className="flex-1" />
@@ -1765,14 +1887,14 @@ function ActivityGroupRow({ group }: { group: ActivityGroup }) {
   const spanStart = relativeTime(last.occurred_at);
   const spanEnd = relativeTime(first.occurred_at);
   const rowContent = (
-    <div className="flex items-baseline gap-1.5 text-sm w-full">
+    <div className="flex items-baseline gap-1.5 text-sm w-full min-w-0">
       <span className="text-muted dark:text-slate-400 shrink-0">
         {actor}
       </span>
       <span className="text-content dark:text-mortar-200 shrink-0">
         {action}
       </span>
-      <span className="text-content dark:text-mortar-100 truncate">
+      <span className="text-content dark:text-mortar-100 truncate min-w-0">
         {summary}
         {allSame && (
           <span className="ml-1.5 inline-flex items-center text-[10px] font-mono uppercase tracking-widest text-accent dark:text-cobble-400 bg-cobble-50 dark:bg-cobble-900/40 rounded px-1.5 py-0.5">
@@ -1795,7 +1917,7 @@ function ActivityGroupRow({ group }: { group: ActivityGroup }) {
   return (
     <li>
       <details className="group">
-        <summary className="list-none cursor-pointer px-4 py-2 hover:bg-subtle dark:hover:bg-slate-800/40 transition flex items-baseline gap-2">
+        <summary className="list-none cursor-pointer px-3 py-2 hover:bg-subtle dark:hover:bg-slate-800/40 transition flex items-baseline gap-2">
           <span className="text-faint dark:text-slate-600 text-[10px] shrink-0 group-open:rotate-90 transition-transform">▸</span>
           {rowContent}
         </summary>

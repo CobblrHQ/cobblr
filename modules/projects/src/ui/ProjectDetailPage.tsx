@@ -2,7 +2,7 @@
 // checked off, deleted inline. Cross-module dependencies render as
 // pill chips on the task row.
 
-import { useState, type FormEvent } from "react";
+import { useLayoutEffect, useRef, useState, type ComponentProps, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Check, Plus, Sparkles, Trash2, Upload } from "lucide-react";
@@ -15,9 +15,43 @@ import type { PatternExtract, Priority, ProjectStatus, ProjectsApi, Task, TaskSt
 const PROJECT_STATUSES: ProjectStatus[] = ["planning", "active", "blocked", "done", "abandoned"];
 const PRIORITIES: Priority[] = ["low", "med", "high", "urgent"];
 
+// A textarea that grows to fit its content so a long value (e.g. a full
+// AI-generated pattern pasted into the description) is visible without
+// scrolling a tiny fixed box. Keeps `resize-y` so the user can still shrink it.
+function AutoGrowTextarea({
+  minRows = 2,
+  ...props
+}: ComponentProps<"textarea"> & { minRows?: number }) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const grow = () => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  };
+  // Size to the loaded value on mount and whenever the value prop changes.
+  useLayoutEffect(grow, [props.value, props.defaultValue]);
+  return (
+    <textarea
+      ref={ref}
+      rows={minRows}
+      {...props}
+      onInput={(e) => {
+        grow();
+        props.onInput?.(e);
+      }}
+    />
+  );
+}
+
 export function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const { api, entityKind } = useProjects();
+  const { api, entityKind, instance, displayName } = useProjects();
+  // Route "back" to the collection the user actually came from: a Designs (or
+  // any named) instance lives at /instances/<name>, not the empty base
+  // /projects. Mirrors ProjectsListPage's basePath.
+  const backPath = instance ? `/instances/${instance}` : "/projects";
+  const backLabel = displayName ? displayName.toLowerCase() : "projects";
   // Native-field presentation (relabel + show/hide via bundle/config); no-op
   // until an override exists. Keyed off the INSTANCE kind (designs:item) so a
   // Designs instance's custom fields (pattern link, category) actually resolve —
@@ -74,8 +108,8 @@ export function ProjectDetailPage() {
 
   return (
     <div className="space-y-5 max-w-3xl">
-      <Link to="/projects" className="inline-flex items-center gap-1.5 text-xs text-muted dark:text-slate-400 hover:text-accent">
-        <ArrowLeft size={12} /> back to projects
+      <Link to={backPath} className="inline-flex items-center gap-1.5 text-xs text-muted dark:text-slate-400 hover:text-accent">
+        <ArrowLeft size={12} /> back to {backLabel}
       </Link>
 
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
@@ -88,6 +122,12 @@ export function ProjectDetailPage() {
               }
             }}
             className="font-display text-2xl font-bold text-content dark:text-mortar-100 bg-transparent flex-1 focus:outline-none focus:bg-subtle dark:focus:bg-slate-800/70 rounded px-1"
+          />
+          <SaveStatus
+            saving={updateProject.isPending}
+            saved={updateProject.isSuccess}
+            failed={updateProject.isError}
+            className="mt-2 shrink-0"
           />
           <EntityActionsBar entityKind="projects:project" entityId={project.data.id} className="mt-1" />
         </div>
@@ -122,12 +162,16 @@ export function ProjectDetailPage() {
               </select>
             </Labelled>
           )}
+          {/* Dates commit on CHANGE, not blur: a mobile date picker doesn't
+              reliably fire blur when you confirm a date, so an onBlur-only save
+              silently dropped the value ("no option to save progress" — Grace).
+              Change fires the moment a full date is picked, like the selects. */}
           {!fp.hidden("target_date") && (
             <Labelled label={fp.label("target_date", "target date")}>
               <input
                 type="date"
                 defaultValue={project.data.target_date ?? ""}
-                onBlur={(e) =>
+                onChange={(e) =>
                   updateProject.mutate({ target_date: e.target.value || null })
                 }
                 className="input !w-auto !py-1 text-xs"
@@ -138,7 +182,7 @@ export function ProjectDetailPage() {
             <input
               type="date"
               defaultValue={project.data.completion_date ?? ""}
-              onBlur={(e) =>
+              onChange={(e) =>
                 updateProject.mutate({ completion_date: e.target.value || null })
               }
               className="input !w-auto !py-1 text-xs"
@@ -150,7 +194,7 @@ export function ProjectDetailPage() {
           <label className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 block mb-1">
             description
           </label>
-          <textarea
+          <AutoGrowTextarea
             defaultValue={project.data.description ?? ""}
             onBlur={(e) => {
               const v = e.target.value.trim();
@@ -158,7 +202,7 @@ export function ProjectDetailPage() {
                 updateProject.mutate({ description: v || null });
               }
             }}
-            rows={2}
+            minRows={3}
             placeholder="What is this project about?"
             className="input text-sm w-full resize-y"
           />
@@ -242,6 +286,38 @@ function Labelled({
       </label>
       {children}
     </div>
+  );
+}
+
+// Every field on this page auto-saves (on change/blur) — there is no Save
+// button. This tiny status pill makes that visible so a user who's used to
+// clicking "save" can see their edits are being persisted ("no option to save
+// progress" — Grace). Idle before the first edit → renders nothing.
+function SaveStatus({
+  saving,
+  saved,
+  failed,
+  className = "",
+}: {
+  saving: boolean;
+  saved: boolean;
+  failed: boolean;
+  className?: string;
+}) {
+  if (!saving && !saved && !failed) return null;
+  const [text, tone] = failed
+    ? ["couldn't save", "text-ember-500"]
+    : saving
+      ? ["saving…", "text-faint dark:text-slate-500"]
+      : ["saved", "text-moss-600"];
+  return (
+    <span
+      aria-live="polite"
+      className={`inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-widest ${tone} ${className}`}
+    >
+      {saved && !saving && !failed && <Check size={11} />}
+      {text}
+    </span>
   );
 }
 

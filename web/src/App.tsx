@@ -9,7 +9,10 @@
 
 import { lazy, Suspense , useEffect } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
-import { PlatformWebProvider } from "@cobblr/platform-web";
+import { PlatformWebProvider, type FlowRegistry } from "@cobblr/platform-web";
+import { OrganizeFlow } from "./flows/OrganizeFlow";
+import { Boxes, FolderKanban } from "lucide-react";
+import { InstanceHubGate } from "./components/InstanceHubGate";
 import { InventoryUI } from "@cobblr/inventory/ui";
 import { LabelsBasket, LabelsUI } from "@cobblr/labels/ui";
 import { ProjectsUI } from "@cobblr/projects/ui";
@@ -127,6 +130,13 @@ import { api, getToken } from "./lib/api";
 import { useNavMode, useNavTopBar } from "./lib/nav-mode";
 import { useQuery } from "@tanstack/react-query";
 import { InstancePage } from "./pages/InstancePage";
+
+// First-party flow registry: id → overlay the shell can open from anywhere
+// (an action's `ui` directive, a view bulk-action, a nav entry). See
+// docs/architecture/invokable-flows-and-lego-redesign.md.
+const WORKSPACE_FLOWS: FlowRegistry = {
+  "core-scan:organize": OrganizeFlow,
+};
 
 function RouteFallback() {
   return (
@@ -413,6 +423,7 @@ function ActiveOrgScopedRoutes() {
     <PlatformWebProvider
       orgSlug={activeSlug}
       appMode={!!appMode}
+      flows={WORKSPACE_FLOWS}
       api={{
         listActions: (slug, kind) => api.listActions(slug, kind),
         invokeAction: (slug, body) => api.invokeAction(slug, body),
@@ -443,7 +454,11 @@ function ActiveOrgScopedRoutes() {
           <Route index element={<Dashboard />} />
           <Route
             path="/inventory/*"
-            element={<InventoryUI orgSlug={activeSlug} getToken={getToken} />}
+            element={
+              <InstanceHubGate module="inventory" basePath="/inventory" icon={Boxes} noun="part">
+                <InventoryUI orgSlug={activeSlug} getToken={getToken} />
+              </InstanceHubGate>
+            }
           />
           <Route
             path="/labels/*"
@@ -451,7 +466,11 @@ function ActiveOrgScopedRoutes() {
           />
           <Route
             path="/projects/*"
-            element={<ProjectsUI orgSlug={activeSlug} getToken={getToken} />}
+            element={
+              <InstanceHubGate module="projects" basePath="/projects" icon={FolderKanban} noun="project">
+                <ProjectsUI orgSlug={activeSlug} getToken={getToken} />
+              </InstanceHubGate>
+            }
           />
           <Route
             path="/lists/*"

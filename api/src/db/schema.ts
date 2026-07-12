@@ -507,6 +507,11 @@ export interface EntityKindsTable {
   /** Preset name (e.g. "owned-thing") if the manifest used profile
    *  shorthand, null if declared raw. Bookkeeping for tooling. */
   profile: string | null;
+  /** Owning module's default for drawing the label code in the QR center
+   *  (manifest `labelCodeOverlayDefault`). Read generically by the labels
+   *  module to pick a default when a workspace has no explicit per-kind
+   *  toggle. Null = undeclared (treated as true — today's behavior). */
+  label_code_overlay_default: boolean | null;
   /** Cross-module read whitelist (jsonb array of field names) — the
    *  read-time trust boundary. Null = legacy (full fields returned,
    *  deprecation logged on first cross-module read of this kind).

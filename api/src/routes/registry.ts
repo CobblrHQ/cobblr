@@ -14,9 +14,23 @@ import { verify as cryptoVerify, createPublicKey } from "node:crypto";
 import { requireAuth } from "../auth/middleware.js";
 import { assertSafeUrl } from "../sandbox/ssrf.js";
 import { githubRegistryHeaders, fetchGithubText } from "../lib/github-registry.js";
+import { buildOfficialIndex } from "../lib/extensions-index.js";
 
 export const registryRouter = Router();
 registryRouter.use(requireAuth);
+
+// The public, unauthenticated catalog endpoint. This is what "serve the
+// catalog from cobblr.me's own stack" means: GET /api/v1/registry/index.json
+// returns the official index built locally from the baked-in bundle manifests
+// — the drop-in replacement for the GitHub-hosted cobblr-extensions/index.json.
+// No auth (the GitHub URL it replaces was public too); mounted BEFORE the
+// authed router in server.ts so it isn't caught by requireAuth.
+export const registryPublicRouter = Router();
+registryPublicRouter.get("/index.json", (_req, res) => {
+  // no-store-ish but cacheable briefly: the catalog only changes on deploy.
+  res.set("Cache-Control", "public, max-age=60");
+  res.json(buildOfficialIndex());
+});
 
 // ── Notarised-open trust (extension-registry.md §2.4, Phase D) ──────
 // The official index may be anchored to a Cobblr ROOT key: a detached
@@ -38,15 +52,15 @@ function verifyEd25519(pubkeyB64: string, data: Buffer, sigB64: string): boolean
   }
 }
 
-// The official index. While the repo is private, fetch via the GitHub API
-// contents endpoint (raw.githubusercontent doesn't accept a Bearer token
-// for private repos). When it goes public, a raw URL works too — both are
-// handled by the shared helpers in lib/github-registry.ts.
-const DEFAULT_INDEX =
-  // `||` not `??` — compose passes `${COBBLR_EXTENSIONS_URL:-}` = an EMPTY
-  // string when unset, which `??` would NOT fall back from. Empty → default.
-  process.env.COBBLR_EXTENSIONS_URL ||
-  "https://api.github.com/repos/CobblrHQ/cobblr-extensions/contents/index.json";
+// The official catalog is now SELF-HOSTED: built in-process from the baked-in
+// bundle manifests (see lib/extensions-index.ts + GET /registry/index.json).
+// No GitHub, no manual publish — the catalog is always current with the deploy.
+//
+// COBBLR_EXTENSIONS_URL stays as an OPTIONAL override: point it at an external
+// index.json (e.g. another cobblr.me's /api/v1/registry/index.json, or a
+// future signed index) and that URL becomes the official source instead of the
+// local build. Empty/unset (the default, and what compose passes) → local.
+const EXTERNAL_INDEX_URL = process.env.COBBLR_EXTENSIONS_URL || "";
 
 interface IndexShape {
   schema?: number;
@@ -61,9 +75,11 @@ interface IndexShape {
 type Lane = "bundles" | "drivers" | "modules" | "renderers";
 const LANES: Lane[] = ["bundles", "drivers", "modules", "renderers"];
 
-// The detached signature for the official index — defaults to the index
-// URL with `.sig` appended. Only the OFFICIAL index is root-checked.
-const DEFAULT_SIG = process.env.COBBLR_EXTENSIONS_SIG_URL || `${DEFAULT_INDEX}.sig`;
+// The detached signature for an EXTERNAL official index — defaults to that
+// index URL with `.sig` appended. Only meaningful when COBBLR_EXTENSIONS_URL
+// points at an external index AND COBBLR_ROOT_PUBKEY is set; the local build
+// is inherently trusted (it's your own deploy) and carries no signature.
+const DEFAULT_SIG = process.env.COBBLR_EXTENSIONS_SIG_URL || (EXTERNAL_INDEX_URL ? `${EXTERNAL_INDEX_URL}.sig` : "");
 
 // Small TTL cache so browsing the marketplace doesn't hammer GitHub (the
 // authenticated API is 5,000/hr, but a 5-min cache keeps us comfortable).
@@ -82,6 +98,19 @@ async function fetchIndex(url: string): Promise<{ raw: string; data: IndexShape 
   return entry;
 }
 
+/** The OFFICIAL index: the local self-hosted build by default, or a configured
+ *  external index.json when COBBLR_EXTENSIONS_URL is set. Returns both the raw
+ *  bytes (needed to verify an external index's detached sig) and the parsed
+ *  data. The local build carries no signature (it's your own deploy). */
+async function getOfficialIndex(): Promise<{ raw: string; data: IndexShape; local: boolean }> {
+  if (EXTERNAL_INDEX_URL) {
+    const { raw, data } = await fetchIndex(EXTERNAL_INDEX_URL);
+    return { raw, data, local: false };
+  }
+  const data = buildOfficialIndex() as unknown as IndexShape;
+  return { raw: JSON.stringify(data), data, local: true };
+}
+
 /** Fetch a single bundle's full manifest from the OFFICIAL registry index by
  *  its id (e.g. "cobblr.flagship.yarn"). Used by managed-app provisioning so the
  *  server owns the bundle (the rich, published version) instead of trusting a
@@ -89,7 +118,7 @@ async function fetchIndex(url: string): Promise<{ raw: string; data: IndexShape 
  *  a miss or if the registry is unreachable (caller decides the fallback). */
 export async function getOfficialBundleManifest(bundleId: string): Promise<unknown | null> {
   try {
-    const { data } = await fetchIndex(DEFAULT_INDEX);
+    const { data } = await getOfficialIndex();
     const entry = (data.bundles ?? []).find((b) => b.id === bundleId || (b.manifest as { id?: string } | undefined)?.id === bundleId);
     return (entry?.manifest as unknown) ?? null;
   } catch (err) {
@@ -101,7 +130,7 @@ export async function getOfficialBundleManifest(bundleId: string): Promise<unkno
 /** Fetch the official index's detached signature and verify it over the
  *  raw index bytes. Returns whether the root anchor checks out. */
 async function verifyRoot(rawIndex: string): Promise<boolean> {
-  if (!ROOT_PUBKEY) return false; // no anchor configured
+  if (!ROOT_PUBKEY || !DEFAULT_SIG) return false; // no anchor / no sig to fetch
   try {
     await assertSafeUrl(DEFAULT_SIG);
     const r = await fetch(DEFAULT_SIG, { headers: githubRegistryHeaders(DEFAULT_SIG) });
@@ -143,37 +172,53 @@ registryRouter.get("/index", async (req, res, next) => {
     // root yields an empty set → every module is "unverified" (fail closed).
     let trustedKeys = new Set<string>();
 
-    // Official first → it wins on id collisions; it also carries the
-    // trust anchor (root sig + trusted_keys) used to tag every module.
-    const ingest = async (url: string, label: string, isOfficial: boolean) => {
+    const mergeLanes = (idx: IndexShape, label: string) => {
+      for (const lane of LANES) {
+        for (const e of idx[lane] ?? []) {
+          const id = typeof e.id === "string" ? e.id : typeof e.name === "string" ? e.name : undefined;
+          if (id && seen[lane].has(id)) continue;
+          if (id) seen[lane].add(id);
+          out[lane].push({ ...e, source: label });
+        }
+      }
+    };
+
+    // Official FIRST → it wins on id collisions; it also carries the trust
+    // anchor (root sig + trusted_keys) used to tag every module. The official
+    // index is the local self-hosted build by default (no HTTP, always current
+    // with the deploy) or a configured external index.
+    const officialUrl = EXTERNAL_INDEX_URL || "self";
+    try {
+      const { raw, data: idx, local } = await getOfficialIndex();
+      // The local build is inherently trusted (your own deploy) → no root
+      // check; treat as "no anchor configured" and honour its trusted_keys
+      // (empty). An external index is root-checked when a root key is set.
+      if (local || !ROOT_PUBKEY) {
+        out.official_root_verified = null;
+        trustedKeys = new Set(idx.trusted_keys ?? []);
+      } else {
+        const ok = await verifyRoot(raw);
+        out.official_root_verified = ok;
+        trustedKeys = ok ? new Set(idx.trusted_keys ?? []) : new Set();
+      }
+      mergeLanes(idx, "official");
+      out.sources.push({ url: officialUrl, label: "official", ok: true });
+    } catch (err) {
+      out.sources.push({ url: officialUrl, label: "official", ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+
+    // Third-party sources = extra index.json URLs (HACS "custom repository"
+    // model). Each is SSRF-checked in fetchIndex; never a trust anchor.
+    const ingest = async (url: string, label: string) => {
       try {
-        const { raw, data: idx } = await fetchIndex(url);
-        if (isOfficial) {
-          if (!ROOT_PUBKEY) {
-            out.official_root_verified = null;
-            trustedKeys = new Set(idx.trusted_keys ?? []);
-          } else {
-            const ok = await verifyRoot(raw);
-            out.official_root_verified = ok;
-            trustedKeys = ok ? new Set(idx.trusted_keys ?? []) : new Set();
-          }
-        }
-        for (const lane of LANES) {
-          for (const e of idx[lane] ?? []) {
-            const id = typeof e.id === "string" ? e.id : typeof e.name === "string" ? e.name : undefined;
-            if (id && seen[lane].has(id)) continue;
-            if (id) seen[lane].add(id);
-            out[lane].push({ ...e, source: label });
-          }
-        }
+        const { data: idx } = await fetchIndex(url);
+        mergeLanes(idx, label);
         out.sources.push({ url, label, ok: true });
       } catch (err) {
         out.sources.push({ url, label, ok: false, error: err instanceof Error ? err.message : String(err) });
       }
     };
-
-    await ingest(DEFAULT_INDEX, "official", true);
-    for (const s of sources) await ingest(s, s, false);
+    for (const s of sources) await ingest(s, s);
 
     // Tag each code extension's trust tier: "official" iff its pubkey is a
     // vouched key, else "unverified" (the UI gates those behind consent).

@@ -328,7 +328,7 @@ function DestinationsSection({ base, auth }: { base: string; auth: () => Record<
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch(`${base}/destinations`, { headers: auth() });
+      const res = await fetch(`${base}/backup/destinations`, { headers: auth() });
       if (!res.ok) return;
       const j = await res.json();
       setDests(j.destinations ?? []);
@@ -346,7 +346,7 @@ function DestinationsSection({ base, auth }: { base: string; auth: () => Record<
   async function create() {
     setBusy("create");
     try {
-      const res = await fetch(`${base}/destinations`, {
+      const res = await fetch(`${base}/backup/destinations`, {
         method: "POST",
         headers: { ...auth(), "content-type": "application/json" },
         body: JSON.stringify({ driver: form.driver, label: form.label || selDriver?.label || form.driver, schedule: form.schedule, retention: form.retention, config: form.config }),
@@ -367,7 +367,7 @@ function DestinationsSection({ base, auth }: { base: string; auth: () => Record<
   async function runNow(d: Destination) {
     setBusy(`run-${d.id}`);
     try {
-      const res = await fetch(`${base}/destinations/${d.id}/run`, { method: "POST", headers: auth() });
+      const res = await fetch(`${base}/backup/destinations/${d.id}/run`, { method: "POST", headers: auth() });
       const j = await res.json();
       if (j.ok) toast.success(`Backup pushed to ${d.label}.`);
       else toast.error(`Backup failed: ${j.error ?? "unknown"}`);
@@ -382,7 +382,7 @@ function DestinationsSection({ base, auth }: { base: string; auth: () => Record<
   async function patch(d: Destination, body: Record<string, unknown>) {
     setBusy(`patch-${d.id}`);
     try {
-      const res = await fetch(`${base}/destinations/${d.id}`, { method: "PATCH", headers: { ...auth(), "content-type": "application/json" }, body: JSON.stringify(body) });
+      const res = await fetch(`${base}/backup/destinations/${d.id}`, { method: "PATCH", headers: { ...auth(), "content-type": "application/json" }, body: JSON.stringify(body) });
       if (!res.ok) throw new Error((await res.json())?.error?.message ?? `HTTP ${res.status}`);
       await load();
     } catch (e) {
@@ -395,7 +395,7 @@ function DestinationsSection({ base, auth }: { base: string; auth: () => Record<
   async function remove(d: Destination) {
     setBusy(`del-${d.id}`);
     try {
-      await fetch(`${base}/destinations/${d.id}`, { method: "DELETE", headers: auth() });
+      await fetch(`${base}/backup/destinations/${d.id}`, { method: "DELETE", headers: auth() });
       await load();
     } finally {
       setBusy(null);
@@ -405,7 +405,7 @@ function DestinationsSection({ base, auth }: { base: string; auth: () => Record<
   async function connectGoogle() {
     setBusy("google");
     try {
-      const res = await fetch(`${base}/destinations/google/connect`, { method: "POST", headers: { ...auth(), "content-type": "application/json" }, body: JSON.stringify({ label: "Google Drive" }) });
+      const res = await fetch(`${base}/backup/destinations/google/connect`, { method: "POST", headers: { ...auth(), "content-type": "application/json" }, body: JSON.stringify({ label: "Google Drive" }) });
       const j = await res.json();
       if (!res.ok) throw new Error(j?.error?.message ?? `HTTP ${res.status}`);
       window.location.href = j.url;

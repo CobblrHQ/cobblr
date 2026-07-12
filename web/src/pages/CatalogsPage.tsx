@@ -59,10 +59,12 @@ export function CatalogsPage() {
       </div>
 
       <p className="text-sm text-content dark:text-mortar-200">
-        Imported reference datasets — Rebrickable parts, McMaster, USDA,
-        anything you have a CSV for. Your own entities (parts, machines,
-        assets) can <em>match</em> a row in a catalog; once matched, the
-        catalog's photo + metadata is shown alongside your entity.
+        Reference datasets your entities match against. Rebrickable's Lego
+        catalog comes with the Lego setup; bring your own as a CSV — any table
+        with a stable id and a name (a parts list, a product export, a
+        collection inventory). Your own entities (parts, machines, assets) can
+        <em>match</em> a row in a catalog; once matched, the catalog's photo +
+        metadata is shown alongside your entity.
       </p>
 
       {list.isLoading && <div className="text-sm text-muted">Loading…</div>}
@@ -81,7 +83,10 @@ export function CatalogsPage() {
             onDelete={async () => {
               const ok = await confirm({
                 title: "Delete catalog?",
-                message: `${c.name} and all ${c.entry_count} entries will be removed. Existing matches from your entities to entries in this catalog will become dangling.`,
+                message:
+                  c.source === "hosted"
+                    ? `${c.name} will be removed from this workspace (its data stays in Cobblr's shared catalog). Existing matches from your entities to it will become dangling.`
+                    : `${c.name} and all ${c.entry_count} entries will be removed. Existing matches from your entities to entries in this catalog will become dangling.`,
                 confirmLabel: "Delete",
                 destructive: true,
               });
@@ -129,9 +134,22 @@ function CatalogCard({
             </div>
           )}
         </Link>
-        <span className="text-[10px] font-mono text-accent dark:text-cobble-400">
-          {catalog.entry_count} {catalog.entry_count === 1 ? "entry" : "entries"}
-        </span>
+        {catalog.source === "hosted" ? (
+          // Hosted catalogs keep their rows in Cobblr's shared reference-catalog
+          // service, so the local entry_count is 0 by design — showing "0
+          // entries" reads as broken. Say "Hosted" instead: it's ready to match
+          // against, nothing to import.
+          <span
+            title="Served from Cobblr's shared reference catalog — ready to match against, nothing to import."
+            className="text-[10px] font-mono uppercase tracking-widest text-accent dark:text-cobble-400 rounded bg-accent/10 dark:bg-cobble-400/10 px-1.5 py-0.5"
+          >
+            Hosted
+          </span>
+        ) : (
+          <span className="text-[10px] font-mono text-accent dark:text-cobble-400">
+            {catalog.entry_count} {catalog.entry_count === 1 ? "entry" : "entries"}
+          </span>
+        )}
         {catalog.puller_id && (
           <span className="text-[10px] uppercase font-mono tracking-widest text-faint dark:text-slate-500">
             {catalog.puller_id}

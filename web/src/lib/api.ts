@@ -348,6 +348,7 @@ export interface Machine {
   family: string | null;
   type: string | null;
   manufacturer: string | null;
+  serial_number: string | null;
   state: string;
   excitement: number;
   image_path: string | null;
@@ -2482,7 +2483,10 @@ export const api = {
     body: {
       item_ids?: string[];
       scan_batch_id?: string;
-      scope?: "unplaced" | "pending";
+      scope?: "unplaced" | "pending" | "refs";
+      /** For scope:"refs" — the "<kind>::<uuid>" refs to plan (a specific pile,
+       *  e.g. the parts a disassemble just spawned). */
+      refs?: string[];
       /** Ground truth typed by the human — folded into the AI plan call. */
       hint?: string;
       /** Pre-compute the scope:"pending" plan (fingerprint-deduped server-side)
@@ -2770,10 +2774,15 @@ export const api = {
   quickstart: (slug: string) =>
     request<QuickstartSuggestions>("GET", `/orgs/${slug}/quickstart`),
   // Install a flagship bundle + batch-commit the captures that fit it.
-  materializeQuickstart: (slug: string, bundle_external_id: string, item_ids?: string[]) =>
+  materializeQuickstart: (
+    slug: string,
+    bundle_external_id: string,
+    opts?: { item_ids?: string[]; skip_install?: boolean },
+  ) =>
     request<QuickstartMaterializeResult>("POST", `/orgs/${slug}/quickstart/materialize`, {
       bundle_external_id,
-      ...(item_ids ? { item_ids } : {}),
+      ...(opts?.item_ids ? { item_ids: opts.item_ids } : {}),
+      ...(opts?.skip_install ? { skip_install: true } : {}),
     }),
   rerunScanAi: (slug: string, id: string, hint?: string, wrong?: boolean, enrich?: boolean, imageFileId?: string) =>
     request<ScanInboxItem>(
@@ -3025,7 +3034,13 @@ export const api = {
   /** Agentic chat: returns a plain reply OR one/many proposed writes the user
    *  confirms via aiChatExecute (the tool loop can propose several in one turn —
    *  "add it to the list AND save it as a note"). */
-  aiChat: (slug: string, messages: { role: "user" | "assistant"; content: string }[]) =>
+  aiChat: (
+    slug: string,
+    messages: { role: "user" | "assistant"; content: string }[],
+    /** What the user is looking at right now (route + one-line summary), for
+     *  Cobb's situational awareness. See web/src/lib/chat-context.ts. */
+    context?: { label: string; summary?: string },
+  ) =>
     request<{
       type: "reply" | "proposal" | "proposals" | "build-proposal" | "error";
       text?: string;
@@ -3040,7 +3055,7 @@ export const api = {
        *  until the draft leaves "building", then read its validation.preview. */
       building?: boolean;
       draft_id?: string;
-    }>("POST", `/orgs/${slug}/modules/core-ai/chat`, { messages }),
+    }>("POST", `/orgs/${slug}/modules/core-ai/chat`, { messages, ...(context ? { context } : {}) }),
   aiChatExecute: (slug: string, proposal: AiChatProposal) =>
     request<{
       ok: boolean;
@@ -3131,8 +3146,8 @@ export const api = {
     ),
 
   // core-catalogs — imported reference datasets (Rebrickable parts,
-  // McMaster catalog, ISBN, etc.). User entities point at rows here
-  // via `entity_pairings` with `relationship_kind: "matches"`.
+  // Open Library books, Open Food Facts groceries, etc.). User entities
+  // point at rows here via `entity_pairings` with `relationship_kind: "matches"`.
   listCatalogs: (slug: string) =>
     request<{ items: Catalog[] }>(
       "GET",
@@ -3222,6 +3237,15 @@ export const api = {
       `/orgs/${slug}/modules/core-catalogs/catalogs/${id}/import-csv`,
       body,
     ),
+  /** Pull a catalog's rows from its source_url (the built-in puller — fetches +
+   *  gunzips the CSV). One-tap import for a bundle-shipped catalog shell (e.g.
+   *  Rebrickable), replacing the hand-run seeder. */
+  pullCatalog: (slug: string, id: string) =>
+    request<{ imported: number; total: number; source_url: string }>(
+      "POST",
+      `/orgs/${slug}/modules/core-catalogs/catalogs/${id}/pull`,
+      {},
+    ),
   listCatalogEntries: (
     slug: string,
     catalogId: string,
@@ -3232,7 +3256,14 @@ export const api = {
     if (params.limit) qs.set("limit", String(params.limit));
     if (params.offset) qs.set("offset", String(params.offset));
     const trailing = qs.toString() ? `?${qs}` : "";
-    return request<{ items: CatalogEntry[]; title_column: string }>(
+    return request<{
+      items: CatalogEntry[];
+      title_column: string;
+      /** Present for hosted catalogs: whether this catalog's rows can be
+       *  browsed/searched via the shared service (false for the BOM). */
+      hosted?: boolean;
+      browsable?: boolean;
+    }>(
       "GET",
       `/orgs/${slug}/modules/core-catalogs/catalogs/${catalogId}/entries${trailing}`,
     );
@@ -3722,6 +3753,9 @@ export interface UserConnection {
   share_status: Record<string, "pending" | "approved" | "active">;
   /** Which credential keys are set (names only — never the secret values). */
   credential_keys: string[];
+  /** Values of the NON-SECRET credential fields (base_url, choices, model …), so
+   *  the edit form can pre-fill them. Secret fields are never included. */
+  credential_values: Record<string, string>;
   /** Depends on the user's personal edge agent (the edge-bridge provider, or a
    *  URL provider with bridge transit) — drives the live status indicators. */
   uses_edge: boolean;
@@ -4322,6 +4356,11 @@ export interface Catalog {
   schema: CatalogSchema;
   last_sync_at: string | null;
   entry_count: number;
+  /** `hosted` — rows live in Cobblr's shared reference-catalog service, not
+   *  this workspace's DB, so `entry_count` is 0 by design; the catalog is
+   *  still fully usable (matches resolve against the service). `local` — rows
+   *  imported into this workspace. Absent on older installs → treat as local. */
+  source?: "local" | "hosted";
   created_at: string;
   updated_at: string;
 }
@@ -5634,6 +5673,9 @@ export interface PlatformBundleManifest {
    *  multi-instance module — e.g. an "inventory" instance named "Yarn"). Each
    *  instance's fields/views/wires apply scoped to `<instance_name>:item`. */
   provides_instances?: PlatformBundleInstance[];
+  /** Catalog shells this bundle installs (name + schema config, no rows). Rows
+   *  load separately via CSV import or a puller. A feature can carry its own. */
+  catalogs?: PlatformBundleCatalog[];
   /** WorkspaceApps this bundle seeds on install (e.g. the Outfit Planner). */
   provides_apps?: PlatformBundleApp[];
   /** Data migrations the bundle owns — run automatically + idempotently when the
@@ -5693,6 +5735,33 @@ export interface PlatformBundleInstance {
   wires?: PlatformBundleManifest["wires"];
 }
 
+/** A catalog SHELL a bundle installs — schema config only, no rows. Mirrors the
+ *  server-side CatalogEntry (bundles.ts). Rows load via CSV import or a puller. */
+export interface PlatformBundleCatalog {
+  external_id: string;
+  name: string;
+  description?: string;
+  source_url?: string;
+  puller_id?: string;
+  schema?: {
+    id_column?: string;
+    title_column?: string;
+    image_column?: string;
+    subtitle_column?: string;
+    description_column?: string;
+    field_renderers?: Record<
+      string,
+      "text" | "color-hex" | "image-url" | "url-link" | "year" | "boolean" | "code"
+    >;
+    field_labels?: Record<string, string>;
+    bindable_to_kinds?: string[];
+    semantic_type?: string;
+    hero_field?: string;
+    hero_renderer?: "text" | "color-hex" | "image-url" | "url-link" | "year" | "boolean" | "code";
+    exclude_from_global_search?: boolean;
+  };
+}
+
 /** An opt-in capability of a bundle — its contributions merge into the
  *  manifest when its key is enabled. */
 export interface PlatformBundleFeature {
@@ -5714,6 +5783,9 @@ export interface PlatformBundleFeature {
   provides_instances?: PlatformBundleManifest["provides_instances"];
   /** WorkspaceApps this feature seeds when enabled (e.g. the Outfit Planner). */
   provides_apps?: PlatformBundleManifest["provides_apps"];
+  /** Catalog shells this feature installs when enabled (e.g. the Rebrickable
+   *  catalogs behind "Link to Rebrickable"). */
+  catalogs?: PlatformBundleCatalog[];
   /** Post-install guided steps (web nav only; stripped server-side). */
   next_steps?: { label: string; module: string; path?: string; hint?: string }[];
 }

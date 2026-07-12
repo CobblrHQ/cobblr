@@ -145,6 +145,12 @@ const IMPLICIT_EXPOSABLE_PROPS = new Set([
   "subtitle",
   "image_path",
   "detailUrl",
+  // `instance` is the platform-level instances-system column (which named
+  // collection an item belongs to — "monitors" vs "printers" within one
+  // module). It's a structural, non-sensitive attribute the generic instance
+  // + labels layers group by, so it's always readable cross-module like
+  // detailUrl, without every instanceable module having to list it.
+  "instance",
 ]);
 
 async function getExposableFields(kind: string): Promise<string[] | null> {
@@ -758,14 +764,34 @@ export async function listKinds(): Promise<EntityKindRecord[]> {
   return rows.map(rowToKindRecord);
 }
 
+/** Per-item detail path under `/instances/<name>/…` for the modules whose
+ *  instance UI actually mounts a per-item detail route (verified against each
+ *  module's <Routes> + web/src/App.tsx `/instances/:name/*` → InstancePage):
+ *    - projects  → `/instances/<name>/<id>`        (ProjectsUI `<Route path=":id">`)
+ *    - inventory → `/instances/<name>/items/<id>`  (InventoryUI `<Route path="items/:id">`,
+ *                  the same target inventory's resolver already sets as detailUrl)
+ *  Each template still carries `{id}` for the caller (useDetailRoute / SearchBar)
+ *  to substitute. Modules NOT listed here (machines, assets, purchases) have NO
+ *  per-item instance detail route today — their instance UI opens items in a
+ *  modal or a name-only list — so their synthesized kind keeps pointing at the
+ *  instance LIST page (no `{id}`), unchanged. Add a module here only once its
+ *  instance UI mounts a real per-item route. */
+const INSTANCE_ITEM_DETAIL: Record<string, (instanceName: string) => string> = {
+  projects: (n) => `/instances/${n}/{id}`,
+  inventory: (n) => `/instances/${n}/items/{id}`,
+};
+
 /** The kinds a WORKSPACE sees: every manifest kind, plus one synthesized
  *  `<instance_name>:item` kind per named (non-default) instance in this org.
  *  A synthesized kind copies its module's PRIMARY kind's shape (fields,
  *  traits, exposable fields) and carries `instance_name` — its endpoints are
  *  then relative to /orgs/:slug/instances/<name>, not /modules/<module>.
- *  detail_route points at the instance's page (items open in-page there; a
- *  per-item deep link is UI that doesn't exist yet). Multi modules without a
- *  declared primary kind simply synthesize nothing — never guessed.
+ *  detail_route points at that module's real per-item instance detail page
+ *  (INSTANCE_ITEM_DETAIL) when it has one, so useDetailRoute / the header
+ *  search send an instance item to a detail that carries instance context;
+ *  modules with no per-item instance route fall back to the instance LIST
+ *  page. Multi modules without a declared primary kind simply synthesize
+ *  nothing — never guessed.
  *  Fixes the pre-2026-07-10 gap where instance items were invisible to every
  *  registry consumer (search detail routes, MCP kind listing, generic
  *  surfaces). */
@@ -791,12 +817,15 @@ export async function listKindsForOrg(orgId: string): Promise<EntityKindRecord[]
   for (const inst of instances) {
     const primary = primaryByModule.get(inst.module_name);
     if (!primary) continue;
+    const perItem = INSTANCE_ITEM_DETAIL[inst.module_name];
     synthesized.push({
       ...primary,
       id: `${inst.instance_name}:item`,
       display_name: inst.display_name,
       display_name_plural: inst.display_name,
-      detail_route: `/instances/${inst.instance_name}`,
+      detail_route: perItem
+        ? perItem(inst.instance_name)
+        : `/instances/${inst.instance_name}`,
       endpoints: {
         list: "/items",
         get: "/items/{id}",
@@ -868,6 +897,7 @@ function rowToKindRecord(row: {
   is_primary?: boolean;
   traits: unknown | null;
   profile: string | null;
+  label_code_overlay_default: boolean | null;
   exposable_fields: unknown | null;
 }): EntityKindRecord {
   return {
@@ -884,6 +914,7 @@ function rowToKindRecord(row: {
     is_primary: row.is_primary === true,
     traits: (row.traits as EntityKindRecord["traits"]) ?? null,
     profile: row.profile,
+    label_code_overlay_default: row.label_code_overlay_default ?? null,
     exposable_fields: (row.exposable_fields as string[] | null) ?? null,
   };
 }

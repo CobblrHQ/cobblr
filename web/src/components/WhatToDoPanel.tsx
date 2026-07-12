@@ -265,6 +265,9 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
   const [selectedModule, setSelectedModule] = useState<string | null>(null);
   const [selectedRecipe, setSelectedRecipe] = useState<CatalogBundle | null>(null);
   const [picked, setPicked] = useState<CatalogBundle | null>(null); // "details" modal only
+  // A capture whose matched bundle carries optional capabilities → open the
+  // feature-picker modal first (like the recipe path), then file the captures.
+  const [captureBundle, setCaptureBundle] = useState<CatalogBundle | null>(null);
 
   // ── data ────────────────────────────────────────────────────────────────
   const { registry, catalog } = useBundleCatalog();
@@ -386,16 +389,28 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't add that"),
   });
+  // Landing after a materialize: the ?created strip powers the one-time success
+  // banner (A3). Shared by the one-shot path and the post-modal commit.
+  const landAfterMaterialize = (r: { route?: string | null; label?: string | null; created: number }) => {
+    void qc.invalidateQueries();
+    toast.success(`Created your ${r.label ?? "tracker"} with ${r.created} item${r.created === 1 ? "" : "s"}.`);
+    if (r.route) navigate(`${r.route}${r.route.includes("?") ? "&" : "?"}created=${encodeURIComponent(r.label ?? "Your tracker")}&count=${r.created}`);
+  };
   const materializeMut = useMutation({
     mutationFn: (bundleId: string) => api.materializeQuickstart(slug, bundleId),
-    onSuccess: (r) => {
-      void qc.invalidateQueries();
-      toast.success(`Created your ${r.label ?? "tracker"} with ${r.created} item${r.created === 1 ? "" : "s"}.`);
-      // ?created powers the landing page's one-time success strip (A3).
-      if (r.route) navigate(`${r.route}${r.route.includes("?") ? "&" : "?"}created=${encodeURIComponent(r.label ?? "Your tracker")}&count=${r.created}`);
-    },
+    onSuccess: landAfterMaterialize,
     onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't set that up"),
   });
+  // A matched capture's "Create X": if the bundle carries optional capabilities,
+  // open the feature-picker modal first (consistent with the recipe path) — its
+  // install runs, then onInstalled commits the captures (skip_install). A bundle
+  // with nothing to choose (or one not in the catalog) keeps the one-shot
+  // install+file materialize.
+  const startMaterialize = (bundleId: string) => {
+    const cb = catalog.find((b) => b.manifest.id === bundleId);
+    if (cb?.manifest.features?.length) setCaptureBundle(cb);
+    else materializeMut.mutate(bundleId);
+  };
   const discardMut = useMutation({
     mutationFn: (id: string) => api.discardScanItem(slug, id),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["capture-inbox", slug] }),
@@ -529,6 +544,13 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
         : undefined)
     : undefined;
   const itemPlaceholder = recipeItemEg ?? kindVocab?.itemEg ?? "a 3D printer, a box of screws…";
+  // A recipe that declares optional capabilities (e.g. Lego: Bricks / Rebrickable
+  // / Disassemble / Labels / Scan) routes its captive "Set up" through the detail
+  // modal so the user SEES and picks what it does — a silent install would drop
+  // them on an empty page never knowing those capabilities exist (a beta tester's
+  // "installed Lego, empty Sets page, no walkthrough"). A featureless recipe keeps
+  // the one-tap "set it up & drop me straight in".
+  const recipeHasFeatures = !!selectedRecipe?.manifest.features?.length;
   const items = inbox.data?.items ?? [];
   // Provenance split (the author): TYPED captures are part of the funnel conversation
   // and stay in col 3; SCANNED ones (barcode/photo/url/receipt) are a batch
@@ -609,7 +631,7 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
                               : <span className="inline-flex items-center gap-1"><Loader2 size={11} className="animate-spin" /> finding a home…</span>}
                           </span>
                           {c?.bundle_external_id ? (
-                            <button type="button" disabled={making} onClick={() => materializeMut.mutate(c.bundle_external_id!)} className={ctaCls + " bg-cobble-600 text-white hover:bg-cobble-700"}>
+                            <button type="button" disabled={making} onClick={() => startMaterialize(c.bundle_external_id!)} className={ctaCls + " bg-cobble-600 text-white hover:bg-cobble-700"}>
                               {making ? <Loader2 size={12} className="animate-spin" /> : <ArrowRight size={12} />} Create {c.label}
                             </button>
                           ) : c ? (
@@ -793,7 +815,9 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
           />
           <p className="text-xs text-faint dark:text-slate-500 mb-2">
             {selectedRecipe
-              ? "We'll set it up and take you straight in to add your first one."
+              ? recipeHasFeatures
+                ? `Choose what ${selectedRecipe.manifest.name} should do, then add your first one.`
+                : "We'll set it up and take you straight in to add your first one."
               : selectedModuleObj
                 ? (kindIsMulti
                     ? `Name a category${kindVocab ? ` — like ${kindVocab.categoryEg}` : ""} — then add things inside it.`
@@ -801,16 +825,21 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
                 : "Type what you've got — Cobblr finds or builds the right tracker and files it."}
           </p>
 
-          {/* Mode D — a recipe: install the ready-made category + drop in. */}
+          {/* Mode D — a recipe. Featureless: install + drop straight in. With
+              optional capabilities: open the detail modal (its checkboxes are the
+              "here's what it does" surface) — same proven autoLand path as the
+              "details →" link, so Install still lands the user in their instance. */}
           {selectedRecipe && (
             <button
               type="button"
               disabled={setupRecipeMut.isPending}
-              onClick={() => setupRecipeMut.mutate(selectedRecipe)}
+              onClick={() => (recipeHasFeatures ? setPicked(selectedRecipe) : setupRecipeMut.mutate(selectedRecipe))}
               className="w-full mb-2 inline-flex items-center justify-center gap-1.5 rounded-lg bg-cobble-600 text-white text-sm font-medium px-3 py-2 hover:bg-cobble-700 transition disabled:opacity-50"
             >
               {setupRecipeMut.isPending ? <Loader2 size={15} className="animate-spin" /> : <ArrowRight size={15} />}
-              Set up {selectedRecipe.manifest.name} & add my first one
+              {recipeHasFeatures
+                ? `Set up ${selectedRecipe.manifest.name}`
+                : `Set up ${selectedRecipe.manifest.name} & add my first one`}
             </button>
           )}
           {/* Mode B — a multi-instance kind: name + create a new CATEGORY. */}
@@ -940,6 +969,26 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
       {picked && (
         <BundleDetailModal key={picked.manifest.id} open onClose={() => setPicked(null)} slug={slug} mode="featured" manifest={picked.manifest} glyph={picked.glyph} blurb={picked.blurb} nextSteps={picked.next_steps} autoLand />
       )}
+      {captureBundle && (
+        <BundleDetailModal
+          key={`capture:${captureBundle.manifest.id}`}
+          open
+          onClose={() => setCaptureBundle(null)}
+          slug={slug}
+          mode="featured"
+          manifest={captureBundle.manifest}
+          glyph={captureBundle.glyph}
+          blurb={captureBundle.blurb}
+          nextSteps={captureBundle.next_steps}
+          // The modal installs with the chosen capabilities; then we file the
+          // captures that matched this bundle onto the tables it just created.
+          onInstalled={async () => {
+            const r = await api.materializeQuickstart(slug, captureBundle.manifest.id, { skip_install: true });
+            setCaptureBundle(null);
+            landAfterMaterialize(r);
+          }}
+        />
+      )}
       </>)}
     </section>
 
@@ -972,7 +1021,7 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
                     <button
                       type="button"
                       disabled={busy}
-                      onClick={() => materializeMut.mutate(g.bundleId!)}
+                      onClick={() => startMaterialize(g.bundleId!)}
                       className="shrink-0 inline-flex items-center gap-1 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-xs font-medium px-2.5 py-1 transition disabled:opacity-50"
                     >
                       {busy ? <Loader2 size={12} className="animate-spin" /> : <ArrowRight size={12} />}
