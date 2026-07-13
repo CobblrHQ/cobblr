@@ -1,7 +1,7 @@
 {
   "manifest": {
     "id": "cobblr.community.lego",
-    "version": "0.4.1",
+    "version": "0.5.0",
     "name": "Lego",
     "description": "Lego as its own tables — Sets you own (sealed / built / disassembled) with optional Bricks bins, a Rebrickable catalog link, and a one-tap Disassemble that spawns the parts and opens the sorting planner.",
     "author": "Cobblr community",
@@ -334,6 +334,9 @@
                 "part_num": "Part number",
                 "part_cat_id": "Category"
               },
+              "field_map": {
+                "external_id": "part_num"
+              },
               "bindable_to_kinds": [
                 "inventory:part"
               ],
@@ -358,6 +361,12 @@
                 "theme_id": "Theme",
                 "num_parts": "Pieces",
                 "year": "Year"
+              },
+              "field_map": {
+                "external_id": "set_number",
+                "category": "theme",
+                "year": "year",
+                "num_parts": "piece_count"
               },
               "bindable_to_kinds": [
                 "inventory:part"

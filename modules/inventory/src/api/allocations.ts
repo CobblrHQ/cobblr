@@ -17,6 +17,7 @@ import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody } from "./util.js";
+import { recordConsumption } from "./stock-ledger.js";
 
 export const allocationsRouter = Router({ mergeParams: true });
 
@@ -150,7 +151,10 @@ allocationsRouter.patch(
     const result = await db.transaction().execute(async (trx) => {
       const current = await trx
         .selectFrom("inventory_allocations")
-        .select(["id", "part_id", "qty", "status"])
+        .select([
+          "id", "part_id", "qty", "status", "reason",
+          "target_module", "target_entity_type", "target_entity_id",
+        ])
         .where("id", "=", id)
         .executeTakeFirst();
       if (!current) return { error: "not_found" as const };
@@ -167,6 +171,24 @@ allocationsRouter.patch(
           })
           .where("id", "=", current.part_id)
           .execute();
+
+        // The code-verified gap this PR closes (consumption-ledger.md §7.3):
+        // consuming an allocation decremented qty but never wrote the ledger, so
+        // a project pulling from a bound skein produced NO statement line and
+        // that skein's running balance disagreed with reality. Now, inside this
+        // same transaction (so the decrement + the row commit or roll back
+        // together — no double-count, no orphan line), one withdrawal row is
+        // written against the part, attributed to the allocation's target. The
+        // reason is the binding's own label ("Winter scarf") when set, else a
+        // readable target descriptor.
+        await recordConsumption(trx, {
+          partId: current.part_id,
+          delta: -Number(current.qty),
+          reason: (current.reason && current.reason.trim())
+            || `for ${current.target_entity_type}`,
+          sourceKind: "allocation",
+          sourceId: current.id,
+        });
       }
 
       const next = await trx

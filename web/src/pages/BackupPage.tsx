@@ -50,6 +50,20 @@ interface DriverInfo {
   configFields: Array<{ key: string; label: string; required: boolean; placeholder?: string; secret?: boolean }>;
 }
 
+/** Compact local timestamp for the "next: …" / "last: …" hints — a date, plus
+ *  the time only when it's today (so a daily run reads "3:00 AM", a future run
+ *  reads "Jul 14"). Bad/empty input renders nothing. */
+function shortWhen(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  return sameDay
+    ? d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+    : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
 function downloadBlob(blob: Blob, name: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -341,7 +355,28 @@ function DestinationsSection({ base, auth }: { base: string; auth: () => Record<
     void load();
   }, [load]);
 
+  // Coming back from the Google OAuth round-trip the callback redirects to
+  // `?google=connected`. Without this the user lands on the page with no sign
+  // the connect worked (the screenshots showed exactly that confusion). Confirm
+  // it, then strip the param so a refresh doesn't re-toast. The persistent
+  // schedule nudge below is what actually gets them to turn on automation.
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    if (q.get("google") === "connected") {
+      toast.success("Google Drive connected — now pick how often it backs up below.");
+      q.delete("google");
+      const qs = q.toString();
+      window.history.replaceState(null, "", window.location.pathname + (qs ? `?${qs}` : ""));
+    }
+    // once, on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const selDriver = drivers.find((d) => d.id === form.driver);
+  // A destination is "actionable" once it can actually run — filesystem always,
+  // Google only after the OAuth connect. We only nudge about scheduling once the
+  // destination can run; before that the important ask is "connect it".
+  const actionable = (d: Destination): boolean => d.driver !== "google_drive" || d.connected;
 
   async function create() {
     setBusy("create");
@@ -420,6 +455,8 @@ function DestinationsSection({ base, auth }: { base: string; auth: () => Record<
   const googleDriver = drivers.find((d) => d.id === "google_drive");
   const btn = "inline-flex items-center gap-2 rounded-lg bg-cobble-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-cobble-700 disabled:opacity-50";
   const ghost = "inline-flex items-center gap-2 rounded-lg border border-line dark:border-slate-600 px-3 py-1.5 text-sm font-semibold text-content dark:text-mortar-100 hover:bg-subtle disabled:opacity-50";
+  const nudgeBtn =
+    "inline-flex items-center gap-1 rounded-md border border-amber-400/70 px-2 py-0.5 font-semibold text-amber-800 dark:text-amber-200 hover:bg-amber-100/60 dark:hover:bg-amber-800/30 disabled:opacity-50";
 
   return (
     <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-800/40 p-5 space-y-3">
@@ -435,36 +472,68 @@ function DestinationsSection({ base, auth }: { base: string; auth: () => Record<
       {dests.length > 0 && (
         <ul className="space-y-2">
           {dests.map((d) => (
-            <li key={d.id} className="rounded-lg border border-line dark:border-slate-700 p-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
-              <div className="font-semibold text-content dark:text-mortar-100">{d.label}</div>
-              <div className="text-faint">{drivers.find((x) => x.id === d.driver)?.label ?? d.driver}</div>
-              {d.driver === "google_drive" && !d.connected && <span className="text-amber-600">not connected</span>}
-              <label className="flex items-center gap-1 text-muted">
-                <Clock className="h-3.5 w-3.5" />
-                <select
-                  className="bg-transparent border border-line dark:border-slate-600 rounded px-1 py-0.5"
-                  value={d.schedule}
-                  onChange={(e) => patch(d, { schedule: e.target.value })}
-                  disabled={busy !== null}
-                >
-                  <option value="off">manual</option>
-                  <option value="daily">daily</option>
-                  <option value="weekly">weekly</option>
-                </select>
-              </label>
-              {d.last_status && (
-                <span className={d.last_status === "ok" ? "text-emerald-600" : "text-red-600"}>
-                  {d.last_status === "ok" ? "last: ok" : `last: ${d.last_status.slice(0, 40)}`}
-                </span>
-              )}
-              <div className="ml-auto flex gap-2">
-                <button className={ghost} onClick={() => runNow(d)} disabled={busy !== null || (d.driver === "google_drive" && !d.connected)}>
-                  {busy === `run-${d.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />} Back up now
-                </button>
-                <button className={ghost} onClick={() => remove(d)} disabled={busy !== null} aria-label="Delete destination">
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
+            <li key={d.id} className="rounded-lg border border-line dark:border-slate-700 p-3 space-y-2">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+                <div className="font-semibold text-content dark:text-mortar-100">{d.label}</div>
+                <div className="text-faint">{drivers.find((x) => x.id === d.driver)?.label ?? d.driver}</div>
+                {d.driver === "google_drive" && !d.connected && <span className="text-amber-600">not connected</span>}
+                <label className="flex items-center gap-1 text-muted">
+                  <Clock className="h-3.5 w-3.5" />
+                  <select
+                    className={`bg-transparent border rounded px-1 py-0.5 ${
+                      d.schedule === "off" && actionable(d)
+                        ? "border-amber-400 text-amber-700 dark:text-amber-300"
+                        : "border-line dark:border-slate-600"
+                    }`}
+                    value={d.schedule}
+                    onChange={(e) => patch(d, { schedule: e.target.value })}
+                    disabled={busy !== null}
+                  >
+                    <option value="off">manual only</option>
+                    <option value="daily">daily</option>
+                    <option value="weekly">weekly</option>
+                  </select>
+                </label>
+                {d.schedule !== "off" && d.next_run_at && (
+                  <span className="text-faint">next: {shortWhen(d.next_run_at)}</span>
+                )}
+                {d.last_status && (
+                  <span className={d.last_status === "ok" ? "text-emerald-600" : "text-red-600"}>
+                    {d.last_status === "ok"
+                      ? `last: ok${d.last_run_at ? ` (${shortWhen(d.last_run_at)})` : ""}`
+                      : `last: ${d.last_status.slice(0, 40)}`}
+                  </span>
+                )}
+                <div className="ml-auto flex gap-2">
+                  <button className={ghost} onClick={() => runNow(d)} disabled={busy !== null || (d.driver === "google_drive" && !d.connected)}>
+                    {busy === `run-${d.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />} Back up now
+                  </button>
+                  <button className={ghost} onClick={() => remove(d)} disabled={busy !== null} aria-label="Delete destination">
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
               </div>
+
+              {/* The nag: a scheduled backup is the whole point, but new
+                  destinations (incl. a freshly-connected Drive) default to
+                  manual-only — and a manual-only backup that nobody remembers
+                  to click never happens. Persistently offer one-tap scheduling
+                  until they turn it on. */}
+              {d.schedule === "off" && actionable(d) && (
+                <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300/60 dark:border-amber-700/40 bg-amber-50/70 dark:bg-amber-900/15 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
+                  <Clock className="h-3.5 w-3.5 shrink-0" />
+                  <span>
+                    Automatic backups are <strong>off</strong> — this only runs when you press <em>Back up now</em>. Turn on a schedule so
+                    it happens on its own:
+                  </span>
+                  <button className={nudgeBtn} onClick={() => patch(d, { schedule: "daily" })} disabled={busy !== null}>
+                    {busy === `patch-${d.id}` ? <Loader2 className="h-3 w-3 animate-spin" /> : null} Daily
+                  </button>
+                  <button className={nudgeBtn} onClick={() => patch(d, { schedule: "weekly" })} disabled={busy !== null}>
+                    Weekly
+                  </button>
+                </div>
+              )}
             </li>
           ))}
         </ul>

@@ -37,7 +37,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeftRight, ArrowRight, Camera, Check, Flashlight, Loader2, MapPin, Package, ScanLine, SkipForward, Undo2, X, Zap } from "lucide-react";
 import { Modal, usePageTitle, useToast } from "@cobblr/platform-web";
 import { ApiError, api, type LiveSortEntry, type ScanInboxItem, type TrackedMatch } from "../lib/api";
-import { decideLocationScan, filingLabel } from "../lib/scanFiling";
+import { LOCATION_ENTITY_KIND, decideLocationScan, filingLabel } from "../lib/scanFiling";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { LocationPicker } from "../components/LocationPicker";
 import {
@@ -61,6 +61,12 @@ interface BarcodeDetectorCtor {
 }
 
 type Phase = "idle" | "scanning" | "result";
+
+// Where a floating note (photo-saved, reading-label, resume) sits so it clears
+// the top chrome on a notched phone. One constant, three overlays — they each
+// carried their own copy of this magic number, so any change to the chrome's
+// height had to be remembered in three places.
+const UNDER_TOP_CHROME = "max(4.5rem, calc(env(safe-area-inset-top) + 3.5rem))";
 
 // Scan-session persistence — localStorage (NOT sessionStorage: phones kill
 // background tabs, and resuming the same shelf-walk is the whole point).
@@ -150,6 +156,11 @@ export function ScanCameraPage() {
   // captures. This shows briefly at the TOP over the dark preview instead.
   const [savedNote, setSavedNote] = useState(false);
   const savedNoteTimer = useRef<number | null>(null);
+  // Reading a QR label pauses the camera (the preview freezes) while we ask the
+  // server what it points at. THAT is the moment worth narrating — the old
+  // always-on "scanning" chip said "scanning" when the reticle already showed it
+  // and went silent right here, so the freeze read as a hang.
+  const [resolvingNote, setResolvingNote] = useState(false);
   // Single-SKU bin (scanned its QR): direct qty-adjust modal for the one SKU
   // that lives there — the "bin of M3 screws" flow.
   const [binAdjust, setBinAdjust] = useState<{
@@ -519,6 +530,111 @@ export function ScanCameraPage() {
   const confirmSortRef = useRef(confirmSort);
   confirmSortRef.current = confirmSort;
 
+  // ── what a resolved QR DOES ──────────────────────────────────────────────
+  // One handler for every label that resolves to an entity in this workspace,
+  // whether it was printed by Cobblr (/qr/<token>) or by another system the
+  // workspace taught Cobblr to read (the external QR resolver). The ACTION is a
+  // property of what the label points AT, never of who printed it:
+  //
+  //   location  → set the filing bin (keep scanning INTO it), never navigate
+  //   container → set the container bin
+  //   anything else → open its detail page
+  //
+  // Foreign labels used to skip all of this and navigate straight to
+  // detail_path, so scanning a linked companion app room label opened the room's
+  // page instead of pointing the scanner at that room.
+  type ResolvedQr = {
+    entity_kind: string;
+    entity_id: string;
+    org_slug?: string | undefined;
+  };
+  const routeResolved = useCallback(
+    async (r: ResolvedQr | null, fallbackPath: string) => {
+      const mine = !!r?.entity_id && (!r.org_slug || r.org_slug === activeSlug);
+      const isLocation = mine && r!.entity_kind === LOCATION_ENTITY_KIND;
+
+      // Sort mode with a directive on screen: a BIN label is the "put it there
+      // instead" gesture. The camera never pauses for this.
+      if (sortModeRef.current && sortEntryRef.current) {
+        if (isLocation) confirmSortRef.current(r!.entity_id);
+        else toast.error("That QR isn't a bin label.");
+        return;
+      }
+
+      if (isLocation) {
+        const locId = r!.entity_id;
+        // Single-SKU bin? Then the bin's QR IS the item's label (loose M3 screws
+        // carry no codes) — go straight to adjusting ITS count in THIS bin.
+        // Multi-SKU / empty bins keep the filing flow below.
+        try {
+          const contents = await api.binContents(activeSlug, locId);
+          if (contents.single && contents.items[0]) {
+            const items0 = locsRef.current ?? [];
+            const loc = items0.find((l) => l.id === locId);
+            setBinAdjust({
+              locationId: locId,
+              locationName: loc ? filingLabel(loc) : "this bin",
+              item: contents.items[0],
+            });
+            return; // phase stays "idle" while the modal is up
+          }
+        } catch {
+          /* contents unavailable → normal filing flow */
+        }
+        const items = locsRef.current ?? [];
+        const byId = new Map(
+          items.map((l) => [
+            l.id,
+            { id: l.id, name: l.name, short_name: l.short_name, parent_id: l.parent_id, kind: l.kind },
+          ]),
+        );
+        const decision = decideLocationScan(locId, areaIdRef.current, byId);
+        if (decision.reparent) {
+          try {
+            await api.updateLocation(activeSlug, decision.reparent.child, {
+              parent_id: decision.reparent.parent,
+            });
+            await locations.refetch();
+          } catch {
+            /* cycle / permission — fall back to a plain adopt */
+          }
+        }
+        setAreaId(decision.bin);
+        setContainerBin(null); // location + container bins are exclusive
+        containerBinRef.current = null;
+        const b = byId.get(decision.bin);
+        const nm = b ? filingLabel(b) : "location";
+        const p = decision.reparent ? byId.get(decision.reparent.parent) : null;
+        toast.success(
+          p ? `Filed ${nm} in ${filingLabel(p)} — filing into ${nm}` : `Filing into ${nm}`,
+        );
+        setPhase("scanning");
+        return;
+      }
+
+      // A container-capable entity's QR (a machine, a server asset, any
+      // physical+unique kind per its declared traits) becomes the active
+      // CONTAINER bin — every barcode you scan then files INTO it (a
+      // placement), like a location bin. Mutually exclusive with the location
+      // bin. Kinds come from the registry, never a hardcoded list.
+      if (mine && containerKindsRef.current.has(r!.entity_kind)) {
+        const cb = { kind: r!.entity_kind, id: r!.entity_id };
+        setContainerBin(cb);
+        containerBinRef.current = cb;
+        setAreaId(null);
+        areaIdRef.current = null;
+        toast.success("Scanning into this — scan components to add them inside.");
+        setPhase("scanning");
+        return;
+      }
+
+      navigate(fallbackPath);
+    },
+    [activeSlug, locations, navigate, setPhase, toast],
+  );
+  const routeResolvedRef = useRef(routeResolved);
+  routeResolvedRef.current = routeResolved;
+
   const undoSort = useCallback(() => {
     const sid = sortSessionRef.current;
     const last = sortLast;
@@ -635,124 +751,59 @@ export function ScanCameraPage() {
           c.toBlob((blob) => resolve(blob), "image/jpeg", 0.85),
         );
       }
+      // Sort mode with a directive on screen keeps the camera LIVE while we
+      // resolve — a bin label there is the retarget gesture, not a navigation.
+      const sortRetarget = sortModeRef.current && !!sortEntryRef.current;
+
+      // A native Cobblr label. What it points at decides what happens
+      // (routeResolved); the token is only the fallback nav target.
       const qrLabel = /^https?:\/\/[^/]+\/qr\/([A-Za-z0-9_-]{16,})$/.exec(raw);
-      if (qrLabel && sortModeRef.current && sortEntryRef.current) {
-        // Sort mode with a directive pending: a scanned BIN label is the
-        // retarget gesture — confirm the current item into that bin. Camera
-        // stays live.
-        void (async () => {
-          const resolved = await api.resolveQrToken(qrLabel[1] ?? "").catch(() => null);
-          if (resolved?.entity_kind === "core-locations:location" && resolved.entity_id) {
-            confirmSortRef.current(resolved.entity_id);
-          } else {
-            toast.error("That QR isn't a bin label.");
-          }
-        })();
-        return;
-      }
       if (qrLabel) {
-        setPhase("idle");
         const token = qrLabel[1] ?? "";
+        if (!sortRetarget) {
+          setPhase("idle"); // pause the camera while we resolve
+          setResolvingNote(true);
+        }
         void (async () => {
-          const resolved = await api.resolveQrToken(token);
-          const locId = resolved?.entity_id;
-          // A LOCATION label in this workspace sets the active filing bin (and
-          // nests a container under the current bin) — then keep scanning into it,
-          // no navigation. Anything else navigates as before.
-          if (
-            resolved?.entity_kind === "core-locations:location" &&
-            locId &&
-            (!resolved.org_slug || resolved.org_slug === activeSlug)
-          ) {
-            // Single-SKU bin? Then the bin's QR IS the item's label (loose
-            // M3 screws carry no codes) — go straight to adjusting ITS count
-            // in THIS bin. Multi-SKU / empty bins keep the filing flow below.
-            try {
-              const contents = await api.binContents(activeSlug, locId);
-              if (contents.single && contents.items[0]) {
-                const items0 = locsRef.current ?? [];
-                const loc = items0.find((l) => l.id === locId);
-                setBinAdjust({
-                  locationId: locId,
-                  locationName: loc ? filingLabel(loc) : "this bin",
-                  item: contents.items[0],
-                });
-                return; // phase stays "idle" while the modal is up
-              }
-            } catch {
-              /* contents unavailable → normal filing flow */
-            }
-            const items = locsRef.current ?? [];
-            const byId = new Map(
-              items.map((l) => [
-                l.id,
-                { id: l.id, name: l.name, short_name: l.short_name, parent_id: l.parent_id, kind: l.kind },
-              ]),
-            );
-            const decision = decideLocationScan(locId, areaIdRef.current, byId);
-            if (decision.reparent) {
-              try {
-                await api.updateLocation(activeSlug, decision.reparent.child, {
-                  parent_id: decision.reparent.parent,
-                });
-                await locations.refetch();
-              } catch {
-                /* cycle / permission — fall back to a plain adopt */
-              }
-            }
-            setAreaId(decision.bin);
-            setContainerBin(null); // location + container bins are exclusive
-            containerBinRef.current = null;
-            const b = byId.get(decision.bin);
-            const nm = b ? filingLabel(b) : "location";
-            const p = decision.reparent ? byId.get(decision.reparent.parent) : null;
-            toast.success(
-              p ? `Filed ${nm} in ${filingLabel(p)} — filing into ${nm}` : `Filing into ${nm}`,
-            );
-            setPhase("scanning");
-            return;
-          }
-          // Scanning a container-capable entity's QR (a machine, a server asset,
-          // any physical+unique kind per its declared traits) sets it as the
-          // active CONTAINER bin — then every barcode you scan files INTO it (a
-          // placement), like a location bin. Mutually exclusive with the
-          // location bin. Kinds come from the registry, never a hardcoded list.
-          if (
-            resolved?.entity_kind &&
-            containerKindsRef.current.has(resolved.entity_kind) &&
-            resolved.entity_id &&
-            (!resolved.org_slug || resolved.org_slug === activeSlug)
-          ) {
-            const cb = { kind: resolved.entity_kind, id: resolved.entity_id };
-            setContainerBin(cb);
-            containerBinRef.current = cb;
-            setAreaId(null);
-            areaIdRef.current = null;
-            toast.success("Scanning into this — scan components to add them inside.");
-            setPhase("scanning");
-            return;
-          }
-          navigate(`/qr/${token}`);
+          const resolved = await api.resolveQrToken(token).catch(() => null);
+          setResolvingNote(false);
+          await routeResolvedRef.current(
+            resolved?.entity_kind && resolved.entity_id
+              ? {
+                  entity_kind: resolved.entity_kind,
+                  entity_id: resolved.entity_id,
+                  org_slug: resolved.org_slug,
+                }
+              : null,
+            `/qr/${token}`,
+          );
         })();
         return;
       }
-      // SORT MODE: a product barcode routes to a directive inline — the camera
-      // never pauses and the result modal never opens.
-      if (sortModeRef.current) {
-        handleSortScan(raw);
-        return;
-      }
+
       // External QR resolver (the redirect table): a foreign label the workspace
       // has taught Cobblr to read resolves to a native entity and then behaves
-      // exactly like a native scan. Opt-in — only consulted when rules exist.
+      // EXACTLY like a native scan — same routeResolved, so a linked system's
+      // room label sets the filing bin rather than opening the room.
+      // Opt-in — only consulted when rules exist. A plain product barcode can't
+      // be a foreign QR label, so it skips the round trip and Sort mode's hot
+      // loop stays as fast as it was.
       // See docs/design-decisions/external-qr-resolver.md.
-      if (hasQrRulesRef.current) {
-        setPhase("idle"); // pause the camera while we resolve
+      const bareProductBarcode = /^\d{8,14}$/.test(raw);
+      if (hasQrRulesRef.current && !bareProductBarcode) {
+        if (!sortRetarget) {
+          setPhase("idle"); // pause the camera while we resolve
+          setResolvingNote(true);
+        }
         void (async () => {
           try {
             const out = await api.scanResolveExternal(activeSlug, raw);
+            setResolvingNote(false);
             if (out.outcome === "resolved") {
-              navigate(out.detail_path); // identical to a native scan
+              await routeResolvedRef.current(
+                { entity_kind: out.entity_kind, entity_id: out.entity_id },
+                out.detail_path,
+              );
               return;
             }
             if (out.outcome === "recognized_no_match") {
@@ -765,21 +816,39 @@ export function ScanCameraPage() {
               setPhase("scanning");
               return;
             }
-            // "no_rule" → not a resolver scan: the normal barcode/identify routine.
+            // "no_rule" → not a resolver scan: the normal routine for this mode.
+            if (sortModeRef.current) {
+              setPhase("scanning");
+              handleSortScan(raw);
+              return;
+            }
             setPendingBarcode(raw);
             setPhase("result");
           } catch {
             // A resolver hiccup must never swallow the scan — fall through.
+            setResolvingNote(false);
+            if (sortModeRef.current) {
+              setPhase("scanning");
+              handleSortScan(raw);
+              return;
+            }
             setPendingBarcode(raw);
             setPhase("result");
           }
         })();
         return;
       }
+
+      // SORT MODE: a product barcode routes to a directive inline — the camera
+      // never pauses and the result modal never opens.
+      if (sortModeRef.current) {
+        handleSortScan(raw);
+        return;
+      }
       setPendingBarcode(raw);
       setPhase("result");
     },
-    [setPhase, navigate, activeSlug, toast],
+    [setPhase, activeSlug, handleSortScan, toast],
   );
   useEffect(() => {
     onDetectRef.current = onDetect;
@@ -987,7 +1056,7 @@ export function ScanCameraPage() {
       {savedNote && (
         <div
           className="absolute inset-x-0 z-30 flex justify-center pointer-events-none px-4"
-          style={{ top: "max(4.5rem, calc(env(safe-area-inset-top) + 3.5rem))" }}
+          style={{ top: UNDER_TOP_CHROME }}
         >
           <div className="inline-flex items-center gap-2 rounded-full bg-emerald-600/90 text-white text-xs font-medium px-3 py-1.5 shadow-lg backdrop-blur-sm">
             <Check size={13} className="shrink-0" /> Photo saved — identifying in the inbox
@@ -995,9 +1064,27 @@ export function ScanCameraPage() {
         </div>
       )}
 
-      {/* ── top chrome: torch · area chip · status · close ──────────── */}
+      {/* Reading a label — the preview is frozen while the server tells us what
+          this QR points at. Says so, exactly when it's true. */}
+      {resolvingNote && (
+        <div
+          className="absolute inset-x-0 z-30 flex justify-center pointer-events-none px-4"
+          style={{ top: UNDER_TOP_CHROME }}
+        >
+          <div className="inline-flex items-center gap-2 rounded-full bg-black/70 text-white text-xs font-medium px-3 py-1.5 shadow-lg backdrop-blur-sm">
+            <Loader2 size={13} className="shrink-0 animate-spin text-cobble-300" /> Reading label…
+          </div>
+        </div>
+      )}
+
+      {/* ── top chrome: torch · where-you're-filing · modes · close ─────
+          The filing chip is the only thing here that carries a NAME, so it's the
+          only thing that gets to grow: it's flex-1 and everything else is
+          shrink-0. It used to be squeezed to its padding by a row of fixed-width
+          buttons plus a "scanning" chip that only ever restated the reticle.
+      */}
       <div
-        className="absolute top-0 inset-x-0 flex items-center justify-between gap-2 p-4"
+        className="absolute top-0 inset-x-0 flex items-center gap-1.5 p-4"
         style={{ paddingTop: "max(1rem, env(safe-area-inset-top))" }}
       >
         {running && hasTorch ? (
@@ -1013,18 +1100,9 @@ export function ScanCameraPage() {
         ) : (
           <span className="w-10 shrink-0" />
         )}
-        {/* Area chip — where you're standing; stamped on every save. */}
-        <button
-          type="button"
-          onClick={() => setAssignOpen(true)}
-          className="inline-flex items-center gap-1.5 bg-black/50 hover:bg-black/70 rounded-full px-3 py-1.5 text-white text-xs min-w-0"
-        >
-          <MapPin size={13} className={areaName ? "text-emerald-400" : "text-white/60"} />
-          <span className="truncate max-w-[40vw]">{areaName ?? "Set area"}</span>
-        </button>
-        {/* Container chip — you scanned a machine/asset QR, so every scan files
-            INTO it (a placement). Tap to clear. */}
-        {containerBin && (
+        {containerBin ? (
+          /* Container bin — you scanned a machine/asset QR, so every scan files
+             INTO it (a placement). Tap to clear. */
           <button
             type="button"
             onClick={() => {
@@ -1032,11 +1110,26 @@ export function ScanCameraPage() {
               containerBinRef.current = null;
             }}
             title="Scanning into this container — tap to clear"
-            className="inline-flex items-center gap-1.5 bg-cobble-600/80 hover:bg-cobble-600 rounded-full px-3 py-1.5 text-white text-xs min-w-0"
+            className="inline-flex items-center gap-1.5 bg-cobble-600/85 hover:bg-cobble-600 rounded-full px-3 py-1.5 text-white text-xs min-w-0 flex-1"
           >
-            <Package size={13} />
-            <span className="truncate max-w-[36vw]">Into {containerName ?? "container"}</span>
-            <X size={12} className="text-white/70" />
+            <Package size={13} className="shrink-0" />
+            <span className="truncate min-w-0 flex-1 text-left">
+              Into {containerName ?? "container"}
+            </span>
+            <X size={12} className="text-white/70 shrink-0" />
+          </button>
+        ) : (
+          /* Area chip — where you're standing; stamped on every save. */
+          <button
+            type="button"
+            onClick={() => setAssignOpen(true)}
+            className="inline-flex items-center gap-1.5 bg-black/50 hover:bg-black/70 rounded-full px-3 py-1.5 text-white text-xs min-w-0 flex-1"
+          >
+            <MapPin
+              size={13}
+              className={`shrink-0 ${areaName ? "text-emerald-400" : "text-white/60"}`}
+            />
+            <span className="truncate min-w-0 flex-1 text-left">{areaName ?? "Set area"}</span>
           </button>
         )}
         {/* Move mode — scan a tracked item → it MOVES to the active bin,
@@ -1044,6 +1137,7 @@ export function ScanCameraPage() {
         <button
           type="button"
           onClick={toggleMoveMode}
+          aria-pressed={moveMode}
           title="Move mode: scanning something you already track moves it to the active area"
           className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs shrink-0 ${
             moveMode ? "bg-emerald-500 text-white" : "bg-black/50 text-white/70 hover:bg-black/70"
@@ -1056,6 +1150,7 @@ export function ScanCameraPage() {
         <button
           type="button"
           onClick={toggleSortMode}
+          aria-pressed={sortMode}
           title="Sort mode: every scan gets a destination bin directive — put it there, tap Done, next"
           className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs shrink-0 ${
             sortMode ? "bg-cobble-600 text-white" : "bg-black/50 text-white/70 hover:bg-black/70"
@@ -1063,25 +1158,15 @@ export function ScanCameraPage() {
         >
           <Zap size={13} /> Sort
         </button>
-        <div className="flex items-center gap-2 shrink-0">
-          {running && (
-            <span className="inline-flex items-center gap-1.5 bg-black/50 rounded-full px-2.5 py-1 text-white text-xs">
-              <span
-                className={`w-2 h-2 rounded-full ${phase === "scanning" ? "bg-emerald-400 animate-pulse" : "bg-amber-400"}`}
-              />
-              {phase === "scanning" ? "scanning" : "paused"}
-            </span>
-          )}
-          <button
-            type="button"
-            onClick={close}
-            aria-label="Close scanner"
-            title="Close"
-            className="bg-black/50 rounded-full p-2.5 text-white hover:bg-black/70"
-          >
-            <X size={18} />
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={close}
+          aria-label="Close scanner"
+          title="Close"
+          className="bg-black/50 rounded-full p-2.5 text-white hover:bg-black/70 shrink-0"
+        >
+          <X size={18} />
+        </button>
       </div>
 
       {/* Resume — a recent session (same workspace, < 4h) can continue its
@@ -1089,7 +1174,7 @@ export function ScanCameraPage() {
       {resumable && savedCount === 0 && (
         <div
           className="absolute inset-x-0 flex justify-center"
-          style={{ top: "max(4.5rem, calc(env(safe-area-inset-top) + 3.5rem))" }}
+          style={{ top: UNDER_TOP_CHROME }}
         >
           <div className="flex items-center gap-1 bg-black/55 rounded-full pl-3 pr-1 py-1 text-white text-xs">
             <button type="button" onClick={resume} className="inline-flex items-center gap-1.5 py-1">

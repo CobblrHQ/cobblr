@@ -33,7 +33,12 @@ export function useBundleCatalog(sources?: string[]): {
           const embedded = EMBEDDED_BY_ID.get(e.manifest.id);
           return {
             manifest: e.manifest,
-            glyph: e.glyph ?? embedded?.glyph ?? "📦",
+            // Prefer the EMBEDDED flagship glyph over the registry entry's: the
+            // official index carries no real glyph (it is a web-only card field),
+            // so an index placeholder must never win over the authoritative one.
+            // A third-party bundle (not in EMBEDDED_BY_ID) still uses its own
+            // e.glyph. Fixes every flagship card showing a box (2026-07-13).
+            glyph: embedded?.glyph ?? e.glyph ?? "📦",
             blurb: e.blurb ?? e.description ?? embedded?.blurb ?? "",
             // next_steps + item_example are web-only metadata the registry
             // drops; restore them from the embedded flagship catalog so the

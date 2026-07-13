@@ -28,6 +28,10 @@ export interface InvFieldDef {
   server_managed?: boolean | null;
   /** type='relation' only: the referenced entity-kind id. */
   ref_kind?: string | null;
+  /** type='computed' only: the {{ }} template rendered read-only server-side.
+   *  Per-unit consumption reads this to detect a DERIVED capacity + its source
+   *  field for the provenance chip. */
+  template?: string | null;
 }
 
 export interface Category {
@@ -454,10 +458,17 @@ export class InventoryApi {
   updatePart = (id: string, b: Record<string, unknown>) =>
     this.partsRequest<Part>("PATCH", `/${id}`, b);
   deletePart = (id: string) => this.partsRequest<void>("DELETE", `/${id}`);
-  stockAdjust = (id: string, delta: number, reason?: string) =>
+  stockAdjust = (
+    id: string,
+    delta: number,
+    reason?: string,
+    source?: { source_kind?: string; source_id?: string },
+  ) =>
     this.partsRequest<{ id: string; name: string; qty: number }>("POST", `/${id}/stock-adjust`, {
       delta,
       reason,
+      ...(source?.source_kind ? { source_kind: source.source_kind } : {}),
+      ...(source?.source_id ? { source_id: source.source_id } : {}),
     });
   importParts = (b: {
     csv: string;
@@ -488,18 +499,32 @@ export class InventoryApi {
   setAllocationStatus = (id: string, status: "consumed" | "released") =>
     this.request<Allocation>("PATCH", `/allocations/${id}/status`, { status });
 
+  /** Installed catalogs (id + schema) — enough to tell whether ANY catalog
+   *  binds to inventory:part, which gates showing the quick-match typeahead on
+   *  a skinned instance (e.g. Lego Sets) without adding an empty field to
+   *  instances that have nothing to match against (e.g. a lone Yarn stash). */
+  listCatalogs = () =>
+    this.requestAbs<{
+      items: Array<{
+        id: string;
+        schema?: { bindable_to_kinds?: string[]; field_map?: Record<string, string> } | null;
+      }>;
+    }>("GET", `/api/v1/orgs/${this.slug}/modules/core-catalogs/catalogs`);
+
   /** Cross-catalog search — returns hits from every installed catalog
    *  that has a title_column match against `q`. Used by the catalog-
-   *  aware quick-add typeahead on NewPartDialog.
+   *  aware quick-add typeahead on NewPartDialog. Hosted catalogs are
+   *  searched through the shared reference service.
    *
    *  source_kind=inventory:part keeps non-Lego catalogs out of the
    *  typeahead unless they explicitly declare bindable_to_kinds
-   *  including inventory:part (or omit it). */
-  searchCatalogs = (q: string, limit = 20) =>
+   *  including inventory:part (or omit it). `prefer` (a catalog id) floats that
+   *  catalog's hits to the top so a Sets form leads with sets, not minifigs. */
+  searchCatalogs = (q: string, limit = 20, prefer?: string) =>
     this.requestAbs<{ items: CatalogSearchHit[] }>(
       "GET",
       `/api/v1/orgs/${this.slug}/modules/core-catalogs/catalogs/search?${new URLSearchParams(
-        { q, limit: String(limit), source_kind: "inventory:part" },
+        { q, limit: String(limit), source_kind: "inventory:part", ...(prefer ? { prefer } : {}) },
       )}`,
     );
 
@@ -577,6 +602,24 @@ export class InventoryApi {
   deletePairing = (pairing_id: string) =>
     this.requestAbs<unknown>("DELETE", `/api/v1/orgs/${this.slug}/pairings/${encodeURIComponent(pairing_id)}`);
 
+  /** The reverse of listParentPairings: the `instance-of` CHILDREN of a model
+   *  part (each `source_id` is a unit under this parent). Powers per-unit
+   *  consumption's "which skeins are open under this model" lookup. */
+  listChildPairings = (parent_id: string) =>
+    this.requestAbs<{ items: Array<{ id: string; source_id: string }> }>(
+      "GET",
+      `/api/v1/orgs/${this.slug}/pairings?target_kind=inventory:part&target_id=${encodeURIComponent(parent_id)}&relationship_kind=instance-of`,
+    );
+
+  /** The RESOLVED view of an entity — the same platform read `CustomFieldsPanel`
+   *  uses, so COMPUTED field values (e.g. a per-skein `capacity` derived from
+   *  `{{ length_per_skein }}`) come back rendered under `.fields`. */
+  lookupResolvedEntity = (kind: string, id: string) =>
+    this.requestAbs<{ id: string; kind: string; title?: string; fields?: Record<string, unknown> }>(
+      "GET",
+      `/api/v1/orgs/${this.slug}/entities/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`,
+    );
+
   /** Mint a QR navigate-token for an entity. Used by NewPartDialog's
    *  "queue a label after create" flow. Cross-module call into
    *  core-labels-qr — kept here so callers don't reach for raw fetch. */
@@ -620,4 +663,8 @@ export interface CatalogSearchHit {
   payload: Record<string, unknown>;
   title: string;
   title_column: string;
+  /** `{ catalogPayloadKey: instanceFieldName }` — declared on the catalog
+   *  (schema.field_map). Picking this hit prefills those instance fields from
+   *  the payload (e.g. Rebrickable set → set_number/theme/year/piece_count). */
+  field_map?: Record<string, string>;
 }

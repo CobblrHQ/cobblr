@@ -7,7 +7,7 @@ import { trackProductEvent } from "../platform/product-events.js";
 import { parseWireFilter } from "../platform/wire-filter.js";
 import { z } from "zod";
 import { sql, type Kysely } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { platform, CatalogSchemaConfig } from "@cobblr/platform-contract";
 import { requireAuth } from "../auth/middleware.js";
 import { requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
@@ -132,6 +132,14 @@ const FieldDefEntry = z
      *  physical semantics (a length-category unit IS a length), never derived
      *  from the field's name. */
     unit: z.string().trim().min(1).max(40).nullish(),
+    /** Semantic DECODE role (P3 of the identifier-decoder registry):
+     *  `identifier:<decoderId>` (this field holds a decodable code) or
+     *  `decode:<key>` (fill from the decoder's <key> output). Optional +
+     *  generic — see packages/platform-contract parseDecodeRole. */
+    decode_role: z
+      .string()
+      .regex(/^(identifier:[a-z][a-z0-9_-]*|decode:[a-z][a-z0-9_-]*)$/i)
+      .optional(),
   })
   .refine((f) => f.type !== "computed" || (f.template && f.template.trim().length > 0), {
     message: "computed field_defs need a template",
@@ -148,6 +156,14 @@ const FieldOverrideEntry = z.object({
   display_label: z.string().optional(),
   hidden: z.boolean().optional(),
   position: z.number().int().optional(),
+  /** Semantic DECODE role (P3) for this NATIVE field — stored in the override's
+   *  `overrides` jsonb blob. `identifier:<decoderId>` or `decode:<key>`. Lets a
+   *  bundle mark a relabeled native field (serial_number → "VIN") as the
+   *  decoder's identifier / a fill target without a schema change. */
+  decode_role: z
+    .string()
+    .regex(/^(identifier:[a-z][a-z0-9_-]*|decode:[a-z][a-z0-9_-]*)$/i)
+    .optional(),
 });
 
 const SavedViewEntry = z.object({
@@ -255,27 +271,11 @@ const CatalogEntry = z.object({
   description: z.string().optional(),
   source_url: z.string().optional(),
   puller_id: z.string().optional(),
-  schema: z
-    .object({
-      id_column: z.string().optional(),
-      title_column: z.string().optional(),
-      image_column: z.string().optional(),
-      subtitle_column: z.string().optional(),
-      description_column: z.string().optional(),
-      field_renderers: z
-        .record(
-          z.enum(["text", "color-hex", "image-url", "url-link", "year", "boolean", "code"]),
-        )
-        .optional(),
-      field_labels: z.record(z.string()).optional(),
-      bindable_to_kinds: z.array(z.string()).optional(),
-      semantic_type: z.string().regex(/^[a-z0-9][a-z0-9.-]*$/).optional(),
-      hero_field: z.string().optional(),
-      hero_renderer: z
-        .enum(["text", "color-hex", "image-url", "url-link", "year", "boolean", "code"])
-        .optional(),
-    })
-    .default({}),
+  // The canonical catalog-schema shape — same zod the core-catalogs module
+  // validates writes with. Shared (not a hand-kept copy) so a new key can't be
+  // silently stripped here on install (the field_map / exclude_from_global_search
+  // trap). Strict on purpose. Add keys in @cobblr/platform-contract.
+  schema: CatalogSchemaConfig.default({}),
 });
 
 export const BundleManifest = z.object({
@@ -1335,6 +1335,7 @@ export async function applyValidatedBundle(
           template: f.type === "computed" ? f.template ?? null : null,
           help: f.help ?? null,
           unit: f.type === "number" ? f.unit ?? null : null,
+          decode_role: (f as { decode_role?: string | null }).decode_role ?? null,
         })
         .execute();
     }
@@ -1342,6 +1343,12 @@ export async function applyValidatedBundle(
     // reshape a field another bundle already touched (last writer wins);
     // tagged with bundle_id so uninstall cleans them up.
     for (const fo of m.field_overrides) {
+      // A decode role (P3) rides in the open-ended `overrides` jsonb blob (the
+      // native twin of module_field_defs.decode_role) — merged, so a co-located
+      // `choices` on a bundle row survives. Absent → the default '{}' stands.
+      const foBlob = (fo as { decode_role?: string }).decode_role
+        ? sql`jsonb_build_object('decode_role', ${(fo as { decode_role?: string }).decode_role}::text)`
+        : null;
       await trx
         .insertInto("native_field_overrides")
         .values({
@@ -1352,6 +1359,7 @@ export async function applyValidatedBundle(
           hidden: fo.hidden ?? false,
           position: fo.position ?? 0,
           bundle_id: bundle.id,
+          ...(foBlob ? { overrides: foBlob as never } : {}),
         })
         .onConflict((c) =>
           c
@@ -1361,6 +1369,9 @@ export async function applyValidatedBundle(
               hidden: fo.hidden ?? false,
               position: fo.position ?? 0,
               bundle_id: bundle.id,
+              ...(foBlob
+                ? { overrides: sql`coalesce(native_field_overrides.overrides, '{}'::jsonb) || ${foBlob}` as never }
+                : {}),
               updated_at: new Date(),
             })
             // Never overwrite a USER override (bundle_id null) on re-push: the
@@ -1413,10 +1424,14 @@ export async function applyValidatedBundle(
             template: f.type === "computed" ? f.template ?? null : null,
             help: f.help ?? null,
             unit: f.type === "number" ? f.unit ?? null : null,
+            decode_role: (f as { decode_role?: string | null }).decode_role ?? null,
           })
           .execute();
       }
       for (const fo of inst.field_overrides) {
+        const foBlob = (fo as { decode_role?: string }).decode_role
+          ? sql`jsonb_build_object('decode_role', ${(fo as { decode_role?: string }).decode_role}::text)`
+          : null;
         await trx
           .insertInto("native_field_overrides")
           .values({
@@ -1427,6 +1442,7 @@ export async function applyValidatedBundle(
             hidden: fo.hidden ?? false,
             position: fo.position ?? 0,
             bundle_id: bundle.id,
+            ...(foBlob ? { overrides: foBlob as never } : {}),
           })
           .onConflict((c) =>
             c
@@ -1436,6 +1452,9 @@ export async function applyValidatedBundle(
                 hidden: fo.hidden ?? false,
                 position: fo.position ?? 0,
                 bundle_id: bundle.id,
+                ...(foBlob
+                  ? { overrides: sql`coalesce(native_field_overrides.overrides, '{}'::jsonb) || ${foBlob}` as never }
+                  : {}),
                 updated_at: new Date(),
               })
               // Never overwrite a USER override (bundle_id null) on re-push.

@@ -22,7 +22,7 @@ import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
-import { platform } from "@cobblr/platform-contract";
+import { platform, planDecodeFill, type DecodeFillTarget } from "@cobblr/platform-contract";
 import { bearer, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { downloadCatalogImage, enrichBarcodeItem, isJunkName } from "../services/enrich.js";
@@ -43,6 +43,8 @@ import {
   type ScanMenuEntry,
 } from "../services/matchmaker.js";
 import { lookupBookIsbn } from "../services/book-lookup.js";
+import { resolvePaintColorFromText } from "../services/paint-code.js";
+import { resolvePaintCodeViaWeb } from "../services/paint-code-websearch.js";
 import { parseReceipt } from "../services/receipt.js";
 import { reportBarcodeCorrection } from "../services/barcode-corrections.js";
 import { findBinContents, findTracked } from "../services/entity-match.js";
@@ -1085,6 +1087,13 @@ inboxRouter.post(
       ...((meta as { serial_number?: string }).serial_number
         ? { serial_number: (meta as { serial_number?: string }).serial_number }
         : {}),
+      // A decoded/observed model (an identifier decoder stamps meta.model — a
+      // VIN's model) → the destination's NATIVE model field. Same discipline as
+      // serial_number: assets/machines declare it; a target without it drops the
+      // key harmlessly (a user-typed value in restExtras still wins below).
+      ...((meta as { model?: string }).model
+        ? { model: (meta as { model?: string }).model }
+        : {}),
       // Carry the SKU + barcode + source into metadata so a future
       // catalog-match step can find this entity.
       metadata: {
@@ -1796,6 +1805,17 @@ inboxRouter.post(
   }),
 );
 
+/** First non-empty value a candidate filled for `field` (e.g. the resolved
+ *  `color`), across the item's candidates. Generic — no vehicle knowledge. */
+function candidateFieldValue(candidates: unknown, field: string): string | null {
+  if (!Array.isArray(candidates)) return null;
+  for (const c of candidates) {
+    const v = (c as { fields?: Record<string, unknown> })?.fields?.[field];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return null;
+}
+
 // ─────────────────── GET /inbox/:id/photo-options ───────────────────
 // Alternative catalog photos: a DDG image search on the item's resolved
 // name (the "OTHER PHOTO OPTIONS" strip). Read-only; picking one
@@ -1821,7 +1841,11 @@ inboxRouter.get(
     const name = row?.suggested_name?.trim() ?? "";
     // Author/media extras (Laura Ingalls Wilder + "book") sharpen a weak title.
     const { author, mediaWord } = mediaSearchExtras(row?.suggested_candidates as Array<{ fields?: Record<string, unknown> }> | null);
-    const extra = [author, mediaWord].filter(Boolean).join(" ") || null;
+    // A resolved vehicle color sharpens the search to the actual paint, so the
+    // picked photo matches the car ("2019 Honda Civic Hatchback EX" → "… Lunar
+    // Silver Metallic"). Generic: it's just the `color` field a candidate filled.
+    const color = candidateFieldValue(row?.suggested_candidates, "color");
+    const extra = [author, mediaWord, color].filter(Boolean).join(" ") || null;
     const q = override ? override : isJunkName(name) ? null : imageQuery(name, row?.suggested_manufacturer ?? null, extra);
     if (!q) {
       res.json({ items: [] });
@@ -3140,6 +3164,88 @@ async function reconcileSeriesRouting(orgId: string, batchId: string | null, ser
   }
 }
 
+/** Merge an identifier decode (a scanned VIN) onto the matchmaker candidates by
+ *  ROLE. For each candidate we take the routed table's declared fields (carrying
+ *  their `decode_role`), plan the fill from the decoded semantic bag with the
+ *  shared platform planner (prefers `decode:<key>`, falls back to name), and set
+ *  each fill's field — EMPTY-ONLY, so the model's own extraction is never
+ *  clobbered. Mutates `candidates` in place. A no-op when the item wasn't
+ *  decoder-resolved. Generic: it never names a vehicle or a domain. */
+function applyDecoderFill(
+  suggestedMetadata: unknown,
+  candidates: MatchCandidate[],
+  menu: ScanMenuEntry[],
+): void {
+  const decoded = (suggestedMetadata as { decoded?: { fields?: Record<string, string | number> } } | null)
+    ?.decoded?.fields;
+  if (!decoded || Object.keys(decoded).length === 0) return;
+  const menuByKey = new Map(menu.map((m) => [`${m.module}::${m.instance ?? ""}`, m] as const));
+  for (const cand of candidates) {
+    const entry = menuByKey.get(`${cand.module}::${cand.instance ?? ""}`);
+    if (!entry) continue;
+    const targets: DecodeFillTarget[] = entry.fields.map((f) => ({
+      id: f.name,
+      name: f.name,
+      label: f.label,
+      // Only a field the model DID NOT already fill is eligible — role-fill is
+      // the floor, the model's read wins.
+      empty: cand.fields[f.name] === undefined || cand.fields[f.name] === "" || cand.fields[f.name] === null,
+      role: f.decode_role ?? null,
+    }));
+    for (const fill of planDecodeFill(decoded, targets)) {
+      cand.fields[fill.target.name] = fill.value;
+    }
+  }
+}
+
+const PAINT_CACHE_NS = "vehicle-paint";
+
+/** Resolve a vehicle's paint color from the code the photo pass ALREADY read
+ *  onto the item — Tier 0 (extract) + Tier 1 (curated table), then Tier 2
+ *  (web-search) on a table miss. Vehicle-scoped (only runs when the item was
+ *  VIN-decoded, i.e. `make` is present), deterministic + web-search only (NO
+ *  LLM, so it never touches the shared scan-inbox prompt), and best-effort:
+ *  Tier 2 is bounded so it can't stall the match, its hits cache once (make|
+ *  code), and an unresolved code just leaves the field blank (never a guess).
+ *  See docs/design-decisions/vehicle-color-resolution.md. */
+async function resolveVehicleColor(suggestedMetadata: unknown, text: string): Promise<string | null> {
+  const decoded = (suggestedMetadata as { decoded?: { fields?: Record<string, string | number> } } | null)
+    ?.decoded?.fields;
+  const make = typeof decoded?.make === "string" ? decoded.make : "";
+  if (!make) return null; // only VIN-decoded vehicles carry a make here
+  const r = resolvePaintColorFromText(make, text); // Tier 0 (extract) + Tier 1 (table)
+  if (!r) return null; // no paint code in the item's text
+  if (r.name) return r.name; // table hit — zero network
+  // Tier 2: web-search a code not in the table. Cached once; bounded so a slow
+  // DDG can't hold up the match; a miss/timeout is simply not cached.
+  const cacheKey = `${make.toLowerCase()}|${r.code}`;
+  const cached = await platform().sharedCache.get<{ name: string }>(PAINT_CACHE_NS, cacheKey).catch(() => null);
+  if (cached?.name) return cached.name;
+  const web = await Promise.race([
+    resolvePaintCodeViaWeb(make, r.code),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), 8_000)),
+  ]).catch(() => null);
+  if (web?.name) {
+    await platform().sharedCache.put(PAINT_CACHE_NS, cacheKey, { name: web.name }).catch(() => {});
+    return web.name;
+  }
+  return null;
+}
+
+/** Land a resolved color onto every candidate whose table DECLARES a `color`
+ *  field and hasn't already got one — mirrors applyDecoderFill's field-scoped
+ *  fill, so only the vehicle tables (incl. the not-yet-installed Vehicles bundle
+ *  candidate) receive it; nothing else is touched. */
+function applyPaintColorFill(color: string, candidates: MatchCandidate[], menu: ScanMenuEntry[]): void {
+  const menuByKey = new Map(menu.map((m) => [`${m.module}::${m.instance ?? ""}`, m] as const));
+  for (const cand of candidates) {
+    const entry = menuByKey.get(`${cand.module}::${cand.instance ?? ""}`);
+    if (!entry || !entry.fields.some((f) => f.name === "color")) continue;
+    const cur = cand.fields.color;
+    if (cur === undefined || cur === "" || cur === null) cand.fields.color = color;
+  }
+}
+
 /** Run vision corroboration + the matchmaker for one item and persist the
  *  result (+ a matched_at stamp so intake auto-match never repeats). Returns
  *  the candidates, or null when skipped (no row / nothing identified yet /
@@ -3205,6 +3311,15 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
       opts.userId,
     );
 
+    // Decoder role-fill (P2/P3). When the item was resolved by an identifier
+    // decoder (a scanned VIN), deterministically map its decoded semantic bag
+    // onto each candidate's declared fields BY ROLE (`decode:<key>`), falling
+    // back to name/shape — the SAME planner the client form uses. This lands
+    // year/fuel/… onto the routed vehicle table even with no AI, and never
+    // clobbers a value the model already filled. Generic: core-scan reads the
+    // flat bag + the field roles, nothing vehicle-specific.
+    applyDecoderFill(row.suggested_metadata, candidates, menu);
+
     // Persist: candidates + the matched_at stamp (the web renders a passive
     // "AI is reading…" pulse until this lands — no client triggering) +
     // the cached photo observations. The top candidate's reconciliation
@@ -3223,6 +3338,11 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
     const idSource = ((row.suggested_metadata ?? {}) as { source?: string }).source ?? "";
     const REAL_BARCODE_SOURCES = new Set(["go-upc", "openfoodfacts", "openproductsfacts", "upcitemdb"]);
     const barcodeIdentified = !!row.barcode_text && !!row.suggested_name && REAL_BARCODE_SOURCES.has(idSource);
+    // A decoder (VIN) name is AUTHORITATIVE — vPIC's "year make model body trim"
+    // is ground truth, not a guess — so the matchmaker's reconciliation must not
+    // rename it. Without this, adoptName dropped "2019 Honda Civic Hatchback EX"
+    // back to the model's terser "2019 Honda Civic" on every match/re-run.
+    const decoderIdentified = idSource.startsWith("decoder:");
     // For web-search / photo (NON-curated) items the matchmaker's candidate name
     // is the reconciled one its note describes — publisher / author-parenthetical /
     // retailer-noise stripped (a book: "Delmar Cengage Learning … (Whitman)" →
@@ -3237,8 +3357,25 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
     const adoptName =
       !!candName &&
       !barcodeIdentified &&
+      !decoderIdentified &&
       candName.toLowerCase() !== (row.suggested_name ?? "").toLowerCase() &&
       !(SPEC_RE.test(row.suggested_name ?? "") && !SPEC_RE.test(candName));
+
+    // Vehicle paint color: resolve the code the photo pass read (candidate notes
+    // / observations / ai_notes) to a color name and fill it onto the vehicle
+    // candidates. Deterministic table + web-search, no LLM — so it's outside the
+    // benchmark-gated prompt surface. Best-effort; mutates `candidates` before
+    // they're persisted just below. Only fires for VIN-decoded items.
+    const vehColor = await resolveVehicleColor(
+      row.suggested_metadata,
+      [
+        top && typeof top === "object" && "notes" in top ? (top as { notes?: string }).notes ?? "" : "",
+        photoObservations ?? "",
+        row.ai_notes ?? "",
+      ].join("\n"),
+    ).catch(() => null);
+    if (vehColor) applyPaintColorFill(vehColor, candidates, menu);
+
     await dbAfter
       .updateTable("core_scan_inbox_items")
       .set({

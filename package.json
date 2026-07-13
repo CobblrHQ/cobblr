@@ -37,6 +37,7 @@
     "lint:ai-reach": "tsx scripts/lint-ai-reach.ts",
     "lint:provider-labels": "tsx scripts/lint-provider-field-labels.ts",
     "lint:page-imports": "tsx scripts/lint-page-imports.ts",
+    "lint:client-fetch-mounts": "tsx scripts/lint-client-fetch-mounts.ts",
     "lint:pagination": "tsx scripts/lint-pagination.ts",
     "lint:inline-overrides": "tsx scripts/lint-inline-style-overrides.ts",
     "lint:unit-conversion": "tsx scripts/lint-unit-conversion.ts",
@@ -45,6 +46,9 @@
     "lint:ui-jargon": "tsx scripts/lint-ui-jargon.ts",
     "lint:ai-invoke": "tsx scripts/lint-ai-invoke.ts",
     "lint:workspace-vocab": "tsx scripts/lint-workspace-vocab.ts",
+    "lint:no-passthrough": "tsx scripts/lint-no-passthrough.ts",
+    "lint:catalog-schema-complete": "tsx scripts/lint-catalog-schema-complete.ts",
+
     "build": "pnpm -r run --if-present build",
     "dev:api": "npm run dev -w api",
     "dev:web": "npm run dev -w web",

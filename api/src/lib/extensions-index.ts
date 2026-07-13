@@ -122,7 +122,10 @@ export function buildOfficialIndex(): ExtensionIndex {
         author: m.author ?? "",
         // glyph/blurb are web-only card fields (not in the manifest); the web
         // catalog hook (useBundleCatalog) backfills the real ones by manifest
-        // id. Defaults here keep the index shape intact for any non-web consumer.
+        // id. A "📦" placeholder keeps the index shape a string for non-web
+        // consumers. The hook now PREFERS the embedded glyph over this
+        // placeholder (see useBundleCatalog), so this default no longer
+        // overrides real card icons (was the 2026-07-13 all-boxes regression).
         glyph: typeof m.glyph === "string" ? m.glyph : "📦",
         blurb: typeof m.blurb === "string" ? m.blurb : typeof m.description === "string" ? m.description : "",
         requires: (m.requires ?? []).map((r) => r.module).filter((x): x is string => typeof x === "string"),

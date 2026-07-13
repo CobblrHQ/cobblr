@@ -33,6 +33,10 @@ interface MenuField {
   type: string;
   help?: string;
   choices?: string[];
+  /** Semantic DECODE role (P3), e.g. `decode:year` — lets a scanned-identifier
+   *  decode fill this field by declared role, not English name. Not sent to the
+   *  model (routing/extraction is unaffected); consumed by the decode-fill pass. */
+  decode_role?: string;
 }
 
 /** One routable destination in the workspace (a table). */
@@ -203,7 +207,7 @@ export async function assembleScanMenu(
     try {
       const res = await fetch(`${baseUrl}/api/v1/orgs/${slug}/field-defs?kind=${encodeURIComponent(kind)}`, { headers: auth });
       if (res.ok) {
-        const defs = ((await res.json()) as { items?: Array<{ name: string; display_label: string; type: string; help?: string | null; choices?: string[] | null }> }).items ?? [];
+        const defs = ((await res.json()) as { items?: Array<{ name: string; display_label: string; type: string; help?: string | null; choices?: string[] | null; decode_role?: string | null }> }).items ?? [];
         fields = defs
           .filter((d) => d.type !== "computed")
           .map((d) => ({
@@ -212,6 +216,7 @@ export async function assembleScanMenu(
             type: d.type,
             ...(d.help ? { help: d.help } : {}),
             ...(d.choices && d.choices.length ? { choices: d.choices } : {}),
+            ...(d.decode_role ? { decode_role: d.decode_role } : {}),
           }));
       }
     } catch {

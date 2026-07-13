@@ -9,16 +9,16 @@
 // parameterized (tracked in instances.md). The API path
 // (/instances/:name/items) already works for every module.
 
-import { useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { Link } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Camera, Plus, Trash2, X } from "lucide-react";
-import { useConfirm, useToast } from "@cobblr/platform-web";
+import { useQuery } from "@tanstack/react-query";
+import { CheckCircle2, Camera, Plus, X } from "lucide-react";
 import { InventoryUI } from "@cobblr/inventory/ui";
 import { ProjectsUI } from "@cobblr/projects/ui";
 import { MachinesPage } from "./MachinesPage";
-import { ApiError, api, getToken } from "../lib/api";
+import { AssetsPage } from "./AssetsPage";
+import { BundleFeaturesStrip } from "../components/BundleFeaturesStrip";
+import { api, getToken } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
 export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
@@ -113,15 +113,14 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
       />
     );
   }
-  // Assets has no parameterized page yet — keep the lightweight scoped list
-  // (see / add / delete) until its full page is instance-aware (instances.md).
+  // Assets renders its FULL page (thumbnails, views, detail/edit) scoped to the
+  // instance — a Vehicle on /vehicles is a complete asset, not a name-only stub.
   if (inst.module_name === "assets") {
     return (
-      <HostInstanceList
-        slug={activeSlug}
+      <AssetsPage
         instance={inst.instance_name}
-        moduleName={inst.module_name}
         displayName={displayName}
+        itemNoun={cfg.item_noun}
       />
     );
   }
@@ -152,6 +151,10 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
   return (
     <div className="space-y-3">
       <CreatedSuccessStrip />
+      {/* "More you can turn on from <bundle>" — surfaces the instance's bundle's
+          not-yet-enabled features (maintenance, connected-car…) + opens the
+          bundle modal to enable them. Renders nothing when there's nothing more. */}
+      <BundleFeaturesStrip slug={activeSlug} instance={inst.instance_name} />
       {body}
     </div>
   );
@@ -191,135 +194,3 @@ function CreatedSuccessStrip() {
   );
 }
 
-/** Lightweight scoped list for name-based host-page modules (machines,
- *  assets). Reads / creates / deletes through the instance-aware web
- *  client (api.list/create/deleteMachine|Asset with the instance arg),
- *  so rows are fully isolated to the instance. Detail/edit modals (the
- *  full host page) are a follow-up — tracked in instances.md. */
-function HostInstanceList({
-  slug,
-  instance,
-  moduleName,
-  displayName,
-}: {
-  slug: string;
-  instance: string;
-  moduleName: "machines" | "assets";
-  displayName: string;
-}) {
-  const qc = useQueryClient();
-  const toast = useToast();
-  const confirm = useConfirm();
-  const [newName, setNewName] = useState("");
-
-  const listFn = moduleName === "machines" ? api.listMachines : api.listAssets;
-  const createFn = moduleName === "machines" ? api.createMachine : api.createAsset;
-  const deleteFn = moduleName === "machines" ? api.deleteMachine : api.deleteAsset;
-  const key = ["instance-items", slug, instance];
-
-  const list = useQuery<{ items: Array<{ id: string; name: string }> }>({
-    queryKey: key,
-    queryFn: () =>
-      listFn(slug, instance) as Promise<{
-        items: Array<{ id: string; name: string }>;
-      }>,
-    enabled: !!slug,
-  });
-  const invalidate = () => void qc.invalidateQueries({ queryKey: key });
-
-  const create = useMutation<void, unknown, string>({
-    mutationFn: async (name: string) => {
-      await createFn(slug, { name } as never, instance);
-    },
-    onSuccess: () => {
-      setNewName("");
-      invalidate();
-    },
-    onError: (e: unknown) =>
-      toast.error(e instanceof ApiError ? e.message : "Couldn't add"),
-  });
-  const del = useMutation<void, unknown, string>({
-    mutationFn: async (id: string) => {
-      await deleteFn(slug, id, instance);
-    },
-    onSuccess: invalidate,
-  });
-
-  const items = (list.data?.items ?? []) as Array<{ id: string; name: string }>;
-
-  return (
-    <div className="space-y-4 max-w-2xl" data-testid="host-instance-list">
-      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
-          {displayName}
-        </h1>
-        <span className="text-[10px] font-mono text-faint dark:text-slate-500">
-          {items.length} · instance of {moduleName}
-        </span>
-      </div>
-
-      <form
-        className="flex gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (newName.trim()) create.mutate(newName.trim());
-        }}
-      >
-        <input
-          value={newName}
-          onChange={(e) => setNewName(e.target.value)}
-          placeholder={`New ${moduleName === "machines" ? "machine" : "asset"} name`}
-          className="flex-1 px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-          data-testid="host-new-name"
-        />
-        <button
-          type="submit"
-          disabled={!newName.trim() || create.isPending}
-          className="inline-flex items-center gap-1.5 rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white px-3 py-1.5 text-sm"
-        >
-          <Plus size={14} /> Add
-        </button>
-      </form>
-
-      {list.isLoading && <div className="text-sm text-muted">Loading…</div>}
-      {!list.isLoading && items.length === 0 && (
-        <div className="text-sm text-muted dark:text-slate-400 italic">
-          Nothing here yet — add the first one above.
-        </div>
-      )}
-      <ul className="border border-line dark:border-slate-700 rounded divide-y divide-line dark:divide-slate-800">
-        {items.map((it) => (
-          <li
-            key={it.id}
-            className="px-3 py-2 text-sm flex items-center gap-2"
-            data-item-name={it.name}
-          >
-            <span className="flex-1 text-content dark:text-mortar-100">
-              {it.name}
-            </span>
-            <button
-              onClick={async () => {
-                const ok = await confirm({
-                  title: "Delete?",
-                  message: `${it.name} — removed from this instance.`,
-                  confirmLabel: "Delete",
-                  destructive: true,
-                });
-                if (ok) del.mutate(it.id);
-              }}
-              className="text-faint hover:text-ember-500 transition"
-              title="Delete"
-            >
-              <Trash2 size={14} />
-            </button>
-          </li>
-        ))}
-      </ul>
-
-      <p className="text-[11px] text-faint">
-        This is the lightweight view for {moduleName} instances — full
-        detail / edit is on the default {moduleName} page for now.
-      </p>
-    </div>
-  );
-}

@@ -20,8 +20,8 @@
     "hash": "79233db8126f953a0996fe7236d648b8f880d4a9e0b80b519fce5c8bb19fa638"
   },
   "cobblr.community.lego": {
-    "version": "0.4.1",
-    "hash": "649c6e1b4580195badba79497c29a50553054e04b1f25124b84cfd4c57672e44"
+    "version": "0.5.0",
+    "hash": "d9dc4be67d661a3eec6638f756e5888f50ca74967bfe56cb245501f0488ae831"
   },
   "cobblr.community.printer-parts": {
     "version": "0.2.0",
@@ -108,7 +108,7 @@
     "hash": "e7ddeb6d864df7ede547f325241b5bdae9a83b13a704f39e109ce1a8d9465326"
   },
   "cobblr.flagship.yarn": {
-    "version": "0.5.0",
-    "hash": "b64ae55df8a4869d7bd96d52839f95929dde792a4bbb6f1e0b51097f5e16f015"
+    "version": "0.6.0",
+    "hash": "2015f542a3f48cbb4a4505875dc2567e0bf7c06fa30942682d07709a29597910"
   }
 }

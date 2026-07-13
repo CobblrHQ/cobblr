@@ -121,7 +121,7 @@ export function ProjectDetailPage() {
                 updateProject.mutate({ name: e.target.value.trim() });
               }
             }}
-            className="font-display text-2xl font-bold text-content dark:text-mortar-100 bg-transparent flex-1 focus:outline-none focus:bg-subtle dark:focus:bg-slate-800/70 rounded px-1"
+            className="font-display text-2xl font-bold text-content dark:text-mortar-100 bg-transparent flex-1 min-w-0 focus:outline-none focus:bg-subtle dark:focus:bg-slate-800/70 rounded px-1"
           />
           <SaveStatus
             saving={updateProject.isPending}
@@ -399,7 +399,7 @@ function TaskRow({ task }: { task: Task }) {
       </button>
       <span
         className={
-          "text-sm flex-1 " + (done ? "line-through text-faint dark:text-slate-500" : "text-content dark:text-mortar-100")
+          "text-sm flex-1 min-w-0 break-words " + (done ? "line-through text-faint dark:text-slate-500" : "text-content dark:text-mortar-100")
         }
       >
         {task.title}

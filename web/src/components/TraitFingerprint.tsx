@@ -80,11 +80,16 @@ export function TraitFingerprint({
     );
   }
   return (
-    <span className={`text-[10px] font-mono text-muted dark:text-slate-400 ${className}`}>
+    // inline-flex + flex-wrap so the six ·-joined axis tokens are each their
+    // own wrap unit: the fingerprint breaks BETWEEN tokens (never mid-word)
+    // and fits any width instead of one unbreakable run that overflowed narrow
+    // (mobile) containers. Each token stays whitespace-nowrap so "· durable"
+    // moves as a piece; min-w-0 lets the whole run shrink inside a flex parent.
+    <span className={`inline-flex flex-wrap items-baseline min-w-0 text-[10px] font-mono text-muted dark:text-slate-400 ${className}`}>
       {AXIS_ORDER.map((axis, i) => {
         const value = traits[axis];
         return (
-          <span key={axis}>
+          <span key={axis} className="inline-flex items-baseline whitespace-nowrap">
             {i > 0 && <span className="mx-1 text-faint dark:text-slate-600">·</span>}
             <AxisCell axis={axis} value={value ?? null} />
           </span>
@@ -108,7 +113,7 @@ export function TraitProfileBadge({
     return <TraitFingerprint traits={traits} />;
   }
   return (
-    <span className="inline-flex flex-wrap items-baseline gap-x-1.5 gap-y-0">
+    <span className="inline-flex flex-wrap items-baseline gap-x-1.5 gap-y-0 min-w-0">
       <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300 border border-cobble-200 dark:border-cobble-800">
         {profile}
       </span>

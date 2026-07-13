@@ -852,6 +852,9 @@ platformOrgRouter.get(
             display_label: o.display_label ?? f.display_label,
             position: o.position ?? f.position,
             choices: o.overrides?.choices ?? f.choices,
+            // The override layer's decode_role (P3) wins over the field-def's own,
+            // mirroring choices — so a user/bundle can retarget a decode field.
+            decode_role: o.overrides?.decode_role ?? f.decode_role,
             _hidden: o.hidden,
           };
         })

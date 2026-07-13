@@ -300,14 +300,19 @@ export function LocationsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
+      {/* flex-wrap + a full-width basis on the spacer: on a phone the action
+          buttons drop to their own line (and wrap among themselves) instead of
+          running off the right edge — that unwrapped row was the locations-page
+          horizontal-scroll bug. On desktop it stays a single row, spacer pushing
+          the buttons right. */}
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2 border-b border-line dark:border-slate-700 pb-3">
         <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">
           Locations
         </h1>
         <span className="text-sm text-muted dark:text-slate-400">
           {items.length} {items.length === 1 ? "place" : "places"}
         </span>
-        <div className="flex-1" />
+        <div className="flex-1 basis-full sm:basis-0" />
         {items.length > 0 && (
           <button
             onClick={() =>
@@ -494,7 +499,7 @@ function LocationCard({
       style={style}
       className={`rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden ${isDragging ? "opacity-60 shadow-lg ring-1 ring-accent/40" : ""}`}
     >
-      <div className="px-4 py-2.5 bg-subtle dark:bg-slate-800/50 border-b border-line dark:border-slate-700 flex items-center gap-2">
+      <div className="px-4 py-2.5 bg-subtle dark:bg-slate-800/50 border-b border-line dark:border-slate-700 flex flex-wrap items-center gap-2">
         <button
           type="button"
           {...attributes}
@@ -527,44 +532,51 @@ function LocationCard({
             </div>
           )}
         </div>
-        {usageTotal > 0 && (
-          <span
-            className="text-[10px] font-mono text-accent dark:text-cobble-400"
-            title={`${usage?.machines ?? 0} machine(s) · ${usage?.assets ?? 0} asset(s) · ${usage?.parts ?? 0} part(s) point here`}
-          >
-            {usageTotal} item{usageTotal === 1 ? "" : "s"}
+        {/* Trailing meta + actions: their own wrap group so that on a narrow
+            (mobile) card — or a deeply-nested one where indentation eats the
+            width — the cluster drops to its own line and, if still tight, its
+            chips wrap, instead of forcing the page to scroll sideways. min-w-0
+            lets it shrink; on desktop there's room and it stays inline. */}
+        <div className="flex flex-wrap items-center gap-2 min-w-0 ml-auto">
+          {usageTotal > 0 && (
+            <span
+              className="text-[10px] font-mono text-accent dark:text-cobble-400"
+              title={`${usage?.machines ?? 0} machine(s) · ${usage?.assets ?? 0} asset(s) · ${usage?.parts ?? 0} part(s) point here`}
+            >
+              {usageTotal} item{usageTotal === 1 ? "" : "s"}
+            </span>
+          )}
+          <span className="text-[10px] uppercase font-mono tracking-widest text-faint dark:text-slate-500">
+            {node.kind}
           </span>
-        )}
-        <span className="text-[10px] uppercase font-mono tracking-widest text-faint dark:text-slate-500">
-          {node.kind}
-        </span>
-        <button
-          type="button"
-          onClick={() => onAddChild(node.id)}
-          title="Add child"
-          className="text-faint hover:text-accent transition p-1"
-        >
-          <Plus size={14} />
-        </button>
-        <button
-          type="button"
-          onClick={() => onEdit(node)}
-          title="Edit"
-          className="text-faint hover:text-accent transition p-1"
-        >
-          <Pencil size={14} />
-        </button>
-        <button
-          type="button"
-          onClick={() => onDelete(node)}
-          title="Delete"
-          className="text-faint hover:text-ember-500 transition p-1"
-        >
-          <Trash2 size={14} />
-        </button>
+          <button
+            type="button"
+            onClick={() => onAddChild(node.id)}
+            title="Add child"
+            className="text-faint hover:text-accent transition p-1"
+          >
+            <Plus size={14} />
+          </button>
+          <button
+            type="button"
+            onClick={() => onEdit(node)}
+            title="Edit"
+            className="text-faint hover:text-accent transition p-1"
+          >
+            <Pencil size={14} />
+          </button>
+          <button
+            type="button"
+            onClick={() => onDelete(node)}
+            title="Delete"
+            className="text-faint hover:text-ember-500 transition p-1"
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
       </div>
       {node.children.length > 0 && (
-        <div className="p-3 pl-6 space-y-2 bg-subtle/50 dark:bg-slate-900/40">
+        <div className="p-2 pl-3 sm:p-3 sm:pl-6 space-y-2 bg-subtle/50 dark:bg-slate-900/40">
           {/* Child AREAS are zones — subdivisions of this space, not things
               inside it — so they render as dashed annotations (ZoneCard), never
               as nested boxes; containers keep the boxed card. Zones first, so
@@ -638,7 +650,7 @@ function ZoneCard({
     // from overlapping the previous sibling.
     <div ref={setNodeRef} style={style} className={`pt-2 ${isDragging ? "opacity-60" : ""}`}>
       <div
-        className={`relative rounded-xl border border-dashed border-slate-400/70 dark:border-slate-500/60 p-3 pt-4 space-y-2 ${isDragging ? "ring-1 ring-accent/40" : ""}`}
+        className={`relative rounded-xl border border-dashed border-slate-400/70 dark:border-slate-500/60 p-2 pt-4 sm:p-3 sm:pt-4 space-y-2 ${isDragging ? "ring-1 ring-accent/40" : ""}`}
       >
         <div className="absolute -top-3 left-3 inline-flex items-center gap-1.5 rounded-full border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-0.5">
           <button
@@ -942,7 +954,7 @@ function LocationFormModal({
             <option value="">(top-level)</option>
             {selectableParents.map((p) => (
               <option key={p.id} value={p.id}>
-                {"  ".repeat(p.depth)}
+                {"  ".repeat(Math.min(p.depth, 8))}
                 {p.name}
               </option>
             ))}

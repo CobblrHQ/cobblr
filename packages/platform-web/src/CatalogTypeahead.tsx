@@ -17,6 +17,9 @@ export interface CatalogTypeaheadHit {
   payload: Record<string, unknown>;
   title: string;
   title_column: string;
+  /** `{ catalogPayloadKey: instanceFieldName }` from the catalog schema —
+   *  picking this hit prefills those instance fields from the payload. */
+  field_map?: Record<string, string>;
 }
 
 interface Props {

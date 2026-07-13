@@ -155,15 +155,26 @@ function ReserveForm({ partId }: { partId: string }) {
   );
 }
 
+/** A picked target entity (a project/design/…): its module + type + id, plus a
+ *  human label for display + the binding reason. */
+export interface PickedEntity {
+  module: string;
+  type: string;
+  id: string;
+  label: string;
+}
+
 // Typeahead entity picker — search across kinds (core-search) and pick a
 // real entity, so reserving no longer means typing a raw module/type/UUID.
-function EntityPicker({
+// Exported so per-unit consumption reuses the exact same "bind to a project"
+// picker instead of a second, drifting copy.
+export function EntityPicker({
   selected,
   onSelect,
   onClear,
 }: {
   selected: { label: string } | null;
-  onSelect: (e: { module: string; type: string; id: string; label: string }) => void;
+  onSelect: (e: PickedEntity) => void;
   onClear: () => void;
 }) {
   const { api, orgSlug } = useInventory();

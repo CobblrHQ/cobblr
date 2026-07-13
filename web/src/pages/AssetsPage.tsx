@@ -8,8 +8,9 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate, useParams, useSearchParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Plus, Printer, Search, Sprout, Tag as TagIcon, Trash2 } from "lucide-react";
+import { ChevronRight, Loader2, Plus, Printer, Search, Sprout, Tag as TagIcon, Trash2, Undo2, Wand2 } from "lucide-react";
 import { ApiError, api, type Asset, type OrgModuleListItem, type PlatformFieldDef } from "../lib/api";
+import { isShapeValidVin, planVinFill, type VinFill, type VinFillTarget } from "../lib/vin";
 import { ModuleInstanceChooser } from "../components/ModuleInstanceChooser";
 import { queueLabelsBulk } from "../lib/queue-label";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -32,23 +33,59 @@ import { ContentsPanel } from "../components/ContentsPanel";
 
 const ENTITY_KIND = "assets:asset";
 
-export function AssetsPage() {
-  usePageTitle("Assets");
+export function AssetsPage({
+  instance,
+  displayName,
+  itemNoun,
+}: { instance?: string; displayName?: string; itemNoun?: string } = {}) {
+  // When `instance` is set we render ONE named collection of assets (e.g.
+  // "Vehicles"), reached at the clean /<instance> URL — the SAME rich page as
+  // /assets (thumbnails, views, detail/edit), just scoped to the instance's
+  // items. No lens/instance-chooser (the instance IS the focus), and detail is
+  // local state (no /<instance>/:id route). Mirrors MachinesPage.
+  usePageTitle(displayName ?? "Assets");
   const { activeSlug } = useActiveOrg();
   const navigate = useNavigate();
   const { id } = useParams<{ id?: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
-  const lensName = searchParams.get("lens");
+  const lensName = instance ? null : searchParams.get("lens");
   const viewId = searchParams.get("view");
+  const noun = itemNoun?.trim() || "asset";
+  // On an instance page, fields/views are keyed to the instance ("vehicles:item")
+  // rather than the base assets:asset. Mirrors MachinesPage's viewKind.
+  const entityKind = instance ? `${instance}:item` : ENTITY_KIND;
+
+  // Detail selection: URL param on /assets, local state (+ deep-link ?asset=id)
+  // on an instance page.
+  const [localSel, setLocalSel] = useState<string | null>(null);
+  const selectedId = instance ? localSel : id ?? null;
+  useEffect(() => {
+    if (!instance) return;
+    const a = searchParams.get("asset");
+    if (a && a !== localSel) setLocalSel(a);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [instance, searchParams]);
+  const openDetail = (aid: string) => {
+    if (instance) {
+      setLocalSel(aid);
+      setSearchParams((prev) => { prev.set("asset", aid); return prev; }, { replace: true });
+    } else navigate(`/assets/${aid}${searchParams.toString() ? `?${searchParams}` : ""}`);
+  };
+  const closeDetail = () => {
+    if (instance) {
+      setLocalSel(null);
+      setSearchParams((prev) => { prev.delete("asset"); return prev; }, { replace: true });
+    } else navigate(`/assets${searchParams.toString() ? `?${searchParams}` : ""}`);
+  };
 
   const list = useQuery({
-    queryKey: ["assets", activeSlug],
-    queryFn: () => api.listAssets(activeSlug),
+    queryKey: ["assets", activeSlug, instance ?? null],
+    queryFn: () => api.listAssets(activeSlug, instance),
     enabled: !!activeSlug,
   });
   const fieldDefs = useQuery({
-    queryKey: ["platform-field-defs", activeSlug, ENTITY_KIND, "effective"],
-    queryFn: () => api.listFieldDefs(activeSlug, ENTITY_KIND, true),
+    queryKey: ["platform-field-defs", activeSlug, entityKind, "effective"],
+    queryFn: () => api.listFieldDefs(activeSlug, entityKind, true),
     enabled: !!activeSlug,
     staleTime: 60_000,
   });
@@ -72,8 +109,8 @@ export function AssetsPage() {
   // and "All assets". An active view drives the columns (its visible_fields)
   // and grouping (its group_by).
   const savedViews = useQuery({
-    queryKey: ["saved-views", activeSlug, ENTITY_KIND],
-    queryFn: () => api.listSavedViews(activeSlug, ENTITY_KIND),
+    queryKey: ["saved-views", activeSlug, entityKind],
+    queryFn: () => api.listSavedViews(activeSlug, entityKind),
     enabled: !!activeSlug,
     staleTime: 60_000,
   });
@@ -140,7 +177,7 @@ export function AssetsPage() {
       // Sequential to keep the API gentle; few-dozen-row selections
       // finish in well under a second even one-at-a-time.
       for (const id of ids) {
-        await api.deleteAsset(activeSlug, id);
+        await api.deleteAsset(activeSlug, id, instance);
       }
     },
     onSuccess: () => {
@@ -163,8 +200,7 @@ export function AssetsPage() {
     else setSelected(new Set());
   }
   const allChecked = filtered.length > 0 && filtered.every((r) => selected.has(r.id));
-  const openAsset = (aid: string) =>
-    navigate(`/assets/${aid}${searchParams.toString() ? `?${searchParams}` : ""}`);
+  const openAsset = (aid: string) => openDetail(aid);
 
   const [bulkTagOpen, setBulkTagOpen] = useState(false);
   const bulkTag = useMutation({
@@ -191,7 +227,7 @@ export function AssetsPage() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2 border-b border-line dark:border-slate-700 pb-3">
         <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
-          assets
+          {displayName ?? "assets"}
         </h1>
         {lensModule && (
           <Link
@@ -220,7 +256,7 @@ export function AssetsPage() {
           onClick={() => setNewOpen(true)}
           className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
         >
-          <Plus size={14} /> New asset
+          <Plus size={14} /> New {noun}
         </button>
       </div>
 
@@ -239,12 +275,14 @@ export function AssetsPage() {
       )}
 
       {filtered.length === 0 ? (
-        allRows.length === 0 && (assetInstances.data?.items.length ?? 0) > 0 ? (
+        // The instance-chooser is a BASE-page affordance ("pick one of your asset
+        // tables"); on an instance page we're already inside one, so never show it.
+        !instance && allRows.length === 0 && (assetInstances.data?.items.length ?? 0) > 0 ? (
           <ModuleInstanceChooser instances={assetInstances.data!.items} icon={Sprout} noun="asset" />
         ) : (
           <div className="border-2 border-dashed border-line dark:border-slate-700 rounded-xl p-12 text-center text-xs text-faint dark:text-slate-500 italic">
             {allRows.length === 0
-              ? "No assets yet. Click + New asset to add one."
+              ? `No ${noun}s yet. Click + New ${noun} to add one.`
               : activeView
                 ? `Nothing in “${activeView.name}” yet — add your first with New asset.`
                 : "No matches with the current filters."}
@@ -290,10 +328,11 @@ export function AssetsPage() {
       )}
 
       <AssetDetailModal
-        assetId={id ?? null}
-        onClose={() => navigate(`/assets${searchParams.toString() ? `?${searchParams}` : ""}`)}
+        assetId={selectedId}
+        onClose={closeDetail}
+        instance={instance}
       />
-      <NewAssetModal open={newOpen} onClose={() => setNewOpen(false)} />
+      <NewAssetModal open={newOpen} onClose={() => setNewOpen(false)} instance={instance} noun={noun} />
       <BulkActionBar
         count={selected.size}
         onClear={() => setSelected(new Set())}
@@ -570,26 +609,47 @@ function BulkTagPromptModal({
   );
 }
 
-function AssetDetailModal({ assetId, onClose }: { assetId: string | null; onClose: () => void }) {
+function AssetDetailModal({
+  assetId,
+  onClose,
+  instance,
+}: { assetId: string | null; onClose: () => void; instance?: string }) {
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
-  const fp = useFieldPresentation(ENTITY_KIND);
+  // On an instance page the item lives under /instances/<name>/items and its
+  // custom fields are keyed to the instance ("vehicles:item"), NOT the base
+  // assets:asset — reading/writing without the instance 404s (the modal then
+  // hangs on "loading…"). Thread it through every asset call + the field kind.
+  const kind = instance ? `${instance}:item` : ENTITY_KIND;
+  const fp = useFieldPresentation(kind);
   const asset = useQuery({
-    queryKey: ["asset", activeSlug, assetId],
-    queryFn: () => api.getAsset(activeSlug, assetId!),
+    queryKey: ["asset", activeSlug, instance ?? null, assetId],
+    queryFn: () => api.getAsset(activeSlug, assetId!, instance),
     enabled: !!assetId,
+    // A server error (404/403/…) is deterministic — don't retry it 3× with
+    // backoff before showing the error state; only retry transient network fails.
+    retry: (n, e) => !(e instanceof ApiError) && n < 2,
+  });
+  // Declared/custom fields for this kind — the guarded-auto VIN decode fills
+  // whichever of these are named/roled make/model/year/body/fuel (empty ones
+  // only). Shared cache with the list page's copy.
+  const fieldDefs = useQuery({
+    queryKey: ["platform-field-defs", activeSlug, kind, "effective"],
+    queryFn: () => api.listFieldDefs(activeSlug, kind, true),
+    enabled: !!assetId,
+    staleTime: 60_000,
   });
   const update = useMutation({
-    mutationFn: (patch: Partial<Asset>) => api.updateAsset(activeSlug, assetId!, patch),
+    mutationFn: (patch: Partial<Asset>) => api.updateAsset(activeSlug, assetId!, patch, instance),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["asset", activeSlug, assetId] });
+      void qc.invalidateQueries({ queryKey: ["asset", activeSlug, instance ?? null, assetId] });
       void qc.invalidateQueries({ queryKey: ["assets", activeSlug] });
     },
   });
   const remove = useMutation({
-    mutationFn: () => api.deleteAsset(activeSlug, assetId!),
+    mutationFn: () => api.deleteAsset(activeSlug, assetId!, instance),
     onSuccess: () => {
       toast.success("Asset deleted.");
       void qc.invalidateQueries({ queryKey: ["assets", activeSlug] });
@@ -611,7 +671,7 @@ function AssetDetailModal({ assetId, onClose }: { assetId: string | null; onClos
   }
 
   return (
-    <Modal open={!!assetId} onClose={onClose} title={a?.name ?? "loading…"} subtitle={a ? `${a.manufacturer ?? "—"} · ${a.state}` : undefined} size="lg">
+    <Modal open={!!assetId} onClose={onClose} title={a?.name ?? (asset.isError ? "Couldn't load" : "loading…")} subtitle={a ? `${a.manufacturer ?? "—"} · ${a.state}` : undefined} size="lg">
       {a ? (
         <div className="space-y-4">
           <div className="flex items-start gap-4">
@@ -632,11 +692,25 @@ function AssetDetailModal({ assetId, onClose }: { assetId: string | null; onClos
           <dl className="grid grid-cols-2 gap-3 text-xs">
             <EditField label={fp.label("name", "Name")} value={a.name} onCommit={(v) => update.mutate({ name: v })} />
             {!fp.hidden("short_name") && <EditField label={fp.label("short_name", "Short name")} value={a.short_name ?? ""} onCommit={(v) => update.mutate({ short_name: v || null })} />}
-            {!fp.hidden("manufacturer") && <EditField label={fp.label("manufacturer", "Manufacturer")} value={a.manufacturer ?? ""} onCommit={(v) => update.mutate({ manufacturer: v || null })} />}
-            {!fp.hidden("model") && <EditField label={fp.label("model", "Model")} value={a.model ?? ""} onCommit={(v) => update.mutate({ model: v || null })} />}
+            {/* make/model are keyed on their value so a guarded-auto VIN fill
+                (which mutates + refetches) actually re-renders these otherwise
+                uncontrolled inputs. */}
+            {!fp.hidden("manufacturer") && <EditField key={`mfr-${a.manufacturer ?? ""}`} label={fp.label("manufacturer", "Manufacturer")} value={a.manufacturer ?? ""} onCommit={(v) => update.mutate({ manufacturer: v || null })} />}
+            {!fp.hidden("model") && <EditField key={`mdl-${a.model ?? ""}`} label={fp.label("model", "Model")} value={a.model ?? ""} onCommit={(v) => update.mutate({ model: v || null })} />}
             {!fp.hidden("type") && <EditField label={fp.label("type", "Type")} value={a.type ?? ""} onCommit={(v) => update.mutate({ type: v || null })} />}
             {!fp.hidden("state") && <EditField label={fp.label("state", "State")} value={a.state} onCommit={(v) => update.mutate({ state: v })} />}
-            {!fp.hidden("serial_number") && <EditField label={fp.label("serial_number", "Serial number")} value={a.serial_number ?? ""} onCommit={(v) => update.mutate({ serial_number: v || null })} />}
+            {!fp.hidden("serial_number") &&
+              (/\bvin\b/i.test(fp.label("serial_number", "Serial number")) ? (
+                <VinDecodeField
+                  a={a}
+                  fp={fp}
+                  fieldDefs={fieldDefs.data?.items ?? []}
+                  slug={activeSlug}
+                  onPatch={(patch) => update.mutate(patch)}
+                />
+              ) : (
+                <EditField label={fp.label("serial_number", "Serial number")} value={a.serial_number ?? ""} onCommit={(v) => update.mutate({ serial_number: v || null })} />
+              ))}
             {!fp.hidden("purchased_at") && <EditField label={fp.label("purchased_at", "Purchased at")} value={a.purchased_at ?? ""} onCommit={(v) => update.mutate({ purchased_at: v || null })} type="date" />}
             {!fp.hidden("warranty_until") && <EditField label={fp.label("warranty_until", "Warranty until")} value={a.warranty_until ?? ""} onCommit={(v) => update.mutate({ warranty_until: v || null })} type="date" />}
             {!fp.hidden("last_service_at") && <EditField label={fp.label("last_service_at", "Last service")} value={a.last_service_at ?? ""} onCommit={(v) => update.mutate({ last_service_at: v || null })} type="date" />}
@@ -649,7 +723,7 @@ function AssetDetailModal({ assetId, onClose }: { assetId: string | null; onClos
             />
           </dl>
           <CustomFieldsPanel
-            entityKind={ENTITY_KIND}
+            entityKind={kind}
             entityId={a.id}
             values={a.metadata}
             onCommit={(name, value) =>
@@ -676,6 +750,23 @@ function AssetDetailModal({ assetId, onClose }: { assetId: string | null; onClos
             </button>
           </div>
         </div>
+      ) : asset.isError ? (
+        // Don't sit on "loading…" forever when the fetch fails (a 404, a stale
+        // service-worker chunk hitting the wrong route, an auth blip). Say what
+        // went wrong + offer a retry, so it's never a silent mystery.
+        <div className="space-y-2 py-2 text-sm">
+          <div className="text-ember-600 dark:text-ember-400">
+            Couldn't load this {instance ? "record" : "asset"}
+            {asset.error instanceof ApiError ? `: ${asset.error.message}` : "."}
+          </div>
+          <button
+            type="button"
+            onClick={() => void asset.refetch()}
+            className="rounded-md border border-line dark:border-slate-600 px-3 py-1.5 text-xs font-medium text-content dark:text-mortar-200 hover:border-accent transition"
+          >
+            Retry
+          </button>
+        </div>
       ) : (
         <div className="text-xs text-faint">loading…</div>
       )}
@@ -683,7 +774,12 @@ function AssetDetailModal({ assetId, onClose }: { assetId: string | null; onClos
   );
 }
 
-function NewAssetModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+function NewAssetModal({
+  open,
+  onClose,
+  instance,
+  noun = "asset",
+}: { open: boolean; onClose: () => void; instance?: string; noun?: string }) {
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
@@ -708,12 +804,14 @@ function NewAssetModal({ open, onClose }: { open: boolean; onClose: () => void }
         manufacturer: manufacturer.trim() || null,
         type: category.trim() || null,
         location_id: locationId,
-      }),
+      }, instance),
     onSuccess: (a) => {
-      toast.success("Asset added.");
+      toast.success(`${noun[0]!.toUpperCase()}${noun.slice(1)} added.`);
       void qc.invalidateQueries({ queryKey: ["assets", activeSlug] });
       onClose();
-      navigate(`/assets/${a.id}`);
+      // On an instance page stay in the instance and deep-link the new record's
+      // detail; on the base page go to /assets/:id as before.
+      navigate(instance ? `/${instance}?asset=${a.id}` : `/assets/${a.id}`);
     },
     onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't create."),
   });
@@ -790,6 +888,193 @@ function EditField({
         rows={multiline ? 3 : undefined}
         className="input"
       />
+    </label>
+  );
+}
+
+// ── Guarded-auto VIN decode ───────────────────────────────────────────────────
+// Renders the "VIN" field (the relabeled serial_number) as a controlled input
+// with guarded-auto decode: when the field holds a COMPLETE shape-valid VIN, it
+// calls the identifier-decoder endpoint and FILLS ONLY EMPTY target fields
+// (make/model/year/…), mapped BY ROLE/NAME (never by hardcoded id, so it serves
+// any table with those fields). Fills are provenance-chipped, trivially
+// undoable, and a manual "Decode" affordance stays for the on-paper case. It
+// only renders when the field is labelled "VIN" (see the caller), so forms
+// without a VIN field are untouched.
+
+type VinStatus =
+  | { kind: "idle" }
+  | { kind: "decoding" }
+  | { kind: "filled"; outcome: "hit" | "partial"; note?: string; fills: VinFill[] }
+  | { kind: "no-fill"; outcome: "hit" | "partial"; note?: string }
+  | { kind: "miss" }
+  | { kind: "unavailable" };
+
+const isBlankVal = (v: unknown): boolean => v === null || v === undefined || v === "";
+
+function VinDecodeField({
+  a,
+  fp,
+  fieldDefs,
+  slug,
+  onPatch,
+}: {
+  a: Asset;
+  fp: ReturnType<typeof useFieldPresentation>;
+  fieldDefs: PlatformFieldDef[];
+  slug: string;
+  onPatch: (patch: Partial<Asset>) => void;
+}) {
+  const [vin, setVin] = useState(a.serial_number ?? "");
+  const [status, setStatus] = useState<VinStatus>({ kind: "idle" });
+  useEffect(() => {
+    setVin(a.serial_number ?? "");
+  }, [a.serial_number]);
+
+  const decode = useMutation({ mutationFn: (code: string) => api.decodeIdentifier(slug, code) });
+
+  // Build the generic target set: native make/model + every plain declared
+  // field. planVinFill decides which decoded key lands where, by role/name.
+  function buildTargets(): VinFillTarget[] {
+    const targets: VinFillTarget[] = [
+      { id: "native:manufacturer", name: "manufacturer", label: fp.label("manufacturer", "Manufacturer"), empty: isBlankVal(a.manufacturer) },
+      { id: "native:model", name: "model", label: fp.label("model", "Model"), empty: isBlankVal(a.model) },
+    ];
+    for (const d of fieldDefs) {
+      if (d.type !== "text" && d.type !== "number") continue; // only plainly fillable fields
+      if (d.name === "serial_number") continue; // never the VIN field itself
+      targets.push({
+        id: `meta:${d.name}`,
+        name: d.name,
+        label: d.display_label,
+        empty: isBlankVal(a.metadata?.[d.name]),
+        // A bundle-declared decode role (`decode:year`) targets this field
+        // precisely; absent → planVinFill falls back to name matching.
+        role: d.decode_role ?? null,
+      });
+    }
+    return targets;
+  }
+
+  function fillsToPatch(fills: VinFill[], clear: boolean): Partial<Asset> {
+    const patch: Partial<Asset> = {};
+    let meta: Record<string, unknown> | null = null;
+    for (const f of fills) {
+      if (f.target.id === "native:manufacturer") patch.manufacturer = clear ? null : String(f.value);
+      else if (f.target.id === "native:model") patch.model = clear ? null : String(f.value);
+      else if (f.target.id.startsWith("meta:")) {
+        meta = meta ?? { ...(a.metadata ?? {}) };
+        meta[f.target.name] = clear ? "" : f.value;
+      }
+    }
+    if (meta) patch.metadata = meta;
+    return patch;
+  }
+
+  async function runDecode(code: string) {
+    setStatus({ kind: "decoding" });
+    try {
+      const res = await decode.mutateAsync(code);
+      if (res.outcome === "hit" || res.outcome === "partial") {
+        const plan = planVinFill(res.fields, buildTargets());
+        if (plan.length > 0) {
+          onPatch(fillsToPatch(plan, false));
+          setStatus({ kind: "filled", outcome: res.outcome, note: res.note, fills: plan });
+        } else {
+          setStatus({ kind: "no-fill", outcome: res.outcome, note: res.note });
+        }
+      } else if (res.outcome === "miss") {
+        setStatus({ kind: "miss" });
+      } else {
+        setStatus({ kind: "unavailable" });
+      }
+    } catch {
+      setStatus({ kind: "unavailable" });
+    }
+  }
+
+  function commit() {
+    const v = vin.trim().toUpperCase();
+    if (v !== (a.serial_number ?? "")) onPatch({ serial_number: v || null });
+    // Guarded-auto: fire ONLY on a complete shape-valid VIN. onBlur is the debounce.
+    if (isShapeValidVin(v)) void runDecode(v);
+  }
+
+  function undo() {
+    if (status.kind !== "filled") return;
+    onPatch(fillsToPatch(status.fills, true));
+    setStatus({ kind: "idle" });
+  }
+
+  const shapeValid = isShapeValidVin(vin);
+  const decoding = status.kind === "decoding";
+
+  return (
+    <label className="block col-span-2">
+      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+        {fp.label("serial_number", "VIN")}
+      </span>
+      <div className="flex items-center gap-2">
+        <input
+          value={vin}
+          onChange={(e) => setVin(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          }}
+          spellCheck={false}
+          autoCapitalize="characters"
+          className="input flex-1 font-mono tracking-wide"
+          placeholder="17-character VIN"
+        />
+        <button
+          type="button"
+          disabled={!shapeValid || decoding}
+          onClick={() => void runDecode(vin.trim().toUpperCase())}
+          title={shapeValid ? "Decode this VIN" : "Enter a complete 17-character VIN"}
+          className="shrink-0 inline-flex items-center gap-1 px-2 py-1.5 rounded text-xs font-medium bg-subtle dark:bg-slate-800 hover:bg-line dark:hover:bg-slate-700 disabled:opacity-40 transition"
+        >
+          {decoding ? <Loader2 size={12} className="animate-spin" /> : <Wand2 size={12} />}
+          {decoding ? "Decoding…" : "Decode"}
+        </button>
+      </div>
+
+      {status.kind === "filled" && (
+        <div className="mt-2 rounded-md border border-cobble-300/60 dark:border-cobble-800 bg-cobble-50/60 dark:bg-cobble-950/40 px-2.5 py-2 text-xs">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-content dark:text-slate-300">
+              Filled from VIN — double-check{status.outcome === "partial" ? " (partial match)" : ""}.
+            </span>
+            <button type="button" onClick={undo} className="inline-flex items-center gap-1 text-faint hover:text-ember-500 transition">
+              <Undo2 size={11} /> undo
+            </button>
+          </div>
+          <div className="mt-1.5 flex flex-wrap gap-1">
+            {status.fills.map((f) => (
+              <span
+                key={f.target.id}
+                className="inline-flex items-center gap-1 rounded-full bg-cobble-100 dark:bg-cobble-900/60 text-cobble-800 dark:text-cobble-200 px-2 py-0.5 text-[10px] font-medium"
+              >
+                {f.target.label}: {String(f.value)}
+              </span>
+            ))}
+          </div>
+          {status.note && <div className="mt-1 text-[10px] text-faint">{status.note}</div>}
+        </div>
+      )}
+      {status.kind === "no-fill" && (
+        <div className="mt-2 text-[11px] text-faint">
+          Decoded, but every matching field is already filled. {status.note ?? ""}
+        </div>
+      )}
+      {status.kind === "miss" && (
+        <div className="mt-2 text-[11px] text-faint">Couldn&apos;t decode that VIN — check for typos.</div>
+      )}
+      {status.kind === "unavailable" && (
+        <div className="mt-2 text-[11px] text-amber-600 dark:text-amber-400">
+          VIN service unavailable — try again in a moment.
+        </div>
+      )}
     </label>
   );
 }

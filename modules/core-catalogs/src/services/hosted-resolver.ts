@@ -8,9 +8,8 @@
 // (Env name mirrors COBBLR_BARCODE_RESOLVER_URL — the box .env sets it, the
 // compose passes it 1:1 to the api container.)
 //
-// All outbound calls go through platform().egress.guardedFetch (SSRF policy).
-
-import { platform } from "@cobblr/platform-contract";
+// Outbound calls use plain fetch (NOT the tenant SSRF guard): BASE is an
+// operator-set env, trusted infrastructure — same as the barcode resolver.
 
 const BASE = (process.env.COBBLR_CATALOG_RESOLVER_URL ?? "").replace(/\/+$/, "");
 const TOKEN = process.env.COBBLR_CATALOG_RESOLVER_TOKEN ?? "";
@@ -33,13 +32,21 @@ interface DatasetManifest {
 let datasetsCache: { at: number; data: DatasetManifest[] } | null = null;
 const DATASETS_TTL_MS = 5 * 60 * 1000;
 
-async function call<T>(orgId: string, path: string): Promise<T | null> {
+async function call<T>(_orgId: string, path: string): Promise<T | null> {
   if (!catalogResolverConfigured()) return null;
   const url = `${BASE}${path}`;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), DEADLINE_MS);
   try {
-    const res = await platform().egress.guardedFetch(orgId, url, {
+    // Plain fetch, NOT platform().egress.guardedFetch — same as the barcode
+    // resolver (core-scan/barcode-lookup.ts). BASE is an OPERATOR-configured env
+    // (COBBLR_CATALOG_RESOLVER_URL), not a tenant-controlled URL, so there's no
+    // SSRF surface to guard. On the hosted deployment the guard runs the strict
+    // policy and blocks the resolver's private/CGNAT (Tailscale 100.64/10) IP —
+    // which silently broke ALL hosted-catalog calls on cobblr.me (empty results
+    // → every catalog reported browsable:false). The guard is for tenant/user
+    // URLs (webhooks, edge devices, sync), not trusted internal infrastructure.
+    const res = await fetch(url, {
       headers: TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {},
       signal: ctrl.signal,
     });

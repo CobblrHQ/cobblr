@@ -1,0 +1,17 @@
+{
+  "_note": "Synthetic partial-shape response. Real vPIC fills Make/Model aggressively from WMI+VDS even for questionable VINs, so a captured 'partial' with a non-0/1 error code is hard to reproduce on demand. This exercises the classifier's `partial` branch: core data (Make/Model/Year) present, but the ErrorCode leads with something other than 0 or 1 (here 6 = incomplete/unable to add more decode detail). Shape mirrors DecodeVinValues Results[0].",
+  "Results": [
+    {
+      "ErrorCode": "6",
+      "ErrorText": "6 - Incomplete VIN; Unable to provide complete decoding. Decoded data may not be accurate.",
+      "ModelYear": "2019",
+      "Make": "TESLA",
+      "Model": "Model 3",
+      "Trim": "",
+      "Series": "",
+      "BodyClass": "Sedan/Saloon",
+      "FuelTypePrimary": "Electric",
+      "VehicleType": "PASSENGER CAR"
+    }
+  ]
+}

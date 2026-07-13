@@ -49,11 +49,135 @@ const EntityField = z.object({
   // via platform.entities.lookupMany.
   type: z.enum(["text", "number", "boolean", "date", "image-path", "url", "object"]),
   role: EntityFieldRole.optional(),
+  // The SEMANTIC decode role (P3 of the identifier-decoder registry) — distinct
+  // from the PRESENTATION `role` above. Marks a field as either HOLDING a
+  // decodable identifier (`identifier:<decoderId>`, e.g. `identifier:vin`) or as
+  // a decode TARGET filled from a decoder's flat output key (`decode:<key>`,
+  // e.g. `decode:make`). Optional + generic: a decoder targets fields by this
+  // declared role instead of matching English names, so ISBN/HIN/appliance
+  // decoders drop in later without per-kind code. See parseDecodeRole below and
+  // docs/design-decisions/vin-decode.md §9.
+  decodeRole: z.string().max(80).optional(),
   required: z.boolean().optional(),
   description: z.string().optional(),
 });
 
 export const EntityKindIdRegex = /^[a-z][a-z0-9_-]*:[a-z][a-z0-9_-]*$/;
+
+// ─────────────── Decode field-role vocabulary (P3) ────────────────
+//
+// The generalization seam of the identifier-decoder registry (VIN is its only
+// current consumer). A decoder emits a flat bag of SEMANTIC keys (a VIN decode →
+// { year, make, model, body, fuel_type, trim }); a bundle DECLARES which field
+// holds the identifier and which fields receive each decoded key, by ROLE — so
+// the fill no longer depends on a field being named "Make" in English. Two
+// shapes, both carried in a single `decode_role` string:
+//
+//   identifier:<decoderId>   — this field HOLDS a decodable code (identifier:vin)
+//   decode:<key>             — fill this field from the decoder's <key> (decode:make)
+//
+// Minimal + decoder-agnostic: <key> is the decoder's own output vocabulary, so a
+// future ISBN decoder emitting `author` fills a `decode:author` field with zero
+// new platform code. Presentation roles (title/subtitle/…) are untouched.
+
+export type DecodeRole =
+  | { kind: "identifier"; decoderId: string }
+  | { kind: "target"; key: string };
+
+/** Parse a `decode_role` string into its structured form, or null when the
+ *  string is absent/blank/malformed. Pure; safe on any input. */
+export function parseDecodeRole(raw: string | null | undefined): DecodeRole | null {
+  if (typeof raw !== "string") return null;
+  const s = raw.trim();
+  if (!s) return null;
+  const id = s.match(/^identifier:([a-z][a-z0-9_-]*)$/i);
+  if (id) return { kind: "identifier", decoderId: id[1]!.toLowerCase() };
+  const tgt = s.match(/^decode:([a-z][a-z0-9_-]*)$/i);
+  if (tgt) return { kind: "target", key: tgt[1]!.toLowerCase() };
+  return null;
+}
+
+/** A fillable field, described generically for the decode-fill planner. */
+export interface DecodeFillTarget {
+  /** Opaque id the caller uses to apply the fill; never interpreted here. */
+  id: string;
+  /** Programmatic field name (native column or metadata key). */
+  name: string;
+  /** Display label (may be relabeled, e.g. "Make", "VIN"). */
+  label: string;
+  /** Is the field currently empty? Only empty targets are ever filled. */
+  empty: boolean;
+  /** The field's declared `decode_role` string, when it has one. Preferred over
+   *  name/label matching. */
+  role?: string | null;
+}
+
+export interface DecodeFill {
+  target: DecodeFillTarget;
+  /** The decoder's semantic key this fill came from (year/make/model/…). */
+  decodedKey: string;
+  value: string | number;
+}
+
+/** Fallback name/label matchers (the P1 behaviour) — used only when no field
+ *  declares the matching `decode:<key>` role. Order is the order decoded keys
+ *  are consumed. Kept deliberately small + generic; a bundle that wants
+ *  precision declares roles instead of relying on these. */
+const DECODE_NAME_MATCHERS: ReadonlyArray<{
+  key: string;
+  match: (t: DecodeFillTarget) => boolean;
+}> = [
+  { key: "make", match: (t) => /^(make|manufacturer)$/i.test(t.name) || /^(make|manufacturer)$/i.test(t.label) },
+  { key: "model", match: (t) => /^model$/i.test(t.name) || /^model$/i.test(t.label) },
+  { key: "year", match: (t) => /^(model[_ ]?)?year$/i.test(t.name) || /^(model )?year$/i.test(t.label) },
+  { key: "body", match: (t) => /^body([_ ]?class)?$/i.test(t.name) || /^body( class)?$/i.test(t.label) },
+  { key: "fuel_type", match: (t) => /^fuel([_ ]?type)?$/i.test(t.name) || /fuel/i.test(t.label) },
+  { key: "trim", match: (t) => /^trim$/i.test(t.name) || /^trim$/i.test(t.label) },
+];
+
+/**
+ * Decide which fields a decode result fills. Generic across decoders. For each
+ * decoded key it PREFERS a field whose `decode_role` is `decode:<key>` (P3),
+ * then falls back to name/label matching (P1). Guarantees:
+ *   - EMPTY ONLY: a non-empty target is never chosen (no clobbering typed input).
+ *   - ONE-TO-ONE: each target is filled by at most one decoded key.
+ *   - SKIP ABSENT: a decoded key with no matching empty target is dropped.
+ * Pure; unit-tested. Shared by the server scan-fill and the client form.
+ */
+export function planDecodeFill(
+  decoded: Record<string, string | number>,
+  targets: DecodeFillTarget[],
+): DecodeFill[] {
+  const fills: DecodeFill[] = [];
+  const claimed = new Set<string>();
+  const roleOf = (t: DecodeFillTarget): DecodeRole | null => parseDecodeRole(t.role);
+  for (const [key, value] of Object.entries(decoded)) {
+    if (value === "" || value === null || value === undefined) continue;
+    // P3: a field explicitly declaring `decode:<key>` wins outright.
+    let target = targets.find((t) => {
+      if (!t.empty || claimed.has(t.id)) return false;
+      const r = roleOf(t);
+      return r?.kind === "target" && r.key === key;
+    });
+    // P1 fallback: name/label match, but never steal a field that another key's
+    // ROLE has reserved (a role declaration is authoritative).
+    if (!target) {
+      const matcher = DECODE_NAME_MATCHERS.find((m) => m.key === key);
+      if (matcher) {
+        target = targets.find((t) => {
+          if (!t.empty || claimed.has(t.id)) return false;
+          const r = roleOf(t);
+          if (r?.kind === "target" && r.key !== key) return false; // reserved by another role
+          return matcher.match(t);
+        });
+      }
+    }
+    if (!target) continue;
+    claimed.add(target.id);
+    fills.push({ target, decodedKey: key, value });
+  }
+  return fills;
+}
 
 // ─────────────────── Trait vocabulary (6 axes) ────────────────────
 //
@@ -68,6 +192,53 @@ export const Containment = z.enum(["container", "containable"]);
 export const TimeAxis = z.enum(["schedulable", "timeless"]);
 export const Lifecycle = z.enum(["completable", "indefinite"]);
 export const Persistence = z.enum(["durable", "ephemeral"]);
+
+/** Built-in renderer ids for a catalog's declarative field presentation. The
+ *  platform owns the renderer library; bundles/catalogs only pick one per
+ *  field. See web/src/components/CatalogFieldValue.tsx. */
+export const CatalogFieldRenderer = z.enum([
+  "text",
+  "color-hex",
+  "image-url",
+  "url-link",
+  "year",
+  "boolean",
+  "code",
+]);
+
+/** The declarative config on an imported catalog (core-catalogs). The **single
+ *  source of truth**, referenced by BOTH the module's write-time validator
+ *  (`SchemaConfig`) AND the bundle installer (`CatalogEntry.schema`). Those two
+ *  used to be hand-kept copies that drifted — each silently stripped keys the
+ *  other had (`field_map`, `exclude_from_global_search`), breaking features on
+ *  install. Add a catalog-schema key HERE, once, and both paths get it. Strict
+ *  on purpose: an unrecognised key is a bug, not something to wave through. */
+export const CatalogSchemaConfig = z.object({
+  id_column: z.string().optional(),
+  title_column: z.string().optional(),
+  image_column: z.string().optional(),
+  subtitle_column: z.string().optional(),
+  description_column: z.string().optional(),
+  /** Per-field renderer overrides, keyed by payload field name. */
+  field_renderers: z.record(CatalogFieldRenderer).optional(),
+  /** Per-field display-label overrides (`{ num_parts: "Pieces" }`). */
+  field_labels: z.record(z.string()).optional(),
+  /** Catalog-match prefill + preferred-catalog derivation:
+   *  `{ catalogPayloadKey: instanceFieldName }`. */
+  field_map: z.record(z.string()).optional(),
+  /** Replace the card image slot with a renderer over `payload[hero_field]`
+   *  (e.g. a colour swatch from `rgb`). */
+  hero_field: z.string().optional(),
+  hero_renderer: CatalogFieldRenderer.optional(),
+  /** Keep a huge / non-matchable catalog (a set BOM) out of cross-catalog
+   *  search + the quick-add typeahead. */
+  exclude_from_global_search: z.boolean().optional(),
+  /** Entity kinds this catalog is meaningful to match against (omit = all). */
+  bindable_to_kinds: z.array(z.string()).optional(),
+  /** Stable `<vendor>.<kind>` id so other modules find "the canonical sets
+   *  catalog" without coupling to a bundle id. */
+  semantic_type: z.string().regex(/^[a-z0-9][a-z0-9.-]*$/).optional(),
+});
 
 /** Reverse map from a trait name to the axis it lives on. Used by
  *  the action matcher to compute the per-axis-OR / cross-axis-AND

@@ -2790,7 +2790,7 @@ function InboxCard({
    *  discard; the accordion owns collapse. */
   planContext?: boolean;
 }) {
-  const { activeSlug } = useActiveOrg();
+  const { activeSlug, activeOrg } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
 
@@ -2977,10 +2977,32 @@ function InboxCard({
   // One-tap confirm from the collapsed row — commit into the AI's top candidate
   // without opening the accordion (mirrors the form's confirm path). Ready only
   // when we have a routed candidate + a name (same guard as bulk-confirm).
-  const quickConfirmReady = !!topCand && !!item.suggested_name;
+  // The top match can be a bundle this workspace hasn't installed (a scanned VIN
+  // → "Vehicles"). Surface the install right on the CLOSED card — most people
+  // won't open the accordion. Owner/admin only (install changes composition).
+  const canInstallBundle = activeOrg?.role === "owner" || activeOrg?.role === "admin";
+  const topBundle = canInstallBundle && topCand?.bundle_external_id ? topCand : null;
+  // Ready to one-tap confirm from the collapsed card. A not-installed-bundle top
+  // match is only "ready" when the user can install it (else the green check
+  // would try to file into a table that doesn't exist).
+  const quickConfirmReady =
+    !!topCand && !!item.suggested_name && (!topCand.bundle_external_id || !!topBundle);
   const quickConfirm = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       if (!topCand || !item.suggested_name) throw new Error("not ready to confirm");
+      // Install the bundle first (no item_ids = install-only) so its table
+      // exists, then file into it — the same install-then-add the form's Confirm
+      // runs, but with the scan's values as-is (open the card to edit them).
+      if (topCand.bundle_external_id) {
+        await api.materializeQuickstart(activeSlug, topCand.bundle_external_id, { item_ids: [] });
+      }
+      const meta = (item.suggested_metadata as Record<string, unknown> | null) ?? {};
+      const serial = String((meta as { serial_number?: unknown }).serial_number ?? "");
+      const extras = {
+        ...(item.suggested_manufacturer ? { manufacturer: item.suggested_manufacturer } : {}),
+        ...(serial ? { serial_number: serial } : {}),
+        ...(topCand.fields && Object.keys(topCand.fields).length ? { metadata: topCand.fields } : {}),
+      };
       return api.confirmScanItem(activeSlug, item.id, {
         target_module: topCand.module,
         target_kind: baseKind(topCand.module),
@@ -2988,13 +3010,21 @@ function InboxCard({
         name: item.suggested_name,
         quantity: item.quantity ?? topCand.quantity ?? undefined,
         location_id: item.target_location_id ?? undefined,
-        extras:
-          topCand.fields && Object.keys(topCand.fields).length ? { metadata: topCand.fields } : undefined,
+        extras: Object.keys(extras).length ? extras : undefined,
       });
     },
     onSuccess: () => {
-      toast.success(`Added ${item.suggested_name}`);
+      toast.success(
+        topCand?.bundle_external_id
+          ? `Installed ${topCand.label} — added ${item.suggested_name}`
+          : `Added ${item.suggested_name}`,
+      );
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      if (topCand?.bundle_external_id) {
+        void qc.invalidateQueries({ queryKey: ["scan-menu", activeSlug] });
+        void qc.invalidateQueries({ queryKey: ["org-modules", activeSlug] });
+        void qc.invalidateQueries({ queryKey: ["instances", activeSlug] });
+      }
     },
     onError: (e) => toast.error((e as Error).message),
   });
@@ -3204,7 +3234,14 @@ function InboxCard({
               src={thumb}
               alt={item.suggested_name ?? item.barcode_text ?? ""}
               className="w-full h-full object-contain"
-              loading="lazy"
+              // NOT lazy: an EXTERNAL catalog URL (a user-picked web/dealer photo)
+              // with loading="lazy" stayed unloaded on the closed card — the
+              // intersection observer saw the card at 0-height on first render and
+              // never re-checked, so it looked broken until opening the accordion
+              // forced a reflow. Internal thumbs are blob URLs (load instantly),
+              // so only external ones showed the bug. Eager-load the small thumb.
+              // The expanded views aren't lazy either; this matches them.
+              onError={() => markBroken(catalogImg ? catalogUrl : yoursRawUrl)}
             />
           ) : (
             <ScanLine size={26} className="text-faint dark:text-slate-600" />
@@ -3520,6 +3557,30 @@ function InboxCard({
           )}
           {candidates.length === 0 && serverMatching && (
             <div className="text-[11px] text-faint italic mt-1">finding the best table…</div>
+          )}
+          {/* Install CTA on the CLOSED card — the top match is a bundle you don't
+              have (a scanned VIN → Vehicles), and most people won't open the
+              accordion. One tap installs its table + files this in (scan values
+              as-is); "edit fields first" opens the form to adjust. */}
+          {topBundle && (
+            <div className="mt-2 flex flex-wrap items-center gap-2" onClick={(e) => e.stopPropagation()}>
+              <button
+                type="button"
+                onClick={() => quickConfirm.mutate()}
+                disabled={quickConfirm.isPending}
+                className="inline-flex items-center gap-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-xs font-semibold transition disabled:opacity-50"
+              >
+                <Download size={13} />
+                {quickConfirm.isPending ? `Installing ${topBundle.label}…` : `Install ${topBundle.label} & add`}
+              </button>
+              <button
+                type="button"
+                onClick={() => openForm(topCand ?? undefined)}
+                className="text-[11px] text-muted hover:text-accent underline"
+              >
+                edit fields first
+              </button>
+            </div>
           )}
         </div>
         {/* Stack the actions VERTICALLY (mobile + desktop) so the title gets the
@@ -4569,9 +4630,13 @@ function ConfirmForm({
   onDone: () => void;
   onCancel: () => void;
 }) {
-  const { activeSlug } = useActiveOrg();
+  const { activeSlug, activeOrg } = useActiveOrg();
   const { user } = useAuth();
   const isAdmin = !!user?.is_platform_admin;
+  // Installing a bundle changes workspace composition → owner/admin only (the
+  // materialize endpoint enforces this). Gate the install-and-add card on it so
+  // an editor doesn't hit a 403 dead-end; they still get the normal picker.
+  const canInstallBundle = activeOrg?.role === "owner" || activeOrg?.role === "admin";
   const qc = useQueryClient();
   const toast = useToast();
   // Platform-admin only: capture this corrected commit as a matchmaker eval case.
@@ -4586,17 +4651,48 @@ function ConfirmForm({
   // flashing "Inventory part" (and filing there if the user confirms before the
   // fetch lands). Once the real menu resolves it already carries the instance —
   // with field defs — and the placeholder is dropped as a duplicate.
-  const entries = withRoutedInstances(
+  const baseEntries = withRoutedInstances(
     menu && menu.length > 0 ? menu : FALLBACK_MENU,
     candidates,
   );
-  // Initial pick: the routed entry if it resolves; else a GENERIC default table
-  // (never an arbitrary named instance). Pure + unit-tested in scanDestination.ts.
-  const hintedKey = pickDestinationKey({
-    initialKey,
-    entries,
-    entityType: (item.suggested_metadata as { entity_type?: string } | null)?.entity_type ?? null,
+  // A not-installed flagship bundle can BE the best match (a scanned VIN →
+  // "Vehicles"). Rather than dropping to Inventory with read-only chips, make it
+  // a FIRST-CLASS editable destination that leads the picker and is the default:
+  // fetch its field DEFS from the bundle menu and offer "Vehicles (installs on
+  // confirm)"; the install happens as part of Confirm (nothing is created until
+  // then). Owner/admin only — installing changes workspace composition.
+  const topBundleCand = canInstallBundle && candidates[0]?.bundle_external_id ? candidates[0] : null;
+  const bundleMenuQ = useQuery({
+    queryKey: ["scan-bundle-menu", activeSlug],
+    queryFn: () => api.scanBundleMenu(activeSlug),
+    enabled: !!activeSlug && !!topBundleCand,
+    staleTime: 5 * 60_000,
   });
+  const willInstallEntry: (ScanMenuEntry & { bundle_external_id?: string }) | null =
+    topBundleCand?.bundle_external_id
+      ? (bundleMenuQ.data?.items ?? []).find(
+          (m) =>
+            m.bundle_external_id === topBundleCand.bundle_external_id &&
+            m.module === topBundleCand.module &&
+            (m.instance ?? null) === (topBundleCand.instance ?? null),
+        ) ?? null
+      : null;
+  const willInstallKey = willInstallEntry ? entryKey(willInstallEntry.module, willInstallEntry.instance) : null;
+  // The will-install destination leads the picker; dedupe against the base menu.
+  const entries =
+    willInstallEntry && !baseEntries.some((m) => entryKey(m.module, m.instance) === willInstallKey)
+      ? [willInstallEntry, ...baseEntries]
+      : baseEntries;
+  // Initial pick: the will-install bundle when it's the top match, else the
+  // routed entry, else a GENERIC default table (never an arbitrary named
+  // instance). pickDestinationKey is pure + unit-tested in scanDestination.ts.
+  const hintedKey =
+    willInstallKey ??
+    pickDestinationKey({
+      initialKey,
+      entries,
+      entityType: (item.suggested_metadata as { entity_type?: string } | null)?.entity_type ?? null,
+    });
   const [selKey, setSelKey] = useState<string>(hintedKey);
   // `withRoutedInstances` keeps `hintedKey` correct for a routed LIVE instance
   // even mid-load, so this adopt-on-change mainly covers the OTHER direction: a
@@ -4705,8 +4801,13 @@ function ConfirmForm({
     if (hit) setLocationId(hit.id);
   }, [locs.data, item.scan_area, locationId, locTouched]);
 
+  // The selected destination is a not-installed bundle when the entry carries a
+  // `bundle_external_id` (the will-install "Vehicles" entry). Confirm installs it
+  // first, then files into it — so nothing is created until the user confirms.
+  const willInstall = (entry as { bundle_external_id?: string }).bundle_external_id ?? null;
+
   const confirmMut = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       // `extras.metadata` (the table's fields the user filled — colorway,
       // fibre, …) is deep-merged server-side (keeps the scan's barcode/sku);
       // manufacturer overrides the lookup's.
@@ -4720,6 +4821,12 @@ function ConfirmForm({
         ...(serial.trim() ? { serial_number: serial.trim() } : {}),
         ...(Object.keys(cleanMeta).length ? { metadata: cleanMeta } : {}),
       };
+      // A will-install destination is created FIRST (materialize with no item_ids
+      // installs the bundle + its table, committing nothing), then we file THIS
+      // item into it with the EDITED values — same commit path as any table.
+      if (willInstall) {
+        await api.materializeQuickstart(activeSlug, willInstall, { item_ids: [] });
+      }
       return api.confirmScanItem(activeSlug, item.id, {
         target_module: entry.module,
         target_kind: baseKind(entry.module),
@@ -4744,13 +4851,20 @@ function ConfirmForm({
       // commit. Use a plain <a> with the basename-absolute href instead.
       toast.success(
         <span>
-          Created — open{" "}
+          {willInstall ? `Installed ${entry.label} — added ` : "Created — open "}
           <a href={`/w/${activeSlug}${dest}`} className="underline">
             {r.item.suggested_name ?? "the new entity"}
           </a>
         </span> as never,
       );
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      // A will-install commit just added a module/instance/table — refresh nav +
+      // menus so everything reflects the new install.
+      if (willInstall) {
+        void qc.invalidateQueries({ queryKey: ["scan-menu", activeSlug] });
+        void qc.invalidateQueries({ queryKey: ["org-modules", activeSlug] });
+        void qc.invalidateQueries({ queryKey: ["instances", activeSlug] });
+      }
       onDone();
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
@@ -4772,6 +4886,20 @@ function ConfirmForm({
       }}
       className="space-y-3"
     >
+      {/* The selected destination is a bundle this workspace doesn't have yet
+          (a scanned VIN → "Vehicles"). It's the DEFAULT + leads the picker, its
+          fields render editable + pre-filled below, and Confirm creates its table
+          first. A slim note makes that clear; picking another table opts out. */}
+      {willInstall && (
+        <div className="flex items-start gap-2 rounded-lg border border-accent/50 bg-accent/[0.06] dark:bg-accent/10 p-3 text-xs text-muted dark:text-slate-400">
+          <Sparkles size={14} className="text-accent shrink-0 mt-0.5" />
+          <span>
+            You don't have <span className="font-semibold text-content dark:text-mortar-100">{entry.label}</span> yet —{" "}
+            <strong>Confirm</strong> installs it (its own table + nav entry) and files this in, with the fields below. Want to
+            track it another way? Pick a different table in <em>Add to</em>.
+          </span>
+        </div>
+      )}
       <label className="block">
         <div className={labelCls}>Add to</div>
         <select
@@ -4790,12 +4918,16 @@ function ConfirmForm({
           }}
           className={inputCls}
         >
-          {entries.map((m) => (
-            <option key={entryKey(m.module, m.instance)} value={entryKey(m.module, m.instance)}>
-              {m.label}
-              {m.instance ? "" : ` (${m.noun})`}
-            </option>
-          ))}
+          {entries.map((m) => {
+            const wi = (m as { bundle_external_id?: string }).bundle_external_id;
+            return (
+              <option key={entryKey(m.module, m.instance)} value={entryKey(m.module, m.instance)}>
+                {m.label}
+                {m.instance ? "" : ` (${m.noun})`}
+                {wi ? " · installs on confirm" : ""}
+              </option>
+            );
+          })}
         </select>
       </label>
       {parentConfig && (
@@ -4966,8 +5098,14 @@ function ConfirmForm({
           disabled={confirmMut.isPending || (!name.trim() && !item.suggested_name)}
           className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 text-white disabled:opacity-50 inline-flex items-center gap-1"
         >
-          <CheckCircle size={14} />
-          {confirmMut.isPending ? "Creating…" : "Confirm"}
+          {willInstall ? <Download size={14} /> : <CheckCircle size={14} />}
+          {confirmMut.isPending
+            ? willInstall
+              ? `Installing ${entry.label}…`
+              : "Creating…"
+            : willInstall
+              ? `Install ${entry.label} & add`
+              : "Confirm"}
         </button>
       </div>
     </form>

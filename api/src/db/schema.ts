@@ -704,6 +704,11 @@ export interface ModuleFieldDefsTable {
    *  VALUE (a target id) lives in the entity's metadata; the read layer resolves
    *  it to the target's title and injects `<name>_label`. */
   ref_kind: string | null;
+  /** Semantic DECODE role (P3 of the identifier-decoder registry). Either
+   *  `identifier:<decoderId>` (this field holds a decodable code) or
+   *  `decode:<key>` (fill from the decoder's <key> output). Null for ordinary
+   *  fields. See packages/platform-contract parseDecodeRole. */
+  decode_role: string | null;
   created_at: Generated<Date>;
 }
 
@@ -748,6 +753,11 @@ export interface NativeFieldOverridesTable {
  *  `choices` is the first key (user-customized dropdown options). */
 export interface FieldOverrideBlob {
   choices?: string[];
+  /** Semantic DECODE role (P3) for a NATIVE field — the override-layer twin of
+   *  module_field_defs.decode_role. `identifier:<decoderId>` or `decode:<key>`.
+   *  Lets the vehicle bundle mark the native serial_number/manufacturer/model
+   *  fields as the VIN identifier + make/model targets without a schema change. */
+  decode_role?: string;
 }
 
 /** One iCal feed token per workspace, in meta so the unauthenticated

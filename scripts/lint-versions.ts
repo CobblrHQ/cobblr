@@ -66,7 +66,13 @@ function ver(j: unknown): string | undefined {
   const o = j as { manifest?: { version?: string }; version?: string };
   return o?.manifest?.version ?? o?.version;
 }
-for (const f of changed.filter((f) => /^bundles\/[^/]+\.json$/.test(f))) {
+// Only real bundle MANIFESTS — not the generated content-lock, which carries
+// per-bundle versions under bundle-id keys (no top-level manifest version), so
+// it would always read as "version undefined, content changed" and false-trip.
+// It's a derived artifact; a manifest bump is what the lock records, not a thing
+// that itself needs bumping.
+const BUNDLE_LOCK = "bundles/bundle-versions.lock.json";
+for (const f of changed.filter((f) => /^bundles\/[^/]+\.json$/.test(f) && f !== BUNDLE_LOCK)) {
   const oldRaw = tryGit(`show ${base}:${f}`);
   if (!oldRaw || !existsSync(f)) continue; // newly added / deleted — fine
   let oldJson: unknown, newJson: unknown;

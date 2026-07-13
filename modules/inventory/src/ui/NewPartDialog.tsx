@@ -7,7 +7,7 @@
 // `matches → core-catalogs:entry` pairing is written after create so
 // the rest of the app can hydrate matched-entry data into the row.
 
-import { useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -69,6 +69,20 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
   const navigate = useNavigate();
   const cats = useQuery({ queryKey: ["inventory-categories"], queryFn: () => api.listCategories() });
   const locs = useQuery({ queryKey: ["inventory-locations"], queryFn: () => api.listLocations() });
+  // Does any installed catalog bind to inventory:part? If so, show the
+  // quick-match typeahead even on a skinned instance (Lego Sets is the point —
+  // the instance IS the catalog-backed thing). Instances in a workspace with no
+  // such catalog (a lone Yarn stash) still get the clean, matchless form.
+  const catalogsQ = useQuery({
+    queryKey: ["catalogs-bound-inventory-part", orgSlug],
+    queryFn: () => api.listCatalogs(),
+    staleTime: 60_000,
+  });
+  const hasBoundCatalog = (catalogsQ.data?.items ?? []).some((c) => {
+    const b = c.schema?.bindable_to_kinds;
+    // Omitted → binds to everything; array → must include the kind.
+    return b == null || (Array.isArray(b) && b.includes("inventory:part"));
+  });
   // The instance's custom fields (yarn: colour, fibre, weight, …) — promoted
   // INTO the create form so the user fills them at creation, not after.
   const fieldDefs = useQuery({
@@ -81,6 +95,22 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
     // Neither has anything to set at creation — no input.
     .filter((d) => d.type !== "computed" && !d.server_managed)
     .sort((a, b) => a.position - b.position);
+  // The instance's PREFERRED catalog: the one whose field_map fills the most of
+  // this instance's own fields (Lego Sets fields ← the Rebrickable sets
+  // catalog). Floats that catalog's hits to the top of the quick-match so a Sets
+  // form leads with sets, not minifigs. Derived — no per-instance config to
+  // seed; the binding IS the field_map the instance's fields already declare.
+  const preferredCatalogId = useMemo(() => {
+    const fieldNames = new Set(customFields.map((f) => f.name));
+    if (fieldNames.size === 0) return undefined;
+    let best: { id: string; score: number } | undefined;
+    for (const c of catalogsQ.data?.items ?? []) {
+      const targets = Object.values(c.schema?.field_map ?? {});
+      const score = targets.filter((t) => fieldNames.has(t)).length;
+      if (score > 0 && (!best || score > best.score)) best = { id: c.id, score };
+    }
+    return best?.id;
+  }, [catalogsQ.data, customFields]);
 
   const [matched, setMatched] = useState<CatalogTypeaheadHit | null>(null);
   const [name, setName] = useState(seed?.name ?? "");
@@ -117,6 +147,23 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
     setMatched(hit);
     if (!hit) return;
     if (!name.trim()) setName(hit.title);
+    // Prefill the instance's fields the catalog declares a mapping for (Lego
+    // Sets → set_number / theme / year / piece_count). Blanks only — never
+    // clobber something the user already typed. The map lives on the catalog
+    // (schema.field_map: { catalogPayloadKey: instanceFieldName }).
+    const map = hit.field_map;
+    if (map) {
+      const payload = hit.payload as Record<string, unknown>;
+      setMeta((m) => {
+        const next = { ...m };
+        for (const [catKey, fieldName] of Object.entries(map)) {
+          const v = payload[catKey];
+          const cur = next[fieldName];
+          if (v != null && v !== "" && (cur == null || cur === "")) next[fieldName] = v;
+        }
+        return next;
+      });
+    }
   }
 
   async function queueQrLabel(partId: string, displayName: string) {
@@ -214,16 +261,18 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
   }
 
   return (
-    <Modal open onClose={() => onClose(false)} title={`new ${itemNoun.toLowerCase()}`} size="sm" dismissOnBackdrop={false}>
+    <Modal open onClose={() => onClose(false)} title={`new ${itemNoun.toLowerCase()}`} size="lg" dismissOnBackdrop={false}>
       <form onSubmit={submit} className="space-y-3">
-        {/* Catalog matching is for the base inventory (Lego/BrickLink etc.) —
-            irrelevant noise on a skinned instance, so hide it when scoped. */}
-        {!instance && (
+        {/* Catalog matching: always on the base inventory; on a skinned
+            instance only when a catalog actually binds to inventory:part (Lego
+            Sets → Rebrickable). Instances with nothing to match against stay
+            clean — no empty field. */}
+        {(!instance || hasBoundCatalog) && (
           <Field label="Match to a catalog (optional)">
             <CatalogTypeahead
               selected={matched}
               onSelect={handleMatch}
-              search={(q) => api.searchCatalogs(q)}
+              search={(q) => api.searchCatalogs(q, 20, preferredCatalogId)}
               placeholder="Search a catalog…"
             />
           </Field>
@@ -238,7 +287,10 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
             className="input"
           />
         </Field>
-        <div className="grid grid-cols-2 gap-2">
+        {/* Everything below name flows in a 2-up grid — a wide modal that uses
+            the horizontal space instead of a tall column you have to scroll.
+            Full-width things (parent picker, long text) span both columns. */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
           {!fp.hidden("qty") && (
             <Field label={fp.label("qty", "Qty")}>
               <input
@@ -274,85 +326,85 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
               </datalist>
             </Field>
           )}
+          {/* Parent / "type" link — when this instance's items belong to a type
+              in another instance (Spool → Filament type), pick it here; the
+              `instance-of` pairing is written after create. */}
+          {parent && (
+            <div className="sm:col-span-2">
+              <Field label={parent.label ?? "Type"}>
+                <ParentPicker
+                  instance={parent.instance}
+                  value={parentRef}
+                  onChange={setParentRef}
+                  placeholder={`Search ${parent.label?.toLowerCase() ?? "type"}…`}
+                />
+              </Field>
+            </div>
+          )}
+          {/* The instance's own fields, promoted into create (the whole point of a
+              skinned instance — fill yarn fields here, not after). Long fields
+              (rich text) span both columns. */}
+          {customFields.map((f) => (
+            <div key={f.id} className={f.type === "richtext" ? "sm:col-span-2" : undefined}>
+              <CustomFieldInput
+                def={f}
+                value={meta[f.name]}
+                entityKind={entityKind}
+                onChange={(v) => setMeta((m) => ({ ...m, [f.name]: v }))}
+              />
+            </div>
+          ))}
+          {/* Brand + Price — natives that belong on the first create modal,
+              not buried in the full-size editor. Relabelled per instance via fp
+              (Yarn: "Brand" / "Price"); an instance can still hide either. */}
+          {!fp.hidden("manufacturer") && (
+            <Field label={fp.label("manufacturer", "Brand")}>
+              <input
+                value={manufacturer}
+                onChange={(e) => setManufacturer(e.target.value)}
+                className="input"
+              />
+            </Field>
+          )}
+          {!fp.hidden("cost") && (
+            <Field label={fp.label("cost", "Price")}>
+              <input
+                type="number"
+                step="any"
+                min="0"
+                inputMode="decimal"
+                value={cost}
+                onChange={(e) => setCost(e.target.value)}
+                className="input"
+              />
+            </Field>
+          )}
+          {!fp.hidden("category") && (
+            <Field label={fp.label("category", "Category")}>
+              <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="input">
+                <option value="">— none —</option>
+                {cats.data?.items.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
+          {!fp.hidden("location") && (
+            <Field label={fp.label("location", "Location")}>
+              <select value={locationId} onChange={(e) => setLocationId(e.target.value)} className="input">
+                <option value="">— none —</option>
+                {locs.data?.items.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {"  ".repeat(l.depth)}
+                    {l.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
         </div>
-        {/* Parent / "type" link — when this instance's items belong to a type
-            in another instance (Spool → Filament type), pick it here; the
-            `instance-of` pairing is written after create. */}
-        {parent && (
-          <Field label={parent.label ?? "Type"}>
-            <ParentPicker
-              instance={parent.instance}
-              value={parentRef}
-              onChange={setParentRef}
-              placeholder={`Search ${parent.label?.toLowerCase() ?? "type"}…`}
-            />
-          </Field>
-        )}
-        {/* The instance's own fields, promoted into create (the whole point of a
-            skinned instance — fill yarn fields here, not after). */}
-        {customFields.map((f) => (
-          <CustomFieldInput
-            key={f.id}
-            def={f}
-            value={meta[f.name]}
-            entityKind={entityKind}
-            onChange={(v) => setMeta((m) => ({ ...m, [f.name]: v }))}
-          />
-        ))}
-        {/* Brand + Price — natives that belong on the first create modal,
-            not buried in the full-size editor. Relabelled per instance via fp
-            (Yarn: "Brand" / "Price"); an instance can still hide either. */}
-        {(!fp.hidden("manufacturer") || !fp.hidden("cost")) && (
-          <div className="grid grid-cols-2 gap-2">
-            {!fp.hidden("manufacturer") && (
-              <Field label={fp.label("manufacturer", "Brand")}>
-                <input
-                  value={manufacturer}
-                  onChange={(e) => setManufacturer(e.target.value)}
-                  className="input"
-                />
-              </Field>
-            )}
-            {!fp.hidden("cost") && (
-              <Field label={fp.label("cost", "Price")}>
-                <input
-                  type="number"
-                  step="any"
-                  min="0"
-                  inputMode="decimal"
-                  value={cost}
-                  onChange={(e) => setCost(e.target.value)}
-                  className="input"
-                />
-              </Field>
-            )}
-          </div>
-        )}
-        {!fp.hidden("category") && (
-          <Field label={fp.label("category", "Category")}>
-            <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="input">
-              <option value="">— none —</option>
-              {cats.data?.items.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-        )}
-        {!fp.hidden("location") && (
-          <Field label={fp.label("location", "Location")}>
-            <select value={locationId} onChange={(e) => setLocationId(e.target.value)} className="input">
-              <option value="">— none —</option>
-              {locs.data?.items.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {"  ".repeat(l.depth)}
-                  {l.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-        )}
         {/* QR-label printing is a platform/maker feature — hide it in a locked
             managed app (a yarn consumer has no label printer). */}
         {!appMode && (

@@ -10,11 +10,29 @@ import { useInventory } from "./context";
 import { NewPartDialog } from "./NewPartDialog";
 import { ParentPicker } from "./ParentPicker";
 import { useMatchedCatalogEntry } from "./useMatchedCatalogEntry";
-import { AllocationsPanel } from "./AllocationsPanel";
+import { AllocationsPanel, EntityPicker, type PickedEntity } from "./AllocationsPanel";
 import { PartGallery } from "./PartGallery";
 import { MaintenancePanel } from "./MaintenancePanel";
 import { useFieldPresentation } from "./useFieldPresentation";
 import { useDisclosure } from "./useDisclosure";
+import {
+  PER_UNIT_TRACKING_KEY,
+  isPerUnitTracking,
+  resolveUnitCapacity,
+  gaugePct,
+  runningBalances,
+  summarizePool,
+  capacitySourceField,
+  buildUnitMetadata,
+  parseUnitRecord,
+  bindingOf,
+  closeOutGate,
+  resolveThresholdPct,
+  isExpandedFace,
+  type UnitRecord,
+  type UnitBinding,
+  type AllocationLike,
+} from "./consumption/perUnit";
 
 // The part-detail body. Rendered inside PartDetailModal (below) — the
 // detail view is a modal over the list now (consistent with machines),
@@ -441,9 +459,11 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
       {!hide("consumable") && (
         <ConsumptionPanel
           partId={p.id}
+          partName={p.name}
           qty={Number(p.qty)}
           unit={p.unit}
           capacity={pmeta.capacity != null ? Number(pmeta.capacity) : null}
+          metadata={pmeta}
           trackedBy={typeof pmeta.tracked_by === "string" ? pmeta.tracked_by : null}
           // Instances whose bundle declares the `consumable` section (e.g. Yarn)
           // present consumption tracking as active by default, rather than an
@@ -821,7 +841,91 @@ export function PartDetailModal({
 // full / new amount (a 1kg spool). The ledger (inventory_consumption) is what
 // drew it down and how much — the spool's print/usage history. Generic: works
 // for filament, yarn, tape, anything you set a capacity on.
+//
+// Two faces, one section:
+//   • FLAT (default, unchanged) — one gauge over the whole item's qty. This is
+//     what every consumable shows today and keeps showing until the user opts
+//     in per item.
+//   • PER-UNIT (opt-in) — models each opened skein/spool/box as its own unit
+//     with its own remaining + ledger, and a simple by-state COUNT ("3 skeins ·
+//     2 new · 1 open"). NEVER a total across units. See
+//     docs/design-decisions/consumption-ledger.md.
+// The flag lives on the model's own metadata (per_unit_tracking); flipping it is
+// non-destructive and reversible — no data moves, no unit rows are created.
 function ConsumptionPanel({
+  partId,
+  partName,
+  qty,
+  unit,
+  capacity,
+  metadata,
+  trackedBy,
+  defaultOn = false,
+  onSetCapacity,
+}: {
+  partId: string;
+  partName: string;
+  qty: number;
+  unit: string;
+  capacity: number | null;
+  metadata: Record<string, unknown>;
+  trackedBy?: string | null;
+  /** The instance treats its items as consumables (bundle-declared), so the
+   *  section presents as active instead of a collapsed opt-in link. */
+  defaultOn?: boolean;
+  onSetCapacity: (c: number | null) => void;
+}) {
+  const { api } = useInventory();
+  const qc = useQueryClient();
+  const toast = useToast();
+
+  // Opt-in flag write — merges into the existing metadata (never clobbers other
+  // fields) and refreshes the item. Turning it OFF leaves any unit rows in place
+  // (archived, harmless): disclosure is never destructive.
+  const setPerUnit = useMutation({
+    mutationFn: (on: boolean) =>
+      api.updatePart(partId, { metadata: { ...metadata, [PER_UNIT_TRACKING_KEY]: on } }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["inventory-part", partId] });
+      void qc.invalidateQueries({ queryKey: ["inventory-parts"] });
+    },
+    onError: (e: unknown) => toast.error((e as Error).message),
+  });
+
+  // External tracker (Spoolman) owns the count — per-unit tracking isn't offered
+  // there. Otherwise, an opted-in item shows the per-unit face.
+  if (!trackedBy && isPerUnitTracking(metadata)) {
+    return (
+      <PerUnitConsumptionPanel
+        partId={partId}
+        partName={partName}
+        modelQty={qty}
+        countUnit={unit}
+        legacyCapacity={capacity}
+        modelMetadata={metadata}
+        onDisable={() => setPerUnit.mutate(false)}
+      />
+    );
+  }
+
+  return (
+    <FlatConsumptionPanel
+      partId={partId}
+      qty={qty}
+      unit={unit}
+      capacity={capacity}
+      trackedBy={trackedBy}
+      defaultOn={defaultOn}
+      onSetCapacity={onSetCapacity}
+      onEnablePerUnit={trackedBy ? undefined : () => setPerUnit.mutate(true)}
+    />
+  );
+}
+
+// The original single-gauge consumption face — unchanged behaviour, plus a
+// subtle "track each <unit> separately" link that opts THIS item into the
+// per-unit face (only when the section is active and not externally tracked).
+function FlatConsumptionPanel({
   partId,
   qty,
   unit,
@@ -829,16 +933,16 @@ function ConsumptionPanel({
   trackedBy,
   defaultOn = false,
   onSetCapacity,
+  onEnablePerUnit,
 }: {
   partId: string;
   qty: number;
   unit: string;
   capacity: number | null;
   trackedBy?: string | null;
-  /** The instance treats its items as consumables (bundle-declared), so the
-   *  section presents as active instead of a collapsed opt-in link. */
   defaultOn?: boolean;
   onSetCapacity: (c: number | null) => void;
+  onEnablePerUnit?: () => void;
 }) {
   const { api } = useInventory();
   const [editing, setEditing] = useState(false);
@@ -980,6 +1084,565 @@ function ConsumptionPanel({
           </ul>
         </div>
       )}
+
+      {/* Opt into per-unit tracking (§9). Only when the section is active
+          (capacity set or bundle-declared) — a flat gauge with no capacity has
+          nothing to break into units yet. Non-destructive + reversible. */}
+      {onEnablePerUnit && (capacity != null || defaultOn) && !editing && (
+        <button
+          onClick={onEnablePerUnit}
+          className="text-[11px] text-faint hover:text-accent"
+          title={`Track each ${unit} on its own — a by-state count with the open one's remaining`}
+        >
+          Track each {unit} separately →
+        </button>
+      )}
     </section>
   );
+}
+
+// ── Per-unit (per-skein) consumption face ─────────────────────────────────────
+//
+// The simple Grace face (consumption-ledger.md §4.1): a by-state COUNT
+// ("3 skeins · 2 new · 1 open") with the open unit's remaining shown subtly —
+// never a total across units. Each opened unit is a child part under the model
+// (linked by an instance-of pairing, kept out of lists via `archived`), so it
+// reuses the existing per-part ledger + gauge machinery with no new engine.
+function PerUnitConsumptionPanel({
+  partId,
+  partName,
+  modelQty,
+  countUnit,
+  legacyCapacity,
+  modelMetadata,
+  onDisable,
+}: {
+  partId: string;
+  partName: string;
+  /** The model's own qty = the count of unopened, fungible spares (the "new"). */
+  modelQty: number;
+  /** The unit the COUNT is in (skein / spool / box). */
+  countUnit: string;
+  /** Legacy manually-typed capacity, used only as a fallback. */
+  legacyCapacity: number | null;
+  /** The model's metadata — carries the tunable close-out threshold override. */
+  modelMetadata: Record<string, unknown>;
+  onDisable: () => void;
+}) {
+  const { api, entityKind } = useInventory();
+  const qc = useQueryClient();
+  const toast = useToast();
+
+  // Field defs → detect a DERIVED `capacity` computed def + read its consumed
+  // unit ("m") and its source field for the provenance chip.
+  const defs = useQuery({
+    queryKey: ["inventory-fielddefs", entityKind],
+    queryFn: () => api.listFieldDefs(entityKind),
+    staleTime: 60_000,
+  });
+  const capDef = (defs.data?.items ?? []).find((d) => d.name === "capacity" && d.type === "computed");
+  const consumedUnit = capDef?.unit || "";
+  const sourceField = capacitySourceField(capDef?.template ?? null);
+  const sourceLabel = sourceField
+    ? (defs.data?.items ?? []).find((d) => d.name === sourceField)?.display_label ?? sourceField
+    : null;
+
+  // Resolved model entity → the computed per-unit capacity (e.g. length_per_skein).
+  const resolved = useQuery({
+    queryKey: ["inventory-resolved", entityKind, partId],
+    queryFn: () => api.lookupResolvedEntity(entityKind, partId),
+    enabled: !!capDef,
+    staleTime: 10_000,
+  });
+  const resolvedCap = numOr(resolved.data?.fields?.capacity);
+  const unitCapacity = resolveUnitCapacity({ resolvedCapacity: resolvedCap, metadataCapacity: legacyCapacity });
+  const derived = resolvedCap != null && resolvedCap > 0;
+
+  // The model's open/empty unit children (reverse instance-of lookup → fetch each).
+  const unitsQ = useQuery({
+    queryKey: ["inventory-units", partId],
+    queryFn: async () => {
+      const pairs = (await api.listChildPairings(partId)).items;
+      const parts = await Promise.all(pairs.map((p) => api.getPart(p.source_id).catch(() => null)));
+      return parts
+        .filter((p): p is NonNullable<typeof p> => !!p)
+        .map((p) => parseUnitRecord(
+          { id: p.id, name: p.name, qty: Number(p.qty), metadata: p.metadata as Record<string, unknown> | null },
+          unitCapacity,
+        ));
+    },
+    staleTime: 5_000,
+  });
+  const units = unitsQ.data ?? [];
+  const pool = summarizePool(modelQty, units);
+  const nounSingular = countUnit || "unit";
+  const nounPlural = pluralizeUnit(nounSingular);
+
+  // Project bindings (§3): a reserved allocation whose part_id is an open unit
+  // binds that skein to a project. One instance-wide fetch, grouped by unit, so
+  // the panel derives the EXPANDED face (§4.2) from real bindings rather than a
+  // toggle. Reserved-only — a released/consumed allocation is history.
+  const allocsQ = useQuery({
+    queryKey: ["inventory-unit-allocs", partId],
+    queryFn: () => api.listAllocations({ status: "reserved" }),
+    staleTime: 5_000,
+  });
+  const allByPart = new Map<string, AllocationLike[]>();
+  for (const a of allocsQ.data?.items ?? []) {
+    const list = allByPart.get(a.part_id) ?? [];
+    list.push(a);
+    allByPart.set(a.part_id, list);
+  }
+  const bindingFor = (unitId: string): UnitBinding | null => bindingOf(allByPart.get(unitId) ?? []);
+  const boundCount = pool.open.filter((u) => bindingFor(u.id)).length;
+  // Skeins that RAN OUT (empty) while still bound — their project may want the
+  // next spare. `units` (unlike pool.open) still carries the empties.
+  const spentBound = units
+    .filter((u) => !(u.qty > 0))
+    .map((u) => ({ unit: u, binding: bindingFor(u.id) }))
+    .filter((x): x is { unit: UnitRecord; binding: UnitBinding } => x.binding != null);
+  // Derived, never a mode toggle: two-or-more open units OR any binding earns
+  // the per-unit/per-project card face; a lone unbound skein stays simple.
+  const expanded = isExpandedFace(pool.open.length, boundCount);
+  const thresholdPct = resolveThresholdPct(modelMetadata);
+  // The by-state breakdown ("2 new · 1 open") — a new-only pool shows none, the
+  // same rule the tested poolCountLabel encodes. The total + its noun render
+  // separately (emphasised) so we don't re-parse the label string.
+  const breakdown = [
+    pool.newCount > 0 ? `${pool.newCount} new` : null,
+    pool.openCount > 0 ? `${pool.openCount} open` : null,
+  ].filter(Boolean).join(" · ");
+  const showBreakdown = pool.openCount > 0;
+
+  const invalidate = () => {
+    void qc.invalidateQueries({ queryKey: ["inventory-units", partId] });
+    void qc.invalidateQueries({ queryKey: ["inventory-unit-allocs", partId] });
+    void qc.invalidateQueries({ queryKey: ["inventory-part", partId] });
+    void qc.invalidateQueries({ queryKey: ["inventory-parts"] });
+  };
+
+  // Mint one open unit: a child at full capacity, its opening ledger line, the
+  // instance-of link to the model, and the model's spare count down by one. If a
+  // project target is given, also bind the new skein to it (an allocation) so
+  // "open the next spare FOR the scarf" is one call — per-project continuation
+  // (§3). Every qty move goes through the shared writer, so each leaves a line.
+  const mintOpenUnit = async (bindTo?: PickedEntity) => {
+    if (unitCapacity == null) throw new Error(`Set a per-${countUnit || "unit"} amount first.`);
+    const child = await api.createPart({
+      name: `${partName} (open ${countUnit || "unit"})`,
+      unit: consumedUnit || countUnit || "unit",
+      qty: 0,
+      archived: true,
+      metadata: buildUnitMetadata(partId, unitCapacity),
+    });
+    await api.stockAdjust(child.id, unitCapacity, `Opened ${countUnit || "unit"}`);
+    await api.createParentPairing(child.id, partId);
+    if (modelQty > 0) await api.stockAdjust(partId, -1, `Opened a ${countUnit || "unit"}`);
+    if (bindTo) {
+      await api.createAllocation({
+        part_id: child.id,
+        qty: unitCapacity,
+        target_module: bindTo.module,
+        target_entity_type: bindTo.type,
+        target_entity_id: bindTo.id,
+        reason: bindTo.label,
+      });
+    }
+  };
+
+  // Open a spare, unbound.
+  const openOne = useMutation({
+    mutationFn: () => mintOpenUnit(),
+    onSuccess: invalidate,
+    onError: (e: unknown) => toast.error((e as Error).message),
+  });
+
+  // Continue a project onto a fresh skein (§3): mint the next open unit bound to
+  // the same project. Used when a project's current skein is spent.
+  const continueProject = useMutation({
+    mutationFn: (target: PickedEntity) => mintOpenUnit(target),
+    onSuccess: invalidate,
+    onError: (e: unknown) => toast.error((e as Error).message),
+  });
+
+  const loading = defs.isLoading || unitsQ.isLoading || (!!capDef && resolved.isLoading);
+
+  return (
+    <section className="rounded-xl border border-line dark:border-slate-700 p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <h3 className="text-sm font-semibold text-content dark:text-mortar-100">Consumption</h3>
+        {/* Provenance chip (§8.3) — is the full amount derived or typed? */}
+        {derived && sourceLabel ? (
+          <span
+            className="text-[10px] font-mono uppercase tracking-wider text-accent dark:text-cobble-300 bg-cobble-50 dark:bg-cobble-900/40 border border-cobble-200 dark:border-cobble-800 rounded px-1.5 py-0.5"
+            title={`Each ${countUnit || "unit"}'s full amount comes from “${sourceLabel}”.`}
+          >
+            full from {sourceLabel}
+          </span>
+        ) : unitCapacity != null ? (
+          <span className="text-[10px] font-mono uppercase tracking-wider text-faint border border-line dark:border-slate-700 rounded px-1.5 py-0.5">
+            set manually
+          </span>
+        ) : null}
+        <div className="flex-1" />
+        <button onClick={onDisable} className="text-[11px] text-faint hover:text-accent" title="Go back to a single gauge over the whole item">
+          simple view
+        </button>
+      </div>
+
+      {/* The headline: a by-state count, never a metres total. */}
+      <div className="text-content dark:text-mortar-100">
+        <span className="text-base font-semibold">{pool.totalCount}</span>{" "}
+        <span className="text-sm">{pool.totalCount === 1 ? nounSingular : nounPlural}</span>
+        {showBreakdown && (
+          <span className="text-sm text-faint">{"  ·  "}{breakdown}</span>
+        )}
+      </div>
+
+      {/* No derived/typed capacity yet → point at the source field (§8.4). */}
+      {unitCapacity == null && !loading && (
+        <p className="text-[11px] text-faint">
+          {sourceLabel
+            ? `Add a ${sourceLabel} above to derive each ${countUnit || "unit"}'s full amount.`
+            : `Set a full amount per ${countUnit || "unit"} to track what's left as you use it.`}
+        </p>
+      )}
+
+      {/* The open unit(s): subtle remaining + gauge + its own statement. One at a
+          time (simple face) in the common case; the expanded per-project card
+          face (bindings + finish/continue) only once state contains real
+          parallelism or a binding (§4.2), derived not toggled. */}
+      {pool.open.map((u) => (
+        <OpenUnitCard
+          key={u.id}
+          unit={u}
+          consumedUnit={consumedUnit}
+          countUnit={countUnit || "unit"}
+          binding={bindingFor(u.id)}
+          expanded={expanded}
+          thresholdPct={thresholdPct}
+          onChanged={invalidate}
+        />
+      ))}
+
+      {/* Per-project continuation (§3). A bound skein that ran OUT drops off the
+          open cards (it's empty), but its project may want the next spare — so
+          surface each spent-but-still-bound skein here: roll onto a fresh unit
+          bound to the same project, or mark the project done (clear the binding).
+          Reached only when a real binding outlived its skein — derived, not a mode. */}
+      {spentBound.map(({ unit: u, binding: b }) => (
+        <div key={u.id} className="rounded-lg border border-dashed border-line dark:border-slate-700 p-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px]">
+          <span className="text-faint">{b.label}'s {countUnit || "unit"} ran out</span>
+          {modelQty > 0 ? (
+            <button
+              onClick={() => {
+                api.setAllocationStatus(b.allocationId, "released").catch(() => {});
+                continueProject.mutate({ module: b.targetModule, type: b.targetEntityType, id: b.targetEntityId, label: b.label });
+              }}
+              className="text-accent hover:text-cobble-800"
+              title={`Open the next ${countUnit || "unit"} for ${b.label}`}
+            >
+              Continue on a fresh {countUnit || "unit"} →
+            </button>
+          ) : (
+            <span className="text-faint italic">no new {nounPlural} left</span>
+          )}
+          <span className="text-line dark:text-slate-700">·</span>
+          <button
+            onClick={() => api.setAllocationStatus(b.allocationId, "released").then(invalidate).catch((e: unknown) => toast.error((e as Error).message))}
+            className="text-faint hover:text-content"
+          >
+            done
+          </button>
+        </div>
+      ))}
+
+      {pool.open.length === 0 && pool.newCount > 0 && unitCapacity != null && !loading && (
+        <p className="text-[11px] text-faint">Nothing open yet — open a {countUnit || "unit"} to start tracking what's left.</p>
+      )}
+
+      <div className="flex items-center gap-3 pt-1">
+        <button
+          onClick={() => openOne.mutate()}
+          disabled={openOne.isPending || modelQty <= 0 || unitCapacity == null}
+          className="inline-flex items-center gap-1 text-xs rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-40 disabled:cursor-not-allowed text-white px-2.5 py-1"
+          title={modelQty <= 0 ? `No new ${nounPlural} to open` : `Open a ${countUnit || "unit"} (uses one spare)`}
+        >
+          <Plus size={12} /> Open a {countUnit || "unit"}
+        </button>
+        {modelQty <= 0 && pool.open.length > 0 && (
+          <span className="text-[11px] text-faint">No new {nounPlural} left — you're on your open {pool.open.length > 1 ? nounPlural : (countUnit || "unit")}.</span>
+        )}
+      </div>
+    </section>
+  );
+}
+
+// One open unit — its remaining, a gauge, an inline "use" control, and its own
+// statement with the running balance DERIVED on read over its ledger (§7.2).
+// In the EXPANDED face it also carries its project binding (§3): a "for <project>"
+// label, an assign/unassign control, per-project continuation, and the smart
+// close-out prompt (§1.1). A withdrawal on a BOUND unit posts to its ledger with
+// the project as the reason (source_kind "allocation"), so the statement reads
+// "−200 m · Winter scarf".
+function OpenUnitCard({
+  unit,
+  consumedUnit,
+  countUnit,
+  binding,
+  expanded,
+  thresholdPct,
+  onChanged,
+}: {
+  unit: UnitRecord;
+  consumedUnit: string;
+  countUnit: string;
+  /** The project this skein is bound to, or null (unbound partial / working ball). */
+  binding: UnitBinding | null;
+  /** Whether the panel is in the expanded per-project face (§4.2). */
+  expanded: boolean;
+  /** Fraction of capacity below which close-out prompts (else keep silently). */
+  thresholdPct: number;
+  onChanged: () => void;
+}) {
+  const { api } = useInventory();
+  const toast = useToast();
+  const [amt, setAmt] = useState("");
+  const [open, setOpen] = useState(false);
+  const [assigning, setAssigning] = useState(false);
+  // Close-out prompt state: null = closed; else the editable "~N left" estimate.
+  const [closeOut, setCloseOut] = useState<string | null>(null);
+  const log = useQuery({ queryKey: ["inventory-consumption", unit.id], queryFn: () => api.listConsumption(unit.id) });
+  const rows = log.data?.items ?? [];
+  const balanced = runningBalances(rows, unit.qty);
+  const pct = gaugePct(unit.qty, unit.capacity);
+  const u = consumedUnit || "";
+  const fail = (e: unknown) => toast.error((e as Error).message);
+
+  // A withdrawal — attributed to the bound project when there is one, so the
+  // skein's statement line reads the project's name (§7.4). Goes through the now-
+  // ledgered stock-adjust writer, so the line exists and the balance walks.
+  const use = (n: number) => {
+    if (!(n > 0)) return;
+    api
+      .stockAdjust(
+        unit.id,
+        -n,
+        binding ? binding.label : "Used",
+        binding ? { source_kind: "allocation", source_id: binding.allocationId } : undefined,
+      )
+      .then(() => { setAmt(""); onChanged(); })
+      .catch(fail);
+  };
+
+  // Bind this open skein to a project (§3) — a reserved allocation on the unit.
+  const bind = (target: PickedEntity) => {
+    api
+      .createAllocation({
+        part_id: unit.id,
+        qty: unit.qty > 0 ? unit.qty : (unit.capacity ?? 1),
+        target_module: target.module,
+        target_entity_type: target.type,
+        target_entity_id: target.id,
+        reason: target.label,
+      })
+      .then(() => { setAssigning(false); onChanged(); })
+      .catch(fail);
+  };
+
+  // Release the binding (§1.1 keep / plain unassign) — the skein returns to the
+  // pool as an open, unbound partial. Never CONSUMED (that would double-decrement
+  // the qty the per-unit withdrawals already tracked); release only.
+  const release = () =>
+    api.setAllocationStatus(binding!.allocationId, "released").then(onChanged).catch(fail);
+
+  // Finish the project on this skein (§1.1): gate on the remainder vs the tunable
+  // threshold. Clearly reusable → back to the pool silently; small/ambiguous →
+  // the one-tap keep-vs-write-off prompt; nothing left → just release.
+  const finish = () => {
+    const gate = closeOutGate(unit.qty, unit.capacity, thresholdPct);
+    if (gate === "prompt") {
+      setCloseOut(String(round3(unit.qty)));
+      return;
+    }
+    if (gate === "silent-keep") {
+      release();
+      toast.success(`Kept ~${round3(unit.qty)}${u ? " " + u : ""} left — back in the pool.`);
+      return;
+    }
+    // "none" — already empty; just clear the binding.
+    release();
+  };
+
+  // Keep from the prompt: optionally reconcile the remaining to the edited number
+  // (a compensating ledger line), then release the binding.
+  const keep = async () => {
+    try {
+      const n = Number(closeOut);
+      if (Number.isFinite(n) && n >= 0 && Math.abs(n - unit.qty) > 1e-9) {
+        await api.stockAdjust(unit.id, round3(n - unit.qty), "Adjusted at close-out");
+      }
+      await api.setAllocationStatus(binding!.allocationId, "released");
+      setCloseOut(null);
+      onChanged();
+    } catch (e) { fail(e); }
+  };
+
+  // Write off from the prompt: the remaining is scrapped — drive the skein to 0
+  // with an explicit "written off" line (§1.1, never silently vanished), then
+  // release the binding. The unit goes empty and drops off the active view.
+  const writeOff = async () => {
+    try {
+      if (unit.qty > 0) await api.stockAdjust(unit.id, -unit.qty, "Written off");
+      await api.setAllocationStatus(binding!.allocationId, "released");
+      setCloseOut(null);
+      onChanged();
+    } catch (e) { fail(e); }
+  };
+
+  return (
+    <div className="rounded-lg border border-line dark:border-slate-700/70 bg-mortar-50/40 dark:bg-slate-800/40 p-3 space-y-2">
+      {/* Heading — in the expanded face, the per-skein binding label ("· Winter
+          scarf" / "· unbound partial"), else just "open ·" once several exist. */}
+      {expanded && (
+        <div className="flex items-center gap-2 text-[11px] font-mono uppercase tracking-wider">
+          <span className="text-faint">open · {unit.name}</span>
+          {binding ? (
+            <span className="text-accent dark:text-cobble-300 normal-case font-sans">for {binding.label}</span>
+          ) : (
+            <span className="text-faint normal-case font-sans italic">unbound partial</span>
+          )}
+        </div>
+      )}
+      <div>
+        <div className="flex items-baseline justify-between text-sm">
+          <span className="text-content dark:text-mortar-100">
+            <b className="tabular-nums">{round3(unit.qty)}</b> {u} left
+          </span>
+          {pct != null && unit.capacity != null && (
+            <span className="text-faint text-xs">of {unit.capacity} {u} · {pct}%</span>
+          )}
+        </div>
+        {pct != null && (
+          <div className="mt-1 h-2 rounded bg-line dark:bg-slate-700 overflow-hidden">
+            <div className={`h-full ${pct <= 15 ? "bg-ember-500" : "bg-moss-500"}`} style={{ width: `${pct}%` }} />
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center gap-2">
+        <input
+          type="number"
+          min="0"
+          step="any"
+          value={amt}
+          onChange={(e) => setAmt(e.target.value)}
+          placeholder={`use (${u || "amount"})`}
+          className="w-28 px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+        />
+        <button
+          onClick={() => use(Number(amt))}
+          disabled={!(Number(amt) > 0)}
+          className="inline-flex items-center gap-1 text-xs rounded border border-line dark:border-slate-600 hover:border-accent disabled:opacity-40 px-2 py-1 text-content dark:text-mortar-200"
+        >
+          <Minus size={12} /> Use
+        </button>
+        {rows.length > 0 && (
+          <button onClick={() => setOpen((v) => !v)} className="text-[11px] text-faint hover:text-accent ml-auto">
+            {open ? "hide history" : `history (${rows.length})`}
+          </button>
+        )}
+      </div>
+
+      {/* Binding controls (§3). A bound skein shows finish + continue; an unbound
+          one offers assign-to-a-project. Kept subtle so the simple face stays
+          quiet — these appear per open card, and only a binding/parallelism flips
+          the panel to the expanded face. */}
+      {closeOut != null ? (
+        <div className="rounded border border-line dark:border-slate-700 p-2 space-y-2 bg-surface/60 dark:bg-slate-900/40">
+          <div className="text-[12px] text-content dark:text-mortar-100">
+            ~{round3(unit.qty)}{u ? " " + u : ""} left — keep it, or done with it?
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min="0"
+              step="any"
+              value={closeOut}
+              onChange={(e) => setCloseOut(e.target.value)}
+              className="w-24 px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+              title="Adjust the remaining before deciding"
+            />
+            <button onClick={keep} className="text-xs rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2.5 py-1">
+              Keep it
+            </button>
+            <button onClick={writeOff} className="text-xs rounded border border-ember-300 dark:border-ember-800 text-ember-600 dark:text-ember-500 hover:bg-ember-50 dark:hover:bg-ember-900/30 px-2.5 py-1">
+              Done with it
+            </button>
+            <button onClick={() => setCloseOut(null)} className="text-[11px] text-faint hover:text-content">
+              cancel
+            </button>
+          </div>
+        </div>
+      ) : binding ? (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
+          <button onClick={finish} className="text-faint hover:text-accent" title={`Finish ${binding.label} on this ${countUnit}`}>
+            Done with {binding.label}
+          </button>
+          <span className="text-line dark:text-slate-700">·</span>
+          <button onClick={release} className="text-faint hover:text-accent">unassign</button>
+        </div>
+      ) : assigning ? (
+        <div className="space-y-1">
+          <EntityPicker selected={null} onSelect={bind} onClear={() => setAssigning(false)} />
+          <button onClick={() => setAssigning(false)} className="text-[11px] text-faint hover:text-content">cancel</button>
+        </div>
+      ) : (
+        <button onClick={() => setAssigning(true)} className="text-[11px] text-faint hover:text-accent" title={`Assign this ${countUnit} to a project`}>
+          + assign to a project
+        </button>
+      )}
+
+      {open && rows.length > 0 && (
+        <ul className="divide-y divide-line dark:divide-slate-800">
+          {balanced.map(({ row, balanceAfter }, i) => {
+            const d = Number(row.delta);
+            return (
+              <li key={row.id} className="py-1.5 flex items-center gap-2 text-[13px]">
+                <span className={"font-medium tabular-nums w-20 " + (d < 0 ? "text-ember-600 dark:text-ember-500" : "text-moss-600 dark:text-moss-400")}>
+                  {d < 0 ? "" : "+"}{round3(d)} {u}
+                </span>
+                <span className="text-muted dark:text-slate-400 truncate flex-1">{row.reason ?? row.source_kind ?? "adjustment"}</span>
+                <span className="text-[11px] text-faint shrink-0 w-24 text-right">{new Date(row.at).toLocaleDateString()}</span>
+                <span
+                  className={"tabular-nums shrink-0 w-20 text-right " + (i === 0 ? "text-content dark:text-mortar-100 font-medium" : "text-faint")}
+                  title={i === 0 ? "what's left in this one" : "balance after this line"}
+                >
+                  {round3(balanceAfter)} {u}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/** Trim float dust for display (546 - 0.1 - 0.2 …) without forcing integers. */
+function round3(n: number): number {
+  return Math.round(n * 1e6) / 1e6;
+}
+
+function pluralizeUnit(u: string): string {
+  if (!u) return "units";
+  if (/(s|x|z|ch|sh)$/i.test(u)) return `${u}es`;
+  if (/[^aeiou]y$/i.test(u)) return `${u.slice(0, -1)}ies`;
+  return `${u}s`;
+}
+
+function numOr(v: unknown): number | null {
+  if (v == null || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
 }

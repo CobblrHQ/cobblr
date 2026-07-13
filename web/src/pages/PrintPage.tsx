@@ -9,6 +9,7 @@ import { Plus, Trash2, Printer as PrinterIcon, Wifi, Send, Pencil, Star } from "
 import { ApiError, api, type Printer, type PrinterInput } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { EdgeConnectField, type EdgeConnectValue } from "../components/EdgeConnectField";
 
 /** UTF-8-safe base64 — btoa() alone throws on non-Latin1 chars (em dash, etc.). */
 function toBase64(s: string): string {
@@ -81,8 +82,8 @@ export function PrintPage() {
 
       <p className="text-sm text-muted dark:text-slate-400 max-w-2xl">
         A printer is a queue on a print manager (CUPS). Cobblr sends documents to
-        the manager over IPP — direct on your LAN, or via the edge-bridge from the
-        cloud. It hands the manager a job; it never drives the device.
+        the manager over IPP: direct on your LAN, or, on a hosted Cobblr, through
+        an on-site edge bridge. It hands the manager a job; it never drives the device.
       </p>
 
       {list.isLoading && <div className="text-sm text-muted">Loading…</div>}
@@ -164,9 +165,21 @@ function PrinterModal({
   onSaved: () => void;
 }) {
   const toast = useToast();
+  // Is this a hosted (managed) Cobblr? A hosted box can't reach a LAN printer
+  // directly, so it offers the edge-bridge path; a self-hosted one just uses a URL.
+  const authCfg = useQuery({ queryKey: ["auth-config"], queryFn: () => api.authConfig(), staleTime: 5 * 60_000 });
+  const hosted = !!authCfg.data?.hosted;
   const [name, setName] = useState(printer?.name ?? "");
   const [driver, setDriver] = useState(printer?.driver ?? "cups");
-  const [baseUrl, setBaseUrl] = useState(printer?.base_url ?? "");
+  // How Cobblr reaches the manager: a direct URL, or a cobblr-edge:// bridge route.
+  const [conn, setConn] = useState<EdgeConnectValue>(() => {
+    const url = printer?.base_url ?? "";
+    if (/^cobblr-edge:/i.test(url)) {
+      const bridge = (/^cobblr-edge:\/\/(.*)$/i.exec(url)?.[1] ?? "").replace(/^\/+|\/+$/g, "") || null;
+      return { mode: "edge", base_url: url, bridge };
+    }
+    return { mode: "direct", base_url: url, bridge: null };
+  });
   const [queue, setQueue] = useState(printer?.queue ?? "");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -175,8 +188,9 @@ function PrinterModal({
   const [busy, setBusy] = useState(false);
 
   const save = async () => {
-    if (!name.trim() || !baseUrl.trim() || !queue.trim()) {
-      toast.error("Name, base URL, and queue are required");
+    const baseUrl = conn.base_url.trim();
+    if (!name.trim() || !baseUrl || !queue.trim()) {
+      toast.error(conn.mode === "edge" ? "Name and queue are required (pick a bridge)" : "Name, manager URL, and queue are required");
       return;
     }
     setBusy(true);
@@ -184,7 +198,7 @@ function PrinterModal({
     const body: PrinterInput = {
       name: name.trim(),
       driver,
-      base_url: baseUrl.trim(),
+      base_url: baseUrl,
       queue: queue.trim(),
       is_default: isDefault,
       notes: notes.trim() || undefined,
@@ -218,11 +232,9 @@ function PrinterModal({
             <option value="mock">Mock (test)</option>
           </select>
         </label>
-        <label className="block">
-          <div className="text-xs text-muted mb-1">Print manager URL</div>
-          <input className={field + " font-mono"} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="http://printhost.lan:631" />
-          <div className="text-[11px] text-faint mt-1">CUPS host on your LAN, or the edge-bridge URL from cloud.</div>
-        </label>
+        <div className="block">
+          <EdgeConnectField slug={slug} hosted={hosted} value={conn} onChange={setConn} />
+        </div>
         <label className="block">
           <div className="text-xs text-muted mb-1">Queue / printer name</div>
           <input className={field + " font-mono"} value={queue} onChange={(e) => setQueue(e.target.value)} placeholder="Rollo" />

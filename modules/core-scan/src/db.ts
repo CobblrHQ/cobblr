@@ -101,6 +101,23 @@ export interface CoreScanBarcodeCacheTable {
   fetched_at: Generated<Date>;
 }
 
+/** The identifier-decoder registry's shared cache (migration 0011). Generic
+ *  across decoders (keyed by decoder_id + code); the VIN decoder is the first
+ *  customer. `unavailable` outcomes are never written here — only hit/partial
+ *  (expires_at null) and durable miss (expires_at set). See
+ *  services/identifier-registry.ts + docs/design-decisions/vin-decode.md §6. */
+export interface CoreScanDecodeCacheTable {
+  decoder_id: string;
+  code: string;
+  outcome: string;
+  fields: Generated<Record<string, unknown>>;
+  provenance: string | null;
+  note: string | null;
+  raw: Record<string, unknown> | null;
+  fetched_at: Generated<Date>;
+  expires_at: Date | null;
+}
+
 /** Captured eval cases — P2 of the matchmaker eval harness. A platform admin's
  *  corrected scan commit, recorded as a golden case (input + menu + expected). */
 export interface CoreScanEvalCasesTable {
@@ -141,6 +158,7 @@ export interface CoreScanDB {
   core_scan_organize_plans: CoreScanOrganizePlansTable;
   core_scan_putaway_sessions: CoreScanPutawaySessionsTable;
   core_scan_barcode_cache: CoreScanBarcodeCacheTable;
+  core_scan_decode_cache: CoreScanDecodeCacheTable;
   core_scan_eval_cases: CoreScanEvalCasesTable;
   core_scan_qr_rules: CoreScanQrRulesTable;
 }

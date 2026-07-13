@@ -12,7 +12,8 @@
   },
   "scripts": {
     "build": "tsc",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "tsx tests/edge-print.test.ts"
   },
   "dependencies": {
     "@cobblr/platform-contract": "workspace:*",

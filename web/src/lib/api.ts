@@ -2389,6 +2389,18 @@ export const api = {
       `/orgs/${slug}/modules/core-integrations/sync/connections/${id}/syncs/${encodeURIComponent(entityType)}/import`,
     ),
 
+  // core-scan — the identifier-decoder registry. Hand it a typed/scanned
+  // identifier (a VIN today; any registered decoder tomorrow); it dispatches by
+  // the code's shape, decodes against the external source, and returns a flat
+  // semantic field bag to map onto a record by role. Powers the guarded-auto
+  // VIN fill on the entity form. See docs/design-decisions/vin-decode.md.
+  decodeIdentifier: (slug: string, code: string) =>
+    request<{
+      outcome: "hit" | "partial" | "miss" | "unavailable";
+      fields: Record<string, string | number>;
+      provenance: string | null;
+      note?: string;
+    }>("POST", `/orgs/${slug}/modules/core-scan/decode`, { code }),
   // core-scan — barcode + photo identification, generalized. See
   // docs/modules/core-scan.md.
   scanBarcode: (
@@ -2921,6 +2933,14 @@ export const api = {
     request<{ items: ScanMenuEntry[] }>(
       "GET",
       `/orgs/${slug}/modules/core-scan/menu`,
+    ),
+  // Not-yet-installed flagship bundles as scan destinations (carries each
+  // bundle's field DEFS + `bundle_external_id`) — so the confirm form can offer
+  // "Vehicles (installs on confirm)" with its real, editable fields.
+  scanBundleMenu: (slug: string) =>
+    request<{ items: Array<ScanMenuEntry & { bundle_external_id?: string }> }>(
+      "GET",
+      `/orgs/${slug}/quickstart/bundle-menu`,
     ),
   // Would an AI call work right now (kill-switch → personal connection →
   // workspace/managed provider → entitlement)? Member-accessible, so
@@ -4331,6 +4351,9 @@ export interface CatalogSchema {
   /** Pretty labels for payload keys — `{ is_trans: "Transparent" }`.
    *  Falls back to the raw key when not set. */
   field_labels?: Record<string, string>;
+  /** Catalog-match prefill: `{ catalogPayloadKey: instanceFieldName }` — picking
+   *  an entry fills those instance fields from its payload. */
+  field_map?: Record<string, string>;
   /** Which entity kinds this catalog is meaningful to match against.
    *  Omitted ⇒ catalog appears in the picker for every source kind
    *  the action applies to. */
@@ -4384,6 +4407,9 @@ export interface CatalogSearchHit {
   payload: Record<string, unknown>;
   title: string;
   title_column: string;
+  /** `{ catalogPayloadKey: instanceFieldName }` from the catalog's schema —
+   *  picking a hit prefills those instance fields from the payload. */
+  field_map?: Record<string, string>;
 }
 
 export interface PairingItem {
@@ -5566,6 +5592,10 @@ export interface PlatformFieldDef {
   /** type='relation' only: the referenced entity-kind id (e.g.
    *  "core-locations:location"). Stored value = the target entity's id. */
   ref_kind?: string | null;
+  /** Semantic DECODE role (P3): `identifier:<decoderId>` (holds a decodable
+   *  code) or `decode:<key>` (a fill target for the decoder's <key> output).
+   *  Lets the guarded-auto VIN fill target fields by declared role. */
+  decode_role?: string | null;
   created_at: string;
 }
 
@@ -5754,6 +5784,8 @@ export interface PlatformBundleCatalog {
       "text" | "color-hex" | "image-url" | "url-link" | "year" | "boolean" | "code"
     >;
     field_labels?: Record<string, string>;
+    /** Catalog-match prefill: `{ catalogPayloadKey: instanceFieldName }`. */
+    field_map?: Record<string, string>;
     bindable_to_kinds?: string[];
     semantic_type?: string;
     hero_field?: string;

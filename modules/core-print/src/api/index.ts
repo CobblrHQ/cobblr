@@ -19,6 +19,7 @@ import { tenantDb, tenantContext, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { assertSafePrinterUrl } from "../drivers/ssrf.js";
 import { buildDriver, isDriverKind } from "../drivers/registry.js";
+import { isEdgeManagerUrl, buildEdgeRelay } from "../edge.js";
 import type { PrinterConfig, PrintDoc } from "../drivers/types.js";
 import type { CorePrintPrintersTable } from "../db.js";
 import type { Selectable } from "kysely";
@@ -87,7 +88,30 @@ async function configuredDriver(orgId: string, row: PrinterRow) {
     password: typeof creds.password === "string" ? creds.password : undefined,
     apiKey: typeof creds.apiKey === "string" ? creds.apiKey : undefined,
   };
-  return buildDriver(row.driver, cfg);
+  // A cobblr-edge:// manager routes through the org's edge bridge; a direct
+  // http(s):// one dials CUPS itself (relay stays null).
+  return buildDriver(row.driver, cfg, buildEdgeRelay(orgId, row.base_url));
+}
+
+/** Validate a manager URL before persisting it. A `cobblr-edge://` manager is
+ *  exempt from the SSRF guard — the BRIDGE reaches the LAN, Cobblr never does, so
+ *  there's no server-side fetch to a private IP to guard. A direct http(s):// one
+ *  is checked as before; on a HOSTED instance a LAN address is blocked, and we
+ *  turn that raw refusal into an actionable "run an edge bridge" hint (mirrors the
+ *  UI's DirectManagerConnect warning — the "silent disable" class). Returns null
+ *  when fine, else the message to return as a 400. */
+async function checkManagerUrl(baseUrl: string): Promise<string | null> {
+  if (isEdgeManagerUrl(baseUrl)) return null;
+  try {
+    await assertSafePrinterUrl(baseUrl);
+    return null;
+  } catch (e) {
+    const msg = (e as Error).message;
+    const hosted = platform().ai.getEndpointPolicy() === "strict";
+    return hosted
+      ? `${msg}. This is a hosted Cobblr — it can't reach a printer on your network directly. Run the Cobblr edge bridge on your network and point the printer at it instead.`
+      : msg;
+  }
 }
 
 // ─────────────────────────────── CRUD ──────────────────────────────
@@ -126,10 +150,9 @@ router.post(
       return;
     }
     if (body.driver === "cups") {
-      try {
-        await assertSafePrinterUrl(body.base_url);
-      } catch (e) {
-        res.status(400).json({ error: { code: "bad_url", message: (e as Error).message } });
+      const bad = await checkManagerUrl(body.base_url);
+      if (bad) {
+        res.status(400).json({ error: { code: "bad_url", message: bad } });
         return;
       }
     }
@@ -181,10 +204,9 @@ router.patch(
       patch.driver = body.driver;
     }
     if (body.base_url !== undefined) {
-      try {
-        await assertSafePrinterUrl(body.base_url);
-      } catch (e) {
-        res.status(400).json({ error: { code: "bad_url", message: (e as Error).message } });
+      const bad = await checkManagerUrl(body.base_url);
+      if (bad) {
+        res.status(400).json({ error: { code: "bad_url", message: bad } });
         return;
       }
       patch.base_url = body.base_url;

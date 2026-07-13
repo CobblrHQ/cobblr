@@ -1,12 +1,12 @@
 {
   "manifest": {
     "id": "cobblr.flagship.yarn",
-    "version": "0.5.0",
+    "version": "0.6.0",
     "name": "Yarn",
     "description": "Yarn as its own inventory instance — skein-tracked, yarn-only fields, grouped by weight. Optional Hooks + Designs tables.",
     "author": "Cobblr",
-    "released_at": "2026-06-16",
-    "changelog": "Your Yarn table now reads “yarn” everywhere — the “New”, search box, and empty-state labels say “yarn” instead of “part”. (Earlier installs picked up the generic “part” wording; upgrading applies the fix.) Real yarn-user polish: the Color field is a swatch picker (type a hex or pick one), Brand + Price now show right on the “New yarn” modal, and a “Suggested needle size” field was added. Dropdowns (vendor, fibre…) let you add a new option on the fly that sticks for next time. Dropped the confusing “Summary” computed field. — Yarn is its OWN table (a Yarn instance), not a skin over generic inventory: only yarn fields show, the button reads “New yarn”, quantities are in skeins. Hooks and Designs become their own tables too. The generic inventory cruft (warranty, insured, lifecycle…) is hidden, and the pinned view is named for its lens (“By weight”). Opening a yarn now hides the Maintenance log (that section is for machines) and turns on skein-by-skein consumption tracking by default, so you can see at a glance how much of a skein is left. Existing yarn tables pick this up on upgrade.",
+    "released_at": "2026-07-13",
+    "changelog": "New: track your yarn skein-by-skein. On a yarn's page, under Consumption, tap “Track each skein separately” and you get a plain count by state — “3 skeins · 2 new · 1 open” — with the metres left in the skein you're actually knitting from shown quietly (never a confusing total across skeins). Open a skein when you crack a new one, and log metres as you go; each open skein keeps its own running balance. It reads the “Length / skein” you already entered to know a full skein, so there's no capacity to type. It's opt-in per yarn and fully reversible — existing yarn is untouched until you turn it on. Earlier changes below. — Your Yarn table now reads “yarn” everywhere — the “New”, search box, and empty-state labels say “yarn” instead of “part”. (Earlier installs picked up the generic “part” wording; upgrading applies the fix.) Real yarn-user polish: the Color field is a swatch picker (type a hex or pick one), Brand + Price now show right on the “New yarn” modal, and a “Suggested needle size” field was added. Dropdowns (vendor, fibre…) let you add a new option on the fly that sticks for next time. Dropped the confusing “Summary” computed field. — Yarn is its OWN table (a Yarn instance), not a skin over generic inventory: only yarn fields show, the button reads “New yarn”, quantities are in skeins. Hooks and Designs become their own tables too. The generic inventory cruft (warranty, insured, lifecycle…) is hidden, and the pinned view is named for its lens (“By weight”). Opening a yarn now hides the Maintenance log (that section is for machines) and turns on skein-by-skein consumption tracking by default, so you can see at a glance how much of a skein is left. Existing yarn tables pick this up on upgrade.",
     "requires": [
       {
         "module": "inventory"
@@ -106,10 +106,20 @@
           },
           {
             "entity_kind": "inventory:part",
+            "name": "capacity",
+            "display_label": "Full skein",
+            "type": "computed",
+            "unit": "m",
+            "template": "{{ length_per_skein }}",
+            "position": 7,
+            "help": "Metres in one full skein, from the length above. When you track skein-by-skein, each opened skein's gauge is measured against this — you never type it."
+          },
+          {
+            "entity_kind": "inventory:part",
             "name": "dye_lot",
             "display_label": "Dye lot",
             "type": "text",
-            "position": 7,
+            "position": 8,
             "help": "The batch code on the label — buy the same lot so colours match across skeins."
           },
           {
@@ -117,7 +127,7 @@
             "name": "needle_size",
             "display_label": "Suggested needle size",
             "type": "text",
-            "position": 8,
+            "position": 9,
             "choices": [
               "2.0 mm",
               "2.5 mm",

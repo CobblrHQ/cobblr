@@ -13,6 +13,7 @@ import { instanceOf, instanceQtyUnit, sessionUser, tenantContext, tenantDb } fro
 import { asyncHandler, badBody, requireCapability, requireRole } from "./util.js";
 import { routeUnknownToMetadata, preserveServerManaged, coerceMetadata } from "./route-helpers.js";
 import { disclosureHandler } from "./disclosure.js";
+import { recordConsumption } from "./stock-ledger.js";
 
 export const partsRouter = Router({ mergeParams: true });
 
@@ -52,6 +53,11 @@ const PartUpdate = PartCreate.partial();
 const StockAdjust = z.object({
   delta: z.number(),
   reason: z.string().max(500).optional(),
+  // Optional provenance for the consumption ledger — e.g. the per-unit panel
+  // attributing a bound skein's withdrawal to a project ("allocation" + the
+  // allocation id). Omitted for a plain +/- stepper tap.
+  source_kind: z.string().max(80).optional(),
+  source_id: z.string().max(120).optional(),
 });
 
 const Truthy = z.union([z.literal("1"), z.literal("true"), z.literal("0"), z.literal("false")]);
@@ -828,6 +834,24 @@ partsRouter.post(
     if (!updated) {
       res.status(404).json({ error: { code: "not_found", message: "part not found" } });
       return;
+    }
+
+    // Consumption ledger (append-only): this HTTP path historically skipped it —
+    // the documented "ledgered stock-adjust endpoint" was aspirational, so the
+    // per-unit panel's own Open/Use taps (which route through here) left no
+    // statement line and the running balance had nothing to walk. Fixed via the
+    // ONE shared writer so every qty path leaves a line (consumption-ledger.md
+    // §7.3). Best-effort — a ledger hiccup must not fail the stock change.
+    try {
+      await recordConsumption(db, {
+        partId: updated.id,
+        delta: parsed.data.delta,
+        reason: parsed.data.reason ?? null,
+        sourceKind: parsed.data.source_kind ?? null,
+        sourceId: parsed.data.source_id ?? null,
+      });
+    } catch (e) {
+      console.error("[inventory.stock-adjust] ledger write failed:", (e as Error).message);
     }
 
     await platform().activity.log({

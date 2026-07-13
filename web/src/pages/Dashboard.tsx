@@ -20,7 +20,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpCircle, CheckCircle2, ChevronDown, Compass, Eye, EyeOff, GripVertical, LayoutList, Maximize2, Minimize2, Pin, Plus, Sliders, Sparkles, X } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpCircle, CheckCircle2, ChevronDown, Compass, Download, Eye, EyeOff, GripVertical, LayoutList, Maximize2, Minimize2, Pin, Plus, Sliders, Sparkles, X } from "lucide-react";
 import { useBundleUpdates, type BundleUpdate } from "../lib/useBundleUpdates";
 import { classifyBundleUpdate, tierAutoApplies, updateMayTeardownCatalogs } from "../lib/bundleUpdateTier";
 import { useDetailRoute } from "../lib/useDetailRoute";
@@ -49,6 +49,7 @@ import {
   type ActivityEntry,
   type DashboardLayout,
   type OrgModuleListItem,
+  type QuickstartSuggestion,
   type SavedView,
 } from "../lib/api";
 
@@ -144,6 +145,13 @@ export function Dashboard() {
           Renders nothing when everything has a home. */}
       <PutAwayCard slug={activeSlug} />
 
+      {/* Scanned-but-unrouted: captures that fit a bundle this workspace hasn't
+          installed (a pile of VIN scans → Vehicles). The first-run hero shows
+          this on an empty workspace and collapses once there's content — this
+          resurfaces it on an established dashboard. Renders nothing when there's
+          nothing to suggest. */}
+      <BundleSuggestionsCard slug={activeSlug} enabled={enabled} role={activeOrg.role} />
+
       {/* Quick links to the things this workspace uses most (Scan Inbox, Yarn,
           …). High up + big tap targets so a phone user isn't forced to find the
           hamburger to reach her instance or the scan inbox. */}
@@ -225,6 +233,100 @@ function PutAwayCard({ slug }: { slug: string }) {
       >
         Put them away <ArrowRight size={14} />
       </Link>
+    </section>
+  );
+}
+
+/** Cheap "does this workspace have any committed content?" probe — mirrors
+ *  GettingStartedPanel's, so BundleSuggestionsCard only surfaces on an
+ *  ESTABLISHED workspace (a brand-new one gets the prominent first-run hero,
+ *  which already offers the same install). One limit=1 read per enabled domain
+ *  module + each named instance; cached. */
+async function probeWorkspaceItemCount(slug: string, enabled: Set<string>): Promise<number> {
+  const wrap = (path: string) =>
+    api.request<{ items: unknown[] }>("GET", `/orgs/${slug}${path}`).then((r) => r.items.length).catch(() => 0);
+  const probes: Array<Promise<number>> = [];
+  if (enabled.has("inventory")) probes.push(wrap("/modules/inventory/parts?limit=1"));
+  if (enabled.has("machines")) probes.push(wrap("/modules/machines/machines?limit=1"));
+  if (enabled.has("assets")) probes.push(wrap("/modules/assets/assets?limit=1"));
+  if (enabled.has("projects")) probes.push(wrap("/modules/projects/projects?limit=1"));
+  if (enabled.has("purchases")) probes.push(wrap("/modules/purchases/orders?limit=1"));
+  const instances = await api.listInstances(slug).then((r) => r.items).catch(() => []);
+  for (const inst of instances.filter((i) => !i.is_default))
+    probes.push(wrap(`/instances/${encodeURIComponent(inst.instance_name)}/items?limit=1`));
+  const counts = await Promise.all(probes);
+  return counts.reduce((a, b) => a + b, 0);
+}
+
+/** Established-workspace nudge: pending scan captures that fit a bundle you
+ *  haven't installed ("3 look like Vehicles → install"). One tap installs the
+ *  bundle AND files every fitting capture into it (the capture-first materialize
+ *  path). Owner/admin only (install changes composition). Hidden on empty
+ *  workspaces (the first-run hero owns that) and when there's nothing to suggest. */
+function BundleSuggestionsCard({ slug, enabled, role }: { slug: string; enabled: Set<string>; role?: string }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const canInstall = role === "owner" || role === "admin";
+  const contentQ = useQuery({
+    queryKey: ["dash-content-probe", slug, Array.from(enabled).sort().join(",")],
+    queryFn: () => probeWorkspaceItemCount(slug, enabled),
+    enabled: canInstall && enabled.size > 0,
+    staleTime: 60_000,
+  });
+  const hasContent = (contentQ.data ?? 0) > 0;
+  const qs = useQuery({
+    queryKey: ["quickstart", slug],
+    queryFn: () => api.quickstart(slug),
+    enabled: canInstall && hasContent,
+    staleTime: 60_000,
+  });
+  const materializeMut = useMutation({
+    mutationFn: (s: QuickstartSuggestion) => api.materializeQuickstart(slug, s.bundle_external_id),
+    onSuccess: (r, s) => {
+      toast.success(`Installed ${s.bundle_name} — filed ${r.created} ${s.noun}${r.created === 1 ? "" : "s"}.`);
+      void qc.invalidateQueries({ queryKey: ["quickstart", slug] });
+      void qc.invalidateQueries({ queryKey: ["org-modules", slug] });
+      void qc.invalidateQueries({ queryKey: ["instances", slug] });
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", slug] });
+      void qc.invalidateQueries({ queryKey: ["scan-stats", slug] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't install that."),
+  });
+  if (!canInstall || !hasContent) return null;
+  const suggestions = qs.data?.suggestions ?? [];
+  if (suggestions.length === 0) return null;
+  return (
+    <section
+      className="rounded-lg border border-accent/40 bg-accent/[0.06] dark:bg-accent/10 px-4 py-3 space-y-2"
+      data-testid="bundle-suggestions"
+    >
+      <div className="flex items-center gap-2 text-sm font-semibold text-content dark:text-mortar-100">
+        <Sparkles size={15} className="text-accent shrink-0" />
+        You've scanned things that fit a table you don't have yet
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {suggestions.map((s) => {
+          const busy = materializeMut.isPending && materializeMut.variables?.bundle_external_id === s.bundle_external_id;
+          return (
+            <button
+              key={s.bundle_external_id}
+              type="button"
+              onClick={() => materializeMut.mutate(s)}
+              disabled={materializeMut.isPending}
+              title={s.sample_names.length ? `e.g. ${s.sample_names.join(", ")}` : undefined}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm font-medium transition disabled:opacity-50"
+            >
+              <Download size={14} />
+              {busy
+                ? `Installing ${s.bundle_name}…`
+                : `${s.count} look${s.count === 1 ? "s" : ""} like ${s.bundle_name} — install`}
+            </button>
+          );
+        })}
+      </div>
+      <div className="text-[10px] text-faint dark:text-slate-500">
+        Installs the bundle and files those scanned items into it. Or triage them one-by-one in the Scan inbox.
+      </div>
     </section>
   );
 }

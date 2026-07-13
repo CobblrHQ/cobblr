@@ -338,7 +338,7 @@ function ActionCard({
                   {previewMatches.map((kid) => {
                     const k = kinds.find((x) => x.id === kid);
                     return (
-                      <div key={kid} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                      <div key={kid} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 min-w-0">
                         <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-surface dark:bg-slate-900 border border-line dark:border-slate-700 text-content dark:text-mortar-200">
                           {kid}
                         </span>

@@ -18,7 +18,15 @@ import { resolveBarcodeViaWebSearch } from "./barcode-websearch.js";
 import { reportBarcodeCorrection } from "./barcode-corrections.js";
 import { classifyScanCode, resolveIsbn, resolveAsin } from "./scan-router.js";
 import { crossCheckScanPhoto, identifyImage, parsePackSize, refreshCatalogImageByName } from "./enrich-photo.js";
+import { findDecoder } from "./identifier-registry.js";
+import { registerBuiltinDecoders } from "./vin-decode.js";
+import { readDecodeCache, writeDecodeCache, decodeCacheKey } from "./decode-cache.js";
 import type { CoreScanDB } from "../db.js";
+
+// Register the built-in identifier decoders (VIN) once, at module load
+// (idempotent). enrichBarcodeItem dispatches a scanned code whose SHAPE a
+// decoder claims to that decoder instead of the UPC barcode chain — see step 0c.
+registerBuiltinDecoders();
 
 // Cross-tenant barcode cache namespace + value shape. A UPC means the same
 // product for every workspace, so we resolve each ONCE for the whole host
@@ -349,6 +357,19 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
     return;
   }
 
+  // 0c. Identifier-decoder dispatch (VIN today). A scanned code whose SHAPE a
+  // registered decoder claims — a 17-char door-jamb VIN — is decoded against its
+  // own source (NHTSA vPIC) and used to NAME + FILL the item, exactly as a
+  // scanned UPC mints a part. The registry's matches() IS the dispatcher: a
+  // UPC/EAN is digits and a VIN is 17 alnum (no I/O/Q), so they never collide —
+  // the UPC barcode path below is completely untouched. See
+  // docs/design-decisions/vin-decode.md §4 (scan-first flagship).
+  const decoder = findDecoder(ctx.upc);
+  if (decoder) {
+    await enrichViaDecoder(ctx, decoder.id, (code) => decoder.decode(code));
+    return;
+  }
+
   // 1a. Per-tenant cache first (local, fastest). force → skip straight to
   // a live lookup (rerun must actually re-ask the providers).
   const tenantRow = ctx.force
@@ -651,6 +672,92 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
       console.error("[core-scan] thin-hit enrich failed:", (e as Error).message),
     );
   }
+}
+
+/**
+ * Enrich a scanned item via a registered identifier decoder (VIN today). The
+ * scan-path twin of the POST /decode endpoint: it shares the SAME tenant decode
+ * cache + discipline (hit/partial cached forever, miss TTL'd, `unavailable`
+ * never cached → the next scan retries), then maps the decode onto the inbox
+ * row so the minted record is named + pre-filled. GENERIC: it reads the
+ * decoder's flat semantic bag (year/make/model/…) and stamps it; the target
+ * kind's fields are filled BY ROLE downstream (matchItem's decode-fill pass),
+ * so core-scan stays domain-agnostic. Bounded by the caller's ~12s enrich race;
+ * the vPIC lookup has its own 12s timeout, so a slow provider finishes detached
+ * exactly like a barcode overrun.
+ */
+export async function enrichViaDecoder(
+  ctx: EnrichContext,
+  decoderId: string,
+  decode: (code: string) => Promise<import("./identifier-registry.js").DecodeResult>,
+): Promise<void> {
+  const key = decodeCacheKey(ctx.upc);
+  const cached = ctx.force ? null : await readDecodeCache(ctx.db, decoderId, key);
+  const result = cached ?? (await decode(ctx.upc));
+  if (!cached) await writeDecodeCache(ctx.db, decoderId, key, result).catch(() => {});
+
+  if (result.outcome === "unavailable") {
+    // Provider timeout/outage — NOT a durable miss (nothing was cached). Leave
+    // ai_suggested_at NULL so the item reads as unfinished + the client paces an
+    // auto-retry, mirroring a rate-limited barcode. A re-scan / rerun re-asks.
+    await ctx.db
+      .updateTable("core_scan_inbox_items")
+      .set({
+        ai_notes: "Decode service is unavailable — retrying automatically in a moment.",
+        suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || '{"decode_unavailable":true}'::jsonb` as never,
+        updated_at: new Date(),
+      })
+      .where("id", "=", ctx.itemId)
+      .execute();
+    return;
+  }
+
+  if (result.outcome === "miss") {
+    await ctx.db
+      .updateTable("core_scan_inbox_items")
+      .set({
+        ai_confidence: "0",
+        ai_notes: "Couldn't decode this code — check for typos, or name it manually.",
+        ai_suggested_at: new Date(),
+        updated_at: new Date(),
+      })
+      .where("id", "=", ctx.itemId)
+      .execute();
+    return;
+  }
+
+  // hit / partial — name + fill. The decoded semantic bag rides in
+  // suggested_metadata in TWO forms: `decoded` (the structured provenance record
+  // matchItem's role-fill reads) AND merged into `fields` (the generic vendor-
+  // path bag the commit lands onto the entity's metadata). The decoder's `make`
+  // maps to the item's native manufacturer suggestion; its `model` to the native
+  // model lift on commit. Everything is provenance-noted, never authoritative.
+  const fields = result.fields ?? {};
+  const make = typeof fields.make === "string" ? fields.make : null;
+  const model = typeof fields.model === "string" ? fields.model : null;
+  const name = (result.title && result.title.trim()) || ctx.upc;
+  const provenanceNote = `Decoded from ${result.provenance ?? "the identifier"}${
+    result.note ? ` — ${result.note}` : ""
+  } (double-check).`;
+  await ctx.db
+    .updateTable("core_scan_inbox_items")
+    .set({
+      suggested_name: name,
+      suggested_manufacturer: make,
+      suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({
+        source: `decoder:${decoderId}`,
+        entity_type: "asset",
+        decoded: { decoder_id: decoderId, fields },
+        ...(model ? { model } : {}),
+        fields,
+      })}::jsonb` as never,
+      ai_confidence: result.outcome === "hit" ? "0.9" : "0.6",
+      ai_notes: provenanceNote,
+      ai_suggested_at: new Date(),
+      updated_at: new Date(),
+    })
+    .where("id", "=", ctx.itemId)
+    .execute();
 }
 
 /** A resolver hit worth enriching: a brand exists but the NAME omits it (a bare

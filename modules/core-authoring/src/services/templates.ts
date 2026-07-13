@@ -77,24 +77,27 @@ export const TEMPLATE_CATALOG: TemplateEntry[] = [
       "collection with service history",
       "things i own and their upkeep",
     ],
-    requires: ["inventory"],
-    kinds: ["inventory:part"],
+    // A maintained thing (car, bike, tool, equipment) is an ASSET, not stock —
+    // its canonical home is `assets` (matching the shipped vehicle-maintenance
+    // bundle, which targets assets:asset). See vin-decode.md §9.
+    requires: ["assets"],
+    kinds: ["assets:asset"],
     manifest: {
       id: "cobblr.user.collection-maintenance",
       version: "0.1.0",
       name: "Collection + Maintenance",
       description:
         "Fields for a maintained collection: make/model/year, identifier, acquired date, last/next service, condition.",
-      requires: [{ module: "inventory" }],
+      requires: [{ module: "assets" }],
       field_defs: [
-        { entity_kind: "inventory:part", name: "make", display_label: "Make / brand", type: "text" },
-        { entity_kind: "inventory:part", name: "model", display_label: "Model", type: "text" },
-        { entity_kind: "inventory:part", name: "model_year", display_label: "Year", type: "number" },
-        { entity_kind: "inventory:part", name: "identifier", display_label: "Identifier (VIN/serial/plate)", type: "text" },
-        { entity_kind: "inventory:part", name: "acquired_at", display_label: "Acquired", type: "date" },
-        { entity_kind: "inventory:part", name: "last_service", display_label: "Last service", type: "date" },
-        { entity_kind: "inventory:part", name: "next_service", display_label: "Next service due", type: "date" },
-        { entity_kind: "inventory:part", name: "condition", display_label: "Condition", type: "text", choices: ["mint", "good", "fair", "needs work", "project"] },
+        { entity_kind: "assets:asset", name: "make", display_label: "Make / brand", type: "text" },
+        { entity_kind: "assets:asset", name: "model", display_label: "Model", type: "text" },
+        { entity_kind: "assets:asset", name: "model_year", display_label: "Year", type: "number" },
+        { entity_kind: "assets:asset", name: "identifier", display_label: "Identifier (VIN/serial/plate)", type: "text" },
+        { entity_kind: "assets:asset", name: "acquired_at", display_label: "Acquired", type: "date" },
+        { entity_kind: "assets:asset", name: "last_service", display_label: "Last service", type: "date" },
+        { entity_kind: "assets:asset", name: "next_service", display_label: "Next service due", type: "date" },
+        { entity_kind: "assets:asset", name: "condition", display_label: "Condition", type: "text", choices: ["mint", "good", "fair", "needs work", "project"] },
       ],
       wires: [],
     },

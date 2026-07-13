@@ -12,6 +12,7 @@
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { InventoryDB } from "../db.js";
+import { recordConsumption } from "./stock-ledger.js";
 
 let registered = false;
 
@@ -59,19 +60,17 @@ async function applyStockDelta(
   if (!updated) return { ok: false, error: "part_not_found" };
 
   // Consumption ledger (append-only): WHAT drew the part down and HOW MUCH —
-  // also the raw data the burn-rate predictor reads. Best-effort; a ledger
-  // hiccup must never fail the stock change.
+  // also the raw data the burn-rate predictor reads. Through the ONE shared
+  // writer (stock-ledger.ts) so every qty path leaves the same statement line.
+  // Best-effort here; a ledger hiccup must never fail a standalone stock change.
   try {
-    await db
-      .insertInto("inventory_consumption")
-      .values({
-        part_id: partId,
-        delta: String(delta),
-        reason: reason ?? null,
-        source_kind: p.sourceKind ?? null,
-        source_id: p.sourceId ?? null,
-      })
-      .execute();
+    await recordConsumption(db, {
+      partId,
+      delta,
+      reason: reason ?? null,
+      sourceKind: p.sourceKind ?? null,
+      sourceId: p.sourceId ?? null,
+    });
   } catch (e) {
     console.error("[inventory.applyStockDelta] ledger write failed:", (e as Error).message);
   }

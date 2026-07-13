@@ -34,12 +34,13 @@ export function LabelsUI({ orgSlug, getToken }: LabelsUIProps) {
   );
 }
 
-/** App-root mount: shows the floating basket on every page that's
- *  wrapped by LabelsProvider. */
-export function LabelsBasket({ orgSlug, getToken }: LabelsUIProps) {
+/** App-root / sidebar-foot mount: the queue widget, wrapped in its provider.
+ *  `asRow` picks the sidebar-foot row over the floating pill (the host chooses
+ *  per shell mode — see BasketWidget). Renders nothing when the queue is empty. */
+export function LabelsBasket({ orgSlug, getToken, asRow }: LabelsUIProps & { asRow?: boolean }) {
   return (
     <LabelsProvider orgSlug={orgSlug} getToken={getToken}>
-      <BasketWidget />
+      <BasketWidget asRow={asRow} />
     </LabelsProvider>
   );
 }

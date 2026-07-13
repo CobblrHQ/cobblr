@@ -12,6 +12,10 @@
     "spec": "./MachinesPage"
   },
   {
+    "file": "web/src/pages/InstancePage.tsx",
+    "spec": "./AssetsPage"
+  },
+  {
     "file": "web/src/pages/PortalPlanPage.tsx",
     "spec": "./PlanPrintPage"
   },

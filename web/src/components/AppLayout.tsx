@@ -32,7 +32,8 @@ import { CommandPalette, OPEN_PALETTE_EVENT } from "./CommandPalette";
 import { NewVersionNudge } from "./NewVersionNudge";
 import { QuickAccess } from "./QuickAccess";
 import { ErrorBoundary } from "./ErrorBoundary";
-import { api, isFocused } from "../lib/api";
+import { LabelsBasket } from "@cobblr/labels/ui";
+import { api, getToken, isFocused } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { getManagedAppMeta } from "../lib/managed-apps";
 import { adminHtmlVars, fontFaceCss } from "../lib/appTheme";
@@ -81,6 +82,16 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
   const qc = useQueryClient();
   // Managed-app mode: no workspace switching, no platform nav — just the app.
   const appMode = activeOrg?.app_mode ?? null;
+
+  // Is the labels module on? Gates the label-queue foot row below. Shares the
+  // cached ["org-modules"] query the nav already fetches — no extra request.
+  const orgModulesQ = useQuery({
+    queryKey: ["org-modules", activeSlug],
+    queryFn: () => api.orgModules(activeSlug),
+    enabled: !!activeSlug,
+    staleTime: 30_000,
+  });
+  const labelsEnabled = (orgModulesQ.data?.items ?? []).some((m) => m.name === "labels" && m.enabled);
 
   // Auto-update on use: once per session, ask the server to re-apply the latest
   // bundle if this managed app is behind. No-op when current; if it updated,
@@ -273,6 +284,11 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
         Search
       </button>
       <NotificationsBell panelOnly asRow />
+      {/* Label-queue lives as a foot row here (not a floating pill) so it reads
+          as workspace chrome with its neighbours; renders nothing when the
+          queue is empty. The floating pill is suppressed in full-sidebar
+          (App.tsx). */}
+      {labelsEnabled && <LabelsBasket asRow orgSlug={activeSlug} getToken={getToken} />}
       <ChatWidget open={chatOpen} setOpen={setChatOpen} asRow />
       {/* Configuration lives HERE, not behind the account flyout — the flyout
           detour (open menu → Configuration → back into the sidebar) was the

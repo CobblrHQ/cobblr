@@ -687,7 +687,12 @@ function ActiveOrgScopedRoutes() {
         <Route path="/super-admin" element={<ConsoleEscape />} />
       </Routes>
       </Suspense>
-      {!onAdmin && labelsEnabled && <LabelsBasket orgSlug={activeSlug} getToken={getToken} />}
+      {/* Floating queue pill — top-nav mode only. In full-sidebar mode the
+          basket lives as a foot row (AppLayout), same as the feedback pill;
+          floating it in the empty bottom-right corner there reads as orphaned
+          chrome. When it does float, it sits ABOVE the feedback pill (see
+          BasketWidget) — the two used to overlap in that corner. */}
+      {!onAdmin && labelsEnabled && !fullSide && <LabelsBasket orgSlug={activeSlug} getToken={getToken} />}
     </PlatformWebProvider>
   );
 }
