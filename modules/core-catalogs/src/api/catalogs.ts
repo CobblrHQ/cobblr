@@ -554,6 +554,7 @@ async function importCsvIntoCatalog(
     .set({
       entry_count: Number(count),
       last_sync_at: new Date(),
+      // jsonb-replace-ok: the schema IS the document this endpoint owns
       schema: sql`${JSON.stringify(schemaConfig)}::jsonb` as never,
       updated_at: new Date(),
     } as never)

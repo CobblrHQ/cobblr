@@ -709,6 +709,21 @@ export interface ModuleFieldDefsTable {
    *  `decode:<key>` (fill from the decoder's <key> output). Null for ordinary
    *  fields. See packages/platform-contract parseDecodeRole. */
   decode_role: string | null;
+  /** Semantic role of the field IN THE RECORD — distinct from `decode_role`
+   *  (identifier decoding) and from the manifest's presentation role (how to
+   *  DISPLAY it). Today: `category` — the field saying what KIND of thing this
+   *  record is, WITHIN its table. The scan matchmaker routes on it, so that a
+   *  difference in kind is expressed as a CATEGORY rather than by scattering
+   *  items across near-synonym tables. Declared, never guessed. At most one
+   *  category field per (org, kind) — enforced by a partial unique index. */
+  field_role: string | null;
+  /** TRAIT SCOPE: when set, this def applies to a CLASS of entity kinds
+   *  ("everything physical") rather than the single `entity_kind` it's keyed to,
+   *  and `entity_kind` holds a scope sentinel (`@physical`) instead of a real
+   *  kind. The value is an ActionAppliesToDecl — the same predicate the action
+   *  registry matches — so one matcher serves both. Null = per-kind (the
+   *  default). See platform/field-defs.ts + docs/design-decisions/trait-scoped-fields.md. */
+  applies_to: unknown | null;
   created_at: Generated<Date>;
 }
 
@@ -758,6 +773,11 @@ export interface FieldOverrideBlob {
    *  Lets the vehicle bundle mark the native serial_number/manufacturer/model
    *  fields as the VIN identifier + make/model targets without a schema change. */
   decode_role?: string;
+  /** Semantic record role for a NATIVE field — the override-layer twin of
+   *  module_field_defs.field_role. Lets a bundle mark an existing native field
+   *  (inventory's own `category`) as the table's grouping axis without a schema
+   *  change, exactly as decode_role does for the VIN fields. */
+  field_role?: string;
 }
 
 /** One iCal feed token per workspace, in meta so the unauthenticated
@@ -791,6 +811,16 @@ export interface WorkspaceModuleInstancesTable {
   instance_name: string;
   display_name: string;
   is_default: Generated<boolean>;
+  /** The workspace's designated catch-all for a scan the matchmaker can't
+   *  confidently place. Unset for every instance = fall back to `is_default`.
+   *
+   *  A workspace accumulates tables that overlap almost entirely (Home Inventory,
+   *  Household Supplies, Maker Workshop, Inventory). Asked one item at a time to
+   *  choose between near-synonyms, the matchmaker scatters same-domain items
+   *  across all of them — the question has no right answer. So it stops being
+   *  asked: an unplaceable item lands HERE and says what it is via this table's
+   *  `category` field. At most one per (org, module). */
+  is_scan_fallback: Generated<boolean>;
   config: Generated<Record<string, unknown>>;
   created_at: Generated<Date>;
 }

@@ -49,3 +49,20 @@ export async function put(
     )
     .execute();
 }
+
+/**
+ * Forget a key.
+ *
+ * The cache had no eviction, which is a real gap for a store shared across every
+ * workspace: when an entry turned out to be WRONG, the only moves were to
+ * overwrite it with another guess or leave it poisoning everyone. Eviction is the
+ * honest third option — "we no longer believe this" — so the next lookup takes a
+ * fresh look instead of re-serving a disproved answer.
+ */
+export async function del(namespace: string, key: string): Promise<void> {
+  await meta
+    .deleteFrom("shared_cache")
+    .where("namespace", "=", namespace)
+    .where("key", "=", key)
+    .execute();
+}

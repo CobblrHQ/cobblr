@@ -114,6 +114,7 @@ portalRouter.put(
       await meta
         .updateTable("orgs")
         .set({
+          // jsonb-replace-ok: the whole portal config is this endpoint's document
           portal_config: sql`${JSON.stringify(parsed.data)}::jsonb` as never,
           updated_at: new Date(),
         })

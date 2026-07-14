@@ -7,7 +7,7 @@ import { trackProductEvent } from "../platform/product-events.js";
 import { parseWireFilter } from "../platform/wire-filter.js";
 import { z } from "zod";
 import { sql, type Kysely } from "kysely";
-import { platform, CatalogSchemaConfig } from "@cobblr/platform-contract";
+import { platform, CatalogSchemaConfig, packFieldIssues } from "@cobblr/platform-contract";
 import { requireAuth } from "../auth/middleware.js";
 import { requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
@@ -18,6 +18,7 @@ import { enableModuleForOrg } from "../modules/enable.js";
 import { getEntry } from "../modules/registry.js";
 import { upsertOverride, deleteOverride } from "../platform/entity-kind-overrides.js";
 import { createInstance, getInstance } from "../platform/instances.js";
+import { SCAN_CATEGORY_SOURCE } from "../platform/reconcile-scan-category.js";
 import { listNavHeadings, createNavHeading, addNavMember } from "../platform/nav-headings.js";
 import { tearDownInstance, countInstanceItems } from "../platform/instances.js";
 import { disableModuleForOrg } from "../modules/enable.js";
@@ -140,10 +141,27 @@ const FieldDefEntry = z
       .string()
       .regex(/^(identifier:[a-z][a-z0-9_-]*|decode:[a-z][a-z0-9_-]*)$/i)
       .optional(),
+    /** Semantic RECORD role. `category` marks the field that says what KIND of
+     *  thing a record is WITHIN this table — the axis the scan matchmaker routes
+     *  on, so a difference in kind is a category rather than a different table.
+     *  `pack` marks the packaging-count field, filled from the scanned package.
+     *  At most one of each per entity kind. */
+    field_role: z.enum(["category", "pack"]).optional(),
   })
   .refine((f) => f.type !== "computed" || (f.template && f.template.trim().length > 0), {
     message: "computed field_defs need a template",
     path: ["template"],
+  })
+  .refine((f) => f.field_role !== "category" || f.type === "text", {
+    message: "a category field must be type='text' (its choices are the categories)",
+    path: ["field_role"],
+  })
+  // Pack-dimension guardrail — shared with the contract + its unit test, so a
+  // mislabeled or "usually buy"-framed pack field can never ship (see FIELD_ROLE_PACK).
+  .superRefine((f, ctx) => {
+    for (const issue of packFieldIssues(f)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: [issue.path], message: issue.message });
+    }
   })
   .refine((f) => !f.unit || f.type === "number", {
     message: "unit is only valid for type='number'",
@@ -164,6 +182,11 @@ const FieldOverrideEntry = z.object({
     .string()
     .regex(/^(identifier:[a-z][a-z0-9_-]*|decode:[a-z][a-z0-9_-]*)$/i)
     .optional(),
+  /** Semantic RECORD role for this NATIVE field — same override seam as
+   *  decode_role. Lets a bundle mark inventory's OWN `category` field as the
+   *  table's grouping axis, or a native field as the `pack` count, with no
+   *  schema change. */
+  field_role: z.enum(["category", "pack"]).optional(),
 });
 
 const SavedViewEntry = z.object({
@@ -706,6 +729,15 @@ export async function validateBundle(
         "b.name as bundle_name",
       ])
       .where("fd.org_id", "=", orgId)
+      // The scan platform auto-creates a placeholder `category` axis on the scan
+      // fallback table (reconcile-scan-category, a platform sentinel source). It's a
+      // PLACEHOLDER — a bundle shipping its own `category` field for the same kind
+      // SUPERSEDES it, so it must never count as a collision. (12 flagship bundles
+      // ship `category`; without this each would 409 on any workspace the reconcile
+      // touched.) The install replaces the placeholder with the bundle's field.
+      // NULL-safe: a USER field has source_module NULL, and `NOT(NULL = x)` is
+      // NULL (drops the row), which would silently hide every real user collision.
+      .where((eb) => eb.or([eb("fd.source_module", "is", null), eb("fd.source_module", "!=", SCAN_CATEGORY_SOURCE)]))
       .where((eb) =>
         eb.or(m.field_defs.map((f) => eb.and([eb("fd.entity_kind", "=", f.entity_kind), eb("fd.name", "=", f.name)]))),
       )
@@ -778,8 +810,8 @@ export async function validateBundle(
         .where("org_id", "=", orgId)
         .where("bundle_id", "in", selfIds)
         .execute();
-      const curByKey = new Map(curDefs.map((d) => [`${d.entity_kind} ${d.name}`, d]));
-      const newByKey = new Map(m.field_defs.map((f) => [`${f.entity_kind} ${f.name}`, f]));
+      const curByKey = new Map(curDefs.map((d) => [`${d.entity_kind}\x00${d.name}`, d]));
+      const newByKey = new Map(m.field_defs.map((f) => [`${f.entity_kind}\x00${f.name}`, f]));
       const userOvrs = await meta
         .selectFrom("native_field_overrides")
         .select(["entity_kind", "name", "display_label", "overrides"])
@@ -788,7 +820,7 @@ export async function validateBundle(
         .execute();
       const sameJson = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
       for (const o of userOvrs) {
-        const key = `${o.entity_kind} ${o.name}`;
+        const key = `${o.entity_kind}\x00${o.name}`;
         const cur = curByKey.get(key);
         if (!cur) continue; // not a field this bundle owns — nothing to reconcile
         const fieldLabel = o.display_label ?? cur.display_label ?? o.name;
@@ -1308,6 +1340,20 @@ export async function applyValidatedBundle(
         })
         .execute();
     }
+    // Replace the platform category placeholder (reconcile-scan-category) with the
+    // bundle's own field for any kind this bundle defines — so the bundle's
+    // definition wins and there's never a duplicate `category` axis or a unique
+    // collision. (The collision pre-check already excludes the platform sentinel.)
+    if (m.field_defs.length) {
+      await trx
+        .deleteFrom("module_field_defs")
+        .where("org_id", "=", orgId)
+        .where("source_module", "=", SCAN_CATEGORY_SOURCE)
+        .where((eb) =>
+          eb.or(m.field_defs.map((f) => eb.and([eb("entity_kind", "=", f.entity_kind), eb("name", "=", f.name)]))),
+        )
+        .execute();
+    }
     for (const f of m.field_defs) {
       // Q6: collisions were pre-checked above and the install
       // would have already failed with 409 field_def_collision.
@@ -1336,6 +1382,7 @@ export async function applyValidatedBundle(
           help: f.help ?? null,
           unit: f.type === "number" ? f.unit ?? null : null,
           decode_role: (f as { decode_role?: string | null }).decode_role ?? null,
+          field_role: (f as { field_role?: string | null }).field_role ?? null,
         })
         .execute();
     }
@@ -1343,12 +1390,18 @@ export async function applyValidatedBundle(
     // reshape a field another bundle already touched (last writer wins);
     // tagged with bundle_id so uninstall cleans them up.
     for (const fo of m.field_overrides) {
-      // A decode role (P3) rides in the open-ended `overrides` jsonb blob (the
-      // native twin of module_field_defs.decode_role) — merged, so a co-located
-      // `choices` on a bundle row survives. Absent → the default '{}' stands.
-      const foBlob = (fo as { decode_role?: string }).decode_role
-        ? sql`jsonb_build_object('decode_role', ${(fo as { decode_role?: string }).decode_role}::text)`
-        : null;
+      // A decode role (P3) and a record role ride in the open-ended `overrides`
+      // jsonb blob (the native twins of module_field_defs.decode_role /
+      // .field_role) — merged, so a co-located `choices` on a bundle row
+      // survives. Absent → the default '{}' stands.
+      const roles = fo as { decode_role?: string; field_role?: string };
+      const foBlob =
+        roles.decode_role || roles.field_role
+          ? sql`(
+              coalesce(${roles.decode_role ? sql`jsonb_build_object('decode_role', ${roles.decode_role}::text)` : sql`'{}'::jsonb`}, '{}'::jsonb)
+              || coalesce(${roles.field_role ? sql`jsonb_build_object('field_role', ${roles.field_role}::text)` : sql`'{}'::jsonb`}, '{}'::jsonb)
+            )`
+          : null;
       await trx
         .insertInto("native_field_overrides")
         .values({
@@ -1554,6 +1607,7 @@ export async function applyValidatedBundle(
         .updateTable("bundles")
         .set({
           install_status: "partial",
+          // jsonb-replace-ok: warnings are re-derived per install; stale ones must NOT survive
           install_warnings: sql`${JSON.stringify([
             {
               step: "catalogs",

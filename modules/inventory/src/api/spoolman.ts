@@ -151,14 +151,15 @@ spoolmanRouter.post(
         .executeTakeFirst();
 
       if (existing) {
-        const merged = { ...(existing.metadata as Record<string, unknown>), ...meta };
         await db
           .updateTable("inventory_parts")
           .set({
             name,
             qty: String(remaining),
             unit: "g",
-            metadata: sql`${JSON.stringify(merged)}::jsonb` as never,
+            // Overlay just the Spoolman-synced keys, DB-side — a part's metadata
+            // is multi-writer, and a snapshot rewrite dropped the rest on each sync.
+            metadata: sql`coalesce(metadata, '{}'::jsonb) || ${JSON.stringify(meta)}::jsonb` as never,
             updated_at: new Date(),
           })
           .where("id", "=", existing.id)

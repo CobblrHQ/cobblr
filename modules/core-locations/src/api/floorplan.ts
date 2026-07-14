@@ -354,7 +354,9 @@ floorplanRouter.post(
       await db
         .updateTable("core_locations_locations")
         .set({
-          metadata: sql`${JSON.stringify({ ...meta, floorplan: p.rect })}::jsonb` as never,
+          // Overlay just the floorplan rect, DB-side — a location's metadata holds
+          // more than the floorplan, and the snapshot rewrite dropped the rest.
+          metadata: sql`coalesce(metadata, '{}'::jsonb) || ${JSON.stringify({ floorplan: p.rect })}::jsonb` as never,
           updated_at: now,
         })
         .where("id", "=", child.id)

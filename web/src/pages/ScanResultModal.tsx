@@ -271,7 +271,7 @@ export function ScanResultModal({
   // desktop triage uses). A barcode re-run is inline, so the response IS the
   // re-identified row; swap it straight in so the card updates on the spot.
   const rerunWrong = useMutation({
-    mutationFn: () => api.rerunScanAi(activeSlug, item!.id, undefined, true),
+    mutationFn: () => api.rerunScanAi(activeSlug, item!.id, { wrong: true }),
     onSuccess: (fresh) => {
       setItem(fresh);
       setQty(fresh.quantity > 0 ? fresh.quantity : 1);
@@ -291,7 +291,7 @@ export function ScanResultModal({
       readingAnchor.current = item?.ai_suggested_at ?? null;
       const named = new File([file], `identify-${Date.now()}.jpg`, { type: "image/jpeg" });
       const f = await api.uploadFile(activeSlug, named);
-      return api.rerunScanAi(activeSlug, item!.id, undefined, undefined, undefined, f.id);
+      return api.rerunScanAi(activeSlug, item!.id, { imageFileId: f.id });
     },
     onMutate: () => setReading(true),
     onSuccess: (fresh) => {

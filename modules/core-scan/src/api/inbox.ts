@@ -33,6 +33,8 @@ import {
   observeScanPhoto,
   refreshCatalogImageByName,
 } from "../services/enrich-photo.js";
+import { mergeMeta } from "../services/metadata.js";
+import { pickPrimaryId, unionCandidateFields, type CombineItem } from "../services/combine-merge.js";
 import { searchImages, rankImageOptions, imageQuery, mediaSearchExtras } from "../services/ddg-images.js";
 import {
   assembleScanMenu,
@@ -828,6 +830,10 @@ const PatchBody = z.object({
   box_state: z.enum(["item-in-box", "empty-box"]).nullable().optional(),
   // "Looks fine" — a human eyeballed a ⚠-flagged item; drop it from needs-review.
   reviewed: z.boolean().optional(),
+  // Answer to "this photo has N different things — keep them together, or split?"
+  // true = keep as one record; the offer stops asking. An UNANSWERED offer and a
+  // declined one must look different, or we'd nag on every render.
+  keep_grouped: z.boolean().optional(),
 });
 
 inboxRouter.patch(
@@ -848,7 +854,11 @@ inboxRouter.patch(
     const db = tenantDb(req);
     // Metadata-riders (box_state / reviewed): merge into suggested_metadata
     // without clobbering the rest of the blob.
-    if (parsed.data.box_state !== undefined || parsed.data.reviewed !== undefined) {
+    if (
+      parsed.data.box_state !== undefined ||
+      parsed.data.reviewed !== undefined ||
+      parsed.data.keep_grouped !== undefined
+    ) {
       const cur = await db
         .selectFrom("core_scan_inbox_items")
         .select("suggested_metadata")
@@ -860,6 +870,7 @@ inboxRouter.patch(
         else meta.box_state = parsed.data.box_state;
       }
       if (parsed.data.reviewed !== undefined) meta.reviewed = parsed.data.reviewed;
+      if (parsed.data.keep_grouped !== undefined) meta.keep_grouped = parsed.data.keep_grouped;
       patch.suggested_metadata = JSON.stringify(meta);
     }
     // Capture the prior name first: renaming a barcode item is a correction we
@@ -932,6 +943,48 @@ inboxRouter.patch(
 );
 
 // ──────────────────────── POST /inbox/:id/confirm ──────────────────
+
+/**
+ * A confirmed category value joins the table's vocabulary.
+ *
+ * The taxonomy is not something the kernel ships or a model invents — it is the
+ * list of categories the user has actually accepted. Growing it here, at the
+ * moment of confirm, is what makes the next scan REUSE "Electrical" rather than
+ * coin "Electrical Parts" beside it. (`resolveCategory` already snaps near-misses
+ * onto an existing value; this is what gives it something to snap to.)
+ *
+ * A no-op for a table with no category axis, or a value already in the list.
+ */
+async function growCategoryChoices(
+  baseUrl: string,
+  slug: string,
+  token: string,
+  kind: string,
+  extras: Record<string, unknown> | undefined,
+): Promise<void> {
+  if (!extras) return;
+  const auth = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+  const res = await fetch(`${baseUrl}/api/v1/orgs/${slug}/field-defs?kind=${encodeURIComponent(kind)}`, {
+    headers: auth,
+  });
+  if (!res.ok) return;
+  const defs = ((await res.json()) as {
+    items?: Array<{ id: string; name: string; choices?: string[] | null; field_role?: string | null }>;
+  }).items ?? [];
+  const axis = defs.find((d) => d.field_role === "category");
+  if (!axis) return;
+  const value = extras[axis.name];
+  if (typeof value !== "string" || !value.trim()) return;
+  const chosen = value.trim();
+  const choices = axis.choices ?? [];
+  const norm = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  if (choices.some((c) => norm(c) === norm(chosen))) return; // already in the vocabulary
+  await fetch(`${baseUrl}/api/v1/orgs/${slug}/field-defs/${axis.id}`, {
+    method: "PATCH",
+    headers: auth,
+    body: JSON.stringify({ choices: [...choices, chosen].sort((a, b) => a.localeCompare(b)) }),
+  });
+}
 
 const ConfirmBody = z.object({
   /** Optional — when absent, routed from the identify's asset/part hint
@@ -1283,6 +1336,18 @@ inboxRouter.post(
       }
     }
 
+    // The taxonomy grows from what the user actually confirms — never from what a
+    // model merely proposed. A brand-new category value becomes one of the field's
+    // choices HERE, at the moment a human accepted it, so the next scan of an
+    // electrical part finds "Electrical" already in the vocabulary and reuses it
+    // instead of coining a synonym. Best-effort: a failure to grow the list must
+    // never fail a confirm the user already committed to.
+    // Field-defs are keyed by the INSTANCE's kind when routing into one.
+    const fieldKind = parsed.data.instance ? `${parsed.data.instance}:item` : kindKey;
+    void growCategoryChoices(baseUrl, ctx.org.slug, token, fieldKind, parsed.data.extras).catch((err) =>
+      console.error("[core-scan] grow category choices failed:", (err as Error).message),
+    );
+
     // Mark the inbox row resolved.
     const resolvedRow = await db
       .updateTable("core_scan_inbox_items")
@@ -1624,6 +1689,17 @@ const RerunBody = z.object({
    *  phone's "Not it — photograph it": a junk/non-product barcode that no source
    *  can fix gets identified from the package instead. */
   image_file_id: z.string().uuid().optional(),
+  /** REPLAY: re-run the pipeline without spending a token. Every AI stage is
+   *  served from the cache, and a stage with no cached reply is SKIPPED (it
+   *  degrades exactly as it would with no provider — the matchmaker falls back to
+   *  its keyword heuristic) rather than calling out.
+   *
+   *  This exists to exercise a change to our own deterministic code — the reply
+   *  parsers, pack-size, the split derivation, keyword routing, decoder role-fill,
+   *  field mapping — against real items, instantly and for free. It CANNOT test a
+   *  prompt change: the cache is keyed on the input (the image), not the prompt,
+   *  so a cached reply answers whatever prompt was live when it was bought. */
+  no_ai: z.boolean().optional(),
 });
 
 inboxRouter.post(
@@ -1689,30 +1765,41 @@ inboxRouter.post(
       const imageFileId = row.image_file_id;
       const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
       const photoHint = rerun?.hint;
-      // Stamp the hint as user_hint NOW (before the detached work) so it rides
-      // into the matchmaker too — the barcode path stamps below, but the photo
-      // path returns before it, which silently dropped the hint entirely.
-      if (photoHint) {
-        const meta = ((row.suggested_metadata ?? {}) as Record<string, unknown>) ?? {};
-        await db
-          .updateTable("core_scan_inbox_items")
-          .set({ suggested_metadata: JSON.stringify({ ...meta, user_hint: photoHint }) as never, updated_at: new Date() })
-          .where("id", "=", id)
-          .execute();
-      }
+      // Mark the pipeline RUNNING before we return, and clear the terminal
+      // markers the last run left behind. Without this the card kept the previous
+      // run's `matched_at`/`finalized_at` (and its candidate list), so the UI's
+      // "AI is reading…" predicate stayed false and the spinner stopped the moment
+      // the name landed — while the matchmaker was still in flight. It looked
+      // done, and then it changed, which reads as a bug rather than as progress.
+      await db
+        .updateTable("core_scan_inbox_items")
+        .set({
+          suggested_metadata: sql`(coalesce(suggested_metadata, '{}'::jsonb) - 'matched_at' - 'finalized_at' - 'match_failed')
+            || ${JSON.stringify({
+              pipeline_started_at: new Date().toISOString(),
+              // The hint has to ride into the matchmaker too — the barcode path
+              // stamps it below, but the photo path returns before that, which
+              // silently dropped the correction entirely.
+              ...(photoHint ? { user_hint: photoHint } : {}),
+            })}::jsonb` as never,
+          updated_at: new Date(),
+        })
+        .where("id", "=", id)
+        .execute();
       // "This is wrong" on a photo: the user-picked catalog image was anchoring
       // the identity (the re-read kept seeing the picked product). Drop its lock
       // + refs so the re-identify — and the user's hint — aren't fighting a stale
       // image. A plain hint/enrich keeps the picked image (it's still the item).
+      // Drop the ONE key DB-side: rebuilding the object from the request's stale
+      // in-memory `row` would roll back whatever the write above (or a concurrent
+      // pass) just committed.
       if (rerun?.wrong) {
-        const meta = ((row.suggested_metadata ?? {}) as Record<string, unknown>) ?? {};
-        delete (meta as { catalog_image_user_set?: unknown }).catalog_image_user_set;
         await db
           .updateTable("core_scan_inbox_items")
           .set({
             catalog_image_file_id: null,
             catalog_image_url: null,
-            suggested_metadata: JSON.stringify({ ...meta, ...(photoHint ? { user_hint: photoHint } : {}) }) as never,
+            suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) - 'catalog_image_user_set'` as never,
             updated_at: new Date(),
           })
           .where("id", "=", id)
@@ -1721,11 +1808,46 @@ inboxRouter.post(
       // Capture the caller now — the detached work runs after the request, so
       // route the AI through their personal connection (the 'own' path).
       const uid = sessionUser(req).id;
+      const replay = !!rerun?.no_ai;
       void (async () => {
         const workDb = (await platform().tenants.getDb(ctx.org.id)) as unknown as typeof db;
-        await enrichPhotoItem({ db: workDb, orgId: ctx.org.id, itemId: id, imageFileId, userId: uid, force: true, hint: photoHint });
+        const outcome = await enrichPhotoItem({
+          db: workDb,
+          orgId: ctx.org.id,
+          itemId: id,
+          imageFileId,
+          userId: uid,
+          force: true,
+          hint: photoHint,
+          replay,
+        });
+        // A replay with no cached reply for this image changed nothing and cost
+        // nothing. Say so on the row (the card surfaces it) rather than leaving
+        // the user staring at an unchanged card wondering if the button works.
+        if (replay && outcome === "nothing-cached") {
+          await workDb
+            .updateTable("core_scan_inbox_items")
+            .set({
+              ai_notes:
+                "Replay (no AI): nothing cached for this photo, so there was no reply to re-parse. Use Re-run AI to identify it for real.",
+              suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || jsonb_build_object('finalized_at', now()::text)` as never,
+              updated_at: new Date(),
+            })
+            .where("id", "=", id)
+            .execute();
+          return;
+        }
         void platform().events.emit("core-scan.scan.enriched", { orgId: ctx.org.id, itemId: id });
-        await matchItem({ orgId: ctx.org.id, userId: sessionUser(req)?.id ?? null, orgSlug: ctx.org.slug, token, baseUrl, itemId: id, force: true });
+        await matchItem({
+          orgId: ctx.org.id,
+          userId: sessionUser(req)?.id ?? null,
+          orgSlug: ctx.org.slug,
+          token,
+          baseUrl,
+          itemId: id,
+          force: true,
+          replay,
+        });
       })().catch((err) => {
         console.error("[core-scan] photo rerun-ai work failed:", (err as Error)?.message ?? err);
       });
@@ -1764,20 +1886,19 @@ inboxRouter.post(
       hint: rerun?.hint,
     });
 
-    // Stamp the user's hint AFTER enrichment (which rewrites
-    // suggested_metadata) so the matchmaker sees it as user_hint.
+    // Stamp the user's hint AFTER enrichment, so the matchmaker sees it as
+    // user_hint. (It has to come after because the enrich passes CLEAR the
+    // identify-owned keys, and user_hint is one of them — an identify that
+    // re-reads the item is entitled to drop the correction it just consumed.)
+    // A merge, not a read-and-rewrite: the enrich above spawns DETACHED work
+    // (crossCheckScanPhoto, refreshCatalogImageByName, enrichThinHit), any of
+    // which can land between a SELECT here and its UPDATE.
     const hint = rerun?.hint;
     if (hint) {
-      const cur = await db
-        .selectFrom("core_scan_inbox_items")
-        .select("suggested_metadata")
-        .where("id", "=", id)
-        .executeTakeFirst();
-      const meta = ((cur?.suggested_metadata ?? {}) as Record<string, unknown>) ?? {};
       await db
         .updateTable("core_scan_inbox_items")
         .set({
-          suggested_metadata: JSON.stringify({ ...meta, user_hint: hint }) as never,
+          suggested_metadata: mergeMeta({ user_hint: hint }) as never,
           updated_at: new Date(),
         })
         .where("id", "=", id)
@@ -1913,28 +2034,31 @@ inboxRouter.post(
       return;
     }
     const baseMeta = (row.suggested_metadata ?? {}) as Record<string, unknown> & { orig_catalog?: OrigCatalog };
-    // Capture the original ONCE — on the first override — so Revert can restore it.
-    const metaWithOrig = baseMeta.orig_catalog
-      ? baseMeta
-      : { ...baseMeta, orig_catalog: { url: row.catalog_image_url, file_id: row.catalog_image_file_id } };
+    // The keys the catalog-image override OWNS: the user-set lock, and (captured
+    // ONCE, on the first override) the original image so Revert can restore it.
+    // Merged, not full-replaced — this write shares suggested_metadata with a dozen
+    // other passes and used to drop all of theirs.
+    const catalogLockSet = {
+      catalog_image_user_set: true as const,
+      ...(baseMeta.orig_catalog
+        ? {}
+        : { orig_catalog: { url: row.catalog_image_url, file_id: row.catalog_image_file_id } }),
+    };
     const fresh = () =>
       db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", row.id).executeTakeFirstOrThrow();
 
     if ("action" in parsed.data && parsed.data.action === "revert") {
       const orig = (baseMeta.orig_catalog ?? { url: null, file_id: null }) as OrigCatalog;
-      // Reverting to the auto image relinquishes the user's pick → also clear the
-      // `catalog_image_user_set` lock so a future re-identify can refresh it again.
-      const { orig_catalog: _drop, catalog_image_user_set: _u, ...rest } = baseMeta as Record<string, unknown> & {
-        catalog_image_user_set?: boolean;
-      };
-      void _drop;
-      void _u;
+      // Reverting to the auto image relinquishes the user's pick → drop the
+      // `catalog_image_user_set` lock (so a future re-identify can refresh it) and
+      // the stashed `orig_catalog`. DB-side delete, so no OTHER writer's key goes
+      // with them — which is what the whole-snapshot rewrite here used to do.
       await db
         .updateTable("core_scan_inbox_items")
         .set({
           catalog_image_url: orig.url,
           catalog_image_file_id: orig.file_id,
-          suggested_metadata: sql`${JSON.stringify(rest)}::jsonb` as never,
+          suggested_metadata: mergeMeta({}, ["orig_catalog", "catalog_image_user_set"]) as never,
           updated_at: new Date(),
         })
         .where("id", "=", row.id)
@@ -1954,7 +2078,7 @@ inboxRouter.post(
           catalog_image_file_id: row.image_file_id,
           catalog_image_url: null,
           // The user chose this image → lock it so a later re-identify won't clobber it.
-          suggested_metadata: sql`${JSON.stringify({ ...metaWithOrig, catalog_image_user_set: true })}::jsonb` as never,
+          suggested_metadata: mergeMeta(catalogLockSet) as never,
           updated_at: new Date(),
         })
         .where("id", "=", row.id)
@@ -1971,7 +2095,7 @@ inboxRouter.post(
           catalog_image_file_id: parsed.data.file_id,
           catalog_image_url: null,
           // The user chose this image → lock it so a re-identify won't clobber it.
-          suggested_metadata: sql`${JSON.stringify({ ...metaWithOrig, catalog_image_user_set: true })}::jsonb` as never,
+          suggested_metadata: mergeMeta(catalogLockSet) as never,
           updated_at: new Date(),
         })
         .where("id", "=", row.id)
@@ -1987,7 +2111,7 @@ inboxRouter.post(
       .set({
         catalog_image_url: url,
         // The user chose this image → lock it so a later re-identify won't clobber it.
-        suggested_metadata: sql`${JSON.stringify({ ...metaWithOrig, catalog_image_user_set: true })}::jsonb` as never,
+        suggested_metadata: mergeMeta(catalogLockSet) as never,
         updated_at: new Date(),
       })
       .where("id", "=", row.id)
@@ -2114,7 +2238,6 @@ inboxRouter.post(
     // the item's whole SESSION header time + sort position forward to the undo
     // moment (the session reads max(created_at) across its items). Only
     // updated_at moves. suggested_* stays — the point is to FIX + redo.
-    const { attached_to: _drop, ...restMeta } = meta;
     const reopened = await db
       .updateTable("core_scan_inbox_items")
       .set({
@@ -2123,7 +2246,9 @@ inboxRouter.post(
         target_kind: null,
         target_entity_id: null,
         resolved_at: null,
-        suggested_metadata: JSON.stringify(restMeta) as never,
+        // Unconfirm just clears the attach link — DB-side delete of that one key,
+        // leaving every other pass's keys intact (this used to full-replace).
+        suggested_metadata: mergeMeta({}, ["attached_to"]) as never,
         updated_at: new Date(),
       })
       .where("id", "=", id)
@@ -2319,8 +2444,7 @@ inboxRouter.post(
         target_module: module ?? null,
         target_kind: parsed.data.kind,
         target_entity_id: parsed.data.entity_id,
-        suggested_metadata: JSON.stringify({
-          ...meta,
+        suggested_metadata: mergeMeta({
           attached_to: { kind: parsed.data.kind, id: parsed.data.entity_id, mode: parsed.data.mode },
         }) as never,
         resolved_at: new Date(),
@@ -2484,8 +2608,10 @@ inboxRouter.post(
       .updateTable("core_scan_inbox_items")
       .set({
         image_file_id: newId,
-        suggested_metadata: JSON.stringify({
-          ...meta,
+        // extra_photos is single-writer (only the gallery endpoints touch it), so
+        // deriving the new array from the snapshot is fine — merge so this write
+        // stops dropping the OTHER writers' keys.
+        suggested_metadata: mergeMeta({
           extra_photos: [...extras.filter((p) => p !== newId), row.image_file_id].slice(-8),
         }) as never,
         updated_at: new Date(),
@@ -2526,12 +2652,11 @@ inboxRouter.post(
       .updateTable("core_scan_inbox_items")
       .set({
         ...(asPrimary ? { image_file_id: parsed.data.file_id } : {}),
-        suggested_metadata: JSON.stringify({
-          ...meta,
-          ...(asPrimary
+        suggested_metadata: mergeMeta(
+          asPrimary
             ? {}
-            : { extra_photos: [...extras.filter((p) => p !== parsed.data.file_id), parsed.data.file_id].slice(-8) }),
-        }) as never,
+            : { extra_photos: [...extras.filter((p) => p !== parsed.data.file_id), parsed.data.file_id].slice(-8) },
+        ) as never,
         updated_at: new Date(),
       })
       .where("id", "=", id ?? "")
@@ -2568,8 +2693,7 @@ inboxRouter.post(
       .updateTable("core_scan_inbox_items")
       .set({
         image_file_id: parsed.data.file_id,
-        suggested_metadata: JSON.stringify({
-          ...meta,
+        suggested_metadata: mergeMeta({
           extra_photos: [
             ...extras.filter((p) => p !== parsed.data.file_id),
             ...(row.image_file_id ? [row.image_file_id] : []),
@@ -2604,7 +2728,7 @@ inboxRouter.delete(
     const updated = await db
       .updateTable("core_scan_inbox_items")
       .set({
-        suggested_metadata: JSON.stringify({ ...meta, extra_photos: extras.filter((p) => p !== fileId) }) as never,
+        suggested_metadata: mergeMeta({ extra_photos: extras.filter((p) => p !== fileId) }) as never,
         updated_at: new Date(),
       })
       .where("id", "=", id ?? "")
@@ -2642,7 +2766,32 @@ inboxRouter.post(
       return;
     }
     const userId = sessionUser(req).id;
-    const detected = await detectSplitItems(ctx.org.id, row.image_file_id, userId);
+
+    // Segmentation is the PREFERRED path: it returns boxes, so each child gets a
+    // crop of just itself out of the group shot.
+    let detected = await detectSplitItems(ctx.org.id, row.image_file_id, userId);
+
+    // ...but the observation pass (already paid for, on every photo scan) may have
+    // NAMED the items even when segmentation can't box them. Names alone are enough
+    // to split: each child then earns its own product photo from the catalog image
+    // search, which for a known product is usually better than a crop anyway. This
+    // is what stops "the AI sees 2 humidifiers" and "nothing to split" from being
+    // true at the same time — the dead end that made the old button feel broken.
+    if (detected.length < 2) {
+      const observed =
+        (row.suggested_metadata as {
+          photo_individuals?: Array<{ name: string; brand: string | null; qty: number }>;
+        } | null)?.photo_individuals ?? [];
+      if (observed.length >= 2) {
+        detected = observed.map((o) => ({
+          name: o.name,
+          brand: o.brand,
+          qty: o.qty,
+          box: null,
+        }));
+      }
+    }
+
     if (detected.length < 2) {
       res.status(409).json({
         error: {
@@ -2654,7 +2803,9 @@ inboxRouter.post(
     }
     const children: unknown[] = [];
     for (const it of detected) {
-      const cropId = await cropRegion(ctx.org.id, row.image_file_id, it.box).catch(() => null);
+      const cropId = it.box
+        ? await cropRegion(ctx.org.id, row.image_file_id, it.box).catch(() => null)
+        : null;
       const child = await db
         .insertInto("core_scan_inbox_items")
         .values({
@@ -2670,7 +2821,9 @@ inboxRouter.post(
           suggested_manufacturer: it.brand,
           quantity: it.qty,
           ai_confidence: "0.6",
-          ai_notes: "Split from a group photo by vision — double-check the crop.",
+          ai_notes: it.box
+            ? "Split from a group photo by vision — double-check the crop."
+            : "Split from a group photo. It keeps the group shot; pick a catalog photo for this one.",
           ai_suggested_at: new Date(),
           suggested_metadata: JSON.stringify({
             source: "vision-split",
@@ -2680,6 +2833,20 @@ inboxRouter.post(
         .returningAll()
         .executeTakeFirstOrThrow();
       children.push(child);
+      // Give each individual its OWN product photo, searched by its own name.
+      // matchItem only refetches art when it RENAMES an item, and a split child
+      // keeps the name we just gave it — so without this, every child inherits the
+      // group shot (or a crop of it) and never earns real catalog art. This is the
+      // "find an internet image for each one" half of a split, and it's what makes
+      // the children look like records rather than fragments.
+      void refreshCatalogImageByName(
+        ctx.org.id,
+        (child as { id: string }).id,
+        it.name,
+        it.brand,
+      ).catch((err) =>
+        console.error("[core-scan] split-child catalog image failed:", (err as Error).message),
+      );
       void platform().events.emit("core-scan.scan.received", {
         orgId: ctx.org.id,
         itemId: (child as { id: string }).id,
@@ -2704,8 +2871,7 @@ inboxRouter.post(
       .updateTable("core_scan_inbox_items")
       .set({
         status: "resolved",
-        suggested_metadata: JSON.stringify({
-          ...meta,
+        suggested_metadata: mergeMeta({
           split_into: children.map((c) => (c as { id: string }).id),
         }) as never,
         ai_notes: `Split into ${children.length} items.`,
@@ -2730,6 +2896,21 @@ inboxRouter.post(
   "/inbox/:id/confirm-barcode",
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
+    // Curating the SHARED, cross-workspace barcode DB is the platform operator's
+    // call, not every member's — a member "locking in" a mislabelled listing
+    // poisons every other workspace's future scans of that UPC. The UI already
+    // hides this control from non-operators; this is the enforcement so a crafted
+    // request can't write to the shared DB either. (The commit-time flywheel and
+    // catalog-image picks are separate, user-scoped-benefit paths and unaffected.)
+    if (!sessionUser(req).is_platform_admin) {
+      res.status(403).json({
+        error: {
+          code: "operator_only",
+          message: "Only the platform operator can lock a listing into the shared barcode database.",
+        },
+      });
+      return;
+    }
     const id = req.params.id;
     if (!id) {
       res.status(400).json({ error: { code: "missing_id", message: "id required" } });
@@ -3003,12 +3184,22 @@ inboxRouter.post(
       res.status(400).json({ error: { code: "too_few", message: "need ≥2 pending items to combine" } });
       return;
     }
-    const primary = rows.find((r) => r.id === keep_id) ?? rows[0];
+    // Keep the richest identity by default (a VIN-decoded vehicle over a photo of
+    // it), not just rows[0]; the user's explicit keep_id still wins.
+    const primaryId = pickPrimaryId(rows as unknown as CombineItem[], keep_id);
+    const primary = rows.find((r) => r.id === primaryId) ?? rows[0];
     if (!primary) {
       res.status(400).json({ error: { code: "too_few", message: "need ≥2 pending items to combine" } });
       return;
     }
     const others = rows.filter((r) => r.id !== primary.id);
+    // UNION the fields: the primary keeps its own values and fills its GAPS from the
+    // others (same table only). So merging a plate photo into a VIN vehicle carries
+    // the colour + plate across instead of discarding them.
+    const unionedCandidates = unionCandidateFields(
+      primary as unknown as CombineItem,
+      others as unknown as CombineItem[],
+    );
     const totalQty = rows.reduce((n, r) => n + (Number(r.quantity) || 1), 0);
     const barcodes = Array.from(new Set(rows.map((r) => r.barcode_text).filter(Boolean))) as string[];
     const meta = (primary.suggested_metadata ?? {}) as Record<string, unknown>;
@@ -3032,11 +3223,16 @@ inboxRouter.post(
         quantity: totalQty,
         ...(adoptBarcode ? { barcode_text: adoptBarcode } : {}),
         ...(adoptPhoto ? { image_file_id: adoptPhoto } : {}),
-        suggested_metadata: JSON.stringify({
-          ...(adoptBarcode ? metaNoSource : meta),
-          ...(barcodes.length ? { merged_barcodes: barcodes } : {}),
-          merged_count: rows.length,
-        }) as never,
+        ...(unionedCandidates ? { suggested_candidates: JSON.stringify(unionedCandidates) as never } : {}),
+        suggested_metadata: mergeMeta(
+          {
+            ...(barcodes.length ? { merged_barcodes: barcodes } : {}),
+            merged_count: rows.length,
+          },
+          // Adopting a merged item's barcode means its AI-photo-read barcode_source
+          // no longer applies — drop it (what metaNoSource used to do by omission).
+          adoptBarcode ? ["barcode_source"] : [],
+        ) as never,
         updated_at: new Date(),
       })
       .where("id", "=", primary.id)
@@ -3076,6 +3272,10 @@ interface MatchItemOpts {
   /** true = explicit re-rank (rerun / POST /match); false = intake
    *  auto-match, which SKIPS items already matched (matched_at stamp). */
   force: boolean;
+  /** REPLAY: every AI stage served from cache, a miss degrades instead of paying
+   *  (see RerunBody.no_ai). The deterministic tail — heuristic routing, decoder
+   *  role-fill, field mapping — re-runs against today's code either way. */
+  replay?: boolean;
 }
 
 /** For a book candidate whose table has an ISBN field the match left BLANK, look
@@ -3175,10 +3375,21 @@ function applyDecoderFill(
   suggestedMetadata: unknown,
   candidates: MatchCandidate[],
   menu: ScanMenuEntry[],
+  /** The identifier that was decoded (the item's code). A field declaring
+   *  `identifier:<decoderId>` is the field that HOLDS it — the VIN box on a
+   *  vehicle — so it gets the code itself. Without this the role was parsed and
+   *  then ignored: after a VIN scan the VIN field sat EMPTY while the VIN was
+   *  printed in the title right above it. */
+  identifierCode?: string | null,
 ): void {
-  const decoded = (suggestedMetadata as { decoded?: { fields?: Record<string, string | number> } } | null)
-    ?.decoded?.fields;
+  const meta = suggestedMetadata as {
+    decoded?: { decoder_id?: string; fields?: Record<string, string | number> };
+  } | null;
+  const decoded = meta?.decoded?.fields;
+  const decoderId = meta?.decoded?.decoder_id;
   if (!decoded || Object.keys(decoded).length === 0) return;
+  const identifier =
+    decoderId && identifierCode ? { decoderId, code: identifierCode } : undefined;
   const menuByKey = new Map(menu.map((m) => [`${m.module}::${m.instance ?? ""}`, m] as const));
   for (const cand of candidates) {
     const entry = menuByKey.get(`${cand.module}::${cand.instance ?? ""}`);
@@ -3192,7 +3403,7 @@ function applyDecoderFill(
       empty: cand.fields[f.name] === undefined || cand.fields[f.name] === "" || cand.fields[f.name] === null,
       role: f.decode_role ?? null,
     }));
-    for (const fill of planDecodeFill(decoded, targets)) {
+    for (const fill of planDecodeFill(decoded, targets, identifier)) {
       cand.fields[fill.target.name] = fill.value;
     }
   }
@@ -3233,16 +3444,25 @@ async function resolveVehicleColor(suggestedMetadata: unknown, text: string): Pr
 }
 
 /** Land a resolved color onto every candidate whose table DECLARES a `color`
- *  field and hasn't already got one — mirrors applyDecoderFill's field-scoped
- *  fill, so only the vehicle tables (incl. the not-yet-installed Vehicles bundle
- *  candidate) receive it; nothing else is touched. */
+ *  field — mirrors applyDecoderFill's field-scoped fill, so only the vehicle
+ *  tables (incl. the not-yet-installed Vehicles bundle candidate) receive it;
+ *  nothing else is touched.
+ *
+ *  Deliberately NOT empty-only, unlike the decoder fill. A color resolved FROM A
+ *  CODE is a fact: the paint code stamped on the vehicle's own compliance label,
+ *  run through a lookup. What it displaces is the model's guess from the photo,
+ *  which is a guess wearing a fact's clothes. A real silver 2002 Odyssey came back
+ *  as `#6F8FAF` (a blue-grey) because vision was asked what color the car was and
+ *  duly invented six hex digits: precision it does not have.
+ *
+ *  So the code wins. It only ever displaces the AI's OWN extraction (this runs at
+ *  intake, before anyone has touched the form), never something a human typed. */
 function applyPaintColorFill(color: string, candidates: MatchCandidate[], menu: ScanMenuEntry[]): void {
   const menuByKey = new Map(menu.map((m) => [`${m.module}::${m.instance ?? ""}`, m] as const));
   for (const cand of candidates) {
     const entry = menuByKey.get(`${cand.module}::${cand.instance ?? ""}`);
     if (!entry || !entry.fields.some((f) => f.name === "color")) continue;
-    const cur = cand.fields.color;
-    if (cur === undefined || cur === "" || cur === null) cand.fields.color = color;
+    cand.fields.color = color;
   }
 }
 
@@ -3270,6 +3490,17 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
       entity_type?: "asset" | "part";
       description?: string;
       photo_observations?: string;
+      /** How many DISTINCT things the observation pass saw (units of one thing
+       *  don't count — that's a quantity). >= 2 is what makes the inbox offer a
+       *  split, and it costs nothing: the observe call already counted them. */
+      photo_distinct?: number;
+      /** Those things, named — so the split offer can LIST them without paying
+       *  for a second vision call to find out what they are. */
+      photo_individuals?: Array<{ name: string; brand: string | null; qty: number }>;
+      /** WHICH image the three fields above describe. A retake swaps the photo
+       *  out from under them, and an observation about a photo that no longer
+       *  exists is worse than none — so they're only reused when this matches. */
+      photo_observed_for?: string;
       matched_at?: string;
     };
     if (!opts.force && meta.matched_at) return null;
@@ -3278,14 +3509,32 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
     // a factual read of it ("one loose skein in hand", "sealed 10-pack,
     // label says QTY 10") joins the matchmaker context and OUTRANKS
     // listing-derived counts — this catches the unit-barcode-on-a-9-pack-
-    // listing trap. Cached in suggested_metadata so re-matches don't
-    // re-pay the vision call. Best-effort with a hang guard.
-    let photoObservations = meta.photo_observations ?? null;
+    // listing trap. The same read reports how many DISTINCT things are in frame,
+    // which is what lets the inbox offer a split.
+    //
+    // On the PHOTO path this is already done: `identify-image` answers all three
+    // in its single read, so enrichPhotoItem has written these and we make NO
+    // second vision call — the split offer landed with the name, seconds earlier.
+    // What's left here is the BARCODE-with-a-photo path, which never runs
+    // identify. Valid only for the image it actually looked at: a retake must
+    // re-observe rather than describe a photo that's gone.
+    const observedFor = meta.photo_observed_for ?? null;
+    const observationIsCurrent = !!observedFor && observedFor === row.image_file_id;
+    let photoObservations = observationIsCurrent ? (meta.photo_observations ?? null) : null;
+    let photoDistinct = observationIsCurrent ? (meta.photo_distinct ?? null) : null;
+    let photoIndividuals = observationIsCurrent ? (meta.photo_individuals ?? null) : null;
+    let photoObservedFor = observationIsCurrent ? observedFor : null;
     if (!photoObservations && row.image_file_id) {
-      photoObservations = await Promise.race([
-        observeScanPhoto(opts.orgId, row.image_file_id, opts.itemId, opts.userId),
+      const obs = await Promise.race([
+        observeScanPhoto(opts.orgId, row.image_file_id, opts.itemId, opts.userId, opts.replay),
         new Promise<null>((resolve) => setTimeout(() => resolve(null), 15_000)),
       ]);
+      if (obs) {
+        photoObservations = obs.text;
+        photoDistinct = obs.distinct;
+        photoIndividuals = obs.individuals;
+        photoObservedFor = row.image_file_id;
+      }
     }
 
     const menu = await assembleMergedMenu(opts.baseUrl, opts.orgSlug, opts.token);
@@ -3309,6 +3558,7 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
       menu,
       opts.itemId, // links the AI-log row to this scan
       opts.userId,
+      opts.replay,
     );
 
     // Decoder role-fill (P2/P3). When the item was resolved by an identifier
@@ -3318,7 +3568,10 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
     // year/fuel/… onto the routed vehicle table even with no AI, and never
     // clobbers a value the model already filled. Generic: core-scan reads the
     // flat bag + the field roles, nothing vehicle-specific.
-    applyDecoderFill(row.suggested_metadata, candidates, menu);
+    // The row's code is the identifier — and by now it's the CORRECTED one (the
+    // VIN decoder repairs a mangled scan and writes the fix back), so the VIN field
+    // gets the VIN that exists, not the one the scanner hallucinated.
+    applyDecoderFill(row.suggested_metadata, candidates, menu, row.barcode_text);
 
     // Persist: candidates + the matched_at stamp (the web renders a passive
     // "AI is reading…" pulse until this lands — no client triggering) +
@@ -3379,6 +3632,7 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
     await dbAfter
       .updateTable("core_scan_inbox_items")
       .set({
+        // jsonb-replace-ok: candidates are a LIST wholly re-derived by this match; a merge would fuse two runs
         suggested_candidates: JSON.stringify(candidates) as never,
         ...(adoptName ? { suggested_name: candName } : {}),
         // jsonb-merge ONLY the keys this match sets onto the LIVE row value —
@@ -3387,6 +3641,16 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
         // series stamp) is silently clobbered. `||` overlays keys DB-side.
         suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({
           ...(photoObservations ? { photo_observations: photoObservations } : {}),
+          ...(photoObservedFor ? { photo_observed_for: photoObservedFor } : {}),
+          // The multi-item signal, from the observation call we already paid for.
+          // Only stamped when it's actually a group — a lone item writes nothing,
+          // so the common case adds no bytes and the UI's check stays a truthy read.
+          ...(photoDistinct && photoDistinct >= 2
+            ? {
+                photo_distinct: photoDistinct,
+                photo_individuals: photoIndividuals ?? [],
+              }
+            : {}),
           // Reliability net: if identify didn't STRUCTURE a serial but the model
           // named one in its reasoning/observations, promote it to the native
           // key so it reaches the item's serial_number field on commit. Only

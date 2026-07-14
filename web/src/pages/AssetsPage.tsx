@@ -296,6 +296,7 @@ export function AssetsPage({
               <AssetsTiles rows={g.rows} onOpen={openAsset} />
             ) : (
               <AssetsTable
+                instance={instance}
                 rows={g.rows}
                 customCols={customCols}
                 selected={selected}
@@ -317,6 +318,7 @@ export function AssetsPage({
         <AssetsTiles rows={filtered} onOpen={openAsset} />
       ) : (
         <AssetsTable
+                instance={instance}
           rows={filtered}
           customCols={customCols}
           selected={selected}
@@ -450,6 +452,7 @@ function AssetsTable({
   onToggle,
   onSelectAll,
   onOpen,
+  instance,
 }: {
   rows: Asset[];
   customCols: PlatformFieldDef[];
@@ -458,7 +461,11 @@ function AssetsTable({
   onToggle: (id: string, checked: boolean) => void;
   onSelectAll: (checked: boolean) => void;
   onOpen: (id: string) => void;
+  instance?: string;
 }) {
+  // The column header must respect a bundle relabel too, or the list says
+  // "Manufacturer" while the detail page says "Make".
+  const fp = useFieldPresentation(instance ? `${instance}:item` : ENTITY_KIND);
   return (
     <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-x-auto">
       <table className="w-full text-sm">
@@ -474,7 +481,7 @@ function AssetsTable({
               />
             </th>
             <th className="text-left px-3 py-2">Name</th>
-            <th className="text-left px-3 py-2">Manufacturer</th>
+            <th className="text-left px-3 py-2">{fp.label("manufacturer", "Manufacturer")}</th>
             <th className="text-left px-3 py-2">Model</th>
             <th className="text-left px-3 py-2">State</th>
             {customCols.map((d) => (
@@ -782,6 +789,9 @@ function NewAssetModal({
 }: { open: boolean; onClose: () => void; instance?: string; noun?: string }) {
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
+  // A bundle relabels this per kind (Vehicles: manufacturer -> "Make"). Hardcode it
+  // and the workspace's own rename silently never reaches this form.
+  const fp = useFieldPresentation(instance ? `${instance}:item` : ENTITY_KIND);
   const toast = useToast();
   const navigate = useNavigate();
   const [name, setName] = useState("");
@@ -830,7 +840,7 @@ function NewAssetModal({
           <input value={name} onChange={(e) => setName(e.target.value)} autoFocus className="input" />
         </label>
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Manufacturer</span>
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">{fp.label("manufacturer", "Manufacturer")}</span>
           <input value={manufacturer} onChange={(e) => setManufacturer(e.target.value)} className="input" />
         </label>
         <label className="block">

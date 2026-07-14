@@ -34,6 +34,28 @@ export interface WebSearchProduct {
   confidence: number;
   /** "llm" when the model refined it, "heuristic" when only stage 1 ran. */
   method: "llm" | "heuristic";
+  /**
+   * Does anything actually BACK THIS NAME UP, or did we take whatever the search
+   * engine handed back for a naked number?
+   *
+   * This matters more than it sounds. A bare 12-digit UPC **looks like a phone
+   * number to a search engine**, so a code with no product page reliably surfaces
+   * phone-directory SEO. That is how a Harbor Freight silicone-tie pack came back
+   * as "411 - White Pages | Find Phone Numbers", and `pickHeuristicName` had no way
+   * to tell: it accepts ANY title ≥6 chars containing a letter.
+   *
+   * Corroborated means one of:
+   *   • the MODEL identified it (not merely the title heuristic), with real
+   *     confidence, having actually had search results to look at; or
+   *   • the same name RECURRED across independent results — a real product's UPC
+   *     surfaces several retailers who agree; SEO junk surfaces unrelated pages
+   *     that don't agree on anything.
+   *
+   * An uncorroborated name is a GUESS. A guess must never (a) outrank a photo of
+   * the thing itself, nor (b) be promoted into the shared cross-workspace cache,
+   * where it stops being one user's bad scan and becomes everyone's.
+   */
+  corroborated: boolean;
   /** One-line evidence string for the inbox row's ai_notes. */
   evidence: string;
 }
@@ -126,7 +148,16 @@ function foreignScore(t: string): number {
 
 // The heuristic floor: the cleaned title that recurs most (ties → the
 // longer, more descriptive one); when all unique, the longest usable.
-export function pickHeuristicName(cleaned: string[]): string | null {
+/**
+ * The best title, AND how many independent results agreed on it.
+ *
+ * The count is the whole point. A real product's UPC surfaces several retailers
+ * whose titles converge; a UPC with no product page surfaces unrelated SEO pages
+ * that agree on nothing — and this function used to return the top of THAT pile
+ * with the same confidence as a genuine consensus. `n === 1` means "one page on
+ * the internet said this", which is not evidence, it's a coin toss.
+ */
+export function pickHeuristicNameWithSupport(cleaned: string[]): { title: string; n: number } | null {
   const usable = cleaned.filter((t) => t.length >= 6 && /[a-z]/i.test(t));
   if (usable.length === 0) return null;
   // Keep only the most-English tier (lowest foreignScore), then rank by
@@ -141,7 +172,11 @@ export function pickHeuristicName(cleaned: string[]): string | null {
     if (cur) cur.n++;
     else counts.set(key, { title: t, n: 1 });
   }
-  return [...counts.values()].sort((a, b) => b.n - a.n || b.title.length - a.title.length)[0]!.title;
+  return [...counts.values()].sort((a, b) => b.n - a.n || b.title.length - a.title.length)[0] ?? null;
+}
+
+export function pickHeuristicName(cleaned: string[]): string | null {
+  return pickHeuristicNameWithSupport(cleaned)?.title ?? null;
 }
 
 // Pick the result image whose title best overlaps the chosen name.
@@ -346,20 +381,40 @@ export async function resolveBarcodeViaWebSearch(
       .filter(Boolean),
   );
   const cleaned = rawTitles.map((t) => cleanTitle(t, code)).filter(Boolean);
-  const heuristicName = pickHeuristicName(cleaned); // null when there were no titles
+  const heuristic = pickHeuristicNameWithSupport(cleaned); // null when there were no titles
 
   // Stage 2 — folded identify+classify via core-ai. Reached even with zero
   // titles; the heuristic floor only applies when titles actually existed.
   const llm = await llmIdentify(orgId, code, rawTitles.slice(0, 12), hint, userId);
 
-  const name = llm?.name ?? heuristicName;
+  const name = llm?.name ?? heuristic?.title ?? null;
   if (!name) return null; // genuinely nothing — caller falls to "fill in manually"
+
+  // Is this a FINDING or a GUESS? A bare UPC looks like a phone number to a search
+  // engine, so a code with no product page reliably surfaces phone-directory SEO.
+  // The caller uses this to decide whether the name may outrank a photo of the
+  // actual thing, and whether it may enter the shared cross-workspace cache.
+  const corroborated = llm
+    ? // The model named it AND had something real to look at. With zero titles it
+      // is working from the number alone — that's product knowledge at best and a
+      // hallucination at worst; either way, nothing corroborates it.
+      llm.confidence >= 0.6 && titled.length + textTitles.length > 0
+    : // Title heuristic: only when independent results AGREED. n === 1 means "one
+      // page on the internet said this", which is not evidence.
+      (heuristic?.n ?? 0) >= 2;
 
   // Stage 3 — a product photo. DDG image search WORKS for a product name (it
   // just can't do a bare UPC), so once we have a name, search the NAME. Prefer
   // an image already returned by the UPC search (rare) before spending a call.
-  let imageUrl = titled.length ? pickImage(titled, name) : null;
-  if (!imageUrl) {
+  //
+  // NOT for an uncorroborated name. Image-searching a guess doesn't produce a
+  // picture of the item, it produces a picture of the guess — searching "Harbor
+  // Freight Tools Item 57631" returned a Harbor Freight ADVERTISING BANNER (a
+  // collage of a welder, a mitre saw, a compressor) and pinned it to a pack of
+  // silicone ties. A wrong picture is worse than no picture: it looks like an
+  // answer. Skipping it also saves a call on exactly the scans that deserve none.
+  let imageUrl = corroborated ? (titled.length ? pickImage(titled, name) : null) : null;
+  if (!imageUrl && corroborated) {
     try {
       // Rank by catalog quality (retail/brand domain + square-ish) and take the
       // best — NOT the first DDG hit, which is often a recipe-blog / social /
@@ -379,12 +434,18 @@ export async function resolveBarcodeViaWebSearch(
     entityType: llm?.entityType ?? null,
     series: llm?.series ?? null,
     imageUrl,
-    confidence: llm ? llm.confidence : 0.4,
+    // An uncorroborated name is a guess, and its confidence must SAY so — a 0.4
+    // "heuristic" read like a weak-but-real answer, and everything downstream
+    // treated it as one.
+    confidence: corroborated ? (llm ? llm.confidence : 0.4) : 0.2,
     method: llm ? "llm" : "heuristic",
-    evidence: llm
-      ? titled.length
-        ? `Identified from a web search of UPC ${code} (${titled.length} results), AI-confirmed.`
-        : `Identified from UPC ${code} by AI product knowledge (no web results on this host).`
-      : `Identified from a web search of UPC ${code} (${titled.length} results), title heuristic.`,
+    corroborated,
+    evidence: !corroborated
+      ? `Nothing on the web corroborates UPC ${code} — a bare barcode reads as a phone number to a search engine, so the results are unrelated. Treat this name as a guess.`
+      : llm
+        ? titled.length
+          ? `Identified from a web search of UPC ${code} (${titled.length} results), AI-confirmed.`
+          : `Identified from UPC ${code} by AI product knowledge (no web results on this host).`
+        : `Identified from a web search of UPC ${code} (${titled.length} results), title heuristic.`,
   };
 }

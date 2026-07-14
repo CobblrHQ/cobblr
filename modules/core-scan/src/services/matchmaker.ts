@@ -19,7 +19,7 @@ import { platform, extractJsonObject, repairJson, parseJsonReply } from "@cobblr
 // completed call then populated the core-ai cache, which is why a manual
 // re-run later looked fine). Be generous; the in-flight guard prevents pileups.
 const MATCH_DEADLINE_MS = 120_000;
-// Only take the JSON-recovery retry (a 2nd model call) when at least this much of
+// Only take the JSON-recovery retry (a 2nd model call) when at least this much off
 // the shared deadline is left — so a slow first call can't trigger a second that
 // doubles total latency. On a fast provider the first call returns in seconds,
 // leaving the whole budget; on the slow subscription bridge a slow first call
@@ -62,6 +62,20 @@ export interface ScanMenuEntry {
    *  the bundle to install on materialize. Absent for the user's live instances.
    *  This is the "link" — a capture knows which bundle would hold it. */
   bundle_external_id?: string;
+  /** This table's GROUPING AXIS: the field declaring `field_role: "category"`,
+   *  plus the values it already holds. It is what lets the model say "this is an
+   *  ELECTRICAL part" without reaching for a different TABLE to say it. Absent
+   *  when the table declares no category field. */
+  category_field?: { name: string; label: string; values: string[] };
+  /** This table's PACK-COUNT field: the field declaring `field_role: "pack"` —
+   *  how many base units are in the scanned package. Filled DETERMINISTICALLY
+   *  from the observed pack (metadata.pack_size), never a "usual buy" guess.
+   *  Absent when the table declares no pack field. */
+  pack_field?: { name: string; label: string };
+  /** The workspace's designated catch-all for this module: where an item that
+   *  matches no table in particular lands, to then be told apart by its category.
+   *  At most one entry per module carries this. */
+  is_fallback?: boolean;
 }
 
 /** What the scanner perceived (the left half). */
@@ -107,6 +121,15 @@ export interface MatchCandidate {
   /** When the item data implies a count ("1 Pack Of 9 Skein", "10 Pack"),
    *  the unit quantity to pre-fill. Omitted when nothing implies one. */
   quantity?: number;
+  /** The value for this table's `category_field` — what KIND of thing this is,
+   *  WITHIN the table. Either one of the values already in use, or a NEW one the
+   *  model proposed because none fit (`category_is_new`). Nothing is created
+   *  until the user confirms. This is the axis that stops a difference in kind
+   *  from being expressed as a different TABLE. */
+  category?: string;
+  /** True when `category` is not yet one of the table's existing values — the UI
+   *  says "new" on the chip, and confirming adds it to the field's choices. */
+  category_is_new?: boolean;
   /** Field names in `fields` that were COMPLETED from the model's own knowledge
    *  of a confidently-identified entity (a known book's ISBN/publisher/year),
    *  NOT read off the photo/catalog data. Provenance so a wrong guess stays
@@ -133,6 +156,27 @@ export function normalizeInferred(rawInferred: unknown, filled: Record<string, u
 }
 
 /**
+ * Which of a module's instances is the scan CATCH-ALL — where an item matching no
+ * table in particular lands, to be told apart by its category.
+ *
+ * The user's explicit pick (`is_scan_fallback`) wins; absent one, the module's
+ * DEFAULT instance — **even when it's an empty auto-default that named instances
+ * have otherwise hidden**. That last clause is the fix: a workspace with named
+ * instances and a hidden default used to get NO fallback, so its unmatched items
+ * scattered across the named tables. The default + a category IS the
+ * consolidation, and it un-hides the moment anything lands in it.
+ */
+export function chooseFallbackInstance(
+  insts: Array<{ instance_name: string; is_default: boolean; is_scan_fallback?: boolean }>,
+): string | null {
+  return (
+    insts.find((i) => i.is_scan_fallback)?.instance_name ??
+    insts.find((i) => i.is_default)?.instance_name ??
+    null
+  );
+}
+
+/**
  * Assemble the workspace "scan menu" by reading the user's instances + each
  * instance's field defs over the internal API (same bearer the caller holds,
  * so isolation + role gating apply). Only domain modules that hold scannable
@@ -152,7 +196,7 @@ export async function assembleScanMenu(
     scanByModule.set(s.kind.split(":")[0]!, { kind: s.kind, noun: s.noun });
   }
 
-  let instances: Array<{ module_name: string; instance_name: string; display_name: string; is_default: boolean; item_count?: number | null; config?: Record<string, unknown> }> = [];
+  let instances: Array<{ module_name: string; instance_name: string; display_name: string; is_default: boolean; is_scan_fallback?: boolean; item_count?: number | null; config?: Record<string, unknown> }> = [];
   try {
     const res = await fetch(`${baseUrl}/api/v1/orgs/${slug}/instances`, { headers: auth });
     if (res.ok) instances = ((await res.json()) as { items?: typeof instances }).items ?? [];
@@ -178,6 +222,28 @@ export async function assembleScanMenu(
     if (hasNamed && def && def.item_count === 0) hideDefaults.add(moduleName);
   }
 
+  // The workspace's designated catch-all per module: where an item that matches
+  // no table IN PARTICULAR should land, to then be told apart by its category.
+  // The user's pick wins; absent a pick, the module's DEFAULT instance is the
+  // catch-all — even when it's otherwise hidden as clutter.
+  //
+  // (This used to skip a hidden default, on the theory that routing to "a table
+  // the user never opens" caused the scatter. It's the opposite: WITH a category
+  // axis, the default table + a category IS the consolidation — every unmatched
+  // item lands in ONE place, told apart by category, and the table un-hides the
+  // moment it holds anything. Without this, a workspace with named instances and a
+  // hidden default got NO fallback, so its unmatched items scattered across the
+  // named tables by name-similarity — exactly the example-user bug.)
+  const fallbackByModule = new Map<string, string>();
+  const fallbackInstance = new Set<string>(); // "<module>::<instance>"
+  for (const [moduleName, insts] of byModule) {
+    const pick = chooseFallbackInstance(insts);
+    if (pick) {
+      fallbackByModule.set(moduleName, pick);
+      fallbackInstance.add(`${moduleName}::${pick}`);
+    }
+  }
+
   const overridesByTarget = new Map<string, { item_noun?: string; scan_keywords?: string[] }>();
   try {
     const res = await fetch(`${baseUrl}/api/v1/orgs/${slug}/entity-kind-overrides`, { headers: auth });
@@ -195,7 +261,15 @@ export async function assembleScanMenu(
   for (const inst of instances) {
     const scanInfo = scanByModule.get(inst.module_name);
     if (!scanInfo) continue;
-    if (inst.is_default && hideDefaults.has(inst.module_name)) continue;
+    // Hide an empty auto-default that named instances have superseded — UNLESS it's
+    // this module's scan catch-all. The fallback MUST be in the menu, or the model
+    // has nowhere to route an unmatched item and it scatters into the named tables.
+    if (
+      inst.is_default &&
+      hideDefaults.has(inst.module_name) &&
+      !fallbackInstance.has(`${inst.module_name}::${inst.instance_name}`)
+    )
+      continue;
     const kind = inst.is_default ? scanInfo.kind : `${inst.instance_name}:item`;
     const override = overridesByTarget.get(`${inst.module_name}:${inst.instance_name}`);
     const noun = override?.item_noun || scanInfo.noun;
@@ -204,10 +278,12 @@ export async function assembleScanMenu(
       : undefined;
 
     let fields: MenuField[] = [];
+    let categoryField: ScanMenuEntry["category_field"];
+    let packField: ScanMenuEntry["pack_field"];
     try {
       const res = await fetch(`${baseUrl}/api/v1/orgs/${slug}/field-defs?kind=${encodeURIComponent(kind)}`, { headers: auth });
       if (res.ok) {
-        const defs = ((await res.json()) as { items?: Array<{ name: string; display_label: string; type: string; help?: string | null; choices?: string[] | null; decode_role?: string | null }> }).items ?? [];
+        const defs = ((await res.json()) as { items?: Array<{ name: string; display_label: string; type: string; help?: string | null; choices?: string[] | null; decode_role?: string | null; field_role?: string | null }> }).items ?? [];
         fields = defs
           .filter((d) => d.type !== "computed")
           .map((d) => ({
@@ -218,6 +294,20 @@ export async function assembleScanMenu(
             ...(d.choices && d.choices.length ? { choices: d.choices } : {}),
             ...(d.decode_role ? { decode_role: d.decode_role } : {}),
           }));
+        // The table's GROUPING AXIS, declared — never guessed from a field named
+        // "category". Its existing choices ARE the workspace's taxonomy: it grows
+        // from the user's own data, and the kernel never learns the word
+        // "Electrical". At most one per kind (a partial unique index enforces it).
+        const cat = defs.find((d) => d.field_role === "category");
+        if (cat) {
+          categoryField = { name: cat.name, label: cat.display_label, values: cat.choices ?? [] };
+        }
+        // The PACK-COUNT axis, declared — filled deterministically from the
+        // observed pack, never guessed. At most one per kind.
+        const pack = defs.find((d) => d.field_role === "pack");
+        if (pack) {
+          packField = { name: pack.name, label: pack.display_label };
+        }
       }
     } catch {
       /* no fields → the table is still routable by its noun. */
@@ -231,6 +321,9 @@ export async function assembleScanMenu(
       label: inst.display_name,
       fields,
       ...(scanKeywords && scanKeywords.length ? { scan_keywords: scanKeywords } : {}),
+      ...(categoryField ? { category_field: categoryField } : {}),
+      ...(packField ? { pack_field: packField } : {}),
+      ...(fallbackByModule.get(inst.module_name) === inst.instance_name ? { is_fallback: true } : {}),
     });
   }
   return entries;
@@ -403,6 +496,51 @@ export function filterMenuForItem(item: PerceivedItem, menu: ScanMenuEntry[]): S
  * than the model, but it means free / no-AI workspaces still get a real tracker
  * suggestion instead of a capture that never resolves. Connect AI to sharpen it.
  */
+/**
+ * The category the model proposed, resolved against the values the table already
+ * uses — case- and punctuation-insensitively.
+ *
+ * The prompt ASKS the model to reuse an existing value. This ENFORCES it, because
+ * a prompt is a request and a taxonomy that quietly grows an "Electrical",
+ * "electrical" and "Electrical Parts" is worthless. Only a genuinely unseen value
+ * is flagged `isNew`; a near-miss snaps to what's already there.
+ *
+ * Returns null when the table declared no category axis, or the model said
+ * nothing usable — a category is never invented on the model's behalf.
+ */
+export function resolveCategory(
+  entry: Pick<ScanMenuEntry, "category_field">,
+  raw: unknown,
+): { value: string; isNew: boolean } | null {
+  const axis = entry.category_field;
+  if (!axis) return null;
+  const proposed = typeof raw === "string" ? raw.trim() : "";
+  if (!proposed || proposed.length > 60) return null;
+  const norm = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const key = norm(proposed);
+  if (!key) return null;
+  const existing = axis.values.find((v) => norm(v) === key);
+  // A value the table already uses always wins over the model's spelling of it.
+  if (existing) return { value: existing, isNew: false };
+  return { value: proposed, isNew: true };
+}
+
+/** Seed a table's `pack`-role field from the OBSERVED package (metadata.pack_size
+ *  — parsed deterministically by enrich / read off the photo). Heuristic-first:
+ *  the parsed pack is more trustworthy than a model guess, so it WINS over any
+ *  value already in `fields`. A no-op for a table without a pack axis. */
+function seedPackSize(
+  entry: ScanMenuEntry,
+  item: PerceivedItem,
+  fields: Record<string, string | number | boolean>,
+): void {
+  if (!entry.pack_field) return;
+  const packSize = (item.metadata as { pack_size?: unknown } | null | undefined)?.pack_size;
+  if ((typeof packSize === "number" || typeof packSize === "string") && String(packSize).trim() !== "") {
+    fields[entry.pack_field.name] = packSize;
+  }
+}
+
 export function heuristicMatch(item: PerceivedItem, menuIn: ScanMenuEntry[]): MatchCandidate[] {
   const menu = filterMenuForItem(item, menuIn);
   if (menu.length === 0) return [];
@@ -509,25 +647,63 @@ export function heuristicMatch(item: PerceivedItem, menuIn: ScanMenuEntry[]): Ma
     .sort((a, b) => b.score - a.score)
     .slice(0, 2);
 
-  if (scored.length === 0) return [];
   const qm = hay.match(/(\d+)\s*(skein|ball|spool|roll|pack|box|bottle|can|bag|unit|pcs|piece|x|×)/);
   const quantity = qm ? Number(qm[1]) : undefined;
   const name = cleanCaptureName(item.name ?? "");
 
-  return scored.map(({ entry, score, fields }, i) => ({
-    module: entry.module,
-    instance: entry.instance,
-    kind: entry.kind,
-    label: entry.label,
-    confidence: Math.min(0.6, 0.3 + score * 0.04),
-    name,
-    fields,
-    ...(Number.isInteger(quantity) && quantity! > 0 && quantity! <= 10_000 ? { quantity } : {}),
-    ...(entry.bundle_external_id ? { bundle_external_id: entry.bundle_external_id } : {}),
-    ...(i === 0
-      ? { notes: "Matched by keywords (no AI). Connect an AI provider for sharper identification + field-fill." }
-      : {}),
-  }));
+  // Nothing matched a specific table. That is NOT nothing to say: the identify
+  // pass already produced a category for this item ("electrical wiring device"),
+  // and the workspace has a designated fallback table. So route it there and
+  // carry that category — deterministically, with no model call. Without this,
+  // the no-AI path returns [] and every unmatched item lands in one undifferen-
+  // tiated heap, which is the same scatter problem wearing a different hat.
+  if (scored.length === 0) {
+    const fallback = menu.find((m) => m.is_fallback);
+    if (!fallback) return [];
+    const cat = resolveCategory(fallback, item.category);
+    const fallbackFields: Record<string, string | number | boolean> = {};
+    seedPackSize(fallback, item, fallbackFields);
+    return [
+      {
+        module: fallback.module,
+        instance: fallback.instance,
+        kind: fallback.kind,
+        label: fallback.label,
+        confidence: 0.3,
+        name,
+        fields: fallbackFields,
+        ...(Number.isInteger(quantity) && quantity! > 0 && quantity! <= 10_000 ? { quantity } : {}),
+        ...(cat ? { category: cat.value, ...(cat.isNew ? { category_is_new: true } : {}) } : {}),
+        ...(fallback.bundle_external_id ? { bundle_external_id: fallback.bundle_external_id } : {}),
+        notes: cat
+          ? `No specific table matched, so this went to ${fallback.label} as “${cat.value}”. Connect an AI provider for sharper identification + field-fill.`
+          : "No specific table matched (no AI). Connect an AI provider for sharper identification + field-fill.",
+      },
+    ];
+  }
+
+  return scored.map(({ entry, score, fields }, i) => {
+    // Same deterministic pack-fill as the AI path (no-AI workspaces get it too).
+    seedPackSize(entry, item, fields);
+    // The identify already named a category — reuse it rather than paying anyone
+    // to re-derive it. resolveCategory snaps it to the table's existing vocabulary.
+    const cat = resolveCategory(entry, item.category);
+    return {
+      module: entry.module,
+      instance: entry.instance,
+      kind: entry.kind,
+      label: entry.label,
+      confidence: Math.min(0.6, 0.3 + score * 0.04),
+      name,
+      fields,
+      ...(Number.isInteger(quantity) && quantity! > 0 && quantity! <= 10_000 ? { quantity } : {}),
+      ...(cat ? { category: cat.value, ...(cat.isNew ? { category_is_new: true } : {}) } : {}),
+      ...(entry.bundle_external_id ? { bundle_external_id: entry.bundle_external_id } : {}),
+      ...(i === 0
+        ? { notes: "Matched by keywords (no AI). Connect an AI provider for sharper identification + field-fill." }
+        : {}),
+    };
+  });
 }
 
 export async function runMatchmaker(
@@ -540,6 +716,10 @@ export async function runMatchmaker(
   /** The scanning user (null for a cron/background match) — routes to their
    *  personal AI connection. */
   userId?: string | null,
+  /** REPLAY: serve the model call from cache, never pay. On a miss it fails like
+   *  any unavailable provider, so we land on `heuristicMatch` — which is exactly
+   *  the deterministic routing a no-AI re-run exists to exercise. */
+  cacheOnly?: boolean,
 ): Promise<MatchCandidate[]> {
   // A physical scan never routes to a record table — drop them before the model
   // even sees the menu, so it can't suggest one (and the heuristic fallback below
@@ -556,40 +736,64 @@ export async function runMatchmaker(
     "labels/help/allowed choices). Do three things:\n" +
     "1. Pick the tables for this item, RANKED best-first: the ONE best-fitting " +
     "table (the primary) and AT MOST ONE secondary. Include a secondary ONLY " +
-    "when the item genuinely belongs in two DIFFERENT tables (e.g. a graded " +
-    "collectible that is both a 'Bookshelf' reading copy AND a 'Collections' " +
-    "graded item) — most items have just ONE home, so usually return a single " +
+    "when the item genuinely belongs in two DIFFERENT tables (e.g. one copy is " +
+    "both a reading copy in one table AND a graded collectible in another) — " +
+    "most items have just ONE home, so usually return a single " +
     "table. NEVER list the same table (same module+instance) twice, and never " +
     "pad the list with a marginal or duplicate table to fill a slot: one " +
     "confident table beats two noisy ones, and identical items must route the " +
     "same way. A table " +
-    "fits when the item is the kind of thing that table holds (a skein of yarn " +
-    "-> a 'yarn' table; a drill -> 'tools'/'assets'). Judge fit PRIMARILY from " +
-    "the table's noun and its FIELDS — a field's label, help, and allowed " +
-    "choices reveal what the table is for (a table with `fiber:[Wool,Cotton]` " +
-    "and `weight:[Worsted,Aran]` is clearly for yarn; one with " +
-    "`material:[PLA,PETG]` + `nozzle_temp` is for 3D-printer filament; one with " +
-    "`VIN`/`mileage` is for vehicles). scan_keywords, when present, are an " +
+    "fits when the item is the kind of thing that table holds. Judge fit " +
+    "PRIMARILY from the table's noun and its FIELDS — a field's label, help, and " +
+    "allowed choices reveal what a table is for (fields like `author` + `isbn` " +
+    "say a table is for books; `size` + `care_instructions` say clothing — the " +
+    "fields, not the name alone, tell you). scan_keywords, when present, are an " +
     "EXTRA explicit hint — use them to BREAK TIES when two tables fit similarly, " +
     "not as the main signal (most tables won't have them, and route fine " +
-    "without). But a specific table holds a specific KIND of thing — its fields " +
-    "say which (a Components table of resistors/ICs/capacitors is for DISCRETE " +
-    "parts, NOT a finished USB cable; a Filament-Types table is for spools, not " +
-    "a 3D-printed widget). If the item is a finished or whole product that merely " +
+    "without). But a specific table holds a specific KIND of thing: a table of " +
+    "discrete components is for the individual parts, NOT a finished product " +
+    "assembled from them. If the item is a finished or whole product that merely " +
     "RELATES to a table's domain rather than being the kind it holds, route it to " +
-    "the generic default table (instance null) — and do NOT invent a field value " +
+    "the FALLBACK table (`is_fallback: true`) — and do NOT invent a field value " +
     "to justify forcing it into a specific table (a fabricated field is worse " +
-    "than the honest generic table). If nothing fits well, " +
-    "return the generic default table (instance null) for the closest module.\n" +
+    "than the honest fallback table). If nothing fits well, " +
+    "return the FALLBACK table for the closest module (or its generic default " +
+    "table, instance null, if no table is flagged).\n" +
+    "1b. A DIFFERENCE IN KIND IS A CATEGORY, NOT A DIFFERENT TABLE. This is the " +
+    "most important routing rule. A workspace often has several tables that " +
+    "overlap almost entirely — broad catch-alls that all hold roughly the same " +
+    "kind of thing. They are NOT how you express that two items differ in kind. " +
+    "When a table declares a `category_field`, THAT is where a difference in kind " +
+    "belongs: route the item to ONE table and set its category. Choose a " +
+    "DIFFERENT table only when the item is a genuinely different kind of RECORD " +
+    "(one table's row is a physical object you keep, another's is an order or a " +
+    "task) — never merely because a different table's name sounds closer to the " +
+    "item's domain. Items of the same domain MUST route the same way: a run of " +
+    "like items belongs in one table distinguished by category, not scattered " +
+    "across near-synonym tables that all mean roughly 'stuff'.\n" +
+    "1c. Setting the category: use one of the `category_field.values` already in " +
+    "use when one genuinely fits — reuse beats invention, and the workspace's " +
+    "existing vocabulary is the right vocabulary. When none fits, PROPOSE a new " +
+    "one: a short, plain, reusable noun phrase for the KIND of thing this is, not " +
+    "a description of this one item (the broad kind, never the individual unit " +
+    "with its colour/size/brand). Return it in the candidate's `category`. " +
+    "Nothing is created until the user confirms.\n" +
+    "COARSEN, don't echo. The item's `category` field is a HINT from a product " +
+    "database and is usually far too specific to group by — a product taxonomy " +
+    "splits one everyday kind into many narrow sub-types. Collapse the hint UP to " +
+    "the broad kind a person would actually file it under, so a workspace ends up " +
+    "with a few dozen categories, not hundreds. Test: if two items would sensibly " +
+    "share a drawer, shelf or bin, give them the SAME category. Prefer a value " +
+    "already in `category_field.values` over coining a synonym of it.\n" +
     "2. For EACH picked table, fill in field values — MINE EVERY ITEM FIELD: " +
     "the title, lookup_metadata attributes (material/color/size), the " +
-    "description, lookup_notes. Map them onto the table's field names (e.g. " +
-    "attribute 'color: Country Blue' -> a 'colorway' field; 'material: " +
-    "Acrylic' -> a 'fibre' field; 'Worsted' in a yarn title -> a weight " +
-    "field). For a field with `choices`, use the closest listed choice or " +
+    "description, lookup_notes. Map them onto the table's field names (e.g. an " +
+    "attribute 'color: Slate Blue' -> a 'colour' field; 'material: Cotton' -> a " +
+    "'fabric' field; a descriptor in the title -> its matching declared field). " +
+    "For a field with `choices`, use the closest listed choice or " +
     "omit. When a field's label/help asks for a hex or colour swatch, " +
-    "output a CSS hex code for the named colour (e.g. '#6F8FAF' for " +
-    "Country Blue), not a word. If lookup_metadata.user_hint is present it " +
+    "output a CSS hex code for the named colour (e.g. '#6F8FAF' for a " +
+    "slate blue), not a word. If lookup_metadata.user_hint is present it " +
     "is the user's own correction — treat it as authoritative over every " +
     "other source. Omit only what nothing in the data supports; never invent. " +
     "COMPLETE A KNOWN ENTITY (backfill): the 'never invent' rule bends ONLY when " +
@@ -604,7 +808,7 @@ export async function runMatchmaker(
     "confident, specific identity. For a generic, ambiguous, or uncertain item " +
     "keep omitting, and NEVER fabricate a plausible-looking value — a made-up " +
     "isbn is worse than a blank. Strip " +
-    "retailer noise from `name` ('Amazon.com:', '1 Pack Of 9 Skein' suffixes " +
+    "retailer noise from `name` (a marketplace prefix, a '3-Pack of ...' suffix " +
     "-> a clean product name).\n" +
     "3. On the FIRST candidate, add `notes` ONLY when something genuinely " +
     "needed reconciling or inferring — a disagreement between the title, " +
@@ -671,6 +875,10 @@ export async function runMatchmaker(
     instance: m.instance,
     noun: m.noun,
     label: m.label,
+    ...(m.is_fallback ? { is_fallback: true } : {}),
+    // The table's grouping axis + the vocabulary already in use, so the model can
+    // express "electrical" WITHOUT reaching for a different table to say it.
+    ...(m.category_field ? { category_field: m.category_field } : {}),
     ...(m.scan_keywords && m.scan_keywords.length ? { scan_keywords: m.scan_keywords } : {}),
     fields: m.fields.map((f) => ({
       name: f.name,
@@ -720,7 +928,10 @@ export async function runMatchmaker(
         capability: "chat",
         input: { messages: [{ role: "system", content: system }, { role: "user", content: user }] },
         source: { kind: "core-scan:matchmaker", id: sourceId ?? "" },
-        bypass_cache: bypassCache,
+        // A replay never bypasses the cache — the retry below asks for a FRESH
+        // sample, which is precisely the paid call replay promises not to make.
+        bypass_cache: !cacheOnly && bypassCache,
+        cache_only: cacheOnly,
       })
       .then((r) => r.result as { content?: string })
       .catch(() => null);
@@ -739,7 +950,10 @@ export async function runMatchmaker(
   // trigger a second that doubles latency + times out a synchronous caller; on a
   // fast provider the retry has ample budget and fires.
   let rawList = await callOnce(false, MATCH_DEADLINE_MS);
-  if (rawList === null && remaining() > RETRY_MIN_MS) rawList = await callOnce(true, remaining());
+  // The retry exists to resample a garbled reply; under replay there IS no second
+  // sample to draw (same cache key, same bytes), so it would only burn a call.
+  if (rawList === null && !cacheOnly && remaining() > RETRY_MIN_MS)
+    rawList = await callOnce(true, remaining());
   // AI unavailable (no provider / not entitled / errored / timed out) → fall back
   // to the deterministic heuristic so capture-first still suggests a tracker for
   // free / no-AI workspaces. The whole point: capture-first never goes dark.
@@ -771,6 +985,9 @@ export async function runMatchmaker(
         if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") fields[k] = v;
       }
     }
+    // PACK COUNT — filled from the OBSERVED package, overriding any model guess
+    // (see seedPackSize). A `pack`-role field records what you're holding.
+    seedPackSize(entry, item, fields);
     const qty = Number(cand.quantity);
     // Backfill provenance: field names the model filled from its KNOWLEDGE of a
     // confident known entity, sanitized against what it actually filled.
@@ -780,6 +997,11 @@ export async function runMatchmaker(
     const baseNotes = typeof cand.notes === "string" && cand.notes.trim() ? cand.notes.trim().slice(0, 1800) : "";
     const inferredNote = inferred.length ? `Filled from catalog knowledge (double-check): ${inferred.join(", ")}.` : "";
     const notes = [baseNotes, inferredNote].filter(Boolean).join(" ");
+    // The category — only meaningful for a table that DECLARED a grouping axis.
+    // Reuse of an existing value is preferred; a proposal is flagged `is_new` so
+    // the card can say so, and nothing is created until the user confirms.
+    const category = resolveCategory(entry, cand.category);
+
     const candidate: MatchCandidate = {
       module: entry.module,
       instance: entry.instance,
@@ -791,6 +1013,7 @@ export async function runMatchmaker(
       ...(inferred.length ? { inferred } : {}),
       ...(notes ? { notes } : {}),
       ...(Number.isInteger(qty) && qty > 0 && qty <= 10_000 ? { quantity: qty } : {}),
+      ...(category ? { category: category.value, ...(category.isNew ? { category_is_new: true } : {}) } : {}),
       // Carry the bundle pointer through from the chosen menu entry so a
       // capture against a not-yet-installed bundle remembers what to install.
       ...(entry.bundle_external_id ? { bundle_external_id: entry.bundle_external_id } : {}),

@@ -1713,13 +1713,13 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.household-supplies",
-      version: "0.2.0",
+      version: "0.2.2",
       name: "Household Supplies auto-reorder",
       description: "Your household supplies as their own table — reorder level per supply auto-adds to a shopping list on low stock; check off → it restocks. Grouped by area.",
       author: "Cobblr",
-      released_at: "2026-06-08",
+      released_at: "2026-07-14",
       changelog:
-        "Now its OWN table (an inventory instance), not generic Inventory with extra columns — its own nav entry, a “New supply” button, only the fields a supplies tracker needs. The low-stock → shopping-list → restock automation now lives on the Supplies table. Plain-language hints + a pinned “By area” view.",
+        "“Usual pack” is now “Pack size” — it records the package you actually scanned (a single, a 10-pack), not a guess at what you usually buy. It rides the platform pack dimension (field_role:pack), filled from the observed package.",
       requires: [{ module: "inventory" }, { module: "lists" }],
       provides_instances: [
         {
@@ -1738,7 +1738,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           ],
           field_defs: [
             { entity_kind: "inventory:part", name: "area", display_label: "Area", type: "text", position: 1, choices: ["Bathroom", "Kitchen", "Laundry", "Cleaning", "Garage", "Office", "General"], help: "Where it's used/stored — the table groups by this." },
-            { entity_kind: "inventory:part", name: "typical_pack", display_label: "Usual pack", type: "text", position: 2, help: "The pack size you usually buy — e.g. “12-pack”, “2 L” — so the shopping list is specific." },
+            { entity_kind: "inventory:part", name: "typical_pack", display_label: "Pack size", type: "text", position: 2, field_role: "pack", help: "How many units are in the package you scanned — e.g. a single, or a 10-pack. The pack in front of you, not a reorder estimate." },
           ],
           field_overrides: [
             { entity_kind: "inventory:part", name: "min_qty", display_label: "Reorder at" },

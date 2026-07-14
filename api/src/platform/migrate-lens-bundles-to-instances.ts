@@ -154,6 +154,7 @@ async function migrateOne(
   await meta
     .updateTable("bundles")
     .set({
+      // jsonb-replace-ok: a migration rewriting the manifest is the whole point
       manifest: sql`${JSON.stringify(newManifest)}::jsonb` as never,
       version: "0.3.0",
       // enabled_features is a postgres text[] — bind a plain array (matches the

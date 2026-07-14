@@ -92,7 +92,11 @@ export interface SplitItem {
   name: string;
   brand: string | null;
   qty: number;
-  box: SplitBox;
+  /** Where it sits in the group photo, so the child can be CROPPED to just it.
+   *  Null when the item came from the observation pass instead of segmentation —
+   *  we know WHAT it is but not where. The child then keeps the group shot and
+   *  earns a proper product photo from the catalog image search, by name. */
+  box: SplitBox | null;
 }
 
 /** Ask vision to segment the photo into distinct items. Returns [] when the
@@ -116,7 +120,14 @@ export async function detectSplitItems(
       },
       source: { kind: "core-scan:split", id: fileId },
       userId: userId ?? undefined,
-      bypass_cache: true,
+      // The cache may now serve this. It couldn't before: the key didn't include
+      // the prompt, so a split call and an IDENTIFY call on the same photo hashed
+      // to the SAME key — a cache hit would have handed the split the identify's
+      // answer. `bypass_cache: true` was the workaround for that collision (and
+      // meant every split paid full price, for a call that couldn't work anyway).
+      // The prompt fingerprint separates them properly, so N children splitting
+      // the same parent image now share one call instead of firing N identical
+      // ones.
     });
     const res = r.result as { text?: string; content?: string };
     const text = (res.text ?? res.content ?? "").trim();

@@ -618,6 +618,7 @@ organizeRouter.post(
         .updateTable("core_scan_organize_plans")
         .set({
           payload: sql`${JSON.stringify({ ...payload, groups: nextGroups })}::jsonb` as never,
+          // jsonb-replace-ok: the applied set is owned end-to-end by the organize run
           applied_group_ids: sql`${JSON.stringify([...applied])}::jsonb` as never,
         })
         .where("id", "=", body.plan_id)

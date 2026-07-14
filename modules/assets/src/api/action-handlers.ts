@@ -84,15 +84,13 @@ export function registerActionHandlers(): void {
     const found = await resolveAssetRef(db, assetRef);
     if ("error" in found) return { ok: false, error: found.error, asset: assetRef };
 
-    const current =
-      found.metadata && typeof found.metadata === "object"
-        ? (found.metadata as Record<string, unknown>)
-        : {};
-    const merged = { ...current, ...updates };
     await db
       .updateTable("assets_assets")
       .set({
-        metadata: sql`${JSON.stringify(merged)}::jsonb` as never,
+        // Overlay only THIS action's keys, DB-side, against the live row — an
+        // asset's metadata is multi-writer (user PATCH, integrations sync, scan
+        // confirm), and a full-replace from a read snapshot dropped their keys.
+        metadata: sql`coalesce(metadata, '{}'::jsonb) || ${JSON.stringify(updates)}::jsonb` as never,
         updated_at: new Date(),
       })
       .where("id", "=", found.id)

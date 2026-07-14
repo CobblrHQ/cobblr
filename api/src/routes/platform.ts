@@ -21,6 +21,15 @@ import { AiCapabilities, type AiCapability } from "@cobblr/platform-contract";
 import { clearComputedDefsCache } from "../platform/computed-fields.js";
 import { effectiveAppliesTo, matchAction } from "../platform/actions.js";
 import type { ActionAppliesToDecl } from "@cobblr/platform-contract";
+import {
+  FIELD_SCOPE_PRESETS,
+  TRAIT_NAMES,
+  fieldScopeProfiles,
+  fieldScopeSentinel,
+  isFieldScope,
+  parseFieldScope,
+} from "@cobblr/platform-contract";
+import { listAllFieldDefs, resolveFieldDefsForKind } from "../platform/field-defs.js";
 
 export const platformOrgRouter = Router({ mergeParams: true });
 
@@ -769,6 +778,15 @@ const FieldDefCreate = z.object({
    *  semantics (this is what size-aware features consume — never the
    *  field's name). */
   unit: z.string().trim().min(1).max(40).nullable().optional(),
+  /** TRAIT SCOPE: attach this def to a CLASS of entity kinds instead of one kind
+   *  ("origin", on everything physical). ANY combination of the 12 traits is
+   *  valid — OR within an axis, AND across axes — matched by the same matcher the
+   *  action registry uses. When present, `entity_kind` is DERIVED (the canonical
+   *  sentinel) and whatever the client sent for it is ignored, so the sentinel can
+   *  never disagree with the predicate it encodes. */
+  applies_to: z
+    .object({ traits: z.array(z.enum(TRAIT_NAMES)).min(1) })
+    .optional(),
 }).refine(
   (d) => !d.choices || d.type === "text",
   { message: "choices is only valid for type='text'", path: ["choices"] },
@@ -805,14 +823,13 @@ platformOrgRouter.get(
       // defs. Resolved at load = "rename on the fly", no data migration: the field
       // is still stored under `name`; only its presentation changes.
       const effective = req.query.effective === "1" || req.query.effective === "true";
-      let q = meta
-        .selectFrom("module_field_defs")
-        .selectAll()
-        .where("org_id", "=", req.tenant!.org.id)
-        .orderBy("entity_kind")
-        .orderBy("position");
-      if (kind) q = q.where("entity_kind", "=", kind);
-      const rawItems = await q.execute();
+      // Asking for ONE kind resolves trait-scoped defs onto it (a "@physical"
+      // field lands on every physical kind, normalized to look per-kind — see
+      // platform/field-defs.ts). Asking for ALL of them is the config read: the
+      // scoped def appears once, as itself, not copied onto every kind it hits.
+      const rawItems = kind
+        ? await resolveFieldDefsForKind(req.tenant!.org.id, kind)
+        : await listAllFieldDefs(req.tenant!.org.id);
       // Bundled fields carry their PARENT's identity so the UI can link to
       // bundle management ("uninstall the parent bundle to remove" must be a
       // door, not a dead end — the author, 2026-07-03).
@@ -831,7 +848,26 @@ platformOrgRouter.get(
         bundle_name: f.bundle_id ? (bundleById.get(f.bundle_id)?.name ?? null) : null,
       }));
       if (!effective) {
-        res.json({ items });
+        // The config read carries the two named ways to say "a class of things":
+        //   broad   — "anything physical" (one or two axes, deliberately loose)
+        //   profile — "every owned-thing" (a full 6-axis fingerprint, the same
+        //             named shapes a module declares its kinds AS)
+        // Neither is a separate mechanism: both just SET the trait grid, and any
+        // combination of the 12 traits is a valid scope whether it has a name or
+        // not. This list is a convenience, never the definition.
+        res.json({
+          items,
+          scopes: [
+            ...FIELD_SCOPE_PRESETS.map((p) => ({
+              key: fieldScopeSentinel(p.traits),
+              label: p.label,
+              hint: p.hint,
+              traits: p.traits,
+              group: "broad" as const,
+            })),
+            ...fieldScopeProfiles().map((p) => ({ ...p, group: "profile" as const })),
+          ],
+        });
         return;
       }
       let oq = meta
@@ -855,6 +891,10 @@ platformOrgRouter.get(
             // The override layer's decode_role (P3) wins over the field-def's own,
             // mirroring choices — so a user/bundle can retarget a decode field.
             decode_role: o.overrides?.decode_role ?? f.decode_role,
+            // Same for the record role: a bundle can mark an existing NATIVE field
+            // (inventory's own `category`) as the table's grouping axis without a
+            // schema change — exactly the seam decode_role opened for the VIN fields.
+            field_role: o.overrides?.field_role ?? f.field_role,
             _hidden: o.hidden,
           };
         })
@@ -1179,11 +1219,32 @@ platformOrgRouter.post(
         });
         return;
       }
+      // A def is keyed either to ONE kind ("inventory:part") or to a TRAIT SCOPE —
+      // any combination of the 12 traits, OR within an axis and AND across them.
+      // The scope arrives either as an explicit predicate (the trait picker) or as
+      // a sentinel shorthand ("@physical", "@physical+unique"); both collapse to
+      // the same canonical trait list. The sentinel is then DERIVED from that list,
+      // never taken from the client, so it can't disagree with the predicate it
+      // encodes — and the same scope always lands on the same row.
+      const scopeTraits =
+        parsed.data.applies_to?.traits ?? parseFieldScope(parsed.data.entity_kind);
+      if (isFieldScope(parsed.data.entity_kind) && scopeTraits.length === 0) {
+        res.status(400).json({
+          error: {
+            code: "unknown_scope",
+            message: `"${parsed.data.entity_kind}" isn't a trait scope. Use trait words, e.g. @physical or @physical+unique.`,
+          },
+        });
+        return;
+      }
+      const entityKind = scopeTraits.length
+        ? fieldScopeSentinel(scopeTraits)
+        : parsed.data.entity_kind;
       const inserted = await meta
         .insertInto("module_field_defs")
         .values({
           org_id: req.tenant!.org.id,
-          entity_kind: parsed.data.entity_kind,
+          entity_kind: entityKind,
           name: parsed.data.name,
           display_label: parsed.data.display_label,
           type: parsed.data.type,
@@ -1195,6 +1256,9 @@ platformOrgRouter.post(
           renderer: parsed.data.renderer ?? null,
           template: parsed.data.type === "computed" ? parsed.data.template ?? null : null,
           unit: parsed.data.type === "number" ? parsed.data.unit ?? null : null,
+          applies_to: scopeTraits.length
+            ? sql`${JSON.stringify({ traits: scopeTraits })}::jsonb`
+            : null,
         })
         .returningAll()
         .executeTakeFirstOrThrow();
@@ -1204,7 +1268,7 @@ platformOrgRouter.post(
         action: "field_def_created",
         ref: { module: null, entityType: "field_def", entityId: inserted.id },
         diff: {
-          entity_kind: parsed.data.entity_kind,
+          entity_kind: entityKind,
           name: parsed.data.name,
           type: parsed.data.type,
         },

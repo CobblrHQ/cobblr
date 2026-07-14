@@ -87,6 +87,7 @@ dashboardRouter.put(
       await meta
         .updateTable("orgs")
         .set({
+          // jsonb-replace-ok: the user PUTs their whole layout; there is no other writer to preserve
           dashboard_layout: sql`${JSON.stringify(parsed.data)}::jsonb` as never,
           updated_at: new Date(),
         })

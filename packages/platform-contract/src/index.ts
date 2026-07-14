@@ -58,9 +58,77 @@ const EntityField = z.object({
   // decoders drop in later without per-kind code. See parseDecodeRole below and
   // docs/design-decisions/vin-decode.md §9.
   decodeRole: z.string().max(80).optional(),
+  // The SEMANTIC RECORD role — a third, distinct axis from the presentation
+  // `role` (how to DISPLAY it) and `decodeRole` (identifier decoding). A field
+  // marked with a record role is TARGETED by that role, never by matching an
+  // English name, so a consumer works for any module or bundle and the kernel
+  // never learns a domain word ("Electrical", "10-pack"). The rule decodeRole
+  // established. Two values today:
+  //
+  //   category — the field saying what KIND of thing this record is, WITHIN its
+  //     table. The scan matchmaker needs it: without it the ONLY way it can
+  //     express "this is an electrical part and that is a plumbing part" is to
+  //     route them to different TABLES — which is exactly what it did, scattering
+  //     five parts across four near-synonym tables. A difference in kind is a
+  //     CATEGORY, not a different table. See docs/design-decisions/scan-category-routing.md.
+  //
+  //   pack — the packaging count of the PHYSICAL item: how many base units are in
+  //     the package you're holding (a single, a 10-pack). Distinct from `quantity`
+  //     (how many you have) and `unit` (each/L/kg) — the third counting dimension.
+  //     Filled from the observed pack (parsePackSize / vision), NOT a "usual buy"
+  //     guess. Marking a field with this role is how a tracker opts into the pack
+  //     dimension without every bundle re-inventing a `typical_pack` column.
+  //     See FIELD_ROLE_PACK + docs/design-decisions/scan-pack-role.md.
+  fieldRole: z.enum(["category", "pack"]).optional(),
   required: z.boolean().optional(),
   description: z.string().optional(),
 });
+
+/** The field whose value says what KIND of thing a record is, within its table.
+ *  At most one per entity kind (a partial unique index enforces it). */
+export const FIELD_ROLE_CATEGORY = "category";
+
+/** The field holding the PHYSICAL pack count of the item in hand — how many base
+ *  units are in the package you scanned (a single, a 10-pack). The third counting
+ *  dimension beside `quantity` (role) and `unit` (role); filled from the observed
+ *  pack, never a "usual buy" guess. At most one per entity kind. */
+export const FIELD_ROLE_PACK = "pack";
+
+// `\bpack\b` matches the WORD "pack" — deliberately not "package" / "backpack"
+// (no word boundary), so only genuine pack-size labels trip the guard.
+const PACK_LABEL_RE = /\bpack\b/i;
+const PACK_BUYING_HABIT_RE = /\b(?:usual(?:ly)?|typical(?:ly)?)\b|\byou (?:usually|typically) buy\b/i;
+
+/** Guardrail for the pack dimension (see FIELD_ROLE_PACK). A field whose label
+ *  names a "pack" IS the packaging count of the scanned item, so it must ride
+ *  `field_role: "pack"` (the platform fills it from the observed package) rather
+ *  than every bundle re-inventing a bespoke column; and it must describe what you
+ *  SCANNED, never a "usually buy" habit — the exact conflation the "Usual pack"
+ *  field shipped once. Returns the issues (path + message) so a Zod schema and a
+ *  test share one source of truth. DB-free + pure. */
+export function packFieldIssues(f: {
+  display_label: string;
+  help?: string | null;
+  field_role?: string | null;
+}): Array<{ path: "field_role" | "help"; message: string }> {
+  const issues: Array<{ path: "field_role" | "help"; message: string }> = [];
+  if (PACK_LABEL_RE.test(f.display_label) && f.field_role !== FIELD_ROLE_PACK) {
+    issues.push({
+      path: "field_role",
+      message:
+        "a field whose label names a 'pack' is the packaging dimension — set field_role:'pack' so the scan fills it from the observed package, instead of a bespoke pack column.",
+    });
+  }
+  const text = `${f.display_label} ${f.help ?? ""}`;
+  if (PACK_LABEL_RE.test(text) && PACK_BUYING_HABIT_RE.test(text)) {
+    issues.push({
+      path: "help",
+      message:
+        "a pack field records the package you SCANNED, not what you 'usually'/'typically' buy — drop the buying-habit framing (see FIELD_ROLE_PACK).",
+    });
+  }
+  return issues;
+}
 
 export const EntityKindIdRegex = /^[a-z][a-z0-9_-]*:[a-z][a-z0-9_-]*$/;
 
@@ -83,6 +151,37 @@ export const EntityKindIdRegex = /^[a-z][a-z0-9_-]*:[a-z][a-z0-9_-]*$/;
 export type DecodeRole =
   | { kind: "identifier"; decoderId: string }
   | { kind: "target"; key: string };
+
+/**
+ * Every DecodeRole variant MUST be consumed by the fill planner. Adding a kind to
+ * the union without handling it in planDecodeFill is a COMPILE ERROR, courtesy of
+ * the `never` below.
+ *
+ * This exists because `identifier:` was parsed and then silently ignored for
+ * months. parseDecodeRole understood it perfectly; planDecodeFill only ever looked
+ * for `kind === "target"`, so the field a bundle DECLARED as the holder of the VIN
+ * was the one field the VIN never reached — after a scan it sat empty while the VIN
+ * was printed in the title directly above it. Nothing failed. Nothing warned. The
+ * declaration was simply a lie the type system was happy to keep.
+ *
+ * A variant you declare and don't consume is worse than one you never added: it
+ * reads as a feature. So the compiler now insists.
+ */
+function assertEveryRoleKindIsConsumed(r: DecodeRole): void {
+  switch (r.kind) {
+    case "identifier": // → the identifier holder claim, at the top of planDecodeFill
+      return;
+    case "target": // → the decode:<key> claim, in the loop below
+      return;
+    default: {
+      const unhandled: never = r;
+      throw new Error(
+        `DecodeRole "${(unhandled as { kind: string }).kind}" is declared but nothing fills it. ` +
+          "Handle it in planDecodeFill — a role nothing consumes is a lie in the type.",
+      );
+    }
+  }
+}
 
 /** Parse a `decode_role` string into its structured form, or null when the
  *  string is absent/blank/malformed. Pure; safe on any input. */
@@ -147,10 +246,45 @@ const DECODE_NAME_MATCHERS: ReadonlyArray<{
 export function planDecodeFill(
   decoded: Record<string, string | number>,
   targets: DecodeFillTarget[],
+  /** The identifier that WAS decoded, when the caller knows it. A field declaring
+   *  `identifier:<decoderId>` is the field that HOLDS that code — the VIN box on a
+   *  vehicle, the ISBN box on a book — so it gets filled with the code itself.
+   *
+   *  Without this the role was parsed and then silently ignored: the Vehicles
+   *  bundle tags `serial_number` as `identifier:vin`, and after a VIN scan that
+   *  field sat empty while the VIN it was declared to hold was printed in the title
+   *  directly above it. Optional, so a caller that doesn't know its own code
+   *  behaves exactly as before. */
+  identifier?: { decoderId: string; code: string },
 ): DecodeFill[] {
   const fills: DecodeFill[] = [];
   const claimed = new Set<string>();
   const roleOf = (t: DecodeFillTarget): DecodeRole | null => parseDecodeRole(t.role);
+
+  // Every role a target declares must be one this planner actually consumes. The
+  // check is compile-time (the `never` in assertEveryRoleKindIsConsumed); calling
+  // it here keeps it wired to the real code path instead of rotting as an unused
+  // export somebody deletes.
+  for (const t of targets) {
+    const r = roleOf(t);
+    if (r) assertEveryRoleKindIsConsumed(r);
+  }
+
+  // The identifier holder is claimed FIRST: naming its decoder is the most specific
+  // claim a field can make, so it must not lose its target to a name-match below.
+  if (identifier?.code) {
+    const want = identifier.decoderId.toLowerCase();
+    const holder = targets.find((t) => {
+      if (!t.empty || claimed.has(t.id)) return false;
+      const r = roleOf(t);
+      return r?.kind === "identifier" && r.decoderId === want;
+    });
+    if (holder) {
+      claimed.add(holder.id);
+      fills.push({ target: holder, decodedKey: want, value: identifier.code });
+    }
+  }
+
   for (const [key, value] of Object.entries(decoded)) {
     if (value === "" || value === null || value === undefined) continue;
     // P3: a field explicitly declaring `decode:<key>` wins outright.
@@ -260,6 +394,10 @@ export const AXIS_OF_TRAIT = {
 
 export type TraitName = keyof typeof AXIS_OF_TRAIT;
 export type AxisName = (typeof AXIS_OF_TRAIT)[TraitName];
+
+/** The 12 trait words as a tuple, for validating client input against the
+ *  vocabulary (z.enum) instead of re-listing it somewhere it can drift. */
+export const TRAIT_NAMES = Object.keys(AXIS_OF_TRAIT) as [TraitName, ...TraitName[]];
 
 // One axis assignment. Three valid shapes:
 //   "physical" — the entity sits on this trait
@@ -885,6 +1023,158 @@ export type EntityKindDecl = z.infer<typeof EntityKind>;
 export type EntityFieldDecl = z.infer<typeof EntityField>;
 export type EntityActionDecl = z.infer<typeof EntityAction>;
 export type ActionAppliesToDecl = z.infer<typeof ActionAppliesTo>;
+
+/**
+ * FIELD SCOPES — the closed vocabulary for a field def that applies to a CLASS
+ * of entity kinds instead of exactly one ("Origin: where I got this", on every
+ * physical thing the workspace tracks — parts, assets, machines, places).
+ *
+ * A scope is just an `appliesTo` predicate over an entity kind, which is
+ * precisely what an action's `appliesTo` already is — so a scoped field is
+ * matched by the SAME matcher (matchAction), not a second one. The key is a
+ * SENTINEL parked in `module_field_defs.entity_kind` (which stays NOT NULL), and
+ * it starts with `@` so it can never collide with a real kind id (`module:kind`).
+ *
+ * Scoped on TRAITS, never on names or a use case: a kind is in-scope because it
+ * declared `tangibility: physical`, not because someone listed it. New physical
+ * kinds (a module installed next month, a bundle's instance) inherit the field
+ * with no migration — that's the whole point.
+ *
+ * A kind with NO declared traits matches no trait scope. That's deliberate: it
+ * keeps workspace-wide fields off untyped internal plumbing kinds by default.
+ *
+ * See docs/design-decisions/trait-scoped-fields.md.
+ */
+/** One-click shortcuts INTO the trait vocabulary — not a replacement for it. Any
+ *  combination of the 12 traits is a valid scope; these are just the ones worth a
+ *  chip. (The first version of this shipped only two canned scopes, which quietly
+ *  told users the other four axes didn't exist.) */
+export const FIELD_SCOPE_PRESETS: Array<{
+  key: string;
+  label: string;
+  hint: string;
+  traits: TraitName[];
+}> = [
+  {
+    key: "physical",
+    label: "All physical items",
+    hint: "Anything you can hold, store, or point at — parts, assets, machines, places.",
+    traits: ["physical"],
+  },
+  {
+    key: "digital",
+    label: "All digital items",
+    hint: "Things with no physical body — records, documents, entries.",
+    traits: ["digital"],
+  },
+  {
+    key: "physical-unique",
+    label: "Things tracked one by one",
+    hint: "Physical AND individually identified — an asset, a machine, a vehicle. Excludes bulk stock.",
+    traits: ["physical", "unique"],
+  },
+  {
+    key: "physical-fungible",
+    label: "Countable stock",
+    hint: "Physical AND interchangeable — tracked by quantity, not by which specific one.",
+    traits: ["physical", "fungible"],
+  },
+];
+
+/** The canonical sentinel for a trait scope: `@` + the traits, sorted, joined by
+ *  `+`. Parked in `module_field_defs.entity_kind` (which is NOT NULL), where it
+ *  keeps `unique (org_id, entity_kind, name)` meaningful — one "origin" per scope
+ *  per org — and can never collide with a real kind id (`module:kind`).
+ *  Deterministic, so the same scope always lands on the same row. */
+export function fieldScopeSentinel(traits: readonly string[]): string {
+  return `@${[...traits].sort().join("+")}`;
+}
+
+/** Plain-language gloss per platform PROFILE. The profile names are the authoring
+ *  vocabulary (a module declares `profile: "owned-thing"`); these say what that
+ *  means to someone who has never read the traits doc. */
+const PROFILE_HINTS: Record<string, string> = {
+  "owned-thing": "A specific thing you own and track one by one — an asset, a machine, a vehicle.",
+  "stock-material": "Bulk stock you count rather than name — parts, filament, screws.",
+  place: "Somewhere things live — a room, a shelf, a bin.",
+  "digital-record": "A record with no physical body — a tag, a file, an entry.",
+  "work-item": "Something with a date that can be finished — a task, a job, an order.",
+  "vendor-order": "An order placed with someone: it has a date and a done state.",
+  "recurring-schedule": "Scheduled, but never finishes — a recurring routine.",
+  "one-shot-completable": "A one-off you finish, with no schedule attached.",
+  "auto-pruning-record": "A short-lived record that ages out on its own.",
+};
+
+/**
+ * The platform PROFILES, as field scopes — the other way to say "a class of
+ * things". A profile is a full 6-axis fingerprint (what a module declares its kind
+ * AS: `profile: "owned-thing"`), so as a scope it means "every kind shaped like
+ * this": owned-thing catches assets, machines and vehicles, but not parts (those
+ * are fungible) and not locations (those are containers).
+ *
+ * DERIVED from TRAIT_PRESETS rather than re-listed, so a new platform profile
+ * appears here for free and the two can't drift apart.
+ *
+ * DEDUPED BY FINGERPRINT, because some profiles are trait-identical: `work-item`
+ * and `vendor-order` are the same six traits, so as PREDICATES they are the same
+ * scope. Two chips would both light up when either was picked and read as a bug;
+ * one chip named for both tells the truth — scope to either and you get both.
+ */
+export function fieldScopeProfiles(): Array<{
+  key: string;
+  label: string;
+  hint: string;
+  traits: TraitName[];
+}> {
+  const byFingerprint = new Map<string, { names: string[]; traits: TraitName[] }>();
+  for (const [name, preset] of Object.entries(TRAIT_PRESETS)) {
+    // A skipped axis (null) contributes nothing: the profile is silent about it,
+    // so a scope built from it has to be silent too.
+    const traits = Object.values(preset).filter(
+      (v): v is TraitName => typeof v === "string" && v in AXIS_OF_TRAIT,
+    );
+    if (!traits.length) continue;
+    const key = fieldScopeSentinel(traits);
+    const hit = byFingerprint.get(key);
+    if (hit) hit.names.push(name);
+    else byFingerprint.set(key, { names: [name], traits });
+  }
+  return [...byFingerprint.entries()].map(([key, { names, traits }]) => ({
+    key,
+    label: names.join(" / "),
+    hint:
+      names.length === 1
+        ? (PROFILE_HINTS[names[0]!] ?? "")
+        : `${PROFILE_HINTS[names[0]!] ?? ""} ${names.slice(1).join(", ")} has the same six traits, so this scope covers both.`,
+    traits,
+  }));
+}
+
+/** The traits encoded in a sentinel, or [] if it isn't one. The sentinel is
+ *  self-describing on purpose — a human reading the DB can see the scope. */
+export function parseFieldScope(entityKind: string): TraitName[] {
+  if (!entityKind.startsWith("@")) return [];
+  return entityKind
+    .slice(1)
+    .split("+")
+    .filter((t): t is TraitName => t in AXIS_OF_TRAIT);
+}
+
+/** True when a field def's `entity_kind` is a scope sentinel rather than a real
+ *  entity kind. Total and cheap — real kind ids never start with `@`. */
+export function isFieldScope(entityKind: string): boolean {
+  return entityKind.startsWith("@");
+}
+
+/** Human name for a scope: the preset's label when it is one, else the trait
+ *  words. The UI must never render a raw `@physical+unique` at a user. */
+export function fieldScopeLabel(traits: readonly string[]): string {
+  const key = fieldScopeSentinel(traits);
+  const preset = FIELD_SCOPE_PRESETS.find((p) => fieldScopeSentinel(p.traits) === key);
+  if (preset) return preset.label;
+  if (traits.length === 0) return "Nothing";
+  return `${[...traits].sort().join(" + ")} things`;
+}
 
 /**
  * Builder for a module's default export. Validates the manifest at
@@ -2115,6 +2405,31 @@ export interface AiProviderDef {
    *  when explicitly chosen/routed and a missing-provider case stays a clean
    *  "no provider configured" rather than an error from the unset provider. */
   autoSelectable?: boolean;
+  /**
+   * A fingerprint of the PROMPT this provider will actually send for
+   * (capability, input) — i.e. the part of the request that the caller's `input`
+   * does NOT already contain.
+   *
+   * The AI cache keys on `{capability, provider, model, input}`. For most image
+   * capabilities the prompt is NOT in `input`: it's a constant the adapter injects
+   * (`IDENTIFY_PROMPT`, and the extract-text / match-to-catalog / summarise
+   * literals). So **editing one of those prompts changed nothing about the cache
+   * key, and every already-seen image kept returning the answer generated by the
+   * OLD prompt — forever, because cache rows have no TTL.**
+   *
+   * The worst victim was the prompt-eval harness: the one tool whose entire job is
+   * to measure whether a prompt change helped was scoring stale replies.
+   *
+   * Returning a hash of the built prompt folds it into the key, so a prompt edit
+   * invalidates exactly the entries it should and nothing else. Omit it and the
+   * old (broken) behaviour stands — which is why every first-party adapter
+   * implements it, and why a lint fails a new one that doesn't.
+   *
+   * MUST NOT hash the image bytes: they are already in `input` and therefore
+   * already in the key. Hashing megabytes on every call to re-derive something the
+   * key has would be pure waste.
+   */
+  promptFingerprint?: (capability: AiCapability, input: Record<string, unknown>) => string | null;
   /** Run a single inference. The platform handles caching + audit
    *  before/after. */
   invoke: (ctx: {
@@ -2193,6 +2508,20 @@ export interface PlatformAi {
     /** Skip cache lookup AND skip cache write. Useful for
      *  match-to-catalog after a user rejects a suggestion. */
     bypass_cache?: boolean;
+    /** REPLAY ONLY — serve from cache, and if there's no cached reply, fail
+     *  instead of calling the provider. Costs nothing and spends no tokens.
+     *
+     *  This is what makes a "re-run without AI" possible: every AI stage already
+     *  degrades to a deterministic path when a call fails (identify → null, the
+     *  matchmaker → its keyword heuristic), so replaying the model's PREVIOUS
+     *  answers through TODAY's parsers and heuristics exercises a fix to them
+     *  without buying a single token. The miss throws in the "no provider" error
+     *  family precisely so those existing degrade paths handle it unchanged.
+     *
+     *  It cannot test a PROMPT change: the cache key hashes the input (the image),
+     *  not the prompt, so a cached reply answers whatever prompt was live when it
+     *  was bought. Mutually exclusive with bypass_cache; bypass_cache wins. */
+    cache_only?: boolean;
     source?: { kind: string; id: string };
     /** The user who initiated this call (for the AI activity log). Null/absent
      *  for system-initiated calls (e.g. a wire). */
@@ -2357,6 +2686,19 @@ export interface PlatformSharedCache {
   /** Upsert a value. `ttlSeconds` omitted ⇒ never expires (stable reference
    *  data like a resolved product). */
   put(namespace: string, key: string, value: unknown, ttlSeconds?: number): Promise<void>;
+  /**
+   * Forget a key.
+   *
+   * There was no way to do this — which is a real gap for a cache shared across
+   * EVERY workspace. When an entry turns out to be wrong, the only options were to
+   * overwrite it with another guess, or leave it poisoning everyone.
+   *
+   * Eviction is the honest third option: "we no longer believe this." It's what a
+   * disproved barcode resolution needs — drop it, let the next scan take a fresh
+   * look, and route the correction through the reviewable channel rather than
+   * silently making one workspace's photo into the whole instance's truth.
+   */
+  del(namespace: string, key: string): Promise<void>;
 }
 
 export interface PlatformQueue {

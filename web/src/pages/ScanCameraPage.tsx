@@ -38,8 +38,9 @@ import { ArrowLeftRight, ArrowRight, Camera, Check, Flashlight, Loader2, MapPin,
 import { Modal, usePageTitle, useToast } from "@cobblr/platform-web";
 import { ApiError, api, type LiveSortEntry, type ScanInboxItem, type TrackedMatch } from "../lib/api";
 import { LOCATION_ENTITY_KIND, decideLocationScan, filingLabel } from "../lib/scanFiling";
+import { freshDedupState, shouldFireScan, type DedupState } from "../lib/scanDedup";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { LocationPicker } from "../components/LocationPicker";
+import { LocationChipPicker } from "../components/LocationChipPicker";
 import {
   NATIVE_FORMATS,
   acquireScannerStream,
@@ -67,6 +68,12 @@ type Phase = "idle" | "scanning" | "result";
 // carried their own copy of this magic number, so any change to the chrome's
 // height had to be remembered in three places.
 const UNDER_TOP_CHROME = "max(4.5rem, calc(env(safe-area-inset-top) + 3.5rem))";
+
+// How long a code must be ABSENT from the frame before it counts as a new scan.
+// The detect loop fires every animation frame, so a code held in view produces
+// sightings tens of ms apart — far below this — and reads as one continuous scan.
+// A deliberate re-scan means moving the code out of frame for about this long.
+const REPEAT_GAP_MS = 1300;
 
 // Scan-session persistence — localStorage (NOT sessionStorage: phones kill
 // background tabs, and resuming the same shelf-walk is the whole point).
@@ -105,12 +112,10 @@ export function ScanCameraPage() {
   const streamRef = useRef<MediaStream | null>(null);
   const deviceIdRef = useRef<string | null>(null);
   const detectorRef = useRef<InstanceType<BarcodeDetectorCtor> | null>(null);
-  const lastSeenRef = useRef<{ value: string; at: number } | null>(null);
-  // Agreement gate: require the SAME code on two consecutive decodes before we
-  // accept it. The native BarcodeDetector loop runs every animation frame, so a
-  // single noisy frame can misread a barcode that isn't even in view — demanding
-  // two-in-a-row throws those away and stops the scanner firing too eagerly.
-  const candidateRef = useRef<{ value: string; count: number } | null>(null);
+  // Scanner dedup state (agreement gate + continuous-presence). The yes/no logic
+  // is a pure, tested reducer (lib/scanDedup); this ref is just where its mutable
+  // state lives across frames.
+  const dedupRef = useRef<DedupState>(freshDedupState());
   // phaseRef mirrors `phase` so the decode callbacks (set up once) read the
   // live value — once we're in the result modal, decodes are ignored. That
   // guard IS the "stop scanning the same thing over and over" fix.
@@ -122,6 +127,12 @@ export function ScanCameraPage() {
   const setPhase = useCallback((p: Phase) => {
     phaseRef.current = p;
     setPhaseState(p);
+  }, []);
+  const filingNoteTimerRef = useRef<number | null>(null);
+  const showFilingNote = useCallback((text: string) => {
+    setFilingNote(text);
+    if (filingNoteTimerRef.current) window.clearTimeout(filingNoteTimerRef.current);
+    filingNoteTimerRef.current = window.setTimeout(() => setFilingNote(null), 2200);
   }, []);
 
   const [supported, setSupported] = useState<boolean | null>(null);
@@ -156,6 +167,11 @@ export function ScanCameraPage() {
   // captures. This shows briefly at the TOP over the dark preview instead.
   const [savedNote, setSavedNote] = useState(false);
   const savedNoteTimer = useRef<number | null>(null);
+  // Filing feedback ("Filing into Guest Bedroom") shows HERE, at the top over the
+  // dark preview — not through the global toast, which renders at the bottom and
+  // sat directly on top of the shutter (the exact obstruction the author already
+  // worked around for the photo-saved note). Same top slot, tap-through, auto-hide.
+  const [filingNote, setFilingNote] = useState<string | null>(null);
   // Reading a QR label pauses the camera (the preview freezes) while we ask the
   // server what it points at. THAT is the moment worth narrating — the old
   // always-on "scanning" chip said "scanning" when the reticle already showed it
@@ -278,7 +294,7 @@ export function ScanCameraPage() {
     const b = locations.data?.items?.find((l) => l.id === binParam);
     if (b) {
       setAreaId(b.id);
-      toast.success(`Scanning into ${filingLabel(b)}`);
+      showFilingNote(`Filing into ${filingLabel(b)}`);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [binParam, locations.data]);
@@ -589,6 +605,14 @@ export function ScanCameraPage() {
           ]),
         );
         const decision = decideLocationScan(locId, areaIdRef.current, byId);
+        // Already filing here and nothing to reparent → a no-op. Re-announcing
+        // "Filing into Guest Bedroom" when it's already the active bin is noise;
+        // the continuous-presence dedup should stop the re-scan before this, but
+        // this makes it correct even if a code briefly leaves and returns.
+        if (!decision.reparent && decision.bin === areaIdRef.current) {
+          setPhase("scanning");
+          return;
+        }
         if (decision.reparent) {
           try {
             await api.updateLocation(activeSlug, decision.reparent.child, {
@@ -605,7 +629,7 @@ export function ScanCameraPage() {
         const b = byId.get(decision.bin);
         const nm = b ? filingLabel(b) : "location";
         const p = decision.reparent ? byId.get(decision.reparent.parent) : null;
-        toast.success(
+        showFilingNote(
           p ? `Filed ${nm} in ${filingLabel(p)} — filing into ${nm}` : `Filing into ${nm}`,
         );
         setPhase("scanning");
@@ -623,7 +647,7 @@ export function ScanCameraPage() {
         containerBinRef.current = cb;
         setAreaId(null);
         areaIdRef.current = null;
-        toast.success("Scanning into this — scan components to add them inside.");
+        showFilingNote("Filing into this — scan components to add them inside.");
         setPhase("scanning");
         return;
       }
@@ -724,33 +748,13 @@ export function ScanCameraPage() {
       if (phaseRef.current !== "scanning") return;
       const raw = rawIn.trim();
       if (!raw) return;
-      // Require two consecutive identical decodes — a lone misread never lands.
-      const cand = candidateRef.current;
-      if (cand && cand.value === raw) {
-        cand.count += 1;
-      } else {
-        candidateRef.current = { value: raw, count: 1 };
-        return;
-      }
-      if (cand.count < 2) return;
-      candidateRef.current = null;
-      const last = lastSeenRef.current;
-      if (last && last.value === raw && Date.now() - last.at < 2_000) return;
-      lastSeenRef.current = { value: raw, at: Date.now() };
+      // Agreement gate + continuous-presence dedup, in one tested reducer. A code
+      // held steady in the frame is ONE scan; it only re-fires after leaving the
+      // frame and coming back. This is the fix for a location QR spamming a new
+      // "Filing into…" toast every couple of seconds.
+      if (!shouldFireScan(dedupRef.current, raw, Date.now(), REPEAT_GAP_MS)) return;
       if (typeof navigator.vibrate === "function") navigator.vibrate(70);
-      // Capture the frame AT the scan moment — it rides the
-      // inbox item as YOUR photo next to the catalog image. The video
-      // pauses on result, so this exact frame is also what stays on screen.
-      const video = videoRef.current;
-      if (video && video.readyState >= 2) {
-        const c = document.createElement("canvas");
-        c.width = video.videoWidth;
-        c.height = video.videoHeight;
-        c.getContext("2d")?.drawImage(video, 0, 0);
-        frameBlobRef.current = new Promise<Blob | null>((resolve) =>
-          c.toBlob((blob) => resolve(blob), "image/jpeg", 0.85),
-        );
-      }
+
       // Sort mode with a directive on screen keeps the camera LIVE while we
       // resolve — a bin label there is the retarget gesture, not a navigation.
       const sortRetarget = sortModeRef.current && !!sortEntryRef.current;
@@ -779,6 +783,24 @@ export function ScanCameraPage() {
           );
         })();
         return;
+      }
+
+      // Capture the frame AT the scan moment — it rides the inbox item as YOUR
+      // photo next to the catalog image. Done HERE, past the Cobblr-QR path above:
+      // a location / bin QR sets a filing target and makes NO inbox item, so it
+      // has no use for a frame — and the synchronous full-res drawImage stutters
+      // the live preview. Grabbing it only on the paths that keep it is what keeps
+      // the camera smooth while you hold a location label. The video pauses on the
+      // result modal, so this exact frame is also what stays on screen.
+      const video = videoRef.current;
+      if (video && video.readyState >= 2) {
+        const c = document.createElement("canvas");
+        c.width = video.videoWidth;
+        c.height = video.videoHeight;
+        c.getContext("2d")?.drawImage(video, 0, 0);
+        frameBlobRef.current = new Promise<Blob | null>((resolve) =>
+          c.toBlob((blob) => resolve(blob), "image/jpeg", 0.85),
+        );
       }
 
       // External QR resolver (the redirect table): a foreign label the workspace
@@ -1060,6 +1082,21 @@ export function ScanCameraPage() {
         >
           <div className="inline-flex items-center gap-2 rounded-full bg-emerald-600/90 text-white text-xs font-medium px-3 py-1.5 shadow-lg backdrop-blur-sm">
             <Check size={13} className="shrink-0" /> Photo saved — identifying in the inbox
+          </div>
+        </div>
+      )}
+
+      {/* Filing feedback — top of frame, over the dark preview, tap-through. The
+          global toast rendered at the BOTTOM, directly over the shutter (see the
+          savedNote comment). Same slot, same reason. */}
+      {filingNote && (
+        <div
+          className="absolute inset-x-0 z-30 flex justify-center pointer-events-none px-4"
+          style={{ top: UNDER_TOP_CHROME }}
+        >
+          <div className="inline-flex items-center gap-2 rounded-full bg-emerald-600/90 text-white text-xs font-medium px-3 py-1.5 shadow-lg backdrop-blur-sm max-w-[92%]">
+            <MapPin size={13} className="shrink-0" />
+            <span className="truncate">{filingNote}</span>
           </div>
         </div>
       )}
@@ -1476,7 +1513,7 @@ export function ScanCameraPage() {
               Stamped on everything you scan or photograph this session, so triage
               knows where it lives.
             </p>
-            <LocationPicker value={areaId} onChange={setAreaId} label="Area" kind="area" />
+            <LocationChipPicker value={areaId} onChange={setAreaId} kind="area" />
             <div className="flex justify-end gap-2 pt-1">
               {areaId && (
                 <button

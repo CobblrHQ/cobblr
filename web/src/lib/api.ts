@@ -1017,7 +1017,10 @@ export const api = {
     if (kind) params.set("kind", kind);
     if (effective) params.set("effective", "1");
     const qs = params.toString() ? `?${params.toString()}` : "";
-    return request<{ items: PlatformFieldDef[]; sections?: FieldSection[] }>("GET", `/orgs/${slug}/field-defs${qs}`);
+    return request<{ items: PlatformFieldDef[]; sections?: FieldSection[]; scopes?: FieldScope[] }>(
+      "GET",
+      `/orgs/${slug}/field-defs${qs}`,
+    );
   },
   createFieldDef: (slug: string, body: Partial<PlatformFieldDef>) =>
     request<PlatformFieldDef>("POST", `/orgs/${slug}/field-defs`, body),
@@ -2486,6 +2489,9 @@ export const api = {
       target_location_id?: string | null;
       box_state?: "item-in-box" | "empty-box" | null;
       reviewed?: boolean;
+      /** Answer to "this photo has N different things — keep them together, or
+       *  split?" true = one record; the offer stops asking. */
+      keep_grouped?: boolean;
     },
   ) => request<ScanInboxItem>("PATCH", `/orgs/${slug}/modules/core-scan/inbox/${id}`, body),
   /** Guided Organize: propose a grouped put-away plan — for a selection of
@@ -2796,15 +2802,36 @@ export const api = {
       ...(opts?.item_ids ? { item_ids: opts.item_ids } : {}),
       ...(opts?.skip_install ? { skip_install: true } : {}),
     }),
-  rerunScanAi: (slug: string, id: string, hint?: string, wrong?: boolean, enrich?: boolean, imageFileId?: string) =>
+  /** Re-run the scan pipeline on one inbox item.
+   *
+   *  `noAi` REPLAYS it instead: every model stage is served from the AI cache,
+   *  and a stage with no cached reply degrades (the matchmaker drops to keyword
+   *  routing) rather than calling out — free, instant, and it re-runs all our
+   *  DETERMINISTIC code (reply parsers, pack-size, the split derivation, keyword
+   *  routing, decoder role-fill, field mapping) against the model's previous
+   *  answers. It cannot test a PROMPT change: the cache is keyed on the input
+   *  (the image), not the prompt, so a cached reply answers the prompt that was
+   *  live when it was bought. */
+  rerunScanAi: (
+    slug: string,
+    id: string,
+    opts: {
+      hint?: string | undefined;
+      wrong?: boolean | undefined;
+      enrich?: boolean | undefined;
+      imageFileId?: string | undefined;
+      noAi?: boolean | undefined;
+    } = {},
+  ) =>
     request<ScanInboxItem>(
       "POST",
       `/orgs/${slug}/modules/core-scan/inbox/${id}/rerun-ai`,
       {
-        ...(hint ? { hint } : {}),
-        ...(wrong ? { wrong: true } : {}),
-        ...(enrich ? { enrich: true } : {}),
-        ...(imageFileId ? { image_file_id: imageFileId } : {}),
+        ...(opts.hint ? { hint: opts.hint } : {}),
+        ...(opts.wrong ? { wrong: true } : {}),
+        ...(opts.enrich ? { enrich: true } : {}),
+        ...(opts.imageFileId ? { image_file_id: opts.imageFileId } : {}),
+        ...(opts.noAi ? { no_ai: true } : {}),
       },
     ),
   // "This listing is good — lock it in": verify the current name/brand/category/
@@ -5559,13 +5586,45 @@ export interface NativeFieldOverride {
   updated_at: string;
 }
 
+/** A field SCOPE — a class of entity kinds a field def can be attached to
+ *  instead of one kind ("all physical items"). The vocabulary is closed and
+ *  owned by the server (it matches on each kind's declared traits); the client
+ *  only ever names a scope by `key`, never describes one. Served on the
+ *  no-kind field-defs read. */
+export interface FieldScope {
+  /** The canonical sentinel, e.g. "@physical" / "@physical+unique". */
+  key: string;
+  label: string;
+  hint: string;
+  /** The trait words this preset selects — what the picker ticks. */
+  traits?: string[];
+  /** "broad" = a loose one/two-axis scope ("anything physical").
+   *  "profile" = a full 6-axis fingerprint, the named shapes modules declare
+   *  their own kinds as ("owned-thing"). Rendered as two separate groups. */
+  group?: "broad" | "profile";
+}
+
 export interface PlatformFieldDef {
   /** Owning bundle's identity when bundle-shipped — powers the manage-the-bundle link. */
   bundle_external_id?: string | null;
   bundle_name?: string | null;
   id: string;
   org_id: string;
+  /** The kind this def applies to. When it came from a SCOPE, the server has
+   *  already normalized this onto the kind you asked for — see `scope`. */
   entity_kind: string;
+  /** Set when this def isn't keyed to one kind but to a CLASS of them (the scope
+   *  sentinel it was created under, e.g. "@physical+unique" — a field on every
+   *  physical, individually-tracked thing). Null for an ordinary per-kind def.
+   *  Editing or deleting it reaches every kind it applies to. */
+  scope?: string | null;
+  /** That scope in words ("Things tracked one by one"). Render THIS, never the
+   *  raw sentinel. Null for a per-kind def. */
+  scope_label?: string | null;
+  /** Trait scope to create this def under — ANY combination of the 12 traits (OR
+   *  within an axis, AND across axes). When set on create, the server derives
+   *  `entity_kind` from it, so the two can't disagree. */
+  applies_to?: { traits: string[] };
   name: string;
   display_label: string;
   type: "text" | "number" | "boolean" | "date" | "url" | "computed" | "relation" | "richtext";
@@ -5669,6 +5728,9 @@ export interface PlatformBundleManifest {
     /** The unit a type='number' value is measured in ("mm", "g") — free text,
      *  resolved against the units vocabulary; declares physical semantics. */
     unit?: string;
+    /** Semantic RECORD role: `category` (this table's grouping axis) or `pack`
+     *  (the packaging-count field, filled from the scanned package). */
+    field_role?: "category" | "pack";
   }[];
   /** Presentation overrides for a kind's native fields (relabel / hide). */
   field_overrides?: {

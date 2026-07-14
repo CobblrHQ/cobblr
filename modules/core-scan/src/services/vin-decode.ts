@@ -79,6 +79,88 @@ export function checkDigitValid(code: string): boolean {
   return expected !== null && expected === vin[8];
 }
 
+// ── scan repair ──────────────────────────────────────────────────────────────
+//
+// Barcode scanners mangle VIN labels. A real one (2026-07-14, a 2002 Odyssey
+// door-jamb label) came back as `I2HKRL18662H580289` — the true VIN with a
+// spurious leading `I`. The decoder's shape test wants EXACTLY 17 chars, so it
+// declined, the code fell through to the product-barcode lookup, and an 18-char
+// alphanumeric string came back as "Reverse Phone" with a photo of an RV.
+//
+// But a corrupt VIN is one of the rare scans we can fix and PROVE we fixed:
+//   • `I`, `O`, `Q` are not in the VIN alphabet at all — they exist nowhere in a
+//     real VIN, so a code containing one is corrupt by definition.
+//   • the position-9 CHECK DIGIT is a mod-11 over the other 16. A wrong repair
+//     fails it ~10 times out of 11.
+//
+// So: generate candidates, and accept one ONLY when the arithmetic agrees. This
+// is a repair, never a guess — the whole point is that we don't have to trust it,
+// we can check it. Zero AI, zero network, sub-millisecond.
+
+export interface VinRepair {
+  vin: string;
+  /** Did we have to change the scanned string to get here? */
+  repaired: boolean;
+  /** Did the check digit CONFIRM it? True = arithmetic proof. False = the code is
+   *  shape-valid but its check digit doesn't compute, which is common and legal
+   *  outside North America — so it's a caveat, never a rejection. */
+  verified: boolean;
+}
+
+/** Every 17-char candidate worth testing, cheapest transformation first. */
+function vinCandidates(raw: string): string[] {
+  // Scanners emit Code 39 start/stop delimiters, whitespace, and stray dashes.
+  const clean = raw.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const out: string[] = [];
+  const push = (c: string) => {
+    if (c.length === 17 && !out.includes(c)) out.push(c);
+  };
+
+  push(clean);
+  // Too long: slide a 17-char window. The real-world case is one junk char on an
+  // end, but a window handles junk at either end for free.
+  for (let i = 0; i + 17 <= clean.length; i++) push(clean.slice(i, i + 17));
+  // Right length but carrying a letter the VIN alphabet forbids: the scanner (or
+  // an OCR pass) confused the digit it was invented to disambiguate from.
+  if (clean.length === 17 && /[IOQ]/.test(clean)) {
+    push(clean.replace(/I/g, "1"));
+    push(clean.replace(/[OQ]/g, "0"));
+    push(clean.replace(/I/g, "1").replace(/[OQ]/g, "0"));
+  }
+  return out;
+}
+
+/**
+ * Recover a VIN from a mangled scan, or null when we can't do it honestly.
+ *
+ * Precedence:
+ *   1. Already shape-valid → use it as-is, check digit or not. Unchanged: vPIC
+ *      decodes plenty of check-digit-fail VINs (the digit is only mandatory in
+ *      North America), so a bad digit on a WELL-FORMED VIN is a caveat, not a
+ *      rejection. We didn't alter the string, so there's nothing to prove.
+ *   2. Otherwise, a candidate whose CHECK DIGIT validates → repair. Proof.
+ *   3. Otherwise → null. NO UNVERIFIED REPAIRS.
+ *
+ * Rule 3 is the whole safety property, and I got it wrong the first time: I let a
+ * single shape-valid candidate through unverified, reasoning that one reading
+ * isn't a guess. It is. `1HGCM82633A00435I` has exactly one reading (I→1) and it
+ * yields a VIN that is NOT the real one — the check digit says so. Accepting it
+ * would decode somebody else's car, and it would also let the VIN decoder CLAIM
+ * codes that belong to other decoders (an ASIN, an FNSKU) by "repairing" them into
+ * something VIN-shaped.
+ *
+ * Altering the string is a claim about reality. Only make it when the arithmetic
+ * backs you. Blank beats wrong.
+ */
+export function repairVin(code: string): VinRepair | null {
+  const raw = normalizeVin(code);
+  if (isShapeValidVin(raw)) {
+    return { vin: raw, repaired: false, verified: checkDigitValid(raw) };
+  }
+  const verified = vinCandidates(raw).filter(isShapeValidVin).find(checkDigitValid);
+  return verified ? { vin: verified, repaired: true, verified: true } : null;
+}
+
 // ── vPIC response → semantic fields + four-way classification ─────────────────
 
 /** The subset of vPIC's ~140-field flat result we read. Everything else stays
@@ -237,8 +319,29 @@ export async function decodeVin(code: string): Promise<DecodeResult> {
 
 export const vinDecoder: IdentifierDecoder = {
   id: "vin",
-  matches: (code) => isShapeValidVin(code),
-  decode: (code) => decodeVin(code),
+  // Claim a REPAIRABLE code, not just a pristine one. A scanner's stray leading
+  // character used to drop the code out of the decoder entirely and into the
+  // product-barcode lookup, which happily returned a wrong product for it.
+  matches: (code) => repairVin(code) !== null,
+  decode: async (code) => {
+    const fix = repairVin(code);
+    if (!fix) return { outcome: "miss", fields: {}, provenance: null };
+    const result = await decodeVin(fix.vin);
+    if (!fix.repaired) return result;
+    // Say what we did, and hand back the CORRECTED code so the caller can fix the
+    // identifier it stored — otherwise the record keeps the mangled scan forever,
+    // which is a VIN that doesn't exist.
+    const how = fix.verified
+      ? "the VIN's check digit confirms it"
+      : "it's the only reading that's a valid VIN";
+    return {
+      ...result,
+      fields: { ...result.fields, vin: fix.vin },
+      note: [`Cleaned up the scan (${code.trim().toUpperCase()} → ${fix.vin}) — ${how}.`, result.note]
+        .filter(Boolean)
+        .join(" "),
+    };
+  },
 };
 
 /** Register the built-in decoders. Idempotent — safe to call on every router

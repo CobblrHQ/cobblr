@@ -65,6 +65,7 @@ import { enableDigifabForMachineBundles } from "./platform/enable-digifab-for-ma
 import { migrateInventoryLocations } from "./platform/migrate-inventory-locations.js";
 import { backfillPlacements } from "./platform/migrate-location-to-placement.js";
 import { backfillDefaultBindings } from "./platform/seed-bindings.js";
+import { reconcileScanCategoryFields } from "./platform/reconcile-scan-category.js";
 import { backfillBundleClaims } from "./platform/backfill-bundle-claims.js";
 import {
   registerDeclarativeScanResolver,
@@ -200,6 +201,7 @@ async function boot() {
     sharedCache: {
       get: sharedCache.get,
       put: sharedCache.put,
+      del: sharedCache.del,
     },
     notifications: {
       dispatch: notificationsImpl.dispatch,
@@ -484,7 +486,11 @@ async function boot() {
           if (cursor.kind === containee.kind && cursor.id === containee.id) {
             throw new Error("placement: would create a containment cycle");
           }
-          const key = `${cursor.kind} ${cursor.id}`;
+          // NOTE: \x00 (an actual control byte) as the join delimiter used to be typed
+          // as a RAW NUL here, which made every grep/rg treat this whole boot file
+          // as binary and silently return zero matches. Same byte at runtime, but
+          // written as an escape so the file stays searchable text.
+          const key = `${cursor.kind}\x00${cursor.id}`;
           if (seen.has(key)) break; // defensive — pre-existing cycle, don't spin
           seen.add(key);
           const up = await tdb
@@ -883,6 +889,13 @@ async function boot() {
   // trigger_event), so repeated boots are safe.
   const seeded = await T("backfillDefaultBindings", backfillDefaultBindings());
   console.log(`[cobblr-api] default bindings backfilled: ${seeded} added`);
+
+  // Give every workspace's scan FALLBACK table a category axis. Without one, the
+  // matchmaker's only way to say "this is electrical, that is plumbing" is to
+  // route them to different TABLES — which is how five electrical parts ended up
+  // scattered across four near-synonym tables. Idempotent; a workspace that
+  // already has an axis costs one in-memory check and opens no tenant pool.
+  await T("reconcileScanCategoryFields", reconcileScanCategoryFields());
 
   // Self-heal the bundle-resource-claims ledger for installs that predate it,
   // so a bundle uninstall can refcount correctly. Once per org, idempotent.

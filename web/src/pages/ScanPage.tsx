@@ -33,20 +33,24 @@ import {
   Loader2,
   MapPin,
   MonitorSmartphone,
+  RefreshCw,
   RotateCcw,
   ScanLine,
   Search,
   Sparkles,
+  Trash2,
   Upload,
   Wand2,
   X,
   Zap,
+  Scissors,
 } from "lucide-react";
 import { Modal, useImageSrc, useToast, usePageTitle, colorSwatch, wantsSwatch } from "@cobblr/platform-web";
 import { ScanImportModal } from "../components/ScanImportModal";
 import { ExportInboxModal } from "../components/ExportInboxModal";
 import { CameraCaptureSheet } from "../components/CameraCaptureSheet";
 import { LocationTreePicker } from "../components/LocationTreePicker";
+import { LocationChipPicker } from "../components/LocationChipPicker";
 import { OrganizePlanSheet, SortingPlanView } from "../components/OrganizePlanSheet";
 import { OrganizeWalkSheet } from "../components/OrganizeWalkSheet";
 import { LiveSortSheet } from "../components/LiveSortSheet";
@@ -57,6 +61,7 @@ import { PairPhoneButton } from "../components/PairPhoneButton";
 import { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
 export { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
 import { decideLocationScan, filingLabel } from "../lib/scanFiling";
+import { findCombineClusters } from "../lib/scanCombine";
 import { entryKey, withRoutedInstances, pickDestinationKey } from "../lib/scanDestination";
 import {
   type AiStatus,
@@ -74,6 +79,7 @@ import { useBarcodeWedge } from "../lib/useBarcodeWedge";
 import { resolveSessionBatch, clearScanSession, readScanSession, isSessionFresh, SESSION_GAP_MS } from "../lib/scanSession";
 import { tabBrowserId } from "../hooks/useBrowserDrive";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { useFieldPresentation } from "../lib/useFieldPresentation";
 import { useAuth } from "../auth/AuthContext";
 
 /** Base-kind fallback for when the scan menu can't load — the menu
@@ -159,52 +165,6 @@ function isUnidentified(name: string | null | undefined): boolean {
   return alnum.length < 3 || /(.)\1{3,}/i.test(alnum);
 }
 
-// ── "looks like the same product" clustering — for the combine offer ──
-const COMBINE_STOP = new Set([
-  "the", "and", "for", "with", "ultra", "soft", "pack", "count", "new", "size", "per", "each",
-]);
-function nameTokens(s: string | null | undefined): Set<string> {
-  return new Set(
-    (s ?? "")
-      .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, " ")
-      .split(/\s+/)
-      .filter((w) => w.length >= 3 && !/^\d+$/.test(w) && !COMBINE_STOP.has(w)),
-  );
-}
-function jaccard(a: Set<string>, b: Set<string>): number {
-  if (!a.size || !b.size) return 0;
-  let inter = 0;
-  for (const w of a) if (b.has(w)) inter++;
-  return inter / (a.size + b.size - inter);
-}
-/** Cluster pending items that look like the SAME product so we can OFFER to
- *  combine them (you scanned 4 of one thing but a pack carried a different
- *  barcode). Anchored on the BRAND plus the shared PRODUCT words (brand words
- *  removed): two items cluster when, same brand, they share ≥2 significant
- *  non-brand tokens — or a high token ratio. A pure Jaccard bar was too strict:
- *  "Charmin … Toilet Paper … Jumbo Roll" vs "Charmin … Bath Tissue Jumbo Roll"
- *  are the same product but only share charmin/jumbo/roll, so this anchors on
- *  the 2 shared product words instead. Compared to each cluster's SEED so it
- *  can't drift. Always an opt-in offer, so erring slightly eager is fine. */
-function productTokens(name: string | null | undefined, brand: string): Set<string> {
-  const brandToks = nameTokens(brand);
-  return new Set([...nameTokens(name)].filter((w) => !brandToks.has(w)));
-}
-/** Titled works — books, movies, albums — are NOT combinable by name: their
- *  "brand" is a publisher/studio shared across a whole catalog, and series
- *  titles overlap heavily ("Little TOWN on the Prairie" vs "Little HOUSE on the
- *  Prairie" share little+prairie → falsely "the same product"). The differing
- *  word IS the identity, so any name-overlap combine is wrong here. Detected by
- *  a creator/identifier field on any candidate (author/isbn/director/artist).
- *  Barcode-match combine still applies — that's identity, not name overlap. */
-const TITLED_MEDIA_FIELD = /^(author|isbn|director|artist|composer|writer|edition|publisher|issn)$/i;
-function isTitledMedia(it: ScanInboxItem): boolean {
-  return (it.suggested_candidates ?? []).some((c) =>
-    Object.keys(c.fields ?? {}).some((k) => TITLED_MEDIA_FIELD.test(k)),
-  );
-}
-
 // Is this row still being worked by the AI pipeline — i.e. NOT yet settled?
 // This is the single source of truth behind both the per-card "finishing…" chip
 // and the session-header "N finishing / all set" signal, so they never diverge.
@@ -220,6 +180,7 @@ function isTitledMedia(it: ScanInboxItem): boolean {
 function itemEnriching(it: ScanInboxItem, now = Date.now()): boolean {
   if (it.status !== "pending") return false;
   const meta = (it.suggested_metadata ?? {}) as {
+    pipeline_started_at?: string;
     matched_at?: string;
     finalized_at?: string;
     rate_limited?: boolean;
@@ -230,6 +191,16 @@ function itemEnriching(it: ScanInboxItem, now = Date.now()): boolean {
   // Enrichment finished but produced no name/candidates → it needs the USER
   // (manual naming), not more AI; that's DONE-for-the-pipeline, not "finishing".
   const needsName = !it.suggested_name && !!it.ai_suggested_at && cands === 0;
+  // A RE-RUN in flight. The server stamps pipeline_started_at, clears the terminal
+  // markers, and stamps finalized_at only when the whole chain is done. Nothing
+  // else here catches it: every other branch demands `cands === 0`, and a re-run
+  // still holds the PREVIOUS run's candidates. So the spinner stopped the instant
+  // the new name landed while the matchmaker was still running — the card looked
+  // finished and then mutated, which reads as a bug rather than as progress.
+  const rerunAgeMs = meta.pipeline_started_at
+    ? now - new Date(meta.pipeline_started_at).getTime()
+    : Infinity;
+  const rerunning = !meta.finalized_at && rerunAgeMs < 300_000;
   const serverMatching =
     !!(it.suggested_name || it.ai_suggested_at) &&
     cands === 0 &&
@@ -238,28 +209,8 @@ function itemEnriching(it: ScanInboxItem, now = Date.now()): boolean {
     aiAgeMs < 180_000;
   const finishing = !!meta.matched_at && !meta.finalized_at && matchedAgeMs < 90_000;
   const awaitingFresh = !it.suggested_name && !it.ai_suggested_at && cands === 0 && !meta.rate_limited;
-  return serverMatching || finishing || awaitingFresh;
+  return rerunning || serverMatching || finishing || awaitingFresh;
 }
-function findCombineClusters(items: ScanInboxItem[]): ScanInboxItem[][] {
-  const clusters: { brand: string; seed: Set<string>; items: ScanInboxItem[] }[] = [];
-  for (const it of items) {
-    if (isTitledMedia(it)) continue; // a different title = a different work
-    const brand = (it.suggested_manufacturer ?? "").trim().toLowerCase();
-    if (!brand || !it.suggested_name) continue;
-    const product = productTokens(it.suggested_name, brand);
-    if (product.size === 0) continue;
-    const hit = clusters.find((c) => {
-      if (c.brand !== brand) return false;
-      let shared = 0;
-      for (const w of product) if (c.seed.has(w)) shared++;
-      return shared >= 2 || jaccard(c.seed, product) >= 0.5;
-    });
-    if (hit) hit.items.push(it);
-    else clusters.push({ brand, seed: product, items: [it] });
-  }
-  return clusters.filter((c) => c.items.length >= 2).map((c) => c.items);
-}
-
 /** How a combine offer was found — drives the banner's wording + which item it
  *  keeps. "name" = same brand + product words; "barcode" = an OCR-read barcode
  *  that's a near-match to one you scanned earlier. */
@@ -662,28 +613,51 @@ export function ScanPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const receiptRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  // Progress across a multi-photo selection ({done,total}); null when idle or a
+  // single photo (which needs no counter). Drives the "adding 3/8…" button label.
+  const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null);
 
-  async function uploadPhoto(file: File) {
+  // Upload one OR many photos as a single batch — every photo in a multi-select
+  // gets the SAME scan_batch_id, so the inbox groups them as one session (the
+  // session-group logic keys on scan_batch_id). We resolve that batch ONCE up
+  // front rather than per-file, so N photos never scatter into N sessions or
+  // race to mint N batches. Each photo reveals in the inbox the moment it lands
+  // (per-file invalidate); the AI identification runs server-side in the
+  // background exactly as for a single photo.
+  async function uploadPhotos(files: File[]) {
+    if (files.length === 0) return;
+    const multi = files.length > 1;
     setUploading(true);
+    if (multi) setUploadProgress({ done: 0, total: files.length });
     try {
-      const rec = await api.uploadFile(activeSlug, file);
       const sessionBatch =
         batchId ??
         (await resolveSessionBatch(activeSlug, () =>
           api.createScanBatch(activeSlug).then((b) => b.id).catch(() => null),
         )) ??
         undefined;
-      await api.scanBarcode(activeSlug, {
-        source_kind: "photo",
-        image_file_id: rec.id,
-        scan_batch_id: sessionBatch,
-      });
-      toast.success("Photo added — AI is identifying it");
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : String(e));
+      let ok = 0;
+      for (const file of files) {
+        try {
+          const rec = await api.uploadFile(activeSlug, file);
+          await api.scanBarcode(activeSlug, {
+            source_kind: "photo",
+            image_file_id: rec.id,
+            scan_batch_id: sessionBatch,
+          });
+          ok++;
+          // Reveal each as it lands, so a long selection fills in progressively.
+          void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+        } catch (e) {
+          toast.error(`${file.name}: ${e instanceof ApiError ? e.message : String(e)}`);
+        }
+        if (multi) setUploadProgress({ done: ok, total: files.length });
+      }
+      if (ok === 1) toast.success("Photo added — AI is identifying it");
+      else if (ok > 1) toast.success(`${ok} photos added as one batch — AI is identifying them`);
     } finally {
       setUploading(false);
+      setUploadProgress(null);
       if (fileRef.current) fileRef.current.value = "";
     }
   }
@@ -1798,24 +1772,31 @@ export function ScanPage() {
         {/* Photo intake sits SECOND (right after UPC) so it's reachable on
             mobile without scrolling the strip — and carries an image icon, not
             the Upload icon, so it can't be mistaken for the batch Import below.
-            accept="image/*" → phone offers Take Photo / Photo Library / Files. */}
+            accept="image/*" + multiple → phone offers Take Photo / Photo Library
+            (multi-select) / Files; a multi-select groups as one batch. */}
         <button
           type="button"
           onClick={() => fileRef.current?.click()}
           disabled={uploading}
-          title="Add a photo — take one now or choose one from this device"
+          title="Add photos — take one now or pick several from this device; multiple photos come in as one batch"
           className={headerBtn + (uploading ? " opacity-50" : "")}
         >
-          <ImageIcon size={15} /> {uploading ? "adding…" : "Photo"}
+          <ImageIcon size={15} />{" "}
+          {uploadProgress
+            ? `adding ${uploadProgress.done}/${uploadProgress.total}…`
+            : uploading
+              ? "adding…"
+              : "Photos"}
         </button>
         <input
           ref={fileRef}
           type="file"
           accept="image/*"
+          multiple
           className="hidden"
           onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) void uploadPhoto(f);
+            const fs = Array.from(e.target.files ?? []);
+            if (fs.length) void uploadPhotos(fs);
           }}
         />
         <button
@@ -2046,25 +2027,28 @@ export function ScanPage() {
       {/* Bulk-triage toolbar — appears once anything is selected. Confirm routes
           each item to its own matchmaker top candidate; discard clears them out. */}
       {(selected.size > 0 || (visibleItems.length > 1 && allVisibleSelected)) && (
-        <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 rounded-lg border border-accent/40 bg-cobble-50 dark:bg-cobble-900/30 px-3 py-2 text-sm">
-          <span className="font-medium text-content dark:text-mortar-100">{selected.size} selected</span>
+        <div className="sticky top-0 z-10 flex flex-wrap items-center gap-x-1.5 gap-y-1 rounded-lg border border-accent/40 bg-cobble-100 dark:bg-slate-800 shadow-md px-2.5 py-1.5 text-sm">
+          {/* Opaque (was a /30 tint you could read the cards through) and tight:
+              short labels + icon-only Discard/clear keep it to one action row on a
+              phone instead of wrapping to three. */}
+          <span className="font-medium text-content dark:text-mortar-100 whitespace-nowrap">{selected.size} sel.</span>
           <button
             type="button"
             onClick={() => setSelected(new Set(visibleItems.map((i) => i.id)))}
-            className="text-xs text-accent hover:underline"
+            className="text-xs text-accent hover:underline whitespace-nowrap"
           >
-            select all {visibleItems.length}
+            all {visibleItems.length}
           </button>
-          <span className="flex-1" />
+          <span className="flex-1 min-w-[8px]" />
           {selected.size >= 2 && (
             <button
               type="button"
               disabled={bulkBusy}
               onClick={() => setOrganizeOpen(true)}
               title="Get a put-away plan for the selection: how these group, and which bins they belong in"
-              className="rounded border border-accent/50 text-sm px-3 py-1 text-accent hover:bg-cobble-50 dark:hover:bg-cobble-900/30 transition disabled:opacity-50"
+              className="rounded border border-accent/50 text-xs px-2 py-1 text-accent hover:bg-cobble-50 dark:hover:bg-cobble-900/30 transition disabled:opacity-50"
             >
-              Organize…
+              Organize
             </button>
           )}
           {hasLocations && (
@@ -2072,9 +2056,10 @@ export function ScanPage() {
               type="button"
               disabled={bulkBusy || selected.size === 0}
               onClick={() => setBulkLocOpen((o) => !o)}
-              className="rounded border border-line dark:border-slate-700 text-sm px-3 py-1 text-content hover:bg-subtle dark:hover:bg-slate-800 transition disabled:opacity-50"
+              title="File the whole selection into a location"
+              className="inline-flex items-center gap-1 rounded border border-line dark:border-slate-600 text-xs px-2 py-1 text-content hover:bg-subtle dark:hover:bg-slate-700 transition disabled:opacity-50"
             >
-              Set location
+              <MapPin size={13} className="shrink-0" /> Location
             </button>
           )}
           {(menu?.length ?? 0) > 0 && (
@@ -2083,16 +2068,16 @@ export function ScanPage() {
               disabled={bulkBusy || selected.size === 0}
               onClick={() => setBulkTargetOpen((o) => !o)}
               title="Commit the whole selection into one table"
-              className="rounded border border-line dark:border-slate-700 text-sm px-3 py-1 text-content hover:bg-subtle dark:hover:bg-slate-800 transition disabled:opacity-50"
+              className="rounded border border-line dark:border-slate-600 text-xs px-2 py-1 text-content hover:bg-subtle dark:hover:bg-slate-700 transition disabled:opacity-50"
             >
-              Add all to…
+              Add to…
             </button>
           )}
           <button
             type="button"
             disabled={bulkBusy || selected.size === 0}
             onClick={() => void bulkConfirm()}
-            className="rounded bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-3 py-1 transition disabled:opacity-50"
+            className="rounded bg-cobble-600 hover:bg-cobble-700 text-white text-xs font-medium px-2.5 py-1 transition disabled:opacity-50"
           >
             {bulkBusy ? "Working…" : "Confirm"}
           </button>
@@ -2100,12 +2085,20 @@ export function ScanPage() {
             type="button"
             disabled={bulkBusy || selected.size === 0}
             onClick={() => void bulkDiscard()}
-            className="rounded border border-line dark:border-slate-700 text-sm px-3 py-1 text-bad hover:bg-subtle dark:hover:bg-slate-800 transition disabled:opacity-50"
+            title="Discard the selection"
+            aria-label="Discard the selection"
+            className="rounded border border-line dark:border-slate-600 p-1 text-bad hover:bg-subtle dark:hover:bg-slate-700 transition disabled:opacity-50"
           >
-            Discard
+            <Trash2 size={14} className="shrink-0" />
           </button>
-          <button type="button" onClick={clearSelected} className="text-xs text-faint hover:text-content">
-            clear
+          <button
+            type="button"
+            onClick={clearSelected}
+            title="Clear selection"
+            aria-label="Clear selection"
+            className="rounded p-1 text-faint hover:text-content"
+          >
+            <X size={14} className="shrink-0" />
           </button>
           {bulkTargetOpen && (menu?.length ?? 0) > 0 && (
             <div className="w-full pt-1 flex flex-wrap gap-1.5">
@@ -2123,12 +2116,13 @@ export function ScanPage() {
             </div>
           )}
           {bulkLocOpen && (
-            <div className="w-full pt-1">
-              <LocationTreePicker
-                value={null}
-                onChange={(v) => v && void bulkApplyLocation(v)}
-                label="File the selection into"
-              />
+            <div className="w-full pt-2 mt-1 border-t border-line/40 dark:border-slate-700/60">
+              <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1.5">
+                File the selection into
+              </div>
+              {/* Chips, not a dropdown — one tap files the whole selection into a
+                  room or bin (the mobile pattern from the camera scanner). */}
+              <LocationChipPicker value={null} onChange={(v) => v && void bulkApplyLocation(v)} />
             </div>
           )}
         </div>
@@ -2794,6 +2788,15 @@ function InboxCard({
   const qc = useQueryClient();
   const toast = useToast();
 
+  // Locations, only to name the filing bin on the card. Same query key as the
+  // page's list, so this reads the shared react-query cache — no extra fetch.
+  const cardLocs = useQuery({
+    queryKey: ["core-locations", activeSlug],
+    queryFn: () => api.listLocations(activeSlug),
+    enabled: !!activeSlug && hasLocations,
+    staleTime: 60_000,
+  });
+
   // The expansion's confirm context: which table/instance the form commits
   // into + the matchmaker's pre-filled fields. Keyed into ConfirmForm so
   // switching chips remounts (and so re-seeds) the form.
@@ -3029,8 +3032,13 @@ function InboxCard({
     onError: (e) => toast.error((e as Error).message),
   });
   const rerun = useMutation({
-    mutationFn: (vars?: { hint?: string; wrong?: boolean; enrich?: boolean }) =>
-      api.rerunScanAi(activeSlug, item.id, vars?.hint, vars?.wrong, vars?.enrich),
+    mutationFn: (vars?: { hint?: string; wrong?: boolean; enrich?: boolean; noAi?: boolean }) =>
+      api.rerunScanAi(activeSlug, item.id, {
+        hint: vars?.hint,
+        wrong: vars?.wrong,
+        enrich: vars?.enrich,
+        noAi: vars?.noAi,
+      }),
     onMutate: () => {
       if (isPhotoItem) {
         readingSnapshot.current = item.ai_suggested_at ?? null;
@@ -3039,6 +3047,10 @@ function InboxCard({
     },
     onSuccess: (fresh, vars) => {
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      if (vars?.noAi) {
+        toast.success("Replaying the cached read through the current code…");
+        return;
+      }
       if (isPhotoItem) {
         // Detached on the server — the result isn't ready yet; the poll shows it.
         toast.success("Reading the photo with AI…");
@@ -3107,7 +3119,16 @@ function InboxCard({
   const yoursUrl = yoursRawUrl && !brokenSrcs.has(yoursRawUrl) ? yoursRawUrl : null;
   const catalogImg = useImageSrc(catalogUrl);
   const yoursImg = useImageSrc(yoursUrl);
-  const thumb = catalogImg ?? yoursImg;
+  // While a barcode's catalog image is UNVERIFIED — being checked against your
+  // photo, or already flagged a mismatch — lead with YOUR photo, not the catalog
+  // one. A barcode can resolve to a wrong/spam product (an action figure, a
+  // lookup-site screenshot) whose race-fetched image reads as "the scan failed";
+  // your own photo is never wrong. Once the check confirms, the catalog image
+  // (a clean product shot) leads again.
+  const photoUnverified = !!(
+    item.suggested_metadata as { photo_check_pending?: boolean; photo_mismatch?: unknown } | null
+  )?.photo_check_pending || !!(item.suggested_metadata as { photo_mismatch?: unknown } | null)?.photo_mismatch;
+  const thumb = photoUnverified ? (yoursImg ?? catalogImg) : (catalogImg ?? yoursImg);
 
   // Image viewer: click to zoom (lightbox), revert the catalog image to the
   // original (preserved server-side on the first override), or use your own scan
@@ -3136,6 +3157,36 @@ function InboxCard({
     },
     onError: onErr,
   });
+  // "Keep as one" — the OTHER answer to the split question. Persisted, so the
+  // offer doesn't ask again on the next render.
+  const keepGrouped = useMutation({
+    mutationFn: () => api.updateScanItem(activeSlug, item.id, { keep_grouped: true }),
+    onSuccess: () => {
+      toast.success("Kept as one record.");
+      invalidateInbox();
+    },
+    onError: onErr,
+  });
+  // Several DIFFERENT things in one photo (units of the SAME thing are a quantity,
+  // not a split — the observation pass draws that line). Free: this comes from the
+  // vision call every photo scan already makes. Hidden once answered, once split,
+  // and on a child that IS a split result.
+  const multiItem = (() => {
+    const m = (item.suggested_metadata ?? {}) as {
+      photo_distinct?: number;
+      photo_individuals?: Array<{ name: string; qty: number }>;
+      keep_grouped?: boolean;
+      split_from?: string;
+      split_into?: string[];
+    };
+    if (!m.photo_distinct || m.photo_distinct < 2) return null;
+    if (m.keep_grouped || m.split_from || m.split_into) return null;
+    if (item.status !== "pending") return null;
+    return {
+      distinct: m.photo_distinct,
+      individuals: m.photo_individuals ?? [],
+    };
+  })();
   // In-app capture (shared CameraCaptureSheet). The inbox card has no live camera,
   // so the sheet acquires its own rear camera — still no iOS native camera launch.
   const [captureSheet, setCaptureSheet] = useState<"add" | "retake" | null>(null);
@@ -3367,7 +3418,17 @@ function InboxCard({
               const cb = [creator, brand].filter((p, i, a): p is string => !!p && a.indexOf(p) === i);
               if (cb.length) segs.push(cb.join(" · "));
               if (item.suggested_sku) segs.push(item.suggested_sku);
-              if (item.scan_area) segs.push(`📍${item.scan_area}`);
+              // Where it's being FILED — the bin set by "Set location" (bulk or
+              // per-item). This is target_location_id, the authoritative
+              // destination, and it's distinct from any AI-guessed location-ish
+              // custom field (a bundle's `room`). Without showing it, using "Set
+              // location" changed nothing visible on the card. Falls back to the
+              // free-text scan_area stamped at scan time when no bin is set.
+              const filedInto = item.target_location_id
+                ? (cardLocs.data?.items ?? []).find((l) => l.id === item.target_location_id)
+                : null;
+              if (filedInto) segs.push(<span className="text-accent">📍 {filingLabel(filedInto)}</span>);
+              else if (item.scan_area) segs.push(`📍${item.scan_area}`);
               const ps = (item.suggested_metadata as { pack_size?: number } | null)?.pack_size;
               if (ps) segs.push(<span className="text-accent">{ps}-pack</span>);
               const bs = (item.suggested_metadata as { box_state?: string } | null)?.box_state;
@@ -3427,6 +3488,57 @@ function InboxCard({
               <Sparkles size={12} className="shrink-0" />
               Use photo’s name: “{photoSuggestedName}”
             </button>
+          )}
+          {/* The photo holds several DIFFERENT things. The observation pass (which
+              every photo scan already pays for) counted them and named them, so
+              ask the only question that matters — one record, or one each? — right
+              here on the closed card. Buried in the open card it may as well not
+              exist: nobody expands a card to discover a question they didn't know
+              they had. */}
+          {multiItem && (
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="mt-1.5 rounded-md border border-cobble-500/50 bg-cobble-600/10 px-2.5 py-2"
+            >
+              <div className="flex items-start gap-1.5 text-[11px] text-content dark:text-mortar-100">
+                <Sparkles size={12} className="shrink-0 mt-0.5 text-accent" />
+                <span>
+                  <strong>{multiItem.distinct} different items</strong> in this photo. Keep
+                  them together as one record, or split into individuals?
+                </span>
+              </div>
+              {multiItem.individuals.length > 0 && (
+                <ul className="mt-1 ml-5 space-y-0.5">
+                  {multiItem.individuals.map((ind, i) => (
+                    <li key={i} className="text-[11px] text-muted truncate">
+                      · {ind.name}
+                      {ind.qty > 1 && <span className="text-faint"> ×{ind.qty}</span>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => split.mutate()}
+                  disabled={split.isPending || keepGrouped.isPending}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-cobble-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-cobble-500 transition disabled:opacity-50"
+                >
+                  <Scissors size={11} className="shrink-0" />
+                  {split.isPending
+                    ? "Splitting…"
+                    : `Split into ${multiItem.distinct} items`}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => keepGrouped.mutate()}
+                  disabled={split.isPending || keepGrouped.isPending}
+                  className="rounded-md border border-line dark:border-slate-600 px-2 py-1 text-[11px] text-muted hover:text-content dark:hover:text-mortar-100 transition disabled:opacity-50"
+                >
+                  Keep as one
+                </button>
+              </div>
+            </div>
           )}
           {cantIdentify && <NameItInline slug={activeSlug} itemId={item.id} />}
           {/* One-tap correction: a barcode whose name looks wrong (always
@@ -4169,14 +4281,24 @@ function HintBox({
   onConfirm,
   confirming,
 }: {
-  onSubmit: (hint: string, opts: { wrong?: boolean; enrich?: boolean }) => void;
+  onSubmit: (hint: string, opts: { wrong?: boolean; enrich?: boolean; noAi?: boolean }) => void;
   busy: boolean;
   hasBarcode: boolean;
   onConfirm: () => void;
   confirming: boolean;
 }) {
   const [hint, setHint] = useState("");
-  const fire = (opts: { wrong?: boolean; enrich?: boolean }) => {
+  // The three correction buttons below all write to the SHARED, cross-workspace
+  // Barcode Intelligence DB (a wrong/enrich correction, or a green verify) — so a
+  // scan in one workspace teaches every other workspace's future scans of that
+  // UPC. Curating that shared DB is the platform operator's call, not every
+  // member's: a well-meaning member "locking in" a mislabelled listing poisons it
+  // for everyone. So the trio is operator-only. Members keep the research-hint +
+  // Re-run AI above, which only re-resolves THEIR OWN item (workspace-scoped
+  // cache), never the shared DB.
+  const { user } = useAuth();
+  const canCurateBarcodeDb = !!user?.is_platform_admin;
+  const fire = (opts: { wrong?: boolean; enrich?: boolean; noAi?: boolean }) => {
     onSubmit(hint.trim(), opts);
     setHint("");
   };
@@ -4208,7 +4330,26 @@ function HintBox({
         placeholder="Anything that helps — a model number, a better name, a correction… (Enter to submit, Shift+Enter for a newline)"
         className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-800 resize-none"
       />
-      <div className="mt-1.5 flex justify-end">
+      <div className="mt-1.5 flex items-center justify-end gap-2">
+        {/* Replay — no model call, no tokens. Re-runs the pipeline's OWN code
+            (reply parsers, pack-size, the split derivation, keyword routing,
+            decoder role-fill, field mapping) over the model's cached answer, so
+            a fix to any of that can be tried on a real item instantly and for
+            free. It CANNOT test a prompt change: the cache is keyed on the image,
+            not the prompt, so the cached reply answers the OLD prompt. Hidden
+            when a hint is typed — a hint is new information, which needs a real
+            read. */}
+        {!hint.trim() && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => fire({ noAi: true })}
+            title="Replay the cached AI reply through the current code — no model call, no tokens. Tests our parsers/heuristics/routing, NOT a prompt change."
+            className="rounded border border-line dark:border-slate-600 px-2.5 py-1.5 text-sm text-muted dark:text-slate-300 hover:bg-mortar-50 dark:hover:bg-slate-800 disabled:opacity-50 shrink-0 inline-flex items-center gap-1.5"
+          >
+            <RefreshCw size={13} className={busy ? "animate-spin" : ""} /> Replay (no AI)
+          </button>
+        )}
         <button
           type="submit"
           disabled={busy}
@@ -4217,42 +4358,47 @@ function HintBox({
           <RotateCcw size={13} className={busy ? "animate-spin" : ""} /> {hint.trim() ? "Re-run with hint" : "Re-run AI"}
         </button>
       </div>
-      {/* Triage, in traffic-light order — red → yellow → green:
+      {/* Shared-barcode-DB curation — OPERATOR ONLY (see canCurateBarcodeDb).
+          Triage in traffic-light order — red → yellow → green:
           • This is wrong — distrust the identity entirely, re-derive from scratch.
           • Right — needs detail — product's right but the listing is thin; keep
             the identity, dig every source + the web for the full name/spec/photo.
           • This is good — verify the current listing into the shared barcode DB.
           The two corrections share a half-width row; the affirmative sits below. */}
-      <div className="mt-2 flex gap-2">
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => fire({ wrong: true })}
-          title="Wrong product — re-check every source + the web, fix the name & photo, and correct the shared barcode database"
-          className="flex-1 min-w-0 rounded border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 px-2 py-1.5 text-sm font-medium disabled:opacity-50 inline-flex items-center justify-center gap-1.5"
-        >
-          <Flag size={13} className={busy ? "animate-pulse" : ""} /> This is wrong
-        </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => fire({ enrich: true })}
-          title="The product is right but the listing is sparse — re-check every source + the web to fill in the proper name, size and photo"
-          className="flex-1 min-w-0 rounded border border-amber-300 dark:border-amber-700/70 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 px-2 py-1.5 text-sm font-medium disabled:opacity-50 inline-flex items-center justify-center gap-1.5"
-        >
-          <Sparkles size={13} className={busy ? "animate-pulse" : ""} /> Right — needs detail
-        </button>
-      </div>
-      {hasBarcode && (
-        <button
-          type="button"
-          disabled={busy || confirming}
-          onClick={onConfirm}
-          title="Lock the current name, brand & photo into the shared barcode database as verified"
-          className="mt-2 w-full rounded border border-emerald-300 dark:border-emerald-700/70 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 px-3 py-1.5 text-sm font-medium disabled:opacity-50 inline-flex items-center justify-center gap-1.5"
-        >
-          <CheckCircle size={13} className={confirming ? "animate-pulse" : ""} /> This is good — lock it in
-        </button>
+      {canCurateBarcodeDb && (
+        <>
+          <div className="mt-2 flex gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => fire({ wrong: true })}
+              title="Wrong product — re-check every source + the web, fix the name & photo, and correct the shared barcode database"
+              className="flex-1 min-w-0 rounded border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 px-2 py-1.5 text-sm font-medium disabled:opacity-50 inline-flex items-center justify-center gap-1.5"
+            >
+              <Flag size={13} className={busy ? "animate-pulse" : ""} /> This is wrong
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => fire({ enrich: true })}
+              title="The product is right but the listing is sparse — re-check every source + the web to fill in the proper name, size and photo"
+              className="flex-1 min-w-0 rounded border border-amber-300 dark:border-amber-700/70 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 px-2 py-1.5 text-sm font-medium disabled:opacity-50 inline-flex items-center justify-center gap-1.5"
+            >
+              <Sparkles size={13} className={busy ? "animate-pulse" : ""} /> Right — needs detail
+            </button>
+          </div>
+          {hasBarcode && (
+            <button
+              type="button"
+              disabled={busy || confirming}
+              onClick={onConfirm}
+              title="Lock the current name, brand & photo into the shared barcode database as verified"
+              className="mt-2 w-full rounded border border-emerald-300 dark:border-emerald-700/70 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 px-3 py-1.5 text-sm font-medium disabled:opacity-50 inline-flex items-center justify-center gap-1.5"
+            >
+              <CheckCircle size={13} className={confirming ? "animate-pulse" : ""} /> This is good — lock it in
+            </button>
+          )}
+        </>
       )}
     </form>
   );
@@ -4741,9 +4887,26 @@ function ConfirmForm({
   // this table" reinforced that). Surface it, pre-filled + editable (fix OCR
   // slips), for items where a serial applies: one was captured, or the target is
   // equipment (machines/assets). It rides to the native column via `extras`.
-  const capturedSerial = String((item.suggested_metadata as { serial_number?: unknown } | null)?.serial_number ?? "");
+  // A decoded IDENTIFIER is a serial: the Vehicles bundle tags `serial_number` as
+  // `identifier:vin`, so a VIN scan's code belongs in this box. Before, the VIN sat
+  // in the card's title while the very field declared to hold it was blank.
+  const decodedIdentifier = (() => {
+    const m = item.suggested_metadata as { decoded?: { decoder_id?: string } } | null;
+    return m?.decoded?.decoder_id ? (item.barcode_text ?? "") : "";
+  })();
+  const capturedSerial =
+    String((item.suggested_metadata as { serial_number?: unknown } | null)?.serial_number ?? "") ||
+    decodedIdentifier;
   const [serial, setSerial] = useState(capturedSerial);
   const showSerial = !!capturedSerial || entry.module === "machines" || entry.module === "assets";
+  // The destination's native-field PRESENTATION. A bundle can relabel a native
+  // field per kind (manufacturer -> "Make", serial_number -> "VIN"); every other
+  // entity form reads this, but the confirm form hardcoded its labels, so a
+  // bundle's relabels stopped at its door. You could install Vehicles and still be
+  // asked for a "Serial number" on a card whose subtitle was a VIN.
+  const presentation = useFieldPresentation(entry.kind ?? "");
+  const fieldLabel = (nativeName: string, fallback: string) =>
+    presentation.label(nativeName, fallback);
   const aiStatus = useAiStatus();
   // Quantity: the matchmaker's pack-count read ("1 Pack Of 9 Skein" -> 9)
   // beats the row's default 1; an explicitly-set row quantity beats both.
@@ -4941,7 +5104,7 @@ function ConfirmForm({
       )}
       <div className="grid sm:grid-cols-2 gap-3">
         <label className="block sm:col-span-2">
-          <div className={labelCls}>Name</div>
+          <div className={labelCls}>{fieldLabel("name", "Name")}</div>
           <input
             type="text"
             value={name}
@@ -4954,7 +5117,7 @@ function ConfirmForm({
         </label>
 
         <label className="block">
-          <div className={labelCls}>Brand</div>
+          <div className={labelCls}>{fieldLabel("manufacturer", "Brand")}</div>
           <input
             type="text"
             value={manufacturer}
@@ -4966,7 +5129,7 @@ function ConfirmForm({
 
         {showSerial && (
           <label className="block">
-            <div className={labelCls}>Serial number</div>
+            <div className={labelCls}>{fieldLabel("serial_number", "Serial number")}</div>
             <input
               type="text"
               value={serial}

@@ -507,9 +507,9 @@ export async function applyBlueprint(
         .selectFrom("core_views_views")
         .select(["id", "entity_kind", "name"])
         .execute();
-      for (const ev of existingViews) viewIdByName.set(`${ev.entity_kind} ${ev.name}`, ev.id);
+      for (const ev of existingViews) viewIdByName.set(`${ev.entity_kind}\x00${ev.name}`, ev.id);
       for (const v of m.saved_views) {
-        const key = `${v.entity_kind} ${v.name}`;
+        const key = `${v.entity_kind}\x00${v.name}`;
         if (viewIdByName.has(key)) continue;
         const row = await tdb
           .insertInto("core_views_views")
@@ -536,7 +536,7 @@ export async function applyBlueprint(
         // manifest doesn't carry the kind — match by name across kinds.
         let scopeId: string | undefined;
         for (const [key, id] of viewIdByName) {
-          if (key.endsWith(` ${s.scope_view_name}`)) {
+          if (key.endsWith(`\x00${s.scope_view_name}`)) {
             scopeId = id;
             break;
           }

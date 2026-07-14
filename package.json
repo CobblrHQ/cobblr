@@ -22,6 +22,7 @@
     "lint:dockerfile-modules": "tsx scripts/lint-dockerfile-modules.ts",
     "lint:versions": "tsx scripts/lint-versions.ts",
     "lint:docs": "tsx scripts/lint-docs.ts",
+    "lint:branch-live": "node scripts/lint-branch-live.mjs",
     "lint:changelog": "tsx scripts/lint-changelog.ts",
     "lint:scan-keywords": "tsx scripts/lint-scan-keywords.ts",
     "lint:bundle-quality": "tsx scripts/lint-bundle-quality.ts",
@@ -45,17 +46,21 @@
     "lint:consume-params": "tsx scripts/lint-consume-once-params.ts",
     "lint:ui-jargon": "tsx scripts/lint-ui-jargon.ts",
     "lint:ai-invoke": "tsx scripts/lint-ai-invoke.ts",
+    "lint:jsonb-merge": "tsx scripts/lint-jsonb-merge.ts",
+    "lint:control-bytes": "tsx scripts/lint-no-raw-control-bytes.ts",
+    "lint:prompt-fingerprint": "tsx scripts/lint-ai-prompt-fingerprint.ts",
     "lint:workspace-vocab": "tsx scripts/lint-workspace-vocab.ts",
     "lint:no-passthrough": "tsx scripts/lint-no-passthrough.ts",
     "lint:catalog-schema-complete": "tsx scripts/lint-catalog-schema-complete.ts",
-
     "build": "pnpm -r run --if-present build",
     "dev:api": "npm run dev -w api",
     "dev:web": "npm run dev -w web",
     "test": "pnpm -r run --if-present test",
     "prepare": "git config core.hooksPath scripts/git-hooks 2>/dev/null || true",
     "typecheck:fast": "pnpm -r run --if-present typecheck:fast",
-    "embed:bridge": "node scripts/embed-bridge-bundle.mjs"
+    "embed:bridge": "node scripts/embed-bridge-bundle.mjs",
+    "test:unit": "node scripts/run-unit-tests.mjs",
+    "lint:native-field-labels": "node scripts/lint-native-field-labels.mjs"
   },
   "devDependencies": {
     "playwright": "^1.60.0",

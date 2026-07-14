@@ -3,23 +3,55 @@
 // Editing the def's name / type is not supported yet — would
 // require migrating any stored values in entity metadata.
 
+import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { Trash2 } from "lucide-react";
 import { ApiError, api, type PlatformFieldDef } from "../lib/api";
 import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
+import { ChoicesInput } from "./ChoicesInput";
 
 interface Props {
   open: boolean;
   onClose: () => void;
   slug: string;
   fieldDef: PlatformFieldDef | null;
+  /** Human name of the SCOPE this def is attached to ("All physical items"),
+   *  when it's scoped to a class of kinds rather than one kind. The caller
+   *  resolves it — the scope vocabulary is served by the API. */
+  scopeLabel?: string | null;
 }
 
-export function FieldDefDetailModal({ open, onClose, slug, fieldDef }: Props) {
+export function FieldDefDetailModal({ open, onClose, slug, fieldDef, scopeLabel }: Props) {
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
+
+  // Choices are editable AFTER the fact: they're suggestions stored as free text,
+  // so adding or removing one can never orphan a saved value. (Renaming the field
+  // or changing its type still isn't offered — those WOULD strand metadata.)
+  const [choices, setChoices] = useState<string[]>(fieldDef?.choices ?? []);
+  useEffect(() => {
+    setChoices(fieldDef?.choices ?? []);
+  }, [fieldDef?.id, fieldDef?.choices]);
+  const choicesDirty =
+    JSON.stringify(choices) !== JSON.stringify(fieldDef?.choices ?? []);
+
+  const saveChoices = useMutation({
+    mutationFn: () =>
+      api.updateFieldDef(slug, fieldDef!.id, {
+        // null clears the dropdown back to a plain text box.
+        choices: choices.length ? choices : null,
+      }),
+    onSuccess: () => {
+      toast.success(
+        choices.length ? "Choices updated." : "Dropdown removed — it's a plain text box now.",
+      );
+      void qc.invalidateQueries({ queryKey: ["field-defs", slug] });
+    },
+    onError: (e: unknown) =>
+      toast.error(e instanceof ApiError ? e.message : "Couldn't save choices."),
+  });
 
   const remove = useMutation({
     mutationFn: () => api.deleteFieldDef(slug, fieldDef!.id),
@@ -51,14 +83,14 @@ export function FieldDefDetailModal({ open, onClose, slug, fieldDef }: Props) {
       open={open}
       onClose={onClose}
       title={fieldDef.display_label}
-      subtitle={`${fieldDef.entity_kind} · ${fieldDef.name}`}
+      subtitle={`${scopeLabel ?? fieldDef.entity_kind} · ${fieldDef.name}`}
       size="md"
     >
       <div className="space-y-4">
         <dl className="grid grid-cols-2 gap-2 text-xs">
-          <Row label="Entity kind">
+          <Row label={scopeLabel ? "Applies to" : "Entity kind"}>
             <code className="font-mono text-accent dark:text-cobble-300">
-              {fieldDef.entity_kind}
+              {scopeLabel ?? fieldDef.entity_kind}
             </code>
           </Row>
           <Row label="Field name">
@@ -94,13 +126,67 @@ export function FieldDefDetailModal({ open, onClose, slug, fieldDef }: Props) {
           )}
         </dl>
 
+        {fieldDef.type === "text" && (
+          <div>
+            <div className="font-mono uppercase tracking-widest text-[10px] text-faint mb-1">
+              Choices
+              <span className="ml-2 normal-case tracking-normal text-faint dark:text-slate-600">
+                {choices.length ? "renders as a dropdown" : "empty = a plain text box"}
+              </span>
+            </div>
+            <ChoicesInput
+              value={choices}
+              onChange={setChoices}
+              placeholder="e.g. FB Marketplace, Gift, Bought new"
+            />
+            {choicesDirty && (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => saveChoices.mutate()}
+                  disabled={saveChoices.isPending}
+                  className="rounded-md bg-cobble-600 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-cobble-500 transition disabled:opacity-50"
+                >
+                  {saveChoices.isPending ? "Saving…" : "Save choices"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setChoices(fieldDef.choices ?? [])}
+                  className="text-[11px] text-muted hover:text-content dark:hover:text-mortar-100 transition"
+                >
+                  Revert
+                </button>
+                {/* Changing the list can't strand a saved value: it's stored as
+                    free text, and an unlisted value still renders (as "legacy"). */}
+                <span className="text-[10px] text-faint">
+                  Safe to change — values already saved are kept either way.
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="p-3 rounded-md bg-subtle dark:bg-slate-800/70 text-xs text-content dark:text-mortar-200">
           <div className="font-mono uppercase tracking-widest text-[10px] text-faint mb-1">
             Where it appears
           </div>
-          Renders on every <code className="font-mono text-accent">{fieldDef.entity_kind}</code>{" "}
-          detail page under a <em>custom fields</em> section, and the value is
-          accessible in templates as <code className="font-mono text-accent">{`{{${fieldDef.name}}}`}</code>.
+          {scopeLabel ? (
+            <>
+              Renders on <strong>{scopeLabel.toLowerCase()}</strong> — every kind that
+              qualifies today, and any you add later. Editing or deleting it here
+              changes it <em>everywhere</em> it appears. To change it on just one
+              kind, add a field with the same name{" "}
+              <code className="font-mono text-accent">{fieldDef.name}</code> to that
+              kind; the more specific one wins.
+            </>
+          ) : (
+            <>
+              Renders on every <code className="font-mono text-accent">{fieldDef.entity_kind}</code>{" "}
+              detail page under a <em>custom fields</em> section, and the value is
+              accessible in templates as{" "}
+              <code className="font-mono text-accent">{`{{${fieldDef.name}}}`}</code>.
+            </>
+          )}
         </div>
 
         <div className="flex items-center justify-between pt-3 border-t border-line dark:border-slate-700">

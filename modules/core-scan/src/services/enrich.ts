@@ -18,6 +18,8 @@ import { resolveBarcodeViaWebSearch } from "./barcode-websearch.js";
 import { reportBarcodeCorrection } from "./barcode-corrections.js";
 import { classifyScanCode, resolveIsbn, resolveAsin } from "./scan-router.js";
 import { crossCheckScanPhoto, identifyImage, parsePackSize, refreshCatalogImageByName } from "./enrich-photo.js";
+import { identityMeta, mergeMeta } from "./metadata.js";
+import { BARCODE_NS } from "./barcode-cache.js";
 import { findDecoder } from "./identifier-registry.js";
 import { registerBuiltinDecoders } from "./vin-decode.js";
 import { readDecodeCache, writeDecodeCache, decodeCacheKey } from "./decode-cache.js";
@@ -33,7 +35,6 @@ registerBuiltinDecoders();
 // (critical on a shared-egress-IP public deploy where the upcitemdb free-tier
 // quota is shared across all tenants). A genuine MISS is cached with a TTL so a
 // product later added to the catalog gets re-checked; a HIT never expires.
-const BARCODE_NS = "barcode";
 const GLOBAL_MISS_TTL_SEC = 30 * 24 * 60 * 60; // 30 days
 interface BarcodeCacheValue {
   found: boolean;
@@ -174,11 +175,21 @@ async function nameFromPhoto(ctx: EnrichContext): Promise<boolean> {
     .set({
       suggested_name: identity.name,
       suggested_manufacturer: identity.brand,
-      suggested_metadata: sql`${JSON.stringify({
+      suggested_metadata: identityMeta({
         source: "photo",
         category: identity.category,
         entity_type: identity.entityType,
-      })}::jsonb` as never,
+        // The identify read already counted what's in frame — carry it, so a
+        // barcode-miss photo gets the same split offer a photo-only scan gets.
+        ...(identity.observations
+          ? {
+              photo_observations: identity.observations,
+              photo_distinct: identity.distinct,
+              photo_individuals: identity.individuals,
+              photo_observed_for: row.image_file_id,
+            }
+          : {}),
+      }) as never,
       ai_confidence: String(Math.min(identity.confidence, 0.7)),
       ai_notes: "No catalog or web hit — named from your photo.",
       ai_suggested_at: new Date(),
@@ -266,15 +277,27 @@ interface EnrichContext {
 export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
   // If the user hand-picked a catalog image, NO enrichment path may overwrite it —
   // it's their explicit choice and must survive a re-run/hint correction. The write
-  // paths below clobber catalog_image_url AND rewrite suggested_metadata (dropping
-  // the `catalog_image_user_set` lock), so we hold the refs up front and re-assert
-  // them (+ re-stamp the lock) after each path. `refreshCatalogImageByName` is the
+  // paths below still overwrite the catalog_image_* COLUMNS, so we hold the refs up
+  // front and re-assert them after each path. `refreshCatalogImageByName` is the
   // matching guard on the detached enrichThinHit tail.
+  //
+  // The `catalog_image_user_set` LOCK no longer needs rescuing: those paths write
+  // suggested_metadata through `identityMeta()`, which touches only the keys the
+  // identify pass owns. (This helper used to re-stamp the lock because the writes
+  // replaced the whole bag and dropped it — a one-key rescue from a blast radius
+  // that was hitting a dozen other keys nobody had noticed. See
+  // docs/design-decisions/scan-inbox-pipeline.md.)
   const lockRow = await ctx.db
     .selectFrom("core_scan_inbox_items")
-    .select(["catalog_image_url", "catalog_image_file_id", "suggested_metadata"])
+    .select(["catalog_image_url", "catalog_image_file_id", "suggested_metadata", "image_file_id"])
     .where("id", "=", ctx.itemId)
     .executeTakeFirst();
+  // A scan photo means the barcode result can be CROSS-CHECKED against what the
+  // user actually photographed. When one exists, a barcode hit is shown as
+  // "checking…" at a damped confidence until crossCheckScanPhoto confirms or
+  // corrects it — so a collided/reused UPC (198973386273 resolved to an action
+  // figure over a photo of yarn) never flashes a confident wrong product.
+  const hasScanPhoto = !!lockRow?.image_file_id;
   const lockedImg = (lockRow?.suggested_metadata as { catalog_image_user_set?: boolean } | null)
     ?.catalog_image_user_set
     ? { url: lockRow!.catalog_image_url, file_id: lockRow!.catalog_image_file_id }
@@ -311,12 +334,12 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
         catalog_image_url: vendor.imageUrl ?? null,
         // `fields` ride in suggested_metadata so the commit can land them on
         // the created entity's metadata (size / batch_code for a spool, …).
-        suggested_metadata: sql`${JSON.stringify({
+        suggested_metadata: identityMeta({
           source: vendor.source,
           category: vendor.category,
           entity_type: vendor.entityType,
           fields: vendor.fields,
-        })}::jsonb` as never,
+        }) as never,
         ai_confidence: "0.9",
         // User-facing note: name the maker/brand, never the internal resolver
         // id (e.g. "polar-pfil") — that's a private routing detail, not for users.
@@ -493,6 +516,29 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
     // Catalog DBs have nothing — fall back to web search (what a person
     // does: search the UPC, read the name off the agreeing results).
     const web = await resolveBarcodeViaWebSearch(ctx.orgId, ctx.upc, ctx.hint, ctx.userId).catch(() => null);
+
+    // READ THE LABEL BEFORE TRUSTING A GUESS.
+    //
+    // A bare UPC looks like a phone number to a search engine, so a code with no
+    // product page reliably surfaces phone-directory SEO. That is how a pack of
+    // Harbor Freight silicone ties became "411 - White Pages | Find Phone Numbers":
+    // the search "succeeded", so the PHOTO — which has "24in Silicone Ties" printed
+    // across it in the largest text on the card — was never asked to identify the
+    // item at all. It was only consulted afterwards as a cross-CHECK, and the
+    // cross-check is deliberately conservative, so it hedged.
+    //
+    // The photo of the thing itself is better evidence than a web search of a naked
+    // number. So when nothing corroborates the web name and we HAVE a photo, the
+    // photo identifies the item and the web name is demoted to a hint. This is
+    // heuristic-first applied honestly: read what's in front of you.
+    if (web && !web.corroborated && (await nameFromPhoto(ctx))) {
+      // The photo named it. Deliberately NOT caching anything: an uncorroborated
+      // web name must not enter even the tenant cache, or the next scan of this UPC
+      // resolves to the junk again.
+      await reassertLockedImage();
+      return;
+    }
+
     // A junk "name" ("Unknown Item" / "XXXXXXXX") means the web couldn't identify
     // it either — DON'T accept it as a result. Fall through to the photo/manual
     // path with no name, so it never gets shown as valid or image-searched.
@@ -504,14 +550,14 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
           suggested_manufacturer: web.brand,
           suggested_sku: web.sku,
           catalog_image_url: web.imageUrl,
-          suggested_metadata: sql`${JSON.stringify({
+          suggested_metadata: identityMeta({
             source: "web-search",
             method: web.method,
             category: web.category,
             entity_type: web.entityType,
             ...(web.series ? { series: web.series } : {}),
             ...(parsePackSize(web.name) ? { pack_size: parsePackSize(web.name) } : {}),
-          })}::jsonb` as never,
+          }) as never,
           ai_confidence: String(web.confidence),
           ai_notes: web.evidence,
           ai_suggested_at: new Date(),
@@ -521,24 +567,38 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
         .execute();
       // Promote both caches to the web-search resolution. Use an upsert (not a
       // bare UPDATE) because on a rate-limited path no tenant row exists yet.
-      // Cache the LLM resolution cross-tenant too (with a TTL) so the next
-      // workspace to scan this UPC reuses it instead of paying for another
-      // web-search — but it can still be superseded by a real catalog hit later.
-      const webValue: BarcodeCacheValue = {
-        found: true,
-        source: "web-search",
-        title: web.name,
-        brand: web.brand,
-        model: web.sku,
-        description: null,
-        category: web.category,
-        image_url: web.imageUrl,
-        raw: stampFetchedAt({}),
-      };
-      await writeTenantCache(ctx, webValue).catch(() => {});
-      await platform()
-        .sharedCache.put(BARCODE_NS, ctx.upc, webValue, GLOBAL_MISS_TTL_SEC)
-        .catch(() => {});
+      //
+      // ONLY A CORROBORATED NAME MAY BE CACHED — and only a corroborated name may
+      // go CROSS-WORKSPACE.
+      //
+      // The shared cache is the Barcode Intelligence DB: whatever lands there
+      // becomes the answer for *the next workspace to scan this UPC*. Promoting an
+      // uncorroborated DuckDuckGo guess into it means one person's bad scan is
+      // silently everybody's bad scan, with a TTL measured in days. That is exactly
+      // the poisoning the resolver is supposed to be immune to. "411 - White Pages"
+      // was one scan away from being the canonical name of a Harbor Freight part
+      // for every workspace on this instance.
+      //
+      // Not caching it locally either: a guess in the tenant cache just means the
+      // next scan of the same code re-serves the same junk instead of getting
+      // another (possibly better) look at it.
+      if (web.corroborated) {
+        const webValue: BarcodeCacheValue = {
+          found: true,
+          source: "web-search",
+          title: web.name,
+          brand: web.brand,
+          model: web.sku,
+          description: null,
+          category: web.category,
+          image_url: web.imageUrl,
+          raw: stampFetchedAt({}),
+        };
+        await writeTenantCache(ctx, webValue).catch(() => {});
+        await platform()
+          .sharedCache.put(BARCODE_NS, ctx.upc, webValue, GLOBAL_MISS_TTL_SEC)
+          .catch(() => {});
+      }
       if (web.imageUrl) await downloadCatalogImage(ctx, web.imageUrl);
       // A web-search title is the weakest source (a UPC search can surface a
       // SPURIOUS listing — e.g. a J-Link probe coming back as a power supply). If
@@ -570,8 +630,15 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
         // tag the row so the client shows a distinct "retrying" state and paces
         // an auto-retry. The lookup wasn't cached, so retrying once the go-upc /
         // upcitemdb gate frees will resolve it — no need to re-scan the item.
+        //
+        // MERGE, emphatically. This used to REPLACE the whole bag with
+        // `{rate_limited:true}` — so a provider being throttled for a moment
+        // deleted the row's receipt_group_id (the line fell out of its receipt),
+        // its import_provenance (the re-import dedupe key, so it duplicated
+        // forever), the user's box_state/reviewed/keep_grouped, everything. A
+        // transient outage must not be a data-loss event.
         ...(rateLimited
-          ? { suggested_metadata: sql`${JSON.stringify({ rate_limited: true })}::jsonb` as never }
+          ? { suggested_metadata: mergeMeta({ rate_limited: true }) as never }
           : { ai_suggested_at: new Date() }),
         updated_at: new Date(),
       })
@@ -592,6 +659,24 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
   // actual file download happens next and may take a moment.
   // Suggested_metadata carries the source + raw payload so the
   // confirm step has access to the full provider response.
+  // The confidence + provenance note this hit resolves to ONCE confirmed. When a
+  // scan photo exists we don't show these yet — we hold at a damped "checking…"
+  // state and stash the confirmed values so crossCheckScanPhoto can restore them
+  // if the photo agrees (or override them if it doesn't).
+  const confirmedConfidence = hit.title ? (lowTrust ? "0.6" : "0.85") : null;
+  // Provenance: a box-resolver result that came from the shared Barcode
+  // Intelligence DB (cache or OFF mirror) returns resolver.cache==="hit" — it
+  // resolved instantly from BIdb, NOT a live provider call. Surface that as
+  // "BIdb / go-upc" so an instant hit doesn't read as a live go-upc fetch.
+  const confirmedNotes = hit.title
+    ? `Identified via ${provenanceLabel(hit)}.${
+        lowTrust ? " ⚠ Short barcode — double-check this is the right product." : ""
+      }`
+    : `Resolved via ${provenanceLabel(hit)}.`;
+  // Gate the hit behind the photo cross-check only when there's a photo to check
+  // AND a real product name to verify.
+  const gateOnPhoto = hasScanPhoto && !!hit.title;
+
   await ctx.db
     .updateTable("core_scan_inbox_items")
     .set({
@@ -599,7 +684,7 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
       suggested_manufacturer: hit.brand,
       suggested_sku: hit.model,
       catalog_image_url: hit.image_url,
-      suggested_metadata: sql`${JSON.stringify({
+      suggested_metadata: identityMeta({
         source: hit.source,
         category: hit.category,
         description: hit.description,
@@ -607,17 +692,14 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
         low_trust: lowTrust || undefined,
         // Multipack read off the title ("WD-40 2 Pack") — carried to the entity.
         ...(parsePackSize(hit.title) ? { pack_size: parsePackSize(hit.title) } : {}),
-      })}::jsonb` as never,
-      ai_confidence: hit.title ? (lowTrust ? "0.6" : "0.85") : null,
-      // Provenance: a box-resolver result that came from the shared Barcode
-      // Intelligence DB (cache or OFF mirror) returns resolver.cache==="hit" —
-      // it resolved instantly from BIdb, NOT a live provider call. Surface that
-      // as "BIdb / go-upc" so an instant hit doesn't read as a live go-upc fetch.
-      ai_notes: hit.title
-        ? `Identified via ${provenanceLabel(hit)}.${
-            lowTrust ? " ⚠ Short barcode — double-check this is the right product." : ""
-          }`
-        : `Resolved via ${provenanceLabel(hit)}.`,
+        // The pending-check bag: the values to restore when the photo confirms.
+        ...(gateOnPhoto
+          ? { photo_check_pending: true, pending_confidence: confirmedConfidence, pending_notes: confirmedNotes }
+          : {}),
+      }) as never,
+      // Damp the confidence + say we're checking, until the photo cross-check lands.
+      ai_confidence: gateOnPhoto ? "0.5" : confirmedConfidence,
+      ai_notes: gateOnPhoto ? "Checking this against your photo…" : confirmedNotes,
       ai_suggested_at: new Date(),
       updated_at: new Date(),
     })
@@ -735,7 +817,17 @@ export async function enrichViaDecoder(
   const fields = result.fields ?? {};
   const make = typeof fields.make === "string" ? fields.make : null;
   const model = typeof fields.model === "string" ? fields.model : null;
-  const name = (result.title && result.title.trim()) || ctx.upc;
+  // A decoder may CORRECT the identifier it was handed (the VIN decoder repairs a
+  // scanner's stray leading character and proves the repair with the check digit).
+  // Write the corrected code back to the row: otherwise the item keeps the mangled
+  // scan as its identifier forever — a VIN that exists nowhere — and every
+  // downstream surface (the barcode chip, the sanity-check link, the value that
+  // lands on the entity at commit) quotes it.
+  const corrected =
+    typeof fields.vin === "string" && fields.vin && fields.vin !== ctx.upc
+      ? fields.vin
+      : null;
+  const name = (result.title && result.title.trim()) || corrected || ctx.upc;
   const provenanceNote = `Decoded from ${result.provenance ?? "the identifier"}${
     result.note ? ` — ${result.note}` : ""
   } (double-check).`;
@@ -744,13 +836,16 @@ export async function enrichViaDecoder(
     .set({
       suggested_name: name,
       suggested_manufacturer: make,
-      suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({
+      ...(corrected ? { barcode_text: corrected } : {}),
+      // Already merged, but it never cleared its OWN stale keys — a re-decode of a
+      // corrected code left the previous VIN's `decoded`/`fields` half-overlaid.
+      suggested_metadata: identityMeta({
         source: `decoder:${decoderId}`,
         entity_type: "asset",
         decoded: { decoder_id: decoderId, fields },
         ...(model ? { model } : {}),
         fields,
-      })}::jsonb` as never,
+      }) as never,
       ai_confidence: result.outcome === "hit" ? "0.9" : "0.6",
       ai_notes: provenanceNote,
       ai_suggested_at: new Date(),

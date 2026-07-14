@@ -490,7 +490,7 @@ export function useNavModules(activeSlug: string): NavModules {
   const rawTopsKey = rawTops
     .map((t) => {
       const x = t as OrgModuleListItem & { groupLabel?: string | null; navOrder?: number | null };
-      return `${x.name}${x.displayName}${x.icon ?? ""}${x.groupLabel ?? ""}${x.navOrder ?? ""}`;
+      return `${x.name}\x01${x.displayName}\x01${x.icon ?? ""}\x01${x.groupLabel ?? ""}${x.navOrder ?? ""}`;
     })
     .join("|");
   // Order precedence: (1) the member's per-device reorder (localStorage)

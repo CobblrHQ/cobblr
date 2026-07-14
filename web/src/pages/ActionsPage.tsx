@@ -24,58 +24,10 @@ import {
   type PlatformEntityKind,
   type RegisteredAction,
 } from "../lib/api";
-import { traitPredicateMatches } from "../lib/trait-match";
-import { TraitProfileBadge } from "../components/TraitFingerprint";
+import { TraitScopePicker } from "../components/TraitScopePicker";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useToast, usePageTitle } from "@cobblr/platform-web";
 
-// The 6 axes, in canonical order. The trait word is the label —
-// it's the vocabulary, deliberately. The `hint` is a genuine
-// one-line definition surfaced as a tooltip, not a synonym.
-const AXES: { axis: string; poles: { trait: string; hint: string }[] }[] = [
-  {
-    axis: "Tangibility",
-    poles: [
-      { trait: "physical", hint: "Tangible — a real-world thing you could attach a QR sticker to." },
-      { trait: "digital", hint: "Exists only as data — a record, config, or message." },
-    ],
-  },
-  {
-    axis: "Identity",
-    poles: [
-      { trait: "fungible", hint: "Interchangeable — tracked by quantity, not which specific one." },
-      { trait: "unique", hint: "Individually identified — tracked per instance." },
-    ],
-  },
-  {
-    axis: "Containment",
-    poles: [
-      { trait: "container", hint: "Holds other entities — things point to it as their location." },
-      { trait: "containable", hint: "Goes inside a container — has a location of its own." },
-    ],
-  },
-  {
-    axis: "Time",
-    poles: [
-      { trait: "schedulable", hint: "Time-bound — has a due date, duration, or completion time." },
-      { trait: "timeless", hint: "No time-bound semantics — valid until edited or deleted." },
-    ],
-  },
-  {
-    axis: "Lifecycle",
-    poles: [
-      { trait: "completable", hint: "Reaches a terminal done / closed / cancelled state." },
-      { trait: "indefinite", hint: "No defined endpoint — persists with its current state." },
-    ],
-  },
-  {
-    axis: "Persistence",
-    poles: [
-      { trait: "durable", hint: "The system keeps it indefinitely." },
-      { trait: "ephemeral", hint: "The system auto-prunes it — retention window, TTL, or read-then-clear." },
-    ],
-  },
-];
 
 function isTraitPredicate(p: ActionAppliesTo): p is { traits: string[] } {
   return !("any" in p) && Array.isArray((p as { traits?: string[] }).traits);
@@ -217,14 +169,6 @@ function ActionCard({
     return false;
   }, [selected, initialSelected]);
 
-  // Live preview: which entity kinds the *current* checkbox state
-  // would match. Recomputed client-side so toggling is instant.
-  const previewMatches = useMemo(() => {
-    if (!editable) return action.matched_kinds;
-    const sel = [...selected];
-    return kinds.filter((k) => traitPredicateMatches(sel, k)).map((k) => k.id);
-  }, [selected, kinds, editable, action.matched_kinds]);
-
   const save = useMutation({
     mutationFn: () =>
       api.setActionPredicate(slug, action.id, { traits: [...selected] }),
@@ -244,15 +188,6 @@ function ActionCard({
     onError: (e: unknown) =>
       toast.error(e instanceof ApiError ? e.message : "Couldn't revert."),
   });
-
-  function toggle(trait: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(trait)) next.delete(trait);
-      else next.add(trait);
-      return next;
-    });
-  }
 
   return (
     <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900">
@@ -297,64 +232,13 @@ function ActionCard({
             <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
               applies to entities matching
             </div>
-            <div className="space-y-1.5">
-              {AXES.map(({ axis, poles }) => (
-                <div key={axis} className="flex items-center gap-3 text-sm">
-                  <span className="w-28 shrink-0 text-[11px] font-mono uppercase tracking-wide text-faint dark:text-slate-500">
-                    {axis}
-                  </span>
-                  {poles.map((pole) => (
-                    <label
-                      key={pole.trait}
-                      title={pole.hint}
-                      className="flex items-center gap-1.5 cursor-pointer select-none w-44"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selected.has(pole.trait)}
-                        onChange={() => toggle(pole.trait)}
-                        className="accent-cobble-500"
-                      />
-                      <span className="text-content dark:text-mortar-100">
-                        {pole.trait}
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              ))}
-            </div>
-
-            {/* Live match preview */}
-            <div className="rounded-md bg-subtle dark:bg-slate-800/50 px-3 py-2">
-              <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-                {dirty ? "would match" : "matches"} {previewMatches.length}{" "}
-                entity kind{previewMatches.length === 1 ? "" : "s"}
-                {dirty && (
-                  <span className="text-accent"> · unsaved</span>
-                )}
-              </div>
-              {previewMatches.length > 0 ? (
-                <div className="space-y-1.5">
-                  {previewMatches.map((kid) => {
-                    const k = kinds.find((x) => x.id === kid);
-                    return (
-                      <div key={kid} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 min-w-0">
-                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-surface dark:bg-slate-900 border border-line dark:border-slate-700 text-content dark:text-mortar-200">
-                          {kid}
-                        </span>
-                        {k && (
-                          <TraitProfileBadge profile={k.profile} traits={k.traits} />
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="text-[10px] font-mono text-ember-500">
-                  matches nothing — pick at least one trait, or revert
-                </div>
-              )}
-            </div>
+            <TraitScopePicker
+              value={[...selected]}
+              onChange={(next) => setSelected(new Set(next))}
+              kinds={kinds}
+              previewVerb={dirty ? "would match" : "matches"}
+              emptyHint="matches nothing — pick at least one trait, or revert"
+            />
 
             <div className="flex items-center gap-2 pt-1">
               <button

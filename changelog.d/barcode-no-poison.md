@@ -1,0 +1,6 @@
+---
+type: fix
+scope: core-scan
+date: 2026-07-14
+---
+**A barcode that nothing on the web can identify no longer invents an answer, and no longer teaches that answer to everyone else.** A bare twelve digit barcode looks like a phone number to a search engine, so a product with no listing anywhere reliably turns up phone directory pages instead. Cobblr was taking the first of those and calling it the product: a pack of Harbor Freight silicone ties came back as "411 - White Pages, Find Phone Numbers". Worse, it then wrote that guess into the shared barcode database that every workspace on the instance reads, so one bad scan was about to become everybody's answer for that barcode. Three things change. A name from a web search is now only trusted when something actually backs it up, meaning the model recognised the product or several independent results agreed on it. An unsupported name is never written to the shared database, and the guesses already in there have been cleared out, so they will be looked up properly next time. And when a barcode has no trustworthy match but you photographed the item, Cobblr now reads the photo to identify it rather than treating the photo as a mere sanity check, because the label in front of you beats a search for a naked number. Real catalogue lookups are unaffected.

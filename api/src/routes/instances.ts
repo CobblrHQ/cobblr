@@ -13,9 +13,11 @@ import {
   createInstance,
   getInstance,
   listInstances,
+  setScanFallback,
   countInstanceItems,
   tearDownInstance,
 } from "../platform/instances.js";
+import { promoteCategory, demoteInstance } from "../platform/instance-promote.js";
 import {
   deleteOverride,
   listOverrides,
@@ -156,6 +158,134 @@ instancesRouter.post(
         throw err;
       }
     } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// A category that outgrew its table gets one of its own — and can be folded back.
+//
+// The pair is deliberately symmetric: promote → demote → promote must land you
+// exactly where you started. That reversibility is the whole point. It means you
+// don't have to decide your table structure before you've scanned anything; you
+// scan, categories emerge from real data, and the ones that earn a table get one.
+const PromoteBody = z.object({
+  category: z.string().min(1).max(60),
+  instance_name: z.string().min(1).regex(/^[a-z0-9][a-z0-9-]*$/),
+  display_name: z.string().min(1).max(160),
+});
+
+instancesRouter.post(
+  "/:instanceName/promote-category",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      if (!requireOwnerOrAdmin(req, res)) return;
+      const parentInstance = req.params.instanceName;
+      const parsed = PromoteBody.safeParse(req.body);
+      if (!parentInstance || !parsed.success) {
+        res.status(400).json({
+          error: { code: "invalid_body", message: "Bad request body", details: parsed.error?.issues },
+        });
+        return;
+      }
+      const collision = await getInstance(req.tenant!.org.id, parsed.data.instance_name);
+      if (collision) {
+        res.status(409).json({
+          error: {
+            code: "instance_name_taken",
+            message: `Instance name '${parsed.data.instance_name}' is already used by ${collision.module_name}.`,
+          },
+        });
+        return;
+      }
+      const out = await promoteCategory({
+        orgId: req.tenant!.org.id,
+        parentInstance,
+        category: parsed.data.category,
+        instanceName: parsed.data.instance_name,
+        displayName: parsed.data.display_name,
+      });
+      res.status(201).json(out);
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      if (code === "instance_not_found" || code === "no_schema") {
+        res.status(400).json({ error: { code, message: (err as Error).message } });
+        return;
+      }
+      next(err);
+    }
+  },
+);
+
+const DemoteBody = z.object({
+  parent_instance: z.string().min(1),
+  /** The category the demoted items take on. Defaults to the instance's display
+   *  name — it IS the category, that's why it was promoted. */
+  category: z.string().min(1).max(60).optional(),
+});
+
+instancesRouter.post(
+  "/:instanceName/demote-to-category",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      if (!requireOwnerOrAdmin(req, res)) return;
+      const instanceName = req.params.instanceName;
+      const parsed = DemoteBody.safeParse(req.body);
+      if (!instanceName || !parsed.success) {
+        res.status(400).json({
+          error: { code: "invalid_body", message: "Bad request body", details: parsed.error?.issues },
+        });
+        return;
+      }
+      const inst = await getInstance(req.tenant!.org.id, instanceName);
+      if (!inst) {
+        res.status(404).json({ error: { code: "not_found", message: "instance not found" } });
+        return;
+      }
+      const out = await demoteInstance({
+        orgId: req.tenant!.org.id,
+        instanceName,
+        parentInstance: parsed.data.parent_instance,
+        category: parsed.data.category ?? inst.display_name,
+      });
+      res.json(out);
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      if (code === "instance_not_found" || code === "is_default" || code === "bad_parent" || code === "no_schema") {
+        res.status(400).json({ error: { code, message: (err as Error).message } });
+        return;
+      }
+      next(err);
+    }
+  },
+);
+
+// Designate this instance as its module's scan catch-all — where a scan that
+// matches no table IN PARTICULAR lands, to then be told apart by its category.
+// Exclusive per module; setting a new one clears the old.
+instancesRouter.post(
+  "/:instanceName/scan-fallback",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      if (!requireOwnerOrAdmin(req, res)) return;
+      const instanceName = req.params.instanceName;
+      if (!instanceName) {
+        res.status(400).json({ error: { code: "missing_id", message: "instance name required" } });
+        return;
+      }
+      const inst = await setScanFallback(req.tenant!.org.id, instanceName);
+      res.json(inst);
+    } catch (err) {
+      if ((err as { code?: string }).code === "instance_not_found") {
+        res.status(404).json({ error: { code: "not_found", message: "instance not found" } });
+        return;
+      }
       next(err);
     }
   },

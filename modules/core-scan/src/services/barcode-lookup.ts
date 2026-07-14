@@ -407,9 +407,32 @@ async function tryResolver(upc: string): Promise<ProviderResult> {
  * A thrown/transport error from any provider degrades to a miss for THAT
  * provider, never crashes the lookup.
  */
+/**
+ * Could this string even BE a product barcode? UPC/EAN/GTIN are pure DIGITS at
+ * fixed lengths (UPC-E 8, UPC-A 12, EAN-13, GTIN-14); ISBN-10 is 9 digits plus a
+ * 0-9/X check character.
+ *
+ * Anything else is not a product code, and asking a product database about it is
+ * how you get a confident wrong answer. A mangled VIN (`I2HKRL18662H580289` — 18
+ * alphanumeric chars) reached a product lookup on 2026-07-14 and came back as
+ * "Reverse Phone", with a photo of a travel trailer, which became the item's name
+ * and cover image. The provider was never going to say "that's a VIN": it only
+ * knows how to return its best match. So the shape gate has to be ours.
+ */
+export function looksLikeProductBarcode(code: string): boolean {
+  const c = code.trim().toUpperCase();
+  if (/^\d{8}$/.test(c)) return true; // UPC-E
+  if (/^\d{12,14}$/.test(c)) return true; // UPC-A / EAN-13 / GTIN-14
+  if (/^\d{9}[\dX]$/.test(c)) return true; // ISBN-10
+  return false;
+}
+
 export async function lookupBarcode(upc: string): Promise<BarcodeOutcome> {
   const norm = upc.trim();
   if (!norm) return { outcome: "miss" };
+  // Never ask a product database about something that cannot be a product code.
+  // A miss is the honest answer, and it costs no quota to give.
+  if (!looksLikeProductBarcode(norm)) return { outcome: "miss" };
 
   // Box-level resolver first (when configured): the host-wide chain —
   // one cache, one go-upc gate, one quota budget. Its answer (hit, miss,

@@ -19,7 +19,11 @@ import {
   flagshipBundleMenu,
   flagshipBundleTargets,
   getFlagshipManifest,
+  type BundleMenuEntry,
+  type BundleMenuField,
 } from "../lib/flagship-bundles.js";
+import { meta } from "../db/meta.js";
+import { resolveFieldDefsForKind } from "../platform/field-defs.js";
 
 export const quickstartRouter = Router({ mergeParams: true });
 
@@ -62,11 +66,65 @@ async function fetchPendingInbox(baseUrl: string, slug: string, token: string): 
 quickstartRouter.get("/bundle-menu", requireAuth, withTenant, async (req, res, next) => {
   try {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
-    res.json({ items: flagshipBundleMenu() });
+    const items = flagshipBundleMenu();
+    // Merge in the workspace's TRAIT-SCOPED fields ("Acquired from" on everything
+    // physical). A not-yet-installed bundle's items don't exist as a kind yet, so
+    // the resolver can't reach them directly — but they WILL inherit their
+    // module's primary kind (assets:asset / inventory:part / machines:machine, all
+    // physical), so a physical-scoped field applies. Without this, a field scoped
+    // to "all physical items" was invisible on every scan routed to an uninstalled
+    // bundle (Home Inventory, etc.): the bundle menu is static manifest fields and
+    // knows nothing about workspace field defs. A workspace with no scoped fields
+    // adds nothing (one resolve per base kind, all empty).
+    await mergeScopedFieldsIntoBundleMenu(req.tenant!.org.id, items);
+    res.json({ items });
   } catch (err) {
     next(err);
   }
 });
+
+/** For each bundle-menu entry, append the workspace's trait-scoped field defs that
+ *  the entry's items will inherit once installed — resolved against the entry
+ *  module's PRIMARY kind (the base its instance is skinned from). Dedups by name,
+ *  never overrides a field the bundle already declares. Mutates `items`. */
+async function mergeScopedFieldsIntoBundleMenu(
+  orgId: string,
+  items: BundleMenuEntry[],
+): Promise<void> {
+  const primaries = await meta
+    .selectFrom("entity_kinds")
+    .select(["module_name", "id"])
+    .where("is_primary", "=", true)
+    .execute();
+  const primaryByModule = new Map(primaries.map((k) => [k.module_name, k.id]));
+
+  const scopedByBase = new Map<string, BundleMenuField[]>();
+  const scopedFor = async (module: string): Promise<BundleMenuField[]> => {
+    const base = primaryByModule.get(module);
+    if (!base) return [];
+    const cached = scopedByBase.get(base);
+    if (cached) return cached;
+    const defs = await resolveFieldDefsForKind(orgId, base);
+    const scoped: BundleMenuField[] = defs
+      .filter((d) => d.scope && d.type !== "computed")
+      .map((d) => ({
+        name: d.name,
+        label: d.display_label,
+        type: d.type,
+        ...(d.help ? { help: d.help } : {}),
+        ...(Array.isArray(d.choices) && d.choices.length ? { choices: d.choices } : {}),
+      }));
+    scopedByBase.set(base, scoped);
+    return scoped;
+  };
+
+  for (const it of items) {
+    const extra = await scopedFor(it.module);
+    if (extra.length === 0) continue;
+    const have = new Set(it.fields.map((f) => f.name));
+    it.fields.push(...extra.filter((f) => !have.has(f.name)));
+  }
+}
 
 // ── GET /quickstart ──────────────────────────────────────────────────────────
 // Pending captures grouped by the bundle they fit — "These look like yarn (3)".

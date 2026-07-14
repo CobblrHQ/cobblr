@@ -21,6 +21,10 @@ export interface ModuleInstance {
   instance_name: string;
   display_name: string;
   is_default: boolean;
+  /** The workspace's designated catch-all for this module — where a scan that
+   *  matches no table in particular lands, to then be told apart by its category.
+   *  At most one per (org, module); unset everywhere = use the default instance. */
+  is_scan_fallback: boolean;
   config: Record<string, unknown>;
   created_at: Date;
 }
@@ -94,6 +98,41 @@ export async function listInstances(
     .where("org_id", "=", orgId);
   if (moduleName) q = q.where("module_name", "=", moduleName);
   return (await q.orderBy("module_name").orderBy("created_at").execute()) as ModuleInstance[];
+}
+
+/**
+ * Designate this instance as its module's scan fallback — the catch-all a scan
+ * lands in when it matches no table in particular, to then be told apart by its
+ * category rather than by being flung at a near-synonym table.
+ *
+ * Exclusive per (org, module): clearing the previous holder and setting the new
+ * one happen in ONE transaction, because a partial unique index means "two
+ * fallbacks" isn't a bad state we'd have to reconcile later — it's a constraint
+ * violation that would fail the request halfway.
+ */
+export async function setScanFallback(orgId: string, instanceName: string): Promise<ModuleInstance> {
+  return meta.transaction().execute(async (trx) => {
+    const inst = await trx
+      .selectFrom("workspace_module_instances")
+      .selectAll()
+      .where("org_id", "=", orgId)
+      .where("instance_name", "=", instanceName)
+      .executeTakeFirst();
+    if (!inst) throw Object.assign(new Error("instance not found"), { code: "instance_not_found" });
+    await trx
+      .updateTable("workspace_module_instances")
+      .set({ is_scan_fallback: false })
+      .where("org_id", "=", orgId)
+      .where("module_name", "=", inst.module_name)
+      .execute();
+    const row = await trx
+      .updateTable("workspace_module_instances")
+      .set({ is_scan_fallback: true })
+      .where("id", "=", inst.id)
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    return row as ModuleInstance;
+  });
 }
 
 /** Look up a single instance by (org, instance_name). The instance_name

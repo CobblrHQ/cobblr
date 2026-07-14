@@ -258,11 +258,13 @@ export function registerInventoryActionHandlers(): void {
       .where("id", "=", partId)
       .executeTakeFirst();
     if (!row) return { ok: false, error: "part_not_found" };
-    const existing = (row.metadata as Record<string, unknown> | null) ?? {};
     await db
       .updateTable("inventory_parts")
       .set({
-        metadata: sql`${JSON.stringify({ ...existing, status })}::jsonb` as never,
+        // Overlay just `status`, DB-side — a part's metadata is multi-writer (the
+        // Lego lifecycle, scan-confirm fields, connector namespaces), and a
+        // snapshot rewrite that set status dropped whatever else had changed.
+        metadata: sql`coalesce(metadata, '{}'::jsonb) || ${JSON.stringify({ status })}::jsonb` as never,
         updated_at: new Date(),
       })
       .where("id", "=", partId)

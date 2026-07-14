@@ -11,10 +11,11 @@
 // confirm in the triage queue).
 
 import type { Kysely } from "kysely";
-import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { CoreScanDB } from "../db.js";
 import { reportBarcodeCorrection } from "./barcode-corrections.js";
+import { identityMeta, mergeMeta } from "./metadata.js";
+import { evictBarcodeCaches } from "./barcode-cache.js";
 import { searchImages, rankImageOptions, imageQuery, mediaSearchExtras } from "./ddg-images.js";
 
 /** Re-fetch the catalog image to match a (corrected) name. The card prefers the
@@ -88,6 +89,9 @@ interface PhotoEnrichContext {
    *  identify as an AUTHORITATIVE correction that overrides the visual read, so
    *  a hint naming a DIFFERENT item than the obvious one re-identifies to it. */
   hint?: string;
+  /** REPLAY: re-parse the model's PREVIOUS reply with today's code, never call
+   *  the provider (see RerunBody.no_ai). Beats `force`, which means the opposite. */
+  replay?: boolean;
 }
 
 function clamp01(n: number): number {
@@ -113,6 +117,62 @@ export interface PhotoIdentity {
    *  serial_number field on commit. OCR'd, so read-only-if-legible + never
    *  guessed (the prompt forbids completing a partial one). */
   serial_number: string | null;
+  /** Factual prose on what's physically in frame (packaging state, "sealed
+   *  10-pack, label says QTY 10"). The matchmaker's corroboration — it OUTRANKS
+   *  listing-derived counts and is what catches the unit-barcode-on-a-multipack
+   *  trap. Empty string when the model didn't say (an older cached reply). */
+  observations: string;
+  /** How many DISTINCT things are pictured. Several units of the SAME product is
+   *  a quantity, not a split (a sealed 10-pack of screws is ONE thing) — only
+   *  genuinely different items count. 1 for the overwhelmingly common case. */
+  distinct: number;
+  /** Those things, named — present when `distinct` >= 2, so the inbox can offer
+   *  "split into individuals" and LIST them without a second vision call. */
+  individuals: Individual[];
+}
+
+export interface Individual {
+  name: string;
+  brand: string | null;
+  qty: number;
+}
+
+/**
+ * The distinct-count + named-list normalizer, shared by BOTH vision parsers
+ * (identify and observe) so the two can never disagree about what "2 different
+ * things" means. Tolerant: bad entries drop out rather than failing the parse.
+ */
+export function normalizeIndividuals(
+  rawItems: unknown,
+  claimedDistinct: unknown,
+): { distinct: number; individuals: Individual[] } {
+  const items = Array.isArray(rawItems) ? rawItems : [];
+  const individuals = items
+    .map((it): Individual | null => {
+      const i = (it ?? {}) as { name?: unknown; brand?: unknown; qty?: unknown };
+      const name = typeof i.name === "string" ? i.name.trim() : "";
+      if (!name) return null;
+      const qty = Number(i.qty);
+      return {
+        name: name.slice(0, 200),
+        brand: typeof i.brand === "string" && i.brand.trim() ? i.brand.trim().slice(0, 120) : null,
+        qty: Number.isFinite(qty) && qty >= 1 ? Math.min(Math.round(qty), 999) : 1,
+      };
+    })
+    .filter((x): x is Individual => x !== null);
+
+  // Trust the LIST over the count. A model that claims 3 but names 2 has named
+  // what it actually saw, and the offer must never promise an item it can't
+  // produce. A count with NO names is still honest ("2 items — split?"); the
+  // names then come from the segmentation pass the user opted into.
+  const claimed = Number(claimedDistinct);
+  const distinct =
+    individuals.length >= 2
+      ? individuals.length
+      : Number.isFinite(claimed) && claimed >= 1
+        ? Math.min(Math.round(claimed), 99)
+        : 1;
+  return { distinct, individuals };
 }
 
 /**
@@ -130,6 +190,7 @@ export async function identifyImage(
   userId?: string | null,
   bypassCache?: boolean,
   hint?: string,
+  cacheOnly?: boolean,
 ): Promise<PhotoIdentity | null> {
   let parsed: Record<string, unknown> | null = null;
   try {
@@ -146,6 +207,9 @@ export async function identifyImage(
       // CURRENT identify prompt, not a result cached under an older one (keyed by
       // image, not prompt — a prompt fix wouldn't otherwise reach a cached image).
       bypass_cache: bypassCache,
+      // A REPLAY re-parses the previous reply with today's code and never calls
+      // out; a miss throws in the no-provider family and we return null below.
+      cache_only: cacheOnly,
     });
     // OpenAI returns {role, content}; Anthropic returns {text} — tolerate both.
     const res = r.result as { text?: string; content?: string };
@@ -224,7 +288,74 @@ export function parseIdentityReply(parsed: Record<string, unknown> | null): Phot
       const s = (str(p.serial_number) || str(p.serial) || str(p.service_tag) || str(p.serialNumber)).slice(0, 80);
       return s && !/^(n\/?a|none|unknown)$/i.test(s) ? s : null;
     })(),
+    // The same read also tells us what's in frame and how many DIFFERENT things
+    // there are. An older reply cached before the prompt asked for these simply
+    // has neither: observations "" and distinct 1 — i.e. exactly the pre-change
+    // behavior, no split offer. Never a reason to fail the identify.
+    observations: str(p.observations).slice(0, 1500),
+    ...normalizeIndividuals(p.items, p.distinct_items),
   };
+}
+
+/**
+ * What a fresh identity writes into `suggested_metadata`, as a pure decision:
+ * the keys to SET, and the identify-owned keys to KEEP rather than clear.
+ *
+ * The caller feeds this to `identityMeta()`, which drops every identify-owned key
+ * (minus `keep`) and overlays `set` — DB-side, in one statement, against the LIVE
+ * row. Nothing is read-modify-written, so a key another pass commits while the
+ * vision call is in flight (the user tapping "Reviewed" during the tens of seconds
+ * a detached identify runs) cannot be rolled back by this write.
+ *
+ * This used to build the whole object in JS and hand-copy two keys forward, which
+ * destroyed every other key on each re-run: `photo_distinct` (so a re-run ERASED
+ * the split offer, then paid a second vision call to rediscover it — the "it
+ * didn't offer to separate, then it did" report) and `keep_grouped` (so a re-run
+ * threw away the user's ANSWER and asked again).
+ */
+export function identityOverlay(
+  identity: PhotoIdentity,
+  opts: {
+    imageFileId: string;
+    captureBarcode: string | null;
+    hint?: string | undefined;
+    /** `photo_observed_for` currently on the row — which image the stored
+     *  observation describes, or null/undefined if there isn't one. */
+    priorObservedFor?: string | null | undefined;
+  },
+): { set: Record<string, unknown>; keep: string[] } {
+  const set: Record<string, unknown> = {
+    source: "vision",
+    category: identity.category,
+    entity_type: identity.entityType,
+  };
+  if (identity.series) set.series = identity.series;
+  // A serial/service tag read off the label → carried to the destination table's
+  // native serial_number field on commit (see inbox.ts commit).
+  if (identity.serial_number) set.serial_number = identity.serial_number;
+  if (opts.captureBarcode) set.barcode_source = "ai-photo";
+  const pack = parsePackSize(identity.name);
+  if (pack) set.pack_size = pack;
+  // Keep the correction visible to the matchmaker as an authoritative hint.
+  if (opts.hint) set.user_hint = opts.hint;
+
+  const keep: string[] = [];
+  if (identity.observations) {
+    // The observation rides the SAME vision read as the name, so the split offer
+    // lands in this one write instead of trailing a second call by seconds.
+    set.photo_observations = identity.observations;
+    set.photo_distinct = identity.distinct;
+    set.photo_individuals = identity.individuals;
+    set.photo_observed_for = opts.imageFileId;
+  } else if (opts.priorObservedFor && opts.priorObservedFor === opts.imageFileId) {
+    // A reply cached before the prompt asked for an observation carries none. The
+    // previous run's read of THIS SAME photo is still true, so keep it rather than
+    // clearing it and paying to rediscover the same answer. (A retake changes the
+    // image id, so a stale observation about a photo that no longer exists is
+    // NOT kept — it falls through and gets cleared.)
+    keep.push("photo_observations", "photo_distinct", "photo_individuals", "photo_observed_for");
+  }
+  return { set, keep };
 }
 
 async function patchNote(ctx: PhotoEnrichContext, note: string): Promise<void> {
@@ -243,12 +374,27 @@ async function patchNote(ctx: PhotoEnrichContext, note: string): Promise<void> {
  * physically present, 2-3 plain sentences, no speculation. Returns null on
  * no provider / no bytes / failure — corroboration is best-effort.
  */
+export interface PhotoObservation {
+  /** The factual prose. Byte-for-byte the same job it always did — the
+   *  matchmaker consumes this as corroboration and is unaffected by the rest. */
+  text: string;
+  /** How many DISTINCT things are pictured. Several units of the SAME product is
+   *  a quantity, not a split (a sealed 10-pack of screws is ONE thing) — only
+   *  genuinely different items count here. 1 for the overwhelmingly common case. */
+  distinct: number;
+  /** Named, when `distinct` >= 2 — a penguin humidifier AND a frog humidifier.
+   *  This is what lets the inbox offer "split into individuals" with the actual
+   *  list, without paying for a second vision call to find out what they are. */
+  individuals: Array<{ name: string; brand: string | null; qty: number }>;
+}
+
 export async function observeScanPhoto(
   orgId: string,
   imageFileId: string,
   sourceId?: string,
   userId?: string | null,
-): Promise<string | null> {
+  cacheOnly?: boolean,
+): Promise<PhotoObservation | null> {
   const file =
     (await platform().files.read(orgId, imageFileId, "medium")) ??
     (await platform().files.read(orgId, imageFileId, "original"));
@@ -259,26 +405,73 @@ export async function observeScanPhoto(
       orgId,
       userId: userId ?? undefined,
       capability: "classify-image",
+      cache_only: cacheOnly,
       input: {
         image_b64: imageB64,
         image_media_type: file.mimeType,
         prompt:
-          "Describe ONLY what is physically present in this photo, in 2-3 short " +
-          "factual sentences: how many retail units are visible (one loose unit, " +
-          "a sealed multipack of N, a shelf of several); the packaging state; any " +
-          "label text you can read (QTY, pack size, model/SKU, size, and a serial " +
-          "number or service tag if one is printed and clearly legible — read it " +
-          "verbatim, never guess or complete a partly-hidden one). " +
-          "No speculation, no marketing language. Reply with plain text only.",
+          "Describe ONLY what is physically present in this photo. Reply with JSON " +
+          "only, no prose outside it:\n" +
+          '{"observations": string, "distinct_items": integer, "items": [{"name": string, "brand": string|null, "qty": integer}]}\n\n' +
+          '"observations": 2-3 short factual sentences: how many retail units are ' +
+          "visible (one loose unit, a sealed multipack of N, a shelf of several); " +
+          "the packaging state; any label text you can read (QTY, pack size, " +
+          "model/SKU, size, a serial number or service tag, and any PAINT or COLOR " +
+          "CODE, if one is printed and clearly legible — read every such code " +
+          "VERBATIM, never guess one and never complete a partly-hidden one). " +
+          "No speculation, no marketing language.\n" +
+          '"distinct_items": how many DIFFERENT things are pictured. Several units ' +
+          "of the SAME product is a QUANTITY, not different items — a sealed 10-pack " +
+          "of one screw, or three identical mugs, is 1. A penguin humidifier next to " +
+          "a frog humidifier is 2. Most photos are 1.\n" +
+          '"items": ONLY when distinct_items >= 2 — one entry per DIFFERENT thing, ' +
+          "each named as specifically as the photo allows, with how many of that one " +
+          "are visible. Otherwise [].",
       },
       source: { kind: "core-scan:photo-observe", id: sourceId ?? "" },
     });
     const res = r.result as { text?: string; content?: string };
     const out = (res.text ?? res.content ?? "").trim();
-    return out ? out.slice(0, 1500) : null;
+    if (!out) return null;
+    return parseObservation(out);
   } catch {
     return null;
   }
+}
+
+/**
+ * Parse the observation reply. The model is asked for JSON, but a model that
+ * ignores that and just writes the prose must NOT cost us the observation — that
+ * text is load-bearing for the matchmaker (it's what catches the
+ * unit-barcode-on-a-multipack trap). So a parse failure degrades to exactly the
+ * pre-2026-07-14 behavior: the whole reply IS the prose, one item, no split offer.
+ * Never throws.
+ */
+export function parseObservation(raw: string): PhotoObservation {
+  const flat = (text: string): PhotoObservation => ({
+    text: text.slice(0, 1500),
+    distinct: 1,
+    individuals: [],
+  });
+  // Models like to wrap JSON in ```json fences.
+  const body = raw.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+  const start = body.indexOf("{");
+  const end = body.lastIndexOf("}");
+  if (start === -1 || end <= start) return flat(raw);
+  let obj: unknown;
+  try {
+    obj = JSON.parse(body.slice(start, end + 1));
+  } catch {
+    return flat(raw);
+  }
+  const o = obj as {
+    observations?: unknown;
+    distinct_items?: unknown;
+    items?: unknown;
+  };
+  const text = typeof o.observations === "string" ? o.observations.trim() : "";
+  if (!text) return flat(raw);
+  return { text: text.slice(0, 1500), ...normalizeIndividuals(o.items, o.distinct_items) };
 }
 
 /**
@@ -291,6 +484,24 @@ export async function observeScanPhoto(
  * shared Barcode Intelligence DB); YES / UNSURE leaves it untouched. No-op when
  * there's no scan photo (e.g. hardware-wedge scans). Best-effort + detached.
  */
+/** The pending-check bag `enrichBarcodeItem` stashes while a photo-backed barcode
+ *  hit is shown as "checking…". crossCheckScanPhoto clears them when it resolves. */
+const PENDING_KEYS = ["photo_check_pending", "pending_confidence", "pending_notes"] as const;
+
+/** True when the cross-check's "corrected" name is really just the name we were
+ *  REJECTING, echoed back — a self-contradictory vision reply ("this is NOT an
+ *  Anchorman figure … the correct name is Anchorman figure"). Applying it would
+ *  rename the item to the exact wrong product, so treat it as "no confident name"
+ *  and flag it instead. Case- + punctuation-insensitive, either direction of
+ *  containment (the lookup name often carries an extra brand prefix the photo drops). */
+export function isNameEcho(correctName: string, rejectedName: string): boolean {
+  const norm = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const a = norm(correctName);
+  const b = norm(rejectedName);
+  if (!a || !b) return false;
+  return a === b || a.includes(b) || b.includes(a);
+}
+
 export async function crossCheckScanPhoto(
   orgId: string,
   itemId: string,
@@ -299,50 +510,133 @@ export async function crossCheckScanPhoto(
   const db = (await platform().tenants.getDb(orgId)) as unknown as Kysely<CoreScanDB>;
   const row = await db
     .selectFrom("core_scan_inbox_items")
-    .select(["image_file_id"])
+    .select(["image_file_id", "suggested_metadata"])
     .where("id", "=", itemId)
     .executeTakeFirst();
-  if (!row?.image_file_id) return; // no scan photo → nothing to compare against
-  const file =
-    (await platform().files.read(orgId, row.image_file_id, "medium")) ??
-    (await platform().files.read(orgId, row.image_file_id, "original"));
-  if (!file) return;
-  const imageB64 = Buffer.from(file.bytes).toString("base64");
+
+  const meta = (row?.suggested_metadata ?? {}) as {
+    photo_observations?: string;
+    photo_observed_for?: string;
+    photo_check_pending?: boolean;
+    pending_confidence?: string;
+    pending_notes?: string;
+  };
+  // The "checking…" gate enrichBarcodeItem set for a photo-backed barcode hit.
+  // Whatever this cross-check decides, it MUST resolve the gate so the row can't
+  // stay stuck at the damped confidence — confirm (photo agrees / can't verify)
+  // and override (rename / flag) both clear it.
+  const isGated = meta.photo_check_pending === true;
+  const pendingConfidence = typeof meta.pending_confidence === "string" ? meta.pending_confidence : "0.85";
+  const pendingNotes = typeof meta.pending_notes === "string" ? meta.pending_notes : "Identified by barcode.";
+  /** Release the gate to the CONFIRMED barcode result. `verified` = the photo
+   *  positively matched (vs the check merely being unable to run). No-op when the
+   *  row was never gated. Atomic key-drop so nothing else's writes are clobbered. */
+  const confirmPending = async (verified: boolean): Promise<void> => {
+    if (!isGated) return;
+    const fresh = (await platform().tenants.getDb(orgId)) as unknown as Kysely<CoreScanDB>;
+    await fresh
+      .updateTable("core_scan_inbox_items")
+      .set({
+        ai_confidence: pendingConfidence,
+        ai_notes: verified ? `${pendingNotes} Matches your photo.` : pendingNotes,
+        suggested_metadata: mergeMeta({}, PENDING_KEYS) as never,
+        updated_at: new Date(),
+      })
+      .where("id", "=", itemId)
+      .execute();
+  };
+
+  if (!row?.image_file_id) {
+    await confirmPending(false); // no scan photo → nothing to compare; trust the barcode
+    return;
+  }
+
+  // The identify/observe pass may have ALREADY read this photo and written a
+  // factual description of what's in frame (photo_observations). When it did — for
+  // THIS image — the question "does the photo show <resolvedName>?" is a TEXT
+  // comparison against that description, not a third read of the same pixels. A
+  // text `chat` call is cheaper, cacheable, needs no image upload, and a small
+  // model handles "does 'silicone ties' match 'red silicone cable ties on a
+  // retail card'?" fine. The vision call stays as the fallback for a barcode scan
+  // whose photo nothing has described yet.
+  const observation =
+    meta.photo_observed_for === row.image_file_id && meta.photo_observations?.trim()
+      ? meta.photo_observations.trim()
+      : null;
 
   let verdict: { match?: string; reason?: string; correct_name?: string; correct_brand?: string } | null =
     null;
   try {
-    // ai-userless: background barcode-vs-photo mismatch cross-check (runs
-    // detached from the cron, no request user in scope).
-    const r = await platform().ai.invoke({
-      orgId,
-      capability: "classify-image",
-      input: {
-        image_b64: imageB64,
-        image_media_type: file.mimeType,
-        prompt:
-          `A scanned barcode resolved this item to: "${resolvedName}". ` +
-          "Look at the photo and decide whether the product visible in it plausibly " +
-          "matches that name/identity — consider the product type, packaging, and any " +
-          "readable label text, and allow for a generic or differently-angled shot. " +
-          'Only answer "no" when the photo clearly shows a DIFFERENT kind of product. ' +
-          "When (and ONLY when) it's a clear mismatch AND the photo's label makes the " +
-          "real product unambiguous, also return what the item actually IS — a concise " +
-          "retail product name, plus brand if visible. Omit them if you can't read it " +
-          "confidently. " +
-          'Reply with JSON only: {"match":"yes"|"no"|"unsure","reason":"<one short sentence>",' +
-          '"correct_name":"<the real product name, optional>","correct_brand":"<brand, optional>"}.',
-      },
-      source: { kind: "core-scan:photo-crosscheck", id: itemId },
-    });
+    const r = observation
+      ? // ai-userless: background barcode-vs-photo mismatch cross-check (runs
+        // detached from the cron, no request user in scope).
+        await platform().ai.invoke({
+          orgId,
+          capability: "chat",
+          input: {
+            messages: [
+              {
+                role: "user",
+                content:
+                  `A scanned barcode resolved an item to: "${resolvedName}".\n` +
+                  `A factual description of the actual photographed item reads:\n"${observation}"\n\n` +
+                  "Does the described item plausibly match that name/identity? Consider product " +
+                  "type, packaging and any label text; allow for a generic or differently-angled " +
+                  'shot. Answer "no" ONLY when the description clearly shows a DIFFERENT kind of ' +
+                  "product. When (and only when) it's a clear mismatch AND the description names the " +
+                  "real product unambiguously, also return what it actually IS (concise retail name " +
+                  "+ brand if present). Omit them otherwise.\n" +
+                  'Reply with JSON only: {"match":"yes"|"no"|"unsure","reason":"<one short sentence>",' +
+                  '"correct_name":"<optional>","correct_brand":"<optional>"}.',
+              },
+            ],
+          },
+          source: { kind: "core-scan:photo-crosscheck-text", id: itemId },
+        })
+      : await (async () => {
+          const file =
+            (await platform().files.read(orgId, row.image_file_id!, "medium")) ??
+            (await platform().files.read(orgId, row.image_file_id!, "original"));
+          if (!file) throw new Error("no photo bytes");
+          // ai-userless: background barcode-vs-photo mismatch cross-check (runs
+          // detached from the cron, no request user in scope).
+          return platform().ai.invoke({
+            orgId,
+            capability: "classify-image",
+            input: {
+              image_b64: Buffer.from(file.bytes).toString("base64"),
+              image_media_type: file.mimeType,
+              prompt:
+                `A scanned barcode resolved this item to: "${resolvedName}". ` +
+                "Look at the photo and decide whether the product visible in it plausibly " +
+                "matches that name/identity — consider the product type, packaging, and any " +
+                "readable label text, and allow for a generic or differently-angled shot. " +
+                'Only answer "no" when the photo clearly shows a DIFFERENT kind of product. ' +
+                "When (and ONLY when) it's a clear mismatch AND the photo's label makes the " +
+                "real product unambiguous, also return what the item actually IS — a concise " +
+                "retail product name, plus brand if visible. Omit them if you can't read it " +
+                "confidently. " +
+                'Reply with JSON only: {"match":"yes"|"no"|"unsure","reason":"<one short sentence>",' +
+                '"correct_name":"<the real product name, optional>","correct_brand":"<brand, optional>"}.',
+            },
+            source: { kind: "core-scan:photo-crosscheck", id: itemId },
+          });
+        })();
     const res = r.result as { text?: string; content?: string };
     const raw = res.text ?? res.content ?? "";
     const m = raw.match(/\{[\s\S]*\}/);
     verdict = JSON.parse(m ? m[0] : raw);
   } catch {
+    await confirmPending(false); // can't verify → fall back to the barcode result
     return; // best-effort — a flaky/absent vision provider never blocks anything
   }
-  if (String(verdict?.match ?? "").toLowerCase() !== "no") return; // flag only a clear mismatch
+  const matchVerdict = String(verdict?.match ?? "").toLowerCase();
+  if (matchVerdict !== "no") {
+    // "yes" / "unsure" → the photo does not contradict the barcode. Release the
+    // gate; only a positive "yes" earns the "matches your photo" note.
+    await confirmPending(matchVerdict === "yes");
+    return; // flag only a clear mismatch
+  }
   const reason = typeof verdict?.reason === "string" ? verdict.reason.trim() : "";
   const correctName = typeof verdict?.correct_name === "string" ? verdict.correct_name.trim() : "";
   const correctBrand = typeof verdict?.correct_brand === "string" ? verdict.correct_brand.trim() : "";
@@ -351,13 +645,17 @@ export async function crossCheckScanPhoto(
   const freshDb = (await platform().tenants.getDb(orgId)) as unknown as Kysely<CoreScanDB>;
   const existing = await freshDb
     .selectFrom("core_scan_inbox_items")
-    .select(["suggested_metadata", "suggested_name", "barcode_text"])
+    .select(["suggested_name", "barcode_text"])
     .where("id", "=", itemId)
     .executeTakeFirst();
-  const baseMeta = (existing?.suggested_metadata as Record<string, unknown> | null) ?? {};
   const prevName = (existing?.suggested_name as string | null) ?? resolvedName;
 
-  if (correctName) {
+  // A "correct name" that merely echoes the name we're REJECTING is not a
+  // correction (a self-contradictory vision reply) — don't rename to the exact
+  // wrong product; fall through to the mismatch flag. This is what let a photo of
+  // yellow yarn get "corrected" to the Anchorman action figure the barcode wrongly
+  // resolved to: the model said "not an action figure" yet echoed that name back.
+  if (correctName && !isNameEcho(correctName, resolvedName)) {
     // The photo UNAMBIGUOUSLY identifies a different product → the photo wins.
     // The barcode/web-search name is the weakest source (a UPC search can surface a
     // spurious listing), so replace it outright with the photo's identity and treat
@@ -368,11 +666,14 @@ export async function crossCheckScanPhoto(
         suggested_name: correctName,
         ...(correctBrand ? { suggested_manufacturer: correctBrand } : {}),
         ai_confidence: "0.7",
-        suggested_metadata: sql`${JSON.stringify({
-          ...baseMeta,
-          source: "photo",
-          photo_corrected: { from: prevName, reason: reason || undefined },
-        })}::jsonb` as never,
+        // Drop the pending-check gate — this row is now finalized as a correction.
+        suggested_metadata: mergeMeta(
+          {
+            source: "photo",
+            photo_corrected: { from: prevName, reason: reason || undefined },
+          },
+          PENDING_KEYS,
+        ) as never,
         ai_notes:
           `Renamed from your photo — the lookup ("${prevName}") didn't match the item` +
           (reason ? ` (${reason})` : "") +
@@ -392,6 +693,16 @@ export async function crossCheckScanPhoto(
         was: prevName,
         now: correctName,
       }).catch(() => {});
+      // AND EVICT THE CACHES THAT TAUGHT US THE WRONG NAME. The photo just proved
+      // the stored answer for this UPC is wrong; leaving it in the tenant + shared
+      // caches means the very next scan of this code re-serves the same wrong
+      // product — the correction fixes this ITEM and nothing else. (enrichThinHit
+      // already learned this lesson and rewrites both caches; this path never got
+      // the memo, which is how a bad name outlived the photo that disproved it.)
+      // Evict rather than overwrite: a photo-derived name is good evidence for THIS
+      // item, but not authoritative enough to become every workspace's answer —
+      // reportBarcodeCorrection above is the proper, reviewable channel for that.
+      void evictBarcodeCaches(orgId, existing.barcode_text).catch(() => {});
     }
     // The catalog image still shows the wrong product (the lookup's picture) —
     // refresh it to match the corrected name.
@@ -399,17 +710,14 @@ export async function crossCheckScanPhoto(
     return;
   }
 
-  // match=no but the photo didn't yield a confident name → flag for a manual fix,
-  // and store a structured photo_mismatch so the card can offer the one-tap rename.
-  const meta = {
-    ...baseMeta,
-    photo_mismatch: { reason: reason || undefined },
-  };
+  // match=no but the photo didn't yield a confident (non-echo) name → flag for a
+  // manual fix, and store a structured photo_mismatch so the card can offer the
+  // one-tap rename. Drop the pending-check gate — the row is finalized as a mismatch.
   await freshDb
     .updateTable("core_scan_inbox_items")
     .set({
       ai_confidence: "0.3",
-      suggested_metadata: sql`${JSON.stringify(meta)}::jsonb` as never,
+      suggested_metadata: mergeMeta({ photo_mismatch: { reason: reason || undefined } }, PENDING_KEYS) as never,
       ai_notes:
         `⚠ This photo doesn't look like "${resolvedName}" — the barcode may be wrong` +
         (reason ? ` (${reason})` : "") +
@@ -420,7 +728,11 @@ export async function crossCheckScanPhoto(
     .execute();
 }
 
-export async function enrichPhotoItem(ctx: PhotoEnrichContext): Promise<void> {
+/** Why an enrich did nothing — so a REPLAY can report "nothing cached to replay"
+ *  instead of looking like a silent no-op, and never be mistaken for a failure. */
+export type EnrichOutcome = "identified" | "no-photo-bytes" | "not-identified" | "nothing-cached";
+
+export async function enrichPhotoItem(ctx: PhotoEnrichContext): Promise<EnrichOutcome> {
   // Read the photo bytes via the platform files seam. Prefer the medium
   // variant — resized JPEG, smaller payload + a cheaper vision call —
   // falling back to the original if there's no medium.
@@ -429,7 +741,7 @@ export async function enrichPhotoItem(ctx: PhotoEnrichContext): Promise<void> {
     (await platform().files.read(ctx.orgId, ctx.imageFileId, "original"));
   if (!file) {
     await patchNote(ctx, "Photo bytes unavailable — fill in manually.");
-    return;
+    return "no-photo-bytes";
   }
   const imageB64 = Buffer.from(file.bytes).toString("base64");
 
@@ -439,8 +751,10 @@ export async function enrichPhotoItem(ctx: PhotoEnrichContext): Promise<void> {
     file.mimeType,
     ctx.itemId,
     ctx.userId,
-    ctx.force || !!ctx.hint,
+    // A replay must never bypass the cache — that's what would make it pay.
+    !ctx.replay && (ctx.force || !!ctx.hint),
     ctx.hint,
+    ctx.replay,
   );
   // identifyImage's vision call can run tens of seconds. When enrichPhotoItem
   // runs detached (after the HTTP response has returned), the request's tenant
@@ -449,12 +763,17 @@ export async function enrichPhotoItem(ctx: PhotoEnrichContext): Promise<void> {
   // post-vision write (the same guard matchItem uses).
   ctx.db = (await platform().tenants.getDb(ctx.orgId)) as unknown as typeof ctx.db;
   if (!identity) {
+    // A REPLAY with nothing cached for this image. There is no new information,
+    // so leave the row EXACTLY as it was — stamping the couldn't-identify note
+    // here would destroy a perfectly good name to report that we declined to
+    // spend money.
+    if (ctx.replay) return "nothing-cached";
     // No vision provider, the model/parse failed, or no single item was visible.
     await patchNote(
       ctx,
       "Photo couldn't be auto-identified (no vision provider configured, the model errored, or no single item was visible). Fill in manually.",
     );
-    return;
+    return "not-identified";
   }
 
   // The vision read a barcode off the package → capture it, but ONLY when the
@@ -471,44 +790,29 @@ export async function enrichPhotoItem(ctx: PhotoEnrichContext): Promise<void> {
     if (!cur?.barcode_text) captureBarcode = identity.barcode;
   }
 
-  // Preserve a user's deliberate image pick across a re-identify. This write
-  // REPLACES suggested_metadata wholesale, which would drop catalog_image_user_set
-  // → the refreshCatalogImageByName below (and matchItem's) would then clobber the
-  // image the user chose. Carry the lock (and its revert backup) forward. A "this
-  // is wrong" re-run clears the lock BEFORE reaching here (so it still re-images);
-  // a plain re-run keeps the pick — the sweet spot: re-run respects a user-chosen
-  // image when the item is correct, and re-images only when it was flagged wrong.
-  const priorMeta = ((await ctx.db
+  // The ONE thing we need from the current row: which image the stored observation
+  // describes. That decides whether a reply carrying no observation of its own can
+  // keep the previous one (same photo → still true) or must clear it (retaken photo
+  // → a description of something that no longer exists). Nothing else is read: the
+  // write below is a DB-side merge, so it can't roll back a concurrent writer.
+  const priorObservedFor = ((await ctx.db
     .selectFrom("core_scan_inbox_items")
     .select("suggested_metadata")
     .where("id", "=", ctx.itemId)
-    .executeTakeFirst())?.suggested_metadata ?? {}) as {
-    catalog_image_user_set?: boolean;
-    orig_catalog?: unknown;
-  };
+    .executeTakeFirst())?.suggested_metadata ?? {}) as { photo_observed_for?: string };
+  const overlay = identityOverlay(identity, {
+    imageFileId: ctx.imageFileId,
+    captureBarcode,
+    hint: ctx.hint,
+    priorObservedFor: priorObservedFor.photo_observed_for ?? null,
+  });
   await ctx.db
     .updateTable("core_scan_inbox_items")
     .set({
       suggested_name: identity.name,
       suggested_manufacturer: identity.brand,
       ...(captureBarcode ? { barcode_text: captureBarcode } : {}),
-      suggested_metadata: sql`${JSON.stringify({
-        source: "vision",
-        category: identity.category,
-        entity_type: identity.entityType,
-        ...(identity.series ? { series: identity.series } : {}),
-        // A serial/service tag read off the label → carried to the destination
-        // table's native serial_number field on commit (see inbox.ts commit).
-        ...(identity.serial_number ? { serial_number: identity.serial_number } : {}),
-        ...(captureBarcode ? { barcode_source: "ai-photo" } : {}),
-        ...(parsePackSize(identity.name) ? { pack_size: parsePackSize(identity.name) } : {}),
-        // Preserve the correction so the matchmaker (which runs after this
-        // wholesale metadata rewrite) still sees it as an authoritative hint.
-        ...(ctx.hint ? { user_hint: ctx.hint } : {}),
-        // Keep a user's image pick + its revert backup alive across re-identify.
-        ...(priorMeta.catalog_image_user_set ? { catalog_image_user_set: true } : {}),
-        ...(priorMeta.orig_catalog ? { orig_catalog: priorMeta.orig_catalog } : {}),
-      })}::jsonb` as never,
+      suggested_metadata: identityMeta(overlay.set, { keep: overlay.keep }) as never,
       ai_confidence: String(identity.confidence),
       ai_notes:
         identity.confidence < 0.5
@@ -526,4 +830,5 @@ export async function enrichPhotoItem(ctx: PhotoEnrichContext): Promise<void> {
   // mismatch, so a clean photo identify never got a catalog photo. Best-effort;
   // honors a user-picked image (refreshCatalogImageByName checks the lock).
   void refreshCatalogImageByName(ctx.orgId, ctx.itemId, identity.name, identity.brand).catch(() => {});
+  return "identified";
 }

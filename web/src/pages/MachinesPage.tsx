@@ -585,6 +585,7 @@ export function MachinesPage({
                   // {g.key} <span className="text-faint dark:text-slate-500">({g.rows.length})</span>
                 </div>
                 <MachineTable
+              instance={instance}
                   live={liveByMachine}
                   rows={g.rows}
                   lensFieldDefs={lensFieldDefs}
@@ -605,6 +606,7 @@ export function MachinesPage({
           </div>
         ) : (
           <MachineTable
+              instance={instance}
             live={liveByMachine}
             rows={filtered}
             lensFieldDefs={lensFieldDefs}
@@ -625,6 +627,7 @@ export function MachinesPage({
                 <span className="text-faint dark:text-slate-500">({s.rows.length})</span>
               </div>
               <MachineTable
+              instance={instance}
                 live={liveByMachine}
                 rows={s.rows}
                 lensFieldDefs={[]}
@@ -996,7 +999,9 @@ function MachineTable({
   onToggle,
   onSelectAll,
   live,
+  instance,
 }: {
+  instance?: string;
   rows: Machine[];
   lensFieldDefs: PlatformFieldDef[];
   onRowClick: (id: string) => void;
@@ -1006,6 +1011,9 @@ function MachineTable({
   /** machine_id → its linked fleet device, for the live status chip. */
   live?: Map<string, { dev: DigifabFleetDevice; connId: string }>;
 }) {
+  // The column header must respect a relabel too, or the list says "Manufacturer"
+  // while the detail page says "Make".
+  const fp = useFieldPresentation(instance ? `${instance}:item` : ENTITY_KIND);
   const showSelect = !!selected && !!onToggle;
   const allChecked = showSelect && rows.length > 0 && rows.every((r) => selected!.has(r.id));
   return (
@@ -1026,7 +1034,7 @@ function MachineTable({
             )}
             <th className="text-left px-3 py-2">Name</th>
             <th className="text-left px-3 py-2">Family</th>
-            <th className="text-left px-3 py-2">Manufacturer</th>
+            <th className="text-left px-3 py-2">{fp.label("manufacturer", "Manufacturer")}</th>
             <th className="text-left px-3 py-2">State</th>
             {lensFieldDefs.map((d) => (
               <th key={d.id} className="text-left px-3 py-2">
@@ -1474,6 +1482,9 @@ function NewMachineModal({
   onCreated?: (id: string) => void;
   digifabEnabled?: boolean;
 }) {
+  // A bundle relabels this per kind (Vehicles: manufacturer -> "Make"). Hardcode it
+  // and the workspace's own rename never reaches this form.
+  const fp = useFieldPresentation(instance ? `${instance}:item` : ENTITY_KIND);
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
@@ -1793,7 +1804,7 @@ function NewMachineModal({
           <input value={name} onChange={(e) => setName(e.target.value)} autoFocus className="input" />
         </label>
         <label className="block">
-          <span className={lblCls}>Manufacturer</span>
+          <span className={lblCls}>{fp.label("manufacturer", "Manufacturer")}</span>
           <input value={manufacturer} onChange={(e) => setManufacturer(e.target.value)} className="input" />
         </label>
         <label className="block">
