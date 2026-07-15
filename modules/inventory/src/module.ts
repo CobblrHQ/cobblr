@@ -249,6 +249,16 @@ export default defineModule({
         userInvokable: false,
       },
       {
+        id: "inventory:field-to-location",
+        label: "Move a place field into Location",
+        description:
+          "Bundle-migration engine: retire a bundle's bespoke place field (e.g. a 'Room' text field) into the platform's canonical Location — for each item with a value, find-or-create a matching Location AREA, file the item into it (location_id), then clear the field. How a bundle drops a location-shaped custom field for the real Location on a version bump. Idempotent + safe: never invents a place, never overwrites an already-filed item, re-uses an existing same-named area. Args: { field, instance }.",
+        appliesTo: { kinds: ["inventory:part"] },
+        invokeHandler: "inventory.field-to-location",
+        // Migration-only: run by the bundle-upgrade flow, never a detail button.
+        userInvokable: false,
+      },
+      {
         id: "inventory:split-lot",
         label: "Split one off",
         description:

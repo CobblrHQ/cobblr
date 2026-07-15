@@ -23,6 +23,8 @@ export {
 export {
   buildLocationForest,
   flattenLocationForest,
+  makeAreaResolver,
+  LOCATION_GROUP_KEY,
   type LocationNode,
   type LocationAccessors,
   type FlatLocation,

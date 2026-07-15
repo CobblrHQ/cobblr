@@ -110,6 +110,16 @@ export default defineModule({
         // Wire-driven (telemetry shape) — not a per-row button.
         userInvokable: false,
       },
+      {
+        id: "assets:field-to-location",
+        label: "Move a place field into Location",
+        description:
+          "Bundle-migration engine (the assets mirror of inventory:field-to-location): retire a bundle's bespoke place field (e.g. a 'Location' text field) into the platform's canonical Location — for each asset with a value, find-or-create a matching Location AREA, file the asset into it (location_id), then clear the field. Idempotent + safe: never invents a place, never overwrites an already-filed asset, re-uses an existing same-named area. Args: { field, instance }.",
+        appliesTo: { kinds: ["assets:asset"] },
+        invokeHandler: "assets.field-to-location",
+        // Migration-only: run by the bundle-upgrade flow, never a detail button.
+        userInvokable: false,
+      },
     ],
   },
 

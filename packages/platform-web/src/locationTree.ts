@@ -57,6 +57,41 @@ export function buildLocationForest<T>(
   };
 }
 
+/** The view `group_by` value that means "roll each row up to its room (area)".
+ *  A reserved key — no custom field may be named this — so grouping by location
+ *  is generic, not a per-bundle text field. */
+export const LOCATION_GROUP_KEY = "location";
+
+/** Build a resolver that maps a location id → the AREA (room) it rolls up to:
+ *  the nearest ancestor-or-self that is NOT a container. A bin resolves to its
+ *  room; a thing filed directly in an area resolves to that area; an orphan
+ *  container with no area ancestor resolves to itself (grouped, never dropped).
+ *  Returns null for no/unknown id so the caller can bucket it as "unfiled".
+ *  Builds the id index once; cycle-safe. This is how a list groups "by location"
+ *  at the useful room level instead of a long tail of per-bin groups. */
+export function makeAreaResolver<T>(
+  items: T[],
+  a: LocationAccessors<T>,
+): (locationId: string | null | undefined) => string | null {
+  const byId = new Map<string, T>();
+  for (const it of items) byId.set(a.id(it), it);
+  return (locationId) => {
+    if (!locationId) return null;
+    let cur = byId.get(locationId);
+    if (!cur) return null;
+    const seen = new Set<string>();
+    let deepest = cur;
+    while (cur && !seen.has(a.id(cur))) {
+      if (!a.isContainer(cur)) return a.name(cur);
+      seen.add(a.id(cur));
+      deepest = cur;
+      const pid = a.parentId(cur);
+      cur = pid ? byId.get(pid) : undefined;
+    }
+    return a.name(deepest);
+  };
+}
+
 export interface FlatLocation<T> {
   node: LocationNode<T>;
   depth: number;

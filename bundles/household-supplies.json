@@ -1,12 +1,12 @@
 {
   "manifest": {
     "id": "cobblr.flagship.household-supplies",
-    "version": "0.2.2",
+    "version": "0.3.0",
     "name": "Household Supplies auto-reorder",
-    "description": "Your household supplies as their own table — reorder level per supply auto-adds to a shopping list on low stock; check off → it restocks. Grouped by area.",
+    "description": "Your household supplies as their own table — reorder level per supply auto-adds to a shopping list on low stock; check off → it restocks. Grouped by where they live.",
     "author": "Cobblr",
-    "released_at": "2026-07-14",
-    "changelog": "“Usual pack” is now “Pack size” — it records the package you actually scanned (a single, a 10-pack), not a guess at what you usually buy. It rides the platform pack dimension (field_role:pack), filled from the observed package.",
+    "released_at": "2026-07-15",
+    "changelog": "“Area” is now a real Location. The separate “Area” field is gone — supplies file into your Location tree (rooms/zones, and bins inside them) like everything else, so a thing has one place, not two. Your existing area values move over automatically on this update: each becomes a Location and its supplies are filed into it, nothing lost, and the pinned “By area” view groups off the real Location. Earlier: “Usual pack” became “Pack size” (the package you actually scanned, filled from the observed pack).",
     "requires": [
       {
         "module": "inventory"
@@ -69,23 +69,6 @@
         "field_defs": [
           {
             "entity_kind": "inventory:part",
-            "name": "area",
-            "display_label": "Area",
-            "type": "text",
-            "position": 1,
-            "choices": [
-              "Bathroom",
-              "Kitchen",
-              "Laundry",
-              "Cleaning",
-              "Garage",
-              "Office",
-              "General"
-            ],
-            "help": "Where it's used/stored — the table groups by this."
-          },
-          {
-            "entity_kind": "inventory:part",
             "name": "typical_pack",
             "display_label": "Pack size",
             "type": "text",
@@ -108,11 +91,6 @@
           {
             "entity_kind": "inventory:part",
             "name": "category",
-            "hidden": true
-          },
-          {
-            "entity_kind": "inventory:part",
-            "name": "location",
             "hidden": true
           },
           {
@@ -143,7 +121,7 @@
             "view_type": "table",
             "pinned": true,
             "config": {
-              "group_by": "area",
+              "group_by": "location",
               "visible_fields": [
                 "title",
                 "qty",
@@ -153,6 +131,16 @@
             }
           }
         ]
+      }
+    ],
+    "migrations": [
+      {
+        "to_version": "0.3.0",
+        "action": "inventory:field-to-location",
+        "args": {
+          "field": "area",
+          "instance": "supplies"
+        }
       }
     ]
   }

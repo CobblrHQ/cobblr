@@ -62,6 +62,60 @@ export function registerActionHandlers(): void {
   if (registered) return;
   registered = true;
 
+  // ───────────── field-to-location (bundle-migration engine) ─────────────
+  // The assets mirror of inventory:field-to-location. Retire a bundle's bespoke
+  // place field (e.g. home-maintenance's "location" text field) into the
+  // platform's canonical Location: for each asset in an instance with a value,
+  // find-or-create a matching Location AREA (via the core-locations WRITER seam)
+  // and file the asset into it, then clear the field. Idempotent + safe: never
+  // invents a place, never overwrites an already-filed asset, re-uses a same-named
+  // area. Args: { field, instance }.
+  platform().actions.registerHandler("assets.field-to-location", async (ctx) => {
+    const a = (ctx.args as Record<string, unknown> | null) ?? {};
+    const field = typeof a.field === "string" ? a.field : "";
+    const instance = typeof a.instance === "string" ? a.instance : "";
+    if (!field || !instance) return { ok: false, error: "missing field / instance" };
+
+    const writer = platform().entities.getWriter("core-locations:location");
+    if (!writer) return { ok: false, error: "core-locations not available" };
+
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<AssetsDB>;
+    const rows = await db
+      .selectFrom("assets_assets")
+      .select(["id", "location_id", "metadata"])
+      .where("instance", "=", instance as never)
+      .execute();
+
+    const existing = writer.listForMatch ? await writer.listForMatch(ctx.orgId) : [];
+    const areaByName = new Map<string, string>();
+    for (const l of existing) areaByName.set(l.name.trim().toLowerCase(), l.id);
+
+    let filed = 0;
+    let areasCreated = 0;
+    for (const r of rows) {
+      const meta = (r.metadata as Record<string, unknown> | null) ?? {};
+      if (!(field in meta)) continue; // already migrated / never had it → skip
+      const raw = meta[field];
+      const name = raw == null ? "" : String(raw).trim();
+      const nextMeta = { ...meta };
+      delete nextMeta[field];
+      const patch: Record<string, unknown> = { metadata: sql`${JSON.stringify(nextMeta)}::jsonb` as never };
+      if (!r.location_id && name) {
+        const key = name.toLowerCase();
+        let locId = areaByName.get(key);
+        if (!locId) {
+          locId = await writer.create(ctx.orgId, { name, kind: "area" });
+          areaByName.set(key, locId);
+          areasCreated++;
+        }
+        patch.location_id = locId;
+        filed++;
+      }
+      await db.updateTable("assets_assets").set(patch as never).where("id", "=", r.id).execute();
+    }
+    return { ok: true, filed, areas_created: areasCreated };
+  });
+
   platform().actions.registerHandler("assets.update-fields", async (ctx) => {
     const args = (ctx.args as Record<string, unknown> | null) ?? {};
     const assetRef = typeof args.asset === "string" ? args.asset.trim() : "";

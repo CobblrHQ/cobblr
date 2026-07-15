@@ -4969,6 +4969,18 @@ function ConfirmForm({
   // first, then files into it — so nothing is created until the user confirms.
   const willInstall = (entry as { bundle_external_id?: string }).bundle_external_id ?? null;
 
+  // Picking a location PERSISTS immediately (target_location_id on the inbox item),
+  // not only when you Confirm. Two reasons: you shouldn't have to commit the whole
+  // item just to say where it goes, and the 8s inbox poll re-renders this card —
+  // local-only state was getting reset, so the pick "didn't stick". Persisting +
+  // invalidating means the item re-seeds from the saved value, so it survives.
+  const persistLocation = useMutation({
+    mutationFn: (locId: string | null) =>
+      api.updateScanItem(activeSlug, item.id, { target_location_id: locId }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] }),
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+
   const confirmMut = useMutation({
     mutationFn: async () => {
       // `extras.metadata` (the table's fields the user filled — colorway,
@@ -5213,11 +5225,15 @@ function ConfirmForm({
         {hasLocations && (
           <label className="block">
             <div className={labelCls}>Location (optional)</div>
-            <LocationTreePicker
+            {/* Chip drawer (rooms + bins as tappable chips), the same mobile
+                picker the inbox bulk bar + camera Assign use — not the old tree
+                dropdown. A pick persists to the item immediately (no Confirm). */}
+            <LocationChipPicker
               value={locationId || null}
               onChange={(v) => {
                 setLocTouched(true);
                 setLocationId(v ?? "");
+                persistLocation.mutate(v);
               }}
             />
           </label>

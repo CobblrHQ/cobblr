@@ -1,12 +1,12 @@
 {
   "manifest": {
     "id": "cobblr.flagship.home-inventory",
-    "version": "0.3.1",
+    "version": "0.4.0",
     "name": "Home Inventory",
-    "description": "Your belongings as their own room-by-room catalog — make/model + condition, grouped by room. Optional insurance valuation.",
+    "description": "Your belongings as their own room-by-room catalog — make/model + condition, filed by room. Optional insurance valuation.",
     "author": "Cobblr",
-    "released_at": "2026-06-08",
-    "changelog": "Home Inventory is now its OWN table (an inventory instance), not generic Inventory with extra columns — its own nav entry, a “New item” button, and only the fields a home catalog needs (the parts/warranty/supplier cruft is hidden). Plain-language hints added; the “By room” view stays pinned. Turn on Insurance valuation for replacement values + a claim-ready view.",
+    "released_at": "2026-07-15",
+    "changelog": "Rooms are now real Locations. The separate “Room” field is gone — items file into the workspace’s Location tree (rooms, and bins inside them) like everything else, so a thing has one place, not two. Your existing room values move over automatically on this update: each becomes a Location and its items are filed into it, nothing lost. The pinned “By room” view still groups your catalog by room (now off the real Location), and the claim-ready Insurance view too. Earlier: Home Inventory became its OWN table (an inventory instance) with only the fields a home catalog needs, plain-language hints, and optional Insurance valuation.",
     "requires": [
       {
         "module": "inventory"
@@ -57,27 +57,6 @@
         "field_defs": [
           {
             "entity_kind": "inventory:part",
-            "name": "room",
-            "display_label": "Room",
-            "type": "text",
-            "position": 1,
-            "choices": [
-              "Living room",
-              "Kitchen",
-              "Primary bedroom",
-              "Bedroom",
-              "Bathroom",
-              "Office",
-              "Garage",
-              "Basement",
-              "Attic",
-              "Outdoor",
-              "Storage"
-            ],
-            "help": "Where it lives — the catalog groups by room so a claim/move is room-by-room."
-          },
-          {
-            "entity_kind": "inventory:part",
             "name": "condition",
             "display_label": "Condition",
             "type": "text",
@@ -115,11 +94,6 @@
           },
           {
             "entity_kind": "inventory:part",
-            "name": "location",
-            "hidden": true
-          },
-          {
-            "entity_kind": "inventory:part",
             "name": "warranty",
             "hidden": true
           },
@@ -146,7 +120,7 @@
             "view_type": "table",
             "pinned": true,
             "config": {
-              "group_by": "room",
+              "group_by": "location",
               "visible_fields": [
                 "title",
                 "manufacturer",
@@ -210,10 +184,9 @@
                 "name": "Insurance valuation",
                 "view_type": "table",
                 "config": {
-                  "group_by": "room",
+                  "group_by": "location",
                   "visible_fields": [
                     "title",
-                    "room",
                     "replacement_value",
                     "purchase_date",
                     "condition"
@@ -223,6 +196,16 @@
             ]
           }
         ]
+      }
+    ],
+    "migrations": [
+      {
+        "to_version": "0.4.0",
+        "action": "inventory:field-to-location",
+        "args": {
+          "field": "room",
+          "instance": "home-inventory"
+        }
       }
     ]
   }

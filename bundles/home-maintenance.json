@@ -1,12 +1,12 @@
 {
   "manifest": {
     "id": "cobblr.flagship.home-maintenance",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "name": "Home Maintenance Schedule",
     "description": "Your home's systems as their own table — furnace, water heater, HVAC filters, detectors — with service logs + next-due dates on your calendar.",
     "author": "Cobblr",
-    "released_at": "2026-06-08",
-    "changelog": "Now its OWN table (an assets instance), not generic Assets with extra columns — its own nav entry, a “New system” button, only the fields a maintenance schedule needs. Plain-language hints + a pinned “By system” view; service logs come from core-maintenance.",
+    "released_at": "2026-07-15",
+    "changelog": "The “Location” of each system is now a real Location, not a separate text field — systems file into your Location tree (rooms/zones) like everything else, so a thing has one place, not two. Your existing location values move over automatically on this update: each becomes a Location and its systems are filed into it, nothing lost. Earlier: Home Maintenance became its OWN table (an assets instance) with only the fields a maintenance schedule needs, plain-language hints, and a pinned “By system” view.",
     "requires": [
       {
         "module": "assets"
@@ -45,14 +45,6 @@
               "Other"
             ],
             "help": "Which home system — the table groups by this."
-          },
-          {
-            "entity_kind": "assets:asset",
-            "name": "location",
-            "display_label": "Location",
-            "type": "text",
-            "position": 2,
-            "help": "Where it is — “Basement”, “Attic”, “Hallway ceiling”."
           },
           {
             "entity_kind": "assets:asset",
@@ -112,13 +104,22 @@
               "group_by": "system_type",
               "visible_fields": [
                 "title",
-                "location",
                 "installed_date",
                 "filter_size"
               ]
             }
           }
         ]
+      }
+    ],
+    "migrations": [
+      {
+        "to_version": "0.3.0",
+        "action": "assets:field-to-location",
+        "args": {
+          "field": "location",
+          "instance": "maintenance"
+        }
       }
     ]
   }

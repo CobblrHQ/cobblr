@@ -48,7 +48,7 @@ import { lookupBookIsbn } from "../services/book-lookup.js";
 import { resolvePaintColorFromText } from "../services/paint-code.js";
 import { resolvePaintCodeViaWeb } from "../services/paint-code-websearch.js";
 import { parseReceipt } from "../services/receipt.js";
-import { reportBarcodeCorrection } from "../services/barcode-corrections.js";
+import { reportBarcodeCorrection, meaningfullyChanged } from "../services/barcode-corrections.js";
 import { findBinContents, findTracked } from "../services/entity-match.js";
 import { cropRegion, detectSplitItems, rotateImage } from "../services/image-ops.js";
 import { extractLocation, type LocationLite } from "../services/note-location.js";
@@ -1378,46 +1378,58 @@ inboxRouter.post(
     // failure must never fail the commit. See docs/operations/ai-prompt-eval-harness.md.
     const sess = sessionUser(req);
 
-    // Feed a scan-triage correction back to the shared Barcode Intelligence DB:
-    // a barcode item renamed away from what the resolver returned means the
-    // lookup was wrong (or missing) and the human's name is the truth. The next
-    // scan of this UPC, in any workspace, then gets the fix. Fire-and-forget;
+    // A committed barcode item feeds the shared Barcode Intelligence DB. A rename
+    // away from the resolver's answer is a real CORRECTION (the human's name is
+    // the truth); an unchanged commit — and every other field the user filed
+    // as-is — is a strong SIGNAL (a scan-commit vote that only becomes fact once
+    // enough independent people agree resolver-side). Neither is the operator's
+    // absolute "lock it in". This is why a plain Confirm now teaches BIdb without
+    // anyone reaching for the (operator-only) green button. Fire-and-forget;
     // inert unless the resolver + a correction token are configured.
     if (row.barcode_text) {
-      void reportBarcodeCorrection({
-        upc: row.barcode_text,
-        field: "title",
-        was: row.suggested_name,
-        now: String(body.name ?? ""),
-        userId: sess.id,
-      });
-    }
-
-    // Flywheel (scan-parity Epic D): committing an item whose barcode was
-    // RECOVERED from the photo (ai-photo OCR) is a human confirmation of the
-    // (barcode → identity) pair — safe to teach BIdb now. The auto-poison risk
-    // that deferred this was an UNconfirmed OCR name; a commit is the opposite.
-    if (row.barcode_text && (meta as { barcode_source?: string }).barcode_source === "ai-photo") {
-      const confirmedName = String(body.name ?? row.suggested_name ?? "").trim();
-      if (confirmedName) {
+      const committedName = String(body.name ?? row.suggested_name ?? "").trim();
+      const renamed = meaningfullyChanged(row.suggested_name, committedName);
+      if (committedName) {
         void reportBarcodeCorrection({
           upc: row.barcode_text,
           field: "title",
           was: row.suggested_name,
-          now: confirmedName,
+          now: committedName,
           userId: sess.id,
-          confirm: true,
+          // Renamed → a correction; filed as-is → a confirm vote.
+          ...(renamed ? {} : { commitSignal: true }),
         });
-        if (row.suggested_manufacturer) {
-          void reportBarcodeCorrection({
-            upc: row.barcode_text,
-            field: "brand",
-            was: row.suggested_manufacturer,
-            now: row.suggested_manufacturer,
-            userId: sess.id,
-            confirm: true,
-          });
-        }
+      }
+      if (row.suggested_manufacturer) {
+        void reportBarcodeCorrection({
+          upc: row.barcode_text,
+          field: "brand",
+          was: row.suggested_manufacturer,
+          now: row.suggested_manufacturer,
+          userId: sess.id,
+          commitSignal: true,
+        });
+      }
+      const committedCategory = (meta as { category?: unknown }).category;
+      if (typeof committedCategory === "string" && committedCategory.trim()) {
+        void reportBarcodeCorrection({
+          upc: row.barcode_text,
+          field: "category",
+          was: committedCategory,
+          now: committedCategory,
+          userId: sess.id,
+          commitSignal: true,
+        });
+      }
+      if (row.catalog_image_url) {
+        void reportBarcodeCorrection({
+          upc: row.barcode_text,
+          field: "image_url",
+          was: row.catalog_image_url,
+          now: row.catalog_image_url,
+          userId: sess.id,
+          commitSignal: true,
+        });
       }
     }
 

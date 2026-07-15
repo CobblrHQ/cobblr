@@ -64,16 +64,16 @@
     "hash": "a66a2ef3d729d75d135f811f0076cede97ca1b973fb2a49e9e9c73cda10b304b"
   },
   "cobblr.flagship.home-inventory": {
-    "version": "0.3.0",
-    "hash": "80e67116a610e13956c460e9d5abe423117f5892eaa479323526834ebf9c5262"
+    "version": "0.4.0",
+    "hash": "bd0a41ae6e7e5e9df9997f1d43236c61c0aac6e9d58c9bf41ff444045808dd57"
   },
   "cobblr.flagship.home-maintenance": {
-    "version": "0.2.0",
-    "hash": "461e65dde48e92c142f612bd0d5ed15179e561e3e41e6150da787b0b22322577"
+    "version": "0.3.0",
+    "hash": "1c65c108fe06ea11dd189bc3707589003d0c440892e575231d51b594ed7214c6"
   },
   "cobblr.flagship.household-supplies": {
-    "version": "0.2.2",
-    "hash": "a7e70a67067eb263d537068c5fbd1acc750be6016c630c59dadd571c6e6bfbba"
+    "version": "0.3.0",
+    "hash": "deb91619b8fc94c4adc2f3ac1d9233ee8dd3e962a0222d0ee149f70b91b75e45"
   },
   "cobblr.flagship.kitchen-fitness": {
     "version": "0.1.0",
@@ -108,7 +108,7 @@
     "hash": "e7ddeb6d864df7ede547f325241b5bdae9a83b13a704f39e109ce1a8d9465326"
   },
   "cobblr.flagship.yarn": {
-    "version": "0.6.0",
-    "hash": "2015f542a3f48cbb4a4505875dc2567e0bf7c06fa30942682d07709a29597910"
+    "version": "0.6.1",
+    "hash": "ed51c1055616a9eaefef13bdd250038b1e6c915872394238245d23d61a73e82c"
   }
 }

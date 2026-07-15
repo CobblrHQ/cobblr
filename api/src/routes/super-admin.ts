@@ -1508,17 +1508,22 @@ superAdminRouter.post("/feedback/append", async (req, res, next) => {
 });
 
 // POST /super-admin/feedback/append-dm — a user DM'd the support bot. Resolves
-// the reporter from their VERIFIED Discord connection, then ROUTES BY INTENT:
+// the reporter from their VERIFIED Discord connection, then ROUTES BY INTENT
+// (isDmReply, the pure + unit-tested decision):
 //
-//   • REPLY  → their most-recent item is a live thread the TEAM spoke on last
-//     (a clarifying question awaiting an answer) and is still recent → append.
+//   • REPLY  → their most-recent item is still OPEN and either the TEAM spoke on
+//     it last (a clarifying question) and it's fresh, OR it was touched in the
+//     last few MINUTES (a rapid self-continuation — a second DM finishing the
+//     same thought) → append.
 //   • NEW    → anything else → create a fresh feedback item AND post it to the
 //     feedback channel, like any new submission.
 //
-// The old behaviour ALWAYS appended to the latest item, so a brand-new issue
-// sent by DM got silently BURIED as a follow-up on an unrelated ticket and never
-// surfaced. Images ride along now too (they were dropped before). Same
-// feedback:ingest scope as /append.
+// This is the middle ground between the two failure modes we've hit: the ORIGINAL
+// "always append" buried a brand-new DM as a follow-up on a week-old unrelated
+// ticket; over-correcting to "only append to an answered team question" then split
+// two back-to-back user DMs into two items and stranded the terse second one
+// (Grace, 2026-07-15). Either way the DM is never dropped — not-a-reply just opens
+// its own item. Images ride along too. Same feedback:ingest scope as /append.
 const DmImages = z
   .array(z.object({ url: z.string().url().max(2000), name: z.string().max(255).optional() }))
   .max(8)
@@ -1528,6 +1533,13 @@ const AppendDm = z.object({
   text: z.string().trim().max(5000).default(""),
   from: z.string().max(120).optional(),
   images: DmImages,
+  // Filed ON BEHALF of a user (an out-of-band report we're about to resolve
+  // ourselves), NOT organic feedback. Forces a distinct new item, and does NOT
+  // poke the triage daemon or post a "new feedback" card, so the autopilot never
+  // burns tokens investigating a ticket that's already handled (it did, on Grace's
+  // yarn ticket 2026-07-15). Pre-claimed in admin_notes so the daemon's hourly
+  // sweep skips it too. See reference_cobblr_feedback_ingest_token.
+  skip_triage: z.boolean().optional().default(false),
 });
 superAdminRouter.post("/feedback/append-dm", async (req, res, next) => {
   try {
@@ -1563,7 +1575,9 @@ superAdminRouter.post("/feedback/append-dm", async (req, res, next) => {
       .orderBy("updated_at", "desc")
       .limit(1)
       .executeTakeFirst();
-    if (latest && isDmReply(latest, Date.now())) {
+    // skip_triage always files a DISTINCT new item — never fold an on-behalf report
+    // into a recent thread, or resolving it would mis-target that unrelated ticket.
+    if (!parsed.data.skip_triage && latest && isDmReply(latest, Date.now())) {
       const reopened = latest.status === "resolved" || latest.status === "wontfix";
       await meta
         .updateTable("feedback")
@@ -1625,6 +1639,12 @@ superAdminRouter.post("/feedback/append-dm", async (req, res, next) => {
       .where("origin", "=", "discord-dm")
       .executeTakeFirst();
     const firstDm = Number(priorDm?.n ?? 0) === 0;
+    // Pre-claim an on-behalf ticket so the triage daemon's hourly SWEEP skips it
+    // (the autopilot honors another agent's claim for 2h — cb-feedback §3.6),
+    // belt-and-suspenders with not poking it below.
+    const onBehalfClaim = parsed.data.skip_triage
+      ? `🔒 CLAIMED by claude-session @ ${new Date().toISOString()} — filed on behalf, already handled (skip_triage); do not triage.`
+      : null;
     const row = await meta
       .insertInto("feedback")
       .values({
@@ -1636,20 +1656,25 @@ superAdminRouter.post("/feedback/append-dm", async (req, res, next) => {
         message: parsed.data.text || "(see attached screenshot)",
         origin: "discord-dm",
         origin_ref: sql`${JSON.stringify({ user_id: parsed.data.discord_user_id, username: parsed.data.from ?? null })}::jsonb`,
+        ...(onBehalfClaim ? { admin_notes: onBehalfClaim } : {}),
         ...(stored.length ? { attachments: sql`${JSON.stringify(stored)}::jsonb` } : {}),
         ...(urlFallback ? { followups: sql`${JSON.stringify([entry])}::jsonb` } : {}),
       })
       .returning(["id"])
       .executeTakeFirstOrThrow();
-    pokeTriage(row.id);
-    const oid = attachOrgId;
-    void announce("feedback.new", {
-      title: "💬 New feedback (Discord DM)",
-      body: (parsed.data.text || "(screenshot attached)").slice(0, 1500),
-      color: 0x5865f2,
-      fields: parsed.data.from ? [{ name: "from", value: parsed.data.from, inline: true }] : undefined,
-      images: oid ? stored.map((s) => ({ orgId: oid, fileId: s.file_id, name: s.name })) : undefined,
-    });
+    // On-behalf tickets are already handled: never poke triage or post a "new
+    // feedback" card (the resolve posts the public changelog instead).
+    if (!parsed.data.skip_triage) {
+      pokeTriage(row.id);
+      const oid = attachOrgId;
+      void announce("feedback.new", {
+        title: "💬 New feedback (Discord DM)",
+        body: (parsed.data.text || "(screenshot attached)").slice(0, 1500),
+        color: 0x5865f2,
+        fields: parsed.data.from ? [{ name: "from", value: parsed.data.from, inline: true }] : undefined,
+        images: oid ? stored.map((s) => ({ orgId: oid, fileId: s.file_id, name: s.name })) : undefined,
+      });
+    }
     res.status(201).json({ ok: true, feedback_id: row.id, created: true, first_dm: firstDm });
   } catch (err) {
     next(err);

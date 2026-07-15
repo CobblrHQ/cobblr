@@ -34,13 +34,21 @@ export function LabelsUI({ orgSlug, getToken }: LabelsUIProps) {
   );
 }
 
-/** App-root / sidebar-foot mount: the queue widget, wrapped in its provider.
- *  `asRow` picks the sidebar-foot row over the floating pill (the host chooses
- *  per shell mode — see BasketWidget). Renders nothing when the queue is empty. */
-export function LabelsBasket({ orgSlug, getToken, asRow }: LabelsUIProps & { asRow?: boolean }) {
+/** App-root / sidebar-foot / mobile-menu mount: the queue widget, wrapped in its
+ *  provider. `asRow` picks the nav-style row over the floating pill (the host
+ *  chooses per shell mode — see BasketWidget); `rowClassName` + `onNavigate` let
+ *  the host style the row to its own menu and close it on tap. Renders nothing
+ *  when the queue is empty. */
+export function LabelsBasket({
+  orgSlug,
+  getToken,
+  asRow,
+  rowClassName,
+  onNavigate,
+}: LabelsUIProps & { asRow?: boolean; rowClassName?: string; onNavigate?: () => void }) {
   return (
     <LabelsProvider orgSlug={orgSlug} getToken={getToken}>
-      <BasketWidget asRow={asRow} />
+      <BasketWidget asRow={asRow} rowClassName={rowClassName} onNavigate={onNavigate} />
     </LabelsProvider>
   );
 }

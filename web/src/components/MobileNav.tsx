@@ -17,7 +17,8 @@ import { createPortal } from "react-dom";
 import { NavLink, useNavigate } from "react-router-dom";
 import { Menu, X, Moon, Sun, LogOut, Sliders, UserCog, Bell } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "../lib/api";
+import { LabelsBasket } from "@cobblr/labels/ui";
+import { api, getToken } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { UpdateBadge } from "./UpdateBadge";
 import { usePendingAiShares } from "../lib/usePendingAiShares";
@@ -43,6 +44,17 @@ export function MobileNav() {
     refetchInterval: 30000,
   });
   const unreadCount = unread.data?.count ?? 0;
+
+  // Is the labels module on? Gates the label-queue row below (the floating pill
+  // is desktop-only now — see BasketWidget). Shares the cached ["org-modules"]
+  // query the nav already fetches — no extra request.
+  const orgModulesQ = useQuery({
+    queryKey: ["org-modules", activeSlug],
+    queryFn: () => api.orgModules(activeSlug),
+    enabled: !!activeSlug,
+    staleTime: 30_000,
+  });
+  const labelsEnabled = (orgModulesQ.data?.items ?? []).some((m) => m.name === "labels" && m.enabled);
 
   // Close on Escape.
   useEffect(() => {
@@ -219,6 +231,19 @@ export function MobileNav() {
                   </div>
                 );
               })}
+
+              {/* Label queue lives here on mobile, as a menu row — the floating
+                  bottom-right pill was covering page content + the thumb zone, so
+                  it's desktop-only now. Self-hides when nothing is queued. */}
+              {labelsEnabled && (
+                <LabelsBasket
+                  orgSlug={activeSlug}
+                  getToken={getToken}
+                  asRow
+                  rowClassName={linkClass + " flex items-center gap-2"}
+                  onNavigate={() => setOpen(false)}
+                />
+              )}
 
               <NavLink
                 to="/me/notifications"

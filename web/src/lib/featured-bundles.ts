@@ -827,14 +827,14 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.yarn",
-      version: "0.6.0",
+      version: "0.6.1",
       name: "Yarn",
       description:
         "Yarn as its own inventory instance — skein-tracked, yarn-only fields, grouped by weight. Optional Hooks + Designs tables.",
       author: "Cobblr",
-      released_at: "2026-07-13",
+      released_at: "2026-07-15",
       changelog:
-        "New: track your yarn skein-by-skein. On a yarn's page, under Consumption, tap “Track each skein separately” and you get a plain count by state — “3 skeins · 2 new · 1 open” — with the metres left in the skein you're actually knitting from shown quietly (never a confusing total across skeins). Open a skein when you crack a new one, and log metres as you go; each open skein keeps its own running balance. It reads the “Length / skein” you already entered to know a full skein, so there's no capacity to type. It's opt-in per yarn and fully reversible — existing yarn is untouched until you turn it on. Earlier changes below. — Your Yarn table now reads “yarn” everywhere — the “New”, search box, and empty-state labels say “yarn” instead of “part”. (Earlier installs picked up the generic “part” wording; upgrading applies the fix.) Real yarn-user polish: the Color field is a swatch picker (type a hex or pick one), Brand + Price now show right on the “New yarn” modal, and a “Suggested needle size” field was added. Dropdowns (vendor, fibre…) let you add a new option on the fly that sticks for next time. Dropped the confusing “Summary” computed field. — Yarn is its OWN table (a Yarn instance), not a skin over generic inventory: only yarn fields show, the button reads “New yarn”, quantities are in skeins. Hooks and Designs become their own tables too. The generic inventory cruft (warranty, insured, lifecycle…) is hidden, and the pinned view is named for its lens (“By weight”). Opening a yarn now hides the Maintenance log (that section is for machines) and turns on skein-by-skein consumption tracking by default, so you can see at a glance how much of a skein is left. Existing yarn tables pick this up on upgrade.",
+        "Fixed: the Yarn update now installs — a bad field in the previous release made the update fail validation. New: track your yarn skein-by-skein. On a yarn's page, under Consumption, tap “Track each skein separately” and you get a plain count by state — “3 skeins · 2 new · 1 open” — with the metres left in the skein you're actually knitting from shown quietly (never a confusing total across skeins). Open a skein when you crack a new one, and log metres as you go; each open skein keeps its own running balance. It reads the “Length / skein” you already entered to know a full skein, so there's no capacity to type. It's opt-in per yarn and fully reversible — existing yarn is untouched until you turn it on. Earlier changes below. — Your Yarn table now reads “yarn” everywhere — the “New”, search box, and empty-state labels say “yarn” instead of “part”. (Earlier installs picked up the generic “part” wording; upgrading applies the fix.) Real yarn-user polish: the Color field is a swatch picker (type a hex or pick one), Brand + Price now show right on the “New yarn” modal, and a “Suggested needle size” field was added. Dropdowns (vendor, fibre…) let you add a new option on the fly that sticks for next time. Dropped the confusing “Summary” computed field. — Yarn is its OWN table (a Yarn instance), not a skin over generic inventory: only yarn fields show, the button reads “New yarn”, quantities are in skeins. Hooks and Designs become their own tables too. The generic inventory cruft (warranty, insured, lifecycle…) is hidden, and the pinned view is named for its lens (“By weight”). Opening a yarn now hides the Maintenance log (that section is for machines) and turns on skein-by-skein consumption tracking by default, so you can see at a glance how much of a skein is left. Existing yarn tables pick this up on upgrade.",
       requires: [{ module: "inventory" }],
       // The always-on base: a "Yarn" instance of inventory.
       provides_instances: [
@@ -852,7 +852,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             { entity_kind: "inventory:part", name: "weight_class", display_label: "Weight", type: "text", position: 4, choices: ["0 – Lace", "1 – Fingering", "2 – Sport", "3 – DK", "4 – Worsted", "4 – Aran", "5 – Bulky", "6 – Super Bulky"], help: "Craft Yarn Council standard weight — 0 (Lace, thinnest) to 6 (Super Bulky, thickest)." },
             { entity_kind: "inventory:part", name: "vendor", display_label: "Vendor", type: "text", position: 5, choices: ["Michaels", "Hobby Lobby", "Walmart", "Joann", "Amazon", "Etsy", "Local yarn shop"], help: "Where you bought it." },
             { entity_kind: "inventory:part", name: "length_per_skein", display_label: "Length / skein (m)", type: "number", unit: "m", position: 6, help: "Metres per skein, from the label — used to estimate if you have enough for a project." },
-            { entity_kind: "inventory:part", name: "capacity", display_label: "Full skein", type: "computed", unit: "m", template: "{{ length_per_skein }}", position: 7, help: "Metres in one full skein, from the length above. When you track skein-by-skein, each opened skein's gauge is measured against this — you never type it." },
+            { entity_kind: "inventory:part", name: "capacity", display_label: "Full skein", type: "computed", template: "{{ length_per_skein }}", position: 7, help: "Metres in one full skein, from the length above. When you track skein-by-skein, each opened skein's gauge is measured against this — you never type it." },
             { entity_kind: "inventory:part", name: "dye_lot", display_label: "Dye lot", type: "text", position: 8, help: "The batch code on the label — buy the same lot so colours match across skeins." },
             { entity_kind: "inventory:part", name: "needle_size", display_label: "Suggested needle size", type: "text", position: 9, choices: ["2.0 mm", "2.5 mm", "3.0 mm", "3.5 mm", "4.0 mm", "4.5 mm", "5.0 mm", "5.5 mm", "6.0 mm", "6.5 mm", "7.0 mm", "8.0 mm", "9.0 mm", "10.0 mm", "12.0 mm"], help: "The needle/hook size the label recommends for this yarn (in mm)." },
           ],
@@ -1116,13 +1116,13 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.home-inventory",
-      version: "0.3.0",
+      version: "0.4.0",
       name: "Home Inventory",
-      description: "Your belongings as their own room-by-room catalog — make/model + condition, grouped by room. Optional insurance valuation.",
+      description: "Your belongings as their own room-by-room catalog — make/model + condition, filed by room. Optional insurance valuation.",
       author: "Cobblr",
-      released_at: "2026-06-08",
+      released_at: "2026-07-15",
       changelog:
-        "Home Inventory is now its OWN table (an inventory instance), not generic Inventory with extra columns — its own nav entry, a “New item” button, and only the fields a home catalog needs (the parts/warranty/supplier cruft is hidden). Plain-language hints added; the “By room” view stays pinned. Turn on Insurance valuation for replacement values + a claim-ready view.",
+        "Rooms are now real Locations. The separate “Room” field is gone — items file into the workspace’s Location tree (rooms, and bins inside them) like everything else, so a thing has one place, not two. Your existing room values move over automatically on this update: each becomes a Location and its items are filed into it, nothing lost. The pinned “By room” view still groups your catalog by room (now off the real Location), and the claim-ready Insurance view too. Earlier: Home Inventory became its OWN table (an inventory instance) with only the fields a home catalog needs, plain-language hints, and optional Insurance valuation.",
       requires: [{ module: "inventory" }],
       // Always-on base: a "Home Inventory" instance of inventory.
       provides_instances: [
@@ -1135,7 +1135,10 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           scan_keywords: ["bedsheet", "bed sheet", "bedding", "linen", "towel", "pillow", "blanket", "comforter", "duvet", "curtain", "rug", "mattress", "furniture", "dresser", "sofa", "couch", "recliner", "desk", "lamp", "mirror", "shelf", "appliance", "vacuum", "fan", "heater", "cookware", "skillet", "utensil", "dishes", "monitor", "router", "cabinet"],
           qty_unit: "each",
           field_defs: [
-            { entity_kind: "inventory:part", name: "room", display_label: "Room", type: "text", position: 1, choices: ["Living room", "Kitchen", "Primary bedroom", "Bedroom", "Bathroom", "Office", "Garage", "Basement", "Attic", "Outdoor", "Storage"], help: "Where it lives — the catalog groups by room so a claim/move is room-by-room." },
+            // "Room" is deliberately NOT a field here — a home item's room is its
+            // Location (an area in the workspace tree), the platform's canonical
+            // "where". The migration below moves any pre-0.4 room values into real
+            // Locations, and the "By room" view groups on Location.
             { entity_kind: "inventory:part", name: "condition", display_label: "Condition", type: "text", position: 2, choices: ["New", "Excellent", "Good", "Fair", "Poor"], help: "Rough state, for resale or an insurance claim — New down to Poor." },
           ],
           field_overrides: [
@@ -1143,15 +1146,16 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             { entity_kind: "inventory:part", name: "manufacturer", display_label: "Make / brand" },
             { entity_kind: "inventory:part", name: "model_number", display_label: "Model" },
             // Hide the generic inventory cruft a home catalog doesn't want.
+            // NB: `location` is NOT hidden — it's the room now (was hidden while a
+            // bespoke "Room" field stood in for it).
             { entity_kind: "inventory:part", name: "category", hidden: true },
-            { entity_kind: "inventory:part", name: "location", hidden: true },
             { entity_kind: "inventory:part", name: "warranty", hidden: true },
             { entity_kind: "inventory:part", name: "min_qty", hidden: true },
             { entity_kind: "inventory:part", name: "supplier_url", hidden: true },
             { entity_kind: "inventory:part", name: "serial_number", hidden: true },
           ],
           saved_views: [
-            { entity_kind: "inventory:part", name: "By room", view_type: "table", pinned: true, config: { group_by: "room", visible_fields: ["title", "manufacturer", "model_number", "condition", "qty"] } },
+            { entity_kind: "inventory:part", name: "By room", view_type: "table", pinned: true, config: { group_by: "location", visible_fields: ["title", "manufacturer", "model_number", "condition", "qty"] } },
           ],
         },
       ],
@@ -1178,11 +1182,17 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
               { entity_kind: "inventory:part", name: "purchase_date", display_label: "Purchased", type: "date", position: 5 },
             ],
             saved_views: [
-              { entity_kind: "inventory:part", name: "Insurance valuation", view_type: "table", config: { group_by: "room", visible_fields: ["title", "room", "replacement_value", "purchase_date", "condition"] } },
+              { entity_kind: "inventory:part", name: "Insurance valuation", view_type: "table", config: { group_by: "location", visible_fields: ["title", "replacement_value", "purchase_date", "condition"] } },
             ],
           },
         ],
       },
+      ],
+      // On upgrade from any pre-0.4 version, move each item's old "Room" text
+      // value into a real Location (find-or-create the area, file the item in),
+      // then drop the field. Runs once per workspace on update; idempotent.
+      migrations: [
+        { to_version: "0.4.0", action: "inventory:field-to-location", args: { field: "room", instance: "home-inventory" } },
       ],
     },
   },
@@ -1713,13 +1723,13 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.household-supplies",
-      version: "0.2.2",
+      version: "0.3.0",
       name: "Household Supplies auto-reorder",
-      description: "Your household supplies as their own table — reorder level per supply auto-adds to a shopping list on low stock; check off → it restocks. Grouped by area.",
+      description: "Your household supplies as their own table — reorder level per supply auto-adds to a shopping list on low stock; check off → it restocks. Grouped by where they live.",
       author: "Cobblr",
-      released_at: "2026-07-14",
+      released_at: "2026-07-15",
       changelog:
-        "“Usual pack” is now “Pack size” — it records the package you actually scanned (a single, a 10-pack), not a guess at what you usually buy. It rides the platform pack dimension (field_role:pack), filled from the observed package.",
+        "“Area” is now a real Location. The separate “Area” field is gone — supplies file into your Location tree (rooms/zones, and bins inside them) like everything else, so a thing has one place, not two. Your existing area values move over automatically on this update: each becomes a Location and its supplies are filed into it, nothing lost, and the pinned “By area” view groups off the real Location. Earlier: “Usual pack” became “Pack size” (the package you actually scanned, filled from the observed pack).",
       requires: [{ module: "inventory" }, { module: "lists" }],
       provides_instances: [
         {
@@ -1737,23 +1747,31 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             { source_kind: "inventory:part", action_id: "inventory:adjust-stock", trigger_type: "event", trigger_event: "lists.item.checked", args: { delta: 1, reason: "Restocked — checked off the shopping list" } },
           ],
           field_defs: [
-            { entity_kind: "inventory:part", name: "area", display_label: "Area", type: "text", position: 1, choices: ["Bathroom", "Kitchen", "Laundry", "Cleaning", "Garage", "Office", "General"], help: "Where it's used/stored — the table groups by this." },
+            // "Area" is deliberately NOT a field — where a supply lives is its
+            // Location (the platform's canonical "where"). The migration below
+            // moves any pre-0.3 area values into real Locations.
             { entity_kind: "inventory:part", name: "typical_pack", display_label: "Pack size", type: "text", position: 2, field_role: "pack", help: "How many units are in the package you scanned — e.g. a single, or a 10-pack. The pack in front of you, not a reorder estimate." },
           ],
           field_overrides: [
             { entity_kind: "inventory:part", name: "min_qty", display_label: "Reorder at" },
             { entity_kind: "inventory:part", name: "manufacturer", display_label: "Brand" },
             { entity_kind: "inventory:part", name: "category", hidden: true },
-            { entity_kind: "inventory:part", name: "location", hidden: true },
+            // `location` is NOT hidden — it's where the supply lives now.
             { entity_kind: "inventory:part", name: "warranty", hidden: true },
             { entity_kind: "inventory:part", name: "supplier_url", hidden: true },
             { entity_kind: "inventory:part", name: "serial_number", hidden: true },
             { entity_kind: "inventory:part", name: "model_number", hidden: true },
           ],
           saved_views: [
-            { entity_kind: "inventory:part", name: "By area", view_type: "table", pinned: true, config: { group_by: "area", visible_fields: ["title", "qty", "unit", "typical_pack"] } },
+            { entity_kind: "inventory:part", name: "By area", view_type: "table", pinned: true, config: { group_by: "location", visible_fields: ["title", "qty", "unit", "typical_pack"] } },
           ],
         },
+      ],
+      // On upgrade from any pre-0.3 version, move each supply's old "Area" text
+      // value into a real Location (find-or-create the area, file it in), then
+      // drop the field. Runs once per workspace on update; idempotent.
+      migrations: [
+        { to_version: "0.3.0", action: "inventory:field-to-location", args: { field: "area", instance: "supplies" } },
       ],
     },
   },
@@ -1766,13 +1784,13 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.home-maintenance",
-      version: "0.2.0",
+      version: "0.3.0",
       name: "Home Maintenance Schedule",
       description: "Your home's systems as their own table — furnace, water heater, HVAC filters, detectors — with service logs + next-due dates on your calendar.",
       author: "Cobblr",
-      released_at: "2026-06-08",
+      released_at: "2026-07-15",
       changelog:
-        "Now its OWN table (an assets instance), not generic Assets with extra columns — its own nav entry, a “New system” button, only the fields a maintenance schedule needs. Plain-language hints + a pinned “By system” view; service logs come from core-maintenance.",
+        "The “Location” of each system is now a real Location, not a separate text field — systems file into your Location tree (rooms/zones) like everything else, so a thing has one place, not two. Your existing location values move over automatically on this update: each becomes a Location and its systems are filed into it, nothing lost. Earlier: Home Maintenance became its OWN table (an assets instance) with only the fields a maintenance schedule needs, plain-language hints, and a pinned “By system” view.",
       requires: [{ module: "assets" }, { module: "core-maintenance" }],
       provides_instances: [
         {
@@ -1782,8 +1800,11 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           glyph: "🔧",
           item_noun: "system",
           field_defs: [
+            // "Location" is deliberately NOT a field — where a system lives is
+            // its Location (the platform's canonical "where", native on assets).
+            // The migration below moves any pre-0.3 location values into real
+            // Locations.
             { entity_kind: "assets:asset", name: "system_type", display_label: "System", type: "text", position: 1, choices: ["Furnace", "Air conditioner", "Water heater", "HVAC filter", "Smoke / CO detector", "Gutters", "Sump pump", "Dishwasher", "Washer", "Dryer", "Refrigerator", "Garage door", "Other"], help: "Which home system — the table groups by this." },
-            { entity_kind: "assets:asset", name: "location", display_label: "Location", type: "text", position: 2, help: "Where it is — “Basement”, “Attic”, “Hallway ceiling”." },
             { entity_kind: "assets:asset", name: "installed_date", display_label: "Installed", type: "date", position: 3 },
             { entity_kind: "assets:asset", name: "filter_size", display_label: "Filter / part size", type: "text", position: 4, help: "The filter or replacement-part size to buy — e.g. “16×25×1” for a furnace filter." },
           ],
@@ -1796,9 +1817,15 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             { entity_kind: "assets:asset", name: "excitement", hidden: true },
           ],
           saved_views: [
-            { entity_kind: "assets:asset", name: "By system", view_type: "table", pinned: true, config: { group_by: "system_type", visible_fields: ["title", "location", "installed_date", "filter_size"] } },
+            { entity_kind: "assets:asset", name: "By system", view_type: "table", pinned: true, config: { group_by: "system_type", visible_fields: ["title", "installed_date", "filter_size"] } },
           ],
         },
+      ],
+      // On upgrade from any pre-0.3 version, move each system's old "Location"
+      // text value into a real Location (find-or-create the area, file it in),
+      // then drop the field. Runs once per workspace on update; idempotent.
+      migrations: [
+        { to_version: "0.3.0", action: "assets:field-to-location", args: { field: "location", instance: "maintenance" } },
       ],
     },
   },

@@ -1,7 +1,7 @@
 // Parts list — filterable table. Search, category, location, state,
 // low-stock toggle. Clicking a row opens the part detail page.
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -31,6 +31,8 @@ import {
   useViewMode,
   usePlatformWeb,
   usePublishChatContext,
+  makeAreaResolver,
+  LOCATION_GROUP_KEY,
   type FieldRendererId,
 } from "@cobblr/platform-web";
 import { useInventory } from "./context";
@@ -137,6 +139,19 @@ export function PartsListPage() {
 
   const cats = useQuery({ queryKey: ["inventory-categories"], queryFn: () => api.listCategories() });
   const locs = useQuery({ queryKey: ["inventory-locations"], queryFn: () => api.listLocations() });
+  // Rolls a row's location up to its room (area) so a `group_by: "location"` view
+  // buckets by room, not by every individual bin. Rebuilt only when locations change.
+  const areaOf = useMemo(
+    () =>
+      makeAreaResolver(locs.data?.items ?? [], {
+        id: (l) => l.id,
+        parentId: (l) => l.parent_id,
+        position: () => 0, // unused by the area rollup (position only orders siblings)
+        name: (l) => l.name,
+        isContainer: (l) => l.kind === "container",
+      }),
+    [locs.data],
+  );
 
   // Cursor-paginated — the parts endpoint caps each page, so a
   // workshop with hundreds of parts needs "load more" to reach
@@ -607,7 +622,7 @@ export function PartsListPage() {
       )}
       {/* Grouped (a view with group_by) → one section per group; else flat. */}
       {partItems.length > 0 && groupBy
-        ? groupItems(partItems, groupBy).map((g) => (
+        ? groupItems(partItems, groupBy, areaOf).map((g) => (
             <div key={g.key} className="space-y-2">
               <h3 className="text-xs font-mono uppercase tracking-widest text-accent">{g.key}</h3>
               {viewMode === "tiles" ? (
@@ -1077,11 +1092,22 @@ function ViewChip({
 
 /** Partition parts by a metadata field (e.g. weight_class), into ordered
  *  sections. Blank/missing values fall into a trailing "—" group. */
-function groupItems(items: PartListItem[], key: string): { key: string; rows: PartListItem[] }[] {
+function groupItems(
+  items: PartListItem[],
+  key: string,
+  areaOf: (locationId: string | null | undefined) => string | null,
+): { key: string; rows: PartListItem[] }[] {
   const map = new Map<string, PartListItem[]>();
   for (const p of items) {
-    const raw = (p.metadata as Record<string, unknown> | null)?.[key];
-    const v = raw == null || String(raw).trim() === "" ? "—" : String(raw).trim();
+    // `location` is the reserved group key: roll the row's location up to its
+    // room (area). Every other key is an ordinary metadata field.
+    let v: string;
+    if (key === LOCATION_GROUP_KEY) {
+      v = areaOf(p.location_id) ?? "—";
+    } else {
+      const raw = (p.metadata as Record<string, unknown> | null)?.[key];
+      v = raw == null || String(raw).trim() === "" ? "—" : String(raw).trim();
+    }
     if (!map.has(v)) map.set(v, []);
     map.get(v)!.push(p);
   }

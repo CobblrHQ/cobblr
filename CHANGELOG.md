@@ -2,6 +2,13 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-07-15
+
+### Improvements
+- On phones, the floating "labels queued" pill no longer sits on top of the page and the thumb zone. It's desktop-only now; on mobile the label queue shows up as an entry inside the menu instead, still one tap to the queue.
+- When a photo proves a barcode's catalog answer wrong (a yarn skein that resolves to an action figure, then a reverse-phone-lookup site for the same spam code), the scan now casts a downvote to the shared barcode database instead of only clearing its own cache. Once enough separate workspaces independently disagree, that code stops serving junk and future scans of it go straight to naming it from your photo. It is a vote, not a block: a barcode that is legitimately shared is never suppressed by one workspace, and it is reversible.
+- On a scan inbox item, the Location picker is now the tappable rooms-and-bins chip drawer (the same one the bulk bar and camera use), not the old dropdown, and picking a location saves right away instead of only when you Confirm, so your choice sticks even as the inbox refreshes.
+
 ## 2026-07-14
 
 ### Features

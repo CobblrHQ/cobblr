@@ -112,6 +112,68 @@ export function registerInventoryActionHandlers(): void {
     return null;
   });
 
+  // ───────────── field-to-location (bundle-migration engine) ─────────────
+  // Retire a bundle's bespoke PLACE field (e.g. Home Inventory's "room" text
+  // field) into the platform's canonical Location: for each item in an instance
+  // that has a value in that field, find-or-create a matching Location AREA and
+  // file the item into it (set location_id), then clear the field. This is how a
+  // bundle drops a location-shaped custom field in favour of the real Location on
+  // a version bump — no per-workspace script. Cross-module writes go through the
+  // registered core-locations WRITER seam (no HTTP/token). Idempotent + safe:
+  // never invents a place (only moves what the user already typed), never
+  // overwrites an item that's already filed somewhere, and re-files into an
+  // existing same-named area instead of duplicating it. Args: { field, instance }.
+  platform().actions.registerHandler("inventory.field-to-location", async (ctx) => {
+    const a = (ctx.args as Record<string, unknown> | null) ?? {};
+    const field = typeof a.field === "string" ? a.field : "";
+    const instance = typeof a.instance === "string" ? a.instance : "";
+    if (!field || !instance) return { ok: false, error: "missing field / instance" };
+
+    const writer = platform().entities.getWriter("core-locations:location");
+    if (!writer) return { ok: false, error: "core-locations not available" };
+
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
+    const parts = await db
+      .selectFrom("inventory_parts")
+      .selectAll()
+      .where("instance", "=", instance as never)
+      .where("archived", "=", false)
+      .execute();
+
+    // Existing locations by lowercased name → id, so we file into a place the
+    // user already has instead of duplicating it (the homebox-import merge rule).
+    const existing = writer.listForMatch ? await writer.listForMatch(ctx.orgId) : [];
+    const areaByName = new Map<string, string>();
+    for (const l of existing) areaByName.set(l.name.trim().toLowerCase(), l.id);
+
+    let filed = 0;
+    let areasCreated = 0;
+    for (const p of parts) {
+      const meta = (p.metadata as Record<string, unknown> | null) ?? {};
+      if (!(field in meta)) continue; // already migrated / never had it → skip (idempotent)
+      const raw = meta[field];
+      const name = raw == null ? "" : String(raw).trim();
+      const nextMeta = { ...meta };
+      delete nextMeta[field];
+      const patch: Record<string, unknown> = { metadata: sql`${JSON.stringify(nextMeta)}::jsonb` as never };
+      // File into a location ONLY when the item isn't already located AND the
+      // field held a real value — never clobber an existing filing, never invent.
+      if (!p.location_id && name) {
+        const key = name.toLowerCase();
+        let locId = areaByName.get(key);
+        if (!locId) {
+          locId = await writer.create(ctx.orgId, { name, kind: "area" });
+          areaByName.set(key, locId);
+          areasCreated++;
+        }
+        patch.location_id = locId;
+        filed++;
+      }
+      await db.updateTable("inventory_parts").set(patch as never).where("id", "=", p.id).execute();
+    }
+    return { ok: true, filed, areas_created: areasCreated };
+  });
+
   platform().actions.registerHandler("inventory.adjust-stock", async (ctx) => {
     // Args take precedence (an admin can hardwire a wire to "always
     // add 1"); otherwise we pull from the event payload.

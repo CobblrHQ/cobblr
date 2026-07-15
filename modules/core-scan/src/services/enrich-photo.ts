@@ -13,7 +13,7 @@
 import type { Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { CoreScanDB } from "../db.js";
-import { reportBarcodeCorrection } from "./barcode-corrections.js";
+import { reportBarcodeCorrection, reportBarcodeReject } from "./barcode-corrections.js";
 import { identityMeta, mergeMeta } from "./metadata.js";
 import { evictBarcodeCaches } from "./barcode-cache.js";
 import { searchImages, rankImageOptions, imageQuery, mediaSearchExtras } from "./ddg-images.js";
@@ -703,6 +703,15 @@ export async function crossCheckScanPhoto(
       // item, but not authoritative enough to become every workspace's answer —
       // reportBarcodeCorrection above is the proper, reviewable channel for that.
       void evictBarcodeCaches(orgId, existing.barcode_text).catch(() => {});
+      // AND cast a negative VOTE on the provider answer — the photo disproved it.
+      // Not a block: once enough independent workspaces agree, the resolver
+      // suppresses this code's junk so it stops re-serving a fresh wrong product
+      // each scan. A genuinely-shared UPC never gets suppressed by one workspace.
+      void reportBarcodeReject({
+        upc: existing.barcode_text,
+        reason: reason || "photo shows a different product",
+        orgId,
+      }).catch(() => {});
     }
     // The catalog image still shows the wrong product (the lookup's picture) —
     // refresh it to match the corrected name.
@@ -726,6 +735,19 @@ export async function crossCheckScanPhoto(
     })
     .where("id", "=", itemId)
     .execute();
+  // The photo says the provider answer is wrong even though it couldn't name the
+  // real product (a spam/collided code like 198973386273 — a yarn skein that
+  // resolves to an action figure, then a reverse-phone site). Downvote it and drop
+  // the local cache so a re-scan re-queries; once enough workspaces agree the
+  // resolver suppresses it and future scans go straight to photo-first.
+  if (existing?.barcode_text) {
+    void reportBarcodeReject({
+      upc: existing.barcode_text,
+      reason: reason || "photo doesn't match the barcode",
+      orgId,
+    }).catch(() => {});
+    void evictBarcodeCaches(orgId, existing.barcode_text).catch(() => {});
+  }
 }
 
 /** Why an enrich did nothing — so a REPLAY can report "nothing cached to replay"

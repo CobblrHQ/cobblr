@@ -28,6 +28,8 @@
     "lint:bundle-quality": "tsx scripts/lint-bundle-quality.ts",
     "lint:bundles-synced": "tsx scripts/sync-bundles.ts --check",
     "lint:bundle-content": "tsx scripts/lint-bundle-content.ts",
+    "lint:bundle-schema": "tsx scripts/lint-bundle-schema.ts",
+    "lint:bundle-location-dupe": "tsx scripts/lint-bundle-location-dupe.ts",
     "lint:detector-registry": "pnpm --filter @cobblr/digifab gen:check",
     "lint:deprecated-fks": "tsx scripts/lint-deprecated-table-fks.ts",
     "lint:self-heal": "tsx scripts/lint-self-heal.ts",
