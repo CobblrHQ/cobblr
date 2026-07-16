@@ -24,10 +24,14 @@ export {
   buildLocationForest,
   flattenLocationForest,
   makeAreaResolver,
+  groupContainersByArea,
+  ancestorIds,
+  flattenAreaForest,
   LOCATION_GROUP_KEY,
   type LocationNode,
   type LocationAccessors,
   type FlatLocation,
+  type AreaContainerGroup,
 } from "./locationTree";
 export { EntityTile } from "./EntityTile";
 export { ViewModeToggle, useViewMode, type ViewMode } from "./ViewModeToggle";

@@ -1,9 +1,9 @@
 {
   "manifest": {
     "id": "cobblr.flagship.collections",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "name": "Collections",
-    "description": "Your collection as its own table — condition, edition, paid vs value today, grouped by condition, so you stop buying the dupe.",
+    "description": "Your collection as its own cover wall — condition, edition, paid vs value today, so you stop buying the dupe.",
     "author": "Cobblr",
     "released_at": "2026-06-08",
     "changelog": "Now its OWN table (an inventory instance), not generic Inventory with extra columns — its own nav entry, a “New piece” button, only collector fields (parts/warranty/supplier cruft hidden). Plain-language hints + a pinned “By condition” view.",
@@ -121,9 +121,18 @@
         "saved_views": [
           {
             "entity_kind": "inventory:part",
+            "name": "Gallery",
+            "view_type": "gallery",
+            "pinned": true,
+            "config": {
+              "image_field": "image_path",
+              "caption_field": "edition"
+            }
+          },
+          {
+            "entity_kind": "inventory:part",
             "name": "By condition",
             "view_type": "table",
-            "pinned": true,
             "config": {
               "group_by": "condition",
               "visible_fields": [

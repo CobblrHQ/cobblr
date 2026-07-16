@@ -38,6 +38,14 @@ export interface BundleMenuEntry {
   label: string;
   fields: BundleMenuField[];
   scan_keywords?: string[];
+  /** The declared grouping axis (field_role:"category") — same shape as
+   *  ScanMenuEntry.category_field, so a capture against a NOT-yet-installed
+   *  bundle gets category proposals too, not just live tables. */
+  category_field?: { name: string; label: string; values: string[] };
+  /** The declared pack-count field (field_role:"pack") — lets the matchmaker's
+   *  deterministic seedPackSize fill it from the observed package on
+   *  capture-first scans, same as an installed instance. */
+  pack_field?: { name: string; label: string };
   bundle_external_id: string;
 }
 
@@ -147,6 +155,33 @@ export async function getFlagshipManifest(id: string): Promise<unknown | null> {
 
 /** The capture-first menu: every trackable flagship kind as a routable
  *  destination tagged with the bundle that would hold it. */
+/** Derive the declared field-role axes (category / pack) from a bundle's field
+ *  defs — the manifest twin of what assembleScanMenu reads off module_field_defs
+ *  for a LIVE instance, so capture-first routing gets the same structured hints. */
+function fieldRoleAxes(defs: Array<Record<string, unknown>> | undefined): {
+  category_field?: BundleMenuEntry["category_field"];
+  pack_field?: BundleMenuEntry["pack_field"];
+} {
+  if (!Array.isArray(defs)) return {};
+  const byRole = (role: string) => defs.find((d) => d.field_role === role);
+  const cat = byRole("category");
+  const pack = byRole("pack");
+  return {
+    ...(cat
+      ? {
+          category_field: {
+            name: String(cat.name ?? ""),
+            label: String(cat.display_label ?? cat.name ?? ""),
+            values: Array.isArray(cat.choices) ? (cat.choices as unknown[]).map(String) : [],
+          },
+        }
+      : {}),
+    ...(pack
+      ? { pack_field: { name: String(pack.name ?? ""), label: String(pack.display_label ?? pack.name ?? "") } }
+      : {}),
+  };
+}
+
 export function flagshipBundleMenu(): BundleMenuEntry[] {
   const out: BundleMenuEntry[] = [];
   for (const m of listFlagshipManifests()) {
@@ -167,6 +202,7 @@ export function flagshipBundleMenu(): BundleMenuEntry[] {
           ...(Array.isArray(pi.scan_keywords) && pi.scan_keywords.length
             ? { scan_keywords: (pi.scan_keywords as unknown[]).map(String) }
             : {}),
+          ...fieldRoleAxes(pi.field_defs as Array<Record<string, unknown>> | undefined),
           bundle_external_id: id,
         });
       }
@@ -190,6 +226,7 @@ export function flagshipBundleMenu(): BundleMenuEntry[] {
         noun: String(m.name ?? moduleName).toLowerCase(),
         label: String(m.name ?? kind),
         fields: mapFields(defs),
+        ...fieldRoleAxes(defs),
         bundle_external_id: id,
       });
     }

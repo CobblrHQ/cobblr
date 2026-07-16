@@ -5,17 +5,37 @@
 // time. We do not denormalise stock totals; one source of truth is
 // the row, and aggregations live in the read query.
 
-import { Router } from "express";
+import { Router, type Request } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { instanceOf, instanceQtyUnit, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireCapability, requireRole } from "./util.js";
 import { routeUnknownToMetadata, preserveServerManaged, coerceMetadata } from "./route-helpers.js";
-import { disclosureHandler } from "./disclosure.js";
+import { disclosureHandler, fieldsShowStockSignal, latchInstanceStock } from "./disclosure.js";
 import { recordConsumption } from "./stock-ledger.js";
 
 export const partsRouter = Router({ mergeParams: true });
+
+/** Sticky-stock latch guard, shared by every qty-bearing write path (create,
+ *  PATCH, stock-adjust): the first time a NAMED instance takes a stock-shaped
+ *  write, latch it to stock meta-side — so combine/scan see the fungible traits
+ *  and the list shows the stock face even before anyone opens it. Skipped when
+ *  the user has pinned the instance either way (override present) or it is
+ *  already latched — both read for free off req.instanceConfig, so the happy
+ *  path is one comparison and no write. The default "inventory" instance is
+ *  always stock, never a latch target. */
+async function maybeLatchStock(
+  req: Request,
+  orgId: string,
+  fields: Parameters<typeof fieldsShowStockSignal>[0],
+): Promise<void> {
+  const instance = instanceOf(req);
+  if (instance === "inventory") return;
+  const cfg = (req as unknown as { instanceConfig?: Record<string, unknown> }).instanceConfig;
+  if (typeof cfg?.stock === "boolean" || cfg?.stock_latched === true) return;
+  if (fieldsShowStockSignal(fields)) await latchInstanceStock(orgId, instance);
+}
 
 // Stock-vs-catalog disclosure for this instance. Registered BEFORE the "/:id"
 // routes so it isn't swallowed as a part id. Instance-scoped, so req.instance +
@@ -617,6 +637,12 @@ partsRouter.post(
       partId: inserted.id,
     });
 
+    await maybeLatchStock(req, ctx.org.id, {
+      qty: parsed.data.qty,
+      min_qty: parsed.data.min_qty,
+      unit: parsed.data.unit ?? instanceQtyUnit(req) ?? "each",
+    });
+
     // Auto-lift to a parent type. If this instance's items belong to a parent
     // TYPE derived from the item's OWN fields (the instance's parent config
     // carries `key_fields`) and this create carried those fields — a scan /
@@ -762,6 +788,17 @@ partsRouter.patch(
       after: { ...before, ...nativeChanges, ...afterMeta },
     });
 
+    // A stock-shaped EDIT is signal too — a user adding a real qty / reorder
+    // point / measured unit to an existing catalog record must latch the
+    // instance the same as a create, or traits lag until someone opens the list.
+    // Only the fields THIS patch touched count (an untouched qty of 0 isn't a
+    // signal, and unrelated edits must not probe).
+    await maybeLatchStock(req, ctx.org.id, {
+      qty: parsed.data.qty,
+      min_qty: parsed.data.min_qty,
+      unit: parsed.data.unit,
+    });
+
     res.json(updated);
   }),
 );
@@ -870,6 +907,11 @@ partsRouter.post(
       delta: parsed.data.delta,
       newQty: Number(updated.qty),
     });
+
+    // Deliberately counting copies IS stock signal — a stock-adjust on a lean
+    // catalog item ("I have another one") latches the instance like any other
+    // stock-shaped write.
+    await maybeLatchStock(req, ctx.org.id, { qty: updated.qty });
 
     // Low-stock signal: on a DECREASE that lands at/below min_qty, fire
     // inventory.stock.low (manifest-declared; this is its emit point). Wires

@@ -74,7 +74,7 @@ export function ScanResultModal({
   onAttached?: (
     r: { itemId: string; prevLocationId: string | null; entityTitle: string },
     match: TrackedMatch,
-    mode: "add-qty" | "link-barcode" | "move",
+    mode: "add-qty" | "link-barcode" | "move" | "merge-fields",
   ) => void;
 }) {
   const { activeSlug } = useActiveOrg();
@@ -147,7 +147,22 @@ export function ScanResultModal({
     !!item?.suggested_name && (!!item?.catalog_image_file_id || !!item?.catalog_image_url);
   const withinEnrichWindow =
     !!item?.created_at && Date.now() - Date.parse(item.created_at) < 180_000;
-  const stillEnriching = !!item && !enrichedFully && (withinEnrichWindow || reading);
+  // The barcode result is being cross-checked against the user's own photo
+  // (photo_check_pending, set by the enrich when a scan photo exists) or was
+  // flagged as not matching it (photo_mismatch). While unverified, the card must
+  // not lead with a possibly-wrong catalog picture — a collided/spam UPC resolves
+  // to junk (an action figure over a yarn skein), and the race-fetched wrong image
+  // reads as "the scanner failed". Lead with the user's photo instead.
+  const modalMeta = (item?.suggested_metadata ?? {}) as {
+    photo_check_pending?: boolean;
+    photo_mismatch?: { reason?: string };
+  };
+  const photoCheckPending = modalMeta.photo_check_pending === true;
+  const photoMismatch = !!modalMeta.photo_mismatch;
+  // Keep the live poll going while the cross-check is unresolved, so the
+  // "checking…" state flips to confirmed/corrected in-place (same 180s bound).
+  const stillEnriching =
+    !!item && (!enrichedFully || photoCheckPending) && (withinEnrichWindow || reading);
   const live = useQuery({
     queryKey: ["scan-item-live", activeSlug, item?.id],
     queryFn: () => api.getScanItem(activeSlug, item!.id),
@@ -330,23 +345,54 @@ export function ScanResultModal({
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
 
+  // The viewfinder frame captured AT the scan moment, as a LOCAL object URL —
+  // shown instantly (zero network) so the card never opens with a blank box
+  // while the catalog image / server copy resolves; the better image swaps in
+  // the moment it lands (the author).
+  const [frameUrl, setFrameUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let url: string | null = null;
+    let cancelled = false;
+    void Promise.resolve(getFrameBlob?.() ?? null)
+      .then((b) => {
+        if (cancelled || !b) return;
+        url = URL.createObjectURL(b);
+        setFrameUrl(url);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+    // getFrameBlob is a stable ref-getter from the camera page; the frame is
+    // fixed at open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const looking =
     scan.isPending || rerunWrong.isPending || (!!item && !item.suggested_name && !match.isFetched);
   // Catalog image first; the user's own photo as the fallback (photo scans
-  // and barcode items that resolved without catalog art still get a face).
+  // and barcode items that resolved without catalog art still get a face) —
+  // EXCEPT while the catalog result is unverified against the user's photo
+  // (checking, or a flagged mismatch): then the user's own photo leads, because
+  // it is never wrong, and the catalog shot takes over once the check confirms.
   // External catalog_image_url can 404/hotlink-block (the broken-? the author hit)
   // — onError marks that URL broken and we drop to the next rung; the live
   // poll above may then land the server-cached catalog_image_file_id.
+  const ownPhotoUrl = item?.image_file_id
+    ? `/api/v1/orgs/${activeSlug}/modules/core-files/files/${item.image_file_id}/raw?variant=med`
+    : null;
+  const catalogRungs = [
+    item?.catalog_image_file_id
+      ? `/api/v1/orgs/${activeSlug}/modules/core-files/files/${item.catalog_image_file_id}/raw?variant=med`
+      : null,
+    item?.catalog_image_url ?? null,
+  ];
   const catalogImg =
-    [
-      item?.catalog_image_file_id
-        ? `/api/v1/orgs/${activeSlug}/modules/core-files/files/${item.catalog_image_file_id}/raw?variant=med`
-        : null,
-      item?.catalog_image_url ?? null,
-      item?.image_file_id
-        ? `/api/v1/orgs/${activeSlug}/modules/core-files/files/${item.image_file_id}/raw?variant=med`
-        : null,
-    ].find((u): u is string => !!u && !brokenSrcs.has(u)) ?? null;
+    (photoCheckPending || photoMismatch
+      ? [ownPhotoUrl, frameUrl, ...catalogRungs]
+      : [...catalogRungs, ownPhotoUrl, frameUrl]
+    ).find((u): u is string => !!u && !brokenSrcs.has(u)) ?? null;
   const areaLabel = item?.scan_area ?? scanArea ?? null;
   const busy =
     commit.isPending ||
@@ -401,6 +447,16 @@ export function ScanResultModal({
             {reading && (
               <div className="text-[11px] text-accent animate-pulse mt-0.5 flex items-center gap-1">
                 <Camera size={11} /> Reading the photo with AI…
+              </div>
+            )}
+            {!reading && photoCheckPending && (
+              <div className="text-[11px] text-accent animate-pulse mt-0.5 flex items-center gap-1">
+                <Camera size={11} /> Checking this against your photo…
+              </div>
+            )}
+            {!reading && !photoCheckPending && photoMismatch && (
+              <div className="text-[11px] text-amber-600 dark:text-amber-400 mt-0.5 flex items-center gap-1">
+                <Camera size={11} /> May not match your photo — double-check the name.
               </div>
             )}
             <div className="text-[11px] font-mono text-faint truncate">

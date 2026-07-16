@@ -421,7 +421,7 @@ const RawTraits = z.object({
 
 export type RawTraitsDecl = z.infer<typeof RawTraits>;
 
-// The 9 platform-blessed presets. Each maps to a 6-tuple of trait
+// The 10 platform-blessed presets. Each maps to a 6-tuple of trait
 // values. Modules use `profile: "<name>"` as shorthand and `overrides`
 // to flip individual axes from the preset's defaults.
 // See docs/architecture/traits.md §"Presets — preset shorthand".
@@ -430,6 +430,21 @@ export const TRAIT_PRESETS = {
     tangibility: "digital",
     identity: "unique",
     containment: null,
+    time: "timeless",
+    lifecycle: "indefinite",
+    persistence: "durable",
+  },
+  // A lean catalog record — a film, a book, a board game. The face an
+  // inventory instance shows when it carries no stock signal (see
+  // one-record-substrate.md). Identity is UNIQUE — the load-bearing axis:
+  // catalog records are counted per-title, so combine/merge treats duplicates
+  // as one thing (max), never summing a phantom quantity the way it would for
+  // fungible stock. Tangibility is uncertain: a film is digital, a shelved book
+  // is physical, and the catalog face neither knows nor needs to.
+  "catalog-record": {
+    tangibility: { trait: "physical", uncertain: true },
+    identity: "unique",
+    containment: "containable",
     time: "timeless",
     lifecycle: "indefinite",
     persistence: "durable",
@@ -1098,6 +1113,7 @@ const PROFILE_HINTS: Record<string, string> = {
   "stock-material": "Bulk stock you count rather than name — parts, filament, screws.",
   place: "Somewhere things live — a room, a shelf, a bin.",
   "digital-record": "A record with no physical body — a tag, a file, an entry.",
+  "catalog-record": "A lean catalog entry you keep one per title — a film, a book, a board game.",
   "work-item": "Something with a date that can be finished — a task, a job, an order.",
   "vendor-order": "An order placed with someone: it has a date and a done state.",
   "recurring-schedule": "Scheduled, but never finishes — a recurring routine.",
@@ -1230,8 +1246,10 @@ export function resolveTraits(decl: {
 
 /** Read one trait-axis value off a resolved traits map, tolerating both the
  *  plain string form and the `{ trait, uncertain }` inference form the
- *  entity-kind registry can carry. */
-function traitAxisValue(
+ *  entity-kind registry can carry. Exported so every trait consumer (kind
+ *  synthesis, scan confirm, disclosure) reads an axis one way instead of
+ *  growing private near-copies. */
+export function traitAxisValue(
   traits: Record<string, unknown> | null | undefined,
   axis: string,
 ): string | null {
@@ -3033,6 +3051,21 @@ export interface PlatformInstances {
    *  instances), each enriched with its item count. Org-scoped — only what
    *  this workspace has turned on. */
   list(orgId: string): Promise<InstanceInfo[]>;
+  /** Shallow-merge a patch into an instance's platform-derived config — the
+   *  meta-side `entity_kind_overrides` blob (target "instance",
+   *  `<module>:<instance>`) that resolveInstance surfaces on req.instanceConfig.
+   *  Read-modify-write, so existing keys (item_noun, qty_unit, the user's stock
+   *  override) are preserved. Used for signals the PLATFORM latches on behalf of
+   *  a module — e.g. inventory writing `stock_latched: true` the first time an
+   *  instance shows stock data, so the sticky stock face survives a drain-to-zero
+   *  and instance-kind synthesis can read the verdict without a tenant pool.
+   *  See one-record-substrate.md. Creates the override row if absent. */
+  patchDerivedConfig(
+    orgId: string,
+    moduleName: string,
+    instanceName: string,
+    patch: Record<string, unknown>,
+  ): Promise<void>;
 }
 
 // ─────────────────────── Hosted-overlay extension seams ─────────────────────

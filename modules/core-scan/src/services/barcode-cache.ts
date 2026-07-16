@@ -17,7 +17,7 @@
 // circular import.
 
 import { platform } from "@cobblr/platform-contract";
-import type { Kysely } from "kysely";
+import { sql, type Kysely } from "kysely";
 import type { CoreScanDB } from "../db.js";
 
 export const BARCODE_NS = "barcode";
@@ -46,4 +46,39 @@ export async function evictBarcodeCaches(orgId: string, upc: string): Promise<vo
     /* best-effort: the shared eviction below matters more. */
   }
   await platform().sharedCache.del(BARCODE_NS, code);
+}
+
+/**
+ * Remember a PHOTO-PROVEN identity in THIS workspace's own cache — and only this
+ * workspace's. The photo is decisive evidence about the item the workspace
+ * actually holds, so its next scan of the same code must serve the corrected
+ * name instead of re-deriving it (or re-fetching the disproved junk). It is
+ * still not authoritative for anyone else: the cross-workspace answer converges
+ * separately, by consensus votes in the Barcode Intelligence DB.
+ */
+export async function rememberLocalIdentity(
+  orgId: string,
+  upc: string,
+  identity: { title: string; brand?: string | null },
+): Promise<void> {
+  const code = upc.trim();
+  const title = identity.title.trim();
+  if (!code || !title) return;
+  const fields = {
+    found: true,
+    source: "photo",
+    title,
+    brand: identity.brand?.trim() || null,
+    model: null,
+    description: null,
+    category: null,
+    image_url: null,
+    raw: sql`'{}'::jsonb` as never,
+  };
+  const db = (await platform().tenants.getDb(orgId)) as unknown as Kysely<CoreScanDB>;
+  await db
+    .insertInto("core_scan_barcode_cache")
+    .values({ upc: code, ...fields })
+    .onConflict((c) => c.column("upc").doUpdateSet(fields))
+    .execute();
 }

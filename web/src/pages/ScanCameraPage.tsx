@@ -38,7 +38,7 @@ import { ArrowLeftRight, ArrowRight, Camera, Check, Flashlight, Loader2, MapPin,
 import { Modal, usePageTitle, useToast } from "@cobblr/platform-web";
 import { ApiError, api, type LiveSortEntry, type ScanInboxItem, type TrackedMatch } from "../lib/api";
 import { LOCATION_ENTITY_KIND, decideLocationScan, filingLabel } from "../lib/scanFiling";
-import { freshDedupState, shouldFireScan, type DedupState } from "../lib/scanDedup";
+import { freshDedupState, shouldFireScan, pickDetection, makeDetectionCollector, type DedupState } from "../lib/scanDedup";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { LocationChipPicker } from "../components/LocationChipPicker";
 import {
@@ -915,11 +915,18 @@ export function ScanCameraPage() {
           loop();
         } else {
           const reader = createBarcodeReader();
+          // ZXing emits one result per callback — a two-symbol cover alternates
+          // values and starves the agreement gate. The collector windows recent
+          // reads and forwards the stable pickDetection winner (the native
+          // multi-result path does the same per frame).
+          const collect = makeDetectionCollector(400);
           zxingControls = await reader.decodeFromStream(
             stream,
             videoRef.current!,
             (result) => {
-              if (!cancelled && result) onDetectRef.current(result.getText());
+              if (cancelled || !result) return;
+              const picked = collect(result.getText(), Date.now());
+              if (picked) onDetectRef.current(picked);
             },
           );
         }
@@ -941,7 +948,13 @@ export function ScanCameraPage() {
         .detect(video)
         .then((results) => {
           if (cancelled || results.length === 0) return;
-          onDetectRef.current(results[0]!.rawValue);
+          // A frame can hold several symbols (a book's main code + its price
+          // supplement). Taking results[0] made detection ORDER pick the
+          // candidate, and an order that flips frame-to-frame starves the
+          // two-in-a-row agreement gate — books never scanned. Pick ONE
+          // deterministically (retail codes first, then longest) instead.
+          const picked = pickDetection(results.map((r) => r.rawValue));
+          if (picked) onDetectRef.current(picked);
         })
         .catch(() => {
           // detect() can throw transiently; just keep looping.

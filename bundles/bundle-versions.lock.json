@@ -4,8 +4,8 @@
     "hash": "324f7efc8b2d69112c459728cd5b2c1b582972a0377391e14713fbe1298706e7"
   },
   "cobblr.community.bookshelf": {
-    "version": "0.1.0",
-    "hash": "080046908a6ac666a8966f1e79998bdddd27ddfe75edd0b3c5e3b6674f91e787"
+    "version": "0.2.0",
+    "hash": "dd90519445c8d0013584fe176991c0a435cb42c48f4fe9a9c7183aa1b10dea24"
   },
   "cobblr.community.cnc-machines": {
     "version": "0.3.0",
@@ -22,6 +22,10 @@
   "cobblr.community.lego": {
     "version": "0.5.0",
     "hash": "d9dc4be67d661a3eec6638f756e5888f50ca74967bfe56cb245501f0488ae831"
+  },
+  "cobblr.community.lending-library": {
+    "version": "0.1.0",
+    "hash": "dddacf85289f403502d8c96491987ec9c9302b5870bd6052d1d9acc94363f373"
   },
   "cobblr.community.printer-parts": {
     "version": "0.2.0",
@@ -40,8 +44,8 @@
     "hash": "c2b4e5d0b1d5192923f8d00bf07e00926d94ad746a247deac362d75277c2822a"
   },
   "cobblr.flagship.collections": {
-    "version": "0.2.0",
-    "hash": "92c7249a7a6fabeaa2dd1f53209810b5e81b3b0377830524fb21401a2bc5b0f4"
+    "version": "0.3.0",
+    "hash": "8d03fa4f7651e5cc2ea76e13fd1bbeefccd8b30bd7d67dbe604c71d483cc4d99"
   },
   "cobblr.flagship.documents-renewals": {
     "version": "0.2.1",

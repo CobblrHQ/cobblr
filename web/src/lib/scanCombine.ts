@@ -45,6 +45,25 @@ export function isTitledMedia(it: ScanInboxItem): boolean {
   );
 }
 
+/** Unit-ish tokens ("75mm", "10pk", "120v") are measurements, not identity —
+ *  they must neither count as model numbers nor veto anything. */
+const UNIT_TOKEN = /^\d+(pk|ct|pcs?|oz|ml|lb|kg|mm|cm|in|ft|gal|qt|ah|mah|[wvagl])$/;
+
+/** Tokens that read as MODEL NUMBERS: letters+digits interleaved ("F27T350FHN",
+ *  "S23A300B", "MSB1G"). A model number IS the product's identity — two names
+ *  whose model numbers disagree are different products no matter how many
+ *  generic words ("inch", "monitor") they share. Exported for tests. */
+export function modelNumberTokens(s: string | null | undefined): Set<string> {
+  const out = new Set<string>();
+  for (const w of (s ?? "").toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/)) {
+    if (w.length < 4 || UNIT_TOKEN.test(w)) continue;
+    const letters = (w.match(/[a-z]/g) ?? []).length;
+    const digits = (w.match(/[0-9]/g) ?? []).length;
+    if (letters >= 2 && digits >= 1) out.add(w);
+  }
+  return out;
+}
+
 /** A barcode a CATALOG resolved is an identity, not a guess. An AI-read one
  *  (OCR'd off a package by the vision model) can be misread a digit at a time, so
  *  it doesn't get to veto anything. */
@@ -87,8 +106,19 @@ export function combinable(
 
   const codeA = catalogBarcode(a);
   const codeB = catalogBarcode(b);
+  if (codeA && codeB && codeA === codeB) return true; // identity — no name guessing needed
+
+  // DIFFERENT MODEL NUMBERS = DIFFERENT PRODUCTS. Two 27"/23" monitors shared
+  // "inch" + "monitor" and cleared the word bar while their model numbers
+  // (F27T350FHN vs S23A300B) disagreed in plain sight. When BOTH names carry
+  // model-number tokens and NONE match, no amount of generic-word overlap (or
+  // the multipack exception) may combine them — only an identical catalog
+  // barcode above outranks this.
+  const modelsA = modelNumberTokens(a.suggested_name);
+  const modelsB = modelNumberTokens(b.suggested_name);
+  if (modelsA.size && modelsB.size && ![...modelsA].some((m) => modelsB.has(m))) return false;
+
   if (codeA && codeB) {
-    if (codeA === codeB) return true; // identity — no name guessing needed
     const packA = packSize(a);
     const packB = packSize(b);
     const onePack = (packA === null) !== (packB === null);

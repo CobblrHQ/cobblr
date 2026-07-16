@@ -62,7 +62,8 @@
     "typecheck:fast": "pnpm -r run --if-present typecheck:fast",
     "embed:bridge": "node scripts/embed-bridge-bundle.mjs",
     "test:unit": "node scripts/run-unit-tests.mjs",
-    "lint:native-field-labels": "node scripts/lint-native-field-labels.mjs"
+    "lint:native-field-labels": "node scripts/lint-native-field-labels.mjs",
+    "lint:view-config-keys": "tsx scripts/lint-view-config-keys.ts"
   },
   "devDependencies": {
     "playwright": "^1.60.0",

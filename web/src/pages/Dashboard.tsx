@@ -214,17 +214,24 @@ function PutAwayCard({ slug }: { slug: string }) {
   if (unfiled > 0) parts.push(`${unfiled} scanned item${unfiled === 1 ? "" : "s"} without a home`);
   if (ready > 0) parts.push(`${ready} ready to put away`);
   return (
+    // Stack until there's room for a real side-by-side. `flex-wrap` did NOT save
+    // this: the copy is flex-1 + min-w-0, so it SHRANK to whatever the button
+    // left rather than pushing the button to the next line — the sentence wrapped
+    // in a half-width column while the button sat in space. Below sm the copy
+    // gets the full width and the button goes underneath it.
     <section
-      className="rounded-lg border border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20 px-4 py-3 flex flex-wrap items-center gap-3"
+      className="rounded-lg border border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20 px-4 py-3 flex flex-col items-start gap-3 sm:flex-row sm:items-center"
       data-testid="putaway-card"
     >
-      <span className="text-xl shrink-0">📦</span>
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-semibold text-content dark:text-mortar-100">
-          {parts.join(", and ")}.
-        </div>
-        <div className="text-xs text-muted dark:text-slate-400">
-          Preview where everything should go — nothing moves until you confirm.
+      <div className="flex min-w-0 flex-1 items-start gap-3">
+        <span className="text-xl shrink-0 leading-tight">📦</span>
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-content dark:text-mortar-100">
+            {parts.join(", and ")}.
+          </div>
+          <div className="text-xs text-muted dark:text-slate-400">
+            Preview where everything should go — nothing moves until you confirm.
+          </div>
         </div>
       </div>
       <Link
@@ -1687,6 +1694,25 @@ function PosterCell({ path, title }: { path: string | null; title: string }) {
   );
 }
 
+/** Is a grouped view's distribution worth drawing? It needs at least TWO buckets
+ *  to BE a distribution: when every item shares one value ("By make" over a single
+ *  Honda), the lone 100% bar restates the count already in the header and never
+ *  says WHAT you have — "HONDA 1" where "2019 Honda Civic" was the useful answer
+ *  (the author, 2026-07-16). One bucket → fall through to the item list. Same rule the
+ *  all-unset branch already applies (don't draw a meaningless distribution), just
+ *  extended from "no groups" to "no spread"; all-unset keeps the distribution
+ *  branch because the "set it" hint there names the fix, which beats a list.
+ *  `groupCounts` is [value, n] with "" as the unset bucket. Exported for the test
+ *  that pins this rule. */
+export function shouldShowDistribution(
+  isGrouped: boolean,
+  groupCounts: Array<[string, number]>,
+): boolean {
+  const setBucketCount = groupCounts.filter(([k]) => k !== "").length;
+  const unsetCount = groupCounts.find(([k]) => k === "")?.[1] ?? 0;
+  return isGrouped && !(setBucketCount === 1 && unsetCount === 0);
+}
+
 function PinnedView({
   slug,
   view,
@@ -1731,6 +1757,7 @@ function PinnedView({
     }
     return [...m.entries()].sort((a, b) => b[1] - a[1]);
   }, [isGrouped, groupBy, allItems]);
+  const showDistribution = shouldShowDistribution(isGrouped, groupCounts);
   // A readable label for the grouping field, for the "nothing set yet" hint.
   const groupLabel = groupBy ? groupBy.replace(/_/g, " ") : "";
   // The count reads in the item's OWN noun ("5 machines"), not DB-speak "5 rows"
@@ -1775,7 +1802,7 @@ function PinnedView({
           heatmap, never a degraded row list. Non-visual types (list/table/…)
           preview as a compact thumb+title list. */}
       {!data.isLoading && items.length > 0 && (
-        isGrouped ? (
+        showDistribution ? (
           // The group distribution — the whole point of a "by state" / "by type"
           // view. Split the populated groups from the "unset" bucket: when NOTHING
           // carries the grouping field, a distribution is meaningless, so say so

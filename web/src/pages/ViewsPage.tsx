@@ -6,6 +6,7 @@
 // renderers swap in here as they ship.
 
 import { useState, useMemo, useEffect } from "react";
+import { tallyCadence, CADENCE_PRESETS } from "../lib/cadence";
 import { Link, useSearchParams } from "react-router-dom";
 import { useDetailRoute } from "../lib/useDetailRoute";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -899,11 +900,64 @@ export function HeatmapRenderer({ items, cfg }: { items: ViewRow[]; cfg: Record<
     return shades[lvl]!;
   };
   const total = Object.values(counts).reduce((a, b) => a + b, 0);
+
+  // The expected-cadence overlay. Without it every gap looks the same — a rest
+  // day and a skipped day are both an empty square. With it, the days the
+  // cadence expects are OUTLINED, so a gap inside an outline is a real miss and
+  // a gap outside one is simply not a day you were meant to go. Absence reads as
+  // absence: a missed day is an un-filled outline, never a red mark.
+  // rrule is ~30KB gz and ViewsPage is eagerly imported by App, so the expander
+  // is fetched ON DEMAND — only once a view actually declares a cadence. A view
+  // without one costs nothing and never touches the network for it.
+  const rule = (cfg.expect_rrule as string | undefined) ?? "";
+  const first = columns[0]?.[0]?.key;
+  const last = columns[columns.length - 1]?.[6]?.key;
+  const [expected, setExpected] = useState<Set<string>>(new Set());
+  const [invalidRule, setInvalidRule] = useState(false);
+  useEffect(() => {
+    if (!rule.trim() || !first || !last) {
+      setExpected(new Set());
+      setInvalidRule(false);
+      return;
+    }
+    let cancelled = false;
+    void import("../lib/cadence-expand")
+      .then(({ expandExpectedDays }) => {
+        if (cancelled) return;
+        const r = expandExpectedDays(rule, new Date(`${first}T00:00:00`), new Date(`${last}T00:00:00`));
+        setExpected(r.days);
+        setInvalidRule(r.invalid);
+      })
+      .catch(() => {
+        // The overlay is an aid, not the view. If its chunk fails to load the
+        // grid still renders — it just isn't outlined.
+        if (!cancelled) setInvalidRule(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [rule, first, last]);
+  const tally = useMemo(() => tallyCadence(expected, counts, new Date()), [expected, counts]);
+
   return (
     <div className="space-y-1.5">
       <div className="text-[10px] font-mono text-faint dark:text-slate-500">
         {total} logged over {WEEKS} weeks · each square is a day
+        {tally.expected > 0 && (
+          <>
+            {" · "}
+            <span className="text-content dark:text-mortar-200">
+              {tally.kept}/{tally.expected} expected days kept
+            </span>
+            {tally.streak > 0 && ` · ${tally.streak}-day streak`}
+          </>
+        )}
       </div>
+      {invalidRule && (
+        <div className="text-[10px] font-mono text-faint dark:text-slate-500">
+          The expected cadence could not be read, so no days are outlined. Edit the view to fix it.
+        </div>
+      )}
       <div className="overflow-x-auto pb-1">
         <div className="flex gap-1 mb-1">
           {monthLabels.map((m, i) => (
@@ -915,9 +969,24 @@ export function HeatmapRenderer({ items, cfg }: { items: ViewRow[]; cfg: Record<
         <div className="flex gap-1">
           {columns.map((col, i) => (
             <div key={i} className="flex flex-col gap-1">
-              {col.map((cell) => (
-                <div key={cell.key} title={`${cell.key}: ${cell.count}`} className={"w-3 h-3 rounded-sm " + shade(cell.count)} />
-              ))}
+              {col.map((cell) => {
+                const due = expected.has(cell.key);
+                return (
+                  <div
+                    key={cell.key}
+                    title={
+                      due
+                        ? `${cell.key}: ${cell.count}${cell.count > 0 ? "" : " (expected)"}`
+                        : `${cell.key}: ${cell.count}`
+                    }
+                    className={
+                      "w-3 h-3 rounded-sm " +
+                      shade(cell.count) +
+                      (due ? " ring-1 ring-inset ring-cobble-500/70 dark:ring-cobble-400/70" : "")
+                    }
+                  />
+                );
+              })}
             </div>
           ))}
         </div>
@@ -951,6 +1020,12 @@ function CreateViewModal({
   const [startField, setStartField] = useState("start_date");
   const [endField, setEndField] = useState("target_date");
   const [imageField, setImageField] = useState("image_path");
+  const [captionField, setCaptionField] = useState("");
+  const [xField, setXField] = useState("measured_at");
+  const [yField, setYField] = useState("value");
+  const [goal, setGoal] = useState("");
+  const [titleField, setTitleField] = useState("");
+  const [expectRrule, setExpectRrule] = useState("");
   const [filterRows, setFilterRows] = useState<FilterRow[]>([]);
   const [sortRows, setSortRows] = useState<SortRow[]>([]);
   const [shared, setShared] = useState(true);
@@ -958,6 +1033,32 @@ function CreateViewModal({
 
   // The kind's fields (native + custom) drive every picker below.
   const fields = useKindFields(slug, entityKind);
+
+  // If the workspace has ALREADY told the platform this kind's rhythm — a
+  // schedule wire carrying an RRULE ("every weekday, remind me") — a heatmap of
+  // that kind should not make you say it a second time. Default the expected
+  // cadence from it. Only when there is EXACTLY ONE schedule wire on the kind:
+  // with two, "the" cadence is a guess, and a wrong outline is worse than none.
+  // It is a DEFAULT, not a lock — it lands in the picker where you can see it
+  // and change it (same discipline as the derived item-noun).
+  const bindings = useQuery({
+    queryKey: ["bindings", slug],
+    queryFn: () => api.listBindings(slug),
+    enabled: !!slug,
+  });
+  const suggestedCadence = useMemo(() => {
+    const scheduled = (bindings.data?.items ?? []).filter(
+      (b) => b.source_kind === entityKind && b.trigger_type === "schedule" && b.trigger_schedule,
+    );
+    return scheduled.length === 1 ? (scheduled[0]!.trigger_schedule as string) : "";
+  }, [bindings.data, entityKind]);
+  // Apply it when the user turns to a heatmap and hasn't chosen a cadence
+  // themselves. Keyed on the suggestion + kind so switching kinds re-suggests,
+  // and never overwrites a value the user typed.
+  const [cadenceTouched, setCadenceTouched] = useState(false);
+  useEffect(() => {
+    if (!cadenceTouched && suggestedCadence) setExpectRrule(suggestedCadence);
+  }, [suggestedCadence, cadenceTouched]);
 
   // Discover entity kinds from the registry so the user picks a real one.
   const kinds = useQuery({
@@ -982,11 +1083,22 @@ function CreateViewModal({
           if (viewType === "calendar" && dateField.trim()) {
             config.date_field = dateField.trim();
           }
-          if (viewType === "heatmap" && dateField.trim()) {
-            config.date_field = dateField.trim();
+          if (viewType === "heatmap") {
+            if (dateField.trim()) config.date_field = dateField.trim();
+            if (expectRrule.trim()) config.expect_rrule = expectRrule.trim();
           }
-          if (viewType === "gallery" && imageField.trim()) {
-            config.image_field = imageField.trim();
+          if (viewType === "gallery") {
+            if (imageField.trim()) config.image_field = imageField.trim();
+            if (captionField.trim()) config.caption_field = captionField.trim();
+          }
+          if (viewType === "trend") {
+            if (xField.trim()) config.x = xField.trim();
+            if (yField.trim()) config.y = yField.trim();
+            const g = Number(goal);
+            if (goal.trim() && Number.isFinite(g)) config.goal = g;
+          }
+          if ((viewType === "calendar" || viewType === "gantt") && titleField.trim()) {
+            config.title_field = titleField.trim();
           }
           if (viewType === "gantt") {
             if (startField.trim()) config.start_field = startField.trim();
@@ -1065,10 +1177,79 @@ function CreateViewModal({
             <div className="text-[11px] text-faint mt-1">Which field each row lands on.</div>
           </label>
         )}
+        {viewType === "heatmap" && (
+          <label className="block">
+            <div className="text-xs text-muted mb-1">Expected cadence (optional)</div>
+            <select
+              value={CADENCE_PRESETS.some((c) => c.rrule === expectRrule) || expectRrule === "" ? expectRrule : "__custom"}
+              onChange={(e) => {
+                setCadenceTouched(true);
+                setExpectRrule(e.target.value === "__custom" ? "FREQ=DAILY;INTERVAL=1" : e.target.value);
+              }}
+              className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+            >
+              <option value="">No expectation (just count what happened)</option>
+              {CADENCE_PRESETS.map((c) => (
+                <option key={c.rrule} value={c.rrule}>{c.label}</option>
+              ))}
+              <option value="__custom">Custom…</option>
+            </select>
+            {expectRrule !== "" && !CADENCE_PRESETS.some((c) => c.rrule === expectRrule) && (
+              <input
+                type="text"
+                value={expectRrule}
+                onChange={(e) => {
+                  setCadenceTouched(true);
+                  setExpectRrule(e.target.value);
+                }}
+                placeholder="FREQ=WEEKLY;BYDAY=MO,WE,FR"
+                className="mt-2 w-full px-2 py-1 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+              />
+            )}
+            <div className="text-[11px] text-faint mt-1">
+              Outlines the days you meant to do this, so a gap reads as a miss and a rest day doesn't.
+              {!cadenceTouched && suggestedCadence && expectRrule === suggestedCadence && " Taken from this list's schedule — change it if that's not the rhythm you want to see."}
+            </div>
+          </label>
+        )}
         {viewType === "gallery" && (
           <label className="block">
             <div className="text-xs text-muted mb-1">Image field</div>
             <FieldSelect fields={fields} value={imageField} onChange={setImageField} allowBlank blankLabel="Pick an image field…" />
+            <div className="text-xs text-muted mb-1 mt-2">Caption field (optional)</div>
+            <FieldSelect fields={fields} value={captionField} onChange={setCaptionField} allowBlank blankLabel="No caption" />
+          </label>
+        )}
+        {viewType === "trend" && (
+          <div className="space-y-2">
+            <div className="grid grid-cols-2 gap-2">
+              <label className="block">
+                <div className="text-xs text-muted mb-1">Date field (x)</div>
+                <FieldSelect fields={fields} value={xField} onChange={setXField} allowBlank blankLabel="Pick a date field…" />
+              </label>
+              <label className="block">
+                <div className="text-xs text-muted mb-1">Value field (y)</div>
+                <FieldSelect fields={fields} value={yField} onChange={setYField} allowBlank blankLabel="Pick a number field…" />
+              </label>
+            </div>
+            <label className="block">
+              <div className="text-xs text-muted mb-1">Goal line (optional)</div>
+              <input
+                type="number"
+                value={goal}
+                onChange={(e) => setGoal(e.target.value)}
+                placeholder="e.g. 80"
+                className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+              />
+              <div className="text-[11px] text-faint mt-1">Draws a target line across the chart.</div>
+            </label>
+          </div>
+        )}
+        {(viewType === "calendar" || viewType === "gantt") && (
+          <label className="block">
+            <div className="text-xs text-muted mb-1">Label field (optional)</div>
+            <FieldSelect fields={fields} value={titleField} onChange={setTitleField} allowBlank blankLabel="Title (default)" />
+            <div className="text-[11px] text-faint mt-1">What each entry reads as.</div>
           </label>
         )}
         {viewType === "gantt" && (
@@ -1160,6 +1341,12 @@ function EditViewModal({
   const [startField, setStartField] = useState((cfg.start_field as string) ?? "start_date");
   const [endField, setEndField] = useState((cfg.end_field as string) ?? "target_date");
   const [imageField, setImageField] = useState((cfg.image_field as string) ?? "image_path");
+  const [captionField, setCaptionField] = useState((cfg.caption_field as string) ?? "");
+  const [xField, setXField] = useState((cfg.x as string) ?? "measured_at");
+  const [yField, setYField] = useState((cfg.y as string) ?? "value");
+  const [goal, setGoal] = useState(cfg.goal == null ? "" : String(cfg.goal));
+  const [titleField, setTitleField] = useState((cfg.title_field as string) ?? "");
+  const [expectRrule, setExpectRrule] = useState((cfg.expect_rrule as string) ?? "");
   const [filterRows, setFilterRows] = useState<FilterRow[]>(() => configToFilterRows(cfg));
   const [sortRows, setSortRows] = useState<SortRow[]>(() => sortToRows(cfg.sort));
   const [shared, setShared] = useState(view.owner_user_id === null);
@@ -1189,10 +1376,37 @@ function EditViewModal({
           } else {
             delete config.date_field;
           }
-          if (viewType === "gallery" && imageField.trim()) {
-            config.image_field = imageField.trim();
+          if (viewType === "heatmap" && expectRrule.trim()) {
+            config.expect_rrule = expectRrule.trim();
+          } else {
+            delete config.expect_rrule;
+          }
+          if (viewType === "gallery") {
+            if (imageField.trim()) config.image_field = imageField.trim();
+            else delete config.image_field;
+            if (captionField.trim()) config.caption_field = captionField.trim();
+            else delete config.caption_field;
           } else {
             delete config.image_field;
+            delete config.caption_field;
+          }
+          if (viewType === "trend") {
+            if (xField.trim()) config.x = xField.trim();
+            else delete config.x;
+            if (yField.trim()) config.y = yField.trim();
+            else delete config.y;
+            const g = Number(goal);
+            if (goal.trim() && Number.isFinite(g)) config.goal = g;
+            else delete config.goal;
+          } else {
+            delete config.x;
+            delete config.y;
+            delete config.goal;
+          }
+          if ((viewType === "calendar" || viewType === "gantt") && titleField.trim()) {
+            config.title_field = titleField.trim();
+          } else {
+            delete config.title_field;
           }
           if (viewType === "gantt") {
             if (startField.trim()) config.start_field = startField.trim();
@@ -1278,10 +1492,70 @@ function EditViewModal({
             <div className="text-[11px] text-faint mt-1">Which field each row lands on.</div>
           </label>
         )}
+        {viewType === "heatmap" && (
+          <label className="block">
+            <div className="text-xs text-muted mb-1">Expected cadence (optional)</div>
+            <select
+              value={CADENCE_PRESETS.some((c) => c.rrule === expectRrule) || expectRrule === "" ? expectRrule : "__custom"}
+              onChange={(e) => setExpectRrule(e.target.value === "__custom" ? "FREQ=DAILY;INTERVAL=1" : e.target.value)}
+              className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+            >
+              <option value="">No expectation (just count what happened)</option>
+              {CADENCE_PRESETS.map((c) => (
+                <option key={c.rrule} value={c.rrule}>{c.label}</option>
+              ))}
+              <option value="__custom">Custom…</option>
+            </select>
+            {expectRrule !== "" && !CADENCE_PRESETS.some((c) => c.rrule === expectRrule) && (
+              <input
+                type="text"
+                value={expectRrule}
+                onChange={(e) => setExpectRrule(e.target.value)}
+                placeholder="FREQ=WEEKLY;BYDAY=MO,WE,FR"
+                className="mt-2 w-full px-2 py-1 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+              />
+            )}
+            <div className="text-[11px] text-faint mt-1">
+              Outlines the days you meant to do this, so a gap reads as a miss and a rest day doesn't.
+            </div>
+          </label>
+        )}
         {viewType === "gallery" && (
           <label className="block">
             <div className="text-xs text-muted mb-1">Image field</div>
             <FieldSelect fields={fields} value={imageField} onChange={setImageField} allowBlank blankLabel="Pick an image field…" />
+            <div className="text-xs text-muted mb-1 mt-2">Caption field (optional)</div>
+            <FieldSelect fields={fields} value={captionField} onChange={setCaptionField} allowBlank blankLabel="No caption" />
+          </label>
+        )}
+        {viewType === "trend" && (
+          <div className="space-y-2">
+            <div className="grid grid-cols-2 gap-2">
+              <label className="block">
+                <div className="text-xs text-muted mb-1">Date field (x)</div>
+                <FieldSelect fields={fields} value={xField} onChange={setXField} allowBlank blankLabel="Pick a date field…" />
+              </label>
+              <label className="block">
+                <div className="text-xs text-muted mb-1">Value field (y)</div>
+                <FieldSelect fields={fields} value={yField} onChange={setYField} allowBlank blankLabel="Pick a number field…" />
+              </label>
+            </div>
+            <label className="block">
+              <div className="text-xs text-muted mb-1">Goal line (optional)</div>
+              <input
+                type="number"
+                value={goal}
+                onChange={(e) => setGoal(e.target.value)}
+                placeholder="e.g. 80"
+                className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+              />
+            </label>
+          </div>
+        )}
+        {(viewType === "calendar" || viewType === "gantt") && (
+          <label className="block">
+            <div className="text-xs text-muted mb-1">Label field (optional)</div>
+            <FieldSelect fields={fields} value={titleField} onChange={setTitleField} allowBlank blankLabel="Title (default)" />
           </label>
         )}
         {viewType === "gantt" && (

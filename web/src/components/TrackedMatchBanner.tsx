@@ -11,6 +11,13 @@ import { useToast } from "@cobblr/platform-web";
 import { api, ApiError, type ScanInboxItem, type TrackedMatch } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
+/** "license_plate" → "License plate" — a friendly label for a raw field key
+ *  (no field-def lookup needed for a quick merge preview). */
+function humanizeField(key: string): string {
+  const s = key.replace(/_/g, " ").trim();
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 export function TrackedMatchBanner({
   item,
   locationId,
@@ -29,7 +36,7 @@ export function TrackedMatchBanner({
   onAttached?: (
     result: { entity_title: string; new_qty: number | null; prev_location_id: string | null },
     match: TrackedMatch,
-    mode: "add-qty" | "link-barcode" | "move",
+    mode: "add-qty" | "link-barcode" | "move" | "merge-fields",
   ) => void;
 }) {
   const { activeSlug } = useActiveOrg();
@@ -55,7 +62,7 @@ export function TrackedMatchBanner({
     id ? ((locations.data?.items ?? []).find((l) => l.id === id)?.name ?? null) : null;
 
   const attach = useMutation({
-    mutationFn: (vars: { m: TrackedMatch; mode: "add-qty" | "link-barcode" | "move" }) =>
+    mutationFn: (vars: { m: TrackedMatch; mode: "add-qty" | "link-barcode" | "move" | "merge-fields" }) =>
       api.scanAttach(activeSlug, item.id, {
         kind: vars.m.kind,
         entity_id: vars.m.id,
@@ -70,7 +77,11 @@ export function TrackedMatchBanner({
           ? `+${Math.max(1, item.quantity || 1)} → ${r.entity_title}${r.new_qty != null ? ` (now ×${r.new_qty})` : ""}`
           : vars.mode === "move"
             ? `Moved ${r.entity_title}${locationName ? ` → ${locationName}` : ""}`
-            : `Barcode linked to ${r.entity_title}`,
+            : vars.mode === "merge-fields"
+              ? r.merged_fields.length
+                ? `Updated ${r.entity_title} — added ${r.merged_fields.map(humanizeField).join(", ")}`
+                : `${r.entity_title} already had everything — nothing to add`
+              : `Barcode linked to ${r.entity_title}`,
       );
       onAttached?.(r, vars.m, vars.mode);
     },
@@ -101,14 +112,34 @@ export function TrackedMatchBanner({
   const exact = best.matched_by === "barcode";
   const busy = attach.isPending;
 
+  // "Same one — fill it in": the fields THIS scan learned that could enrich the
+  // matched entity (a plate photo's plate/color for a car the VIN scan made).
+  // From the matchmaker candidate for the matched instance; the server writes
+  // only the ones the entity is still missing. Offered on a NAME match (a
+  // unique thing you recognised), where "+1 to it" would wrongly duplicate.
+  const mergeCand = (item.suggested_candidates ?? []).find(
+    (c) =>
+      (c.instance ?? null) === (best.instance ?? null) &&
+      c.fields &&
+      Object.keys(c.fields).length > 0,
+  );
+  const mergeEntries = mergeCand
+    ? Object.entries(mergeCand.fields).filter(([, v]) => v !== "" && v != null)
+    : [];
+  const canMerge = best.matched_by === "name" && mergeEntries.length > 0;
+
   return (
     <div className="rounded-lg border border-emerald-300 dark:border-emerald-700/60 bg-emerald-50/70 dark:bg-emerald-950/20 px-3 py-2.5">
       <div className="flex items-start gap-2">
         <CheckCircle2 size={15} className="text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
         <div className="min-w-0 flex-1 text-sm">
           <span className="font-medium text-content dark:text-mortar-100">
-            Already tracked{exact ? "" : " (name match)"} — {best.title}
-            {best.qty != null && <span className="text-muted"> ×{best.qty}</span>}
+            {canMerge ? (
+              <>Is this the same one? — {best.title}</>
+            ) : (
+              <>Already tracked{exact ? "" : " (name match)"} — {best.title}</>
+            )}
+            {best.qty != null && !canMerge && <span className="text-muted"> ×{best.qty}</span>}
           </span>
           {best.subtitle && <span className="text-muted"> · {best.subtitle}</span>}
           {locName(best.location_id) && (
@@ -124,8 +155,34 @@ export function TrackedMatchBanner({
           <X size={15} />
         </button>
       </div>
+      {canMerge && (
+        <div className="mt-2 rounded-md bg-white/60 dark:bg-slate-900/40 border border-emerald-200/70 dark:border-emerald-800/50 px-2.5 py-2">
+          <div className="text-[11px] font-mono uppercase tracking-widest text-emerald-700 dark:text-emerald-300 mb-1">
+            merge in
+          </div>
+          <dl className="text-xs space-y-0.5">
+            {mergeEntries.map(([k, v]) => (
+              <div key={k} className="flex gap-2">
+                <dt className="text-muted min-w-[92px]">{humanizeField(k)}</dt>
+                <dd className="text-content dark:text-mortar-100 font-medium min-w-0 break-words">{String(v)}</dd>
+              </div>
+            ))}
+          </dl>
+          <p className="text-[11px] text-muted mt-1.5">Only fields it's missing are filled — nothing gets overwritten.</p>
+        </div>
+      )}
       <div className="mt-2 flex flex-wrap gap-1.5">
-        {best.qty != null && (
+        {canMerge && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => attach.mutate({ m: best, mode: "merge-fields" })}
+            className="inline-flex items-center gap-1 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 text-xs font-medium disabled:opacity-50"
+          >
+            <CheckCircle2 size={12} /> Yes — merge these in
+          </button>
+        )}
+        {best.qty != null && !canMerge && (
           <button
             type="button"
             disabled={busy}

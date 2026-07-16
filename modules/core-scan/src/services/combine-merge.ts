@@ -64,6 +64,26 @@ export function pickPrimaryId(items: CombineItem[], keepId?: string | null): str
  * doesn't belong on a book). The primary's own values always win; the others only
  * fill GAPS. Returns the primary's candidates untouched when it has none.
  */
+/** A kind whose DECLARED traits include `unique` is tracked one-by-one — a
+ *  vehicle, a machine, an asset. Reads the kind's trait map (axis → trait
+ *  value(s)), never the kind's name. */
+export function traitsHaveUnique(traits: Record<string, unknown> | null | undefined): boolean {
+  if (!traits) return false;
+  return Object.values(traits).some((v) =>
+    Array.isArray(v) ? v.includes("unique") : v === "unique",
+  );
+}
+
+/** The combined row's quantity. Units SUM for fungible stock (four scans of the
+ *  same soap → ×4), but a unique-tracked thing captured twice — a VIN scan plus
+ *  a plate photo of the SAME vehicle — is still ONE thing: keep the largest
+ *  single count instead of summing sightings into phantom units. */
+export function combinedQuantity(quantities: number[], unique: boolean): number {
+  const qs = quantities.map((q) => (Number.isFinite(q) && q > 0 ? q : 1));
+  if (qs.length === 0) return 1;
+  return unique ? Math.max(...qs) : qs.reduce((a, b) => a + b, 0);
+}
+
 export function unionCandidateFields(
   primary: CombineItem,
   others: CombineItem[],

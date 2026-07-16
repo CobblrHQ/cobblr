@@ -1,9 +1,9 @@
 {
   "manifest": {
-    "id": "cobblr.community.bookshelf",
-    "version": "0.2.0",
-    "name": "Bookshelf",
-    "description": "Your books as their own shelf: author + ISBN + year + read status, on a lean catalog that opens as a cover wall. Spine-label wire bundled.",
+    "id": "cobblr.community.lending-library",
+    "version": "0.1.1",
+    "name": "Lending Library",
+    "description": "A shelf you lend from: each title carries its copies, and lending one out reserves it against a borrower until it comes back.",
     "author": "Cobblr community",
     "requires": [
       {
@@ -15,7 +15,7 @@
         "key": "labels",
         "name": "Label printing",
         "question": "Print QR labels for these?",
-        "description": "Adds the Labels module + a one-tap print action on each item.",
+        "description": "Adds the Labels module + a one-tap print action, so a copy can be scanned in and out.",
         "requires": [
           {
             "module": "labels"
@@ -23,10 +23,10 @@
         ],
         "wires": [
           {
-            "source_kind": "bookshelf:item",
+            "source_kind": "lending-library:item",
             "action_id": "labels:print",
             "trigger_type": "user-invoked",
-            "template": "{{author | default: \"Unknown\"}}\n{{name}}\n{{year | default: \"?\"}}"
+            "template": "{{author | default: \"Unknown\"}}\n{{name}}"
           }
         ]
       }
@@ -34,58 +34,51 @@
     "provides_instances": [
       {
         "module": "inventory",
-        "instance_name": "bookshelf",
-        "display_name": "Bookshelf",
-        "glyph": "📚",
+        "instance_name": "lending-library",
+        "display_name": "Lending Library",
+        "glyph": "📖",
         "item_noun": "book",
-        "qty_unit": "each",
+        "qty_unit": "copy",
         "field_defs": [
           {
-            "entity_kind": "bookshelf:item",
+            "entity_kind": "lending-library:item",
             "name": "author",
             "display_label": "Author",
             "type": "text",
             "position": 1
           },
           {
-            "entity_kind": "bookshelf:item",
+            "entity_kind": "lending-library:item",
             "name": "isbn",
             "display_label": "ISBN",
             "type": "text",
             "position": 2
           },
           {
-            "entity_kind": "bookshelf:item",
+            "entity_kind": "lending-library:item",
             "name": "year",
             "display_label": "Year",
             "type": "number",
             "position": 3
           },
           {
-            "entity_kind": "bookshelf:item",
-            "name": "read_status",
-            "display_label": "Status",
+            "entity_kind": "lending-library:item",
+            "name": "format",
+            "display_label": "Format",
             "type": "text",
             "choices": [
-              "To read",
-              "Reading",
-              "Read",
-              "Abandoned"
+              "Hardback",
+              "Paperback",
+              "Large print",
+              "Audiobook"
             ],
             "position": 4
-          },
-          {
-            "entity_kind": "bookshelf:item",
-            "name": "rating",
-            "display_label": "Rating (1-5)",
-            "type": "number",
-            "position": 5
           }
         ],
         "saved_views": [
           {
-            "entity_kind": "bookshelf:item",
-            "name": "Covers",
+            "entity_kind": "lending-library:item",
+            "name": "Shelf",
             "view_type": "gallery",
             "pinned": true,
             "config": {
@@ -94,18 +87,16 @@
             }
           },
           {
-            "entity_kind": "bookshelf:item",
-            "name": "By status",
+            "entity_kind": "lending-library:item",
+            "name": "Out on loan",
             "view_type": "table",
             "config": {
               "visible_fields": [
                 "title",
                 "author",
-                "year",
-                "read_status",
-                "rating"
-              ],
-              "group_by": "read_status"
+                "qty",
+                "available_qty"
+              ]
             }
           }
         ]

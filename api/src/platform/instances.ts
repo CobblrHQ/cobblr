@@ -260,6 +260,43 @@ export function registerItemCounter(
   itemCounters.set(moduleName, counter);
 }
 
+/** Shallow-merge a patch into an instance's entity-kind-override config (the
+ *  meta-side blob resolveInstance surfaces on req.instanceConfig). One atomic
+ *  upsert — the merge happens IN Postgres (`config || patch`), so a concurrent
+ *  writer (a user renaming the noun, another latch) can never be clobbered by
+ *  a read-modify-write race. Backs platform().instances.patchDerivedConfig —
+ *  the seam a module uses to latch a derived signal (inventory's
+ *  `stock_latched`) meta-side. Cheap and idempotent. */
+export async function patchInstanceDerivedConfig(
+  orgId: string,
+  moduleName: string,
+  instanceName: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  const targetId = `${moduleName}:${instanceName}`;
+  const patchJson = JSON.stringify(patch);
+  await meta
+    .insertInto("entity_kind_overrides")
+    .values({
+      org_id: orgId,
+      target_kind: "instance",
+      target_id: targetId,
+      display_label: null,
+      display_label_plural: null,
+      icon: null,
+      hidden: false,
+      nav_order: null,
+      config: sql`${patchJson}::jsonb` as never,
+    })
+    .onConflict((c) =>
+      c.columns(["org_id", "target_kind", "target_id"]).doUpdateSet({
+        config: sql`coalesce(entity_kind_overrides.config, '{}'::jsonb) || ${patchJson}::jsonb` as never,
+        updated_at: new Date(),
+      }),
+    )
+    .execute();
+}
+
 /** Count primary items in (org, module, instance). null = the module
  *  registered no counter, or the count failed — never breaks the list. */
 export async function countInstanceItems(

@@ -470,13 +470,13 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
     glyph: "📚",
     blurb:
-      "Personal library — author, ISBN, year, read-status. Print spine labels with one wire.",
+      "Personal library — author, ISBN, year, read-status, on its own shelf that opens as a cover wall. Print spine labels with one wire.",
     manifest: {
       id: "cobblr.community.bookshelf",
-      version: "0.1.0",
+      version: "0.2.0",
       name: "Bookshelf",
       description:
-        "Catalog books as inventory parts. Each gets author + ISBN + year + read status. Spine-label wire bundled.",
+        "Your books as their own shelf: author + ISBN + year + read status, on a lean catalog that opens as a cover wall. Spine-label wire bundled.",
       author: "Cobblr community",
       requires: [{ module: "inventory" }],
       features: [
@@ -487,22 +487,117 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           description: "Adds the Labels module + a one-tap print action on each item.",
           requires: [{ module: "labels" }],
           wires: [
-        {
-          source_kind: "inventory:part",
-          action_id: "labels:print",
-          trigger_type: "user-invoked",
-          template:
-            '{{author | default: "Unknown"}}\n{{name}}\n{{year | default: "?"}}',
-        },
+            {
+              source_kind: "bookshelf:item",
+              action_id: "labels:print",
+              trigger_type: "user-invoked",
+              template:
+                '{{author | default: "Unknown"}}\n{{name}}\n{{year | default: "?"}}',
+            },
           ],
         },
       ],
-      field_defs: [
-        { entity_kind: "inventory:part", name: "author", display_label: "Author", type: "text", position: 1 },
-        { entity_kind: "inventory:part", name: "isbn", display_label: "ISBN", type: "text", position: 2 },
-        { entity_kind: "inventory:part", name: "year", display_label: "Year", type: "number", position: 3 },
-        { entity_kind: "inventory:part", name: "read_status", display_label: "Status", type: "text", position: 4 },
-        { entity_kind: "inventory:part", name: "rating", display_label: "Rating (1-5)", type: "number", position: 5 },
+      // Books live on their OWN shelf, not in the workspace's inventory. The
+      // default inventory instance is always stock (it IS your inventory), so a
+      // bookshelf built on it could never show the lean catalog face — it wore
+      // qty/cost/warranty. Its own instance discloses lean (qty_unit "each", no
+      // stock signal) and opens on the cover wall. See one-record-substrate.md.
+      provides_instances: [
+        {
+          module: "inventory",
+          instance_name: "bookshelf",
+          display_name: "Bookshelf",
+          glyph: "📚",
+          item_noun: "book",
+          qty_unit: "each",
+          field_defs: [
+            { entity_kind: "bookshelf:item", name: "author", display_label: "Author", type: "text", position: 1 },
+            { entity_kind: "bookshelf:item", name: "isbn", display_label: "ISBN", type: "text", position: 2 },
+            { entity_kind: "bookshelf:item", name: "year", display_label: "Year", type: "number", position: 3 },
+            { entity_kind: "bookshelf:item", name: "read_status", display_label: "Status", type: "text", choices: ["To read", "Reading", "Read", "Abandoned"], position: 4 },
+            { entity_kind: "bookshelf:item", name: "rating", display_label: "Rating (1-5)", type: "number", position: 5 },
+          ],
+          saved_views: [
+            {
+              entity_kind: "bookshelf:item",
+              name: "Covers",
+              view_type: "gallery",
+              pinned: true,
+              config: { image_field: "image_path", caption_field: "author" },
+            },
+            {
+              entity_kind: "bookshelf:item",
+              name: "By status",
+              view_type: "table",
+              config: { visible_fields: ["title", "author", "year", "read_status", "rating"], group_by: "read_status" },
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    glyph: "📖",
+    blurb:
+      "Lending library — the shelf you lend FROM: count copies, see who has one and when it's due back.",
+    manifest: {
+      id: "cobblr.community.lending-library",
+      version: "0.1.0",
+      name: "Lending Library",
+      description:
+        "A shelf you lend from: each title carries its copies, and lending one out reserves it against a borrower until it comes back.",
+      author: "Cobblr community",
+      requires: [{ module: "inventory" }],
+      features: [
+        {
+          key: "labels",
+          name: "Label printing",
+          question: "Print QR labels for these?",
+          description: "Adds the Labels module + a one-tap print action, so a copy can be scanned in and out.",
+          requires: [{ module: "labels" }],
+          wires: [
+            {
+              source_kind: "lending-library:item",
+              action_id: "labels:print",
+              trigger_type: "user-invoked",
+              template: '{{author | default: "Unknown"}}\n{{name}}',
+            },
+          ],
+        },
+      ],
+      // The deplete-and-lend twin of Bookshelf. Bookshelf is a CATALOG — one row
+      // per title, no quantities — so it discloses lean. A lending library is the
+      // same shelf with stock character: you hold COPIES and they go out and come
+      // back. It says so the generic way, by declaring a measured unit ("copy",
+      // not "each"), which is the signal that opens the stock face — quantities,
+      // and the allocations panel that IS the lending. Nothing here is bespoke
+      // lending code; it's inventory's own reserve/return seen through a library's
+      // words. See one-record-substrate.md.
+      provides_instances: [
+        {
+          module: "inventory",
+          instance_name: "lending-library",
+          display_name: "Lending Library",
+          glyph: "📖",
+          item_noun: "book",
+          qty_unit: "copy",
+          field_defs: [
+            { entity_kind: "lending-library:item", name: "author", display_label: "Author", type: "text", position: 1 },
+            { entity_kind: "lending-library:item", name: "isbn", display_label: "ISBN", type: "text", position: 2 },
+            { entity_kind: "lending-library:item", name: "year", display_label: "Year", type: "number", position: 3 },
+            // Choices are not decoration: they are the fingerprint the HEURISTIC
+            // (no-AI) scan router matches a capture against, so this shelf is
+            // reachable on a workspace with AI off. lint:bundle-quality enforces
+            // that every instance carries choices or scan_keywords for exactly
+            // that reason. Format also happens to be what you want to know
+            // before you lend one out.
+            { entity_kind: "lending-library:item", name: "format", display_label: "Format", type: "text", choices: ["Hardback", "Paperback", "Large print", "Audiobook"], position: 4 },
+          ],
+          saved_views: [
+            { entity_kind: "lending-library:item", name: "Shelf", view_type: "gallery", pinned: true, config: { image_field: "image_path", caption_field: "author" } },
+            { entity_kind: "lending-library:item", name: "Out on loan", view_type: "table", config: { visible_fields: ["title", "author", "qty", "available_qty"] } },
+          ],
+        },
       ],
     },
   },
@@ -1455,9 +1550,9 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.collections",
-      version: "0.2.0",
+      version: "0.3.0",
       name: "Collections",
-      description: "Your collection as its own table — condition, edition, paid vs value today, grouped by condition, so you stop buying the dupe.",
+      description: "Your collection as its own cover wall — condition, edition, paid vs value today, so you stop buying the dupe.",
       author: "Cobblr",
       released_at: "2026-06-08",
       changelog:
@@ -1490,7 +1585,10 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             { entity_kind: "inventory:part", name: "min_qty", hidden: true },
           ],
           saved_views: [
-            { entity_kind: "inventory:part", name: "By condition", view_type: "table", pinned: true, config: { group_by: "condition", visible_fields: ["title", "edition", "current_value", "acquired_date"] } },
+            // A collection is photo-first — the wall of covers IS the point, so it
+            // opens on the gallery; the grouped table stays a click away.
+            { entity_kind: "inventory:part", name: "Gallery", view_type: "gallery", pinned: true, config: { image_field: "image_path", caption_field: "edition" } },
+            { entity_kind: "inventory:part", name: "By condition", view_type: "table", config: { group_by: "condition", visible_fields: ["title", "edition", "current_value", "acquired_date"] } },
           ],
         },
       ],

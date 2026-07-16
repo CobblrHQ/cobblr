@@ -22,7 +22,7 @@ import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
-import { platform, planDecodeFill, type DecodeFillTarget } from "@cobblr/platform-contract";
+import { platform, planDecodeFill, traitAxisValue, type DecodeFillTarget } from "@cobblr/platform-contract";
 import { bearer, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { downloadCatalogImage, enrichBarcodeItem, isJunkName } from "../services/enrich.js";
@@ -34,7 +34,7 @@ import {
   refreshCatalogImageByName,
 } from "../services/enrich-photo.js";
 import { mergeMeta } from "../services/metadata.js";
-import { pickPrimaryId, unionCandidateFields, type CombineItem } from "../services/combine-merge.js";
+import { pickPrimaryId, unionCandidateFields, traitsHaveUnique, combinedQuantity, type CombineItem, type CombineCandidate } from "../services/combine-merge.js";
 import { searchImages, rankImageOptions, imageQuery, mediaSearchExtras } from "../services/ddg-images.js";
 import {
   assembleScanMenu,
@@ -1100,8 +1100,31 @@ inboxRouter.post(
     const createPath = scanTarget.createEndpoint;
 
     // Build the create body. Defaults from the suggestion + extras win.
-    // The quantity rides on the kind's own field name (qty vs quantity).
-    const qty = parsed.data.quantity ?? Number(row.quantity ?? 1);
+    // The quantity rides on the kind's own field name (qty vs quantity) —
+    // EXCEPT for an identity-UNIQUE target (a lean catalog instance, an asset):
+    // a unique record is one-per-title, so a default "qty 1" on its create is
+    // not a count, it's an accident — and on a lean catalog it would latch the
+    // whole list to the stock face (one-record-substrate.md). For unique
+    // targets the quantity only rides when it carries real information: the
+    // user typed one, or the scan read a genuine multiple off the label.
+    // Fungible stock keeps the default-1 (a scanned screw IS stock intake).
+    // Derived from the kind's TRAITS via the org registry, never from module
+    // or bundle names; a registry hiccup falls back to today's behavior.
+    const effectiveKindId = parsed.data.instance ? `${parsed.data.instance}:item` : kindKey;
+    let targetIsUnique = false;
+    try {
+      const kinds = await platform().entities.listKindsForOrg(ctx.org.id);
+      const targetKind = kinds.find((k) => k.id === effectiveKindId);
+      targetIsUnique =
+        traitAxisValue(targetKind?.traits as Record<string, unknown> | null, "identity") ===
+        "unique";
+    } catch {
+      /* advisory — fall through to the fungible default */
+    }
+    const scannedQty = Number(row.quantity ?? 1);
+    const qty =
+      parsed.data.quantity ??
+      (targetIsUnique && !(scannedQty > 1) ? undefined : scannedQty);
     const qtyField = scanTarget.qtyField;
     // `extras.metadata` (the instance's custom fields the user filled on the
     // confirm form — colorway, fibre, …) is DEEP-merged into the scan metadata
@@ -1400,14 +1423,23 @@ inboxRouter.post(
           ...(renamed ? {} : { commitSignal: true }),
         });
       }
-      if (row.suggested_manufacturer) {
+      // Same fork as the title: the brand the user COMMITTED is the signal. An
+      // edited brand is a CORRECTION (the resolver's was wrong); filed as-is is a
+      // vote. Voting row.suggested_manufacturer unconditionally endorsed the very
+      // value the user just fixed — the wrong-signal class this block exists to
+      // avoid.
+      const committedBrand = String(
+        (restExtras as { manufacturer?: unknown }).manufacturer ?? row.suggested_manufacturer ?? "",
+      ).trim();
+      const brandChanged = meaningfullyChanged(row.suggested_manufacturer, committedBrand);
+      if (committedBrand) {
         void reportBarcodeCorrection({
           upc: row.barcode_text,
           field: "brand",
           was: row.suggested_manufacturer,
-          now: row.suggested_manufacturer,
+          now: committedBrand,
           userId: sess.id,
-          commitSignal: true,
+          ...(brandChanged ? {} : { commitSignal: true }),
         });
       }
       const committedCategory = (meta as { category?: unknown }).category;
@@ -1632,10 +1664,14 @@ inboxRouter.post(
     const db = tenantDb(req);
     const row = await db
       .updateTable("core_scan_inbox_items")
-      // Restoring re-queues to the TOP (bump created_at, the list's sort key) so
-      // the recovered item is where the user expects it, not buried at its old
-      // position — the same "where did it go?" trap as a deduped re-scan.
-      .set({ status: "pending", created_at: new Date(), updated_at: new Date() })
+      // created_at is PRESERVED — a restore is an UNDO, and the item goes back
+      // exactly where it was (same contract as un-confirm). Bumping created_at
+      // to "requeue at the top" yanked the item AND its whole session group to
+      // the top of the inbox on an accidental-X-then-undo, and rewrote the
+      // item's real scan time. The "find it later" case (restoring from
+      // Recently deleted long after) is handled client-side by highlight +
+      // scroll-to, never by a created_at rewrite.
+      .set({ status: "pending", updated_at: new Date() })
       .where("id", "=", id)
       .where("status", "=", "discarded")
       .returningAll()
@@ -1655,7 +1691,7 @@ async function appendScanHistory(
   db: ReturnType<typeof tenantDb>,
   id: string,
   entry: {
-    action: "rerun" | "wrong" | "enrich" | "confirm" | "combine" | "attached" | "split" | "unconfirm";
+    action: "rerun" | "replay" | "rerun-hint" | "wrong" | "enrich" | "confirm" | "combine" | "attached" | "split" | "unconfirm";
     note?: string | null;
   },
 ): Promise<void> {
@@ -1743,7 +1779,17 @@ inboxRouter.post(
     // early return too) so the source panel can show "you asked for more detail".
     const rerun = RerunBody.safeParse(req.body ?? {}).data;
     await appendScanHistory(db, id, {
-      action: rerun?.wrong ? "wrong" : rerun?.enrich ? "enrich" : "rerun",
+      // Say WHICH kind of run this was — "Re-ran the lookup" hid whether tokens
+      // were spent, a hint was folded in, or it was a free replay.
+      action: rerun?.wrong
+        ? "wrong"
+        : rerun?.enrich
+          ? "enrich"
+          : rerun?.no_ai
+            ? "replay"
+            : rerun?.hint?.trim()
+              ? "rerun-hint"
+              : "rerun",
       note: rerun?.hint,
     });
     // The user photographed the product to re-identify it (phone "Not it —
@@ -1789,6 +1835,10 @@ inboxRouter.post(
           suggested_metadata: sql`(coalesce(suggested_metadata, '{}'::jsonb) - 'matched_at' - 'finalized_at' - 'match_failed')
             || ${JSON.stringify({
               pipeline_started_at: new Date().toISOString(),
+              // The UI labels the WHOLE in-flight cycle from this ("Replaying
+              // (no AI)…" vs "AI reading…") — the mutation returns immediately,
+              // so a client-side flag alone reverts to AI language mid-run.
+              pipeline_kind: rerun?.no_ai ? "replay" : "rerun",
               // The hint has to ride into the matchmaker too — the barcode path
               // stamps it below, but the photo path returns before that, which
               // silently dropped the correction entirely.
@@ -1833,23 +1883,30 @@ inboxRouter.post(
           hint: photoHint,
           replay,
         });
-        // A replay with no cached reply for this image changed nothing and cost
-        // nothing. Say so on the row (the card surfaces it) rather than leaving
-        // the user staring at an unchanged card wondering if the button works.
-        if (replay && outcome === "nothing-cached") {
+        // A replay with no cached reply keeps the IDENTITY as-is (nothing to
+        // re-parse, nothing spent) — but it must still: (1) stamp
+        // ai_suggested_at, the client's completion signal, or the REPLAYING
+        // badge spins to its 95s timeout on a run that finished in a second;
+        // and (2) fall through to re-MATCH below — replay's whole point is
+        // re-running the ROUTING through current code, and the early return
+        // here meant items with an uncached photo kept absurd stored
+        // candidates forever, immune to every routing fix.
+        const nothingCached = replay && outcome === "nothing-cached";
+        if (nothingCached) {
           await workDb
             .updateTable("core_scan_inbox_items")
             .set({
               ai_notes:
-                "Replay (no AI): nothing cached for this photo, so there was no reply to re-parse. Use Re-run AI to identify it for real.",
-              suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || jsonb_build_object('finalized_at', now()::text)` as never,
+                "Replay (no AI): no cached photo reply, so the name was kept as-is; the table suggestions were re-derived with the current rules. Use Re-run AI to re-identify for real.",
+              ai_suggested_at: new Date(),
               updated_at: new Date(),
             })
             .where("id", "=", id)
             .execute();
-          return;
+        } else {
+          // Identity actually (re)landed → let the wires react.
+          void platform().events.emit("core-scan.scan.enriched", { orgId: ctx.org.id, itemId: id });
         }
-        void platform().events.emit("core-scan.scan.enriched", { orgId: ctx.org.id, itemId: id });
         await matchItem({
           orgId: ctx.org.id,
           userId: sessionUser(req)?.id ?? null,
@@ -1867,6 +1924,18 @@ inboxRouter.post(
       return;
     }
 
+    // "Replay (no AI)" on a BARCODE item must keep the button's promise: no
+    // model call, no tokens. This branch used to ignore no_ai entirely — it
+    // cache-deleted, force-re-asked the catalogs (whose tails call vision/web
+    // AI), and ran the matchmaker live, so a "free replay" burned real tokens
+    // and lit every AI spinner. Under replay: identity stays as stored, and
+    // only the ROUTING re-runs below — the cached matchmaker reply through the
+    // CURRENT post-processing (cache_only, so a prompt-cache miss falls to the
+    // deterministic heuristic instead of a paid call).
+    const replayBarcode = !!rerun?.no_ai;
+    const baseUrl =
+      (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+    if (!replayBarcode) {
     // Bypass the cache by clearing the cache row for this UPC.
     try {
       await db
@@ -1877,8 +1946,6 @@ inboxRouter.post(
       /* non-fatal */
     }
 
-    const baseUrl =
-      (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
     await enrichBarcodeItem({
       db,
       orgId: ctx.org.id,
@@ -1916,6 +1983,7 @@ inboxRouter.post(
         .where("id", "=", id)
         .execute();
     }
+    }
 
     // Rerun = re-ask everything: the match runs INLINE so the response
     // already carries the re-ranked candidates + reconciliation notes
@@ -1927,6 +1995,7 @@ inboxRouter.post(
       baseUrl,
       itemId: id,
       force: true,
+      replay: replayBarcode,
     });
 
     const fresh = await db
@@ -2288,6 +2357,11 @@ inboxRouter.post(
 //   link-barcode — write metadata.barcode only (teach an existing entity its
 //                  barcode; the next scan matches instantly).
 //   move         — set the entity's location_id (move mode's unit action).
+//   merge-fields — "same one, fill in what this scan learned": write the scan's
+//                  structured fields (a plate photo's license_plate/color, a
+//                  VIN's make/model) onto the EXISTING entity, only where it's
+//                  still blank. The unique-asset analogue of add-qty — you don't
+//                  add a second car, you enrich the one you have.
 // All writes go through the module's OWN HTTP endpoint under the caller's
 // bearer (same inherited-capability pattern as confirm) — never raw SQL into
 // another module's table. The inbox item resolves as "attached".
@@ -2297,7 +2371,7 @@ const AttachBody = z.object({
   /** Instance slug when the entity lives in a skinned instance (the bare
    *  module route filters to the default instance and would 404). */
   instance: z.string().optional(),
-  mode: z.enum(["add-qty", "link-barcode", "move"]),
+  mode: z.enum(["add-qty", "link-barcode", "move", "merge-fields"]),
   /** For mode=move: target location; defaults to the item's own
    *  target_location_id (the active bin it was scanned into). */
   location_id: z.string().optional(),
@@ -2366,6 +2440,7 @@ inboxRouter.post(
 
     const patch: Record<string, unknown> = {};
     let newQty: number | null = null;
+    const mergedFields: string[] = [];
     if (parsed.data.mode === "add-qty") {
       const cur = Number(entity[scannable.qtyField] ?? 0);
       const add = Math.max(1, Number(row.quantity ?? 1));
@@ -2387,6 +2462,55 @@ inboxRouter.post(
       // the entity into that bin — the scan meant "this thing, into here".
       const linkLoc = parsed.data.location_id ?? row.target_location_id;
       if (linkLoc) patch.location_id = linkLoc;
+    } else if (parsed.data.mode === "merge-fields") {
+      // "Same one — fill in what this scan learned." Take the SAME structured
+      // values a confirm would write (native identity keys + the matchmaker's
+      // per-instance custom fields), but write them onto the EXISTING entity,
+      // and ONLY where it's still blank — enriching, never clobbering. So a
+      // plate photo adds license_plate + color to a car the VIN scan created,
+      // without touching the make/model/year it already knows.
+      const scanMeta = (row.suggested_metadata ?? {}) as Record<string, unknown>;
+      const candidates =
+        (row.suggested_candidates as Array<{
+          instance?: string | null;
+          module?: string;
+          fields?: Record<string, unknown>;
+        }> | null) ?? [];
+      const [candMod] = parsed.data.kind.split(":");
+      const cand = parsed.data.instance
+        ? candidates.find((c) => c.instance === parsed.data.instance)
+        : (candidates.find((c) => !c.instance && c.module === candMod) ?? candidates[0]);
+      const blank = (v: unknown) =>
+        v === undefined || v === null || (typeof v === "string" && v.trim() === "");
+      // Native identity columns the destination table declares.
+      const nativeIn: Record<string, unknown> = {};
+      if (row.suggested_manufacturer) nativeIn.manufacturer = row.suggested_manufacturer;
+      if (typeof scanMeta.model === "string" && scanMeta.model) nativeIn.model = scanMeta.model;
+      if (typeof scanMeta.serial_number === "string" && scanMeta.serial_number)
+        nativeIn.serial_number = scanMeta.serial_number;
+      for (const [k, v] of Object.entries(nativeIn)) {
+        if (blank(v) || !blank(entity[k])) continue;
+        patch[k] = v;
+        mergedFields.push(k);
+      }
+      // Custom fields (metadata): matchmaker candidate + any resolver-stamped
+      // fields, plus a real scanned barcode/sku for future catalog re-match.
+      const metaIn: Record<string, unknown> = {
+        ...((scanMeta.fields as Record<string, unknown> | undefined) ?? {}),
+        ...(cand?.fields ?? {}),
+      };
+      const aiRead = (scanMeta as { barcode_source?: string }).barcode_source === "ai-photo";
+      if (row.barcode_text && !aiRead) metaIn.barcode = row.barcode_text;
+      if (row.suggested_sku) metaIn.sku = row.suggested_sku;
+      const nextMeta = { ...entityMeta };
+      let metaChanged = false;
+      for (const [k, v] of Object.entries(metaIn)) {
+        if (blank(v) || !blank(entityMeta[k])) continue;
+        nextMeta[k] = v;
+        metaChanged = true;
+        mergedFields.push(k);
+      }
+      if (metaChanged) patch.metadata = nextMeta;
     } else {
       const loc = parsed.data.location_id ?? row.target_location_id;
       if (!loc) {
@@ -2398,23 +2522,27 @@ inboxRouter.post(
       patch.location_id = loc;
     }
 
-    const patchRes = await fetch(entityPath, {
-      method: "PATCH",
-      headers: authHeaders,
-      body: JSON.stringify(patch),
-    });
-    if (!patchRes.ok) {
-      const errText = await patchRes.text();
-      let targetMsg: string | undefined;
-      try {
-        targetMsg = (JSON.parse(errText) as { error?: { message?: string } }).error?.message;
-      } catch {
-        /* non-JSON */
-      }
-      res.status(patchRes.status).json({
-        error: { code: "attach_failed", message: targetMsg ?? `Target update returned ${patchRes.status}`, details: errText },
+    // merge-fields with nothing new to add still counts as "yes, same one" —
+    // the item resolves as attached, we just skip an empty PATCH.
+    if (Object.keys(patch).length > 0) {
+      const patchRes = await fetch(entityPath, {
+        method: "PATCH",
+        headers: authHeaders,
+        body: JSON.stringify(patch),
       });
-      return;
+      if (!patchRes.ok) {
+        const errText = await patchRes.text();
+        let targetMsg: string | undefined;
+        try {
+          targetMsg = (JSON.parse(errText) as { error?: { message?: string } }).error?.message;
+        } catch {
+          /* non-JSON */
+        }
+        res.status(patchRes.status).json({
+          error: { code: "attach_failed", message: targetMsg ?? `Target update returned ${patchRes.status}`, details: errText },
+        });
+        return;
+      }
     }
 
     // add-qty: give the entity the scan's photo when it has none (best-effort).
@@ -2482,6 +2610,7 @@ inboxRouter.post(
       entity_title: entityName,
       new_qty: newQty,
       prev_location_id: prevLocationId,
+      merged_fields: mergedFields,
     });
   }),
 );
@@ -3212,7 +3341,21 @@ inboxRouter.post(
       primary as unknown as CombineItem,
       others as unknown as CombineItem[],
     );
-    const totalQty = rows.reduce((n, r) => n + (Number(r.quantity) || 1), 0);
+    // A unique-tracked kind (a vehicle, a machine — declared traits, never the
+    // name) captured twice is ONE thing seen two ways, not two units: don't sum
+    // sightings into phantom quantity. Fungible stock still sums (×4 soap).
+    let uniqueKind = false;
+    const topCandKind = (primary.suggested_candidates as CombineCandidate[] | null)?.[0]?.kind;
+    if (topCandKind) {
+      try {
+        const ctx = tenantContext(req);
+        const kinds = await platform().entities.listKindsForOrg(ctx.org.id);
+        uniqueKind = traitsHaveUnique(kinds.find((k) => k.id === topCandKind)?.traits ?? null);
+      } catch {
+        /* trait lookup is best-effort — fall back to the summing default */
+      }
+    }
+    const totalQty = combinedQuantity(rows.map((r) => Number(r.quantity) || 1), uniqueKind);
     const barcodes = Array.from(new Set(rows.map((r) => r.barcode_text).filter(Boolean))) as string[];
     const meta = (primary.suggested_metadata ?? {}) as Record<string, unknown>;
     // Barcode authority: if the kept item's own barcode was READ BY AI (OCR, can
@@ -3482,6 +3625,34 @@ function applyPaintColorFill(color: string, candidates: MatchCandidate[], menu: 
  *  result (+ a matched_at stamp so intake auto-match never repeats). Returns
  *  the candidates, or null when skipped (no row / nothing identified yet /
  *  already matched / another match in flight). */
+/** Fill each new candidate's `fields` from the PREVIOUS run's candidate for the
+ *  same route, for keys this run didn't produce. Used on the no-AI replay path,
+ *  which re-derives routing from cached data and would otherwise drop fields only
+ *  a vision pass could have known. This run wins per key — a replay corrects, it
+ *  never erases. Matching is by (module, instance): carrying a vehicle's plate
+ *  onto a candidate for some other table would be worse than losing it. */
+export function carryForwardCandidateFields(prevRaw: unknown, next: unknown[]): void {
+  const prev = (prevRaw ?? []) as Array<{
+    module?: string;
+    instance?: string | null;
+    fields?: Record<string, unknown>;
+  }>;
+  if (!Array.isArray(prev) || prev.length === 0) return;
+  for (const c of next as Array<{
+    module?: string;
+    instance?: string | null;
+    fields?: Record<string, unknown>;
+  }>) {
+    if (!c || typeof c !== "object") continue;
+    const p = prev.find(
+      (x) => x.module === c.module && (x.instance ?? null) === (c.instance ?? null),
+    );
+    if (!p?.fields) continue;
+    const carried = { ...p.fields, ...(c.fields ?? {}) };
+    if (Object.keys(carried).length) c.fields = carried;
+  }
+}
+
 async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
   const inflight = matchInFlight.get(opts.itemId);
   if (inflight && Date.now() - inflight < 120_000) return null;
@@ -3585,6 +3756,15 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
     // gets the VIN that exists, not the one the scanner hallucinated.
     applyDecoderFill(row.suggested_metadata, candidates, menu, row.barcode_text);
 
+    // Replay (no AI) is a CHEAPER re-derivation, not a fresh look at the thing.
+    // The keyword heuristic CANNOT know what a vision pass read off the photo —
+    // a plate, a paint colour — so replacing the candidate list wholesale makes a
+    // replay FORGET those fields and silently downgrade the item (a 0.98 match
+    // carrying license_plate/color became a 0.60 keyword match carrying nothing).
+    // Carry the previous run's fields forward for the SAME route; this run still
+    // wins per key, so a replay can correct but never erase.
+    if (opts.replay) carryForwardCandidateFields(row.suggested_candidates, candidates);
+
     // Persist: candidates + the matched_at stamp (the web renders a passive
     // "AI is reading…" pulse until this lands — no client triggering) +
     // the cached photo observations. The top candidate's reconciliation
@@ -3641,6 +3821,21 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
     ).catch(() => null);
     if (vehColor) applyPaintColorFill(vehColor, candidates, menu);
 
+    // "Do we ALREADY have this?" — resolved here, at match time, rather than left
+    // to the card. The collapsed card's one-tap "Add" CREATES an entity, so it
+    // must not be the offer when the workspace already tracks the thing (that's
+    // how you get a second Honda Civic). The card can only suppress it if it
+    // knows without a per-card round trip, so the answer rides on the row. The
+    // expanded banner still queries live and stays authoritative — this stamp is
+    // the hint that keeps the collapsed CTA honest. Best-effort: a lookup failure
+    // must never fail the match.
+    const tracked = await findTracked(opts.orgId, {
+      barcode: row.barcode_text,
+      name: adoptName ? candName : row.suggested_name,
+    }).catch(() => null);
+    const bestTracked =
+      tracked?.barcode_matches[0] ?? tracked?.name_matches[0] ?? null;
+
     await dbAfter
       .updateTable("core_scan_inbox_items")
       .set({
@@ -3652,6 +3847,18 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
         // detached matchmaker races apply-theme's pending_tags, or a user_hint /
         // series stamp) is silently clobbered. `||` overlays keys DB-side.
         suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({
+          // Always written (null included): a re-run after you deleted the
+          // duplicate must CLEAR a stale match, not leave the card offering to
+          // merge into something that's gone.
+          tracked_match: bestTracked
+            ? {
+                kind: bestTracked.kind,
+                id: bestTracked.id,
+                title: bestTracked.title,
+                instance: bestTracked.instance,
+                matched_by: bestTracked.matched_by,
+              }
+            : null,
           ...(photoObservations ? { photo_observations: photoObservations } : {}),
           ...(photoObservedFor ? { photo_observed_for: photoObservedFor } : {}),
           // The multi-item signal, from the observation call we already paid for.
@@ -3905,6 +4112,16 @@ inboxRouter.get(
     const ctx = tenantContext(req);
     const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
     const items = await assembleScanMenu(baseUrl, ctx.org.slug, token);
+    // Stamp which entries are UNIQUE-tracked kinds (declared traits — a vehicle,
+    // a machine) so the combine banner can say "the same vehicle — merge details"
+    // instead of promising a ×2 that a one-of-a-kind thing must never get.
+    try {
+      const kinds = await platform().entities.listKindsForOrg(ctx.org.id);
+      const uniqueKinds = new Set(kinds.filter((k) => traitsHaveUnique(k.traits ?? null)).map((k) => k.id));
+      for (const it of items) if (uniqueKinds.has(it.kind)) it.unique = true;
+    } catch {
+      /* best-effort — an unstamped menu just keeps the generic combine copy */
+    }
     res.json({ items });
   }),
 );

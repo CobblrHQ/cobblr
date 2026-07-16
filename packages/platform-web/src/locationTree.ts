@@ -92,6 +92,85 @@ export function makeAreaResolver<T>(
   };
 }
 
+/** Flatten an AREA forest to just the areas, pre-order — recursing only into
+ *  non-container children, so the containers nested under an area never leak
+ *  into an "areas" list (the bug: a generic flatten walked ALL children and a
+ *  room's bins rendered as rooms). */
+export function flattenAreaForest<T>(
+  nodes: LocationNode<T>[],
+  a: LocationAccessors<T>,
+): LocationNode<T>[] {
+  const out: LocationNode<T>[] = [];
+  const walk = (ns: LocationNode<T>[]) => {
+    for (const n of ns) {
+      if (a.isContainer(n)) continue;
+      out.push(n);
+      walk(n.children);
+    }
+  };
+  walk(nodes);
+  return out;
+}
+
+export interface AreaContainerGroup<T> {
+  /** The room these containers live in; null = LOOSE containers under no room. */
+  area: T | null;
+  /** The area's container descendants in tree PRE-ORDER — a shelf appears
+   *  immediately before the bins that sit on it. */
+  containers: T[];
+}
+
+/** Containers grouped by the room they roll up to (nearest area ancestor), in
+ *  the forest's display order — so a picker can show "In Garage: Metal Rack,
+ *  Bin 4…" instead of one flat wall where shelves/racks/closets intermingle
+ *  with loose bins. A container nested under another container stays with that
+ *  container's room. Loose containers (no area anywhere above) come last as the
+ *  `area: null` group. Only non-empty groups are returned. */
+export function groupContainersByArea<T>(
+  items: T[],
+  a: LocationAccessors<T>,
+): AreaContainerGroup<T>[] {
+  const { areas, containers } = buildLocationForest(items, a);
+  const groups: AreaContainerGroup<T>[] = [];
+  // A container node with every container nested below it, pre-order.
+  const withDescendants = (n: LocationNode<T>): T[] => {
+    const out: T[] = [n];
+    for (const c of n.children) if (a.isContainer(c)) out.push(...withDescendants(c));
+    return out;
+  };
+  // Every AREA (nested areas included) owns its DIRECT container subtrees; its
+  // nested areas own their own.
+  const walkArea = (n: LocationNode<T>) => {
+    const mine: T[] = [];
+    for (const c of n.children) if (a.isContainer(c)) mine.push(...withDescendants(c));
+    if (mine.length > 0) groups.push({ area: n, containers: mine });
+    for (const c of n.children) if (!a.isContainer(c)) walkArea(c);
+  };
+  for (const r of areas) walkArea(r);
+  const loose: T[] = [];
+  for (const r of containers) loose.push(...withDescendants(r));
+  if (loose.length > 0) groups.push({ area: null, containers: loose });
+  return groups;
+}
+
+/** Ancestor ids of `id`, nearest-first (parent, grandparent, ...). Cycle-safe;
+ *  empty for an unknown id or a root. Lets a picker auto-expand the chain above
+ *  a pre-selected location so the selection is visible. */
+export function ancestorIds<T>(items: T[], a: LocationAccessors<T>, id: string): string[] {
+  const byId = new Map(items.map((x) => [a.id(x), x]));
+  const out: string[] = [];
+  const seen = new Set<string>([id]);
+  let cur = byId.get(id);
+  while (cur) {
+    const pid = a.parentId(cur);
+    if (!pid || seen.has(pid)) break;
+    seen.add(pid);
+    out.push(pid);
+    cur = byId.get(pid);
+  }
+  return out;
+}
+
 export interface FlatLocation<T> {
   node: LocationNode<T>;
   depth: number;

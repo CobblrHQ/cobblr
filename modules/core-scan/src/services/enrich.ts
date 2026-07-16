@@ -543,6 +543,11 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
     // it either — DON'T accept it as a result. Fall through to the photo/manual
     // path with no name, so it never gets shown as valid or image-searched.
     if (web && !isJunkName(web.name)) {
+      // Same pending gate as a catalog hit (below): a web-search name is the
+      // WEAKEST source, so when a scan photo exists, hold it at "checking…" until
+      // crossCheckScanPhoto confirms or corrects it — a spurious listing must not
+      // flash confidently in the moment of scan.
+      const webGate = hasScanPhoto;
       await ctx.db
         .updateTable("core_scan_inbox_items")
         .set({
@@ -557,9 +562,16 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
             entity_type: web.entityType,
             ...(web.series ? { series: web.series } : {}),
             ...(parsePackSize(web.name) ? { pack_size: parsePackSize(web.name) } : {}),
+            ...(webGate
+              ? {
+                  photo_check_pending: true,
+                  pending_confidence: String(web.confidence),
+                  pending_notes: web.evidence,
+                }
+              : {}),
           }) as never,
-          ai_confidence: String(web.confidence),
-          ai_notes: web.evidence,
+          ai_confidence: webGate ? "0.5" : String(web.confidence),
+          ai_notes: webGate ? "Checking this against your photo…" : web.evidence,
           ai_suggested_at: new Date(),
           updated_at: new Date(),
         })

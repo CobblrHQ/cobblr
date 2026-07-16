@@ -1245,7 +1245,15 @@ export async function applyValidatedBundle(
         isDefault: false,
       });
     }
-    const instConfig = { item_noun: inst.item_noun ?? null, qty_unit: inst.qty_unit ?? null, parent: inst.parent ?? null, nav_group: inst.nav_group ?? null, scan_keywords: inst.scan_keywords ?? null };
+    const instConfig: Record<string, unknown> = { item_noun: inst.item_noun ?? null, qty_unit: inst.qty_unit ?? null, parent: inst.parent ?? null, nav_group: inst.nav_group ?? null, scan_keywords: inst.scan_keywords ?? null };
+    // Creation-time stock signal: a bundle that declares a MEASURED unit (a
+    // qty_unit that isn't blank or "each" — filament in kg, yarn in skeins)
+    // carries stock character before any data exists, so latch it to stock at
+    // install. A catalog bundle (qty_unit "each" or unset) omits the key and
+    // discloses lean until it takes a stock-shaped write. Derived from the
+    // declared field, not a use-case flag. See one-record-substrate.md.
+    const declaredUnit = typeof inst.qty_unit === "string" ? inst.qty_unit.trim() : "";
+    if (declaredUnit !== "" && declaredUnit !== "each") instConfig.stock_latched = true;
     await upsertOverride({
       orgId: orgId,
       targetKind: "instance",
@@ -1259,10 +1267,13 @@ export async function applyValidatedBundle(
     // user-edited field like display_label. insertOnly above preserves a
     // user's rename, but the config must still UPDATE on upgrade so a new
     // version's additions (e.g. the parent picker introduced in 0.4.0) land
-    // on an already-installed instance.
+    // on an already-installed instance. MERGE rather than replace (`config ||
+    // instConfig`): bundle-owned keys refresh, but keys the bundle never sets —
+    // the user's `stock` override and a data-set `stock_latched` — survive the
+    // upgrade instead of being wiped (a replace clobbered them).
     await meta
       .updateTable("entity_kind_overrides")
-      .set({ config: sql`${JSON.stringify(instConfig)}::jsonb` as never, updated_at: new Date() })
+      .set({ config: sql`coalesce(config, '{}'::jsonb) || ${JSON.stringify(instConfig)}::jsonb` as never, updated_at: new Date() })
       .where("org_id", "=", orgId)
       .where("target_kind", "=", "instance")
       .where("target_id", "=", `${inst.module}:${inst.instance_name}`)

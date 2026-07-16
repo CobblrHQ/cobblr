@@ -59,6 +59,15 @@ export async function reportBarcodeCorrection(opts: {
    *  `scan-commit` context is a vote that only becomes verified once enough
    *  independent people agree. Distinct from `confirm` (which is absolute). */
   commitSignal?: boolean;
+  /** A PHOTO-PROVEN correction (the cross-check read the real product off the
+   *  user's own photo): a consensus VOTE like a commit-signal, not an instant
+   *  fact and not a dead-end review proposal. The system must converge on the
+   *  right answer from these without an operator ever touching the queue. */
+  photoCorrect?: boolean;
+  /** The reporting WORKSPACE — the voter when no user is in scope (the detached
+   *  cross-check). Without an actor a vote can never count toward consensus,
+   *  which is how photo corrections piled up as anonymous dead proposals. */
+  orgId?: string | null;
 }): Promise<void> {
   const base = (process.env.COBBLR_BARCODE_RESOLVER_URL ?? "").replace(/\/+$/, "");
   const tok = process.env.COBBLR_BARCODE_RESOLVER_CORRECTION_TOKEN ?? "";
@@ -66,7 +75,7 @@ export async function reportBarcodeCorrection(opts: {
   if (!/^[0-9]{6,14}$/.test(opts.upc)) return;
   if (!(opts.now ?? "").trim()) return; // never POST a blank value
   // A confirm or a commit-signal both affirm the CURRENT value, so neither needs
-  // it to have changed; a plain triage correction must be a real change.
+  // it to have changed; a photo/triage correction must be a real change.
   if (!opts.confirm && !opts.commitSignal && !meaningfullyChanged(opts.was, opts.now)) return;
   try {
     await fetch(`${base}/correct`, {
@@ -76,8 +85,16 @@ export async function reportBarcodeCorrection(opts: {
         upc: opts.upc,
         field: opts.field,
         value: (opts.now ?? "").trim(),
-        source_context: opts.confirm ? "scan-confirm" : opts.commitSignal ? "scan-commit" : "scan-triage",
-        corrected_by: opaqueActor(opts.userId),
+        source_context: opts.confirm
+          ? "scan-confirm"
+          : opts.commitSignal
+            ? "scan-commit"
+            : opts.photoCorrect
+              ? "photo-correct"
+              : "scan-triage",
+        // The user when present, else the workspace — a vote needs SOME stable
+        // opaque actor to ever reach consensus.
+        corrected_by: opaqueActor(opts.userId) ?? opaqueOrgActor(opts.orgId),
       }),
       signal: AbortSignal.timeout(8000),
     });

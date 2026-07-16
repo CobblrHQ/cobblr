@@ -170,13 +170,21 @@ function isUnidentified(name: string | null | undefined): boolean {
 // and the session-header "N finishing / all set" signal, so they never diverge.
 // Three not-done phases (see InboxCard for the display split):
 //   • serverMatching — identified but the matchmaker hasn't produced routing yet
-//   • finishing       — matched, but the tail (location + cover) is still landing
-//                       (finalized_at not yet stamped), bounded so old rows that
-//                       predate finalized_at don't read as forever-finishing
-//   • awaitingFresh   — brand-new, nothing has come back at all
+//   • rerunning      — a re-run / replay in flight (real work: tens of seconds)
+//   • awaitingFresh  — brand-new, nothing has come back at all
 // Terminal states (couldn't-identify, rate-limit-gave-up) count as DONE here —
 // they need the user, not more AI. Barcode/photo alike route through matchItem,
 // which stamps matched_at/finalized_at, so this predicate covers every source.
+//
+// The post-match TAIL (matched_at set, finalized_at not — location + cover art
+// landing) is deliberately NOT a phase here. Measured over every stamped item in
+// prod: mean 0.19s, p95 0.72s, max 0.88s, none over 2s. A phase that lasts a
+// fifth of a second cannot honestly be on screen "for a while" — the only way to
+// SEE it is a poll landing inside that sub-second window, which then pins the
+// stale snapshot for a whole interval and reads as "still thinking" long after
+// the work finished (the author, 2026-07-16). It was never a state worth showing. Busy
+// now ends when the AI ends, which is what the spinner already said — so the
+// header and the spinner can no longer tell two different stories.
 function itemEnriching(it: ScanInboxItem, now = Date.now()): boolean {
   if (it.status !== "pending") return false;
   const meta = (it.suggested_metadata ?? {}) as {
@@ -187,7 +195,6 @@ function itemEnriching(it: ScanInboxItem, now = Date.now()): boolean {
   };
   const cands = (it.suggested_candidates ?? []).length;
   const aiAgeMs = it.ai_suggested_at ? now - new Date(it.ai_suggested_at).getTime() : Infinity;
-  const matchedAgeMs = meta.matched_at ? now - new Date(meta.matched_at).getTime() : Infinity;
   // Enrichment finished but produced no name/candidates → it needs the USER
   // (manual naming), not more AI; that's DONE-for-the-pipeline, not "finishing".
   const needsName = !it.suggested_name && !!it.ai_suggested_at && cands === 0;
@@ -207,9 +214,8 @@ function itemEnriching(it: ScanInboxItem, now = Date.now()): boolean {
     !meta.matched_at &&
     !needsName &&
     aiAgeMs < 180_000;
-  const finishing = !!meta.matched_at && !meta.finalized_at && matchedAgeMs < 90_000;
   const awaitingFresh = !it.suggested_name && !it.ai_suggested_at && cands === 0 && !meta.rate_limited;
-  return rerunning || serverMatching || finishing || awaitingFresh;
+  return rerunning || serverMatching || awaitingFresh;
 }
 /** How a combine offer was found — drives the banner's wording + which item it
  *  keeps. "name" = same brand + product words; "barcode" = an OCR-read barcode
@@ -824,11 +830,14 @@ export function ScanPage() {
   }, [visibleItems]);
   const [dismissedCombine, setDismissedCombine] = useState<Set<string>>(new Set());
   const combineMut = useMutation({
-    mutationFn: ({ ids, keepId }: { ids: string[]; keepId: string }) =>
+    // keepId omitted → the server picks the richest identity (a VIN-decoded
+    // vehicle over a photo of it) — smarter than the name-length heuristic.
+    mutationFn: ({ ids, keepId }: { ids: string[]; keepId?: string }) =>
       api.combineScanItems(activeSlug, ids, keepId),
     onSuccess: (fresh) => {
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-      toast.success(`Combined into one — ${fresh.suggested_name ?? "item"} ×${fresh.quantity}`);
+      const qty = Number(fresh.quantity) || 1;
+      toast.success(`Combined into one — ${fresh.suggested_name ?? "item"}${qty > 1 ? ` ×${qty}` : ""}`);
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
@@ -843,6 +852,15 @@ export function ScanPage() {
     const ids = cluster.items.map((c) => c.id);
     const sig = [...ids].sort().join(",");
     if (dismissedCombine.has(sig)) return null;
+    // A UNIQUE-tracked kind (declared traits, stamped on the menu — a vehicle, a
+    // machine) captured twice is ONE thing seen two ways: the combine merges
+    // details (a plate photo's colour + plate into the VIN listing) and must
+    // never advertise or produce a ×2.
+    const menuEntries = menuQ.data?.items ?? [];
+    const clusterKind = cluster.items.map((c) => c.suggested_candidates?.[0]?.kind).find(Boolean);
+    const clusterEntry = clusterKind ? menuEntries.find((e) => e.kind === clusterKind) : undefined;
+    const isUnique = !!clusterEntry?.unique;
+    const clusterNoun = clusterEntry?.noun || "item";
     // Barcode near-match: an OCR-read code that's a couple edits from one you
     // scanned. Keep the SCANNED item (its barcode is authoritative); the photo's
     // OCR'd code is recorded but not trusted.
@@ -878,7 +896,12 @@ export function ScanPage() {
                 Same barcode (<span className="font-mono">{aiItem.barcode_text}</span>){" "}
                 {exact ? "as" : "≈ one"} you scanned — looks like the same item.
               </span>
-              <span className="text-muted"> Which listing to keep? Merges to ×{totalQty}, keeps the scanned barcode.</span>
+              <span className="text-muted">
+                {" "}Which listing to keep?{" "}
+                {isUnique
+                  ? "Combines their details into one, keeps the scanned barcode."
+                  : `Merges to ×${totalQty}, keeps the scanned barcode.`}
+              </span>
             </div>
             <button
               type="button"
@@ -910,20 +933,21 @@ export function ScanPage() {
         <Sparkles size={15} className="text-amber-500 shrink-0" />
         <div className="min-w-0 flex-1 text-sm">
           <span className="font-medium text-content dark:text-mortar-100">
-            {cluster.items.length} items look like the same product
+            {cluster.items.length} items look like the same {isUnique ? clusterNoun : "product"}
           </span>
           <span className="text-muted">
             {" — "}
-            {cluster.items.map((c) => c.suggested_name).filter(Boolean).join(" · ")}. Combine into one (×{totalQty})?
+            {cluster.items.map((c) => c.suggested_name).filter(Boolean).join(" · ")}.{" "}
+            {isUnique ? "Combine their details into one?" : `Combine into one (×${totalQty})?`}
           </span>
         </div>
         <button
           type="button"
           disabled={combineMut.isPending}
-          onClick={() => combineMut.mutate({ ids, keepId: keep.id })}
+          onClick={() => combineMut.mutate({ ids, ...(isUnique ? {} : { keepId: keep.id }) })}
           className="shrink-0 rounded bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 text-sm font-medium disabled:opacity-50"
         >
-          Combine
+          {isUnique ? "Combine details" : "Combine"}
         </button>
         <button
           type="button"
@@ -1107,8 +1131,12 @@ export function ScanPage() {
   const [showDeleted, setShowDeleted] = useState(false);
   const restore = useMutation({
     mutationFn: (id: string) => api.restoreScanItem(activeSlug, id),
-    onSuccess: () => {
+    onSuccess: (r) => {
       toast.success("Restored.");
+      // The item returns to its ORIGINAL spot (created_at preserved — a restore
+      // is an undo, same contract as sent-back). Surface it the same way:
+      // expand its session, scroll to it, flash a ring.
+      setHighlightId(r.id);
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
       void qc.invalidateQueries({ queryKey: ["scan-inbox-discarded", activeSlug] });
     },
@@ -1986,12 +2014,17 @@ export function ScanPage() {
           (put-away.md §5). Live Sort lives where scanning starts instead. */}
       {viewMode !== "plan" &&
         ((scanStatsQ.data?.unfiled ?? 0) > 0 || (scanStatsQ.data?.ready ?? 0) > 0) && (
+        // Stack until there's room for a real side-by-side. `flex-wrap` did NOT
+        // save this: the text is flex-1 + min-w-0, so it SHRANK to whatever the
+        // button left rather than pushing the button to the next line — the
+        // sentence wrapped in a half-width column while the button sat in space.
+        // Below sm the text gets the full width and the button goes underneath.
         <div
-          className="flex flex-wrap items-center gap-3 rounded-lg border border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20 px-3 py-2 text-sm"
+          className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-3 rounded-lg border border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20 px-3 py-2 text-sm"
           data-testid="putaway-strip"
         >
-          <span className="shrink-0">📦</span>
           <span className="min-w-0 flex-1 text-content dark:text-mortar-100">
+            <span className="mr-1.5">📦</span>
             {[
               (scanStatsQ.data!.unfiled ?? 0) > 0
                 ? `${scanStatsQ.data!.unfiled} scanned item${scanStatsQ.data!.unfiled === 1 ? "" : "s"} without a home`
@@ -2880,17 +2913,11 @@ function InboxCard({
     !(item.suggested_metadata as { matched_at?: string } | null)?.matched_at &&
     !needsName &&
     matchAgeMs < 180_000;
-  // Post-match TAIL: the matchmaker ran (matched_at) but the row is still landing
-  // its finalize work — location, and a cover re-fetched for a renamed item —
-  // until the backend stamps finalized_at. This is the ~1-min "spinner stopped
-  // but the name/thumbnail kept changing" gap; surface it as a quiet "finishing…"
-  // so the card doesn't read as settled while it's still mutating. Bounded by the
-  // matched_at age so rows that predate finalized_at don't finish-pulse forever.
-  const finalMeta = item.suggested_metadata as { matched_at?: string; finalized_at?: string } | null;
-  const matchedAtStr = finalMeta?.matched_at ?? null;
-  const matchedAgeMs = matchedAtStr ? Date.now() - new Date(matchedAtStr).getTime() : Infinity;
-  const finishing =
-    item.status === "pending" && !!matchedAtStr && !finalMeta?.finalized_at && matchedAgeMs < 90_000;
+  // The post-match tail (matched_at → finalized_at: location + a cover re-fetched
+  // for a renamed item) used to show a quiet "finishing…" here, on the theory that
+  // it was a ~1-min gap where the card looked settled while still mutating. The
+  // prod numbers say otherwise — mean 0.19s, p95 0.72s, max 0.88s over every
+  // stamped item, none above 2s — so there is no gap to narrate. See itemEnriching.
   // Rate-limited: rapid scanning exhausted the go-upc gate / upcitemdb burst, so
   // the resolver was throttled. The row is tagged + left unfinished (no name, no
   // ai_suggested_at). Show a distinct "retrying" state — NOT a passive "awaiting
@@ -2988,8 +3015,20 @@ function InboxCard({
   // Ready to one-tap confirm from the collapsed card. A not-installed-bundle top
   // match is only "ready" when the user can install it (else the green check
   // would try to file into a table that doesn't exist).
+  // "We already have one of these" — resolved server-side at match time and
+  // stamped on the row, so the CLOSED card knows without a per-card round trip.
+  // One-tap Add CREATES an entity; offering it when the workspace already tracks
+  // the thing is how you end up with a second Honda Civic. So the green Add gives
+  // way to a chip that opens the card, where the merge banner lives.
+  const trackedMatch = (
+    (item.suggested_metadata as Record<string, unknown> | null) ?? {}
+  ).tracked_match as { title?: string } | null | undefined;
+  const alreadyTracked = !!trackedMatch?.title;
   const quickConfirmReady =
-    !!topCand && !!item.suggested_name && (!topCand.bundle_external_id || !!topBundle);
+    !!topCand &&
+    !!item.suggested_name &&
+    !alreadyTracked &&
+    (!topCand.bundle_external_id || !!topBundle);
   const quickConfirm = useMutation({
     mutationFn: async () => {
       if (!topCand || !item.suggested_name) throw new Error("not ready to confirm");
@@ -3096,6 +3135,14 @@ function InboxCard({
     return () => clearTimeout(t);
   }, [reading]);
   const rerunning = rerun.isPending || reading;
+  // "Replay (no AI)" runs the SAME mutation with noAi — but showing it as
+  // "Re-running the lookup…" with the AI sparkle made a token-free replay look
+  // like a model call ("all the spinners are going incl the AI one"). Label the
+  // in-flight variant honestly.
+  const replayNoAi =
+    (rerun.isPending && (rerun.variables as { noAi?: boolean } | undefined)?.noAi === true) ||
+    ((item.suggested_metadata as { pipeline_kind?: string } | null)?.pipeline_kind === "replay" &&
+      (rerunning || serverMatching));
   const aiWorking = rerunning || serverMatching;
 
   // Internal /api/v1 file URLs need the Bearer token a bare <img> can't
@@ -3323,23 +3370,18 @@ function InboxCard({
                 <span className="break-words min-w-0 max-w-full">{item.suggested_name}</span>
                 {rerunning || serverMatching ? (
                   <span className="shrink-0 inline-flex items-center gap-1 rounded-full border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 px-2 py-0.5 text-[10px] font-mono uppercase tracking-widest text-accent animate-pulse">
-                    {rerunning ? "re-running" : "AI reading…"}
-                  </span>
-                ) : finishing ? (
-                  // Quiet, muted (not the bold accent pulse) — the heavy lifting is
-                  // done; this just says "don't trust it as final yet."
-                  <span
-                    className="shrink-0 inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-widest text-muted"
-                    title="Finishing up — location and cover are still landing"
-                  >
-                    <Loader2 size={9} className="animate-spin" /> finishing…
+                    {replayNoAi ? "replaying (no AI)" : rerunning ? "re-running" : "AI reading…"}
                   </span>
                 ) : null}
               </>
             ) : rerunning ? (
-              <span className="text-accent animate-pulse">Re-running the lookup…</span>
+              <span className="text-accent animate-pulse">
+                {replayNoAi ? "Replaying from cached data (no AI)…" : "Re-running the lookup…"}
+              </span>
             ) : serverMatching ? (
-              <span className="text-accent animate-pulse">AI is reading the details…</span>
+              <span className="text-accent animate-pulse">
+                {replayNoAi ? "Replaying from cached data (no AI)…" : "AI is reading the details…"}
+              </span>
             ) : rlActive ? (
               <span className="inline-flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
                 <Loader2 size={13} className="animate-spin shrink-0" />
@@ -3569,6 +3611,33 @@ function InboxCard({
                 {lowTrust ? "Double-check — fix the name" : "Not right? Fix the name"}
               </button>
             ))}
+          {/* "You already have one of these" — its OWN line, because the answer
+              has to NAME the record. As an action segment on the route chip it
+              read "Vehicles | Same one?", which can't say same as WHAT (the author,
+              2026-07-16). Sits above the chips so it's read before the routing,
+              which is the right order: whether this is a duplicate decides
+              whether the routing matters at all. Opens the card rather than
+              merging on the spot — the banner in there shows what would be
+              filled, and merging into something you own is a decision. */}
+          {!planContext && alreadyTracked && (
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs" onClick={(e) => e.stopPropagation()}>
+              <span className="inline-flex min-w-0 items-center gap-1.5 text-emerald-700 dark:text-emerald-300">
+                <CheckCircle size={12} className="shrink-0" />
+                <span className="min-w-0">
+                  You already have{" "}
+                  <span className="font-semibold break-words">{trackedMatch!.title}</span>
+                  <span className="text-muted dark:text-slate-400"> — is this the same one?</span>
+                </span>
+              </span>
+              <button
+                type="button"
+                onClick={() => (topCand ? openForm(topCand) : setExpanded(true))}
+                className="shrink-0 inline-flex items-center gap-1 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1 text-[11px] font-medium transition"
+              >
+                Compare &amp; merge
+              </button>
+            </div>
+          )}
           {/* ONE row for everything the card says about routing + fields:
               the SERIES tag, the routing chip(s) to file into, AND the field
               VALUES the top match fills. Keeping these on a single wrapping row
@@ -3589,31 +3658,75 @@ function InboxCard({
                   <span className="opacity-60 shrink-0">series</span>
                 </span>
               )}
-              {candidates.map((c, i) => (
-                <button
-                  key={`${c.module}:${c.instance ?? ""}:${i}`}
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    openForm(c);
-                  }}
-                  title={
-                    Object.keys(c.fields).length
-                      ? `Fills: ${Object.entries(c.fields).map(([k, v]) => `${k}=${v}`).join(", ")}`
-                      : `Add to ${c.label}`
-                  }
-                  className={`max-w-full items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition border ${
-                    i === 0 ? "inline-flex" : "hidden sm:inline-flex"
-                  } ${
-                    i === 0
-                      ? "bg-cobble-600 hover:bg-cobble-700 text-white border-cobble-600"
-                      : "bg-subtle dark:bg-slate-800 hover:bg-line dark:hover:bg-slate-700 text-content dark:text-mortar-200 border-line dark:border-slate-700"
-                  }`}
-                >
-                  <Sparkles size={11} className="shrink-0" />
-                  <span className="truncate">{c.label}</span>
-                </button>
-              ))}
+              {candidates.map((c, i) =>
+                i === 0 ? (
+                  // The PRIMARY route is a SPLIT chip (the location picker's
+                  // grammar): the body opens the review form; the emerald
+                  // "✓ Add" segment commits as-is into this table. The commit
+                  // used to be an unlabeled green checkmark in the card's icon
+                  // rail — unreadable, and hover-only context doesn't exist on
+                  // a phone (the author). Attached to its destination, labeled.
+                  <span
+                    key={`${c.module}:${c.instance ?? ""}:${i}`}
+                    className="inline-flex max-w-full items-stretch rounded-full overflow-hidden border border-cobble-600 bg-cobble-600 text-white text-xs font-medium"
+                  >
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openForm(c);
+                      }}
+                      title={
+                        Object.keys(c.fields).length
+                          ? `Review & edit — fills: ${Object.entries(c.fields).map(([k, v]) => `${k}=${v}`).join(", ")}`
+                          : `Review & add to ${c.label}`
+                      }
+                      className="inline-flex min-w-0 items-center gap-1 pl-2.5 pr-2 py-1 hover:bg-cobble-700 transition"
+                    >
+                      <Sparkles size={11} className="shrink-0" />
+                      <span className="truncate">{c.label}</span>
+                    </button>
+                    {quickConfirmReady && !topBundle && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          quickConfirm.mutate();
+                        }}
+                        disabled={quickConfirm.isPending}
+                        title={`Add to ${c.label} as shown — no need to open it`}
+                        className="inline-flex shrink-0 items-center gap-1 border-l border-white/25 bg-emerald-600 hover:bg-emerald-500 pl-2 pr-2.5 py-1 transition disabled:opacity-60"
+                      >
+                        <CheckCircle size={11} className={`shrink-0 ${quickConfirm.isPending ? "animate-pulse" : ""}`} />
+                        {quickConfirm.isPending ? "Adding…" : "Add"}
+                      </button>
+                    )}
+                    {/* A match doesn't get an action segment here: "Same one?"
+                        next to a TABLE name can't say same as WHAT (the author,
+                        2026-07-16). It gets its own line above, which can name
+                        the record. The chip stays a plain route, and the
+                        duplicate-making one-tap Add simply isn't offered. */}
+                  </span>
+                ) : (
+                  <button
+                    key={`${c.module}:${c.instance ?? ""}:${i}`}
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openForm(c);
+                    }}
+                    title={
+                      Object.keys(c.fields).length
+                        ? `Fills: ${Object.entries(c.fields).map(([k, v]) => `${k}=${v}`).join(", ")}`
+                        : `Add to ${c.label}`
+                    }
+                    className="max-w-full items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition border hidden sm:inline-flex bg-subtle dark:bg-slate-800 hover:bg-line dark:hover:bg-slate-700 text-content dark:text-mortar-200 border-line dark:border-slate-700"
+                  >
+                    <Sparkles size={11} className="shrink-0" />
+                    <span className="truncate">{c.label}</span>
+                  </button>
+                ),
+              )}
               {candidates.length > 1 && (
                 <button
                   type="button"
@@ -3701,23 +3814,12 @@ function InboxCard({
             the card's full height: rerun at the top, discard centered, the
             expand chevron pinned near the bottom (rather than a tight top cluster). */}
         <div className="flex flex-col items-center justify-between shrink-0 self-stretch py-2 pr-0.5" onClick={(e) => e.stopPropagation()}>
-          {!planContext && (
-            <button
-              type="button"
-              onClick={() => quickConfirm.mutate()}
-              disabled={!quickConfirmReady || quickConfirm.isPending}
-              className="text-emerald-500 hover:text-emerald-400 p-1.5 disabled:opacity-30"
-              title={quickConfirmReady ? `Confirm as ${topCand?.label ?? "suggested"} — no need to open it` : "Not ready to confirm yet"}
-            >
-              <CheckCircle size={17} className={quickConfirm.isPending ? "animate-pulse" : ""} />
-            </button>
-          )}
           <button
             type="button"
             onClick={() => rerun.mutate(undefined)}
             disabled={aiWorking || (!item.barcode_text && !item.image_file_id)}
             className="text-faint hover:text-accent p-1.5 disabled:opacity-30"
-            title={aiWorking ? "AI is working…" : "Rerun lookup"}
+            title={replayNoAi ? "Replaying (no AI)…" : aiWorking ? "AI is working…" : "Rerun lookup"}
           >
             <RotateCcw size={14} className={aiWorking ? "animate-spin text-accent" : ""} />
           </button>
@@ -3935,7 +4037,11 @@ function InboxCard({
                 aria-expanded={aiOpen}
                 className="w-full text-left text-xs font-medium text-content dark:text-mortar-100 flex items-center gap-1.5"
               >
-                <Sparkles size={12} className={aiWorking ? "text-accent animate-pulse" : "text-accent"} />
+                {replayNoAi ? (
+                  <RefreshCw size={12} className="text-accent animate-spin" />
+                ) : (
+                  <Sparkles size={12} className={aiWorking ? "text-accent animate-pulse" : "text-accent"} />
+                )}
                 {aiWorking ? (
                   <span className="animate-pulse">
                     {rerun.isPending ? "Re-running the lookup…" : "AI is reading the details…"}
@@ -3966,7 +4072,9 @@ function InboxCard({
                 )?.history;
                 if (!Array.isArray(hist) || hist.length === 0) return null;
                 const label: Record<string, string> = {
-                  rerun: "Re-ran the lookup",
+                  rerun: "Re-ran the lookup with AI",
+                  replay: "Replayed from cached data (no AI)",
+                  "rerun-hint": "Re-ran with a hint",
                   wrong: "Flagged wrong — re-checked everything",
                   enrich: "Asked for more detail",
                   confirm: "Locked into the barcode database",
@@ -4095,6 +4203,7 @@ function InboxCard({
           <HintBox
             onSubmit={(h, opts) => rerun.mutate({ hint: h || undefined, ...opts })}
             busy={aiWorking}
+            busyKind={aiWorking ? (replayNoAi ? "replay" : "ai") : null}
             hasBarcode={!!item.barcode_text}
             onConfirm={() => confirmBarcode.mutate()}
             confirming={confirmBarcode.isPending}
@@ -4277,12 +4386,16 @@ function PhotoOptions({ item, onPick }: { item: ScanInboxItem; onPick?: (url: st
 function HintBox({
   onSubmit,
   busy,
+  busyKind,
   hasBarcode,
   onConfirm,
   confirming,
 }: {
   onSubmit: (hint: string, opts: { wrong?: boolean; enrich?: boolean; noAi?: boolean }) => void;
   busy: boolean;
+  /** WHICH action is in flight — only that button's icon animates ("both
+   *  spinners going" made a free replay read as an AI call). */
+  busyKind?: "replay" | "ai" | null;
   hasBarcode: boolean;
   onConfirm: () => void;
   confirming: boolean;
@@ -4347,7 +4460,7 @@ function HintBox({
             title="Replay the cached AI reply through the current code — no model call, no tokens. Tests our parsers/heuristics/routing, NOT a prompt change."
             className="rounded border border-line dark:border-slate-600 px-2.5 py-1.5 text-sm text-muted dark:text-slate-300 hover:bg-mortar-50 dark:hover:bg-slate-800 disabled:opacity-50 shrink-0 inline-flex items-center gap-1.5"
           >
-            <RefreshCw size={13} className={busy ? "animate-spin" : ""} /> Replay (no AI)
+            <RefreshCw size={13} className={busyKind === "replay" ? "animate-spin" : ""} /> Replay (no AI)
           </button>
         )}
         <button
@@ -4355,7 +4468,7 @@ function HintBox({
           disabled={busy}
           className="rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm font-medium disabled:opacity-50 shrink-0 inline-flex items-center gap-1.5"
         >
-          <RotateCcw size={13} className={busy ? "animate-spin" : ""} /> {hint.trim() ? "Re-run with hint" : "Re-run AI"}
+          <RotateCcw size={13} className={busyKind === "ai" ? "animate-spin" : ""} /> {hint.trim() ? "Re-run with hint" : "Re-run AI"}
         </button>
       </div>
       {/* Shared-barcode-DB curation — OPERATOR ONLY (see canCurateBarcodeDb).
@@ -4953,6 +5066,9 @@ function ConfirmForm({
   // location's NAME — match it back to a row). Only while untouched, so a
   // user's explicit pick is never overwritten when the list loads late.
   const [locTouched, setLocTouched] = useState(false);
+  // The location chips stay COLLAPSED behind a dropdown-style trigger — a full
+  // location tree (every room + every bin) dumped inline swamped the form.
+  const [locOpen, setLocOpen] = useState(false);
   useEffect(() => {
     if (locTouched || locationId || !item.scan_area) return;
     const want = item.scan_area.trim().toLowerCase();
@@ -5222,22 +5338,50 @@ function ConfirmForm({
         </label>
         {/* Location is core-locations' noun — hidden unless that module is
             actually enabled here (modules never assume each other). */}
-        {hasLocations && (
-          <label className="block">
-            <div className={labelCls}>Location (optional)</div>
-            {/* Chip drawer (rooms + bins as tappable chips), the same mobile
-                picker the inbox bulk bar + camera Assign use — not the old tree
-                dropdown. A pick persists to the item immediately (no Confirm). */}
-            <LocationChipPicker
-              value={locationId || null}
-              onChange={(v) => {
-                setLocTouched(true);
-                setLocationId(v ?? "");
-                persistLocation.mutate(v);
-              }}
-            />
-          </label>
-        )}
+        {hasLocations && (() => {
+          const selectedLoc = locationId ? (locs.data?.items ?? []).find((l) => l.id === locationId) : null;
+          // A pick whose name hasn't loaded yet must not read as "no pick".
+          const selLabel = selectedLoc ? (selectedLoc.short_name?.trim() || selectedLoc.name) : locationId ? "…" : null;
+          return (
+            <>
+              <div className="block">
+                <div className={labelCls}>Location (optional)</div>
+                {/* A dropdown-style trigger showing the current pick; tapping opens
+                    the chip drawer (rooms + bins — the same picker the bulk bar +
+                    camera use) instead of dumping the whole tree inline. A pick
+                    persists to the item immediately (no Confirm) and closes it. */}
+                <button
+                  type="button"
+                  onClick={() => setLocOpen((o) => !o)}
+                  className={`${inputCls} flex items-center justify-between gap-2 text-left`}
+                  aria-expanded={locOpen}
+                >
+                  <span className={selLabel ? "inline-flex items-center gap-1.5 text-content dark:text-mortar-100" : "text-faint"}>
+                    {selLabel ? <><MapPin size={13} className="shrink-0 text-accent" />{selLabel}</> : "Choose a location…"}
+                  </span>
+                  <ChevronDown size={15} className={`shrink-0 text-faint transition ${locOpen ? "rotate-180" : ""}`} />
+                </button>
+              </div>
+              {/* Breakout expansion: the trigger keeps its half-width cell, but
+                  the open drawer is its OWN grid row spanning BOTH columns — the
+                  chip grid needs the full form width on desktop (the author). On
+                  mobile the grid is single-column, so this is a no-op. */}
+              {locOpen && (
+                <div className="sm:col-span-2 rounded-md border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/40 p-2 max-h-72 overflow-y-auto">
+                  <LocationChipPicker
+                    value={locationId || null}
+                    onChange={(v) => {
+                      setLocTouched(true);
+                      setLocationId(v ?? "");
+                      persistLocation.mutate(v);
+                      if (v) setLocOpen(false); // dropdown closes on a pick
+                    }}
+                  />
+                </div>
+              )}
+            </>
+          );
+        })()}
       </div>
       {isAdmin && (
         <div className="rounded border border-dashed border-line dark:border-slate-700 p-2 space-y-2">

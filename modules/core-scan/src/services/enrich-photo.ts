@@ -15,7 +15,7 @@ import { platform } from "@cobblr/platform-contract";
 import type { CoreScanDB } from "../db.js";
 import { reportBarcodeCorrection, reportBarcodeReject } from "./barcode-corrections.js";
 import { identityMeta, mergeMeta } from "./metadata.js";
-import { evictBarcodeCaches } from "./barcode-cache.js";
+import { evictBarcodeCaches, rememberLocalIdentity } from "./barcode-cache.js";
 import { searchImages, rankImageOptions, imageQuery, mediaSearchExtras } from "./ddg-images.js";
 
 /** Re-fetch the catalog image to match a (corrected) name. The card prefers the
@@ -682,27 +682,44 @@ export async function crossCheckScanPhoto(
       })
       .where("id", "=", itemId)
       .execute();
-    // Feed the barcode→name fix back to the shared Barcode Intelligence DB so the
-    // next scan of this code gets the right product. Best-effort; detached (no
-    // user) → lands as a pending proposal, which is the right trust level for an
-    // auto-applied correction.
+    // Feed the barcode→name fix back to the shared Barcode Intelligence DB as a
+    // consensus VOTE (photo-correct, voting as this WORKSPACE): once enough
+    // independent workspaces' photos agree, the corrected identity auto-verifies
+    // and serves everywhere — no operator ever has to touch a review queue. The
+    // system converges on its own; the queue is an audit surface, not a gate.
     if (existing?.barcode_text) {
       void reportBarcodeCorrection({
         upc: existing.barcode_text,
         field: "title",
         was: prevName,
         now: correctName,
+        photoCorrect: true,
+        orgId,
       }).catch(() => {});
-      // AND EVICT THE CACHES THAT TAUGHT US THE WRONG NAME. The photo just proved
-      // the stored answer for this UPC is wrong; leaving it in the tenant + shared
-      // caches means the very next scan of this code re-serves the same wrong
-      // product — the correction fixes this ITEM and nothing else. (enrichThinHit
-      // already learned this lesson and rewrites both caches; this path never got
-      // the memo, which is how a bad name outlived the photo that disproved it.)
-      // Evict rather than overwrite: a photo-derived name is good evidence for THIS
-      // item, but not authoritative enough to become every workspace's answer —
-      // reportBarcodeCorrection above is the proper, reviewable channel for that.
-      void evictBarcodeCaches(orgId, existing.barcode_text).catch(() => {});
+      if (correctBrand) {
+        void reportBarcodeCorrection({
+          upc: existing.barcode_text,
+          field: "brand",
+          was: null,
+          now: correctBrand,
+          photoCorrect: true,
+          orgId,
+        }).catch(() => {});
+      }
+      // EVICT the shared/tenant caches that taught us the wrong name, then
+      // REMEMBER the photo-proven identity in THIS workspace's own cache. The
+      // photo just disproved the stored answer, and it is decisive for the item
+      // this workspace actually holds — so its next scan of the same code serves
+      // the corrected name instead of re-deriving it (or re-fetching fresh junk).
+      // Cross-workspace truth still converges only by the votes above.
+      void evictBarcodeCaches(orgId, existing.barcode_text)
+        .then(() =>
+          rememberLocalIdentity(orgId, existing.barcode_text!, {
+            title: correctName,
+            brand: correctBrand || null,
+          }),
+        )
+        .catch(() => {});
       // AND cast a negative VOTE on the provider answer — the photo disproved it.
       // Not a block: once enough independent workspaces agree, the resolver
       // suppresses this code's junk so it stops re-serving a fresh wrong product

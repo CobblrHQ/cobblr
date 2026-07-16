@@ -15,7 +15,7 @@
 // significant tokens (≥2, the same bar the combine clusters use) so "WD-40
 // EZ-Reach" matches "WD-40 EZ-Reach Lubricant" but not "WD External Drive".
 
-import { platform } from "@cobblr/platform-contract";
+import { platform, type ResolvedEntity } from "@cobblr/platform-contract";
 import { isJunkName } from "./enrich.js";
 
 export interface TrackedMatch {
@@ -48,6 +48,28 @@ function tokens(s: string | null | undefined): string[] {
     ?.filter((t) => !STOP.has(t)) ?? [];
 }
 
+/** The significant tokens the name tier PROBES the list resolver with. The
+ *  resolver's `q` is a full-PHRASE substring LIKE, so probing with the whole
+ *  scan name ("Honda Civic Hatchback") only returns rows that CONTAIN it and
+ *  starves the ranking below. Probing token-by-token ("honda", "civic", …) and
+ *  unioning is what lets a stored "2019 Honda Civic" surface. Capped at the 3
+ *  longest so each kind is a few cheap lookups. Exported for the guardrail test. */
+export function probeTokens(name: string): string[] {
+  return [...new Set(tokens(name))].sort((a, b) => b.length - a.length).slice(0, 3);
+}
+
+/** The name-tier match decision + strength for a (scan tokens, stored title)
+ *  pair: ≥2 shared significant tokens covering most of the shorter name (or the
+ *  single word when the scan is one word). Exported so the rule — the Honda-Civic
+ *  class the phrase-LIKE probe silently broke — is unit-tested directly. */
+export function nameOverlap(want: string[], storedTitle: string): { shared: number; pass: boolean } {
+  const have = new Set(tokens(storedTitle));
+  const shared = want.filter((t) => have.has(t)).length;
+  const ratio = shared / Math.max(1, Math.min(want.length, have.size));
+  const pass = want.length === 1 ? shared === 1 : shared >= 2 && ratio >= 0.6;
+  return { shared, pass };
+}
+
 function metaBarcode(fields: Record<string, unknown>): string | null {
   const md = fields.metadata as Record<string, unknown> | null | undefined;
   const b = md && typeof md.barcode === "string" ? md.barcode.trim() : "";
@@ -61,7 +83,13 @@ function toMatch(
 ): TrackedMatch {
   const rawQty = e.fields[info.qtyField];
   const qty = typeof rawQty === "number" ? rawQty : Number(rawQty);
-  const inst = e.detailUrl?.match(/^\/instances\/([^/]+)\/items\//)?.[1] ?? null;
+  // The instance slug: from the detail route when the resolver supplies one,
+  // else the row's own `instance` column (assets/inventory instance rows carry
+  // it) — the attach/merge endpoint needs it to hit the instance-scoped path,
+  // and a plain module PATCH would 404 or target the wrong instance.
+  const inst =
+    e.detailUrl?.match(/^\/instances\/([^/]+)\/items\//)?.[1] ??
+    (typeof e.fields.instance === "string" && e.fields.instance ? e.fields.instance : null);
   return {
     kind: e.kind,
     id: e.id,
@@ -112,11 +140,24 @@ export async function findTracked(
     const want = tokens(name);
     if (want.length) {
       const seen = new Set(barcodeMatches.map((m) => `${m.kind}:${m.id}`));
+      // Probe token-by-token (see probeTokens) and union — one `q: name` phrase
+      // probe would starve the ranking. The shared-token ratio (nameOverlap)
+      // then decides, so "Prusa PLA Filament Black" won't match "Prusa Nozzle Kit".
+      const probes = probeTokens(name);
       const perKind = await Promise.all(
         kinds.map(async (k) => {
           try {
-            const res = await platform().entities.list(orgId, k.kind, { q: name, limit: 6 });
-            return res.items
+            const byId = new Map<string, ResolvedEntity>();
+            const pages = await Promise.all(
+              probes.map((t) =>
+                platform()
+                  .entities.list(orgId, k.kind, { q: t, limit: 8 })
+                  .catch(() => ({ items: [] as ResolvedEntity[] })),
+              ),
+            );
+            for (const page of pages)
+              for (const e of page.items) byId.set(`${e.kind}:${e.id}`, e);
+            return [...byId.values()]
               .filter((e) => !seen.has(`${e.kind}:${e.id}`))
               // An entity that already carries a DIFFERENT barcode is a
               // different SKU — never offer it as a fuzzy match
@@ -125,18 +166,8 @@ export async function findTracked(
                 const b = metaBarcode(e.fields);
                 return !b || !barcode || b === barcode;
               })
-              .map((e) => {
-                const have = new Set(tokens(e.title));
-                const shared = want.filter((t) => have.has(t)).length;
-                // Strong guard: sharing 2 words isn't enough for long names —
-                // require the overlap to be MOST of the shorter name (≥0.6), so
-                // "Prusa PLA Filament Black" doesn't match "Prusa Nozzle Kit".
-                const ratio = shared / Math.max(1, Math.min(want.length, have.size));
-                return { e, shared, ratio };
-              })
-              .filter(({ shared, ratio }) =>
-                want.length === 1 ? shared === 1 : shared >= 2 && ratio >= 0.6,
-              )
+              .map((e) => ({ e, ...nameOverlap(want, e.title) }))
+              .filter(({ pass }) => pass)
               .map(({ e, shared }) => ({ m: toMatch(e, k, "name"), shared }));
           } catch {
             return [];

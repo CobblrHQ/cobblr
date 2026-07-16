@@ -26,6 +26,7 @@ import type {
   EntityWriter,
   ResolvedEntity,
 } from "@cobblr/platform-contract";
+import { TRAIT_PRESETS, traitAxisValue } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
 import { getEntry } from "../modules/registry.js";
 import { applyComputedFields } from "./computed-fields.js";
@@ -813,16 +814,62 @@ export async function listKindsForOrg(orgId: string): Promise<EntityKindRecord[]
   const primaryByModule = new Map(
     base.filter((k) => k.is_primary).map((k) => [k.module_name, k] as const),
   );
+
+  // Per-instance stock-vs-catalog disclosure, resolved META-SIDE so this hot
+  // path never opens a tenant pool. An instance whose base kind is bulk stock
+  // (fungible) renders LEAN — a unique `catalog-record`, so combine/scan treat a
+  // film as one-per-title, never summing a phantom quantity — until it shows
+  // stock signal. The signal lives entirely in the instance's override config:
+  // an explicit `stock` boolean (the user's toggle) wins; else the sticky
+  // `stock_latched` marker (set by bundle install or the first stock-shaped
+  // write); else lean. This mirrors the disclosure endpoint's meta-side rungs
+  // exactly (override → latched → lean); the tenant-side data probe there is
+  // only the latch-setter, never consulted here. See one-record-substrate.md.
+  let overrideConfigByTarget = new Map<string, Record<string, unknown>>();
+  try {
+    const rows = await meta
+      .selectFrom("entity_kind_overrides")
+      .select(["target_id", "config"])
+      .where("org_id", "=", orgId)
+      .where("target_kind", "=", "instance")
+      .execute();
+    overrideConfigByTarget = new Map(
+      rows.map((r) => [r.target_id, (r.config as Record<string, unknown> | null) ?? {}]),
+    );
+  } catch (err) {
+    // A read failure here must not break kind synthesis — fall back to leaving
+    // the primary's traits untouched (the pre-Phase-2 behaviour).
+    console.error("[entities] instance disclosure lookup failed:", (err as Error).message);
+  }
+
   const synthesized: EntityKindRecord[] = [];
   for (const inst of instances) {
     const primary = primaryByModule.get(inst.module_name);
     if (!primary) continue;
     const perItem = INSTANCE_ITEM_DETAIL[inst.module_name];
+
+    // Downgrade a lean fungible-stock instance to the catalog-record traits.
+    // Only applies when the base kind is fungible stock; every other module's
+    // instances keep their primary traits unchanged.
+    let traits = primary.traits;
+    let profile = primary.profile;
+    if (traitAxisValue(primary.traits as Record<string, unknown> | null, "identity") === "fungible") {
+      const cfg = overrideConfigByTarget.get(`${inst.module_name}:${inst.instance_name}`) ?? {};
+      const stock =
+        typeof cfg.stock === "boolean" ? cfg.stock : cfg.stock_latched === true ? true : false;
+      if (!stock) {
+        traits = TRAIT_PRESETS["catalog-record"] as EntityKindRecord["traits"];
+        profile = "catalog-record";
+      }
+    }
+
     synthesized.push({
       ...primary,
       id: `${inst.instance_name}:item`,
       display_name: inst.display_name,
       display_name_plural: inst.display_name,
+      traits,
+      profile,
       detail_route: perItem
         ? perItem(inst.instance_name)
         : `/instances/${inst.instance_name}`,

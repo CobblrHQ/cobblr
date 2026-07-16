@@ -2868,7 +2868,7 @@ export const api = {
       kind: string;
       entity_id: string;
       instance?: string;
-      mode: "add-qty" | "link-barcode" | "move";
+      mode: "add-qty" | "link-barcode" | "move" | "merge-fields";
       location_id?: string;
     },
   ) =>
@@ -2877,6 +2877,7 @@ export const api = {
       entity_title: string;
       new_qty: number | null;
       prev_location_id: string | null;
+      merged_fields: string[];
     }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/attach`, body),
   // Merge several similar pending items (same product, different barcodes) into one
   // line with the summed quantity; keepId's name/photo wins, others are discarded.
@@ -4115,6 +4116,10 @@ export interface ScanMenuEntry {
   fields: ScanMenuField[];
   /** Domain routing terms a bundle declared for this table. */
   scan_keywords?: string[];
+  /** This kind is tracked ONE BY ONE (its declared traits include `unique` — a
+   *  vehicle, a machine). Two captures of it combine as a detail-merge, never a
+   *  quantity sum. */
+  unique?: boolean;
 }
 
 /** A captured matchmaker eval case (P2). The expected answer = the admin's

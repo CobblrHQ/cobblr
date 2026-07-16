@@ -62,6 +62,7 @@ import { syncInstalledModules } from "./platform/installed-modules.js";
 import { migrateLensModules } from "./platform/migrate-lens-modules.js";
 import { migrateLensBundlesToInstances } from "./platform/migrate-lens-bundles-to-instances.js";
 import { enableDigifabForMachineBundles } from "./platform/enable-digifab-for-machines.js";
+import { migrateBookshelfToInstance } from "./platform/migrate-bookshelf-to-instance.js";
 import { migrateInventoryLocations } from "./platform/migrate-inventory-locations.js";
 import { backfillPlacements } from "./platform/migrate-location-to-placement.js";
 import { backfillDefaultBindings } from "./platform/seed-bindings.js";
@@ -313,6 +314,7 @@ async function boot() {
     },
     instances: {
       registerItemCounter: instancesImpl.registerItemCounter,
+      patchDerivedConfig: instancesImpl.patchInstanceDerivedConfig,
       list: async (orgId: string) => {
         const rows = await instancesImpl.listInstances(orgId);
         return Promise.all(
@@ -827,6 +829,18 @@ async function boot() {
   if (lensInstResult.orgsTouched > 0) {
     console.log(
       `[cobblr-api] lens-bundle → instance migration: ${lensInstResult.orgsTouched} org(s), ${lensInstResult.bundlesMigrated} bundle(s) converted, ${lensInstResult.machinesMoved} machine(s) moved`,
+    );
+  }
+  // Bookshelf <=0.1.x put its fields on inventory:part — the DEFAULT instance,
+  // which is always stock — so books wore a quantity/warranty and could never
+  // render as the lean catalog they are. 0.2.0 gives Bookshelf its own shelf;
+  // this moves an existing install (fields + the books themselves) onto it, so
+  // the upgrade heals instead of stranding books in Inventory. Idempotent;
+  // opens no tenant pool for a workspace that's already on the new shape.
+  const shelfResult = await T("migrateBookshelfToInstance", migrateBookshelfToInstance());
+  if (shelfResult.orgsTouched > 0) {
+    console.log(
+      `[cobblr-api] bookshelf → instance migration: ${shelfResult.orgsTouched} org(s), ${shelfResult.booksMoved} book(s) moved`,
     );
   }
   // Enable digifab (Print Manager) for machine-bundle orgs that predate the

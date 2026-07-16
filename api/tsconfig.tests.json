@@ -1,0 +1,29 @@
+{
+  // Typecheck for api/tests — SEPARATE from tsconfig.json on purpose.
+  //
+  // tsconfig.json is the BUILD (outDir: dist, rootDir: src, noEmit: false), so
+  // tests can't just be added to its `include`: `npm run build` would emit them
+  // into dist and ship the suite inside the api image. This config is type-only
+  // (noEmit), which is why it can widen rootDir to cover tests/ as well as src/.
+  //
+  // THE GAP THIS CLOSES: api/tsconfig.json excludes **/*.test.ts, so ~195
+  // integration tests were NEVER typechecked. A test could reference an
+  // undefined variable and only fail at runtime, in CI, minutes later — exactly
+  // what happened 2026-07-16 (a helper hoisted out of its describe read a `let
+  // s` that wasn't in scope). tsc catches that for free.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "sourceMap": false,
+    // rootDir spans the REPO, not api/: api/src legitimately imports module
+    // sources (super-admin.ts reaches into core-scan's services), and in a
+    // worktree @cobblr/* resolves to that worktree's own source — so those files
+    // join the program. With rootDir at api/ they'd all trip TS6059. It costs
+    // nothing here: this pass never emits, so rootDir only has to contain the
+    // inputs, not shape any output.
+    "rootDir": ".."
+  },
+  "include": ["src/**/*", "tests/**/*"],
+  "exclude": ["dist", "node_modules"]
+}

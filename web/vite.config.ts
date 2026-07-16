@@ -61,6 +61,15 @@ export default defineConfig({
           // the @xyflow incident). Return undefined so Rollup keeps it in the
           // dynamic chunk — it loads only when the fallback actually runs.
           if (id.includes("node_modules/@zxing")) return undefined;
+          // rrule (~30KB gz) is reached ONLY via the lazy
+          // `import("../lib/cadence-expand")` a heatmap fires when its view
+          // declares an expected cadence — a rare, opt-in case. ViewsPage is
+          // imported EAGERLY by App, so without this line the dynamic import
+          // buys nothing: this map would still sweep rrule into the PRELOADED
+          // `vendor` bundle and tax every first load for a grid most people
+          // never open. (Measured: it did exactly that until this was added.)
+          // Return undefined so Rollup leaves it in the dynamic chunk.
+          if (id.includes("node_modules/rrule")) return undefined;
           // Everything else from node_modules goes into a generic
           // vendor bundle.
           return "vendor";
