@@ -8,7 +8,13 @@
 // hardcode — so create-bundle is the first of a taxonomy (add-view,
 // wire-event, …), each with its own context recipe + output contract.
 
-import { platform, parseJsonReply, type EntityKindRecord } from "@cobblr/platform-contract";
+import {
+  platform,
+  parseJsonReply,
+  nativesToHide,
+  type EntityKindRecord,
+  type NativeFieldsPolicy,
+} from "@cobblr/platform-contract";
 import { getTemplate, type TemplateEntry } from "./templates.js";
 
 export interface ContextField {
@@ -169,6 +175,7 @@ const OUTPUT_CONTRACT = `{
     "provides_instances": [
       { "module": "<a MULTI-INSTANCE module>", "instance_name": "<kebab-slug>",
         "display_name": "<Nav Label>", "item_noun": "<singular noun>", "glyph": "<emoji>",
+        "native_fields": "base | inherit",
         "field_defs": [ <same shape as above; entity_kind = the module's BASE kind (e.g. inventory:part) — the platform scopes it to this instance> ],
         "wires": [ <same shape as above> ] }
     ],
@@ -219,6 +226,7 @@ RULES:
 - trigger_type is one of {user-invoked,event,on-create,on-update,on-delete}; for "event" also set trigger_event.
 - requires must list every module owning a referenced kind/action (module = the id prefix before ":").
 - To track a NEW kind of thing (the user names a noun that deserves its own page — "Books, call it Bookshelf"), do NOT bolt fields onto an unrelated kind: add a "provides_instances" entry instead. Pick the best-fitting module marked [multi-instance module]; instance_name is a kebab slug; put that thing's field_defs INSIDE the instance entry, each with entity_kind set to the module's BASE kind (e.g. inventory:part) — the platform scopes them to the new instance. The instance gets its own nav entry + "New <item_noun>" flow.
+- Each provides_instances entry sets "native_fields": the instance BORROWS the module's built-in fields, and most won't fit the new thing. Set "native_fields": "base" for a COLLECTION / CATALOG of items you look up — books, movies, records, recipes, plants, wine — so it keeps only name, photo, location, notes plus your field_defs, and drops the module's built-ins (state, warranty, serial, service dates). Set "native_fields": "inherit" only for a thing you OWN and MAINTAIN that genuinely uses them — tools, vehicles, appliances, equipment. When unsure for a catalog-like noun, prefer "base". (The platform computes exactly which built-ins to hide; you only pick base or inherit.)
 - To group nav entries under a parent ("put X and Y under a Machines heading"), use "nav_headings": members reference module names (target_kind "module") or instance names (target_kind "instance") — including instances that already exist in the workspace. Omit both keys entirely when unused.
 - id = "cobblr.user.<kebab-slug>"; version = "0.1.0".`;
   },
@@ -616,6 +624,63 @@ export function unwrapBuild(parsed: unknown): {
     }
   }
   return { interpretation: null, bundle: parsed, seed: [] };
+}
+
+/** After the model returns a bundle, expand each provides_instances'
+ *  `native_fields` hint into concrete field_overrides that HIDE the module
+ *  natives a lean kind shouldn't carry — so a Bookshelf authored on the assets
+ *  module drops state/warranty/serial automatically, no post-install cleanup.
+ *
+ *  Deterministic: the model only says "base" | "inherit"; we compute exactly
+ *  which built-ins to hide from the module's OWN declared fields (title/image
+ *  roles + the universal base are always kept). `native_fields` is a transient
+ *  authoring hint — it is consumed here and stripped, never a manifest field.
+ *
+ *  `nativeFieldsByBaseKind`: base entity-kind id → its native fields, e.g.
+ *  "assets:asset" → [{name:"state"}, {name:"warranty_until"}, …]. Mutates the
+ *  bundle in place and returns it. */
+export function applyLeanNatives(
+  bundle: unknown,
+  nativeFieldsByBaseKind: Map<string, { name: string; role?: string | null }[]>,
+): unknown {
+  if (!bundle || typeof bundle !== "object") return bundle;
+  const instances = (bundle as { provides_instances?: unknown }).provides_instances;
+  if (!Array.isArray(instances)) return bundle;
+  for (const inst of instances) {
+    if (!inst || typeof inst !== "object") continue;
+    const i = inst as {
+      native_fields?: unknown;
+      field_defs?: Array<{ entity_kind?: string }>;
+      field_overrides?: Array<{ name: string; hidden?: boolean }>;
+    };
+    const policy = i.native_fields;
+    delete i.native_fields; // transient hint — never leave it on the manifest
+    if (policy !== "base" && !Array.isArray(policy)) continue; // inherit / absent → no trim
+    // The instance's field_defs carry entity_kind = the module's BASE kind
+    // (per the contract), which is where its native fields live.
+    const baseKind = i.field_defs?.find((d) => d.entity_kind)?.entity_kind;
+    const natives = baseKind ? nativeFieldsByBaseKind.get(baseKind) : undefined;
+    if (!natives || natives.length === 0) continue;
+    const hide = nativesToHide(natives, policy as NativeFieldsPolicy);
+    const existing = new Set((i.field_overrides ?? []).map((o) => o.name));
+    const add = hide.filter((n) => !existing.has(n)).map((n) => ({ name: n, hidden: true }));
+    if (add.length) i.field_overrides = [...(i.field_overrides ?? []), ...add];
+  }
+  return bundle;
+}
+
+/** Build the base-kind → native-fields map `applyLeanNatives` needs, from the
+ *  live entity-kind registry (name + presentation role per native field). */
+export async function nativeFieldsByBaseKind(): Promise<
+  Map<string, { name: string; role?: string | null }[]>
+> {
+  const kinds = await platform().entities.listKinds();
+  return new Map(
+    kinds.map((k) => [
+      k.id,
+      (k.fields ?? []).map((f) => ({ name: f.name, role: f.role ?? null })),
+    ]),
+  );
 }
 
 /** Split a parsed design-app reply into interpretation + the app definition.

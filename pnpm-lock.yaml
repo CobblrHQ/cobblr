@@ -474,34 +474,6 @@ importers:
         specifier: ^5.7.2
         version: 5.9.3
 
-  modules/core-labels-qr:
-    dependencies:
-      '@cobblr/platform-contract':
-        specifier: workspace:*
-        version: link:../../packages/platform-contract
-      express:
-        specifier: ^4.21.2
-        version: 4.22.2
-      kysely:
-        specifier: ^0.27.5
-        version: 0.27.6
-      qrcode:
-        specifier: ^1.5.4
-        version: 1.5.4
-      zod:
-        specifier: ^3.24.1
-        version: 3.25.76
-    devDependencies:
-      '@types/express':
-        specifier: ^4.17.21
-        version: 4.17.25
-      '@types/qrcode':
-        specifier: ^1.5.5
-        version: 1.5.6
-      typescript:
-        specifier: ^5.7.2
-        version: 5.9.3
-
   modules/core-locations:
     dependencies:
       '@cobblr/platform-contract':

@@ -581,7 +581,9 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
       model,
       credentials,
       input: req.input,
-      config: row.config ?? {},
+      // Per-call knobs win over the workspace row: the calling surface knows
+      // its own output size / determinism needs best.
+      config: { ...(row.config ?? {}), ...(req.config ?? {}) },
     });
     ok = true;
   } catch (err) {

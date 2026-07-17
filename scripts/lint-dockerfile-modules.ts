@@ -25,6 +25,28 @@ function escapeRegex(s: string): string {
 
 const df = readFileSync(DOCKERFILE, "utf8");
 
+// REVERSE check, always on: every explicit `COPY modules/<name>/...` line must
+// reference a module that still exists. The install layer hand-enumerates
+// per-module package.json copies for caching, and a DELETED module's line
+// fails the image build with "not found" — post-merge only, because images
+// build on push to main, not on PR CI (the labels merge hit exactly this).
+const staleCopies: string[] = [];
+for (const m of df.matchAll(/^COPY\s+modules\/([A-Za-z0-9_-]+)\//gm)) {
+  const name = m[1]!;
+  if (!existsSync(join(MODULES_DIR, name))) staleCopies.push(name);
+}
+if (staleCopies.length > 0) {
+  console.error(
+    `dockerfile-modules lint: ${DOCKERFILE} copies ${staleCopies.length} module(s) that no longer exist:\n`,
+  );
+  for (const m of [...new Set(staleCopies)]) console.error(`  ❌ modules/${m}`);
+  console.error(
+    `\nA deleted module's COPY line fails the image build AFTER merge (images\n` +
+      `build on push to main). Remove the stale line(s) from ${DOCKERFILE}.`,
+  );
+  process.exit(1);
+}
+
 // Blanket copy of the whole dir → every module (present + future) is in the image.
 const blanketCopy = /^COPY\s+modules\s+\.\/modules\b/m;
 if (blanketCopy.test(df)) {

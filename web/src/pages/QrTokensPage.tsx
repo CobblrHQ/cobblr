@@ -1,5 +1,5 @@
 // /configuration/qr-tokens — every QR token the workspace has minted.
-// core-labels-qr mints these from entity detail pages / the label
+// Labels' QR half mints these from entity detail pages / the label
 // queue, but there was no central place to audit them: what they
 // point at, whether they're public, when they expire, and a way to
 // revoke a token whose printed label has walked off. This is it.

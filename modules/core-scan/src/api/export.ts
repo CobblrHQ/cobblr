@@ -46,7 +46,7 @@ const EMBED_MAX_BYTES = 10 * 1024 * 1024;
 
 /** The instance origin to build absolute photo URLs against: an
  *  `x-cobblr-base-url` override (isolated-stack e2e), else the request's own
- *  forwarded proto + host. Same precedence core-labels-qr uses. */
+ *  forwarded proto + host. Same precedence labels' QR half uses. */
 function baseUrl(req: Request): string {
   const header = req.headers["x-cobblr-base-url"];
   if (typeof header === "string" && header) return header.replace(/\/+$/, "");

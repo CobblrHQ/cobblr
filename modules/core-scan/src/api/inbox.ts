@@ -243,8 +243,13 @@ inboxRouter.post(
         const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
         if (!bumped.suggested_name && body.barcode && token) {
           // Re-scanning a still-UNIDENTIFIED item means "try again" — re-run
-          // enrichment (force) instead of leaving it frozen. enrichBarcodeItem
+          // enrichment instead of leaving it frozen. enrichBarcodeItem
           // cross-checks the (now-attached) photo against the resolved name itself.
+          // `force` (skip both cache tiers, pay a fresh provider round) only when
+          // the last attempt is STALE: the natural rapid double-beep on a
+          // stubborn code used to multiply provider calls — 10 quick re-scans
+          // was up to 10 forced rounds against a shared quota.
+          const lastTry = bumped.ai_suggested_at ? new Date(bumped.ai_suggested_at as unknown as string).getTime() : 0;
           void enrichBarcodeItem({
             db,
             orgId: ctx.org.id,
@@ -253,7 +258,7 @@ inboxRouter.post(
             bearer: token,
             baseUrl,
             upc: body.barcode,
-            force: true,
+            force: Date.now() - lastTry > 60_000,
           })
             .catch((err) => console.error("[core-scan] re-scan re-enrich threw:", (err as Error).message))
             .then(() =>
@@ -1075,6 +1080,38 @@ inboxRouter.post(
       return;
     }
 
+    // ATOMIC CLAIM — two confirms racing (File-all vs a manual tap, or two
+    // devices) both passed the read-guard above and both created the entity.
+    // A compare-and-set on status makes the loser take the same 409 here.
+    const claim = await db
+      .updateTable("core_scan_inbox_items")
+      .set({ status: "resolved", updated_at: new Date() })
+      .where("id", "=", id)
+      .where("status", "=", row.status)
+      .returning(["id"])
+      .executeTakeFirst();
+    if (!claim) {
+      res.status(409).json({
+        error: { code: "already_resolved", message: "This item was already confirmed." },
+      });
+      return;
+    }
+    // Any failure or early validation bail AFTER the claim releases it (the
+    // target_entity_id guard keeps a stamped success safe) — one hook covers
+    // the thrown-error path and every `res.status(4xx); return` inside the
+    // create flow alike, so an item can never strand resolved-without-entity.
+    res.once("finish", () => {
+      if (res.statusCode < 400) return;
+      void db
+        .updateTable("core_scan_inbox_items")
+        .set({ status: row.status, updated_at: new Date() })
+        .where("id", "=", id)
+        .where("status", "=", "resolved")
+        .where("target_entity_id", "is", null)
+        .execute()
+        .catch(() => {});
+    });
+
     const meta = (row.suggested_metadata as Record<string, unknown> | null) ?? {};
     // Route to the right kind: explicit choice wins, else the identify's
     // asset/part hint (asset → assets:asset, else inventory:part).
@@ -1197,7 +1234,13 @@ inboxRouter.post(
       ...(qtyField && qty ? { [qtyField]: qty } : {}),
       // Empty box → do NOT file the entity at the scan location: that's where
       // the BOX lives; the item itself is deployed elsewhere.
-      ...(parsed.data.location_id && (meta as { box_state?: string }).box_state !== "empty-box"
+      // Container beats location: scanning INTO a bin/server is the more
+      // specific intent, and the placement seam clears location_id for a
+      // non-location container anyway — stamping one here just made the
+      // create carry a home the placement below immediately retracts.
+      ...(parsed.data.location_id &&
+      !(row.target_container_kind && row.target_container_id) &&
+      (meta as { box_state?: string }).box_state !== "empty-box"
         ? { location_id: parsed.data.location_id }
         : {}),
       ...restExtras,
@@ -1602,8 +1645,18 @@ inboxRouter.post(
         updated_at: new Date(),
       })
       .where("id", "=", id)
+      // CAS: the bin-identity merge above is additive/idempotent, so the only
+      // thing a racing second caller must not do is double-resolve — losing
+      // the flip means someone else already confirmed this row.
+      .where("status", "=", "pending")
       .returningAll()
-      .executeTakeFirstOrThrow();
+      .executeTakeFirst();
+    if (!resolvedRow) {
+      res.status(409).json({
+        error: { code: "already_resolved", message: "This item was already confirmed." },
+      });
+      return;
+    }
 
     void platform().events.emit("core-scan.scan.confirmed", {
       orgId: ctx.org.id,
@@ -1662,6 +1715,29 @@ inboxRouter.post(
       return;
     }
     const db = tenantDb(req);
+    // A combine-loser's quantity was SUMMED into its primary — restoring it
+    // would double-count (and the primary's merged_barcodes would go stale).
+    // Refuse with a pointer at the primary; splitting there is the honest way
+    // to get a separate row back.
+    const pre = await db
+      .selectFrom("core_scan_inbox_items")
+      .select(["suggested_metadata"])
+      .where("id", "=", id)
+      .where("status", "=", "discarded")
+      .executeTakeFirst();
+    const combinedInto = ((pre?.suggested_metadata as Record<string, unknown> | null) ?? {})
+      .combined_into as string | undefined;
+    if (combinedInto) {
+      res.status(409).json({
+        error: {
+          code: "was_combined",
+          message:
+            "This item was combined into another scan — its quantity already lives there. Split the combined item instead of restoring this one.",
+          combined_into: combinedInto,
+        },
+      });
+      return;
+    }
     const row = await db
       .updateTable("core_scan_inbox_items")
       // created_at is PRESERVED — a restore is an UNDO, and the item goes back
@@ -1691,7 +1767,7 @@ async function appendScanHistory(
   db: ReturnType<typeof tenantDb>,
   id: string,
   entry: {
-    action: "rerun" | "replay" | "rerun-hint" | "wrong" | "enrich" | "confirm" | "combine" | "attached" | "split" | "unconfirm";
+    action: "rerun" | "replay" | "rerun-hint" | "wrong" | "enrich" | "confirm" | "combine" | "attached" | "split" | "unconfirm" | "undo-rerun";
     note?: string | null;
   },
 ): Promise<void> {
@@ -1839,6 +1915,27 @@ inboxRouter.post(
               // (no AI)…" vs "AI reading…") — the mutation returns immediately,
               // so a client-side flag alone reverts to AI language mid-run.
               pipeline_kind: rerun?.no_ai ? "replay" : "rerun",
+              // SNAPSHOT the answer we're about to overwrite. A re-run is a
+              // gamble: vision can read a dark photo of a Hercules tool tote as a
+              // "Portable Bluetooth Speaker" and clobber the good name that was
+              // already there (the author, 2026-07-17). The run writes suggested_* in
+              // place and `history` only records {at, action}, so the row could
+              // not say what it used to be — the old name survived only by luck,
+              // in the raw AI call log. One run deep is the useful depth: the
+              // thing you want back is what was on screen before you tapped.
+              pre_rerun: {
+                at: new Date().toISOString(),
+                kind: rerun?.no_ai ? "replay" : "rerun",
+                name: row.suggested_name,
+                manufacturer: row.suggested_manufacturer,
+                sku: row.suggested_sku,
+                candidates: row.suggested_candidates ?? [],
+                category: (row.suggested_metadata as { category?: unknown } | null)?.category ?? null,
+                entity_type: (row.suggested_metadata as { entity_type?: unknown } | null)?.entity_type ?? null,
+                ai_notes: row.ai_notes,
+                catalog_image_url: row.catalog_image_url,
+                catalog_image_file_id: row.catalog_image_file_id,
+              },
               // The hint has to ride into the matchmaker too — the barcode path
               // stamps it below, but the photo path returns before that, which
               // silently dropped the correction entirely.
@@ -2215,6 +2312,94 @@ inboxRouter.post(
   }),
 );
 
+// ─────────────────── POST /inbox/:id/undo-rerun ─────────────────────
+// Put back the answer the last re-run overwrote. The re-run snapshots the row's
+// identity into `metadata.pre_rerun` before it starts (see rerun-ai), so this is
+// a straight restore of name / brand / sku / category / candidates / notes /
+// catalog image. Refuses when there's no snapshot rather than inventing one.
+//
+// Why this exists: a re-run is a gamble the user can lose. Vision re-read a dark
+// photo of a Hercules tool tote as a "Portable Bluetooth Speaker" and the good
+// name was simply gone (the author, 2026-07-17) — recoverable only by reading the raw
+// AI call log by hand. The undo is the guardrail for that whole class: any pass
+// allowed to replace a good answer must be reversible.
+/** The scalar columns an undo restores from a `pre_rerun` snapshot. Exported so
+ *  the restore mapping is unit-tested against the REAL code rather than a copy of
+ *  it (a mirrored test drifts and stops guarding). A blank/absent value restores
+ *  NULL, never the string "null". */
+export function preRerunRestore(snap: Record<string, unknown>): {
+  suggested_name: string | null;
+  suggested_manufacturer: string | null;
+  suggested_sku: string | null;
+  ai_notes: string | null;
+  catalog_image_url: string | null;
+  catalog_image_file_id: string | null;
+  suggested_candidates: unknown[];
+} {
+  const str = (v: unknown) => (typeof v === "string" && v ? v : null);
+  return {
+    suggested_name: str(snap.name),
+    suggested_manufacturer: str(snap.manufacturer),
+    suggested_sku: str(snap.sku),
+    ai_notes: str(snap.ai_notes),
+    catalog_image_url: str(snap.catalog_image_url),
+    catalog_image_file_id: str(snap.catalog_image_file_id),
+    suggested_candidates: Array.isArray(snap.candidates) ? snap.candidates : [],
+  };
+}
+
+inboxRouter.post(
+  "/inbox/:id/undo-rerun",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const id = String(req.params.id);
+    const db = tenantDb(req);
+    const row = await db
+      .selectFrom("core_scan_inbox_items")
+      .selectAll()
+      .where("id", "=", id)
+      .executeTakeFirst();
+    if (!row) {
+      res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
+      return;
+    }
+    const snap = (row.suggested_metadata as { pre_rerun?: Record<string, unknown> } | null)?.pre_rerun;
+    if (!snap) {
+      res.status(422).json({
+        error: {
+          code: "nothing_to_undo",
+          message: "This item has no previous lookup to go back to.",
+        },
+      });
+      return;
+    }
+    // The snapshot replaces the identity keys it owns; every other key on the row
+    // (tags, hints, box state, the photo) is the USER's and survives the undo.
+    // pre_rerun is dropped so undo can't be double-applied against a stale twin.
+    const cols = preRerunRestore(snap);
+    const restored = await db
+      .updateTable("core_scan_inbox_items")
+      .set({
+        ...cols,
+        suggested_candidates: JSON.stringify(cols.suggested_candidates) as never,
+        suggested_metadata: sql`(coalesce(suggested_metadata, '{}'::jsonb) - 'pre_rerun' - 'match_failed')
+          || ${JSON.stringify({
+            ...(snap.category != null ? { category: snap.category } : {}),
+            ...(snap.entity_type != null ? { entity_type: snap.entity_type } : {}),
+          })}::jsonb` as never,
+        updated_at: new Date(),
+      })
+      .where("id", "=", id)
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    await appendScanHistory(db, id, {
+      action: "undo-rerun",
+      note: cols.suggested_name ? `back to "${cols.suggested_name}"` : undefined,
+    });
+    res.json(restored);
+  }),
+);
+
 // ─────────────────── GET /inbox/:id/tracked-matches ─────────────────
 // "Already tracked?" — entities the workspace ALREADY has that match this
 // scan, by exact barcode (metadata.barcode, stamped by every confirm) or by
@@ -2275,6 +2460,27 @@ inboxRouter.post(
     if (row.status !== "resolved") {
       res.status(422).json({
         error: { code: "not_resolved", message: "Only a committed scan can be sent back." },
+      });
+      return;
+    }
+
+    // A SPLIT parent resolved without a target entity; un-confirming it while
+    // its children sit in the inbox doubles the pile (parent reopens AND all N
+    // children stay). Refuse with the honest instruction.
+    const splitChild = await db
+      .selectFrom("core_scan_inbox_items")
+      .select(["id"])
+      .where(sql`suggested_metadata->>'split_from'`, "=", id)
+      .where("status", "!=", "discarded")
+      .limit(1)
+      .executeTakeFirst();
+    if (splitChild) {
+      res.status(409).json({
+        error: {
+          code: "was_split",
+          message:
+            "This scan was split into separate items — sending it back would duplicate them. Discard the split items first if you want the original back.",
+        },
       });
       return;
     }
@@ -2409,6 +2615,37 @@ inboxRouter.post(
       });
       return;
     }
+    // ATOMIC CLAIM — the read-guard above has the same two-caller race as
+    // confirm did, and attach's failure mode is worse: the target entity's
+    // quantity gets bumped TWICE. CAS the status first; the loser takes the
+    // same 409 before any entity mutation.
+    const attachClaim = await db
+      .updateTable("core_scan_inbox_items")
+      .set({ status: "resolved", updated_at: new Date() })
+      .where("id", "=", id ?? "")
+      .where("status", "=", "pending")
+      .returning(["id"])
+      .executeTakeFirst();
+    if (!attachClaim) {
+      res.status(409).json({
+        error: { code: "already_resolved", message: "this item was already committed or attached" },
+      });
+      return;
+    }
+    // Release the claim on any post-claim failure or validation bail (the
+    // target_entity_id guard protects a stamped success) — same hook shape as
+    // confirm's.
+    res.once("finish", () => {
+      if (res.statusCode < 400) return;
+      void db
+        .updateTable("core_scan_inbox_items")
+        .set({ status: "pending", updated_at: new Date() })
+        .where("id", "=", id ?? "")
+        .where("status", "=", "resolved")
+        .where("target_entity_id", "is", null)
+        .execute()
+        .catch(() => {});
+    });
     const scannable = platform().entities.getScannable(parsed.data.kind);
     if (!scannable) {
       res.status(400).json({
@@ -3165,7 +3402,30 @@ inboxRouter.post(
         (err) => console.error("[core-scan] backfill catalog photo failed:", (err as Error).message),
       );
     }
-    res.json({ queued: targets.length });
+    // Heal the OTHER gap: an item that already has a catalog URL but never got a
+    // local file (a transient download failure at set-time). Pull the existing
+    // URL into core-files — no search needed — so the cover STAYS local and a
+    // later confirm never has to re-fetch from source.
+    const token = bearer(req);
+    let localized = 0;
+    if (token) {
+      const urlOnly = await db
+        .selectFrom("core_scan_inbox_items")
+        .select(["id", "catalog_image_url"])
+        .where("status", "in", ["pending", "enriching"])
+        .where("catalog_image_url", "is not", null)
+        .where("catalog_image_file_id", "is", null)
+        .limit(30)
+        .execute();
+      for (const r of urlOnly) {
+        void downloadCatalogImage(
+          { db, orgSlug: ctx.org.slug, bearer: token, itemId: r.id },
+          r.catalog_image_url!,
+        ).catch((err) => console.error("[core-scan] backfill localize url failed:", (err as Error).message));
+      }
+      localized = urlOnly.length;
+    }
+    res.json({ queued: targets.length, localized });
   }),
 );
 
@@ -3392,9 +3652,16 @@ inboxRouter.post(
       })
       .where("id", "=", primary.id)
       .execute();
+    // Losers carry a marker: their quantities were SUMMED into the primary, so
+    // restoring one later would double-count. The restore endpoint reads this
+    // and refuses with a pointer at the primary (split there instead).
     await db
       .updateTable("core_scan_inbox_items")
-      .set({ status: "discarded", updated_at: new Date() })
+      .set({
+        status: "discarded",
+        suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || jsonb_build_object('combined_into', ${primary.id}::text)` as never,
+        updated_at: new Date(),
+      })
       .where(
         "id",
         "in",

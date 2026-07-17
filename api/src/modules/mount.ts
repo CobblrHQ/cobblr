@@ -127,6 +127,23 @@ async function mountSingleEntry(app: Application, entry: ReturnType<typeof listE
   }
   const mountPath = `/api/v1/orgs/:slug/modules/${manifest.name}`;
   app.use(mountPath, requireAuth, withTenant, requireModuleEnabled(manifest.name), router);
+  // Merge-compat alias (labels 0.6.0): the former core-labels-qr module's
+  // paths keep answering, served by labels' QR routers, gated on labels
+  // being enabled.
+  // DONE WHEN: merge-labels-qr.ts's DONE WHEN reads true — the boot shim,
+  // this alias block, and migration 0004's compat views retire together.
+  if (manifest.name === "labels") { // HISTORICAL DATA MIGRATION names the module it heals (merge alias)
+    const compat = (imported as { qrCompatRouter?: Router } | undefined)?.qrCompatRouter;
+    if (compat && typeof compat === "function") {
+      app.use(
+        "/api/v1/orgs/:slug/modules/core-labels-qr",
+        requireAuth,
+        withTenant,
+        requireModuleEnabled("labels"), // HISTORICAL DATA MIGRATION names the module it heals
+        compat,
+      );
+    }
+  }
   // Capture the module's primary-entity router (if exposed) so the
   // instance-items dispatcher can route /instances/:name/items to it.
   const primary = (imported as ModuleApiModule | undefined)?.primaryRouter;

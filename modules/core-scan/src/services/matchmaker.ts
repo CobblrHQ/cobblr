@@ -1028,6 +1028,12 @@ export async function runMatchmaker(
         userId: userId ?? undefined,
         capability: "chat",
         input: { messages: [{ role: "system", content: system }, { role: "user", content: user }] },
+        // A 2-candidate reply with reconciliation notes never fit the 1024
+        // default — the notes-truncation salvage in parseMatchmakerCandidates
+        // exists because of that cap. Root-caused here; the salvage stays as
+        // defense in depth. temperature 0 is the adapters' default already,
+        // stated explicitly because THIS prompt demands routing determinism.
+        config: { max_tokens: 2048, temperature: 0 },
         source: { kind: "core-scan:matchmaker", id: sourceId ?? "" },
         // A replay never bypasses the cache — the retry below asks for a FRESH
         // sample, which is precisely the paid call replay promises not to make.

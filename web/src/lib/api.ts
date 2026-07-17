@@ -2031,33 +2031,33 @@ export const api = {
       `/orgs/${slug}/modules/core-maintenance/entries/${id}`,
     ),
 
-  // ─── core-labels-qr (minted QR tokens) ────────────────────────────
+  // ─── labels: QR scan tokens (merged from core-labels-qr) ──────────
   listQrTokens: (slug: string) =>
     request<{ items: QrToken[] }>(
       "GET",
-      `/orgs/${slug}/modules/core-labels-qr/tokens`,
+      `/orgs/${slug}/modules/labels/qr/tokens`,
     ),
   revokeQrToken: (slug: string, id: string) =>
     request<QrToken>(
       "POST",
-      `/orgs/${slug}/modules/core-labels-qr/tokens/${id}/revoke`,
+      `/orgs/${slug}/modules/labels/qr/tokens/${id}/revoke`,
     ),
   getQrSettings: (slug: string) =>
     request<QrSettings>(
       "GET",
-      `/orgs/${slug}/modules/core-labels-qr/settings`,
+      `/orgs/${slug}/modules/labels/qr/settings`,
     ),
   setQrTokenStyle: (slug: string, token_style: "descriptive" | "opaque") =>
     request<QrSettings>(
       "PUT",
-      `/orgs/${slug}/modules/core-labels-qr/settings`,
+      `/orgs/${slug}/modules/labels/qr/settings`,
       { token_style },
     ),
   /** Set (or clear, with "") the custom base URL printed QR codes encode. */
   setQrLabelBaseUrl: (slug: string, label_base_url: string) =>
     request<QrSettings>(
       "PUT",
-      `/orgs/${slug}/modules/core-labels-qr/settings`,
+      `/orgs/${slug}/modules/labels/qr/settings`,
       { label_base_url },
     ),
 
@@ -2406,6 +2406,21 @@ export const api = {
     }>("POST", `/orgs/${slug}/modules/core-scan/decode`, { code }),
   // core-scan — barcode + photo identification, generalized. See
   // docs/modules/core-scan.md.
+  /** File a scanned code as a UNIT (serial) of a model, from the scanner's
+   *  ?unitOf flow — the mint endpoint on inventory's parts router. Instance vs
+   *  default picks the path (parts vs instance items). Does not touch the
+   *  model's qty; see docs/design-decisions/within-instance-units.md. */
+  mintScannedUnit: (
+    slug: string,
+    args: { modelId: string; instance?: string | null; serial: string },
+  ) =>
+    request<{ id: string; name: string; serial_number: string | null }>(
+      "POST",
+      args.instance
+        ? `/orgs/${slug}/instances/${args.instance}/items/${args.modelId}/units`
+        : `/orgs/${slug}/modules/inventory/parts/${args.modelId}/units`,
+      { serial_number: args.serial },
+    ),
   scanBarcode: (
     slug: string,
     body: {
@@ -2640,9 +2655,10 @@ export const api = {
       item_ids: itemIds,
       batch_id: batchId,
     }),
-  /** Fill catalog images for pending items that have a name but no catalog art. */
+  /** Fill catalog images for pending items with no art (search by name), AND
+   *  localize any item stuck on a catalog URL with no local file. */
   backfillScanCatalogPhotos: (slug: string) =>
-    request<{ queued: number }>("POST", `/orgs/${slug}/modules/core-scan/inbox/backfill-catalog-photos`),
+    request<{ queued: number; localized: number }>("POST", `/orgs/${slug}/modules/core-scan/inbox/backfill-catalog-photos`),
   /** Bulk import (inbox-export interop + generic CSV). `file` is the picked File;
    *  mapping only matters for plain CSVs. */
   scanImportPreview: async (slug: string, file: File, mapping?: Record<string, string>) => {
@@ -2845,6 +2861,9 @@ export const api = {
       "GET",
       `/orgs/${slug}/modules/core-scan/inbox/${id}/tracked-matches`,
     ),
+  /** Put back the answer the last re-run overwrote (restores metadata.pre_rerun). */
+  scanUndoRerun: (slug: string, id: string) =>
+    request<ScanInboxItem>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/undo-rerun`),
   /** Single-SKU bin: what lives in this bin + direct qty adjust off its QR. */
   binContents: (slug: string, locationId: string) =>
     request<{ items: TrackedMatch[]; single: boolean }>(
@@ -5694,6 +5713,10 @@ export interface PlatformBundleManifest {
   name: string;
   description?: string;
   author?: string;
+  /** Catalog tier (default `core`): `core` = suggested per-scan + browsable;
+   *  `extended` = browsable but not suggested per-scan; `disabled` = hidden
+   *  everywhere (existing installs keep working). See api lib/flagship-bundles.ts. */
+  catalog?: "core" | "extended" | "disabled";
   /** Release date of THIS version (ISO date), shown on the update prompt. */
   released_at?: string;
   /** Plain-language "what changed in this version" — shown prominently when

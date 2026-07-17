@@ -542,6 +542,32 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
     // A junk "name" ("Unknown Item" / "XXXXXXXX") means the web couldn't identify
     // it either — DON'T accept it as a result. Fall through to the photo/manual
     // path with no name, so it never gets shown as valid or image-searched.
+    if (web && !isJunkName(web.name) && !web.corroborated && !hasScanPhoto) {
+      // Blank beats wrong, at the DISPLAY layer too. The cache gate below has
+      // always refused to store an uncorroborated web title — but with no scan
+      // photo to arbitrate, that same guess used to be WRITTEN AS THE ROW'S
+      // NAME at confidence 0.2 (the hardware-wedge path: no photo, so nothing
+      // ever cross-checked it). "411 - White Pages" on the row is worse than a
+      // blank row. Hold the name in metadata as a hint; say why it's blank.
+      await ctx.db
+        .updateTable("core_scan_inbox_items")
+        .set({
+          suggested_metadata: identityMeta({
+            source: "web-search",
+            method: web.method,
+            held_name: withBrandPrefix(web.name, web.brand),
+            held_reason: "uncorroborated",
+          }) as never,
+          ai_confidence: "0.2",
+          ai_notes: `Web search suggested “${withBrandPrefix(web.name, web.brand)}” but nothing corroborated it — left blank. Add a photo or type a name to pin it down.`,
+          ai_suggested_at: new Date(),
+          updated_at: new Date(),
+        })
+        .where("id", "=", ctx.itemId)
+        .execute();
+      await reassertLockedImage();
+      return;
+    }
     if (web && !isJunkName(web.name)) {
       // Same pending gate as a catalog hit (below): a web-search name is the
       // WEAKEST source, so when a scan photo exists, hold it at "checking…" until
@@ -901,6 +927,15 @@ export function isJunkName(name: string | null | undefined): boolean {
   const alnum = n.replace(/[^a-z0-9]/gi, "");
   if (alnum.length < 3) return true; // too short to be a product name
   if (/(.)\1{3,}/i.test(alnum)) return true; // a run of one char ≥4 (placeholder)
+  // Artifacts of SEARCHING A BARE NUMBER, not identifications: a 12-digit UPC
+  // looks like a phone number to a search engine, so a no-result code reliably
+  // surfaces directory/lookup SEO. This is the structural class (query-shaped
+  // titles), deliberately not a site blocklist — corroboration remains the
+  // real guard; this just keeps the obvious artifacts out of the display floor.
+  if (/white ?pages|yellow ?pages|reverse phone|phone number|caller.?id|area code|barcode (?:lookup|database|scanner|info)|upc (?:lookup|database|search)|\bgtin\b|ean (?:lookup|database)/i.test(lc)) {
+    return true;
+  }
+  if (/^[\d(+][\d\s\-().+]{5,}$/.test(n)) return true; // the "name" IS a number — the query echoed back
   return false;
 }
 
@@ -1083,39 +1118,59 @@ async function writeTenantCache(ctx: EnrichContext, v: BarcodeCacheValue): Promi
  *  fetch directly. SSRF-guarded + size/time-bounded; uses the caller's
  *  bearer against our own API so the upload runs through normal auth. */
 /** Download an external image into core-files and stamp it as the item's
- *  catalog image. Exported for the photo-options picker (set-as-catalog). */
+ *  catalog image. Exported for the photo-options picker (set-as-catalog).
+ *
+ *  Once a cover is in the system it must STAY local: a committed record must
+ *  never depend on re-fetching the source URL (which can 404/expire). A single
+ *  transient hiccup here used to strand an item on a URL with no file, and the
+ *  confirm then had nothing to attach — a workspace filed ~40 books and 3 came
+ *  through coverless (2026-07-17). So we retry a few times; a still-URL-only item
+ *  is later healed by the localize pass in /inbox/backfill-catalog-photos.
+ *
+ *  Returns true once a local file is stamped. */
 export async function downloadCatalogImage(
   ctx: Pick<EnrichContext, "db" | "orgSlug" | "bearer" | "itemId">,
   imageUrl: string,
-): Promise<void> {
+): Promise<boolean> {
   try {
     assertSafeOutboundUrl(imageUrl);
-    const dlRes = await fetch(imageUrl, {
-      headers: { "user-agent": "cobblr-core-scan/0.1" },
-      signal: AbortSignal.timeout(8_000),
-    });
-    const len = Number(dlRes.headers.get("content-length") ?? 0);
-    if (dlRes.ok && len <= 10 * 1024 * 1024) {
+  } catch {
+    return false; // not a safe outbound target — never retry
+  }
+  const MAX = 10 * 1024 * 1024;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 500 * attempt));
+    try {
+      const dlRes = await fetch(imageUrl, {
+        headers: { "user-agent": "cobblr-core-scan/0.1" },
+        signal: AbortSignal.timeout(8_000),
+      });
+      if (!dlRes.ok) continue; // 5xx/timeout/blocked → try again
+      if (Number(dlRes.headers.get("content-length") ?? 0) > MAX) return false; // too big — don't retry
       const blob = await dlRes.blob();
+      if (blob.size === 0 || blob.size > MAX) return false;
       const fd = new FormData();
-      const filename = imageUrl.split("/").pop() ?? "catalog.jpg";
-      fd.append("file", blob, filename);
+      fd.append("file", blob, imageUrl.split("/").pop()?.split("?")[0] || "catalog.jpg");
       // INTERNAL_API, not ctx.baseUrl: this call carries the bearer
       // token, so it must never target a caller-influenced URL.
       const upRes = await fetch(
         `${INTERNAL_API}/api/v1/orgs/${ctx.orgSlug}/modules/core-files/files`,
         { method: "POST", headers: { Authorization: `Bearer ${ctx.bearer}` }, body: fd },
       );
-      if (upRes.ok) {
-        const f = (await upRes.json()) as { id: string };
-        await ctx.db
-          .updateTable("core_scan_inbox_items")
-          .set({ catalog_image_file_id: f.id, updated_at: new Date() })
-          .where("id", "=", ctx.itemId)
-          .execute();
-      }
+      if (!upRes.ok) continue;
+      const f = (await upRes.json()) as { id: string };
+      await ctx.db
+        .updateTable("core_scan_inbox_items")
+        .set({ catalog_image_file_id: f.id, updated_at: new Date() })
+        .where("id", "=", ctx.itemId)
+        .execute();
+      return true;
+    } catch (err) {
+      console.error(
+        `[core-scan] catalog image download attempt ${attempt + 1} failed:`,
+        (err as Error).message,
+      );
     }
-  } catch (err) {
-    console.error("[core-scan] catalog image download failed:", (err as Error).message);
   }
+  return false;
 }

@@ -17,10 +17,8 @@
 // to filter/open a recipe; type in "Add your first thing" to capture it and
 // have Cobblr find/build the tracker. Pick a building block and the recipes
 // column funnels to ITS ready-made versions — modules and bundles converge.
-//
-// Reuses CaptureFirstPanel's proven data + actions, restructured per the author's
-// feedback (swap the first two columns; build-it-yourself is a CTA, not a lane;
-// the 3rd column is the guided add + scan; a mini scan inbox lives below).
+// Build-it-yourself is a CTA, not a lane; the 3rd column is the guided
+// add + scan, and a mini scan inbox lives below.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
@@ -235,6 +233,10 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
   const navigate = useNavigate();
   const qc = useQueryClient();
   const aiStatus = useAiStatus();
+  // Capture-first funnel: the building-blocks / all-trackers columns stay
+  // hidden until asked for, so the first screen is one question + capture +
+  // a short tracker strip (launch-simplification.md §4).
+  const [moreOpen, setMoreOpen] = useState(false);
 
   // The panel persists once the workspace has content (startCollapsed) so you
   // can keep adding via the guided flow — collapsed by default, expandable, and
@@ -667,33 +669,13 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
       </div>
 
       {showBody && (<>
-      {/* Build-it-yourself CTA — a button, not a column (per feedback). */}
-      <Link
-        to="/build?mode=workspace"
-        className="flex items-center gap-3 rounded-lg border border-cobble-300 dark:border-cobble-700 bg-surface dark:bg-slate-900 px-4 py-2.5 hover:border-cobble-400 transition group"
-      >
-        <span className="w-8 h-8 rounded-lg bg-accent/10 text-accent flex items-center justify-center shrink-0">
-          <Wand2 size={16} />
-        </span>
-        <span className="flex-1 text-sm text-content dark:text-mortar-100">
-          <span className="font-medium">Describe what you have</span>
-          <span className="text-faint dark:text-slate-400"> — the AI builder compiles a custom setup, fields and all.</span>
-        </span>
-        <ArrowRight size={15} className="text-faint group-hover:text-accent transition shrink-0" />
-      </Link>
-
-      {/* One shared AI-honesty pattern (redesign A1): say basic-mode up front. */}
-      <AiOffNotice status={aiStatus} compact>
-        <strong>AI isn't connected — matching runs in basic mode.</strong>{" "}
-        Common things still find a home by keywords; connect AI to identify anything (and to use the builder above).{" "}
-      </AiOffNotice>
-
-      {/* The three columns. Desktop order: Building blocks · Ready-made · Add
-          your first thing (left→right funnel). MOBILE inverts: "just add it" is
-          a phone user's most likely intent, so col 3 stacks FIRST — it was 2+
-          screens down under two long lists. The selection state lives IN the
-          columns (highlights + col 3's reactive prompt) — no breadcrumb bar. */}
-      <div className="grid gap-3 md:grid-cols-3">
+      {/* Capture-first: the reactive add/capture surface is the hero, a short
+          tracker strip sits under it, and the two browse columns (building
+          blocks · all trackers) only render once "More ways to start" is
+          opened. Selection state still lives IN the columns; a strip pick or a
+          column pick primes the same hero. */}
+      <div className="grid gap-3 md:grid-cols-2">
+        {moreOpen && (<>
         {/* Col 1 — Building blocks (modules) */}
         <div className="order-2 md:order-none rounded-xl border border-line dark:border-slate-700 bg-surface/60 dark:bg-slate-900/40 p-3 md:flex md:flex-col">
           <LaneHeader kicker="// building blocks" title="Track a kind of thing" count={blockMatches.length} />
@@ -797,12 +779,13 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
             </ScrollList>
           )}
         </div>
+        </>)}
 
-        {/* Col 3 — the captive terminal step. Reacts to the funnel: a chosen
+        {/* The hero — the captive terminal step. Reacts to the funnel: a chosen
             recipe → "set it up & drop me in"; a chosen kind → "add a blank one";
             nothing → the freeform "type what you've got". */}
         <div className={
-          "order-1 md:order-none rounded-xl border p-3 transition " +
+          "order-first md:col-span-2 rounded-xl border p-3 transition " +
           (selectedRecipe || selectedModuleObj ? "border-accent/60 bg-accent/5 dark:bg-cobble-900/15" : "border-line dark:border-slate-700 bg-surface/60 dark:bg-slate-900/40")
         }>
           <LaneHeader
@@ -961,6 +944,63 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
           )}
         </div>
       </div>
+
+      {/* Short tracker strip — the ready-made front door without the wall.
+          Disappears once the full columns are open (col 2 lists everything). */}
+      {!moreOpen && skins.length > 0 && (
+        <div data-strip="ready-made" className="flex flex-wrap gap-1.5 items-center">
+          <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">ready-made:</span>
+          {skins
+            .filter((b) => (b.manifest.catalog ?? "core") === "core")
+            .slice(0, 8)
+            .map((b) => (
+            <button
+              key={b.manifest.id}
+              type="button"
+              onClick={() => pickRecipe(b)}
+              className={
+                "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs transition " +
+                (selectedRecipe?.manifest.id === b.manifest.id
+                  ? "border-accent text-accent bg-accent/5"
+                  : "border-line dark:border-slate-700 bg-surface dark:bg-slate-900 text-content dark:text-mortar-100 hover:border-accent hover:text-accent")
+              }
+            >
+              <span aria-hidden>{b.glyph}</span> {b.manifest.name}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <button
+        type="button"
+        onClick={() => setMoreOpen((v) => !v)}
+        className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:underline"
+      >
+        {moreOpen
+          ? (<>Fewer ways to start <ChevronUp size={13} /></>)
+          : (<>More ways to start — building blocks &amp; every tracker <ChevronDown size={13} /></>)}
+      </button>
+
+      {/* One shared AI-honesty pattern (redesign A1): say basic-mode up front. */}
+      <AiOffNotice status={aiStatus} compact>
+        <strong>AI isn't connected — matching runs in basic mode.</strong>{" "}
+        Common things still find a home by keywords; connect AI to identify anything (and to use the builder below).{" "}
+      </AiOffNotice>
+
+      {/* Build-it-yourself CTA — a button, not a column (per feedback). */}
+      <Link
+        to="/build?mode=workspace"
+        className="flex items-center gap-3 rounded-lg border border-cobble-300 dark:border-cobble-700 bg-surface dark:bg-slate-900 px-4 py-2.5 hover:border-cobble-400 transition group"
+      >
+        <span className="w-8 h-8 rounded-lg bg-accent/10 text-accent flex items-center justify-center shrink-0">
+          <Wand2 size={16} />
+        </span>
+        <span className="flex-1 text-sm text-content dark:text-mortar-100">
+          <span className="font-medium">Describe what you have</span>
+          <span className="text-faint dark:text-slate-400"> — the AI builder compiles a custom setup, fields and all.</span>
+        </span>
+        <ArrowRight size={15} className="text-faint group-hover:text-accent transition shrink-0" />
+      </Link>
 
       <Link to="/bundles" className="inline-block text-xs text-faint dark:text-slate-400 hover:text-accent transition">
         browse all setups & trackers →

@@ -1,6 +1,7 @@
 {
   "manifest": {
     "id": "cobblr.flagship.household-supplies",
+    "catalog": "disabled",
     "version": "0.3.0",
     "name": "Household Supplies auto-reorder",
     "description": "Your household supplies as their own table — reorder level per supply auto-adds to a shopping list on low stock; check off → it restocks. Grouped by where they live.",

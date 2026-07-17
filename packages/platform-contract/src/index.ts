@@ -94,6 +94,40 @@ export const FIELD_ROLE_CATEGORY = "category";
  *  pack, never a "usual buy" guess. At most one per entity kind. */
 export const FIELD_ROLE_PACK = "pack";
 
+/** The universal base: the native fields EVERY entity kind keeps, regardless of
+ *  which domain module it borrows its shape from. Everything else a module
+ *  declares (assets' state/warranty/serial, inventory's qty/reorder) is a
+ *  domain-native that a lean kind — a Bookshelf, a Movies list — hides. This is
+ *  the "a kind owns its fields" rule (field-model spec). */
+export const BASE_NATIVE_FIELDS: ReadonlySet<string> = new Set([
+  "name",
+  "image_path",
+  "location_id",
+  "notes",
+  "metadata",
+]);
+
+/** A kind's native-field policy. `base` = only the universal base shows;
+ *  `inherit` = all the module's natives (today's default); a list = base + these
+ *  explicit natives to keep (e.g. a Wine list keeps `quantity`). */
+export type NativeFieldsPolicy = "base" | "inherit" | readonly string[];
+
+/** The native field NAMES a policy hides: everything a module declares that is
+ *  neither in the universal base, nor a title/image role (those ARE the base
+ *  identity + cover), nor in an explicit keep-list. Pure, so the authoring
+ *  compile and the installer agree on exactly what a lean kind drops. */
+export function nativesToHide(
+  nativeFields: readonly { name: string; role?: string | null }[],
+  policy: NativeFieldsPolicy,
+): string[] {
+  if (policy === "inherit") return [];
+  const keep = new Set<string>(BASE_NATIVE_FIELDS);
+  if (Array.isArray(policy)) for (const n of policy) keep.add(n);
+  return nativeFields
+    .filter((f) => f.role !== "title" && f.role !== "image" && !keep.has(f.name))
+    .map((f) => f.name);
+}
+
 // `\bpack\b` matches the WORD "pack" — deliberately not "package" / "backpack"
 // (no word boundary), so only genuine pack-size labels trip the guard.
 const PACK_LABEL_RE = /\bpack\b/i;
@@ -2523,6 +2557,11 @@ export interface PlatformAi {
     /** Override provider + model from workspace defaults. */
     provider_id?: string;
     model?: string;
+    /** Per-call provider knobs (max_tokens, temperature, …) merged OVER the
+     *  workspace capability-default config. A surface that knows its own
+     *  needs (the matchmaker's 2-candidate JSON never fits 1024 tokens)
+     *  states them here instead of relying on an ops-set DB row. */
+    config?: Record<string, unknown>;
     /** Skip cache lookup AND skip cache write. Useful for
      *  match-to-catalog after a user rejects a suggestion. */
     bypass_cache?: boolean;
@@ -2890,6 +2929,28 @@ export interface PlatformPairings {
     targetKind: string;
     relationshipKind: string;
   }): Promise<Array<{ sourceId: string; targetId: string }>>;
+  /** Aggregate the pairings pointing AT each target: how many, and when the
+   *  newest was made. The counting twin of findByTargets — which returns a row
+   *  per pairing, so counting through it means hauling every row back to count
+   *  them in JS.
+   *
+   *  One query however many targets. That matters: the reconciliation surfaces
+   *  (a serialized model's `units_count`, and the stability window deciding
+   *  whether its numbers have settled) read this for EVERY row of a list page,
+   *  so a per-row version would be an N+1 on a hot path.
+   *
+   *  `latestCreatedAt` is max(created_at) over a target's current pairings — the
+   *  "has this stopped changing?" signal. It only moves forward on an insert:
+   *  deleting a pairing does not bump it, so a window built on it errs quiet
+   *  rather than nagging. Targets with no pairings are simply absent from the
+   *  result (the caller reads them as zero). See
+   *  docs/design-decisions/serialized-rollup-and-stock-adjust.md. */
+  countByTargets(args: {
+    orgId: string;
+    targetKind: string;
+    targetIds: string[];
+    relationshipKind: string;
+  }): Promise<Array<{ targetId: string; count: number; latestCreatedAt: string }>>;
 }
 
 /** Read-only access to core-catalogs from other modules. Modules

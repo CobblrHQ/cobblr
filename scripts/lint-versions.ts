@@ -51,7 +51,12 @@ const changed = git(`diff --name-only ${base}...HEAD`).split("\n").filter(Boolea
 const violations: string[] = [];
 
 // ── bundles ──
-const META = new Set(["version", "changelog", "released_at"]);
+// `catalog` is offer-curation metadata (which tier the platform lists a bundle
+// in — see docs/design-decisions/bundle-catalog-tiers.md), NOT content an
+// installed workspace has to re-sync. Changing it must NOT force a version bump:
+// a bump would show every existing install an "update available" for a bundle the
+// operator is DEMOTING, which is backwards.
+const META = new Set(["version", "changelog", "released_at", "catalog"]);
 function stripMeta(j: unknown): string {
   const obj = j as { manifest?: Record<string, unknown> } & Record<string, unknown>;
   const m = (obj?.manifest ?? obj) as Record<string, unknown>;

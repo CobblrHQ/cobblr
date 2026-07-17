@@ -169,7 +169,7 @@ export function createApp(): AppHandles {
   // Calendar to subscribe. Outside /orgs (no slug in the URL).
   v1.use("/calendar", calendarPublicRouter);
   // QR scan target — unauthenticated GET that resolves a token to
-  // (org, entity, mode). See modules/core-labels-qr.
+  // (org, entity, mode). See modules/labels (QR half).
   v1.use("/qr", qrScanRouter);
   // Inbound webhook receiver for core-integrations. Unauthenticated;
   // the token in the URL is the secret. See

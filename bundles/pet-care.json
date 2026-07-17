@@ -1,6 +1,7 @@
 {
   "manifest": {
     "id": "cobblr.flagship.pet-care",
+    "catalog": "extended",
     "version": "0.2.1",
     "name": "Pet Care",
     "description": "Your pets as their own table — vitals + vet/vaccination dates (calendar-reminded), grouped by species.",
@@ -67,7 +68,8 @@
             "entity_kind": "assets:asset",
             "name": "weight_kg",
             "display_label": "Weight (kg)",
-            "type": "number", "unit": "kg",
+            "type": "number",
+            "unit": "kg",
             "position": 4,
             "help": "Current weight — handy for dosing meds + spotting changes."
           },

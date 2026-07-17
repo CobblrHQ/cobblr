@@ -24,6 +24,8 @@ import {
   parseJsonObject,
   unwrapBuild,
   unwrapApp,
+  applyLeanNatives,
+  nativeFieldsByBaseKind,
   type ValidationError,
   type SeedGroup,
 } from "../services/compile.js";
@@ -347,7 +349,10 @@ async function runBuild(
         if (u.interpretation) interpretation = u.interpretation;
       } else {
         const u = unwrapBuild(parsedJson);
-        candidate = u.bundle;
+        // Expand each instance's native_fields hint into concrete hide-overrides
+        // BEFORE validation — so a lean collection (a Bookshelf) drops the
+        // borrowed module natives at author time, not via a later cleanup.
+        candidate = applyLeanNatives(u.bundle, await nativeFieldsByBaseKind());
         if (u.interpretation) interpretation = u.interpretation;
         if (u.seed.length > 0) seed = u.seed;
       }

@@ -2,8 +2,11 @@
 // placement primitive (core_placement_placements, owned by core-placement) from
 // every existing tenant-local `location_id`, and (2) installs the transitional
 // sync TRIGGERS that keep placement in step with location_id going forward.
-// Delete both once every production tenant has cut over AND location_id has been
-// dropped (step 5). Skip with `COBBLR_SKIP_HISTORICAL_MIGRATIONS=1`.
+// DONE WHEN: the per-tenant core_placement_sync_drift sweep reads empty on
+// prod + staging + dev for the soak window (no unconverted location_id
+// writers remain), THEN step 4 drops location_id + these triggers + the
+// drift table and deletes this file in that same change.
+// Skip with `COBBLR_SKIP_HISTORICAL_MIGRATIONS=1`.
 //
 // Placement subsumes location_id (docs/design-decisions/placement-and-containment.md):
 // "what is this thing inside of?" — a Location is just one KIND of container.
@@ -46,16 +49,38 @@ const LOCATED_TABLES: Array<{ table: string; kind: string }> = [
 // — deliberately scoped to this migration and removed at the location_id cutover
 // (step 5). This is what makes the dual-write GUARANTEED complete: every writer
 // path (handlers, actions, import, sync-writers) fires it, with zero app-code.
+//
+// DRIFT PROBE (placement-cutover-plan step 2): the seam (placement.place/
+// remove) always writes the placement row BEFORE mirroring the column, so a
+// trigger invocation that does REAL work — deleting a row the seam didn't
+// already delete, or upserting where no matching row exists — is the signature
+// of a direct location_id writer the campaign hasn't converted. Those land in
+// core_placement_sync_drift; step 3/4 proceed when a sweep of that table reads
+// empty across deployments for the soak window. The table drops with the
+// triggers in step 4. NOTE for step 4: the DELETE branch below is the ONLY
+// place entity-deletion placement cleanup happens today — it must move into
+// the entity delete paths before the triggers go.
 const TRIGGER_FUNCTION_SQL = `
+create table if not exists core_placement_sync_drift (
+  id bigserial primary key,
+  tg_op text not null,
+  containee_kind text not null,
+  containee_id text not null,
+  location_id text,
+  occurred_at timestamptz not null default now()
+);
+
 create or replace function core_placement_sync_location() returns trigger
 language plpgsql as $$
 declare
   k text := TG_ARGV[0];
+  drift_rows int := 0;
 begin
   if TG_OP = 'DELETE' then
     -- Entity deleted: remove its OWN placement (whatever container kind — a
     -- lingering entity-container row would be a dangling ref), AND everything
-    -- placed INSIDE it (it can't contain anything anymore).
+    -- placed INSIDE it (it can't contain anything anymore). Expected work, not
+    -- drift: deletion cleanup lives here by design until step 4 relocates it.
     delete from core_placement_placements
      where containee_kind = k and containee_id = OLD.id::text;
     delete from core_placement_placements
@@ -68,7 +93,26 @@ begin
     delete from core_placement_placements
      where containee_kind = k and containee_id = NEW.id::text
        and container_kind = 'core-locations:location';
+    get diagnostics drift_rows = row_count;
+    if drift_rows > 0 then
+      -- The seam removes the placement before clearing the column; finding a
+      -- row to delete here means a direct writer cleared location_id.
+      insert into core_placement_sync_drift (tg_op, containee_kind, containee_id, location_id)
+      values (TG_OP, k, NEW.id::text, null);
+    end if;
   else
+    if not exists (
+      select 1 from core_placement_placements
+       where containee_kind = k and containee_id = NEW.id::text
+         and (container_kind <> 'core-locations:location'
+              or container_id = NEW.location_id::text)
+    ) then
+      -- No matching location-derived row and no entity-container placement
+      -- (which the guard below deliberately leaves alone): the upsert below is
+      -- about to do real work, so a direct writer set location_id.
+      insert into core_placement_sync_drift (tg_op, containee_kind, containee_id, location_id)
+      values (TG_OP, k, NEW.id::text, NEW.location_id::text);
+    end if;
     insert into core_placement_placements
       (containee_kind, containee_id, container_kind, container_id)
     values (k, NEW.id::text, 'core-locations:location', NEW.location_id::text)

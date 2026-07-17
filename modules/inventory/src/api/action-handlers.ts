@@ -158,6 +158,7 @@ export function registerInventoryActionHandlers(): void {
       const patch: Record<string, unknown> = { metadata: sql`${JSON.stringify(nextMeta)}::jsonb` as never };
       // File into a location ONLY when the item isn't already located AND the
       // field held a real value — never clobber an existing filing, never invent.
+      let fileInto: string | null = null;
       if (!p.location_id && name) {
         const key = name.toLowerCase();
         let locId = areaByName.get(key);
@@ -166,10 +167,23 @@ export function registerInventoryActionHandlers(): void {
           areaByName.set(key, locId);
           areasCreated++;
         }
-        patch.location_id = locId;
+        fileInto = locId;
         filed++;
       }
       await db.updateTable("inventory_parts").set(patch as never).where("id", "=", p.id).execute();
+      // The filing itself rides the placement seam (placement-cutover-plan
+      // step 1); place() mirrors the legacy column. Fallback: direct write.
+      if (fileInto) {
+        try {
+          await platform().placement.place({
+            orgId: ctx.orgId,
+            containee: { kind: "inventory:part", id: p.id },
+            container: { kind: "core-locations:location", id: fileInto },
+          });
+        } catch {
+          await db.updateTable("inventory_parts").set({ location_id: fileInto } as never).where("id", "=", p.id).execute();
+        }
+      }
     }
     return { ok: true, filed, areas_created: areasCreated };
   });
@@ -364,7 +378,6 @@ export function registerInventoryActionHandlers(): void {
         qty,
         unit,
         instance,
-        location_id: locationId,
         manufacturer,
         image_path: imagePath,
         metadata: sql`${JSON.stringify(fields)}::jsonb` as never,
@@ -372,6 +385,24 @@ export function registerInventoryActionHandlers(): void {
       .returning(["id", "name"])
       .executeTakeFirst();
     if (!created) return { ok: false, error: "create_failed" };
+
+    // Create-then-place (placement-cutover-plan step 1); place() mirrors the
+    // legacy column. Fall back to the direct write if placement refuses.
+    if (locationId) {
+      try {
+        await platform().placement.place({
+          orgId: ctx.orgId,
+          containee: { kind: "inventory:part", id: created.id },
+          container: { kind: "core-locations:location", id: locationId },
+        });
+      } catch {
+        await db
+          .updateTable("inventory_parts")
+          .set({ location_id: locationId })
+          .where("id", "=", created.id)
+          .execute();
+      }
+    }
 
     await platform().events.emit("inventory.part.created", { orgId: ctx.orgId, partId: created.id });
     return { ok: true, item_id: created.id, name: created.name };
@@ -396,6 +427,10 @@ export function registerInventoryActionHandlers(): void {
       // forcing "" would bury the rows in an empty instance the default
       // list/detail reads (instanceOf → 'inventory') never return.
       instance: typeof o.instance === "string" && o.instance.trim() ? o.instance.trim() : undefined,
+      // Bulk keeps the direct column write for now: N place() calls per batch
+      // would undo the one-INSERT design, and the sync trigger mirrors it into
+      // placement. Converts with the bulk placeMany seam
+      // (placement-cutover-plan step 1, bulk special case).
       location_id: typeof o.location_id === "string" && o.location_id ? o.location_id : null,
       manufacturer: typeof o.manufacturer === "string" && o.manufacturer.trim() ? o.manufacturer.trim().slice(0, 120) : null,
       image_path: typeof o.image_path === "string" && o.image_path ? o.image_path : null,
@@ -420,12 +455,35 @@ export function registerInventoryActionHandlers(): void {
     const set: Record<string, unknown> = { updated_at: new Date() };
     if (typeof a.name === "string" && a.name.trim()) set.name = a.name.trim().slice(0, 200);
     if (typeof a.manufacturer === "string") set.manufacturer = a.manufacturer.trim().slice(0, 120) || null;
-    if (typeof a.location_id === "string") set.location_id = a.location_id || null;
     if (a.fields && typeof a.fields === "object") {
       const existing = (row.metadata as Record<string, unknown> | null) ?? {};
       set.metadata = sql`${JSON.stringify({ ...existing, ...(a.fields as Record<string, unknown>) })}::jsonb` as never;
     }
     await db.updateTable("inventory_parts").set(set as never).where("id", "=", id).execute();
+    // A location change rides the placement seam (placement-cutover-plan
+    // step 1); place()/remove() keep the legacy location_id column mirrored.
+    // Fall back to the direct column write if placement refuses.
+    if (typeof a.location_id === "string") {
+      try {
+        if (a.location_id) {
+          await platform().placement.place({
+            orgId: ctx.orgId,
+            containee: { kind: "inventory:part", id },
+            container: { kind: "core-locations:location", id: a.location_id },
+          });
+        } else {
+          await platform().placement.remove({
+            orgId: ctx.orgId,
+            containee: { kind: "inventory:part", id },
+          });
+        }
+      } catch {
+        await db.updateTable("inventory_parts")
+          .set({ location_id: a.location_id || null } as never)
+          .where("id", "=", id)
+          .execute();
+      }
+    }
     await platform().events.emit("inventory.part.updated", { orgId: ctx.orgId, partId: id });
     return { ok: true, id };
   });
@@ -623,13 +681,26 @@ export function registerInventoryActionHandlers(): void {
         unit: src.unit,
         instance: src.instance as never,
         manufacturer: src.manufacturer ?? null,
-        location_id: src.location_id ?? null,
         image_path: src.image_path ?? null,
         metadata: sql`${JSON.stringify((src.metadata as Record<string, unknown> | null) ?? {})}::jsonb` as never,
       })
       .returning(["id"])
       .executeTakeFirst();
     if (!created) return { ok: false, error: "create_failed" };
+
+    // The split-off item inherits the lot's home via the placement seam
+    // (placement-cutover-plan step 1); fallback: direct column write.
+    if (src.location_id) {
+      try {
+        await platform().placement.place({
+          orgId: ctx.orgId,
+          containee: { kind: "inventory:part", id: created.id },
+          container: { kind: "core-locations:location", id: src.location_id },
+        });
+      } catch {
+        await db.updateTable("inventory_parts").set({ location_id: src.location_id }).where("id", "=", created.id).execute();
+      }
+    }
 
     // 3. Inherit the lot's parent pairing(s) (e.g. instance-of its type) so
     //    type rollups count the split-off item too.

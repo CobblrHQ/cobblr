@@ -17,6 +17,7 @@ import {
   type EntityKindOverride,
 } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { BASE_NATIVE_FIELDS } from "../lib/native-field-policy";
 import { HeadingsBuilder } from "../components/HeadingsBuilder";
 
 export function PresentationPage() {
@@ -714,6 +715,52 @@ function FieldsEditorModal({ entityKind, title, onClose }: { entityKind: string;
     mutationFn: (name: string) => api.deleteNativeFieldOverride(activeSlug, entityKind, name),
     onSuccess: invalidate,
   });
+  // "Just the essentials": hide every NATIVE field that isn't part of the
+  // universal base, in one click — so a kind that borrows a module's shape (a
+  // Bookshelf riding on assets) stops showing that module's domain columns
+  // (state/warranty/serial/type/…). Custom fields (author/genre/…) are left
+  // alone. The inverse un-hides them all. This is the no-code form of the
+  // "kind owns its fields" rule; a bundle/instance will be able to declare the
+  // same policy up front (see field-model spec).
+  const essentialsPreset = useMutation({
+    mutationFn: async () => {
+      const toHide = nativeFields.filter((f) => !BASE_NATIVE_FIELDS.has(f.name));
+      for (const f of toHide) {
+        if (byName.get(f.name)?.hidden) continue;
+        await api.putNativeFieldOverride(activeSlug, {
+          entity_kind: entityKind,
+          name: f.name,
+          display_label: byName.get(f.name)?.display_label ?? null,
+          hidden: true,
+        });
+      }
+    },
+    onSuccess: () => {
+      invalidate();
+      toast.success("Trimmed to the essentials — this thing's own fields stay.");
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+  const showAllNative = useMutation({
+    mutationFn: async () => {
+      for (const f of nativeFields) {
+        if (byName.get(f.name)?.hidden) {
+          await api.putNativeFieldOverride(activeSlug, {
+            entity_kind: entityKind,
+            name: f.name,
+            display_label: byName.get(f.name)?.display_label ?? null,
+            hidden: false,
+          });
+        }
+      }
+    },
+    onSuccess: () => {
+      invalidate();
+      toast.success("All built-in fields shown.");
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+  const applyingPreset = essentialsPreset.isPending || showAllNative.isPending;
   return (
     <Modal open onClose={onClose} title={`Fields — ${title}`} size="md">
       <p className="text-sm text-muted mb-3">
@@ -721,6 +768,27 @@ function FieldsEditorModal({ entityKind, title, onClose }: { entityKind: string;
         modal and speak your own language. Your edits layer on top and survive bundle updates; reset
         returns the bundle's default.
       </p>
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <button
+          type="button"
+          disabled={applyingPreset}
+          onClick={() => essentialsPreset.mutate()}
+          className="rounded-md bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 px-3 py-1.5 text-xs font-medium text-white"
+        >
+          Just the essentials
+        </button>
+        <button
+          type="button"
+          disabled={applyingPreset}
+          onClick={() => showAllNative.mutate()}
+          className="rounded-md border border-line dark:border-slate-600 hover:border-faint disabled:opacity-50 px-3 py-1.5 text-xs font-medium text-muted hover:text-content"
+        >
+          Show all built-in fields
+        </button>
+        <span className="text-[11px] text-faint">
+          Hides the built-in fields that aren't this thing's own (keeps name, photo, location, notes).
+        </span>
+      </div>
       <div className="space-y-1 max-h-[60vh] overflow-auto">
         {fields.map((f) => {
           const o = byName.get(f.name);

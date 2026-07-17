@@ -25,7 +25,7 @@ printRouter.use((req, res, next) => {
   next();
 });
 
-// The workspace's custom label base URL lives in core-labels-qr (a sibling
+// The workspace's custom label base URL lives in the QR settings (same
 // module), read over a loopback to its settings endpoint (same pattern
 // scan-drive uses). Lets us rebuild each queued label's URL against the CURRENT
 // base at print time, so what prints matches the live preview. Null on any
@@ -37,7 +37,7 @@ async function qrBaseFor(req: Request): Promise<string | null> {
     const auth = req.headers.authorization;
     const port = process.env.API_PORT ?? "4000";
     const r = await fetch(
-      `http://127.0.0.1:${port}/api/v1/orgs/${encodeURIComponent(slug)}/modules/core-labels-qr/settings`,
+      `http://127.0.0.1:${port}/api/v1/orgs/${encodeURIComponent(slug)}/modules/labels/qr/settings`,
       { headers: auth ? { authorization: auth } : {} },
     );
     if (!r.ok) return null;

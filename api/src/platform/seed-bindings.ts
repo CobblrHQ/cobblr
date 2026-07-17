@@ -1,3 +1,6 @@
+// PERMANENT RECONCILE — not a one-shot heal: modules ship new default wires
+// over time, so this top-up runs for the life of the platform.
+//
 // Manifest-driven default wires. Every module's
 // `manifest.contributes.wires[]` describes user-editable bindings the
 // platform should install when the module gets enabled — the actual

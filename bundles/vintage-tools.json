@@ -1,6 +1,7 @@
 {
   "manifest": {
     "id": "cobblr.community.vintage-tools",
+    "catalog": "disabled",
     "version": "0.1.1",
     "name": "Vintage Tools",
     "description": "Custom fields + label wires for vintage hand tools.",

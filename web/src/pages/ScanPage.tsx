@@ -74,6 +74,8 @@ import {
   type TrackedMatch,
 } from "../lib/api";
 import { matchParentType, readField } from "../lib/parent-type-match";
+import { isRerunInFlight } from "./scan-status";
+import { baseKind, confirmBodyFor, isReadyToFile } from "./scanFileAll";
 import { usePublishChatContext } from "../lib/chat-context";
 import { useBarcodeWedge } from "../lib/useBarcodeWedge";
 import { resolveSessionBatch, clearScanSession, readScanSession, isSessionFresh, SESSION_GAP_MS } from "../lib/scanSession";
@@ -90,11 +92,6 @@ const FALLBACK_MENU: ScanMenuEntry[] = [
   { module: "assets", instance: null, kind: "assets:asset", noun: "asset", label: "Asset", fields: [] },
   { module: "machines", instance: null, kind: "machines:machine", noun: "machine", label: "Machine", fields: [] },
 ];
-
-/** The confirm endpoint's target_kind is the module's BASE kind. */
-function baseKind(module: string): string {
-  return module === "assets" ? "asset" : module === "machines" ? "machine" : "part";
-}
 
 // ── scan-drives-screen (Phase 1) ─────────────────────────────────────────────
 interface ScanDrive {
@@ -204,10 +201,6 @@ function itemEnriching(it: ScanInboxItem, now = Date.now()): boolean {
   // still holds the PREVIOUS run's candidates. So the spinner stopped the instant
   // the new name landed while the matchmaker was still running — the card looked
   // finished and then mutated, which reads as a bug rather than as progress.
-  const rerunAgeMs = meta.pipeline_started_at
-    ? now - new Date(meta.pipeline_started_at).getTime()
-    : Infinity;
-  const rerunning = !meta.finalized_at && rerunAgeMs < 300_000;
   const serverMatching =
     !!(it.suggested_name || it.ai_suggested_at) &&
     cands === 0 &&
@@ -215,7 +208,7 @@ function itemEnriching(it: ScanInboxItem, now = Date.now()): boolean {
     !needsName &&
     aiAgeMs < 180_000;
   const awaitingFresh = !it.suggested_name && !it.ai_suggested_at && cands === 0 && !meta.rate_limited;
-  return rerunning || serverMatching || awaitingFresh;
+  return isRerunInFlight(it, now) || serverMatching || awaitingFresh;
 }
 /** How a combine offer was found — drives the banner's wording + which item it
  *  keeps. "name" = same brand + product words; "barcode" = an OCR-read barcode
@@ -1596,46 +1589,50 @@ export function ScanPage() {
     void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
     toast.success(`Added ${ok} to ${entry.label}${skipped ? ` — ${skipped} skipped (no name / failed)` : ""}`);
   };
-  const bulkConfirm = async () => {
-    setBulkBusy(true);
+  // Commit each item to its OWN top candidate — the destination the matchmaker
+  // already picked ("as-is" routing). Shared by the selection bulk-confirm and
+  // the per-session "File all" button. A pending item without a confident
+  // candidate or a name stays pending for a manual look and is reported;
+  // already-resolved items in the set are skipped silently.
+  const confirmItemsToTheirCandidate = async (ids: Iterable<string>) => {
     const byId = new Map(items.map((i) => [i.id, i]));
     let ok = 0;
     let skipped = 0;
     let failed = 0;
-    for (const id of selected) {
+    for (const id of ids) {
       const it = byId.get(id);
-      const cand = it?.suggested_candidates?.[0];
-      // Only auto-confirm items with a confident table match AND a name; the rest
-      // stay for a manual look (reported in the summary).
-      if (!it || !cand || !it.suggested_name) {
-        skipped++;
+      const body = it ? confirmBodyFor(it) : null;
+      if (!body) {
+        if (it && it.status === "pending") skipped++;
         continue;
       }
       try {
-        await api.confirmScanItem(activeSlug, id, {
-          target_module: cand.module,
-          target_kind: cand.kind,
-          instance: cand.instance ?? undefined,
-          name: it.suggested_name,
-          quantity: it.quantity ?? cand.quantity ?? undefined,
-          extras: cand.fields,
-          // Carry a pre-set home (active-bin filing, an organize apply) — the
-          // confirm endpoint never defaults to target_location_id, so without
-          // this a bulk-confirm of already-located items drops their location.
-          location_id: it.target_location_id ?? undefined,
-        });
+        await api.confirmScanItem(activeSlug, id, body);
         ok++;
       } catch {
         failed++;
       }
     }
-    setBulkBusy(false);
-    clearSelected();
     void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
     const parts = [`${ok} confirmed`];
     if (skipped) parts.push(`${skipped} need a manual look`);
     if (failed) parts.push(`${failed} failed`);
     toast.success(parts.join(" · "));
+    return { ok, skipped, failed };
+  };
+  const bulkConfirm = async () => {
+    setBulkBusy(true);
+    await confirmItemsToTheirCandidate(selected);
+    setBulkBusy(false);
+    clearSelected();
+  };
+  // "File all" on a session header: confirm every ready item in that session to
+  // its own candidate. The button only shows once the AI is done (busy===0), so
+  // routing is settled.
+  const fileSession = async (ids: string[]) => {
+    setBulkBusy(true);
+    await confirmItemsToTheirCandidate(ids);
+    setBulkBusy(false);
   };
 
   return (
@@ -2368,8 +2365,14 @@ export function ScanPage() {
               : null;
             // How many items in this session are still being worked by the AI —
             // the one clear "is the whole session done thinking?" signal. Drives
-            // the header pill: "N finishing…" while any churn, "All set" when 0.
+            // the header control: "N finishing…" while any churn; once 0, it
+            // becomes the "File all" button (routing is settled).
             const busy = g.items.filter((it) => itemEnriching(it)).length;
+            // Pending items with a confident destination + a name — the ones
+            // "File all" will commit to their own candidate. Pending items that
+            // still need a manual look aren't counted here.
+            const readyIds = g.items.filter(isReadyToFile).map((it) => it.id);
+            const pendingInSession = g.items.filter((it) => it.status === "pending").length;
             // This group IS the live scanning session (localStorage) — so it
             // carries the "active" pulse + End control that used to live in the
             // now-suppressed green banner.
@@ -2421,27 +2424,50 @@ export function ScanPage() {
                       </span>
                     )}
                     {g.area && <span className="text-muted truncate">· {g.area}</span>}
-                    <span className="ml-auto shrink-0 flex items-center gap-2">
-                      {busy > 0 ? (
-                        <span
-                          className="inline-flex items-center gap-1 rounded-full border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 px-1.5 py-0.5 text-[10px] font-medium text-accent"
-                          title="The AI is still finalizing some items — names, covers and routing may still change"
-                        >
-                          <Loader2 size={9} className="animate-spin" /> {busy} finishing…
-                        </span>
-                      ) : (
-                        <span
-                          className="inline-flex items-center gap-1 text-emerald-600/70 dark:text-emerald-400/70"
-                          title="AI is done — every item in this session is finalized"
-                        >
-                          <CheckCircle size={11} /> All set
-                        </span>
-                      )}
-                      <span className="text-faint">
-                        {g.items.length} item{g.items.length === 1 ? "" : "s"}
-                      </span>
+                    <span className="ml-auto shrink-0 text-faint">
+                      {g.items.length} item{g.items.length === 1 ? "" : "s"}
                     </span>
                   </button>
+                  {/* The session's action slot — its state used to be a passive
+                      "All set" check that read as "committed" but only collapsed
+                      the row on click (a user filed nothing and thought they had,
+                      2026-07-16). Now: a real "File all" BUTTON once the AI is done,
+                      committing every ready item to its own destination. */}
+                  {busy > 0 ? (
+                    <span
+                      className="shrink-0 inline-flex items-center gap-1 rounded-full border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 px-1.5 py-0.5 text-[10px] font-medium text-accent"
+                      title="The AI is still finalizing some items — names, covers and routing may still change"
+                    >
+                      <Loader2 size={9} className="animate-spin" /> {busy} finishing…
+                    </span>
+                  ) : readyIds.length > 0 ? (
+                    <button
+                      type="button"
+                      disabled={bulkBusy}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void fileSession(readyIds);
+                      }}
+                      title={`Add all ${readyIds.length} to their destinations — each goes where the AI matched it`}
+                      className="shrink-0 inline-flex items-center gap-1 rounded-md bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 px-2 py-1 text-[11px] font-medium text-white"
+                    >
+                      <CheckCircle size={11} /> File all {readyIds.length}
+                    </button>
+                  ) : pendingInSession > 0 ? (
+                    <span
+                      className="shrink-0 inline-flex items-center gap-1 text-amber-600/80 dark:text-amber-400/80 text-[10px] font-medium"
+                      title="Every item still here needs a manual look — open the cards to give each a name or destination"
+                    >
+                      needs review
+                    </span>
+                  ) : (
+                    <span
+                      className="shrink-0 inline-flex items-center gap-1 text-emerald-600/70 dark:text-emerald-400/70 text-[10px]"
+                      title="Every item in this session has been filed"
+                    >
+                      <CheckCircle size={11} /> filed
+                    </span>
+                  )}
                   {g.isBatch && g.batchId && (
                     <Link
                       to={`/scan?batch=${g.batchId}`}
@@ -2891,6 +2917,24 @@ function InboxCard({
     .filter((c, i) => i === 0 || Object.keys(c.fields ?? {}).length > 0)
     .slice(0, 3);
   const topCand = candidates[0] ?? null;
+  // Re-arm the OPEN form when a re-run lands a new answer. `formCtx` (which drives
+  // ADD TO + the pre-filled fields) is only set by openForm() on a CLICK, so a
+  // re-run updated the header chips and the Source panel while the form below kept
+  // the previous run's route + category until the user closed and reopened the
+  // card (the author, 2026-07-17: re-identified a miter-saw misread as a tool tote, but
+  // ADD TO still said Machines / Power tool). A re-run is an explicit "identify
+  // this again", so adopting its result into the open form is what's expected.
+  // Keyed on the top candidate's signature (route + fields), the same shape the
+  // ConfirmForm key already remounts on — so the props it remounts with stop being
+  // stale. Only when the form is actually on screen; never auto-expands a card.
+  const answerSig = topCand ? `${topCand.module}:${topCand.instance ?? ""}|${JSON.stringify(topCand.fields)}` : "none";
+  const lastAnswerSig = useRef(answerSig);
+  useEffect(() => {
+    if (lastAnswerSig.current === answerSig) return;
+    lastAnswerSig.current = answerSig;
+    if (expanded && !planContext) openForm(topCand ?? undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [answerSig]);
   // Stuck-nameless: enrichment finished (ai_suggested_at) but produced no name
   // and no candidates — a bare photo that couldn't be auto-identified. Offer the
   // manual "name it" entry instead of an endless "AI is reading…" pulse.
@@ -2933,6 +2977,14 @@ function InboxCard({
   // Couldn't auto-identify → offer manual naming. Either enrichment finished
   // empty (needsName) or the rate-limit retries are spent (rateLimitGaveUp).
   const cantIdentify = needsName || (rateLimited && !!rateLimitGaveUp);
+  // The matchmaker THREW for this item: the backend stamps match_failed (+
+  // matched_at, so the pulse stops) — but the row then read as SETTLED with a
+  // name, zero candidates, and no error anywhere, while File-all silently
+  // skipped it. Surface the failure with a one-tap retry (rerun-ai clears the
+  // marker server-side).
+  const matchFailed =
+    item.status === "pending" &&
+    !!(item.suggested_metadata as { match_failed?: boolean } | null)?.match_failed;
   // A scan with no photo (just a barcode) must not say "this photo".
   const idNoun = item.barcode_text || item.source_kind === "barcode" ? "barcode" : "photo";
   // "Awaiting lookup…" only while genuinely fresh — nothing has come back yet.
@@ -3070,6 +3122,15 @@ function InboxCard({
     },
     onError: (e) => toast.error((e as Error).message),
   });
+  // Put back what the last re-run overwrote (the row snapshots it before running).
+  const undoRerun = useMutation({
+    mutationFn: () => api.scanUndoRerun(activeSlug, item.id),
+    onSuccess: (it) => {
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      toast.success(it.suggested_name ? `Back to “${it.suggested_name}”` : "Previous lookup restored");
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
   const rerun = useMutation({
     mutationFn: (vars?: { hint?: string; wrong?: boolean; enrich?: boolean; noAi?: boolean }) =>
       api.rerunScanAi(activeSlug, item.id, {
@@ -3134,7 +3195,12 @@ function InboxCard({
     const t = setTimeout(() => setReading(false), 95_000);
     return () => clearTimeout(t);
   }, [reading]);
-  const rerunning = rerun.isPending || reading;
+  // In flight = the local mutation is pending (optimistic, before the server has
+  // even stamped pipeline_started_at) OR the server says the run is still going
+  // (isRerunInFlight — the SAME signal the header count uses, so the spinner and
+  // the "N finishing" pill can't disagree). `reading` alone stopped the moment the
+  // name landed, ~60s before a real AI re-run actually finished.
+  const rerunning = rerun.isPending || reading || isRerunInFlight(item);
   // "Replay (no AI)" runs the SAME mutation with noAi — but showing it as
   // "Re-running the lookup…" with the AI sparkle made a token-free replay look
   // like a model call ("all the spinners are going incl the AI one"). Label the
@@ -3371,6 +3437,17 @@ function InboxCard({
                 {rerunning || serverMatching ? (
                   <span className="shrink-0 inline-flex items-center gap-1 rounded-full border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 px-2 py-0.5 text-[10px] font-mono uppercase tracking-widest text-accent animate-pulse">
                     {replayNoAi ? "replaying (no AI)" : rerunning ? "re-running" : "AI reading…"}
+                  </span>
+                ) : matchFailed ? (
+                  <span className="shrink-0 inline-flex items-center gap-1.5 rounded-full border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/30 px-2 py-0.5 text-[10px] font-mono uppercase tracking-widest text-amber-700 dark:text-amber-300">
+                    matching failed
+                    <button
+                      type="button"
+                      onClick={() => rerun.mutate({})}
+                      className="underline underline-offset-2 hover:text-amber-900 dark:hover:text-amber-100 transition"
+                    >
+                      retry
+                    </button>
                   </span>
                 ) : null}
               </>
@@ -4064,6 +4141,41 @@ function InboxCard({
               {item.ai_notes && (
                 <p className="text-xs text-muted dark:text-slate-400 mt-1">{item.ai_notes}</p>
               )}
+              {/* A re-run is a gamble you can LOSE: vision re-read a dark photo of
+                  a tool tote as a "Portable Bluetooth Speaker" and the good name
+                  was gone, recoverable only by hand-reading the raw AI call log
+                  (the author, 2026-07-17). The run snapshots what it's about to
+                  overwrite, so the way back is one tap. Shown only while a
+                  snapshot exists — the next run replaces it, and undoing clears it. */}
+              {(() => {
+                const snap = (
+                  item.suggested_metadata as { pre_rerun?: { name?: string | null; kind?: string } } | null
+                )?.pre_rerun;
+                if (!snap || item.status !== "pending") return null;
+                return (
+                  <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-amber-300/60 dark:border-amber-700/40 bg-amber-50/60 dark:bg-amber-950/20 px-2.5 py-1.5">
+                    <span className="min-w-0 text-[11px] text-muted dark:text-slate-400">
+                      {snap.name ? (
+                        <>
+                          Before this {snap.kind === "replay" ? "replay" : "re-run"} it was{" "}
+                          <span className="font-medium text-content dark:text-mortar-100 break-words">{snap.name}</span>
+                        </>
+                      ) : (
+                        <>This {snap.kind === "replay" ? "replay" : "re-run"} replaced the previous answer</>
+                      )}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => undoRerun.mutate()}
+                      disabled={undoRerun.isPending}
+                      className="shrink-0 inline-flex items-center gap-1 rounded-full border border-amber-400 dark:border-amber-700 text-amber-800 dark:text-amber-300 hover:bg-amber-100/70 dark:hover:bg-amber-900/30 px-2.5 py-1 text-[11px] font-medium transition disabled:opacity-50"
+                    >
+                      <RotateCcw size={11} className={undoRerun.isPending ? "animate-spin" : ""} />
+                      {undoRerun.isPending ? "Putting it back…" : "Put it back"}
+                    </button>
+                  </div>
+                );
+              })()}
               {/* Per-item history — what you did to this listing, newest first.
                   ("You asked for more detail · 2 min ago".) */}
               {(() => {
@@ -4079,6 +4191,7 @@ function InboxCard({
                   enrich: "Asked for more detail",
                   confirm: "Locked into the barcode database",
                   combine: "Combined similar items",
+                  "undo-rerun": "Undid the re-run",
                 };
                 return (
                   <div className="mt-2 border-t border-line dark:border-slate-700/60 pt-1.5">

@@ -120,6 +120,12 @@ export function ScanCameraPage() {
   // live value — once we're in the result modal, decodes are ignored. That
   // guard IS the "stop scanning the same thing over and over" fix.
   const phaseRef = useRef<Phase>("scanning");
+  // Scan-serials-into-a-model: ?unitOf=<modelId> means each decoded code is a
+  // SERIAL of that model, minted as a unit and the camera stays live for the
+  // next — the dealership scanning 40 VINs into a lot. A ref so onDetect's deps
+  // don't churn. See docs/design-decisions/within-instance-units.md.
+  const unitOfRef = useRef<string | null>(params.get("unitOf"));
+  useEffect(() => { unitOfRef.current = params.get("unitOf"); }, [params]);
 
   // Auto-start: mount straight into "scanning" so the lens turns on with no
   // extra tap. "idle" is now only the permission-denied / camera-error state.
@@ -732,7 +738,7 @@ export function ScanCameraPage() {
 
   // A decoded value → block into the result modal (dedup a stale repeat first).
   // EXCEPT Cobblr QR labels: a printed label encodes <host>/qr/<token>
-  // (24-char base64url — see core-labels-qr's token mint), and that's a
+  // (24-char base64url — see labels' QR token mint), and that's a
   // navigation, not a product — route it to the /qr resolver, which lands
   // on the labeled entity. Without this, scanning your own label staged a
   // junk "no catalog match" inbox item.
@@ -754,6 +760,26 @@ export function ScanCameraPage() {
       // "Filing into…" toast every couple of seconds.
       if (!shouldFireScan(dedupRef.current, raw, Date.now(), REPEAT_GAP_MS)) return;
       if (typeof navigator.vibrate === "function") navigator.vibrate(70);
+
+      // ?unitOf: this code is a SERIAL, not an entity to identify. File it as a
+      // unit of the target model and stay scanning — no result modal, no
+      // identify pipeline. Everything below is untouched when unitOf is absent.
+      if (unitOfRef.current) {
+        const modelId = unitOfRef.current;
+        void (async () => {
+          try {
+            const u = await api.mintScannedUnit(activeSlug, {
+              modelId,
+              instance: params.get("into"),
+              serial: raw,
+            });
+            toast.success(`Filed ${u.serial_number ?? "a unit"}`);
+          } catch (e) {
+            toast.error(e instanceof ApiError ? e.message : "Couldn't file that serial.");
+          }
+        })();
+        return;
+      }
 
       // Sort mode with a directive on screen keeps the camera LIVE while we
       // resolve — a bin label there is the retarget gesture, not a navigation.

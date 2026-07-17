@@ -1,10 +1,13 @@
-// Tenant-side DB types — just the scan audit log; the token rows
-// live cross-tenant in cobblr_meta.
+// Tenant-side DB types for the QR half of labels (merged in from the former
+// core-labels-qr module) — the scan audit log + the per-workspace settings
+// singleton. The token rows live cross-tenant in cobblr_meta (the table keeps
+// its historical `core_labels_qr_tokens` name there: printed URLs and the
+// immutable platform migration both outlive module identity).
 
 import type { Generated, Kysely } from "kysely";
 import type { Request } from "express";
 
-export interface CoreLabelsQrScansTable {
+export interface LabelsQrScansTable {
   id: Generated<string>;
   token_id: string;
   scanned_at: Generated<Date>;
@@ -15,27 +18,27 @@ export interface CoreLabelsQrScansTable {
 }
 
 // Singleton per-workspace settings (one row, id=1).
-export interface CoreLabelsQrSettingsTable {
+export interface LabelsQrSettingsTable {
   id: Generated<number>;
   token_style: Generated<"descriptive" | "opaque">;
   // A stable base URL the workspace controls + forwards to this instance, so
   // printed codes survive a move. null/empty = encode against the serving
-  // origin. See migration 0003.
+  // origin. See labels migration 0004 (formerly core-labels-qr 0003).
   label_base_url: string | null;
   updated_at: Generated<Date>;
 }
 
-export interface CoreLabelsQrDB {
-  core_labels_qr_scans: CoreLabelsQrScansTable;
-  core_labels_qr_settings: CoreLabelsQrSettingsTable;
+export interface LabelsQrDB {
+  labels_qr_scans: LabelsQrScansTable;
+  labels_qr_settings: LabelsQrSettingsTable;
 }
 
 export type QrTokenStyle = "descriptive" | "opaque";
 
 /** Read the workspace's QR token style (default descriptive). */
-export async function getQrTokenStyle(db: Kysely<CoreLabelsQrDB>): Promise<QrTokenStyle> {
+export async function getQrTokenStyle(db: Kysely<LabelsQrDB>): Promise<QrTokenStyle> {
   const row = await db
-    .selectFrom("core_labels_qr_settings")
+    .selectFrom("labels_qr_settings")
     .select("token_style")
     .where("id", "=", 1)
     .executeTakeFirst();
@@ -44,9 +47,9 @@ export async function getQrTokenStyle(db: Kysely<CoreLabelsQrDB>): Promise<QrTok
 
 /** Read the workspace's custom QR label base URL (trimmed, no trailing slash),
  *  or null if unset — in which case callers fall back to the serving origin. */
-export async function getQrLabelBaseUrl(db: Kysely<CoreLabelsQrDB>): Promise<string | null> {
+export async function getQrLabelBaseUrl(db: Kysely<LabelsQrDB>): Promise<string | null> {
   const row = await db
-    .selectFrom("core_labels_qr_settings")
+    .selectFrom("labels_qr_settings")
     .select("label_base_url")
     .where("id", "=", 1)
     .executeTakeFirst();
@@ -58,17 +61,6 @@ export async function getQrLabelBaseUrl(db: Kysely<CoreLabelsQrDB>): Promise<str
  *  The `/qr/<token>` path is the stable contract a custom base must forward to. */
 export function qrScanUrl(base: string, token: string): string {
   return `${base.replace(/\/+$/, "")}/qr/${token}`;
-}
-
-/** A readable, deterministic token for the descriptive style:
- *  "<kind-local-name>/<entity-id>", e.g. "location/9a8e…". The full kind
- *  still lives on the token row, so this is purely the human-readable label
- *  (and stays unique because the entity id is a UUID).
- *  Superseded by qrShortcode + a short slug for new descriptive tokens; kept for
- *  reference and for resolving already-printed labels. */
-export function descriptiveToken(entityKind: string, entityId: string): string {
-  const alias = entityKind.split(":").pop() || entityKind;
-  return `${alias}/${entityId}`;
 }
 
 // A short, curated code per kind so a descriptive token reads short
@@ -92,36 +84,18 @@ export function qrShortcode(entityKind: string): string {
   return KIND_SHORTCODES[alias] ?? (alias.replace(/[^a-z0-9]/g, "").slice(0, 3) || "obj");
 }
 
-export type OrgRole = "owner" | "admin" | "member" | "guest";
-
-export interface TenantContext {
-  org: { id: string; name: string; slug: string };
-  role: OrgRole;
-}
-
 interface RequestWithTenant {
   tenant?: {
     org: { id: string; name: string; slug: string };
-    role: OrgRole;
+    role: "owner" | "admin" | "member" | "guest";
     db: unknown;
   };
-  session?: { id: string; email: string; display_name: string };
 }
 
-export function tenantDb(req: Request): Kysely<CoreLabelsQrDB> {
+/** The tenant DB typed over the QR tables. Labels' own db.ts types the label
+ *  tables; the two views never overlap, so each router imports its own. */
+export function qrTenantDb(req: Request): Kysely<LabelsQrDB> {
   const t = (req as unknown as RequestWithTenant).tenant;
-  if (!t) throw new Error("core-labels-qr route called without tenant context");
-  return t.db as Kysely<CoreLabelsQrDB>;
-}
-
-export function tenantContext(req: Request): TenantContext {
-  const t = (req as unknown as RequestWithTenant).tenant;
-  if (!t) throw new Error("core-labels-qr route called without tenant context");
-  return { org: t.org, role: t.role };
-}
-
-export function sessionUser(
-  req: Request,
-): { id: string; email: string; display_name: string } | null {
-  return (req as unknown as RequestWithTenant).session ?? null;
+  if (!t) throw new Error("labels qr route called without tenant context");
+  return t.db as Kysely<LabelsQrDB>;
 }

@@ -1,6 +1,7 @@
 {
   "manifest": {
     "id": "cobblr.flagship.medications",
+    "catalog": "extended",
     "version": "0.3.1",
     "name": "Medications & Refills",
     "description": "Your medications as their own table — dose, schedule, instructions, prescriber/pharmacy, refills left + a refill-by date. Caregiver-friendly.",

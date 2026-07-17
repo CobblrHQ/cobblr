@@ -1295,12 +1295,23 @@ function MachineDetailModal({
     if (ok) remove.mutate();
   }
 
+  // Honor the same hide overrides the fields do — a lean instance that hid
+  // manufacturer/state shouldn't leak them back in the header subtitle.
+  const subtitle = m
+    ? [
+        !fp.hidden("manufacturer") && m.manufacturer ? m.manufacturer : null,
+        !fp.hidden("state") && m.state ? m.state : null,
+      ]
+        .filter(Boolean)
+        .join(" · ") || undefined
+    : undefined;
+
   return (
     <Modal
       open={!!machineId}
       onClose={onClose}
       title={m?.name ?? "loading…"}
-      subtitle={m ? `${m.manufacturer ?? "—"} · ${m.state}` : undefined}
+      subtitle={subtitle}
       size="lg"
     >
       {m ? (

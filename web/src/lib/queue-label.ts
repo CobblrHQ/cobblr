@@ -3,7 +3,7 @@
 // and by single-print flows on each entity's detail page.
 //
 // The flow is two steps:
-//   1. Mint (or reuse) a QR scan token via core-labels-qr.
+//   1. Mint (or reuse) a QR scan token via labels' QR half.
 //   2. POST to the labels queue with the QR url + description.
 // Both calls are scoped to the workspace slug + need a bearer token.
 //
@@ -42,7 +42,7 @@ export async function queueLabel(input: QueueLabelInput): Promise<void> {
   //    base URL if set, else the serving origin). Never guess the origin here.
   let scanUrl: string | null = null;
   const list = await fetch(
-    `/api/v1/orgs/${slug}/modules/core-labels-qr/tokens?entity_kind=${encodeURIComponent(entityKind)}&entity_id=${encodeURIComponent(entityId)}`,
+    `/api/v1/orgs/${slug}/modules/labels/qr/tokens?entity_kind=${encodeURIComponent(entityKind)}&entity_id=${encodeURIComponent(entityId)}`,
     { headers: auth() },
   );
   if (list.ok) {
@@ -54,7 +54,7 @@ export async function queueLabel(input: QueueLabelInput): Promise<void> {
   }
   if (!scanUrl) {
     const mint = await fetch(
-      `/api/v1/orgs/${slug}/modules/core-labels-qr/tokens`,
+      `/api/v1/orgs/${slug}/modules/labels/qr/tokens`,
       {
         method: "POST",
         headers: { ...auth(), "Content-Type": "application/json" },

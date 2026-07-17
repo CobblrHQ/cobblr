@@ -1,6 +1,7 @@
 {
   "manifest": {
     "id": "cobblr.flagship.collections",
+    "catalog": "disabled",
     "version": "0.3.0",
     "name": "Collections",
     "description": "Your collection as its own cover wall — condition, edition, paid vs value today, so you stop buying the dupe.",

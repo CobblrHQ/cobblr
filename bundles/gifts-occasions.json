@@ -1,6 +1,7 @@
 {
   "manifest": {
     "id": "cobblr.flagship.gifts-occasions",
+    "catalog": "disabled",
     "version": "0.2.0",
     "name": "Gifts & Occasions",
     "description": "Gift ideas as their own table — who, occasion + date (calendar-reminded), budget, and an idea→bought→wrapped→given pipeline.",

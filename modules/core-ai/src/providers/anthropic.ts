@@ -69,9 +69,23 @@ export function register(): void {
       const body: Record<string, unknown> = {
         model: ctx.model,
         max_tokens: typeof ctx.config.max_tokens === "number" ? ctx.config.max_tokens : 1024,
+        // Every capability this adapter serves is extraction/routing-shaped
+        // (the matchmaker literally instructs "identical items must route the
+        // same way") — sampling variance is pure downside, so temperature
+        // pins to 0 unless a caller/config explicitly asks for spread.
+        temperature: typeof ctx.config.temperature === "number" ? ctx.config.temperature : 0,
         messages,
       };
-      if (system) body.system = system;
+      if (system) {
+        // Long static system prompts (the ~2K-token matchmaker block) get a
+        // prompt-cache breakpoint: bursty scanning re-bills the fixed prefix
+        // on every call otherwise. Below the provider's minimum cacheable
+        // length the marker is ignored, so the char gate just avoids noise.
+        body.system =
+          system.length > 4000
+            ? [{ type: "text", text: system, cache_control: { type: "ephemeral" } }]
+            : system;
+      }
       // Native tool-calling for chat: forward the neutral tool defs.
       const toolDefs = ctx.capability === "chat" ? toolsOf(ctx.input) : null;
       if (toolDefs) body.tools = anthropicToolsOf(toolDefs);

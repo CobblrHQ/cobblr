@@ -90,7 +90,7 @@ export function registerActionHandlers(): void {
     return { ok: true, changed: true, away_since: nextVal };
   });
 
-  // Return an item home: current location := home, stamp cleared. One write.
+  // Return an item home: current location := home, stamp cleared.
   platform().actions.registerHandler("core-mobility.return-home", async (ctx) => {
     const kind = ctx.entity?.kind;
     const id = ctx.entity?.id;
@@ -105,7 +105,19 @@ export function registerActionHandlers(): void {
     meta.away_since = null;
     const writer = platform().entities.getWriter(kind);
     if (!writer) return { ok: false, reason: "no_writer" };
-    await writer.update(ctx.orgId, id, { location_id: home, metadata: meta });
+    await writer.update(ctx.orgId, id, { metadata: meta });
+    // The move itself goes through the placement seam (placement-cutover-plan
+    // step 1); place() keeps the legacy location_id column mirrored. Fall back
+    // to the direct column write if placement refuses (unknown custom kind).
+    try {
+      await platform().placement.place({
+        orgId: ctx.orgId,
+        containee: { kind, id },
+        container: { kind: "core-locations:location", id: home },
+      });
+    } catch {
+      await writer.update(ctx.orgId, id, { location_id: home });
+    }
     return { ok: true, location_id: home };
   });
 }

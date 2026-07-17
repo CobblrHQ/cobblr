@@ -47,6 +47,7 @@ export interface InventoryPartsTable {
   asset_id: Generated<number>;
   serial_number: string | null;
   model_number: string | null;
+  assigned_to: string | null;
   warranty_expires: Date | null;
   lifetime_warranty: Generated<boolean>;
   warranty_details: string | null;

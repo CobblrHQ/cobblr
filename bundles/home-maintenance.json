@@ -1,6 +1,7 @@
 {
   "manifest": {
     "id": "cobblr.flagship.home-maintenance",
+    "catalog": "disabled",
     "version": "0.3.0",
     "name": "Home Maintenance Schedule",
     "description": "Your home's systems as their own table — furnace, water heater, HVAC filters, detectors — with service logs + next-due dates on your calendar.",

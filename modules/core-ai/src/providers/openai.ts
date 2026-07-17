@@ -86,6 +86,9 @@ export function register(): void {
           const messages = buildMessages(ctx.capability, ctx.input);
           const body: Record<string, unknown> = {
             model: ctx.model,
+            // Extraction/routing surfaces want determinism (see the Anthropic
+            // adapter note); config can opt back into sampling spread.
+            temperature: typeof ctx.config.temperature === "number" ? ctx.config.temperature : 0,
             messages,
           };
           // Native tool-calling for chat: forward the neutral tool defs.

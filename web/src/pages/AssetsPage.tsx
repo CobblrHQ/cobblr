@@ -677,21 +677,36 @@ function AssetDetailModal({
     if (ok) remove.mutate();
   }
 
+  // The subtitle must honor the same hide overrides the fields do — otherwise a
+  // Bookshelf (manufacturer + state hidden) still leaks "Scholastic · Working"
+  // in the header even after "Just the essentials".
+  const subtitle = a
+    ? [
+        !fp.hidden("manufacturer") && a.manufacturer ? a.manufacturer : null,
+        !fp.hidden("state") && a.state ? a.state : null,
+      ]
+        .filter(Boolean)
+        .join(" · ") || undefined
+    : undefined;
+
   return (
-    <Modal open={!!assetId} onClose={onClose} title={a?.name ?? (asset.isError ? "Couldn't load" : "loading…")} subtitle={a ? `${a.manufacturer ?? "—"} · ${a.state}` : undefined} size="lg">
+    <Modal open={!!assetId} onClose={onClose} title={a?.name ?? (asset.isError ? "Couldn't load" : "loading…")} subtitle={subtitle} size="xl">
       {a ? (
         <div className="space-y-4">
-          <div className="flex items-start gap-4">
-            <EntityThumb
-              src={a.image_path}
-              alt={a.name}
-              size={128}
-              className="ring-1 ring-line dark:ring-slate-700"
-            />
-            <div className="flex-1">
+          {/* Wide record layout: the cover large on the LEFT, fields on the
+              RIGHT — so an image-bearing record (a book, a wine, a machine)
+              uses the width instead of scrolling tall. Stacks on phones. */}
+          <div className="grid gap-6 md:grid-cols-[minmax(200px,260px)_1fr]">
+            <div className="space-y-3">
+              <EntityThumb
+                src={a.image_path}
+                alt={a.name}
+                size={256}
+                className="w-full h-auto ring-1 ring-line dark:ring-slate-700"
+              />
               <EntityActionsBar entityKind={ENTITY_KIND} entityId={a.id} />
             </div>
-          </div>
+            <div className="min-w-0 space-y-4">
           {/* Native fields, reshaped by the workspace's field-presentation
               overrides — a bundle/config can relabel (e.g. Manufacturer → Make)
               or hide the ones a focused use-case doesn't need. `name` is the
@@ -742,6 +757,8 @@ function AssetDetailModal({
           <ContentsPanel slug={activeSlug} container={{ kind: ENTITY_KIND, id: a.id }} title="Contents" />
           <EntityAttachments kind={ENTITY_KIND} entityId={a.id} />
           <EditField label="Notes" value={a.notes ?? ""} multiline onCommit={(v) => update.mutate({ notes: v || null })} />
+            </div>
+          </div>
           <div className="pt-3 border-t border-line dark:border-slate-700 flex items-center justify-between">
             <button
               onClick={handleDelete}

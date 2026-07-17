@@ -1,6 +1,7 @@
 {
   "manifest": {
     "id": "cobblr.flagship.kitchen-fitness",
+    "catalog": "disabled",
     "version": "0.1.1",
     "name": "Kitchen × Fitness — grocery spend",
     "description": "Connects the grocery flow to the Tracking module: order received → log spend into a metric. Neither module knows about the other.",

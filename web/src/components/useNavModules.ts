@@ -520,26 +520,6 @@ export function useNavModules(activeSlug: string): NavModules {
   const overflowNames = new Set(navOverflow);
   const tops = allTops.filter((t) => !hiddenNames.has(t.name));
 
-  // TEMP DEBUG (#4 managed-app empty nav) — remove after diagnosis.
-  if (typeof window !== "undefined") {
-    (window as unknown as { __navDbg?: unknown }).__navDbg = {
-      activeSlug,
-      modStatus: modules.status,
-      modItems: modules.data?.items?.length ?? null,
-      instStatus: instances.status,
-      instItems: instances.data?.items?.length ?? null,
-      instNamed: (instances.data?.items ?? []).filter((i) => !i.is_default).map((i) => `${i.module_name}/${i.instance_name}`),
-      ovrItems: overrides.data?.items?.length ?? null,
-      enabled: enabled.length,
-      userFacing: userFacing.map((m) => m.name),
-      hideSet: [...hideDefaultModules],
-      rawTops: rawTops.map((t) => t.name),
-      allTops: allTops.map((t) => t.name),
-      tops: tops.map((t) => t.name),
-      navHidden,
-    };
-  }
-
   return {
     tops,
     allTops,

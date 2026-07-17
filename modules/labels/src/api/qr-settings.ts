@@ -1,25 +1,26 @@
-// Per-workspace QR settings: token style (descriptive | opaque) + an optional
-// custom label base URL (a stable domain/DuckDNS/Tailscale name the workspace
-// forwards to this instance so printed codes survive a move — see migration 0003).
+// Per-workspace QR settings (merged in from the former core-labels-qr
+// module): token style (descriptive | opaque) + an optional custom label base
+// URL (a stable domain/DuckDNS/Tailscale name the workspace forwards to this
+// instance so printed codes survive a move — see labels migration 0004).
 
 import { Router } from "express";
 import { z } from "zod";
-import { tenantDb, getQrTokenStyle, getQrLabelBaseUrl } from "../db.js";
+import { qrTenantDb, getQrTokenStyle, getQrLabelBaseUrl } from "./qr-db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 
-export const settingsRouter = Router({ mergeParams: true });
+export const qrSettingsRouter = Router({ mergeParams: true });
 
-async function currentSettings(db: ReturnType<typeof tenantDb>) {
+async function currentSettings(db: ReturnType<typeof qrTenantDb>) {
   return {
     token_style: await getQrTokenStyle(db),
     label_base_url: await getQrLabelBaseUrl(db),
   };
 }
 
-settingsRouter.get(
+qrSettingsRouter.get(
   "/",
   asyncHandler(async (req, res) => {
-    res.json(await currentSettings(tenantDb(req)));
+    res.json(await currentSettings(qrTenantDb(req)));
   }),
 );
 
@@ -34,18 +35,18 @@ const SettingsUpdate = z
     message: "no settings fields provided",
   });
 
-settingsRouter.put(
+qrSettingsRouter.put(
   "/",
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin")) return;
     const parsed = SettingsUpdate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
-    const db = tenantDb(req);
+    const db = qrTenantDb(req);
 
     // The singleton row is seeded by the migration; make sure it's there,
     // then patch only the supplied columns.
     await db
-      .insertInto("core_labels_qr_settings")
+      .insertInto("labels_qr_settings")
       .values({ id: 1 })
       .onConflict((oc) => oc.column("id").doNothing())
       .execute();
@@ -57,7 +58,7 @@ settingsRouter.put(
       patch.label_base_url = v ? v.replace(/\/+$/, "") : null;
     }
     await db
-      .updateTable("core_labels_qr_settings")
+      .updateTable("labels_qr_settings")
       .set(patch as never)
       .where("id", "=", 1)
       .execute();

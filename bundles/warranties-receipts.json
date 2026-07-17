@@ -1,6 +1,7 @@
 {
   "manifest": {
     "id": "cobblr.flagship.warranties-receipts",
+    "catalog": "extended",
     "version": "0.2.0",
     "name": "Warranties & Receipts",
     "description": "Your appliances/electronics as their own table — where/when you bought it + warranty and return-by dates, grouped by category.",

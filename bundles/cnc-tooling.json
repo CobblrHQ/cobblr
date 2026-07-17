@@ -1,6 +1,7 @@
 {
   "manifest": {
     "id": "cobblr.flagship.cnc-tooling",
+    "catalog": "extended",
     "version": "0.2.0",
     "name": "CNC Tooling",
     "description": "Your CNC tooling as its own table — end mills, drills, taps, reamers, inserts — by type/diameter/flutes/material, with the bin each lives in. Ships the guided Cataloging Bench app: capture an unknown tool's measurements + observations and it composes the spec for you (AI-enriched when a provider is connected).",
@@ -48,7 +49,8 @@
             "entity_kind": "inventory:part",
             "name": "diameter_mm",
             "display_label": "Diameter (mm)",
-            "type": "number", "unit": "mm",
+            "type": "number",
+            "unit": "mm",
             "position": 2,
             "help": "Cutting diameter, from the calipers."
           },
@@ -56,7 +58,8 @@
             "entity_kind": "inventory:part",
             "name": "shank_dia_mm",
             "display_label": "Shank (mm)",
-            "type": "number", "unit": "mm",
+            "type": "number",
+            "unit": "mm",
             "position": 3,
             "help": "Shank diameter — the size your collet/holder needs."
           },
@@ -64,7 +67,8 @@
             "entity_kind": "inventory:part",
             "name": "overall_length_mm",
             "display_label": "Overall length (mm)",
-            "type": "number", "unit": "mm",
+            "type": "number",
+            "unit": "mm",
             "position": 4,
             "help": "Tip to end — for reach + holder clearance."
           },
@@ -72,7 +76,8 @@
             "entity_kind": "inventory:part",
             "name": "flute_length_mm",
             "display_label": "Flute length (mm)",
-            "type": "number", "unit": "mm",
+            "type": "number",
+            "unit": "mm",
             "position": 5,
             "help": "Length of cut."
           },
@@ -134,7 +139,8 @@
             "entity_kind": "inventory:part",
             "name": "weight_g",
             "display_label": "Weight (g)",
-            "type": "number", "unit": "g",
+            "type": "number",
+            "unit": "g",
             "position": 10,
             "help": "From the scale — helps the AI tell carbide from HSS."
           },

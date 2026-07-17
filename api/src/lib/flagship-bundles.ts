@@ -14,6 +14,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { getOfficialBundleManifest } from "../routes/registry.js";
+import { inCatalogScope, type CatalogScope } from "./catalog-tier.js";
+export { catalogTier, inCatalogScope, type CatalogScope, type CatalogTier } from "./catalog-tier.js";
 
 /** One extraction-target field, mirroring core-scan's MenuField shape. */
 export interface BundleMenuField {
@@ -142,8 +144,18 @@ function shortSlug(id: string): string {
   return id.replace(/^cobblr\.flagship\./, "").replace(/[^a-z0-9-]/gi, "-");
 }
 
-export function listFlagshipManifests(): RawManifest[] {
-  return load().manifests;
+/** The flagship manifests, filtered by WHERE they're offered:
+ *   - `"offerable"` (default): everything a user could install — core + extended,
+ *     minus disabled. The marketplace/registry catalog.
+ *   - `"suggested"`: only `core` — the per-scan capture menu. An `extended` bundle
+ *     is installable but must not compete for every scan (that ambiguity is the
+ *     thing tiering exists to remove).
+ *   - `"all"`: unfiltered, including disabled — for tests + admin tooling.
+ *  `load()` itself stays unfiltered so an EXISTING install of a demoted bundle
+ *  still resolves its manifest by id (getFlagshipManifest); only the OFFER lists
+ *  are gated. */
+export function listFlagshipManifests(scope: CatalogScope = "offerable"): RawManifest[] {
+  return load().manifests.filter((m) => inCatalogScope(m, scope));
 }
 
 /** Resolve a flagship manifest by id — local first, registry fallback. */
@@ -184,7 +196,11 @@ function fieldRoleAxes(defs: Array<Record<string, unknown>> | undefined): {
 
 export function flagshipBundleMenu(): BundleMenuEntry[] {
   const out: BundleMenuEntry[] = [];
-  for (const m of listFlagshipManifests()) {
+  // "suggested" = core only. An `extended` bundle stays installable from the
+  // marketplace but must not be offered as a routing chip on every scan — that
+  // per-scan competition among many overlapping bundles is the ambiguity this
+  // tiering removes. `disabled` is excluded everywhere.
+  for (const m of listFlagshipManifests("suggested")) {
     const id = m.id as string;
     const pis = Array.isArray(m.provides_instances) ? m.provides_instances : [];
     if (pis.length) {

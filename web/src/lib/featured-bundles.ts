@@ -156,7 +156,10 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Track the fridge/pantry with expiry + storage, and auto-build a shopping list when something runs low or is about to expire. Check an item off → it restocks.",
     manifest: {
       id: "cobblr.flagship.food-cluster",
-      version: "0.1.0",
+      version: "0.2.0",
+      released_at: "2026-07-17",
+      changelog:
+        "Back in the catalog as a core (suggested) bundle. The groceries story — pantry stock with expiry + storage, an auto-built shopping list on low-stock/expiry, restock on check-off — had no live offer after the catalog curation pass, and it is a flagship use case (one app for inventory AND groceries). Its axis has no competing suggestion, so returning it adds no scan ambiguity.",
       name: "Kitchen & Groceries",
       description:
         "Turn inventory + lists into a kitchen system: expiry + storage fields, auto shopping list on low-stock/expiry, restock on check-off.",
@@ -181,6 +184,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Run a workshop: keep parts in inventory, define Builds (bills of materials) of those parts, see how many you can build right now — and auto-add anything that runs low to a parts shopping list you check off to restock.",
     manifest: {
       id: "cobblr.flagship.maker-workshop",
+      catalog: "disabled",
       version: "0.1.0",
       name: "Maker Workshop",
       description:
@@ -208,6 +212,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Bridge: every grocery order you receive logs its cost as a 'Grocery spend' measurement — your spending trends like any metric. Set a monthly budget as the goal.",
     manifest: {
       id: "cobblr.flagship.kitchen-fitness",
+      catalog: "disabled",
       version: "0.1.0",
       name: "Kitchen × Fitness — grocery spend",
       description:
@@ -379,6 +384,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Vintage hand tool collection — model, era, finish, condition. Prints labels with model + era so you can find them across a workshop.",
     manifest: {
       id: "cobblr.community.vintage-tools",
+      catalog: "disabled",
       version: "0.1.0",
       name: "Vintage Tools",
       description: "Custom fields + label wires for vintage hand tools.",
@@ -452,6 +458,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Garden tracker — plants as assets with species, sun exposure, planted date, and a repeating watering schedule that the recurrence scanner picks up automatically.",
     manifest: {
       id: "cobblr.community.garden",
+      catalog: "extended",
       version: "0.1.0",
       name: "Garden",
       description:
@@ -607,6 +614,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Tool library — checkout/checkin tracking. Marks machines with borrower, due_date, condition. Pair with the labels module to print barcoded check-out tags.",
     manifest: {
       id: "cobblr.community.tool-library",
+      catalog: "disabled",
       version: "0.1.0",
       name: "Tool Library",
       description:
@@ -753,6 +761,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Track your laser cutters — tube type, wattage, bed size, cooling, focal length. Its own tab; still part of your machines (jobs, fleet, maintenance).",
     manifest: {
       id: "cobblr.community.laser-cutters",
+      catalog: "extended",
       version: "0.3.0",
       name: "Laser Cutters",
       description:
@@ -828,6 +837,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Track your CNC machines — spindle, axes, work area, controller, coolant. Its own tab; still part of your machines (jobs, fleet, maintenance).",
     manifest: {
       id: "cobblr.community.cnc-machines",
+      catalog: "extended",
       version: "0.3.0",
       name: "CNC Machines",
       description:
@@ -1300,6 +1310,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.warranties-receipts",
+      catalog: "extended",
       version: "0.2.0",
       name: "Warranties & Receipts",
       description: "Your appliances/electronics as their own table — where/when you bought it + warranty and return-by dates, grouped by category.",
@@ -1348,6 +1359,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.medications",
+      catalog: "extended",
       version: "0.3.0",
       name: "Medications & Refills",
       description: "Your medications as their own table — dose, schedule, instructions, prescriber/pharmacy, refills left + a refill-by date. Caregiver-friendly.",
@@ -1501,6 +1513,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.subscriptions",
+      catalog: "extended",
       version: "0.2.1",
       name: "Subscriptions & Recurring Bills",
       description: "Every recurring charge as its own table — cost/cycle, renewal date, payment method, grouped by category.",
@@ -1550,6 +1563,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.collections",
+      catalog: "disabled",
       version: "0.3.0",
       name: "Collections",
       description: "Your collection as its own cover wall — condition, edition, paid vs value today, so you stop buying the dupe.",
@@ -1677,6 +1691,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.documents-renewals",
+      catalog: "extended",
       version: "0.2.1",
       name: "Important Documents & Renewals",
       description: "Every document that expires as its own table — number/issuer/expiry, grouped by type, with expiry dates on your calendar.",
@@ -1722,6 +1737,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.pet-care",
+      catalog: "extended",
       version: "0.2.0",
       name: "Pet Care",
       description: "Your pets as their own table — vitals + vet/vaccination dates (calendar-reminded), grouped by species.",
@@ -1771,6 +1787,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.gifts-occasions",
+      catalog: "disabled",
       version: "0.2.0",
       name: "Gifts & Occasions",
       description: "Gift ideas as their own table — who, occasion + date (calendar-reminded), budget, and an idea→bought→wrapped→given pipeline.",
@@ -1821,6 +1838,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.household-supplies",
+      catalog: "disabled",
       version: "0.3.0",
       name: "Household Supplies auto-reorder",
       description: "Your household supplies as their own table — reorder level per supply auto-adds to a shopping list on low stock; check off → it restocks. Grouped by where they live.",
@@ -1882,6 +1900,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.home-maintenance",
+      catalog: "disabled",
       version: "0.3.0",
       name: "Home Maintenance Schedule",
       description: "Your home's systems as their own table — furnace, water heater, HVAC filters, detectors — with service logs + next-due dates on your calendar.",
@@ -1939,6 +1958,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.wardrobe",
+      catalog: "extended",
       version: "0.1.1",
       name: "Wardrobe",
       description: "Catalog your clothing as its own table — type, colour, season, formality, a photo each — grouped by type. Optional Outfits table for planning looks.",
@@ -2044,6 +2064,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.cnc-tooling",
+      catalog: "extended",
       version: "0.2.0",
       name: "CNC Tooling",
       description:

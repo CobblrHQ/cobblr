@@ -1,6 +1,7 @@
 {
   "manifest": {
     "id": "cobblr.community.laser-cutters",
+    "catalog": "extended",
     "version": "0.3.0",
     "name": "Laser Cutters",
     "description": "A Laser Cutters tracker — tube type, wattage, bed size, cooling, focal length. A named view of your machines, so each cutter still drives jobs, fleet status, and maintenance.",
@@ -53,7 +54,8 @@
             "entity_kind": "machines:machine",
             "name": "wattage",
             "display_label": "Wattage (W)",
-            "type": "number", "unit": "W",
+            "type": "number",
+            "unit": "W",
             "position": 21
           },
           {
@@ -89,7 +91,8 @@
             "entity_kind": "machines:machine",
             "name": "focal_length_mm",
             "display_label": "Focal length (mm)",
-            "type": "number", "unit": "mm",
+            "type": "number",
+            "unit": "mm",
             "position": 24
           }
         ],

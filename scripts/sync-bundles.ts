@@ -38,6 +38,16 @@ function sig(manifest: Record<string, unknown>): string {
   return JSON.stringify(rest);
 }
 
+// The VERSION-BUMP signature also ignores `catalog` (the offer tier). Demoting a
+// bundle is a curation change, not content an installed workspace re-syncs, so it
+// must NOT bump the version — a bump would show every existing install an "update
+// available" for the bundle you're disabling. So a catalog-only edit still
+// rewrites the json (sig differs → the field lands) but keeps the version.
+function bumpSig(manifest: Record<string, unknown>): string {
+  const { catalog: _cat, ...rest } = manifest;
+  return sig(rest);
+}
+
 function bumpPatch(v: string): string {
   const m = v.match(/^(\d+)\.(\d+)\.(\d+)$/);
   if (!m) return v + ".1";
@@ -66,11 +76,16 @@ for (const fb of FEATURED_BUNDLES) {
   // source — edit featured-bundles.ts) or edited the source and didn't re-sync.
   if (CHECK) { drifted.push(`${slugOf(id)}.json${existing ? "" : " (missing)"}`); continue; }
   if (existing) {
-    // Content changed → the emitted version must move past the existing file's
-    // (installed workspaces upgrade off THESE files, not the web bundle's).
-    const exVer = String(existing.version ?? "0.0.0");
-    const webVer = String(manifest.version ?? "0.0.0");
-    if (cmpVer(webVer, exVer) <= 0) manifest.version = bumpPatch(exVer);
+    if (bumpSig(existing) !== bumpSig(manifest)) {
+      // Real content changed → the emitted version must move past the existing
+      // file's (installed workspaces upgrade off THESE files, not the web bundle's).
+      const exVer = String(existing.version ?? "0.0.0");
+      const webVer = String(manifest.version ?? "0.0.0");
+      if (cmpVer(webVer, exVer) <= 0) manifest.version = bumpPatch(exVer);
+    } else {
+      // Only the offer tier moved — keep the installed version untouched.
+      manifest.version = String(existing.version ?? manifest.version ?? "0.0.0");
+    }
   }
   fs.writeFileSync(file, JSON.stringify({ manifest }, null, 2) + "\n");
   console.log(`wrote ${path.basename(file)}  v${manifest.version}${existing ? ` (was ${existing.version})` : " (new)"}`);

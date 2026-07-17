@@ -1,6 +1,7 @@
 {
   "manifest": {
     "id": "cobblr.community.garden",
+    "catalog": "extended",
     "version": "0.1.1",
     "name": "Garden",
     "description": "Custom assets:asset fields for tracking plants — species, planted date, watering schedule, sun exposure.",

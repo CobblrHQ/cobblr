@@ -1,6 +1,7 @@
 {
   "manifest": {
     "id": "cobblr.community.tool-library",
+    "catalog": "disabled",
     "version": "0.1.0",
     "name": "Tool Library",
     "description": "Track who's borrowed a tool, when it's due back, and its condition. Custom machine:machine fields.",

@@ -32,7 +32,14 @@ export function useBundleCatalog(sources?: string[]): {
       ? registry.data.bundles.map((e) => {
           const embedded = EMBEDDED_BY_ID.get(e.manifest.id);
           return {
-            manifest: e.manifest,
+            // A registry entry may predate (or strip) the `catalog` tier field;
+            // restore it from the embedded flagship catalog like the other
+            // dropped fields below, so tier-aware surfaces (the ready-made
+            // strip) don't misread a demoted bundle as core.
+            manifest: {
+              ...e.manifest,
+              catalog: e.manifest.catalog ?? embedded?.manifest.catalog,
+            },
             // Prefer the EMBEDDED flagship glyph over the registry entry's: the
             // official index carries no real glyph (it is a web-only card field),
             // so an index placeholder must never win over the authoritative one.
@@ -49,7 +56,10 @@ export function useBundleCatalog(sources?: string[]): {
             source: e.source,
           };
         })
-      : FEATURED_BUNDLES;
+      : // Offline fallback (registry unreachable). Mirror the API gate: a
+        // `disabled` bundle is withdrawn from the offer. `extended` still shows
+        // here — this is the browse catalog, not the per-scan menu.
+        FEATURED_BUNDLES.filter((b) => b.manifest.catalog !== "disabled");
 
   return { registry, catalog };
 }

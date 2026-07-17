@@ -43,6 +43,11 @@ export function PairsWellWith({ module, orgSlug }: { module: string; orgSlug: st
   const installed = new Set(bundles.data.items.map((b) => b.external_id));
 
   const recs = FEATURED_BUNDLES.filter((b) => {
+    // Only CORE bundles are PROACTIVELY recommended. This strip pushes a bundle
+    // the user didn't ask for, so it's held to the same bar as the per-scan menu:
+    // `extended` is installable from the marketplace but never pushed, `disabled`
+    // is hidden entirely (see docs/design-decisions/bundle-catalog-tiers.md).
+    if ((b.manifest.catalog ?? "core") !== "core") return false;
     const reqs = (b.manifest.requires ?? []).map((r) => r.module);
     if (!reqs.includes(module)) return false; // must reference THIS module
     if (installed.has(b.manifest.id)) return false; // not already installed

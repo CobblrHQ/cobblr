@@ -35,16 +35,22 @@ const RULES: Array<{ match: RegExp; bucket: CategoryBucket }> = [
   // general "household" rule might otherwise swallow.
   { match: /filament|\b3d\s*print|\bpla\b|\bpetg\b|\babs\b|resin|nozzle|hotend/, bucket: { key: "filament", name: "3D Printing & Filament" } },
   { match: /yarn|thread|fabric|sewing|knit|crochet|\bcraft|hobby|\bbead|art suppl|spool|scrapbook|quilt/, bucket: { key: "crafts", name: "Crafts & Hobbies" } },
+  // Compound terms that share a token with a FOOD/CARE rule below go first —
+  // first-match-wins means "motor oil" must outrank groceries' \boil\b, and
+  // "framing nails" must outrank personal-care's nail-polish vocabulary. The
+  // class: a generic single token (\boil\b, \bnut\b, \bnail\b) in an early
+  // rule silently claims every compound that contains it.
+  { match: /motor oil|engine oil|transmission fluid|brake fluid|antifreeze|\bcoolant\b|power steering|windshield washer/, bucket: { key: "auto", name: "Automotive" } },
   // Alcohol before beverages/groceries so "beer" and "wine" don't scatter.
   { match: /whisk|bourbon|scotch|tequila|\brum\b|rums|vodka|\bgin\b|liqueur|spirit|\bwine|\bbeer|\bale\b|lager|cognac|brandy|mezcal|\bsake\b|cider|champagne|prosecco|vermouth|aperitif|liquor/, bucket: { key: "liquor", name: "Liquor & Spirits" } },
   { match: /water|soda|\bpop\b|cola|juice|coffee|\btea\b|energy drink|sports drink|kombucha|seltzer|lemonade|beverage|\bdrink/, bucket: { key: "beverages", name: "Beverages" } },
-  { match: /grocery|groceries|\bfood\b|produce|fruit|vegetable|\bmeat|poultry|seafood|snack|candy|chocolate|cereal|pasta|\brice\b|sauce|condiment|spice|seasoning|olive.?oil|\boil\b|vinegar|dairy|cheese|bread|bakery|\bdip|spread|\bnut\b|\bjam\b|honey|canned|\bsoup|breakfast|dessert|frozen/, bucket: { key: "groceries", name: "Groceries" } },
-  { match: /\bhair\b|\bskin\b|deodorant|\bsoap\b|shampoo|lotion|cosmetic|makeup|toothpaste|hygiene|razor|shav(e|ing)|fragrance|perfume|personal care|body wash|\bnail\b/, bucket: { key: "personal-care", name: "Personal Care" } },
+  { match: /grocery|groceries|\bfood\b|produce|fruit|vegetable|\bmeat|poultry|seafood|snack|candy|chocolate|cereal|pasta|\brice\b|sauce|condiment|spice|seasoning|olive.?oil|\boil\b|vinegar|dairy|cheese|bread|bakery|\bdip|spread|almonds?|cashews?|peanuts?|walnuts?|pecans?|pistachios?|mixed nuts|trail mix|\bjam\b|honey|canned|\bsoup|breakfast|dessert|frozen/, bucket: { key: "groceries", name: "Groceries" } },
+  { match: /\bhair\b|\bskin\b|deodorant|\bsoap\b|shampoo|lotion|cosmetic|makeup|toothpaste|hygiene|razor|shav(e|ing)|fragrance|perfume|personal care|body wash|nail (?:polish|file|clippers?|art|care)|manicure|pedicure/, bucket: { key: "personal-care", name: "Personal Care" } },
   { match: /medical|medicine|pharma|supplement|vitamin|first aid|needle|syringe|bandage|\bhealth/, bucket: { key: "health", name: "Health & Medical" } },
   { match: /\bbook|magazine|\bmedia\b|\bdvd\b|\bcd\b|vinyl|board game|\bgame\b|\bpuzzle/, bucket: { key: "books-media", name: "Books & Media" } },
   { match: /\bbulb|\blamp|\blight|\bled\b|lighting|sconce|lantern/, bucket: { key: "lighting", name: "Lighting" } },
   { match: /electronic|\bcable|charger|adapter|batter|\busb\b|hdmi|gadget|\bgps\b|phone|computer|\baudio|headphone|speaker|\bwir(e|ing)/, bucket: { key: "electronics", name: "Electronics & Cables" } },
-  { match: /\btool|hardware|screw|\bbolt|\bnut\b|\bnail\b|drill|wrench|fastener|hinge|bracket|\btape\b/, bucket: { key: "tools", name: "Tools & Hardware" } },
+  { match: /\btool|hardware|screw|\bbolt|\bnuts?\b|\bnails?\b|drill|wrench|fastener|hinge|bracket|\btape\b/, bucket: { key: "tools", name: "Tools & Hardware" } },
   { match: /\blabel|\btag\b|paper|napkin|stationery|\bpen\b|pencil|notebook|envelope|\bink\b|office/, bucket: { key: "office", name: "Office & Paper" } },
   { match: /\bpet\b|\bdog\b|\bcat\b|animal|aquarium|litter/, bucket: { key: "pet", name: "Pet Supplies" } },
   { match: /baby|infant|toddler|\bkids\b|diaper|\btoy/, bucket: { key: "kids", name: "Baby & Kids" } },
@@ -74,8 +80,14 @@ function titleCase(s: string): string {
 export function bucketForCategory(raw: string | null | undefined): CategoryBucket | null {
   if (!raw || !raw.trim()) return null;
   const norm = normalise(raw);
-  // Guard against junk categories the catalog occasionally emits.
-  if (norm.length < 2 || /^(n\/?a|none|null|unknown|other|misc|general|uncategor)/.test(norm)) {
+  // Guard against junk categories the catalog occasionally emits. Whole-string
+  // anchored: the old unanchored prefix test made `n/a` match ANYTHING that
+  // starts with "na" — "nail polish" and "napkins" silently lost their bucket.
+  if (
+    norm.length < 2 ||
+    /^(n\/?a|none|null|unknown|other|misc\.?|general)$/.test(norm) ||
+    /^uncategori[sz]/.test(norm)
+  ) {
     return null;
   }
   for (const { match, bucket } of RULES) {

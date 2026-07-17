@@ -1,4 +1,7 @@
 // One-time, idempotent self-heal for the bundle-resource-claims ledger.
+// DONE WHEN: the backfill touches 0 orgs on prod + staging + dev consistently
+// (every install's claims ledger is populated); then delete this file and its
+// boot call.
 //
 // Existing workspaces predate the ledger, so a bundle uninstall couldn't refcount
 // (it would either orphan resources or risk disabling a shared/user module).

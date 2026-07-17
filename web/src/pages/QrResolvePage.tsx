@@ -1,5 +1,5 @@
 // /qr/:token — the web half of the QR scan-token resolve flow
-// (docs/modules/core-labels-qr.md §4). A printed Cobblr label encodes
+// (docs/modules/labels.md, QR half). A printed Cobblr label encodes
 // `https://<host>/qr/<token>`; this page asks the unauthenticated
 // resolve endpoint (GET /api/v1/qr/:token) what the token points at
 // and forwards a navigate-mode scan to the entity's detail page.

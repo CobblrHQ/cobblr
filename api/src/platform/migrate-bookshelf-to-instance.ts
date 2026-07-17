@@ -1,4 +1,7 @@
 // HISTORICAL DATA MIGRATION — not kernel logic.
+// DONE WHEN: no org's Bookshelf install still keys its field defs to
+// inventory:part (the boot pass reports orgsTouched=0 on prod + staging +
+// dev consistently); then delete this file and its boot call.
 //
 // The Bookshelf bundle (<=0.1.x) put its fields — author / isbn / year /
 // read_status / rating — straight onto `inventory:part`, i.e. onto the

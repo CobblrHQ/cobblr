@@ -191,10 +191,10 @@ export class LabelsApi {
     );
 
   // Queue a label the RIGHT way: mint (or reuse) a QR scan token via
-  // core-labels-qr and queue the full scan_url it hands back, so the label
+  // the QR token endpoint and queue the full scan_url it hands back, so the label
   // encodes `<base>/qr/<token>` (honouring the workspace's custom label base
   // URL) instead of a bare `/entities/<kind>/<id>` path a phone can't open.
-  // core-labels-qr is a sibling module reached over HTTP (no import), same as
+  // The QR endpoints live in this same module's api, reached over HTTP, same as
   // core-print above.
   queueLabelForEntity = async (b: {
     entity_kind: string; // e.g. "core-locations:location"
@@ -209,7 +209,7 @@ export class LabelsApi {
     try {
       const list = await this.requestAbs<{ items: Array<{ scan_url: string; revoked_at: string | null }> }>(
         "GET",
-        `/api/v1/orgs/${this.slug}/modules/core-labels-qr/tokens?${q}`,
+        `/api/v1/orgs/${this.slug}/modules/labels/qr/tokens?${q}`,
       );
       scanUrl = list.items.find((t) => !t.revoked_at)?.scan_url ?? null;
     } catch {
@@ -218,7 +218,7 @@ export class LabelsApi {
     if (!scanUrl) {
       const m = await this.requestAbs<{ scan_url: string }>(
         "POST",
-        `/api/v1/orgs/${this.slug}/modules/core-labels-qr/tokens`,
+        `/api/v1/orgs/${this.slug}/modules/labels/qr/tokens`,
         { entity_kind: b.entity_kind, entity_id: b.entity_id, mode: "navigate", auth: "session" },
       );
       scanUrl = m.scan_url;
@@ -234,12 +234,12 @@ export class LabelsApi {
     });
   };
 
-  /** The workspace's custom label base URL (or null), read from core-labels-qr
+  /** The workspace's custom label base URL (or null), read from the QR settings
    *  over HTTP. Used to rebuild queued labels' URLs live at preview time so a
    *  base-URL change is reflected without re-queuing. */
   qrLabelBaseUrl = () =>
     this.requestAbs<{ label_base_url: string | null }>(
       "GET",
-      `/api/v1/orgs/${this.slug}/modules/core-labels-qr/settings`,
+      `/api/v1/orgs/${this.slug}/modules/labels/qr/settings`,
     ).then((s) => s.label_base_url);
 }

@@ -11,10 +11,13 @@ import { NewPartDialog } from "./NewPartDialog";
 import { ParentPicker } from "./ParentPicker";
 import { useMatchedCatalogEntry } from "./useMatchedCatalogEntry";
 import { AllocationsPanel, EntityPicker, type PickedEntity } from "./AllocationsPanel";
+import { UnitsPanel } from "./UnitsPanel";
 import { PartGallery } from "./PartGallery";
 import { MaintenancePanel } from "./MaintenancePanel";
 import { useFieldPresentation } from "./useFieldPresentation";
 import { useDisclosure } from "./useDisclosure";
+import { adoptUnitsAdjustment } from "../reconcile";
+import type { Part } from "./api";
 import {
   PER_UNIT_TRACKING_KEY,
   isPerUnitTracking,
@@ -38,6 +41,96 @@ import {
 // detail view is a modal over the list now (consistent with machines),
 // not a separate full page. Takes the part id + an onClose from the
 // list route, instead of reading the route param itself.
+/** The reconciliation prompt: the model's two numbers disagree, so ASK.
+ *
+ *  Deliberately quiet and deliberately dumb. It states both numbers, marks
+ *  neither as the wrong one (we do not know which is), and never resolves
+ *  itself — no number moves and no unit is minted or retired unless the user
+ *  picks it. Inventing a physical fact is the failure the whole design rejected;
+ *  a card that "helpfully" corrected the count would smuggle it straight back
+ *  in. See docs/design-decisions/serialized-rollup-and-stock-adjust.md.
+ *
+ *  Rendering it performs no write. Only a click does. */
+function ReconcileCard({
+  part,
+  noun,
+  onAdopt,
+  onDismiss,
+  busy,
+}: {
+  part: Part;
+  noun: string;
+  onAdopt: () => void;
+  onDismiss: () => void;
+  busy: boolean;
+}) {
+  const r = part.reconcile;
+  if (!r || !r.stable || r.dismissed) return null;
+  const under = r.direction === "under";
+  return (
+    <div className="rounded-xl border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800/50 p-4 space-y-3">
+      <div className="text-sm text-content dark:text-mortar-100">
+        {under ? (
+          <>
+            You have <strong>{r.qty}</strong> counted, and{" "}
+            <strong>{r.units_count}</strong> serial{r.units_count === 1 ? "" : "s"} on file.
+          </>
+        ) : (
+          <>
+            You have <strong>{r.qty}</strong> counted, but{" "}
+            <strong>{r.units_count}</strong> units on file.
+          </>
+        )}
+      </div>
+      <div className="text-xs text-muted dark:text-slate-400">
+        {under
+          ? `Either ${r.qty - r.units_count} ${r.qty - r.units_count === 1 ? "is" : "are"} not scanned yet, or the count is out of date.`
+          : "Either the count is out of date, or a unit was recorded twice."}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {under && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onDismiss}
+            className="rounded-md border border-line dark:border-slate-600 px-3 py-1.5 text-xs font-medium text-content dark:text-mortar-100 hover:bg-surface dark:hover:bg-slate-900 transition disabled:opacity-50"
+          >
+            The count is right
+          </button>
+        )}
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onAdopt}
+          className="rounded-md bg-cobble-600 hover:bg-cobble-500 text-white px-3 py-1.5 text-xs font-medium transition disabled:opacity-50"
+        >
+          {busy ? "Saving…" : `Use the ${under ? "serials" : "units"} (${r.units_count})`}
+        </button>
+        {!under && (
+          // The prompt LINKS to the units; it never retires one itself.
+          <a
+            href="#units"
+            className="rounded-md border border-line dark:border-slate-600 px-3 py-1.5 text-xs font-medium text-content dark:text-mortar-100 hover:bg-surface dark:hover:bg-slate-900 transition"
+          >
+            Review units
+          </a>
+        )}
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onDismiss}
+          className="rounded-md px-3 py-1.5 text-xs text-muted hover:text-content dark:hover:text-mortar-100 transition disabled:opacity-50"
+        >
+          Dismiss
+        </button>
+      </div>
+      <div className="text-[11px] text-faint">
+        Nothing changes to your {noun} unless you pick one.
+      </div>
+    </div>
+  );
+}
+
 export function PartDetailPage({ id, onClose }: { id: string; onClose: () => void }) {
   const { api, orgSlug, getToken, entityKind, itemNoun, parent } = useInventory();
   const fp = useFieldPresentation(entityKind);
@@ -95,6 +188,42 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
       void qc.invalidateQueries({ queryKey: ["inventory-part", id] });
       void qc.invalidateQueries({ queryKey: ["inventory-parts"] });
     },
+  });
+
+  // "Use the serials/units" — a stock MOVEMENT, not a silent column write, so
+  // the consumption ledger can explain it and every wire fires exactly as it
+  // would for any other adjustment. A correction nobody can trace is how a
+  // number stops being trusted. Stated side effect: a downward correction that
+  // lands at/below min_qty fires inventory.stock.low and its wires, because you
+  // genuinely are low.
+  const adoptUnits = useMutation({
+    mutationFn: async () => {
+      const r = part.data?.reconcile;
+      if (!r) return;
+      const adj = adoptUnitsAdjustment(r);
+      await api.stockAdjust(id!, adj.delta, adj.reason, { source_kind: adj.source_kind });
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["inventory-part", id] });
+      void qc.invalidateQueries({ queryKey: ["inventory-parts"] });
+    },
+  });
+
+  // Dismissal is keyed on the PAIR of numbers, not the model: the same stable
+  // disagreement never re-asks, but a genuinely new one does. A plain metadata
+  // key, written through the normal read-merge-write.
+  const dismissReconcile = useMutation({
+    mutationFn: async () => {
+      const r = part.data?.reconcile;
+      if (!r) return;
+      await api.updatePart(id!, {
+        metadata: {
+          ...(part.data?.metadata ?? {}),
+          reconcile_dismissed: { qty: r.qty, units_count: r.units_count },
+        },
+      });
+    },
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["inventory-part", id] }),
   });
 
   const remove = useMutation({
@@ -162,6 +291,14 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
 
   return (
     <div className="space-y-5">
+
+      <ReconcileCard
+        part={p}
+        noun={itemNoun}
+        busy={adoptUnits.isPending || dismissReconcile.isPending}
+        onAdopt={() => adoptUnits.mutate()}
+        onDismiss={() => dismissReconcile.mutate()}
+      />
 
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
         <div className="flex items-start gap-4">
@@ -337,6 +474,32 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
             />
           </Field>
           )}
+          {/* The individual's holder. Generic + relabelable (a library calls it
+              "Borrower", IT "Assigned to"); see per-unit-assignment.md. */}
+          {!hide("assigned_to") && (
+          <Field label={fp.label("assigned_to", "Assigned to")}>
+            <InlineText
+              value={p.assigned_to ?? ""}
+              placeholder="—"
+              onCommit={(v) => update.mutate({ assigned_to: v || null })}
+            />
+          </Field>
+          )}
+          {/* The individual face's number, shown only once this model actually
+              has serials on file. Read-only by construction: it counts unit
+              rows, so the way to change it is to add or retire a unit. */}
+          {(p.units_count ?? 0) > 0 && (
+            <Field label="Units on file">
+              <span className="text-sm text-content dark:text-mortar-100">
+                {p.units_count} {p.units_count === 1 ? "unit" : "units"}
+                {Number(p.qty) > (p.units_count ?? 0) && (
+                  <span className="ml-2 text-xs text-muted dark:text-slate-400">
+                    ({Number(p.qty) - (p.units_count ?? 0)} not yet scanned)
+                  </span>
+                )}
+              </span>
+            </Field>
+          )}
         </div>
         <Field label="Notes">
           <InlineTextarea
@@ -476,6 +639,10 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
 
       {!hide("allocations") && <AllocationsPanel partId={p.id} />}
 
+      <div id="units">
+        <UnitsPanel partId={p.id} />
+      </div>
+
       <div className="flex items-center justify-center gap-4 pt-4">
         <button
           onClick={() => setDup(true)}
@@ -551,7 +718,7 @@ function PrintQrButton({
     try {
       // 1. Reuse an active navigate-mode token, or mint one.
       const list = await fetch(
-        `/api/v1/orgs/${orgSlug}/modules/core-labels-qr/tokens?entity_kind=inventory:part&entity_id=${encodeURIComponent(partId)}`,
+        `/api/v1/orgs/${orgSlug}/modules/labels/qr/tokens?entity_kind=inventory:part&entity_id=${encodeURIComponent(partId)}`,
         { headers: auth() },
       );
       // scan_url is the full URL to encode, built server-side from the
@@ -568,7 +735,7 @@ function PrintQrButton({
       }
       if (!scanUrl) {
         const res = await fetch(
-          `/api/v1/orgs/${orgSlug}/modules/core-labels-qr/tokens`,
+          `/api/v1/orgs/${orgSlug}/modules/labels/qr/tokens`,
           {
             method: "POST",
             headers: { ...auth(), "Content-Type": "application/json" },

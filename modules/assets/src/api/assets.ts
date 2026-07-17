@@ -87,16 +87,32 @@ assetsRouter.post(
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
     const ctx = tenantContext(req);
+    // Create-then-place: location rides the placement seam
+    // (placement-cutover-plan step 1); place() mirrors the legacy column.
+    const { location_id: createLocationId, ...createRest } = parsed.data;
     const inserted = await db
       .insertInto("assets_assets")
       .values({
-        ...parsed.data,
+        ...createRest,
         instance: instanceOf(req),
         flags: parsed.data.flags ?? [],
         metadata: parsed.data.metadata ?? {},
       } as never)
       .returningAll()
       .executeTakeFirstOrThrow();
+    if (createLocationId) {
+      try {
+        await platform().placement.place({
+          orgId: ctx.org.id,
+          containee: { kind: "assets:asset", id: inserted.id },
+          container: { kind: "core-locations:location", id: createLocationId },
+        });
+        (inserted as { location_id?: string | null }).location_id = createLocationId;
+      } catch {
+        await db.updateTable("assets_assets").set({ location_id: createLocationId }).where("id", "=", inserted.id).execute();
+        (inserted as { location_id?: string | null }).location_id = createLocationId;
+      }
+    }
     await platform().activity.log({
       orgId: ctx.org.id,
       userId: sessionUser(req).id,
@@ -151,9 +167,13 @@ assetsRouter.patch(
       );
     }
 
+    // Location changes ride the placement seam (placement-cutover-plan
+    // step 1) instead of the column write; parsed.data stays intact so the
+    // activity diff and the change-event bags still carry the transition.
+    const { location_id: patchLocationId, ...patchRest } = parsed.data;
     const updated = await db
       .updateTable("assets_assets")
-      .set({ ...parsed.data, updated_at: new Date() } as never)
+      .set({ ...patchRest, updated_at: new Date() } as never)
       .where("id", "=", id)
       .where("instance", "=", instanceOf(req))
       .returningAll()
@@ -161,6 +181,25 @@ assetsRouter.patch(
     if (!updated) {
       res.status(404).json({ error: { code: "not_found", message: "asset not found" } });
       return;
+    }
+    if (patchLocationId !== undefined) {
+      try {
+        if (patchLocationId) {
+          await platform().placement.place({
+            orgId: ctx.org.id,
+            containee: { kind: "assets:asset", id },
+            container: { kind: "core-locations:location", id: patchLocationId },
+          });
+        } else {
+          await platform().placement.remove({
+            orgId: ctx.org.id,
+            containee: { kind: "assets:asset", id },
+          });
+        }
+      } catch {
+        await db.updateTable("assets_assets").set({ location_id: patchLocationId ?? null }).where("id", "=", id).execute();
+      }
+      (updated as { location_id?: string | null }).location_id = patchLocationId ?? null;
     }
     await platform().activity.log({
       orgId: ctx.org.id,

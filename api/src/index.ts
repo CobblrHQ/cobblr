@@ -59,11 +59,8 @@ import * as edgeImpl from "./platform/edge.js";
 import * as egressImpl from "./platform/egress.js";
 import { syncManifestRegistries } from "./platform/registry-sync.js";
 import { syncInstalledModules } from "./platform/installed-modules.js";
-import { migrateLensModules } from "./platform/migrate-lens-modules.js";
-import { migrateLensBundlesToInstances } from "./platform/migrate-lens-bundles-to-instances.js";
-import { enableDigifabForMachineBundles } from "./platform/enable-digifab-for-machines.js";
 import { migrateBookshelfToInstance } from "./platform/migrate-bookshelf-to-instance.js";
-import { migrateInventoryLocations } from "./platform/migrate-inventory-locations.js";
+import { mergeLabelsQr } from "./platform/merge-labels-qr.js";
 import { backfillPlacements } from "./platform/migrate-location-to-placement.js";
 import { backfillDefaultBindings } from "./platform/seed-bindings.js";
 import { reconcileScanCategoryFields } from "./platform/reconcile-scan-category.js";
@@ -456,6 +453,33 @@ async function boot() {
           .execute();
         return rows;
       },
+      // count(*) + max(created_at) grouped by target, in ONE query for the whole
+      // page. Rides entity_pairings_target_idx (org_id, target_kind, target_id).
+      // NOT filtered by source_kind on purpose: "how many units does this model
+      // have" counts every unit paired to it, whatever kind the unit row is —
+      // the relationship is what makes it a unit, not the kind.
+      countByTargets: async ({ orgId, targetKind, targetIds, relationshipKind }) => {
+        if (targetIds.length === 0) return [];
+        const rows = await meta
+          .selectFrom("entity_pairings")
+          .select(({ fn }) => [
+            "target_id as targetId",
+            fn.count<number>("id").as("count"),
+            fn.max("created_at").as("latestCreatedAt"),
+          ])
+          .where("org_id", "=", orgId)
+          .where("target_kind", "=", targetKind)
+          .where("relationship_kind", "=", relationshipKind)
+          .where("target_id", "in", targetIds)
+          .groupBy("target_id")
+          .execute();
+        return rows.map((r) => ({
+          targetId: r.targetId,
+          // pg returns count as a string over the wire; the contract says number.
+          count: Number(r.count),
+          latestCreatedAt: new Date(r.latestCreatedAt as unknown as string).toISOString(),
+        }));
+      },
     },
     // Placement — the containment primitive. "A containee lives inside a
     // container." One relationship for the whole platform (a part in a machine,
@@ -806,31 +830,9 @@ async function boot() {
   // docs/modules/marketplace.md §4.
   const installedCount = await T("syncInstalledModules", syncInstalledModules());
   console.log(`[cobblr-api] installed_modules synced: ${installedCount}`);
-  // One-shot: convert the four legacy Pillar-E lens modules
-  // (3d-printers, laser-cutters, cnc-machines, workshop-mods) to
-  // equivalent bundles. They used to be pure-field-def modules; now
-  // they're lens bundles with `provides_lens`. Idempotent — orgs
-  // that have already been migrated (or never had the modules
-  // enabled) skip silently. Runs BEFORE syncTenantMigrations so
-  // any cleaned-up org_modules rows don't get a stale migration
-  // sync.
-  const lensResult = await T("migrateLensModules", migrateLensModules());
-  if (lensResult.orgsTouched > 0) {
-    console.log(
-      `[cobblr-api] lens-module → bundle migration: ${lensResult.orgsTouched} org(s), ${lensResult.bundlesInstalled} bundle(s) installed, ${lensResult.fieldsMoved} field def(s) moved`,
-    );
-  }
-  // Second-generation: convert still-lens-shaped machine bundles (provides_lens)
-  // into the instance shape (provides_instances) — provision the tab, re-key
-  // field defs to <name>:item, move existing machines into the instance, enable
-  // digifab. Self-heals the "Machines everywhere" state with no user reinstall.
-  // Runs AFTER migrate-lens-modules so it catches bundles it just created.
-  const lensInstResult = await T("migrateLensBundlesToInstances", migrateLensBundlesToInstances());
-  if (lensInstResult.orgsTouched > 0) {
-    console.log(
-      `[cobblr-api] lens-bundle → instance migration: ${lensInstResult.orgsTouched} org(s), ${lensInstResult.bundlesMigrated} bundle(s) converted, ${lensInstResult.machinesMoved} machine(s) moved`,
-    );
-  }
+  // (The two lens heal shims — lens modules → bundles, lens bundles →
+  // instances — completed on every deployment and were retired 2026-07-17;
+  // restoring a pre-2026-06 backup needs a build that still carries them.)
   // Bookshelf <=0.1.x put its fields on inventory:part — the DEFAULT instance,
   // which is always stock — so books wore a quantity/warranty and could never
   // render as the lean catalog they are. 0.2.0 gives Bookshelf its own shelf;
@@ -843,25 +845,11 @@ async function boot() {
       `[cobblr-api] bookshelf → instance migration: ${shelfResult.orgsTouched} org(s), ${shelfResult.booksMoved} book(s) moved`,
     );
   }
-  // Enable digifab (Print Manager) for machine-bundle orgs that predate the
-  // default-on "Connect to your machines" feature — so a printer can actually be
-  // connected without the user hunting in Configuration. Additive + idempotent.
-  const digifabResult = await T("enableDigifabForMachineBundles", enableDigifabForMachineBundles());
-  if (digifabResult.orgsEnabled > 0) {
-    console.log(`[cobblr-api] enabled digifab for ${digifabResult.orgsEnabled} machine-bundle org(s)`);
-  }
-  // One-shot: move inventory_locations rows into core_locations_locations
-  // (UUIDs preserved so cross-module location_id refs stay valid) and
-  // drop the inventory_parts.location_id FK constraint that pinned the
-  // table to inventory. Idempotent — orgs already migrated no-op.
-  // Runs BEFORE syncTenantMigrations so the org_modules row we may
-  // insert for core-locations doesn't get a stale migration sync.
-  const invLocResult = await T("migrateInventoryLocations", migrateInventoryLocations());
-  if (invLocResult.orgsTouched > 0) {
-    console.log(
-      `[cobblr-api] inventory_locations → core-locations: ${invLocResult.orgsTouched} org(s), ${invLocResult.rowsCopied} row(s) copied, ${invLocResult.fksDropped} FK(s) dropped`,
-    );
-  }
+  // (Two more heal shims retired 2026-07-18 after their DONE WHEN read true on
+  // every deployment: enable-digifab-for-machines — 0 machine-bundle orgs
+  // lacking digifab on all 4 metas — and migrate-inventory-locations — 0
+  // legacy tables across all 205 tenant DBs. Restoring a backup that predates
+  // those cutovers needs a build that still carries the shims.)
   // Seed the placement primitive from existing location_id values (a Location is
   // one KIND of container). Runs after locations are canonical + before
   // syncTenantMigrations, same as above. Idempotent; the dual-write keeps it
@@ -870,6 +858,17 @@ async function boot() {
   if (placeResult.orgsTouched > 0) {
     console.log(
       `[cobblr-api] location_id → placement backfill: ${placeResult.orgsTouched} org(s), ${placeResult.rowsInserted} placement row(s) seeded`,
+    );
+  }
+  // core-labels-qr merged into labels (0.6.0): convert each workspace's
+  // enablement (rename when QR was really used, drop the ambient never-used
+  // rows) + rewrite renamed-event wires. Meta-only; runs BEFORE
+  // syncTenantMigrations so a renamed-to-labels org gets labels' migrations
+  // (incl. 0004's table rename) in this same boot.
+  const lqMerge = await T("mergeLabelsQr", mergeLabelsQr());
+  if (lqMerge.renamed + lqMerge.deleted + lqMerge.wiresRewritten > 0) {
+    console.log(
+      `[cobblr-api] labels-qr merge: ${lqMerge.renamed} org(s) renamed to labels, ${lqMerge.deleted} ambient row(s) dropped, ${lqMerge.wiresRewritten} wire(s) rewritten`,
     );
   }
   // Self-heal: backfill foundational + autoEnable capabilities onto workspaces

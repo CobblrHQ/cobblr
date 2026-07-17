@@ -2,7 +2,7 @@
 //
 // The domain-neutral printing capability. A label printer (Rollo), a shipping-
 // label printer, an office laser — none are "fabrication" (digifab) and none are
-// strictly "QR labels" (core-labels-qr); they're just printers fronted by a
+// strictly "QR labels" (labels' QR half); they're just printers fronted by a
 // print manager. core-print owns the connection to that manager + the
 // send-a-document contract; CONTENT modules (labels, purchases shipping, …) and
 // users submit a document to a configured printer.

@@ -1,6 +1,6 @@
-// QR token CRUD + PNG render. Token rows live in cobblr_meta so
-// the unauthenticated /qr/:token scan route can resolve them in
-// one query — see api/src/routes/qr-scan.ts for the resolver.
+// QR token CRUD + PNG render (merged in from the former core-labels-qr
+// module). Token rows live in cobblr_meta so the unauthenticated /qr/:token
+// scan route can resolve them in one query — see api/src/routes/qr-scan.ts.
 
 import { Router } from "express";
 import { z } from "zod";
@@ -8,11 +8,12 @@ import { sql } from "kysely";
 import { randomBytes } from "node:crypto";
 import { platform } from "@cobblr/platform-contract";
 import QRCode from "qrcode";
-import { tenantContext, tenantDb, getQrTokenStyle, getQrLabelBaseUrl, qrScanUrl, qrShortcode } from "../db.js";
+import { tenantContext } from "../db.js";
+import { qrTenantDb, getQrTokenStyle, getQrLabelBaseUrl, qrScanUrl, qrShortcode } from "./qr-db.js";
 import type { Request } from "express";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 
-export const tokensRouter = Router({ mergeParams: true });
+export const qrTokensRouter = Router({ mergeParams: true });
 
 /** The origin a freshly-minted / rendered QR should encode, in priority order:
  *  1. the workspace's custom label base URL (stable name it forwards to us),
@@ -20,7 +21,7 @@ export const tokensRouter = Router({ mergeParams: true });
  *  3. the incoming request's own protocol + Host.
  *  The `/qr/<token>` path is appended by qrScanUrl(). */
 async function effectiveBase(req: Request): Promise<string> {
-  const stored = await getQrLabelBaseUrl(tenantDb(req));
+  const stored = await getQrLabelBaseUrl(qrTenantDb(req));
   if (stored) return stored;
   const header = req.headers["x-cobblr-base-url"] as string | undefined;
   if (header) return header.replace(/\/+$/, "");
@@ -66,7 +67,7 @@ interface MetaQrToken {
   expires_at: Date | null;
 }
 
-tokensRouter.post(
+qrTokensRouter.post(
   "/",
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
@@ -91,7 +92,7 @@ tokensRouter.post(
     // so those stay opaque even under the descriptive default — otherwise a
     // second mint for the same entity would collide with (and reuse) its nav
     // token, silently dropping the new mode/expiry.
-    const style = await getQrTokenStyle(tenantDb(req));
+    const style = await getQrTokenStyle(qrTenantDb(req));
     // Descriptive (readable "<code>/<slug>") is for a plain, permanent navigate
     // label AND session auth only: a public label must not leak its kind, and an
     // action / expiring token needs a distinct disposable token. Everything else
@@ -163,7 +164,7 @@ tokensRouter.post(
       }
     }
     if (!row) throw new Error("could not mint a unique QR token");
-    void platform().events.emit("core-labels-qr.token.created", {
+    void platform().events.emit("labels.qr.token.created", {
       orgId: ctx.org.id,
       tokenId: row.id,
       entityKind: row.entity_kind,
@@ -173,7 +174,7 @@ tokensRouter.post(
   }),
 );
 
-tokensRouter.get(
+qrTokensRouter.get(
   "/",
   asyncHandler(async (req, res) => {
     const ctx = tenantContext(req);
@@ -202,7 +203,7 @@ tokensRouter.get(
   }),
 );
 
-tokensRouter.post(
+qrTokensRouter.post(
   "/:id/revoke",
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin")) return;
@@ -234,7 +235,7 @@ tokensRouter.post(
       res.status(404).json({ error: { code: "not_found", message: "token not found" } });
       return;
     }
-    void platform().events.emit("core-labels-qr.token.revoked", {
+    void platform().events.emit("labels.qr.token.revoked", {
       orgId: ctx.org.id,
       tokenId: id,
     });
@@ -245,7 +246,7 @@ tokensRouter.post(
 // PNG render — useful for the print path to embed the QR image
 // directly in a label. Resolves a token id to its `token` slug, then
 // renders.
-tokensRouter.get(
+qrTokensRouter.get(
   "/:id/png",
   asyncHandler(async (req, res) => {
     const ctx = tenantContext(req);

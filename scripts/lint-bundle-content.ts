@@ -36,8 +36,11 @@ const WRITE = process.argv.includes("--write");
 
 // Release-metadata keys excluded from the content hash (mirrors lint-versions.ts
 // and sync-bundles.ts `sig()`): moving these alone is a release, not a content
-// change, and is not what we're guarding.
-const META = new Set(["version", "changelog", "released_at"]);
+// change, and is not what we're guarding. `catalog` (the offer tier — see
+// docs/design-decisions/bundle-catalog-tiers.md) is the same kind of thing:
+// demoting a bundle is curation, not content an installed workspace re-syncs, so
+// it must not demand a version bump (which would show a spurious upgrade prompt).
+const META = new Set(["version", "changelog", "released_at", "catalog"]);
 
 /** Deterministic JSON with recursively sorted object keys, so a cosmetic key
  *  reorder in the source doesn't spuriously change the hash. */
@@ -53,7 +56,7 @@ function canonical(v: unknown): unknown {
 }
 
 function contentHash(manifest: Record<string, unknown>): string {
-  const { version: _v, changelog: _c, released_at: _r, ...rest } = manifest;
+  const rest = Object.fromEntries(Object.entries(manifest).filter(([k]) => !META.has(k)));
   return createHash("sha256").update(JSON.stringify(canonical(rest))).digest("hex");
 }
 

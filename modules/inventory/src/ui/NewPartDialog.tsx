@@ -168,7 +168,7 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
 
   async function queueQrLabel(partId: string, displayName: string) {
     // Two-step cross-module call: mint a QR navigate-token from
-    // core-labels-qr, then enqueue a label in the labels module
+    // labels' QR endpoint, then enqueue a label in the labels module
     // pointing at it. Both flow through the typed inventory client
     // so failures throw InventoryApiError instead of vanishing.
     try {

@@ -2,10 +2,11 @@
 //
 // Resolves token → (org_id, entity_kind, entity_id, mode, auth) in
 // one query against cobblr_meta. Logs the scan to the tenant DB's
-// core_labels_qr_scans table (best-effort). Returns a JSON payload
+// labels_qr_scans table (best-effort). Returns a JSON payload
 // the web shell uses to navigate or surface a confirmation card.
 //
-// See docs/modules/core-labels-qr.md.
+// See docs/modules/labels.md (QR half merged in from core-labels-qr,
+// labels 0.6.0; the meta token table keeps its historical name).
 
 import { Router } from "express";
 import { sql } from "kysely";
@@ -96,7 +97,7 @@ qrScanRouter.get("/:token(.*)", async (req, res, next) => {
         };
       };
       await tdb
-        .insertInto("core_labels_qr_scans")
+        .insertInto("labels_qr_scans")
         .values({
           token_id: result.token_id!,
           ua_hint: ((req.headers["user-agent"] as string | undefined) ?? "").slice(0, 200),
@@ -106,7 +107,7 @@ qrScanRouter.get("/:token(.*)", async (req, res, next) => {
     } catch (err) {
       console.error("[qr-scan] audit log write failed:", err);
     }
-    void events.emit("core-labels-qr.scan.received", {
+    void events.emit("labels.qr.scan.received", {
       orgId: result.org_id,
       tokenId: result.token_id,
       entityKind: result.entity_kind,

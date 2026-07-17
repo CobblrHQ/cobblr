@@ -114,6 +114,11 @@ export function buildOfficialIndex(): ExtensionIndex {
       // The curated marketplace catalog = flagship + community bundles (matches
       // what build-extensions-index.ts published from FEATURED_BUNDLES).
       if (!id.includes(".flagship.") && !id.includes(".community.")) continue;
+      // A `disabled` bundle is withdrawn from the offer entirely (existing installs
+      // keep resolving it by id elsewhere). This loader is deliberately independent
+      // of flagship-bundles.ts (import-cycle avoidance), so the tier check is
+      // inlined rather than shared — keep it in step with catalogTier() there.
+      if ((m as { catalog?: unknown }).catalog === "disabled") continue;
       bundles.push({
         id,
         name: typeof m.name === "string" ? m.name : id,

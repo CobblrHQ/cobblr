@@ -1,6 +1,7 @@
 {
   "manifest": {
     "id": "cobblr.flagship.wardrobe",
+    "catalog": "extended",
     "version": "0.1.2",
     "name": "Wardrobe",
     "description": "Catalog your clothing as its own table — type, colour, season, formality, a photo each — grouped by type. Optional Outfits table for planning looks.",

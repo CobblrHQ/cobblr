@@ -63,7 +63,11 @@ export function suggestFeatured(
   const words = new Set((intent.toLowerCase().match(WORD) ?? []).map(stem));
   if (words.size === 0) return null;
 
-  const vocabs = FEATURED_BUNDLES.map((fb) => ({ fb, vocab: bundleVocab(fb) }));
+  // Suggest only from the OFFERED catalog — a disabled bundle is withdrawn, so it
+  // must not be proposed for a build-page intent (same tier rule as every other
+  // discovery surface; see docs/design-decisions/bundle-catalog-tiers.md).
+  const offered = FEATURED_BUNDLES.filter((fb) => fb.manifest.catalog !== "disabled");
+  const vocabs = offered.map((fb) => ({ fb, vocab: bundleVocab(fb) }));
   // df: in how many bundles' vocabularies does each term appear?
   const df = new Map<string, number>();
   for (const { vocab } of vocabs) for (const t of vocab.keys()) df.set(t, (df.get(t) ?? 0) + 1);

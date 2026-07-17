@@ -19,6 +19,15 @@ import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { applyNavOrder, readNavOrder, writeNavOrder } from "../lib/nav-order";
 
+// Launch-surface curation (docs/product/launch-simplification.md §4): the
+// everyday tiles are the inventory-with-extra-hands set, the machine/floor
+// modules present as one opt-in Workshop pack, and every other domain sits
+// behind "More modules". Purely presentational — membership only, never
+// order; names not installed simply don't render, and any module outside
+// both lists lands in More automatically.
+const LAUNCH_FEATURED = new Set(["inventory", "assets", "lists", "purchases", "labels"]);
+const WORKSHOP_PACK = new Set(["digifab", "machines"]);
+
 interface Props {
   /** Render in-flow (settings page mode) instead of as an overlay. */
   inline?: boolean;
@@ -101,6 +110,17 @@ export function ModulePickerModal({ open, onClose, scopeToParent, inline }: Prop
   const userParents = visibleParents.filter((m) => !isPlatformCore(m));
   const corePlatform = visibleParents.filter(isPlatformCore);
 
+  // Scoped mode already narrows to one parent — the launch split only
+  // applies to the full browse view.
+  const skipSplit = !!scopeToParent && !showAll;
+  const featured = skipSplit
+    ? userParents
+    : userParents.filter((m) => LAUNCH_FEATURED.has(m.name));
+  const workshop = skipSplit ? [] : userParents.filter((m) => WORKSHOP_PACK.has(m.name));
+  const more = skipSplit
+    ? []
+    : userParents.filter((m) => !LAUNCH_FEATURED.has(m.name) && !WORKSHOP_PACK.has(m.name));
+
   const enable = useMutation({
     mutationFn: (name: string) => api.enableModule(activeSlug, name),
     onSuccess: (_r, name) => {
@@ -181,7 +201,7 @@ export function ModulePickerModal({ open, onClose, scopeToParent, inline }: Prop
         )}
 
         <ul className="space-y-3">
-          {userParents.map((p) => (
+          {featured.map((p) => (
             <ParentCard
               key={p.name}
               parent={p}
@@ -193,7 +213,7 @@ export function ModulePickerModal({ open, onClose, scopeToParent, inline }: Prop
               draggable={!scopeToParent || showAll}
               onDropBefore={(name) => reorderTo(name, p.name)}
               onDropAtEnd={(name) => reorderTo(name, null)}
-              isLast={p === userParents[userParents.length - 1]}
+              isLast={p === featured[featured.length - 1]}
             />
           ))}
           {visibleOrphans.map((m) => (
@@ -216,6 +236,77 @@ export function ModulePickerModal({ open, onClose, scopeToParent, inline }: Prop
             </li>
           )}
         </ul>
+
+        {workshop.length > 0 && (
+          <details className="mt-4 pt-3 border-t border-line dark:border-slate-700 group">
+            <summary className="cursor-pointer list-none flex items-center justify-between text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 hover:text-accent dark:hover:text-cobble-400 transition">
+              <span>
+                {"// workshop pack ("}
+                {workshop.length}
+                {workshop.some((m) => m.enabled)
+                  ? ` · ${workshop.filter((m) => m.enabled).length} on`
+                  : ""}
+                {")"}
+              </span>
+              <span className="text-faint dark:text-slate-600 group-open:rotate-90 transition-transform">▸</span>
+            </summary>
+            <div className="text-[11px] text-faint dark:text-slate-500 mt-2 mb-2">
+              Run machines and a fabrication floor: a machine registry plus the
+              Print Manager that sends files to your machines' own managers and
+              tracks the jobs.
+            </div>
+            <ul className="space-y-3">
+              {workshop.map((p) => (
+                <ParentCard
+                  key={p.name}
+                  parent={p}
+                  kids={kidsByParent.get(p.name) ?? []}
+                  enabledNames={enabledNames}
+                  onEnable={(name) => enable.mutate(name)}
+                  onDisable={handleDisable}
+                  busy={enable.isPending || disable.isPending}
+                  draggable
+                  onDropBefore={(name) => reorderTo(name, p.name)}
+                  onDropAtEnd={(name) => reorderTo(name, null)}
+                  isLast={p === workshop[workshop.length - 1]}
+                />
+              ))}
+            </ul>
+          </details>
+        )}
+
+        {more.length > 0 && (
+          <details className="mt-4 pt-3 border-t border-line dark:border-slate-700 group">
+            <summary className="cursor-pointer list-none flex items-center justify-between text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 hover:text-accent dark:hover:text-cobble-400 transition">
+              <span>
+                {"// more modules ("}
+                {more.length}
+                {more.some((m) => m.enabled)
+                  ? ` · ${more.filter((m) => m.enabled).length} on`
+                  : ""}
+                {")"}
+              </span>
+              <span className="text-faint dark:text-slate-600 group-open:rotate-90 transition-transform">▸</span>
+            </summary>
+            <ul className="space-y-3 mt-2">
+              {more.map((p) => (
+                <ParentCard
+                  key={p.name}
+                  parent={p}
+                  kids={kidsByParent.get(p.name) ?? []}
+                  enabledNames={enabledNames}
+                  onEnable={(name) => enable.mutate(name)}
+                  onDisable={handleDisable}
+                  busy={enable.isPending || disable.isPending}
+                  draggable
+                  onDropBefore={(name) => reorderTo(name, p.name)}
+                  onDropAtEnd={(name) => reorderTo(name, null)}
+                  isLast={p === more[more.length - 1]}
+                />
+              ))}
+            </ul>
+          </details>
+        )}
 
         {corePlatform.length > 0 && (
           <details className="mt-5 pt-3 border-t border-line dark:border-slate-700 group">

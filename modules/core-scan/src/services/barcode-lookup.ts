@@ -194,10 +194,15 @@ export async function tryGoUpc(upc: string): Promise<ProviderResult> {
   // Honor the crawl-delay — but NEVER queue behind it (see the header
   // comment: a queue here stalls scans under concurrency). Slot busy →
   // skip; the APIs answer this scan.
-  const wait = goUpcLastAt + GO_UPC_SPACING_MS - Date.now();
-  if (wait > GO_UPC_MAX_WAIT_MS) throw new Error("go-upc slot busy — skipped for this scan");
-  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-  goUpcLastAt = Date.now();
+  //
+  // The slot is RESERVED synchronously, before any await: the old
+  // read-check-sleep-set shape let two concurrent scans both observe a clear
+  // gate across the sleep and double-fire against the Crawl-delay contract.
+  const now = Date.now();
+  const slotAt = Math.max(now, goUpcLastAt + GO_UPC_SPACING_MS);
+  if (slotAt - now > GO_UPC_MAX_WAIT_MS) throw new Error("go-upc slot busy — skipped for this scan");
+  goUpcLastAt = slotAt;
+  if (slotAt > now) await new Promise((r) => setTimeout(r, slotAt - now));
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 12_000);
@@ -419,13 +424,47 @@ async function tryResolver(upc: string): Promise<ProviderResult> {
  * and cover image. The provider was never going to say "that's a VIN": it only
  * knows how to return its best match. So the shape gate has to be ours.
  */
+/** GTIN mod-10 check-digit test. From the rightmost digit excluding the check,
+ *  weights alternate 3,1,3,1…; valid when the computed check matches. */
+export function gtinChecksumOk(digits: string): boolean {
+  const check = Number(digits[digits.length - 1]);
+  const body = digits.slice(0, -1);
+  let sum = 0;
+  for (let i = 0; i < body.length; i++) {
+    const d = Number(body[body.length - 1 - i]);
+    sum += i % 2 === 0 ? d * 3 : d;
+  }
+  return (10 - (sum % 10)) % 10 === check;
+}
+
+/** ISBN-10 mod-11 check (final char may be X = 10). */
+export function isbn10ChecksumOk(code: string): boolean {
+  let sum = 0;
+  for (let i = 0; i < 9; i++) sum += (10 - i) * Number(code[i]);
+  const last = code[9] === "X" ? 10 : Number(code[9]);
+  return (sum + last) % 11 === 0;
+}
+
 export function looksLikeProductBarcode(code: string): boolean {
   const c = code.trim().toUpperCase();
-  if (/^\d{8}$/.test(c)) return true; // UPC-E
-  if (/^\d{12,14}$/.test(c)) return true; // UPC-A / EAN-13 / GTIN-14
-  if (/^\d{9}[\dX]$/.test(c)) return true; // ISBN-10
+  // 8-digit codes are deliberately NOT checksummed: the scan can be EAN-8
+  // (standard GTIN checksum) or UPC-E (check digit computed over the EXPANDED
+  // UPC-A form), and the digits alone don't say which — running the wrong
+  // algorithm would reject real labels. Length stays the only gate here.
+  if (/^\d{8}$/.test(c)) return true; // EAN-8 / UPC-E
+  // 12/13/14-digit GTINs have one unambiguous checksum: a mis-read or
+  // transposed digit fails here and becomes an honest, quota-free miss
+  // instead of a confident wrong product from a lookup provider.
+  if (/^\d{12,14}$/.test(c)) return gtinChecksumOk(c); // UPC-A / EAN-13 / GTIN-14
+  if (/^\d{9}[\dX]$/.test(c)) return isbn10ChecksumOk(c); // ISBN-10
   return false;
 }
+
+// Coalesce concurrent lookups of the SAME code — a burst of scans of one
+// unlabeled box, or several devices hitting one new UPC: the first caller pays
+// the provider round; the rest await its outcome. Entry cleared on settle so a
+// later scan retries fresh (a rate_limited outcome must stay retryable).
+const inflightLookups = new Map<string, Promise<BarcodeOutcome>>();
 
 export async function lookupBarcode(upc: string): Promise<BarcodeOutcome> {
   const norm = upc.trim();
@@ -433,6 +472,14 @@ export async function lookupBarcode(upc: string): Promise<BarcodeOutcome> {
   // Never ask a product database about something that cannot be a product code.
   // A miss is the honest answer, and it costs no quota to give.
   if (!looksLikeProductBarcode(norm)) return { outcome: "miss" };
+  const existing = inflightLookups.get(norm);
+  if (existing) return existing;
+  const p = doLookupBarcode(norm).finally(() => inflightLookups.delete(norm));
+  inflightLookups.set(norm, p);
+  return p;
+}
+
+async function doLookupBarcode(norm: string): Promise<BarcodeOutcome> {
 
   // Box-level resolver first (when configured): the host-wide chain —
   // one cache, one go-upc gate, one quota budget. Its answer (hit, miss,

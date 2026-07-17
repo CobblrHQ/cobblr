@@ -60,6 +60,9 @@ export interface HomeBoxFields {
   asset_id: number | null;
   serial_number: string | null;
   model_number: string | null;
+  /** The individual's holder — "Janet", "IT Dept", "Loaned to Bob". A generic
+   *  relabelable field (a library calls it "Borrower"); see per-unit-assignment.md. */
+  assigned_to: string | null;
   warranty_expires: string | null;
   lifetime_warranty: boolean;
   warranty_details: string | null;
@@ -90,6 +93,12 @@ export interface PartListItem extends HomeBoxFields {
   assigned_qty: number;
   available_qty: number;
   low_stock: boolean;
+  /** How many UNITS (serials) this model has on file. Derived server-side, and
+   *  batched for the whole page. Absent on an older response; 0 means the model
+   *  isn't serialized. The list uses it only for the passive "not yet scanned"
+   *  chip — the reconciliation QUESTION lives on the detail, where it can be
+   *  answered. See docs/design-decisions/serialized-rollup-and-stock-adjust.md. */
+  units_count?: number;
   /** Computed: positive = days until expiry, negative = already
    *  expired, null = no warranty date. */
   warranty_days_until: number | null;
@@ -113,6 +122,25 @@ export interface Part extends HomeBoxFields {
   location_id: string | null;
   created_at: string;
   updated_at: string;
+  /** How many UNITS (serials) are on file for this model. DERIVED server-side
+   *  from the unit-of pairings, never stored: `qty` stays the count face's
+   *  number and this is the individual face's. 0 (or absent, on an older
+   *  response) means the model isn't serialized and nothing below applies.
+   *  See docs/design-decisions/serialized-rollup-and-stock-adjust.md. */
+  units_count?: number;
+  /** When the newest unit was paired — the "have the numbers settled?" signal.
+   *  Detail only; the list has no use for it. */
+  units_latest_at?: string | null;
+  /** Present (non-null) only when this model has units AND its two numbers
+   *  disagree. Detail only — a question belongs where you can answer it; the
+   *  list computes its passive chip from qty + units_count. */
+  reconcile?: {
+    direction: "under" | "over";
+    qty: number;
+    units_count: number;
+    stable: boolean;
+    dismissed: boolean;
+  } | null;
 }
 
 export interface ConsumptionRow {
@@ -458,6 +486,18 @@ export class InventoryApi {
   updatePart = (id: string, b: Record<string, unknown>) =>
     this.partsRequest<Part>("PATCH", `/${id}`, b);
   deletePart = (id: string) => this.partsRequest<void>("DELETE", `/${id}`);
+  /** The units (serials) filed under this model. Each is a part in its own
+   *  right — it links to its own detail. */
+  listUnits = (id: string) =>
+    this.partsRequest<{ items: Array<{ id: string; name: string; qty: string; serial_number: string | null; assigned_to: string | null; created_at: string }> }>(
+      "GET",
+      `/${id}/units`,
+    );
+  /** File a serial as a unit of this model. Does not touch the model's qty —
+   *  see docs/design-decisions/within-instance-units.md. */
+  mintUnit = (id: string, body: { serial_number?: string; name?: string }) =>
+    this.partsRequest<{ id: string; name: string; serial_number: string | null }>("POST", `/${id}/units`, body);
+
   stockAdjust = (
     id: string,
     delta: number,
@@ -622,7 +662,7 @@ export class InventoryApi {
 
   /** Mint a QR navigate-token for an entity. Used by NewPartDialog's
    *  "queue a label after create" flow. Cross-module call into
-   *  core-labels-qr — kept here so callers don't reach for raw fetch. */
+   *  labels' QR endpoint — kept here so callers don't reach for raw fetch. */
   mintQrToken = (b: {
     entity_kind: string;
     entity_id: string;
@@ -634,7 +674,7 @@ export class InventoryApi {
     // origin) — use it verbatim instead of guessing window.location.origin.
     this.requestAbs<{ token: string; scan_url: string }>(
       "POST",
-      `/api/v1/orgs/${this.slug}/modules/core-labels-qr/tokens`,
+      `/api/v1/orgs/${this.slug}/modules/labels/qr/tokens`,
       b,
     );
 

@@ -1,6 +1,7 @@
 {
   "manifest": {
     "id": "cobblr.community.cnc-machines",
+    "catalog": "extended",
     "version": "0.3.0",
     "name": "CNC Machines",
     "description": "A CNC Machines tracker — spindle, axes, work area, controller, coolant. A named view of your machines, so each mill still drives jobs, fleet status, and maintenance.",

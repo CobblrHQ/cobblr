@@ -311,6 +311,14 @@ export const BundleManifest = z.object({
    *  the update prompt. Display-only; stored in the manifest jsonb. */
   released_at: z.string().optional(),
   changelog: z.string().max(2000).optional(),
+  /** Catalog tier — where this bundle is OFFERED (see lib/flagship-bundles.ts):
+   *  `core` (default when absent) is suggested per-scan AND browsable in the
+   *  marketplace; `extended` is browsable but NOT suggested per-scan (it only
+   *  surfaces when a user goes looking); `disabled` is hidden everywhere. Existing
+   *  installs of a demoted bundle keep working — only the OFFER is withdrawn, never
+   *  the data. Lets the shipped catalog be curated down to a small, unambiguous
+   *  core without deleting a bundle's work. */
+  catalog: z.enum(["core", "extended", "disabled"]).optional(),
   /** v1.5: long-form walkthrough rendered on the bundle's detail page.
    *  Markdown. The short `description` field still appears in lists +
    *  install confirmations; `readme_md` is for the "here's how I use

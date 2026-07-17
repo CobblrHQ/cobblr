@@ -1,6 +1,7 @@
 {
   "manifest": {
     "id": "cobblr.flagship.subscriptions",
+    "catalog": "extended",
     "version": "0.2.1",
     "name": "Subscriptions & Recurring Bills",
     "description": "Every recurring charge as its own table — cost/cycle, renewal date, payment method, grouped by category.",

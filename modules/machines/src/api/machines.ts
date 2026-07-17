@@ -89,15 +89,30 @@ machinesRouter.post(
     const db = tenantDb(req);
     const ctx = tenantContext(req);
     const session = sessionUser(req);
+    // Create-then-place: location rides the placement seam
+    // (placement-cutover-plan step 1); place() mirrors the legacy column.
+    const { location_id: createLocationId, ...createRest } = parsed.data;
     const inserted = await db
       .insertInto("machines_machines")
       .values({
-        ...parsed.data,
+        ...createRest,
         instance: instanceOf(req),
         metadata: parsed.data.metadata ?? {},
       } as never)
       .returningAll()
       .executeTakeFirstOrThrow();
+    if (createLocationId) {
+      try {
+        await platform().placement.place({
+          orgId: ctx.org.id,
+          containee: { kind: "machines:machine", id: inserted.id },
+          container: { kind: "core-locations:location", id: createLocationId },
+        });
+      } catch {
+        await db.updateTable("machines_machines").set({ location_id: createLocationId }).where("id", "=", inserted.id).execute();
+      }
+      (inserted as { location_id?: string | null }).location_id = createLocationId;
+    }
     await platform().activity.log({
       orgId: ctx.org.id,
       userId: session.id,
@@ -136,13 +151,35 @@ machinesRouter.patch(
       res.status(404).json({ error: { code: "not_found", message: "machine not found" } });
       return;
     }
+    // Location changes ride the placement seam (placement-cutover-plan
+    // step 1); parsed.data stays intact for the activity diff.
+    const { location_id: patchLocationId, ...patchRest } = parsed.data;
     const updated = await db
       .updateTable("machines_machines")
-      .set({ ...parsed.data, updated_at: new Date() } as never)
+      .set({ ...patchRest, updated_at: new Date() } as never)
       .where("id", "=", id)
       .where("instance", "=", instanceOf(req))
       .returningAll()
       .executeTakeFirstOrThrow();
+    if (patchLocationId !== undefined) {
+      try {
+        if (patchLocationId) {
+          await platform().placement.place({
+            orgId: ctx.org.id,
+            containee: { kind: "machines:machine", id },
+            container: { kind: "core-locations:location", id: patchLocationId },
+          });
+        } else {
+          await platform().placement.remove({
+            orgId: ctx.org.id,
+            containee: { kind: "machines:machine", id },
+          });
+        }
+      } catch {
+        await db.updateTable("machines_machines").set({ location_id: patchLocationId ?? null }).where("id", "=", id).execute();
+      }
+      (updated as { location_id?: string | null }).location_id = patchLocationId ?? null;
+    }
     await platform().activity.log({
       orgId: ctx.org.id,
       userId: sessionUser(req).id,

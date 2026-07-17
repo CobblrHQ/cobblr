@@ -1760,9 +1760,30 @@ function PinnedView({
   const showDistribution = shouldShowDistribution(isGrouped, groupCounts);
   // A readable label for the grouping field, for the "nothing set yet" hint.
   const groupLabel = groupBy ? groupBy.replace(/_/g, " ") : "";
-  // The count reads in the item's OWN noun ("5 machines"), not DB-speak "5 rows"
-  // (the author, 2026-07-11). The noun is the kind's suffix (machines:machine → machine).
-  const kindNoun = (data.data?.view?.entity_kind ?? "").split(":")[1] ?? "";
+  // WHAT is this card about? A view name is a lens, not a subject: "By make"
+  // alone never says by make of WHAT (the author, 2026-07-16), and on a dashboard of
+  // pinned cards the subject is the thing you scan for. Resolve it from the
+  // view's kind. Same lookup fixes the noun: taking the kind's suffix reads the
+  // literal "item" for an INSTANCE kind (`vehicles:item`), which is why the card
+  // said "1 item" about a car. An instance knows its own name and noun; ask it.
+  // (Shares App's ["instances", slug] cache key, so this costs no extra fetch.)
+  const instancesQ = useQuery({
+    queryKey: ["instances", slug],
+    queryFn: () => api.listInstances(slug),
+    enabled: !!slug,
+    staleTime: 30_000,
+  });
+  const entityKind = data.data?.view?.entity_kind ?? "";
+  const kindHead = entityKind.split(":")[0] ?? "";
+  const kindTail = entityKind.split(":")[1] ?? "";
+  const instance = (instancesQ.data?.items ?? []).find((i) => i.instance_name === kindHead);
+  // The instance's display name ("Vehicles"); a plain module kind has no instance
+  // and its type suffix already reads as the subject (assets:asset → asset).
+  const subject = instance?.display_name ?? "";
+  const configNoun = instance?.config?.item_noun;
+  const kindNoun =
+    (typeof configNoun === "string" && configNoun) ||
+    (subject ? subject.replace(/s$/i, "").toLowerCase() : kindTail);
   const countLabel = kindNoun
     ? `${allItems.length} ${kindNoun}${allItems.length === 1 ? "" : "s"}`
     : `${allItems.length}`;
@@ -1776,15 +1797,27 @@ function PinnedView({
   };
   return (
     <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
-      <div className="flex items-baseline gap-2 mb-2">
-        <LayoutList size={13} className="text-accent" />
+      <div className="flex items-baseline gap-2 mb-2 min-w-0">
+        <LayoutList size={13} className="text-accent shrink-0" />
+        {/* Subject FIRST, then the lens: "Vehicles · By make". The view name on
+            its own is a grouping, not an answer to "what is this card?". */}
+        {subject && (
+          <>
+            <span className="font-medium text-content dark:text-mortar-100 truncate">{subject}</span>
+            <span className="text-faint shrink-0">·</span>
+          </>
+        )}
         <Link
           to={`/views/${view.id}`}
-          className="font-medium text-content dark:text-mortar-100 hover:text-accent"
+          className={`truncate hover:text-accent ${
+            subject
+              ? "text-muted dark:text-slate-400"
+              : "font-medium text-content dark:text-mortar-100"
+          }`}
         >
           {view.name}
         </Link>
-        <span className="text-[10px] font-mono uppercase tracking-wider text-faint">
+        <span className="text-[10px] font-mono uppercase tracking-wider text-faint shrink-0">
           {view.view_type}
         </span>
         <div className="flex-1" />

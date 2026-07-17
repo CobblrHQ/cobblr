@@ -1,6 +1,7 @@
 {
   "manifest": {
     "id": "cobblr.flagship.documents-renewals",
+    "catalog": "extended",
     "version": "0.2.1",
     "name": "Important Documents & Renewals",
     "description": "Every document that expires as its own table — number/issuer/expiry, grouped by type, with expiry dates on your calendar.",

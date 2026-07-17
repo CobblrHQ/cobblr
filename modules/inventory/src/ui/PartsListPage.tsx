@@ -968,6 +968,16 @@ function PartsTable({
                       <AlertTriangle size={10} /> low
                     </span>
                   )}
+                  {/* The under-gap, as STATE not a question: this many are
+                      counted but have no serial on file yet. Shown the whole
+                      time an intake is in progress (the prompt is what waits
+                      for quiet), and never red — nothing is wrong here.
+                      See one-record-substrate.md. */}
+                  {(p.units_count ?? 0) > 0 && Number(p.qty) > (p.units_count ?? 0) && (
+                    <span className="inline-flex items-center gap-1 text-[10px] text-muted dark:text-slate-400 border border-line dark:border-slate-700 rounded px-1.5 py-0.5">
+                      {Number(p.qty) - (p.units_count ?? 0)} not yet scanned
+                    </span>
+                  )}
                   {warrantyChip(p.warranty_days_until, p.lifetime_warranty)}
                   {p.insured && (
                     <span className="inline-flex items-center gap-1 text-[10px] text-accent border border-cobble-200 dark:border-cobble-800 rounded px-1.5 py-0.5">

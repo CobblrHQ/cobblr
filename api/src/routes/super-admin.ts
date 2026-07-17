@@ -44,7 +44,7 @@ import {
 import { llmIdentify } from "@cobblr/core-scan/services/barcode-websearch";
 import { identifyImage } from "@cobblr/core-scan/services/enrich-photo";
 import { platform } from "@cobblr/platform-contract";
-import { assembleContext, compilePrompt, unwrapBuild, parseJsonObject } from "@cobblr/core-authoring/services/compile";
+import { assembleContext, compilePrompt, unwrapBuild, parseJsonObject, applyLeanNatives, nativeFieldsByBaseKind } from "@cobblr/core-authoring/services/compile";
 import { validateBundle } from "./bundles.js";
 
 // ── Feedback reply email (HTML) ──────────────────────────────────────
@@ -2903,7 +2903,9 @@ superAdminRouter.post("/authoring-eval", async (req, res, next) => {
     }
 
     const unwrapped = unwrapBuild(parseJsonObject(text));
-    const bundle = unwrapped.bundle;
+    // Expand native_fields hints → hide-overrides before validation, so an
+    // autopilot-authored collection is lean too (same as the interactive path).
+    const bundle = applyLeanNatives(unwrapped.bundle, await nativeFieldsByBaseKind());
     const validation = bundle && typeof bundle === "object"
       ? await validateBundle(orgId, bundle, { autoEnable: true })
       : { valid: false, preview: null, errors: [{ path: "", code: "not_json", message: "Model output did not unwrap to a bundle object." }] };

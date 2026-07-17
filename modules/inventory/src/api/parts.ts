@@ -13,9 +13,54 @@ import { instanceOf, instanceQtyUnit, sessionUser, tenantContext, tenantDb } fro
 import { asyncHandler, badBody, requireCapability, requireRole } from "./util.js";
 import { routeUnknownToMetadata, preserveServerManaged, coerceMetadata } from "./route-helpers.js";
 import { disclosureHandler, fieldsShowStockSignal, latchInstanceStock } from "./disclosure.js";
+import { computeReconcile } from "../reconcile.js";
 import { recordConsumption } from "./stock-ledger.js";
 
 export const partsRouter = Router({ mergeParams: true });
+
+/** The pairing relationship that makes a record a UNIT of a model: the unit row
+ *  is the source, the model is the target, both in the same instance. Distinct
+ *  from "instance-of" (the CROSS-instance types→items link ParentConfig drives)
+ *  on purpose — "how many spools of this filament type" and "how many serials of
+ *  this laptop" are different questions and must not share a link.
+ *  See docs/design-decisions/serialized-rollup-and-stock-adjust.md. */
+const UNIT_OF = "unit-of";
+
+/** The entity kind a part is addressed as, which is what its pairings target:
+ *  `<instance>:item` for a named instance, `inventory:part` for the default.
+ *  Get this wrong and units_count is silently 0, so both routes derive it here
+ *  rather than each spelling it out. Mirrors the UI's rule (ui/context.tsx). */
+function partKindOf(req: Request): string {
+  const instance = instanceOf(req);
+  return instance === "inventory" ? "inventory:part" : `${instance}:item`;
+}
+
+/** How many units each of these models has on file, and when the newest was
+ *  paired. ONE query for the whole page (countByTargets aggregates), so this is
+ *  safe to call from the list. A model with no units is absent from the map and
+ *  reads as zero. */
+async function unitCountsFor(
+  req: Request,
+  orgId: string,
+  partIds: string[],
+): Promise<Map<string, { count: number; latestCreatedAt: string }>> {
+  if (partIds.length === 0) return new Map();
+  try {
+    const rows = await platform().pairings.countByTargets({
+      orgId,
+      targetKind: partKindOf(req),
+      targetIds: partIds,
+      relationshipKind: UNIT_OF,
+    });
+    return new Map(rows.map((r) => [r.targetId, { count: r.count, latestCreatedAt: r.latestCreatedAt }]));
+  } catch (err) {
+    // Advisory data. A model's units failing to count must never take the list
+    // or the detail down with it — the page renders as it did before this
+    // existed.
+    console.error("[inventory] unit count failed:", (err as Error).message);
+    return new Map();
+  }
+}
 
 /** Sticky-stock latch guard, shared by every qty-bearing write path (create,
  *  PATCH, stock-adjust): the first time a NAMED instance takes a stock-shaped
@@ -61,6 +106,7 @@ const PartCreate = z.object({
   // HomeBox parity fields.
   serial_number: z.string().max(160).nullable().optional(),
   model_number: z.string().max(160).nullable().optional(),
+  assigned_to: z.string().max(160).nullable().optional(),
   warranty_expires: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   lifetime_warranty: z.boolean().optional(),
   warranty_details: z.string().max(2_000).nullable().optional(),
@@ -364,11 +410,18 @@ partsRouter.get(
       }
     }
 
+    // Units on file, for the whole page in ONE query — bolted onto the batched
+    // enrichment above (location names, catalog images) rather than resolved per
+    // row. `items` here is what the parts list renders, so a per-row count would
+    // be an N+1 on the hottest read in the module.
+    const unitCounts = await unitCountsFor(req, ctx.org.id, filtered.map((p) => p.id));
+    const withUnits = filtered.map((p) => ({ ...p, units_count: unitCounts.get(p.id)?.count ?? 0 }));
+
     const last = filtered[filtered.length - 1];
     const next_cursor =
       hasMore && last ? encodeCursor(last.name, last.id) : null;
 
-    res.json({ items: filtered, next_cursor });
+    res.json({ items: withUnits, next_cursor });
   }),
 );
 
@@ -546,7 +599,146 @@ partsRouter.get(
       res.status(404).json({ error: { code: "not_found", message: "part not found" } });
       return;
     }
-    res.json(row);
+    // The individual face's number. `units_count` is DERIVED (count of unit-of
+    // pairings), never stored — the model's own qty stays the count face's
+    // number, and the two disagreeing is information the client surfaces rather
+    // than a drift to reconcile silently. See one-record-substrate.md.
+    const units = await unitCountsFor(req, tenantContext(req).org.id, [row.id]);
+    const u = units.get(row.id);
+    const unitsCount = u?.count ?? 0;
+    const unitsLatestAt = u?.latestCreatedAt ?? null;
+    // Derived from the SAME numbers the response carries — never re-queried, or
+    // the card could disagree with the figures printed beside it. Null for the
+    // common cases (no units, or the numbers agree), so a plain part pays one
+    // comparison. Detail only: the list shows the passive chip, which it can
+    // compute from qty + units_count itself, and a question belongs where you
+    // can answer it.
+    const meta = coerceMetadata((row as { metadata?: unknown }).metadata);
+    const reconcile = computeReconcile({
+      qty: Number(row.qty),
+      unitsCount,
+      unitsLatestAt,
+      dismissedRaw: meta.reconcile_dismissed,
+    });
+    res.json({
+      ...row,
+      units_count: unitsCount,
+      units_latest_at: unitsLatestAt,
+      reconcile,
+    });
+  }),
+);
+
+// The UNITS of a model — the individual records paired to it via unit-of. A unit
+// IS a part (same instance), so each is returned with the fields the units panel
+// shows and links to its own detail. Newest first, so a just-added serial is at
+// the top. See docs/design-decisions/within-instance-units.md.
+partsRouter.get(
+  "/:id/units",
+  asyncHandler(async (req, res) => {
+    const id = req.params.id;
+    if (!id) {
+      res.status(400).json({ error: { code: "missing_id", message: "id required" } });
+      return;
+    }
+    const kind = partKindOf(req);
+    const pairs = await platform().pairings.findByTargets({
+      orgId: tenantContext(req).org.id,
+      sourceKind: kind,
+      targetKind: kind,
+      targetIds: [id],
+      relationshipKind: UNIT_OF,
+    });
+    const unitIds = pairs.map((p) => p.sourceId);
+    if (unitIds.length === 0) {
+      res.json({ items: [] });
+      return;
+    }
+    const rows = await tenantDb(req)
+      .selectFrom("inventory_parts")
+      .select(["id", "name", "qty", "serial_number", "assigned_to", "location_id", "image_path", "created_at"])
+      .where("id", "in", unitIds)
+      .where("instance", "=", instanceOf(req))
+      .orderBy("created_at", "desc")
+      .execute();
+    res.json({ items: rows });
+  }),
+);
+
+const MintUnit = z.object({
+  serial_number: z.string().max(160).optional(),
+  name: z.string().min(1).max(160).optional(),
+});
+
+// Mint a UNIT of this model: a child part in the SAME instance, paired unit-of.
+// It does NOT touch the model's qty — qty is what you counted, units_count is
+// what's on file, and them disagreeing is the reconciliation prompt's whole job
+// (one-record-substrate.md / within-instance-units.md). A unit is one physical
+// thing → qty 1, and a leaf.
+partsRouter.post(
+  "/:id/units",
+  asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "inventory:create-part"))) return;
+    const modelId = req.params.id;
+    if (!modelId) {
+      res.status(400).json({ error: { code: "missing_id", message: "id required" } });
+      return;
+    }
+    const parsed = MintUnit.safeParse(req.body ?? {});
+    if (!parsed.success) return badBody(res, parsed.error);
+    const db = tenantDb(req);
+    const ctx = tenantContext(req);
+    const session = sessionUser(req);
+    const inst = instanceOf(req);
+
+    const model = await db
+      .selectFrom("inventory_parts")
+      .select(["id", "name"])
+      .where("id", "=", modelId)
+      .where("instance", "=", inst)
+      .executeTakeFirst();
+    if (!model) {
+      res.status(404).json({ error: { code: "not_found", message: "model not found" } });
+      return;
+    }
+
+    const serial = parsed.data.serial_number?.trim() || null;
+    // Default a unit's name from its model + serial, so a bare "add a serial"
+    // yields "ThinkPad X1 · SN-014" rather than an untitled row.
+    const name = parsed.data.name?.trim() || (serial ? `${model.name} · ${serial}` : model.name);
+
+    const unit = await db
+      .insertInto("inventory_parts")
+      .values({
+        instance: inst,
+        name,
+        qty: "1",
+        unit: instanceQtyUnit(req) ?? "each",
+        serial_number: serial,
+        metadata: {},
+      })
+      .returning(["id", "name", "qty", "serial_number", "created_at"])
+      .executeTakeFirstOrThrow();
+
+    await platform().pairings.create({
+      orgId: ctx.org.id,
+      sourceKind: partKindOf(req),
+      sourceId: unit.id,
+      targetKind: partKindOf(req),
+      targetId: modelId,
+      relationshipKind: UNIT_OF,
+      createdBy: session.id,
+    });
+    await platform().activity.log({
+      orgId: ctx.org.id,
+      userId: session.id,
+      action: "unit_added",
+      ref: { module: "inventory", entityType: "part", entityId: modelId },
+      diff: { unit_id: unit.id, serial },
+    });
+    platform().events.emit("inventory.part.created", { orgId: ctx.org.id, partId: unit.id });
+
+    res.status(201).json(unit);
   }),
 );
 
@@ -598,7 +790,6 @@ partsRouter.post(
         name: parsed.data.name,
         description: parsed.data.description ?? null,
         category_id: parsed.data.category_id ?? null,
-        location_id: parsed.data.location_id ?? null,
         qty: String(parsed.data.qty ?? 0),
         // The instance's qty_unit (a yarn instance tracks skeins) beats the
         // generic "each" when the caller doesn't say — so API creates (scan
@@ -614,6 +805,7 @@ partsRouter.post(
         metadata: parsed.data.metadata ?? {},
         serial_number: parsed.data.serial_number ?? null,
         model_number: parsed.data.model_number ?? null,
+        assigned_to: parsed.data.assigned_to ?? null,
         warranty_expires: parsed.data.warranty_expires
           ? new Date(parsed.data.warranty_expires)
           : null,
@@ -624,6 +816,25 @@ partsRouter.post(
       })
       .returning(["id", "name", "qty", "state", "metadata", "asset_id", "created_at"])
       .executeTakeFirstOrThrow();
+
+    // Create-then-place: the location rides the placement seam
+    // (placement-cutover-plan step 1); place() keeps the legacy column
+    // mirrored. Fall back to the direct column write if placement refuses.
+    if (parsed.data.location_id) {
+      try {
+        await platform().placement.place({
+          orgId: ctx.org.id,
+          containee: { kind: "inventory:part", id: inserted.id },
+          container: { kind: "core-locations:location", id: parsed.data.location_id },
+        });
+      } catch {
+        await db
+          .updateTable("inventory_parts")
+          .set({ location_id: parsed.data.location_id })
+          .where("id", "=", inserted.id)
+          .execute();
+      }
+    }
 
     await platform().activity.log({
       orgId: ctx.org.id,
