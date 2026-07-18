@@ -29,6 +29,7 @@ COPY modules/projects/package.json ./modules/projects/
 COPY modules/purchases/package.json ./modules/purchases/
 COPY modules/machines/package.json ./modules/machines/
 COPY modules/assets/package.json ./modules/assets/
+COPY modules/records/package.json ./modules/records/
 COPY modules/lists/package.json ./modules/lists/
 COPY modules/builds/package.json ./modules/builds/
 COPY modules/sales/package.json ./modules/sales/
@@ -50,6 +51,7 @@ COPY modules/projects ./modules/projects
 COPY modules/purchases ./modules/purchases
 COPY modules/machines ./modules/machines
 COPY modules/assets ./modules/assets
+COPY modules/records ./modules/records
 COPY modules/lists ./modules/lists
 COPY modules/builds ./modules/builds
 COPY modules/sales ./modules/sales

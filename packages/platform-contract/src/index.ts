@@ -1625,8 +1625,10 @@ export interface ScannableInfo {
   /** Module HTTP path a confirmed scan POSTs to (under
    *  /api/v1/orgs/:slug/modules/), e.g. "inventory/parts". */
   createEndpoint: string;
-  /** The create body's quantity field name ("qty" | "quantity"). */
-  qtyField: string;
+  /** The create body's quantity field name ("qty" | "quantity"). Absent for
+   *  kinds without a native quantity (one row = one thing, e.g. a record):
+   *  scan flows then skip the qty bump / adjust affordances for that kind. */
+  qtyField?: string;
   /** Marks this the fallback scan target when no identify hint matches a noun
    *  (at most one should set it). Lets core-scan route an unhinted scan without
    *  hardcoding a default module. */

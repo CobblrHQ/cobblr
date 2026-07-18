@@ -121,15 +121,23 @@ function PrefixRow({ group, onRename, pending }: { group: CodeGroup; onRename: (
       {group.frozen ? (
         <span
           className="text-xs font-mono px-2 py-1 rounded bg-subtle dark:bg-slate-800 text-muted dark:text-slate-400"
-          title="Labels have already printed under this prefix, so it can't change. New groups can still be renamed before their first print."
+          title="Labels have been printed under this prefix, so it can't change — a sticker out in the world still reads this code."
         >
           {group.prefix} 🔒
         </span>
       ) : (
         <>
+          {/* Say that it's yours to change. The prefix is auto-derived from the
+              group's name, so without this it reads as a fixed system id and
+              nobody discovers it was theirs to name until it's printed and
+              genuinely fixed (the author, 2026-07-18). */}
+          <span className="text-[10px] text-faint dark:text-slate-500 hidden sm:inline whitespace-nowrap">
+            not printed yet — rename freely
+          </span>
           <input
             value={val}
             onChange={(e) => setVal(e.target.value)}
+            title={`Codes here read ${norm || group.prefix}1, ${norm || group.prefix}2, … Change it any time before the first print.`}
             className="input !w-20 !py-1 text-sm font-mono text-center"
             maxLength={4}
           />

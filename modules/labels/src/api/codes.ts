@@ -257,7 +257,7 @@ codesRouter.patch(
       return;
     }
     if (grp.frozen) {
-      res.status(409).json({ error: { code: "frozen", message: "labels have already printed under this prefix and it can't be changed" } });
+      res.status(409).json({ error: { code: "frozen", message: "labels have already been printed under this prefix, so it can't change" } });
       return;
     }
     const clash = await db
@@ -270,7 +270,27 @@ codesRouter.patch(
       res.status(409).json({ error: { code: "prefix_taken", message: `prefix '${prefix}' is already used` } });
       return;
     }
-    await db.updateTable("labels_code_prefixes").set({ prefix, updated_at: sql`now()` }).where("group_key", "=", key).execute();
-    res.json({ group_key: key, prefix });
+    // Rewrite the group's ALREADY-MINTED codes too. `labels_codes.code` stores
+    // the whole `<prefix><seq>` string (it's what a scan/typed lookup matches),
+    // so renaming only the group would strand every existing code under the old
+    // prefix — c1 would still resolve while the group claims to be `loc`. This
+    // never bit before because a group froze on its first mint and so could
+    // never be both renameable and non-empty; now that freezing waits for a
+    // print, it can be. One transaction: prefix + codes move together.
+    const renamed = await db.transaction().execute(async (trx) => {
+      await trx
+        .updateTable("labels_code_prefixes")
+        .set({ prefix, updated_at: sql`now()` })
+        .where("group_key", "=", key)
+        .execute();
+      const rows = await trx
+        .updateTable("labels_codes")
+        .set({ prefix, code: sql`${prefix} || seq::text` })
+        .where("group_key", "=", key)
+        .returning("code")
+        .execute();
+      return rows.length;
+    });
+    res.json({ group_key: key, prefix, codes_rewritten: renamed });
   }),
 );

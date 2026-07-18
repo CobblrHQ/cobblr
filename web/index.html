@@ -2,7 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover: lets env(safe-area-inset-*) resolve on notched
+         phones (standalone PWA is full-bleed regardless; the app shell pads
+         its chrome with the insets — see AppLayout's header). -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#3D4451" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
@@ -13,7 +16,11 @@
     <meta name="application-name" content="Cobblr" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <!-- black-translucent + the header's safe-area padding = the app paints
+         behind the status bar but its chrome starts below it. "default" was a
+         lie on notched phones: iOS full-bled the webview anyway and the
+         workspace name rendered under the clock. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>Cobblr</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />

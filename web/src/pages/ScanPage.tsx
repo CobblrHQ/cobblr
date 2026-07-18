@@ -3829,8 +3829,11 @@ function InboxCard({
                     return val && val !== brand && val !== creator;
                   });
                   if (entries.length === 0) return null;
-                  const MAX = 3;
-                  const shown = entries.slice(0, MAX);
+                  // The row wraps, so let it breathe: cap only a genuinely long
+                  // tail, and never render "+1" — that summary chip costs as
+                  // much width as the field chip it hides (the author, 2026-07-18).
+                  const MAX = 6;
+                  const shown = entries.length <= MAX + 1 ? entries : entries.slice(0, MAX);
                   const extra = entries.length - shown.length;
                   return (
                     <>
@@ -4094,7 +4097,7 @@ function InboxCard({
                 {/* Swap the photo without leaving the viewer. stopPropagation
                     so a thumbnail click doesn't also dismiss the lightbox. */}
                 <div className="w-full max-w-2xl shrink-0" onClick={(e) => e.stopPropagation()}>
-                  <PhotoOptions item={item} onPick={(u) => setZoom(u)} />
+                  <PhotoOptions item={item} onPick={(u) => setZoom(u)} inViewer />
                 </div>
               </div>,
               document.body,
@@ -4434,13 +4437,24 @@ function ExtraPhotoThumb({
 // The "OTHER PHOTO OPTIONS" strip. Lazy — only fetches once a card
 // is expanded; picking one downloads it into core-files as the catalog
 // image (SSRF-guarded server-side).
-function PhotoOptions({ item, onPick }: { item: ScanInboxItem; onPick?: (url: string) => void }) {
+function PhotoOptions({
+  item,
+  onPick,
+  inViewer = false,
+}: {
+  item: ScanInboxItem;
+  onPick?: (url: string) => void;
+  /** Rendered INSIDE the item lightbox: a tile click swaps the enlarged image
+   *  (via onPreview) instead of opening the picker's own full-screen viewer,
+   *  which would stack two viewers on top of each other. */
+  inViewer?: boolean;
+}) {
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
-  // Editable search term: the derived query (name + author + "book") drives the
-  // default; the user can override it entirely to sharpen a weak result.
-  const [term, setTerm] = useState("");
+  // The term box itself lives in the shared ImageSearchPicker; it hands the
+  // typed term back via onSearch and we re-run the item's own ranked query
+  // with it (the server treats a user term as an outright override).
   const [applied, setApplied] = useState("");
   const options = useQuery({
     queryKey: ["scan-photo-options", activeSlug, item.id, applied],
@@ -4459,39 +4473,21 @@ function PhotoOptions({ item, onPick }: { item: ScanInboxItem; onPick?: (url: st
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
-  // Drop options whose thumbnail won't load (dead hotlink / 404) — onError adds
-  // the url here and we filter it out, so the strip never shows a broken tile.
-  // The grid + broken-thumb handling live in the shared ImageSearchPicker; here
-  // we keep the scan-item query/ranking (scanPhotoOptions) and the catalog apply.
+  // The search box, the grid, broken-thumb handling and the full-size preview
+  // all live in the shared ImageSearchPicker now — this used to carry its own
+  // copy of the box, which is exactly how the surfaces drifted apart. What
+  // stays here is scan-specific: the item's own ranked pipeline
+  // (scanPhotoOptions) and applying the pick as the CATALOG image.
   return (
-    <div className="space-y-1.5">
-      <form
-        onSubmit={(e) => { e.preventDefault(); setApplied(term.trim()); }}
-        className="flex items-center gap-1.5"
-      >
-        <input
-          value={term}
-          onChange={(e) => setTerm(e.target.value)}
-          placeholder={`search images${item.suggested_name ? ` — e.g. "${item.suggested_name} …"` : ""}`}
-          className="flex-1 min-w-0 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1 text-xs"
-        />
-        <button type="submit" className="shrink-0 rounded border border-line dark:border-slate-600 px-2 py-1 text-xs text-muted hover:border-accent">
-          Search
-        </button>
-        {applied && (
-          <button type="button" onClick={() => { setTerm(""); setApplied(""); }} className="shrink-0 text-[11px] text-faint hover:text-content">
-            reset
-          </button>
-        )}
-      </form>
-      <ImageSearchPicker
-        items={options.data?.items ?? []}
-        loading={options.isLoading}
-        busy={pick.isPending}
-        onPick={(url) => pick.mutate(url)}
-        label={applied ? `results for "${applied}"` : "other photo options"}
-      />
-    </div>
+    <ImageSearchPicker
+      items={options.data?.items ?? []}
+      loading={options.isLoading}
+      busy={pick.isPending}
+      onSearch={(t) => setApplied(t)}
+      onPick={(url) => pick.mutate(url)}
+      onPreview={inViewer ? onPick : undefined}
+      label={applied ? `results for "${applied}"` : "other photo options"}
+    />
   );
 }
 

@@ -35,7 +35,7 @@ import {
 } from "../services/enrich-photo.js";
 import { mergeMeta } from "../services/metadata.js";
 import { pickPrimaryId, unionCandidateFields, traitsHaveUnique, combinedQuantity, type CombineItem, type CombineCandidate } from "../services/combine-merge.js";
-import { searchImages, rankImageOptions, imageQuery, mediaSearchExtras } from "../services/ddg-images.js";
+import { searchImages, rankImageOptions, deriveImageQuery } from "../services/ddg-images.js";
 import {
   assembleScanMenu,
   assembleMergedMenu,
@@ -2131,21 +2131,26 @@ inboxRouter.get(
       .select(["suggested_name", "suggested_manufacturer", "barcode_text", "suggested_candidates"])
       .where("id", "=", id ?? "")
       .executeTakeFirst();
-    // A user-supplied search term overrides the derived query entirely (the
-    // "change the DDG search" input) — search EXACTLY what they typed.
-    const override = typeof req.query.q === "string" ? req.query.q.trim() : "";
-    // Only image-search a REAL identified name. An unidentified item ("Unknown
-    // Item") or a bare barcode number returns junk (a "?" bag, an "UNKNOWN" sign),
-    // so return nothing rather than searching for it.
-    const name = row?.suggested_name?.trim() ?? "";
-    // Author/media extras (Laura Ingalls Wilder + "book") sharpen a weak title.
-    const { author, mediaWord } = mediaSearchExtras(row?.suggested_candidates as Array<{ fields?: Record<string, unknown> }> | null);
-    // A resolved vehicle color sharpens the search to the actual paint, so the
-    // picked photo matches the car ("2019 Honda Civic Hatchback EX" → "… Lunar
-    // Silver Metallic"). Generic: it's just the `color` field a candidate filled.
+    // ONE derivation, shared with every other entity surface (deriveImageQuery):
+    // a user term wins outright, a junk name searches nothing, and the item's
+    // own fields sharpen it — an author + media word ("… Laura Ingalls Wilder
+    // book"), a resolved vehicle colour. Flattening the candidate field bags is
+    // the only scan-specific part; the phrase itself is platform-standard, so a
+    // record page and the inbox can never search differently for the same thing.
+    const cands = (row?.suggested_candidates as Array<{ fields?: Record<string, unknown> }> | null) ?? [];
     const color = candidateFieldValue(row?.suggested_candidates, "color");
-    const extra = [author, mediaWord, color].filter(Boolean).join(" ") || null;
-    const q = override ? override : isJunkName(name) ? null : imageQuery(name, row?.suggested_manufacturer ?? null, extra);
+    const candidateFields: Record<string, unknown> = Object.assign(
+      {},
+      // reverse: earlier (higher-confidence) candidates win on key collisions
+      ...cands.map((c) => c.fields ?? {}).reverse(),
+      ...(color ? [{ color }] : []),
+    );
+    const q = deriveImageQuery({
+      name: row?.suggested_name ?? null,
+      brand: row?.suggested_manufacturer ?? null,
+      fields: candidateFields,
+      override: typeof req.query.q === "string" ? req.query.q : null,
+    });
     if (!q) {
       res.json({ items: [] });
       return;
@@ -2679,10 +2684,14 @@ inboxRouter.post(
     let newQty: number | null = null;
     const mergedFields: string[] = [];
     if (parsed.data.mode === "add-qty") {
-      const cur = Number(entity[scannable.qtyField] ?? 0);
-      const add = Math.max(1, Number(row.quantity ?? 1));
-      newQty = (Number.isFinite(cur) ? cur : 0) + add;
-      patch[scannable.qtyField] = newQty;
+      // A kind without a native quantity (qtyField absent) has nothing to
+      // bump — the attach still merges the barcode below.
+      if (scannable.qtyField) {
+        const cur = Number(entity[scannable.qtyField] ?? 0);
+        const add = Math.max(1, Number(row.quantity ?? 1));
+        newQty = (Number.isFinite(cur) ? cur : 0) + add;
+        patch[scannable.qtyField] = newQty;
+      }
       // Barcode-append: a scanned (not AI-read) code the entity doesn't have yet.
       const aiRead =
         (row.suggested_metadata as { barcode_source?: string } | null)?.barcode_source === "ai-photo";
@@ -2920,13 +2929,20 @@ inboxRouter.post(
       });
       return;
     }
-    const cur = Number(entity[scannable.qtyField] ?? 0);
+    const qtyField = scannable.qtyField;
+    if (!qtyField) {
+      res.status(400).json({
+        error: { code: "no_qty", message: `A ${scannable.noun} has no quantity to adjust.` },
+      });
+      return;
+    }
+    const cur = Number(entity[qtyField] ?? 0);
     const oldQty = Number.isFinite(cur) ? cur : 0;
     const newQty = parsed.data.set != null ? parsed.data.set : Math.max(0, oldQty + (parsed.data.delta ?? 0));
     const patchRes = await fetch(entityPath, {
       method: "PATCH",
       headers: authHeaders,
-      body: JSON.stringify({ [scannable.qtyField]: newQty }),
+      body: JSON.stringify({ [qtyField]: newQty }),
     });
     if (!patchRes.ok) {
       const errText = await patchRes.text();

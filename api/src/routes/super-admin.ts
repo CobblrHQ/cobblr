@@ -224,6 +224,37 @@ superAdminRouter.delete("/workspaces/:id", async (req, res, next) => {
   }
 });
 
+// POST /super-admin/rehome-instance — move ONE assets instance onto the
+// records substrate (the field-model Phase-2 data move: a catalog-shaped
+// "asset tracker" like a Bookshelf stops inheriting assets' domain columns).
+// Ids are preserved and non-default domain values fold into metadata, so
+// nothing breaks and nothing is lost; idempotent when already on records.
+// Explicit + per-instance by design — classifying which instances SHOULD move
+// automatically is a separate decision from being able to move one safely.
+// Body: { org_slug, instance }.
+superAdminRouter.post("/rehome-instance", async (req, res, next) => {
+  try {
+    const { org_slug, instance } = (req.body ?? {}) as { org_slug?: string; instance?: string };
+    if (!org_slug || !instance) {
+      res.status(400).json({ error: { code: "bad_body", message: "org_slug + instance required" } });
+      return;
+    }
+    const org = await meta
+      .selectFrom("orgs")
+      .select(["id", "slug"])
+      .where("slug", "=", org_slug)
+      .executeTakeFirst();
+    if (!org) {
+      res.status(404).json({ error: { code: "not_found", message: "Workspace not found." } });
+      return;
+    }
+    const { rehomeAssetsInstanceToRecords } = await import("../platform/rehome-instance.js");
+    res.json(await rehomeAssetsInstanceToRecords(org.id, instance));
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /super-admin/instance-config — which operator-level switches are live
 // on THIS instance. Read-only, booleans + non-secret identifiers only (never
 // echoes tokens/keys). The console's Health section renders these so "what
@@ -2641,10 +2672,18 @@ const ScanEvalMenuField = z.object({
   type: z.string(),
   help: z.string().optional(),
   choices: z.array(z.string()).optional(),
+  decode_role: z.string().optional(),
 });
 
 // Fixtures route by {module, instance} + noun; `kind` is only used to label the
 // returned candidate, so it's optional here and derived when omitted.
+//
+// FIDELITY: this schema must accept every signal the production menu carries
+// (ScanMenuEntry in core-scan's matchmaker) — category_field / pack_field /
+// is_fallback / scan_keywords / unique. When the eval menu is poorer than the
+// production menu, the scoreboard measures a prompt the product never sends and
+// "regressions" become artifacts (the hard2 category cases were exactly this).
+// Extend BOTH together.
 const ScanEvalMenuEntry = z.object({
   module: z.string().min(1),
   instance: z.string().nullable().default(null),
@@ -2652,8 +2691,18 @@ const ScanEvalMenuEntry = z.object({
   noun: z.string(),
   label: z.string(),
   fields: z.array(ScanEvalMenuField).default([]),
+  scan_keywords: z.array(z.string()).optional(),
+  bundle_external_id: z.string().optional(),
+  category_field: z
+    .object({ name: z.string(), label: z.string(), values: z.array(z.string()) })
+    .optional(),
+  pack_field: z.object({ name: z.string(), label: z.string() }).optional(),
+  is_fallback: z.boolean().optional(),
+  unique: z.boolean().optional(),
 });
 
+// Same fidelity rule as the menu: mirror PerceivedItem — notes / scanArea /
+// metadata / photoObservations shape real routing and field-fill.
 const ScanEvalItem = z.object({
   name: z.string(),
   manufacturer: z.string().nullable().optional(),
@@ -2661,7 +2710,31 @@ const ScanEvalItem = z.object({
   description: z.string().nullable().optional(),
   entityType: z.enum(["asset", "part"]).nullable().optional(),
   barcode: z.string().nullable().optional(),
+  sku: z.string().nullable().optional(),
+  notes: z.string().nullable().optional(),
+  scanArea: z.string().nullable().optional(),
+  metadata: z.record(z.string(), z.unknown()).nullable().optional(),
+  photoObservations: z.string().nullable().optional(),
 });
+
+// Compile-time parity guards: a key added to the PRODUCTION types without a
+// matching key in the eval schemas turns these assignments into type errors
+// naming the missing keys. This is what keeps the scoreboard honest — an eval
+// input poorer than production measures a prompt the product never sends.
+type _MenuKeysMissingFromEval = Exclude<
+  keyof Required<ScanMenuEntry>,
+  keyof z.infer<typeof ScanEvalMenuEntry>
+>;
+type _ItemKeysMissingFromEval = Exclude<
+  keyof Required<PerceivedItem>,
+  keyof z.infer<typeof ScanEvalItem>
+>;
+const _menuParity: [_MenuKeysMissingFromEval] extends [never] ? true : _MenuKeysMissingFromEval =
+  true;
+const _itemParity: [_ItemKeysMissingFromEval] extends [never] ? true : _ItemKeysMissingFromEval =
+  true;
+void _menuParity;
+void _itemParity;
 
 // Surface-switched: matchmaker (item+menu → candidates), barcode-identify
 // (upc+titles → identity), photo-identify (image → identity). Each runs the
@@ -2736,6 +2809,12 @@ superAdminRouter.post("/scan-eval", async (req, res, next) => {
         noun: m.noun,
         label: m.label,
         fields: m.fields,
+        ...(m.scan_keywords ? { scan_keywords: m.scan_keywords } : {}),
+        ...(m.bundle_external_id ? { bundle_external_id: m.bundle_external_id } : {}),
+        ...(m.category_field ? { category_field: m.category_field } : {}),
+        ...(m.pack_field ? { pack_field: m.pack_field } : {}),
+        ...(m.is_fallback ? { is_fallback: true } : {}),
+        ...(m.unique ? { unique: true } : {}),
       }));
       const item: PerceivedItem = {
         name: parsed.data.item.name,
@@ -2744,6 +2823,11 @@ superAdminRouter.post("/scan-eval", async (req, res, next) => {
         description: parsed.data.item.description ?? null,
         entityType: parsed.data.item.entityType ?? null,
         barcode: parsed.data.item.barcode ?? null,
+        sku: parsed.data.item.sku ?? null,
+        notes: parsed.data.item.notes ?? null,
+        scanArea: parsed.data.item.scanArea ?? null,
+        metadata: parsed.data.item.metadata ?? null,
+        photoObservations: parsed.data.item.photoObservations ?? null,
       };
       res.json({ candidates: await runMatchmaker(orgId, item, menu) });
       return;

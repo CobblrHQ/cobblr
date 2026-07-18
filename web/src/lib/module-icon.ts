@@ -5,6 +5,7 @@
 // so something always renders.
 
 import {
+  Album,
   Boxes,
   Camera,
   Layers,
@@ -21,6 +22,7 @@ import {
 } from "lucide-react";
 
 const MAP: Record<string, LucideIcon> = {
+  album: Album,
   "scan-line": ScanLine,
   camera: Camera,
   "scan-barcode": ScanBarcode,

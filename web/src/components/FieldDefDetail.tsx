@@ -1,18 +1,23 @@
-// Click a field def → this modal opens. Shows full context (kind,
-// type, position, origin) and lets the user delete it via a confirm.
-// Editing the def's name / type is not supported yet — would
-// require migrating any stored values in entity metadata.
+// Click a field def → this panel expands IN PLACE under the row. Shows full
+// context (kind, type, position, origin), edits choices, and deletes via a
+// confirm. Editing the def's name / type is not supported yet — would require
+// migrating any stored values in entity metadata.
+//
+// A DRAWER, NOT A MODAL, on purpose. A modal is right for one decision you
+// finish and dismiss; this is a list you browse, opening several fields in a
+// row to compare or tidy them. An overlay blanked the list behind it and threw
+// away your scroll position on every open/close (the author, 2026-07-18). See
+// docs/architecture/ui-conventions.md — "overlay or in place".
 
 import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { Trash2 } from "lucide-react";
+import { Trash2, X } from "lucide-react";
 import { ApiError, api, type PlatformFieldDef } from "../lib/api";
-import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
+import { useToast, useConfirm } from "@cobblr/platform-web";
 import { ChoicesInput } from "./ChoicesInput";
 
 interface Props {
-  open: boolean;
   onClose: () => void;
   slug: string;
   fieldDef: PlatformFieldDef | null;
@@ -22,7 +27,7 @@ interface Props {
   scopeLabel?: string | null;
 }
 
-export function FieldDefDetailModal({ open, onClose, slug, fieldDef, scopeLabel }: Props) {
+export function FieldDefDetail({ onClose, slug, fieldDef, scopeLabel }: Props) {
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
@@ -79,13 +84,28 @@ export function FieldDefDetailModal({ open, onClose, slug, fieldDef, scopeLabel 
   if (!fieldDef) return null;
 
   return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title={fieldDef.display_label}
-      subtitle={`${scopeLabel ?? fieldDef.entity_kind} · ${fieldDef.name}`}
-      size="md"
+    <div
+      data-testid="field-detail"
+      className="mt-1 mb-2 rounded-lg border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/30 p-3"
     >
+      <div className="flex items-start justify-between gap-2 mb-3">
+        <div className="min-w-0">
+          <div className="text-sm font-medium text-content dark:text-mortar-100 truncate">
+            {fieldDef.display_label}
+          </div>
+          <div className="text-[11px] font-mono text-faint dark:text-slate-500 truncate">
+            {scopeLabel ?? fieldDef.entity_kind} · {fieldDef.name}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Collapse field details"
+          className="shrink-0 p-1 rounded text-faint hover:text-content dark:hover:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 transition"
+        >
+          <X size={14} />
+        </button>
+      </div>
       <div className="space-y-4">
         <dl className="grid grid-cols-2 gap-2 text-xs">
           <Row label={scopeLabel ? "Applies to" : "Entity kind"}>
@@ -211,11 +231,11 @@ export function FieldDefDetailModal({ open, onClose, slug, fieldDef, scopeLabel 
             onClick={onClose}
             className="px-3 py-1.5 rounded-md text-sm font-medium text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800 transition"
           >
-            Close
+            Collapse
           </button>
         </div>
       </div>
-    </Modal>
+    </div>
   );
 }
 

@@ -97,11 +97,20 @@ export function toggleNavHidden(slug: string, name: string) {
 // window narrows; these are folded unconditionally.
 const OKEY = (slug: string) => `cobblr:nav-overflow:${slug}`;
 
+/** Folded into "more ▾" BY DEFAULT, until the user first customizes the set.
+ *  These are always-on companions that are rarely the destination — the bar
+ *  (and the dashboard's Jump-to tiles) should lead with the workhorses:
+ *  Inventory, Machines, Locations, the named instances. The user's first
+ *  toggle REPLACES the default wholesale (toggleNavOverflow reads-then-writes
+ *  the full list), so un-folding any of these sticks. */
+export const DEFAULT_NAV_OVERFLOW = ["lists", "projects", "purchases"];
+
 export function readNavOverflow(slug: string): string[] {
   if (!slug) return [];
   try {
     const raw = localStorage.getItem(OKEY(slug));
-    const parsed = raw ? JSON.parse(raw) : [];
+    if (raw == null) return [...DEFAULT_NAV_OVERFLOW];
+    const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
   } catch {
     return [];

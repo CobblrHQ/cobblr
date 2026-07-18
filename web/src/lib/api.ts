@@ -440,6 +440,19 @@ export interface Asset {
 }
 
 
+/** A row in the records module — the neutral generic-record substrate.
+ *  Named RecordItem (not Record) to dodge TS's builtin Record type. */
+export interface RecordItem {
+  id: string;
+  name: string;
+  image_path: string | null;
+  notes: string | null;
+  location_id: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
 /** A manifest-declared UI contribution (contributes.panels) — a tab on the
  *  target module's list page, or a panel in the target kind's detail modal. */
 export interface ContributedPanel {
@@ -732,14 +745,49 @@ export const api = {
   /** Auto-fetch a web image for an entity (e.g. a 3D printer) and set its
    *  image_path. Pass `image_url` to store a SPECIFIC user-picked image instead
    *  of auto-searching. Returns the resolved image_path. */
-  enrichEntityImage: (slug: string, body: { entity_kind: string; entity_id: string; query: string; instance?: string | null; image_url?: string }) =>
+  /** Fetch + store an image for an entity. OMIT `query` and the server derives
+   *  the phrase from the entity itself (same derivation as the picker) — hand-
+   *  built phrases are how Auto and the web search drifted apart. */
+  enrichEntityImage: (slug: string, body: { entity_kind: string; entity_id: string; query?: string; instance?: string | null; image_url?: string }) =>
     request<{ image_path: string | null }>("POST", `/orgs/${slug}/modules/core-scan/entity-image`, body),
-  /** Generic web-image candidates for any query (the universal photo-picker strip). */
-  imageOptions: (slug: string, q: string, brand?: string) =>
-    request<{ items: ImageOption[] }>(
+  /** Fill in the missing pictures across a whole collection in one press — the
+   *  same derived auto-fetch a single record's "Auto" runs, for every record
+   *  with no image. Idempotent (a record that has one is never touched) and
+   *  bounded, so pressing it again continues where it stopped. */
+  backfillEntityImages: (
+    slug: string,
+    body: { entity_kind: string; instance?: string | null; limit?: number },
+  ) =>
+    request<{
+      missing: number;
+      started: number;
+      remaining: number;
+      /** Resolved, but had nothing searchable (a blank/junk name). */
+      unnamed: number;
+      /** Couldn't be read at all — a module wiring gap, not a data problem. */
+      unresolved: number;
+    }>("POST", `/orgs/${slug}/modules/core-scan/entity-image/backfill`, body),
+  /** Web-image candidates for the universal photo-picker strip. Prefer `entity`:
+   *  the SERVER derives the search phrase from that thing's own name/brand/fields,
+   *  the same derivation the scan inbox uses, so one thing searches one way
+   *  everywhere. `q` is a literal override (a user-typed term). Echoes back the
+   *  phrase it actually searched. */
+  imageOptions: (
+    slug: string,
+    opts: { q?: string; brand?: string; entity?: { kind: string; id: string } | null },
+  ) => {
+    const p = new URLSearchParams();
+    if (opts.q?.trim()) p.set("q", opts.q.trim());
+    if (opts.brand) p.set("brand", opts.brand);
+    if (opts.entity) {
+      p.set("entity_kind", opts.entity.kind);
+      p.set("entity_id", opts.entity.id);
+    }
+    return request<{ items: ImageOption[]; query?: string }>(
       "GET",
-      `/orgs/${slug}/modules/core-scan/image-options?q=${encodeURIComponent(q)}${brand ? `&brand=${encodeURIComponent(brand)}` : ""}`,
-    ),
+      `/orgs/${slug}/modules/core-scan/image-options?${p.toString()}`,
+    );
+  },
   updateMachine: (slug: string, id: string, body: Partial<Machine>, instance?: string) =>
     request<Machine>("PATCH", `${primaryBase(slug, "machines/machines", instance)}/${id}`, body),
   deleteMachine: (slug: string, id: string, instance?: string) =>
@@ -801,6 +849,18 @@ export const api = {
     request<Asset>("PATCH", `${primaryBase(slug, "assets/assets", instance)}/${id}`, body),
   deleteAsset: (slug: string, id: string, instance?: string) =>
     request<void>("DELETE", `${primaryBase(slug, "assets/assets", instance)}/${id}`),
+
+  // records module (instance? scopes to /instances/:name/items)
+  listRecords: (slug: string, instance?: string) =>
+    request<{ items: RecordItem[] }>("GET", primaryBase(slug, "records/records", instance)),
+  getRecord: (slug: string, id: string, instance?: string) =>
+    request<RecordItem>("GET", `${primaryBase(slug, "records/records", instance)}/${id}`),
+  createRecord: (slug: string, body: Partial<RecordItem>, instance?: string) =>
+    request<RecordItem>("POST", primaryBase(slug, "records/records", instance), body),
+  updateRecord: (slug: string, id: string, body: Partial<RecordItem>, instance?: string) =>
+    request<RecordItem>("PATCH", `${primaryBase(slug, "records/records", instance)}/${id}`, body),
+  deleteRecord: (slug: string, id: string, instance?: string) =>
+    request<void>("DELETE", `${primaryBase(slug, "records/records", instance)}/${id}`),
 
   // Members + invites
   listMembers: (slug: string) =>
@@ -4517,6 +4577,8 @@ export interface GrantableAction {
   action_id: string;
   label: string;
   description: string;
+  /** Owning module — groups the capability rows in the permissions matrix. */
+  module: string;
 }
 
 export interface CustomRole {

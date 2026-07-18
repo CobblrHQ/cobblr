@@ -349,7 +349,14 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
       <header
         ref={headerRef}
         className={`${fullSide ? "md:hidden " : ""}relative z-30 border-b backdrop-blur overflow-x-clip ${envBadge ? envBadge.header : DEFAULT_HEADER}`}
-        style={skin ? { borderTop: "4px solid var(--app-accent)" } : undefined}
+        // paddingTop: the iOS status-bar safe area. In standalone (home-screen)
+        // mode the webview is full-bleed, and without this the workspace name
+        // renders UNDER the status-bar clock. env() is 0 in a normal browser
+        // tab, so nothing changes there. e2e/mobile-overflow.mjs asserts it.
+        style={{
+          paddingTop: "env(safe-area-inset-top)",
+          ...(skin ? { borderTop: "4px solid var(--app-accent)" } : {}),
+        }}
       >
         {/* Header chrome spans the FULL window (no max-width cap) so the module
             nav gets the whole row; page content below stays centred at max-w-6xl. */}

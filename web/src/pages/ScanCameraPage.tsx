@@ -34,7 +34,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeftRight, ArrowRight, Camera, Check, Flashlight, Loader2, MapPin, Package, ScanLine, SkipForward, Undo2, X, Zap } from "lucide-react";
+import { ArrowLeftRight, ArrowRight, Camera, Check, Flashlight, Loader2, MapPin, Package, RefreshCw, ScanLine, SkipForward, Undo2, X, Zap } from "lucide-react";
 import { Modal, usePageTitle, useToast } from "@cobblr/platform-web";
 import { ApiError, api, type LiveSortEntry, type ScanInboxItem, type TrackedMatch } from "../lib/api";
 import { LOCATION_ENTITY_KIND, decideLocationScan, filingLabel } from "../lib/scanFiling";
@@ -45,9 +45,11 @@ import {
   NATIVE_FORMATS,
   acquireScannerStream,
   cameraHasTorch,
+  captureFrame,
   createBarcodeReader,
   setTorch,
 } from "../lib/barcodeScanner";
+import { armScanAudio, scanBeep } from "../lib/scanFeedback";
 import { ScanResultModal } from "./ScanResultModal";
 import { BinAdjustModal } from "../components/BinAdjustModal";
 
@@ -61,7 +63,12 @@ interface BarcodeDetectorCtor {
   getSupportedFormats(): Promise<string[]>;
 }
 
-type Phase = "idle" | "scanning" | "result";
+// "resolving" = a QR label is being resolved server-side (or its modal is up):
+// decoding pauses and the preview freezes, but the STREAM stays live — same
+// trick as "result". "idle" (stream torn down) is only permission-denied /
+// camera-error; routing a bin label through it re-acquired the lens on every
+// scan (preview flicker, iOS black-stream failures, torch reset).
+type Phase = "idle" | "scanning" | "resolving" | "result";
 
 // Where a floating note (photo-saved, reading-label, resume) sits so it clears
 // the top chrome on a notched phone. One constant, three overlays — they each
@@ -168,6 +175,18 @@ export function ScanCameraPage() {
   const [assignOpen, setAssignOpen] = useState(false);
   const [shutterBusy, setShutterBusy] = useState(false);
   const [flash, setFlash] = useState(false);
+  // A shutter capture whose SAVE failed — the framed photo survives for a
+  // retry tap instead of vanishing into an error toast (garage corners and
+  // elevators drop POSTs; the item was already put back on the shelf).
+  const [failedShot, setFailedShot] = useState<{
+    blob: Blob;
+    stamps: {
+      areaName: string | null;
+      areaId: string | null;
+      container: { kind: string; id: string } | null;
+    };
+  } | null>(null);
+  const [retryBusy, setRetryBusy] = useState(false);
   // A camera-LOCAL "photo saved" note (the author): the global toast landed at the
   // bottom and covered the shutter / UPC field, blocking rapid back-to-back
   // captures. This shows briefly at the TOP over the dark preview instead.
@@ -539,6 +558,7 @@ export function ScanCameraPage() {
         })
         .then((r) => {
           if (typeof navigator.vibrate === "function") navigator.vibrate(40);
+          scanBeep("confirm");
           setSortLast(r.entry);
           // Only clear if the banner still shows THIS entry — under implicit
           // commit the next scan's directive may already be up.
@@ -598,7 +618,7 @@ export function ScanCameraPage() {
               locationName: loc ? filingLabel(loc) : "this bin",
               item: contents.items[0],
             });
-            return; // phase stays "idle" while the modal is up
+            return; // stay in "resolving" — the modal owns the screen, the stream stays warm
           }
         } catch {
           /* contents unavailable → normal filing flow */
@@ -726,6 +746,10 @@ export function ScanCameraPage() {
     };
   }, []);
 
+  // Beep support: create the audio context now, unlock it on the first tap
+  // (iOS requires a gesture), so scan blips are audible by the first hit.
+  useEffect(() => armScanAudio(), []);
+
   // Escape closes the scanner (desktop nicety; the X is the touch path).
   // The result modal and the assign sheet own Escape while they're open.
   useEffect(() => {
@@ -760,6 +784,7 @@ export function ScanCameraPage() {
       // "Filing into…" toast every couple of seconds.
       if (!shouldFireScan(dedupRef.current, raw, Date.now(), REPEAT_GAP_MS)) return;
       if (typeof navigator.vibrate === "function") navigator.vibrate(70);
+      scanBeep("scan");
 
       // ?unitOf: this code is a SERIAL, not an entity to identify. File it as a
       // unit of the target model and stay scanning — no result modal, no
@@ -775,7 +800,11 @@ export function ScanCameraPage() {
             });
             toast.success(`Filed ${u.serial_number ?? "a unit"}`);
           } catch (e) {
-            toast.error(e instanceof ApiError ? e.message : "Couldn't file that serial.");
+            // Name the code that failed — in a 40-serial run "that serial" is
+            // unfindable; this one can be retyped into the manual field.
+            toast.error(
+              `Couldn't file ${raw}${e instanceof ApiError ? ` — ${e.message}` : " — scan it again."}`,
+            );
           }
         })();
         return;
@@ -791,7 +820,7 @@ export function ScanCameraPage() {
       if (qrLabel) {
         const token = qrLabel[1] ?? "";
         if (!sortRetarget) {
-          setPhase("idle"); // pause the camera while we resolve
+          setPhase("resolving"); // freeze decode + preview; the stream stays live
           setResolvingNote(true);
         }
         void (async () => {
@@ -819,15 +848,7 @@ export function ScanCameraPage() {
       // the camera smooth while you hold a location label. The video pauses on the
       // result modal, so this exact frame is also what stays on screen.
       const video = videoRef.current;
-      if (video && video.readyState >= 2) {
-        const c = document.createElement("canvas");
-        c.width = video.videoWidth;
-        c.height = video.videoHeight;
-        c.getContext("2d")?.drawImage(video, 0, 0);
-        frameBlobRef.current = new Promise<Blob | null>((resolve) =>
-          c.toBlob((blob) => resolve(blob), "image/jpeg", 0.85),
-        );
-      }
+      if (video) frameBlobRef.current = captureFrame(video);
 
       // External QR resolver (the redirect table): a foreign label the workspace
       // has taught Cobblr to read resolves to a native entity and then behaves
@@ -840,7 +861,7 @@ export function ScanCameraPage() {
       const bareProductBarcode = /^\d{8,14}$/.test(raw);
       if (hasQrRulesRef.current && !bareProductBarcode) {
         if (!sortRetarget) {
-          setPhase("idle"); // pause the camera while we resolve
+          setPhase("resolving"); // freeze decode + preview; the stream stays live
           setResolvingNote(true);
         }
         void (async () => {
@@ -906,6 +927,35 @@ export function ScanCameraPage() {
   // for the whole session; the phase guard pauses/resumes decoding so re-arm
   // after a scan is instant and the lens never switches.
   const running = phase !== "idle";
+  // Bumped when the tab returns from the background to a DEAD stream — phones
+  // revoke the camera on lock/app-switch, and without this the preview came
+  // back as a frozen black frame until the user left and re-entered the page.
+  const [streamEpoch, setStreamEpoch] = useState(0);
+  useEffect(() => {
+    function onVisible() {
+      if (document.visibilityState !== "visible" || phaseRef.current === "idle") return;
+      const track = streamRef.current?.getVideoTracks()[0] ?? null;
+      if (!track || track.readyState === "ended") {
+        setStreamEpoch((e) => e + 1);
+        return;
+      }
+      // iOS sometimes keeps the track but returns it muted; nudge playback,
+      // give it a beat to self-resume, then re-acquire if it stays dark.
+      void videoRef.current?.play().catch(() => {});
+      window.setTimeout(() => {
+        const t = streamRef.current?.getVideoTracks()[0] ?? null;
+        if (
+          document.visibilityState === "visible" &&
+          t &&
+          (t.muted || t.readyState === "ended")
+        ) {
+          setStreamEpoch((e) => e + 1);
+        }
+      }, 800);
+    }
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, []);
   useEffect(() => {
     if (!running) return;
     let cancelled = false;
@@ -934,6 +984,11 @@ export function ScanCameraPage() {
           if (videoRef.current) {
             videoRef.current.srcObject = stream;
             await videoRef.current.play();
+            // Re-acquired mid-modal (visibility recovery): keep the preview
+            // frozen — the freeze effect only reacts to phase CHANGES.
+            if (phaseRef.current === "result" || phaseRef.current === "resolving") {
+              videoRef.current.pause();
+            }
           }
           const Detector = (window as unknown as { BarcodeDetector?: BarcodeDetectorCtor })
             .BarcodeDetector!;
@@ -1001,13 +1056,14 @@ export function ScanCameraPage() {
       setTorchOn(false);
       setHasTorch(false);
     };
-    // Acquire once per session (running 0→1). Phase flips within a session
+    // Acquire once per session (running 0→1), plus once per streamEpoch bump
+    // (visibility recovery of a dead stream). Phase flips within a session
     // are handled by phaseRef, not by re-running this effect.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     // onDetect is called via onDetectRef so a toast-driven identity change
     // never re-runs this effect (which would restart the camera stream).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [running]);
+  }, [running, streamEpoch]);
 
   const toggleTorch = useCallback(async () => {
     const track = streamRef.current?.getVideoTracks()[0] ?? null;
@@ -1016,14 +1072,15 @@ export function ScanCameraPage() {
     if (ok) setTorchOn(next);
   }, [torchOn]);
 
-  // FREEZE the viewfinder while the result modal is up — pausing the <video>
-  // element holds the frame you scanned (the stream + lens lock stay live
-  // underneath, so re-arm is still instant). A live feed wiggling behind the
-  // modal read as "it's still scanning"; the freeze says "got it".
+  // FREEZE the viewfinder while the result modal is up or a QR label is being
+  // resolved — pausing the <video> element holds the frame you scanned (the
+  // stream + lens lock stay live underneath, so re-arm is still instant). A
+  // live feed wiggling behind the modal read as "it's still scanning"; the
+  // freeze says "got it".
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-    if (phase === "result") {
+    if (phase === "result" || phase === "resolving") {
       v.pause();
     } else if (phase === "scanning" && v.paused && v.srcObject) {
       void v.play().catch(() => {
@@ -1054,22 +1111,8 @@ export function ScanCameraPage() {
   // stage a PHOTO inbox item; the vision-identify wire names it detached.
   // Fire-and-forget: scanning never pauses, so the rhythm is
   // shoot → toast → keep walking.
-  const takePhoto = useCallback(async () => {
-    const video = videoRef.current;
-    if (!video || video.readyState < 2 || shutterBusy) return;
-    if (typeof navigator.vibrate === "function") navigator.vibrate(30);
-    setFlash(true);
-    window.setTimeout(() => setFlash(false), 160);
-    setShutterBusy(true);
-    try {
-      const canvas = document.createElement("canvas");
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      canvas.getContext("2d")!.drawImage(video, 0, 0);
-      const blob = await new Promise<Blob | null>((resolve) =>
-        canvas.toBlob(resolve, "image/jpeg", 0.85),
-      );
-      if (!blob) throw new Error("could not capture a frame");
+  const saveShot = useCallback(
+    async (blob: Blob, stamps: NonNullable<typeof failedShot>["stamps"]) => {
       const file = new File([blob], `scan-${Date.now()}.jpg`, { type: "image/jpeg" });
       const [rec, batchId] = await Promise.all([
         api.uploadFile(activeSlug, file),
@@ -1078,10 +1121,10 @@ export function ScanCameraPage() {
       const item = await api.scanBarcode(activeSlug, {
         source_kind: "photo",
         image_file_id: rec.id,
-        scan_area: areaName ?? undefined,
-        target_location_id: areaId ?? undefined,
-        target_container_kind: containerBinRef.current?.kind,
-        target_container_id: containerBinRef.current?.id,
+        scan_area: stamps.areaName ?? undefined,
+        target_location_id: stamps.areaId ?? undefined,
+        target_container_kind: stamps.container?.kind,
+        target_container_id: stamps.container?.id,
         scan_batch_id: batchId ?? undefined,
       });
       onSaved(item);
@@ -1090,12 +1133,58 @@ export function ScanCameraPage() {
       setSavedNote(true);
       if (savedNoteTimer.current) window.clearTimeout(savedNoteTimer.current);
       savedNoteTimer.current = window.setTimeout(() => setSavedNote(false), 1800);
+    },
+    [activeSlug, ensureBatchId, onSaved, qc],
+  );
+
+  const takePhoto = useCallback(async () => {
+    const video = videoRef.current;
+    if (!video || video.readyState < 2 || shutterBusy) return;
+    if (typeof navigator.vibrate === "function") navigator.vibrate(30);
+    scanBeep("shutter");
+    setFlash(true);
+    window.setTimeout(() => setFlash(false), 160);
+    setShutterBusy(true);
+    // Stamps freeze at capture time — a retry minutes later must file the shot
+    // where you STOOD when you took it, not where you've wandered since. Read
+    // through the refs: the areaName memo can lag areaId (two areas sharing a
+    // name never rebind it), and the ref is always the live binding.
+    const areaIdNow = areaIdRef.current;
+    const loc = (locsRef.current ?? []).find((l) => l.id === areaIdNow);
+    const stamps = {
+      areaName: loc ? (loc.short_name ?? loc.name) : null,
+      areaId: areaIdNow,
+      container: containerBinRef.current,
+    };
+    try {
+      const blob = await captureFrame(video);
+      if (!blob) throw new Error("could not capture a frame");
+      try {
+        await saveShot(blob, stamps);
+        setFailedShot(null);
+      } catch (e) {
+        setFailedShot({ blob, stamps });
+        toast.error(e instanceof ApiError ? e.message : String(e));
+      }
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : String(e));
     } finally {
       setShutterBusy(false);
     }
-  }, [activeSlug, areaName, ensureBatchId, onSaved, qc, shutterBusy, toast]);
+  }, [saveShot, shutterBusy, toast]);
+
+  const retryShot = useCallback(async () => {
+    if (!failedShot || retryBusy) return;
+    setRetryBusy(true);
+    try {
+      await saveShot(failedShot.blob, failedShot.stamps);
+      setFailedShot(null);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setRetryBusy(false);
+    }
+  }, [failedShot, retryBusy, saveShot, toast]);
 
   const lastSaved = recent[0] ?? null;
 
@@ -1466,6 +1555,38 @@ export function ScanCameraPage() {
               className="inline-flex items-center gap-1 text-white/80 hover:text-white shrink-0"
             >
               <Undo2 size={13} /> Undo
+            </button>
+          </div>
+        )}
+        {failedShot && (
+          <div
+            className="flex items-center gap-2 bg-amber-400/95 rounded-full px-3 py-2 text-slate-900 text-xs max-w-md mx-auto"
+            data-testid="camera-shot-retry"
+          >
+            <Camera size={14} className="shrink-0" />
+            <span className="min-w-0 flex-1 truncate font-medium">
+              Photo didn&apos;t save — it&apos;s still here
+            </span>
+            <button
+              type="button"
+              disabled={retryBusy}
+              onClick={() => void retryShot()}
+              className="inline-flex items-center gap-1 font-semibold underline disabled:opacity-50 shrink-0"
+            >
+              {retryBusy ? (
+                <Loader2 size={13} className="animate-spin" />
+              ) : (
+                <RefreshCw size={13} />
+              )}{" "}
+              Retry
+            </button>
+            <button
+              type="button"
+              onClick={() => setFailedShot(null)}
+              aria-label="Discard failed photo"
+              className="p-1 rounded-full hover:bg-black/10 shrink-0"
+            >
+              <X size={12} />
             </button>
           </div>
         )}

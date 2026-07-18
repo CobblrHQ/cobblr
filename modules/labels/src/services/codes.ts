@@ -200,6 +200,31 @@ export async function assignCodes(
   return out;
 }
 
+/** Lock the prefixes of everything just PRINTED. A printed code is out in the
+ *  world on a sticker, so its prefix can't change any more; until then a group
+ *  stays renameable (and a rename rewrites its codes — see PATCH /groups/:key).
+ *  Idempotent; only touches groups that aren't frozen yet. */
+export async function freezePrintedGroups(
+  db: Kysely<LabelsDB>,
+  refs: ReadonlyArray<{ kind: string; id: string }>,
+): Promise<void> {
+  if (refs.length === 0) return;
+  const ids = [...new Set(refs.map((r) => r.id))];
+  const rows = await db
+    .selectFrom("labels_codes")
+    .select("group_key")
+    .where("entity_id", "in", ids)
+    .execute();
+  const keys = [...new Set(rows.map((r) => r.group_key))];
+  if (keys.length === 0) return;
+  await db
+    .updateTable("labels_code_prefixes")
+    .set({ frozen: true, updated_at: sql`now()` })
+    .where("group_key", "in", keys)
+    .where("frozen", "=", false)
+    .execute();
+}
+
 /** Mint one code inside an already-locked transaction. */
 async function mintOne(
   trx: Transaction<LabelsDB>,
@@ -231,9 +256,15 @@ async function mintOne(
       .executeTakeFirstOrThrow();
   }
 
+  // NOT frozen here. Minting only RESERVES a code — the row exists, nothing
+  // exists in the world. A prefix becomes unchangeable when a label is
+  // physically printed (freezePrintedGroups, from the print paths), because
+  // that's when a sticker reading `c1` is stuck to a shelf. Freezing at mint
+  // meant an auto-derived prefix locked itself on first use, so a workspace
+  // could never pick one: open the label queue once and it was permanent.
   const claimed = await trx
     .updateTable("labels_code_prefixes")
-    .set({ next_seq: sql`next_seq + 1`, frozen: true, updated_at: sql`now()` })
+    .set({ next_seq: sql`next_seq + 1`, updated_at: sql`now()` })
     .where("group_key", "=", groupKey)
     .returning("next_seq")
     .executeTakeFirstOrThrow();

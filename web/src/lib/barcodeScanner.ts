@@ -152,6 +152,37 @@ export function enableContinuousAutofocus(track: MediaStreamTrack | null): void 
     .catch(() => {});
 }
 
+/** Longest-side cap for uploaded viewfinder captures. Vision pipelines resize
+ * to ~1.5k on the long edge anyway, so a full 1080p-4K frame spends cell-plan
+ * bytes and upload seconds for zero recognition gain. */
+export const CAPTURE_MAX_SIDE = 1600;
+
+/** Pure: dimensions capped at maxSide on the longest edge. Never upscales. */
+export function scaledDims(
+  w: number,
+  h: number,
+  maxSide = CAPTURE_MAX_SIDE,
+): { w: number; h: number } {
+  const scale = Math.min(1, maxSide / Math.max(w || 1, h || 1));
+  return { w: Math.max(1, Math.round(w * scale)), h: Math.max(1, Math.round(h * scale)) };
+}
+
+/** Grab the current viewfinder frame as an upload-ready JPEG (downscaled). */
+export function captureFrame(
+  video: HTMLVideoElement,
+  maxSide = CAPTURE_MAX_SIDE,
+): Promise<Blob | null> {
+  if (video.readyState < 2 || !video.videoWidth) return Promise.resolve(null);
+  const { w, h } = scaledDims(video.videoWidth, video.videoHeight, maxSide);
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const g = canvas.getContext("2d");
+  if (!g) return Promise.resolve(null);
+  g.drawImage(video, 0, 0, w, h);
+  return new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.82));
+}
+
 /** Whether this camera track exposes a controllable torch. */
 export function cameraHasTorch(track: MediaStreamTrack | null): boolean {
   if (!track) return false;

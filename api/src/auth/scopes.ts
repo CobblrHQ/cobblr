@@ -135,6 +135,16 @@ export const TOKEN_SCOPES: TokenScopeDef[] = [
       ["POST", /^\/super-admin\/notices$/],
     ],
   },
+  {
+    key: "instances:rehome",
+    label: "Re-home a collection onto Records",
+    description:
+      "Move ONE named collection from the assets module onto the Records substrate " +
+      "(ids preserved, attachments + tags follow, borrowed field values fold into the " +
+      "record). ONLY that operation — cannot read tenant data, mint tokens, or touch " +
+      "any other admin surface. The operation is itself idempotent and rolls back whole.",
+    allow: [["POST", /^\/super-admin\/rehome-instance$/]],
+  },
 ];
 
 const BY_KEY = new Map(TOKEN_SCOPES.map((s) => [s.key, s] as const));

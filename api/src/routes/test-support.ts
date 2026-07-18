@@ -5,6 +5,7 @@
 import { Router } from "express";
 import { checkoutTestOrg, poolStatus } from "../db/test-org-pool.js";
 import { migrateBookshelfToInstance } from "../platform/migrate-bookshelf-to-instance.js";
+import { rehomeAssetsInstanceToRecords } from "../platform/rehome-instance.js";
 
 export const testSupportRouter = Router();
 
@@ -46,6 +47,22 @@ testSupportRouter.get("/test-support/pool-status", async (_req, res, next) => {
 testSupportRouter.post("/test-support/run-migration/bookshelf", async (_req, res, next) => {
   try {
     res.json(await migrateBookshelfToInstance({ force: true }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Re-home ONE assets instance onto the records substrate — lets the rehome's
+// integration test exercise the real code path in the api process (same reason
+// as the bookshelf endpoint above). Body: { org_id, instance }.
+testSupportRouter.post("/test-support/rehome-instance", async (req, res, next) => {
+  try {
+    const { org_id, instance } = (req.body ?? {}) as { org_id?: string; instance?: string };
+    if (!org_id || !instance) {
+      res.status(400).json({ error: { code: "bad_body", message: "org_id + instance required" } });
+      return;
+    }
+    res.json(await rehomeAssetsInstanceToRecords(org_id, instance));
   } catch (err) {
     next(err);
   }

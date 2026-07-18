@@ -98,7 +98,13 @@ async function ensurePlacementSyncIfLocated(orgId: string, moduleName: string): 
   // and also on the alreadyEnabled path, because pooled/pre-provisioned orgs
   // (CI, templates) only ever hit that path. Idempotent + cheap. Dynamic
   // import avoids the enable.ts ⇄ migrate file cycle. Best-effort.
-  if (moduleName !== "inventory" && moduleName !== "machines" && moduleName !== "assets") return;
+  if (
+    moduleName !== "inventory" &&
+    moduleName !== "machines" &&
+    moduleName !== "assets" &&
+    moduleName !== "records"
+  )
+    return;
   try {
     const { ensurePlacementSyncForOrg } = await import(
       "../platform/migrate-location-to-placement.js"

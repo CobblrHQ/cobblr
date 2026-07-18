@@ -17,6 +17,7 @@ import { InventoryUI } from "@cobblr/inventory/ui";
 import { ProjectsUI } from "@cobblr/projects/ui";
 import { MachinesPage } from "./MachinesPage";
 import { AssetsPage } from "./AssetsPage";
+import { RecordsPage } from "./RecordsPage";
 import { BundleFeaturesStrip } from "../components/BundleFeaturesStrip";
 import { api, getToken } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -118,6 +119,18 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
   if (inst.module_name === "assets") {
     return (
       <AssetsPage
+        instance={inst.instance_name}
+        displayName={displayName}
+        itemNoun={cfg.item_noun}
+      />
+    );
+  }
+  // Records renders its FULL page (thumbnails, detail/edit, custom fields)
+  // scoped to the instance — a Bookshelf on /bookshelf is a complete record
+  // collection, not a name-only stub.
+  if (inst.module_name === "records") {
+    return (
+      <RecordsPage
         instance={inst.instance_name}
         displayName={displayName}
         itemNoun={cfg.item_noun}

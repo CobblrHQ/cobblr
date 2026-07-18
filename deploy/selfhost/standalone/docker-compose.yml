@@ -36,12 +36,20 @@ services:
       # SUPERUSER_DATABASE_URL in .env and they win over the derived values.
       DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-cobblr}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-cobblr_meta}}
       SUPERUSER_DATABASE_URL: ${SUPERUSER_DATABASE_URL:-postgres://${POSTGRES_USER:-cobblr}:${POSTGRES_PASSWORD}@db:5432/postgres}
+      # Uploaded files + runtime-installed modules MUST land on the bind
+      # mounts below — without these env vars the app writes to its defaults
+      # inside the container's writable layer, and every `compose pull && up`
+      # (the documented update) silently discards them. The mount target and
+      # the env value must stay in lockstep; scripts/lint-selfhost-mounts.ts
+      # enforces it in CI.
+      COBBLR_FILES_ROOT: /var/cobblr/files
+      COBBLR_RUNTIME_MODULES_DIR: /var/cobblr/sandboxed-modules
     depends_on:
       db:
         condition: service_healthy
     volumes:
-      - ./data/files:/files
-      - ./data/modules:/app/installed-modules
+      - ./data/files:/var/cobblr/files
+      - ./data/modules:/var/cobblr/sandboxed-modules
     restart: unless-stopped
 
   web:

@@ -11,7 +11,7 @@ import { qrSvg } from "./qr.js";
 import { liveQrUrl } from "../live-qr-url.js";
 import { renderLabelsPdf, type PrintItem } from "../print/pdf.js";
 import { SIZES } from "../print/layout.js";
-import { assignCodes, getOverlayCenter } from "../services/codes.js";
+import { assignCodes, freezePrintedGroups, getOverlayCenter } from "../services/codes.js";
 
 export const printRouter = Router({ mergeParams: true });
 
@@ -88,11 +88,11 @@ printRouter.post(
     // Get-or-assign a human-readable code (m1, p42, b7) per entity — the same
     // code is reused across a queue row's qty copies and across reprints.
     const ctx = tenantContext(req);
-    const codes = await assignCodes(
-      ctx.org.id,
-      db,
-      rows.map((r) => ({ kind: `${r.module_name}:${r.entity_type}`, id: r.entity_id })),
-    );
+    const printRefs = rows.map((r) => ({ kind: `${r.module_name}:${r.entity_type}`, id: r.entity_id }));
+    const codes = await assignCodes(ctx.org.id, db, printRefs);
+    // This renders a printable PDF the user is about to put on paper, so it
+    // counts as printing: lock these prefixes.
+    await freezePrintedGroups(db, printRefs);
     // Per-kind: some kinds opt out of the QR-center code (default on).
     const overlay = await getOverlayCenter(db, rows.map((r) => `${r.module_name}:${r.entity_type}`));
     const items: PrintItem[] = [];
@@ -168,11 +168,10 @@ printRouter.post(
     // hundred items.
     // Assign a human-readable code per entity and draw it in the QR center;
     // bump those QRs to EC=H so the overlay stays scannable.
-    const codes = await assignCodes(
-      ctx.org.id,
-      db,
-      items.map((it) => ({ kind: `${it.module_name}:${it.entity_type}`, id: it.entity_id })),
-    );
+    const printRefs = items.map((it) => ({ kind: `${it.module_name}:${it.entity_type}`, id: it.entity_id }));
+    const codes = await assignCodes(ctx.org.id, db, printRefs);
+    // A batch is recorded — these labels exist. Lock their prefixes.
+    await freezePrintedGroups(db, printRefs);
     // Per-kind: some kinds opt out of the QR-center code (default on).
     const overlay = await getOverlayCenter(db, items.map((it) => `${it.module_name}:${it.entity_type}`));
     const printables: { description: string; qr_svg: string; center_code?: string }[] = [];

@@ -141,6 +141,21 @@ export function registerAssetsResolvers(): void {
   platform().entities.registerInstanceListResolver("assets", (orgId, instance, query) =>
     assetsListResolver(orgId, query, instance),
   );
+  // Single-entity lookup for an INSTANCE kind ("vehicles:item"). Without it the
+  // collection lists fine but every generic single-record read
+  // (entities.lookup) returns null — see the records resolver for the failure
+  // this caused. lint:instance-resolvers enforces the pair.
+  platform().entities.registerInstanceResolver("assets", async (orgId, instance, id) => {
+    const db = (await platform().tenants.getDb(orgId)) as Kysely<AssetsDB>;
+    const row = await db
+      .selectFrom("assets_assets")
+      .selectAll()
+      .where("id", "=", id)
+      .where("instance", "=", instance as never)
+      .executeTakeFirst();
+    if (!row) return null;
+    return toResolvedAsset(row);
+  });
 }
 
 /** Build the watering rule for one asset, or "" if it has no schedule. A raw

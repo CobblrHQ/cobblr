@@ -13,7 +13,7 @@ import { useState, useMemo, useEffect, useRef, Fragment, type ReactNode } from "
 import { Link } from "react-router-dom";
 import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Trash2, Wifi, Printer, RefreshCw, AlertTriangle, Layers, X, Ban, Camera, Pause, Play, Thermometer, Sliders } from "lucide-react";
+import { Trash2, Wifi, Printer, RefreshCw, AlertTriangle, Layers, X, Ban, Camera, Pause, Play, Thermometer, Sliders, ShieldCheck } from "lucide-react";
 import { ApiError, api, fetchAuthBlobUrl, type DigifabFleet, type DigifabFleetDevice, type DigifabDeviceClass, type DigifabHistory, type DigifabDeviceDetail, type DigifabFileInfo } from "../../lib/api";
 import { deviceBucket, fleetStatusChip } from "../../lib/fleet-status";
 import { BambuConnectWizard } from "../../components/BambuConnectWizard";
@@ -1353,7 +1353,7 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
       <div className={rootCls} {...dragProps} onClick={selecting ? onToggleSelect : undefined}>
         <div className={`h-1 ${att ? "bg-amber-500" : st.dot} ${d.klass === "printing" ? "animate-pulse" : ""}`} />
         <button type="button" onClick={selecting ? undefined : () => setDetailOpen(true)} className="block w-full text-left">
-          <div className="aspect-video bg-black/40 flex items-center justify-center overflow-hidden">
+          <div className="relative aspect-video bg-black/40 flex items-center justify-center overflow-hidden">
             {d.snapshot_relay ? (
               <RelaySnapshotFill slug={slug} connId={connId} deviceId={d.id} name={d.name} live={d.klass === "printing" || d.klass === "paused"} />
             ) : d.lan_camera ? (
@@ -1365,6 +1365,26 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
             ) : (
               <span className="flex flex-col items-center gap-1 text-faint text-[11px]"><Camera size={18} /> no camera</span>
             )}
+            {/* The AI verdict, on the image it judges — the camera wall is where
+                "is that print turning into spaghetti?" gets asked. */}
+            {!d.managed_by_detector && d.failure?.paused ? (
+              <span className="absolute top-1.5 left-1.5 z-10 inline-flex items-center gap-1 rounded-full bg-ember-600/90 text-white px-1.5 py-0.5 text-[10px] font-medium shadow">
+                ⚠ paused by AI
+              </span>
+            ) : !d.managed_by_detector && d.failure?.watching ? (
+              <span
+                className={`absolute top-1.5 left-1.5 z-10 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium shadow ${
+                  d.failure.score >= 0.6
+                    ? "bg-ember-600/90 text-white"
+                    : d.failure.score >= 0.3
+                      ? "bg-amber-500/90 text-slate-900"
+                      : "bg-emerald-600/85 text-white"
+                }`}
+                title={`AI failure watch — rolling score ${d.failure.score.toFixed(2)}`}
+              >
+                <ShieldCheck size={10} /> {Math.round(d.failure.score * 100)}%
+              </span>
+            ) : null}
           </div>
           <div className="px-2 py-1.5 flex items-center gap-2">
             {selecting && <input type="checkbox" checked={!!selected} readOnly className="shrink-0" />}
@@ -1476,14 +1496,25 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
           👁 watched by detector
         </div>
       )}
-      {/* AI failure watch: red when it auto-paused, else a subtle live score. */}
+      {/* AI failure watch: red when it auto-paused, else a GRADED live score —
+          visible whenever the watch is live (the old ≥0.2 floor hid the AI on
+          every healthy print, so nobody knew it was working). */}
       {!d.managed_by_detector && d.failure?.paused ? (
         <div className="mt-1 inline-flex items-center gap-1 text-[10px] text-ember-600 dark:text-ember-500 font-medium" title="AI flagged a likely print failure and paused it — check the print">
           ⚠ AI: likely failure — paused
         </div>
-      ) : !d.managed_by_detector && d.failure?.watching && d.failure.score >= 0.2 ? (
-        <div className="mt-1 text-[10px] text-faint" title={`AI failure watch — rolling score ${d.failure.score.toFixed(2)}`}>
-          AI watch · {Math.round(d.failure.score * 100)}%
+      ) : !d.managed_by_detector && d.failure?.watching ? (
+        <div
+          className={`mt-1 inline-flex items-center gap-1 text-[10px] ${
+            d.failure.score >= 0.6
+              ? "text-ember-600 dark:text-ember-500 font-medium"
+              : d.failure.score >= 0.3
+                ? "text-amber-600 dark:text-amber-500"
+                : "text-emerald-600 dark:text-emerald-500"
+          }`}
+          title={`AI failure watch is live — rolling score ${d.failure.score.toFixed(2)}; auto-pause trips when it crosses your threshold`}
+        >
+          <ShieldCheck size={10} /> AI watch · {Math.round(d.failure.score * 100)}%
         </div>
       ) : null}
       {blocked && <div className="mt-1 text-[10px] text-ember-600 dark:text-ember-500">{blocked}</div>}
@@ -2341,6 +2372,30 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
   const [printOpen, setPrintOpen] = useState<DigifabHistory["recent"][number] | null>(null);
   const [linkEdit, setLinkEdit] = useState(false);
   const detail = useQuery({ queryKey: ["digifab-device-detail", slug, connId, device.id], queryFn: () => api.getDigifabDeviceDetail(slug, connId, device.id), refetchInterval: 10_000 });
+  // The AI failure-watch verdict for THIS printer — rendered on the camera
+  // frame (badge + paused banner) and as a detail strip under it, so the
+  // watch reads as part of the picture instead of an invisible daemon.
+  // External-detector printers skip the query (single-owner rule): Cobblr
+  // isn't watching them and shows who is instead.
+  const failQ = useQuery({
+    queryKey: ["digifab-failure-status", slug, connId, device.id],
+    queryFn: () => api.getDigifabFailureStatus(slug, connId, device.id),
+    refetchInterval: 12_000,
+    enabled: !device.managed_by_detector,
+  });
+  const fail = failQ.data ?? null;
+  const aiCheck = useMutation({
+    mutationFn: () => api.checkDigifabFailure(slug, connId, device.id),
+    onSuccess: (r) => {
+      if (!r.available) toast.info(`No reading: ${r.reason ?? "no camera frame available"}`);
+      else
+        toast[r.would_trip ? "error" : "success"](
+          `Live reading: ${Math.round((r.probability ?? 0) * 100)}% failure risk via ${r.source ?? "detector"}${r.would_trip ? " — this would trip the auto-pause" : ""}`,
+        );
+      void failQ.refetch();
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't take a reading"),
+  });
   const machines = useQuery({ queryKey: ["digifab-all-machines", slug], queryFn: () => fetchAllMachines(slug) });
   const links = useQuery({ queryKey: ["digifab-links", slug], queryFn: () => api.listDigifabLinks(slug) });
   const history = useQuery({ queryKey: ["digifab-history", slug, 365], queryFn: () => api.getDigifabHistory(slug, 365) });
@@ -2437,11 +2492,60 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
             {/* LEFT — watch. */}
             <div className="space-y-3 min-w-0">
-              {detail.data?.lan?.camera ? (
-                <LanCameraView slug={slug} connId={connId} deviceId={device.id} name={device.name} onZoom={setLightbox} />
-              ) : machineImg ? (
-                <div className="rounded-lg border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 overflow-hidden aspect-video">
-                  <img src={machineImg} alt={device.name} className="w-full h-full object-cover cursor-zoom-in" onClick={() => setLightbox(machineImg)} />
+              {(detail.data?.lan?.camera || machineImg) && (
+                <div className="relative">
+                  {detail.data?.lan?.camera ? (
+                    <LanCameraView slug={slug} connId={connId} deviceId={device.id} name={device.name} onZoom={setLightbox} />
+                  ) : (
+                    <div className="rounded-lg border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 overflow-hidden aspect-video">
+                      <img src={machineImg!} alt={device.name} className="w-full h-full object-cover cursor-zoom-in" onClick={() => setLightbox(machineImg!)} />
+                    </div>
+                  )}
+                  {/* The verdict, ON the frame it judges. */}
+                  {fail?.watching && !fail.paused && (
+                    <div
+                      className={`absolute top-2 left-2 z-10 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium shadow-lg backdrop-blur-sm ${
+                        fail.score >= 0.6
+                          ? "bg-ember-600/90 text-white"
+                          : fail.score >= 0.3
+                            ? "bg-amber-500/90 text-slate-900"
+                            : "bg-emerald-600/85 text-white"
+                      }`}
+                      title={`AI failure watch — rolling score ${fail.score.toFixed(2)} over ${fail.samples} sample${fail.samples === 1 ? "" : "s"}`}
+                    >
+                      <ShieldCheck size={11} /> {Math.round(fail.score * 100)}%
+                    </div>
+                  )}
+                  {fail?.paused && (
+                    <div className="absolute inset-x-0 bottom-0 z-10 bg-ember-600/90 text-white text-xs font-medium px-3 py-1.5 rounded-b-lg">
+                      ⚠ AI flagged a likely failure and paused this print — inspect the bed, then resume from the controls.
+                    </div>
+                  )}
+                </div>
+              )}
+              {/* The watch, in words: freshness + source + a live one-tap reading. */}
+              {device.managed_by_detector ? (
+                <div className="flex items-center gap-1.5 text-[11px] text-faint">
+                  👁 An external detector watches this printer and raises its own alerts; Cobblr stands down its camera (single-owner rule).
+                </div>
+              ) : fail && (fail.watching || fail.samples > 0 || fail.paused) ? (
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-faint">
+                  <ShieldCheck size={12} className={fail.watching ? "text-emerald-500" : "text-faint"} />
+                  <span>
+                    {fail.watching ? "AI failure watch is live" : "AI watch idle (arms when a print starts)"}
+                    {fail.last_sample_at &&
+                      ` · last look ${Math.max(1, Math.round((Date.now() - new Date(fail.last_sample_at).getTime()) / 60000))}m ago${fail.last_source ? ` via ${fail.last_source}` : ""}`}
+                    {fail.samples > 0 && ` · ${fail.samples} sample${fail.samples === 1 ? "" : "s"} this print`}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={aiCheck.isPending}
+                    onClick={() => aiCheck.mutate()}
+                    className="text-accent hover:underline disabled:opacity-50"
+                    title="Take one reading from the camera right now and show the verdict"
+                  >
+                    {aiCheck.isPending ? "reading…" : "Check now"}
+                  </button>
                 </div>
               ) : null}
               {detail.data?.job && (

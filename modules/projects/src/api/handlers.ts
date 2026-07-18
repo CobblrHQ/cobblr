@@ -104,6 +104,22 @@ export function registerProjectsHandlers(): void {
   platform().entities.registerInstanceListResolver("projects", (orgId, instance, query) =>
     projectsListResolver(orgId, query, instance),
   );
+  // …and the single-entity half. Registering only the list resolver is a trap:
+  // the collection renders (that IS the list) while every generic single-record
+  // read — entities.lookup("<instance>:item", id) — returns null, silently. See
+  // the records resolver for the failure this caused. lint:instance-resolvers
+  // now enforces the pair.
+  platform().entities.registerInstanceResolver("projects", async (orgId, instance, id) => {
+    const db = (await platform().tenants.getDb(orgId)) as Kysely<ProjectsDB>;
+    const row = await db
+      .selectFrom("projects_projects")
+      .selectAll()
+      .where("id", "=", id)
+      .where("instance", "=", instance as never)
+      .executeTakeFirst();
+    if (!row) return null;
+    return toResolvedProject(row);
+  });
 
   platform().entities.registerListResolver("projects:task", async (orgId, query) => {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<ProjectsDB>;

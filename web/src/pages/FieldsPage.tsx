@@ -11,7 +11,7 @@ import { ChoicesInput } from "../components/ChoicesInput";
 import { slugifyFieldName } from "../lib/field-key";
 import { fieldFormReadiness } from "../lib/field-form";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { FieldDefDetailModal } from "../components/FieldDefDetailModal";
+import { FieldDefDetail } from "../components/FieldDefDetail";
 import { FieldRenderer, UnitInput, useToast, usePageTitle } from "@cobblr/platform-web";
 
 // `relation` is deliberately absent: user-authored relation fields (picking a
@@ -197,7 +197,8 @@ export function FieldsPage() {
               <li key={f.id}>
                 <button
                   type="button"
-                  onClick={() => setSelected(f)}
+                  aria-expanded={selected?.id === f.id}
+                  onClick={() => setSelected(selected?.id === f.id ? null : f)}
                   className="w-full text-left flex items-center gap-3 text-sm text-content dark:text-mortar-100 px-1 py-1.5 rounded hover:bg-subtle dark:hover:bg-slate-800/60 transition group"
                 >
                   <span className="font-mono text-xs text-faint dark:text-slate-500 w-32 truncate">
@@ -214,9 +215,20 @@ export function FieldsPage() {
                   )}
                   <ChevronRight
                     size={13}
-                    className="text-faint dark:text-slate-600 group-hover:text-accent transition"
+                    className={
+                      "text-faint dark:text-slate-600 group-hover:text-accent transition " +
+                      (selected?.id === f.id ? "rotate-90" : "")
+                    }
                   />
                 </button>
+                {selected?.id === f.id && (
+                  <FieldDefDetail
+                    onClose={() => setSelected(null)}
+                    slug={slug}
+                    fieldDef={f}
+                    scopeLabel={f.scope_label ?? null}
+                  />
+                )}
               </li>
             ))}
         </ul>
@@ -505,13 +517,6 @@ export function FieldsPage() {
         )}
       </div>
 
-      <FieldDefDetailModal
-        open={!!selected}
-        onClose={() => setSelected(null)}
-        slug={slug}
-        fieldDef={selected}
-        scopeLabel={selected?.scope_label ?? null}
-      />
     </div>
   );
 }

@@ -1,10 +1,9 @@
 // /configuration/permissions — admin-only. Two related controls:
 //
-//  1. Capability matrix: rows = workspace members, columns = actions
-//     that have opted into being portal-grantable (manifest flag, today
-//     returned by GET /permissions/grantable-actions). Admins / owners
-//     are shown with "implicit" badges — they already have every
-//     capability and grants can't be added/removed for them.
+//  1. Capability matrix (components/CapabilityMatrix): rows = capabilities
+//     grouped by owning module, columns = the holders — owners/admins as one
+//     implicit column, then each custom role, then each remaining member.
+//     See that file for why it's oriented this way.
 //
 //  2. Field visibility (H2): mark any field of any kind sensitive and
 //     bind it to a capability, per workspace. The field is hidden in the
@@ -19,10 +18,11 @@ import { useState } from "react";
 import { AreaTabs, ACCESS_TABS } from "../components/AreaTabs";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, EyeOff, Plus, Shield, X } from "lucide-react";
+import { EyeOff, Plus, X } from "lucide-react";
 import { useToast, usePageTitle } from "@cobblr/platform-web";
 import { ApiError, api } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { CapabilityMatrix } from "../components/CapabilityMatrix";
 
 export function PermissionsPage() {
   usePageTitle("Permissions");
@@ -54,26 +54,6 @@ export function PermissionsPage() {
   const customRolesQ = useQuery({
     queryKey: ["custom-roles", activeSlug],
     queryFn: () => api.listCustomRoles(activeSlug),
-  });
-
-  const toggle = useMutation({
-    mutationFn: ({
-      user_id,
-      action_id,
-      grant,
-    }: {
-      user_id: string;
-      action_id: string;
-      grant: boolean;
-    }) =>
-      grant
-        ? api.grantCapability(activeSlug, user_id, action_id)
-        : api.revokeCapability(activeSlug, user_id, action_id),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["permissions-matrix", activeSlug] });
-    },
-    onError: (e: unknown) =>
-      toast.error(e instanceof ApiError ? e.message : "Couldn't update"),
   });
 
   const members = matrixQ.data?.members ?? [];
@@ -154,8 +134,8 @@ export function PermissionsPage() {
           permissions
         </h1>
         <span className="page-subtitle">
-          per-member capability grants + field visibility. admins / owners have
-          everything implicitly.
+          what each role and member can do, plus field visibility. owners /
+          admins have everything implicitly.
         </span>
       </div>
 
@@ -163,7 +143,7 @@ export function PermissionsPage() {
         <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-2">
           <div className="flex items-baseline gap-2">
             <span className="text-[10px] font-mono uppercase tracking-widest text-accent">
-              // who can do what
+              // members &amp; roles
             </span>
             <span className="text-xs text-faint dark:text-slate-400">
               stock role (set in <Link className="underline hover:text-accent" to="/configuration?open=members">Members</Link>) ·
@@ -218,85 +198,12 @@ export function PermissionsPage() {
       )}
 
       {actions.length > 0 && members.length > 0 && (
-        <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-subtle dark:bg-slate-800/40">
-              <tr>
-                <th className="text-left text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 px-3 py-2">
-                  Member
-                </th>
-                {actions.map((a) => (
-                  <th
-                    key={a.action_id}
-                    className="text-center text-[10px] font-mono text-accent dark:text-cobble-300 px-3 py-2"
-                    title={a.description}
-                  >
-                    {a.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-line dark:divide-slate-800">
-              {members.map((m) => {
-                const isAdmin = m.role === "owner" || m.role === "admin";
-                return (
-                  <tr key={m.id}>
-                    <td className="px-3 py-2">
-                      <div className="text-sm text-content dark:text-mortar-100">
-                        {m.display_name}
-                      </div>
-                      <div className="text-[10px] font-mono text-faint dark:text-slate-500">
-                        {m.email} · {m.role}
-                      </div>
-                    </td>
-                    {actions.map((a) => {
-                      const granted = m.grants.includes(a.action_id);
-                      if (isAdmin) {
-                        return (
-                          <td
-                            key={a.action_id}
-                            className="text-center px-3 py-2"
-                            title="Admins have every capability implicitly."
-                          >
-                            <Shield
-                              size={12}
-                              className="inline text-accent"
-                            />
-                          </td>
-                        );
-                      }
-                      return (
-                        <td key={a.action_id} className="text-center px-3 py-2">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              toggle.mutate({
-                                user_id: m.id,
-                                action_id: a.action_id,
-                                grant: !granted,
-                              })
-                            }
-                            className={
-                              "w-6 h-6 rounded inline-flex items-center justify-center transition " +
-                              (granted
-                                ? "bg-cobble-600 text-white hover:bg-cobble-700"
-                                : "border border-line dark:border-slate-600 text-faint dark:text-slate-600 hover:border-accent")
-                            }
-                            title={granted ? "Revoke" : "Grant"}
-                            data-action-id={a.action_id}
-                            data-granted={granted}
-                          >
-                            {granted && <Check size={12} />}
-                          </button>
-                        </td>
-                      );
-                    })}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <CapabilityMatrix
+          slug={activeSlug}
+          actions={actions}
+          members={members}
+          roles={customRolesQ.data?.items ?? []}
+        />
       )}
 
       {/* ── Field visibility (H2) ──────────────────────────────────── */}

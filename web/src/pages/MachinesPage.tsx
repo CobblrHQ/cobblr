@@ -1220,11 +1220,12 @@ function MachineDetailModal({
   // photo for this printer on demand, even if it already has one.
   async function runAutoFetch() {
     if (!m) return;
-    const q = [m.manufacturer, m.family, "3D printer"].filter(Boolean).join(" ");
-    if (!q.replace("3D printer", "").trim()) return;
     setAutoBusy(true);
     try {
-      const r = await api.enrichEntityImage(activeSlug, { entity_kind: "machines:machine", entity_id: m.id, query: q, instance }).catch(() => null);
+      // No query built here on purpose — the server derives it from the
+      // machine's own name/brand/fields, the same phrase the picker and the
+      // scan inbox use.
+      const r = await api.enrichEntityImage(activeSlug, { entity_kind: "machines:machine", entity_id: m.id, instance }).catch(() => null);
       if (r?.image_path) {
         void qc.invalidateQueries({ queryKey: ["machine", activeSlug, machineId] });
         void qc.invalidateQueries({ queryKey: ["machines", activeSlug] });
@@ -1247,9 +1248,8 @@ function MachineDetailModal({
         .enrichEntityImage(activeSlug, {
           entity_kind: "machines:machine",
           entity_id: m.id,
-          query: [m.manufacturer, m.family, "3D printer"].filter(Boolean).join(" ") || m.name,
           instance,
-          image_url: url,
+          image_url: url, // a picked url skips the search entirely
         })
         .catch(() => null);
       if (r?.image_path) {
@@ -1312,23 +1312,54 @@ function MachineDetailModal({
       onClose={onClose}
       title={m?.name ?? "loading…"}
       subtitle={subtitle}
-      size="lg"
+      size="xl"
     >
       {m ? (
         <div className="space-y-3">
-          {/* Consolidated header: photo + actions + Kind/Specialisation share the
-              top row, so the thumbnail isn't floating next to empty space. */}
-          <div className="flex items-start gap-4">
-            <EntityImageEdit
-              slug={activeSlug}
-              src={m.image_path}
-              alt={m.name}
-              size={96}
-              onChange={(image_path) => update.mutate({ image_path })}
-              onAutoFetch={printerKind !== null ? runAutoFetch : undefined}
-              autoBusy={autoBusy}
-            />
-            <div className="flex-1 space-y-2">
+          {/* Wide record layout (same shape as the assets detail): the photo
+              large on the LEFT with its picker, everything else on the RIGHT,
+              so the modal uses width instead of scrolling tall. Stacks on
+              phones. */}
+          <div className="grid gap-6 md:grid-cols-[minmax(180px,240px)_1fr]">
+            <div className="space-y-2">
+              <EntityImageEdit
+                slug={activeSlug}
+                src={m.image_path}
+                alt={m.name}
+                size={220}
+                onChange={(image_path) => update.mutate({ image_path })}
+                onAutoFetch={printerKind !== null ? runAutoFetch : undefined}
+                autoBusy={autoBusy}
+              />
+              {/* Universal web-image picker — pick the machine's photo from a web search. */}
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setPhotoSearchOpen((v) => !v)}
+                  className="text-[10px] font-mono uppercase tracking-widest text-accent hover:underline"
+                >
+                  {photoSearchOpen ? "hide photo search" : "search the web for a photo"}
+                </button>
+                {photoSearchOpen && (
+                  <div className="mt-1.5">
+                    {/* Derived mode: the server builds the phrase from this
+                        machine's own name + brand + fields, identically to the
+                        scan inbox. The old hand-built query (manufacturer +
+                        family + a literal "3D printer") is gone — one
+                        derivation, one behaviour. */}
+                    <ImageSearchPicker
+                      entity={{ kind: ENTITY_KIND, id: m.id }}
+                      brand={m.manufacturer ?? undefined}
+                      busy={photoPickBusy}
+                      onPick={pickWebPhoto}
+                      label="pick a photo"
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="min-w-0 space-y-3">
+            <div className="space-y-2">
               <EntityActionsBar entityKind={ENTITY_KIND} entityId={m.id} />
               <div className="flex flex-wrap gap-3">
                 {printerKind !== null && (
@@ -1358,32 +1389,6 @@ function MachineDetailModal({
                 )}
               </div>
             </div>
-          </div>
-
-          {/* Universal web-image picker — pick the printer's photo from a web search. */}
-          <div>
-            <button
-              type="button"
-              onClick={() => setPhotoSearchOpen((v) => !v)}
-              className="text-[10px] font-mono uppercase tracking-widest text-accent hover:underline"
-            >
-              {photoSearchOpen ? "hide photo search" : "search the web for a photo"}
-            </button>
-            {photoSearchOpen && (
-              <div className="mt-1.5">
-                <ImageSearchPicker
-                  query={
-                    ([m.manufacturer, m.family].filter(Boolean).join(" ").trim() || m.name.split("—")[0]!.trim()) +
-                    (printerKind !== null ? " 3D printer" : "")
-                  }
-                  brand={m.manufacturer ?? undefined}
-                  busy={photoPickBusy}
-                  onPick={pickWebPhoto}
-                  label="pick a photo"
-                />
-              </div>
-            )}
-          </div>
 
           <dl className="grid grid-cols-2 gap-3 text-xs">
             <EditField label={fp.label("name", "Name")} value={m.name} onCommit={(v) => update.mutate({ name: v })} />
@@ -1455,6 +1460,8 @@ function MachineDetailModal({
           {(m.notes || notesOpen) && (
             <EditField label="Notes" value={m.notes ?? ""} multiline onCommit={(v) => update.mutate({ notes: v || null })} />
           )}
+            </div>
+          </div>
 
           <div className="pt-3 border-t border-line dark:border-slate-700 flex items-center justify-between">
             <button

@@ -208,24 +208,43 @@ const ENDPOINT_CAPABILITIES = [
   { action_id: "inventory:update-part", label: "Edit parts", description: "Edit existing part fields." },
 ];
 
+/** The module a capability belongs to, for grouping in the admin UI.
+ *  Registered actions know theirs; everything else is namespaced
+ *  `<module>:<verb>`, so the prefix is the answer. */
+function capabilityModule(actionId: string, moduleName?: string | null): string {
+  return moduleName || actionId.split(":")[0] || "platform";
+}
+
 /** Every capability an admin can grant a member: the registered actions
  *  (entity_actions) plus the endpoint-gate caps above. Single source of
- *  truth for both the matrix columns and grant validation. */
+ *  truth for both the matrix columns and grant validation.
+ *
+ *  USER-INVOKABLE ONLY. `user_invokable = false` marks an action that exists
+ *  purely for a wire to fire on an event — `assets:update-fields` is the
+ *  inbound-telemetry shape (an OBD dongle posts a webhook, a wire sets the
+ *  mileage); a human never "does" it, so granting a person permission to it is
+ *  meaningless. The entity-actions bar already filters on this flag (migration
+ *  20260515-012) and the wires builder deliberately doesn't; this surface is
+ *  user-facing, so it does. Without the filter the permission matrix listed the
+ *  ENTIRE action registry of every installed module. */
 async function grantableActions(
   orgId?: string,
-): Promise<Array<{ action_id: string; label: string; description: string }>> {
+): Promise<Array<{ action_id: string; label: string; description: string; module: string }>> {
   const registered = await meta
     .selectFrom("entity_actions")
-    .select(["id", "label", "description"])
+    .select(["id", "label", "description", "module_name"])
+    .where("user_invokable", "=", true)
     .orderBy("id")
     .execute();
   const items = registered.map((r) => ({
     action_id: r.id,
     label: r.label,
     description: r.description ?? "",
+    module: capabilityModule(r.id, r.module_name),
   }));
   const have = new Set(items.map((a) => a.action_id));
-  for (const c of ENDPOINT_CAPABILITIES) if (!have.has(c.action_id)) items.push(c);
+  for (const c of ENDPOINT_CAPABILITIES)
+    if (!have.has(c.action_id)) items.push({ ...c, module: capabilityModule(c.action_id) });
   // H2 — per-field read-scope capabilities declared by entity kinds
   // (entity_kinds.field_read_scopes values). Auto-grantable so an admin
   // can assign a "view costs"-style cap from the matrix without any
@@ -245,6 +264,7 @@ async function grantableActions(
         action_id: cap,
         label: `View ${field}`,
         description: `See the "${field}" field on records that restrict it.`,
+        module: capabilityModule(cap),
       });
     }
   }
@@ -264,6 +284,7 @@ async function grantableActions(
         action_id: s.capability,
         label: `View ${s.field}`,
         description: `See the "${s.field}" field (restricted in this workspace).`,
+        module: capabilityModule(s.capability),
       });
     }
   }

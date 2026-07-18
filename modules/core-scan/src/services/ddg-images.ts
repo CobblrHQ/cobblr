@@ -10,6 +10,8 @@
 // multi-tenant path without a per-tenant rate budget (core-ai is the
 // natural throttle for the LLM half; this half is best-effort).
 
+import { isJunkName } from "./enrich.js";
+
 const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +
   "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -111,6 +113,36 @@ export function mediaSearchExtras(
     }
   }
   return { author, mediaWord };
+}
+
+/** THE image-search phrase for anything the platform can photograph — the one
+ *  derivation every surface uses, so a book gets the same query whether you're
+ *  looking at it in the scan inbox or on its record page. (They diverged once:
+ *  the inbox produced "Farmer Boy Laura Ingalls Wilder book" while a record
+ *  page searched a bare "Farmer Boy" and got farm scenery. the author, 2026-07-18.)
+ *
+ *  `fields` is any field bag — a scan candidate's `fields`, or a resolved
+ *  entity's. Everything is derived from DECLARED FIELDS (a creator key, a
+ *  media key, a colour), never from a hardcoded noun, so a Movies list or a
+ *  wine shelf sharpens exactly like the Bookshelf does.
+ *
+ *  Returns null when the name is junk ("Unknown Item", a bare barcode): better
+ *  no options than a strip of "?" bags. */
+export function deriveImageQuery(opts: {
+  name: string | null | undefined;
+  brand?: string | null;
+  fields?: Record<string, unknown> | null;
+  /** A user-typed term wins outright — search EXACTLY what they asked for. */
+  override?: string | null;
+}): string | null {
+  const override = (opts.override ?? "").trim();
+  if (override) return override;
+  const name = (opts.name ?? "").trim();
+  if (!name || isJunkName(name)) return null;
+  const { author, mediaWord } = mediaSearchExtras([{ fields: opts.fields ?? {} }]);
+  const color = typeof opts.fields?.color === "string" ? (opts.fields.color as string).trim() : "";
+  const extra = [author, mediaWord, color].filter(Boolean).join(" ") || null;
+  return imageQuery(name, opts.brand ?? null, extra);
 }
 
 /** Reorder image options best-catalog-first (stable on ties). */

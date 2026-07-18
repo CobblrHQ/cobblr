@@ -10,7 +10,7 @@
 //
 // Placement subsumes location_id (docs/design-decisions/placement-and-containment.md):
 // "what is this thing inside of?" — a Location is just one KIND of container.
-// The three tables that carry a location_id each get one placement row per
+// The location-bearing tables each get one placement row per
 // located entity: containee = the entity, container = the core-locations:location.
 //
 // Per org: ensure core-placement is enabled (creates the table); INSERT ...
@@ -41,6 +41,7 @@ const LOCATED_TABLES: Array<{ table: string; kind: string }> = [
   { table: "inventory_parts", kind: "inventory:part" },
   { table: "machines_machines", kind: "machines:machine" },
   { table: "assets_assets", kind: "assets:asset" },
+  { table: "records_records", kind: "records:record" },
 ];
 
 // The transitional sync: one plpgsql function that mirrors a row's location_id

@@ -104,12 +104,12 @@ export function QrTokensPage({ embedded = false }: { embedded?: boolean } = {}) 
               {
                 opt: "descriptive",
                 title: "Self-describing",
-                desc: "Encodes /qr/<kind>/<id> — portable, still interpretable if this instance is gone. Denser code.",
+                desc: "Opens with a short type code, like /qr/loc/Xk7Bq2mNp8rL — a phone's link preview hints what the label is before it's tapped.",
               },
               {
                 opt: "opaque",
                 title: "Opaque",
-                desc: "A short random token — reveals nothing and scans cleanly on tiny labels, but needs this instance to resolve.",
+                desc: "Just the random slug, like /qr/Xk7Bq2mNp8rL — the link reveals nothing about what it points to.",
               },
             ] as const
           ).map(({ opt, title, desc }) => (

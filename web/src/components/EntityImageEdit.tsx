@@ -9,7 +9,7 @@
 // machines, pass it).
 
 import { useRef, useState } from "react";
-import { EntityThumb, useToast } from "@cobblr/platform-web";
+import { EntityThumb, useImageSrc, useToast } from "@cobblr/platform-web";
 import { api, ApiError } from "../lib/api";
 
 export function EntityImageEdit({
@@ -17,6 +17,7 @@ export function EntityImageEdit({
   src,
   alt,
   size = 96,
+  fit = "cover",
   onChange,
   onAutoFetch,
   autoBusy,
@@ -26,6 +27,12 @@ export function EntityImageEdit({
   src?: string | null;
   alt: string;
   size?: number;
+  /** How the image fills its box. `cover` (default) is the square tile every
+   *  list/detail has used. `contain` keeps the image's OWN proportions at
+   *  `size` wide with the height following — for records whose image IS the
+   *  identity (a book jacket, a film poster, a bottle label), where a square
+   *  crop cuts the top and bottom off the very thing you're looking at. */
+  fit?: "cover" | "contain";
   /** New image_path (a core-files raw URL), or null to clear. */
   onChange: (imagePath: string | null) => void;
   /** Re-run the entity's auto-image fetch, if it has one. */
@@ -36,6 +43,10 @@ export function EntityImageEdit({
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const toast = useToast();
+  // `contain` needs the raw resolved src (internal /api/v1 urls are bearer-
+  // fetched to a blob: by this hook) because it renders its own <img> instead
+  // of the square EntityThumb tile.
+  const containSrc = useImageSrc(fit === "contain" ? src : null);
 
   async function pick(file: File) {
     if (!file.type.startsWith("image/")) {
@@ -63,9 +74,20 @@ export function EntityImageEdit({
         disabled={busy}
         title="Change photo"
         className="relative group block rounded overflow-hidden disabled:cursor-wait"
-        style={{ width: size, height: size }}
+        // contain: fix only the WIDTH so the height follows the image's own
+        // ratio. A missing image still falls back to the square placeholder
+        // tile (the initial-letter chip needs a box to sit in).
+        style={fit === "contain" && containSrc ? { width: size } : { width: size, height: size }}
       >
-        <EntityThumb src={src} alt={alt} size={size} className="ring-1 ring-line dark:ring-slate-700" />
+        {fit === "contain" && containSrc ? (
+          <img
+            src={containSrc}
+            alt={alt}
+            className="w-full h-auto object-contain rounded ring-1 ring-line dark:ring-slate-700"
+          />
+        ) : (
+          <EntityThumb src={src} alt={alt} size={size} className="ring-1 ring-line dark:ring-slate-700" />
+        )}
         <span className="absolute inset-0 flex items-center justify-center bg-black/45 text-white text-[10px] font-mono uppercase tracking-wide opacity-0 group-hover:opacity-100 transition-opacity">
           {uploading ? "Uploading…" : "Change"}
         </span>

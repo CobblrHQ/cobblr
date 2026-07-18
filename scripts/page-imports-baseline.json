@@ -16,6 +16,10 @@
     "spec": "./AssetsPage"
   },
   {
+    "file": "web/src/pages/InstancePage.tsx",
+    "spec": "./RecordsPage"
+  },
+  {
     "file": "web/src/pages/PortalPlanPage.tsx",
     "spec": "./PlanPrintPage"
   },

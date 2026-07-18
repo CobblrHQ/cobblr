@@ -78,10 +78,10 @@ function metaBarcode(fields: Record<string, unknown>): string | null {
 
 function toMatch(
   e: { kind: string; id: string; title: string; subtitle?: string; image_path?: string; detailUrl?: string; fields: Record<string, unknown> },
-  info: { noun: string; qtyField: string },
+  info: { noun: string; qtyField?: string },
   matchedBy: "barcode" | "name" | "bin",
 ): TrackedMatch {
-  const rawQty = e.fields[info.qtyField];
+  const rawQty = info.qtyField ? e.fields[info.qtyField] : undefined;
   const qty = typeof rawQty === "number" ? rawQty : Number(rawQty);
   // The instance slug: from the detail route when the resolver supplies one,
   // else the row's own `instance` column (assets/inventory instance rows carry

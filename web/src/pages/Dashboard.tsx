@@ -66,7 +66,10 @@ function QuickLinks({ slug }: { slug: string }) {
       (m) =>
         !(m as { hidden?: boolean }).hidden &&
         !m.name.startsWith("__heading__") &&
-        !m.name.startsWith("__group__"),
+        !m.name.startsWith("__group__") &&
+        // Entries folded into "more ▾" (by default: lists/projects/purchases)
+        // don't take Jump-to tiles either — the 8 slots go to the workhorses.
+        !nav.overflowNames.has(m.name),
     )
     .slice(0, 8)
     .map((m) => ({
@@ -734,7 +737,17 @@ function GettingStartedPanel({
     // sections on an established workspace — prime rows belong to the
     // workspace's own state, not a growth affordance. The empty-state hero
     // keeps the top slot.
-    if (collapsedOnly) return hasContent ? <WhatToDoPanel slug={slug} startCollapsed /> : null;
+    // Established workspace: the panel is a growth affordance, not the hero —
+    // cap it to a half-column card so expanding it never swallows a full
+    // dashboard row (the author, 2026-07-18: "works a lot better as a 1/2 or 1/3
+    // width col"). The empty-state hero below keeps full width: on a blank
+    // workspace it IS the dashboard.
+    if (collapsedOnly)
+      return hasContent ? (
+        <div className="max-w-2xl">
+          <WhatToDoPanel slug={slug} startCollapsed />
+        </div>
+      ) : null;
     if (hasContent) return null;
     return <WhatToDoPanel slug={slug} startCollapsed={false} />;
   }
@@ -1698,10 +1711,14 @@ function PosterCell({ path, title }: { path: string | null; title: string }) {
  *  to BE a distribution: when every item shares one value ("By make" over a single
  *  Honda), the lone 100% bar restates the count already in the header and never
  *  says WHAT you have — "HONDA 1" where "2019 Honda Civic" was the useful answer
- *  (the author, 2026-07-16). One bucket → fall through to the item list. Same rule the
- *  all-unset branch already applies (don't draw a meaningless distribution), just
- *  extended from "no groups" to "no spread"; all-unset keeps the distribution
- *  branch because the "set it" hint there names the fix, which beats a list.
+ *  (the author, 2026-07-16). One bucket → fall through to the item list. A lone SET
+ *  bucket plus unset items still counts as spread (it shows what's missing).
+ *
+ *  ALL-UNSET does not: an earlier revision kept the distribution branch for it
+ *  and rendered only a "set tube type to group them here" hint — a card with
+ *  five laser cutters behind it and zero content ("still 100% useless", the author,
+ *  2026-07-18). The hint is right; hiding the items to show it is not. All-unset
+ *  now falls to the item list, which carries the hint as a footer.
  *  `groupCounts` is [value, n] with "" as the unset bucket. Exported for the test
  *  that pins this rule. */
 export function shouldShowDistribution(
@@ -1710,7 +1727,7 @@ export function shouldShowDistribution(
 ): boolean {
   const setBucketCount = groupCounts.filter(([k]) => k !== "").length;
   const unsetCount = groupCounts.find(([k]) => k === "")?.[1] ?? 0;
-  return isGrouped && !(setBucketCount === 1 && unsetCount === 0);
+  return isGrouped && (setBucketCount >= 2 || (setBucketCount >= 1 && unsetCount > 0));
 }
 
 function PinnedView({
@@ -1796,20 +1813,30 @@ function PinnedView({
     return r.image_path ?? null;
   };
   return (
-    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
+    // min-w-0: this card is a GRID CHILD, whose min-width defaults to its
+    // content's intrinsic width — a long view name or item title silently
+    // stretched the card past the phone viewport, defeating every `truncate`
+    // inside (the title row's min-w-0 is powerless if the card itself grew).
+    // e2e/mobile-overflow.mjs guards the class.
+    <div className="min-w-0 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
       <div className="flex items-baseline gap-2 mb-2 min-w-0">
         <LayoutList size={13} className="text-accent shrink-0" />
         {/* Subject FIRST, then the lens: "Vehicles · By make". The view name on
-            its own is a grouping, not an answer to "what is this card?". */}
+            its own is a grouping, not an answer to "what is this card?".
+            The NAMES own the row: the view-type chip is gone (the card already
+            renders AS its type, so "KANBAN" restated what the bars show), and
+            the count never wraps — "3D Print… · Printer fleet by st…" next to a
+            fully-readable KANBAN chip was the wrong things truncating
+            (the author, 2026-07-18). */}
         {subject && (
           <>
-            <span className="font-medium text-content dark:text-mortar-100 truncate">{subject}</span>
+            <span className="font-medium text-content dark:text-mortar-100 truncate shrink-[2] min-w-[4rem]">{subject}</span>
             <span className="text-faint shrink-0">·</span>
           </>
         )}
         <Link
           to={`/views/${view.id}`}
-          className={`truncate hover:text-accent ${
+          className={`truncate min-w-0 flex-1 hover:text-accent ${
             subject
               ? "text-muted dark:text-slate-400"
               : "font-medium text-content dark:text-mortar-100"
@@ -1817,11 +1844,7 @@ function PinnedView({
         >
           {view.name}
         </Link>
-        <span className="text-[10px] font-mono uppercase tracking-wider text-faint shrink-0">
-          {view.view_type}
-        </span>
-        <div className="flex-1" />
-        <span className="text-[10px] font-mono text-faint">
+        <span className="text-[10px] font-mono text-faint shrink-0 whitespace-nowrap">
           {countLabel}
         </span>
       </div>
@@ -1837,19 +1860,13 @@ function PinnedView({
       {!data.isLoading && items.length > 0 && (
         showDistribution ? (
           // The group distribution — the whole point of a "by state" / "by type"
-          // view. Split the populated groups from the "unset" bucket: when NOTHING
-          // carries the grouping field, a distribution is meaningless, so say so
-          // (and point at the fix) rather than draw an empty/misleading bar.
+          // view. shouldShowDistribution guarantees at least one populated
+          // bucket here; the all-unset case falls to the item list below (which
+          // carries the "set it to group" hint), so this card is never a
+          // hint-only dead card again.
           (() => {
             const setGroups = groupCounts.filter(([k]) => k !== "");
             const unset = groupCounts.find(([k]) => k === "")?.[1] ?? 0;
-            if (setGroups.length === 0) {
-              return (
-                <div className="text-xs text-muted dark:text-slate-400 italic">
-                  No {groupLabel} set on {allItems.length === 1 ? "this item" : `these ${allItems.length}`} yet — set it to group them here.
-                </div>
-              );
-            }
             return (
               <div className="flex flex-wrap gap-x-4 gap-y-2">
                 {setGroups.map(([label, n]) => (
@@ -1889,35 +1906,46 @@ function PinnedView({
         ) : isHeatmap ? (
           <HeatmapRenderer items={allItems} cfg={view.config ?? {}} />
         ) : (
-          <ul className="space-y-1.5">
-            {items.map((r) => {
-              // Row → the entity's detail page (registry-driven; instance
-              // kinds resolve too). No route registered → plain row.
-              const href = routeFor(r.kind, r.id);
-              const body = (
-                <>
-                  <EntityThumb src={r.image_path} alt={r.title} size={40} />
-                  <div className="min-w-0">
-                    <div className="truncate text-content dark:text-mortar-100 group-hover/row:text-accent">
-                      {r.title}
+          <>
+            <ul className="space-y-1.5">
+              {items.map((r) => {
+                // Row → the entity's detail page (registry-driven; instance
+                // kinds resolve too). No route registered → plain row.
+                const href = routeFor(r.kind, r.id);
+                const body = (
+                  <>
+                    <EntityThumb src={r.image_path} alt={r.title} size={40} />
+                    <div className="min-w-0">
+                      <div className="truncate text-content dark:text-mortar-100 group-hover/row:text-accent">
+                        {r.title}
+                      </div>
+                      {r.subtitle && <div className="text-xs text-muted truncate">{r.subtitle}</div>}
                     </div>
-                    {r.subtitle && <div className="text-xs text-muted truncate">{r.subtitle}</div>}
-                  </div>
-                </>
-              );
-              return (
-                <li key={`${r.kind}:${r.id}`} className="text-sm">
-                  {href ? (
-                    <Link to={href} className="flex items-center gap-3 group/row">
-                      {body}
-                    </Link>
-                  ) : (
-                    <div className="flex items-center gap-3">{body}</div>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
+                  </>
+                );
+                return (
+                  <li key={`${r.kind}:${r.id}`} className="text-sm">
+                    {href ? (
+                      <Link to={href} className="flex items-center gap-3 group/row">
+                        {body}
+                      </Link>
+                    ) : (
+                      <div className="flex items-center gap-3">{body}</div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+            {/* A grouped view whose group field is unset everywhere lands here
+                (shouldShowDistribution says no spread). Show the items — they
+                ARE the content — and teach the grouping as a footer, instead of
+                the hint-only dead card this used to be. */}
+            {isGrouped && groupCounts.length > 0 && groupCounts.every(([k]) => k === "") && (
+              <div className="mt-2 text-[11px] text-faint italic">
+                No {groupLabel} set yet — set it on these to group them here.
+              </div>
+            )}
+          </>
         )
       )}
     </div>

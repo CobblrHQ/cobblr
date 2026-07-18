@@ -29,6 +29,7 @@ COPY modules/projects/package.json ./modules/projects/
 COPY modules/purchases/package.json ./modules/purchases/
 COPY modules/machines/package.json ./modules/machines/
 COPY modules/assets/package.json ./modules/assets/
+COPY modules/records/package.json ./modules/records/
 COPY modules/core-recurrence/package.json ./modules/core-recurrence/
 COPY modules/core-activity-log/package.json ./modules/core-activity-log/
 COPY modules/core-notifications/package.json ./modules/core-notifications/

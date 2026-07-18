@@ -59,6 +59,7 @@ import { ConfigMembersPage, ConfigModulesPage, ConfigNewThingPage } from "./page
 // out keeps the dashboard's initial bundle smaller. Each becomes
 // its own chunk; the chunk loads on first navigation.
 const BindingsPage = lazy(() => import("./pages/BindingsPage").then((m) => ({ default: m.BindingsPage })));
+const RecordsPage = lazy(() => import("./pages/RecordsPage").then((m) => ({ default: m.RecordsPage })));
 const ActionsPage = lazy(() => import("./pages/ActionsPage").then((m) => ({ default: m.ActionsPage })));
 const BundlesPage = lazy(() => import("./pages/BundlesPage").then((m) => ({ default: m.BundlesPage })));
 const BuildPage = lazy(() => import("./pages/BuildPage").then((m) => ({ default: m.BuildPage })));
@@ -536,6 +537,8 @@ function ActiveOrgScopedRoutes() {
           <Route path="/machines/:id" element={<MachinesPage />} />
           <Route path="/assets" element={<AssetsPage />} />
           <Route path="/assets/:id" element={<AssetsPage />} />
+          <Route path="/records" element={<RecordsPage />} />
+          <Route path="/records/:id" element={<RecordsPage />} />
           <Route path="/purchases" element={<PurchasesPage />} />
           <Route path="/purchases/:id" element={<PurchasesPage />} />
           {/* Every /configuration/* page renders inside ConfigurationLayout —

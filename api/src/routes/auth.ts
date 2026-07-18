@@ -1104,7 +1104,7 @@ authRouter.post("/discord/verify-dm", async (req, res, next) => {
 // matches WhatsApp Web / Discord device-pairing:
 //
 //   1. A logged-in DESKTOP (no camera) calls POST /auth/pair/start { org_slug }.
-//      Server mints a 128-bit single-use code with a ~90s expiry, stores it
+//      Server mints a 128-bit single-use code with a ~5-minute expiry, stores it
 //      HASHED, and returns it. The desktop renders it as a QR encoding
 //      /pair?code=<code>.
 //   2. The PHONE scans → opens /pair?code=… → POSTs /auth/pair/claim { code }.
@@ -1116,7 +1116,9 @@ authRouter.post("/discord/verify-dm", async (req, res, next) => {
 // Security posture (mirrors the magic-link / reset / verify flows):
 //   - Single-use: claim sets claimed_at in one atomic UPDATE…WHERE…RETURNING;
 //     a second claim returns 410.
-//   - Short TTL (~90s) — an unclaimed row is inert after expiry.
+//   - Short TTL (~5 min) — an unclaimed row is inert after expiry. (Was 90s;
+//     finding + unlocking the phone routinely outran it, and unlike the
+//     WhatsApp-style flows we don't auto-rotate the code.)
 //   - High entropy: 128-bit randomBytes, URL-safe; stored sha256-HASHED, so the
 //     plaintext only ever transits start-response → QR → claim.
 //   - Rate-limited on BOTH start and claim (in-memory, per-IP) — defense in
@@ -1125,7 +1127,7 @@ authRouter.post("/discord/verify-dm", async (req, res, next) => {
 //     start (the minter) AND claim (a membership revoked in between drops the
 //     phone to its default workspace rather than a workspace it can't see).
 
-const PAIR_CODE_TTL_MS = 90 * 1000;
+const PAIR_CODE_TTL_MS = 300 * 1000;
 
 function hashPairCode(plain: string): string {
   return createHash("sha256").update(plain).digest("hex");
@@ -1133,7 +1135,7 @@ function hashPairCode(plain: string): string {
 
 // Minimal in-memory sliding-window limiter — this api carries no
 // express-rate-limit dependency. Per-instance + best-effort: brute-forcing a
-// 128-bit, 90-second, single-use code is already infeasible; this just caps
+// 128-bit, short-lived, single-use code is already infeasible; this just caps
 // accidental floods + abusive bursts. Keyed by client IP.
 function makePairLimiter(windowMs: number, max: number): (key: string) => boolean {
   const hits = new Map<string, number[]>();
@@ -1192,7 +1194,7 @@ authRouter.post("/pair/start", requireAuth, async (req, res, next) => {
       res.status(403).json({ error: { code: "not_a_member", message: "You're not a member of that workspace." } });
       return;
     }
-    // 128-bit URL-safe code: ample entropy for a 90s single-use code, compact
+    // 128-bit URL-safe code: ample entropy for a short-lived single-use code, compact
     // enough to keep the QR low-density. Stored hashed — plaintext only goes
     // out in this response (→ QR → phone).
     const code = randomBytes(16).toString("base64url");
