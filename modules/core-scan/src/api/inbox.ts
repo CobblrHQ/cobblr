@@ -1123,8 +1123,15 @@ inboxRouter.post(
     const kindKey = `${target.module}:${target.kind}`;
     // The owning module declares its scan target (create endpoint + quantity
     // field) via registerScannable — core-scan reads it instead of a hardcoded
-    // map. (Audit 2026-06-26 follow-up.)
-    const scanTarget = platform().entities.getScannable(kindKey);
+    // map. (Audit 2026-06-26 follow-up.) A caller may pass an INSTANCE-scoped
+    // kind (target_kind "vehicles:item" → kindKey "assets:vehicles:item")
+    // instead of the module's base kind; scannability is a MODULE property and
+    // the instance routes the create separately (createUrl below), so fall back
+    // to the module's scannable rather than 400ing. (Confirming a vehicle from
+    // the scan inbox hit this: "assets:vehicles:item is not a scan target".)
+    const scanTarget =
+      platform().entities.getScannable(kindKey) ??
+      platform().entities.getScannableForModule(target.module);
     if (!scanTarget) {
       res.status(400).json({
         error: {

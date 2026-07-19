@@ -1745,6 +1745,13 @@ export interface PlatformEntities {
   registerScannable(kind: string, info: ScannableInfo): void;
   /** The scan info for a kind, or null if it isn't a scan target. */
   getScannable(kind: string): ScannableInfo | null;
+  /** The scan info for a MODULE, regardless of which of its kinds is asked for.
+   *  Scannability is a module-level property (create endpoint + qty field), but a
+   *  caller may hold an INSTANCE-scoped kind ("vehicles:item") rather than the
+   *  registered base kind ("assets:asset") — the instance routes the create
+   *  separately, so the module's one scannable still applies. Resolves by the
+   *  module prefix; null if the module has no scan target. */
+  getScannableForModule(module: string): ScannableInfo | null;
   /** Every registered scan target as { kind, ...info } — core-scan builds its
    *  scan menu from this (which modules/kinds are scannable + their nouns). */
   listScannable(): Array<{ kind: string } & ScannableInfo>;
@@ -1838,6 +1845,15 @@ export interface PlatformEntities {
   listKindsForOrg(orgId: string): Promise<EntityKindRecord[]>;
   /** Get a single kind's full declaration. */
   getKind(kind: string): Promise<EntityKindRecord | null>;
+  /** The MODULE kind behind a kind string: identity for a registered kind,
+   *  `<instance>:item` → its owning module's primary kind.
+   *
+   *  Instance kinds are synthesized per-org and never stored in entity_kinds,
+   *  so any registry keyed by kind (actions, traits, the event payload-key
+   *  convention) misses on one and returns nothing — silently. Resolve through
+   *  here before such a lookup. Reads (`lookup`/`list`/`lookupMany`) don't need
+   *  it; they fall back at the resolver level. */
+  baseKindOf(orgId: string, kind: string): Promise<string>;
   /** The names of a kind's SERVER-MANAGED custom fields (field defs with
    *  `server_managed = true`, e.g. core-mobility's `away_since`). A write
    *  route uses this to preserve the stored value across an unrelated client

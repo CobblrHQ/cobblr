@@ -310,7 +310,10 @@ interface AppValidationError {
 
 async function appReferentialErrors(orgId: string, pages: z.infer<typeof Pages>): Promise<AppValidationError[]> {
   const errors: AppValidationError[] = [];
-  const kindIds = new Set((await platform().entities.listKinds()).map((k) => k.id));
+  // Per-ORG, so synthesized `<instance>:item` kinds count as known. "Generate
+  // your app" builds its pages on exactly those, and validating against the
+  // bare module registry rejected the platform's own output as unknown_kind.
+  const kindIds = new Set((await platform().entities.listKindsForOrg(orgId)).map((k) => k.id));
   // Cache applicable-action ids per kind so we don't re-resolve per block.
   const actionsByKind = new Map<string, Set<string>>();
   const actionsFor = async (kind: string): Promise<Set<string>> => {

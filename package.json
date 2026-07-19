@@ -23,6 +23,7 @@
     "lint:selfhost-mounts": "tsx scripts/lint-selfhost-mounts.ts",
     "lint:instance-resolvers": "tsx scripts/lint-instance-resolvers.ts",
     "lint:image-search": "tsx scripts/lint-image-search-single-surface.ts",
+    "lint:instance-kinds": "tsx scripts/lint-instance-kind-registry.ts",
     "lint:versions": "tsx scripts/lint-versions.ts",
     "lint:docs": "tsx scripts/lint-docs.ts",
     "lint:branch-live": "node scripts/lint-branch-live.mjs",

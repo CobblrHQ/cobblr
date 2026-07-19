@@ -11,7 +11,7 @@ import type {
 } from "@cobblr/platform-contract";
 import { AXIS_OF_TRAIT } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
-import { listKinds, getKind } from "./entities.js";
+import { listKinds, getKind, listKindsForOrg, baseKindOf } from "./entities.js";
 
 const handlers = new Map<string, ActionHandler>();
 
@@ -23,7 +23,21 @@ export async function listApplicable(
   kind: string,
   orgId?: string,
 ): Promise<EntityActionRecord[]> {
-  const kindRecord = await getKind(kind);
+  // An INSTANCE kind ("supplies:item") is synthesized per-org and never lands
+  // in entity_kinds, so getKind missed it and every caller got zero actions —
+  // no error, just an empty Do… dropdown in the wire composer and an action-less
+  // record view in a generated app. (invoke() never checked the kind, so the
+  // actions worked over the API the whole time; only DISCOVERY was blind.)
+  //
+  // Resolved off the synthesized record rather than the module's base kind, so
+  // the instance's own traits drive applicability — a lean catalog instance of a
+  // fungible module carries catalog-record traits, and matching against the
+  // base's would offer it stock actions it shouldn't have. Only pays the heavier
+  // per-org list when the cheap registry read misses.
+  let kindRecord = await getKind(kind);
+  if (!kindRecord && orgId) {
+    kindRecord = (await listKindsForOrg(orgId)).find((k) => k.id === kind) ?? null;
+  }
   if (!kindRecord) return [];
   const allActions = await meta
     .selectFrom("entity_actions")
@@ -43,11 +57,16 @@ export async function listApplicable(
   for (const r of overrideRows) {
     overrides.set(r.action_id, r.applies_to_override as ActionAppliesToDecl);
   }
+  // An explicit `appliesTo.kinds` allowlist names MODULE kinds, so match it
+  // against the base — otherwise "supplies:item" fails an ["inventory:part"]
+  // allowlist. Traits and fields still come from the instance's own record
+  // above, so this widens who's eligible without flattening what they are.
+  const matchKind = orgId ? await baseKindOf(orgId, kind) : kind;
   return allActions
     .map(rowToActionRecord)
     .filter((a) => {
       const predicate = overrides.get(a.id) ?? a.applies_to;
-      return actionApplies(predicate, kindRecord.fields, kind, kindRecord.traits);
+      return actionApplies(predicate, kindRecord.fields, matchKind, kindRecord.traits);
     });
 }
 

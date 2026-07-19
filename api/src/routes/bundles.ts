@@ -662,6 +662,39 @@ export async function validateBundle(
     }
   }
 
+  // Instance wires were never validated: referencedKinds above collects only
+  // top-level m.wires, so a provides_instances wire could name an action that
+  // can't apply and still install clean — then silently never fire. Its
+  // source_kind (`<instance>:item`) doesn't exist yet at validate time (this
+  // bundle creates it), so check against the kind the instance will BE: its
+  // module's primary.
+  const primaryByModule = new Map(
+    knownKinds.filter((k) => k.is_primary).map((k) => [k.module_name, k] as const),
+  );
+  for (const inst of m.provides_instances) {
+    const primary = primaryByModule.get(inst.module);
+    if (!primary) continue; // an unknown module is already reported elsewhere
+    const applicable = new Set(
+      (await platform().actions.listApplicable(primary.id, orgId)).map((a) => a.id),
+    );
+    for (const w of inst.wires) {
+      if (!applicable.has(w.action_id)) {
+        const list = [...applicable].sort().join(", ") || "(none)";
+        errors.push({
+          path: "provides_instances.wires.action_id",
+          code: "action_not_applicable",
+          message: `Action "${w.action_id}" can't be wired to instance "${inst.instance_name}" (a ${primary.id}). Actions available: ${list}.`,
+        });
+      }
+      if (w.filter != null) {
+        const { error } = parseWireFilter(w.filter);
+        if (error) {
+          errors.push({ path: "provides_instances.wires.filter", code: "invalid_wire_filter", message: error });
+        }
+      }
+    }
+  }
+
   // requires[] must name the module owning every referenced kind + action.
   const declaredRequires = new Set(m.requires.map((r) => r.module));
   const neededModules = new Set<string>();

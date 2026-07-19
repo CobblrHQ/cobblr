@@ -20,6 +20,20 @@ export function getScannable(kind: string): ScannableInfo | null {
   return scannable.get(kind) ?? null;
 }
 
+// Scannability is a MODULE-level property (one create endpoint + qty field per
+// module), keyed here by the module's base kind ("assets:asset"). A confirm/apply
+// caller may instead hold an INSTANCE-scoped kind ("vehicles:item") — the instance
+// routes the create separately, so the module's one scannable still applies. Resolve
+// by module prefix so any such kind maps back to its module's scan target instead of
+// 400ing. (A module registers exactly one scannable; first match wins.)
+export function getScannableForModule(module: string): ScannableInfo | null {
+  const prefix = `${module}:`;
+  for (const [kind, info] of scannable) {
+    if (kind.startsWith(prefix)) return info;
+  }
+  return null;
+}
+
 export function listScannable(): Array<{ kind: string } & ScannableInfo> {
   return [...scannable.entries()].map(([kind, info]) => ({ kind, ...info }));
 }

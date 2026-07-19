@@ -208,7 +208,14 @@ listsRouter.patch(
       // no source entity and fires nothing (a clean no-op).
       const meta = (row.metadata as { source_ref?: { kind?: string; id?: string } } | null) ?? {};
       const ref = meta.source_ref;
-      const sourceKey = parsed.data.checked && ref?.kind && ref.id ? sourceIdKey(ref.kind) : undefined;
+      // Through the BASE kind for the same reason the wire engine reads it that
+      // way: a line seeded from an INSTANCE record carries `supplies:item`,
+      // which would publish `itemId` while the listening wire reads `partId`.
+      // Both ends have to agree on the module's key, not the instance's.
+      const refBaseKind =
+        ref?.kind && ref.id ? await platform().entities.baseKindOf(ctx.org.id, ref.kind) : null;
+      const sourceKey =
+        parsed.data.checked && refBaseKind && ref?.id ? sourceIdKey(refBaseKind) : undefined;
       void platform().events.emit("lists.item.checked", {
         orgId: ctx.org.id,
         listId: row.list_id,

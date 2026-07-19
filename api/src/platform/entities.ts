@@ -62,6 +62,47 @@ export function registerInstanceResolver(
   instanceResolvers.set(moduleName, resolver);
 }
 
+/** The MODULE kind behind a kind string: identity for a real registered kind,
+ *  and `<instance>:item` → its owning module's primary kind.
+ *
+ *  Instance kinds are synthesized per-org at read time and never land in
+ *  `entity_kinds`, so anything keyed by the registry (actions, traits, the
+ *  payload-key convention) misses on one and returns nothing — no error, just
+ *  silence. Route those lookups through here. `lookup`/`list` don't need it:
+ *  they have resolver-level fallbacks that reach the same records.
+ *
+ *  Checks the registry FIRST because a genuine module kind can look exactly
+ *  like an instance one — `lists:item` is the lists module's own kind, and
+ *  mapping it away would break lists. */
+export async function baseKindOf(orgId: string, kind: string): Promise<string> {
+  const registered = await meta
+    .selectFrom("entity_kinds")
+    .select("id")
+    .where("id", "=", kind)
+    .executeTakeFirst();
+  if (registered) return kind;
+
+  const m = /^([a-z0-9][a-z0-9-]*):item$/.exec(kind);
+  if (!m) return kind;
+  const inst = await meta
+    .selectFrom("workspace_module_instances")
+    .select(["module_name"])
+    .where("org_id", "=", orgId)
+    .where("instance_name", "=", m[1]!)
+    .executeTakeFirst();
+  if (!inst) return kind;
+
+  const primary = await meta
+    .selectFrom("entity_kinds")
+    .select("id")
+    .where("module_name", "=", inst.module_name)
+    .where("is_primary", "=", true)
+    .executeTakeFirst();
+  // A module with no primary kind (lists) leaves the kind as-is rather than
+  // guessing one of several.
+  return primary?.id ?? kind;
+}
+
 /** For a `<name>:item` kind with no exact single-entity resolver, find the
  *  instance's owning module + its registered instance resolver, bound to the
  *  instance name. Returns a plain EntityResolver, or null. Mirrors
@@ -499,7 +540,10 @@ export async function lookupMany(
   }
   const results = await Promise.all(
     Array.from(byKind.entries()).map(async ([kind, ids]) => {
-      const resolver = resolvers.get(kind);
+      // Same instance fallback lookup() and list() have. Without it the three
+      // sibling read paths disagreed: a batched read of an instance record
+      // returned nothing while a single read of the same record worked.
+      const resolver = resolvers.get(kind) ?? (await instanceFallbackEntityResolver(orgId, kind));
       if (!resolver) return [] as ResolvedEntity[];
       const whitelist = await getExposableFields(kind);
       // Cross-module batched read — fail-closed on gated fields (no

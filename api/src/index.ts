@@ -148,6 +148,7 @@ async function boot() {
       applyDevice: deviceApply.applyDevice,
       registerScannable: scanRegistry.registerScannable,
       getScannable: scanRegistry.getScannable,
+      getScannableForModule: scanRegistry.getScannableForModule,
       listScannable: scanRegistry.listScannable,
       lookup: entities.lookup,
       lookupMany: entities.lookupMany,
@@ -157,6 +158,7 @@ async function boot() {
       listKinds: entities.listKinds,
       listKindsForOrg: entities.listKindsForOrg,
       getKind: entities.getKind,
+      baseKindOf: entities.baseKindOf,
       serverManagedFields: entities.serverManagedFields,
     },
     actions: {

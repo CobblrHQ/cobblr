@@ -21,7 +21,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { sourceIdKey, type ActionInvokeActor } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
 import { invoke } from "./actions.js";
-import { lookup, walkPairings } from "./entities.js";
+import { baseKindOf, lookup, walkPairings } from "./entities.js";
 import { render } from "./templates.js";
 import { log as logActivity } from "./activity.js";
 import { parseWireFilter, passesWireFilter } from "./wire-filter.js";
@@ -199,7 +199,13 @@ async function fireBindings(
       // helper derives that key from the source_kind, so emitters and the
       // engine agree without either hardcoding a kind. Multi-word suffixes
       // camelCase ('purchases:order_item' → 'orderItemId').
-      const idKey = sourceIdKey(b.source_kind);
+      //
+      // Derived from the BASE kind, because a bundle installs an instance wire
+      // with the instance's kind ("supplies:item") — which yields "itemId"
+      // while the emitter, knowing only its own module, sends "partId". The key
+      // just missed, sourceId came out "", and the wire silently never fired.
+      // Every instance wire in every bundle was dead this way.
+      const idKey = sourceIdKey(await baseKindOf(orgId, b.source_kind));
       const sourceId =
         typeof payload[idKey] === "string" ? (payload[idKey] as string) : "";
 
